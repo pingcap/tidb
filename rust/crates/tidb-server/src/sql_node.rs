@@ -852,16 +852,6 @@ impl<'a> QueryResult<'a> {
         &mut self.source
     }
 
-    /// Consumes this result, returning its boxed source for re-wrapping.
-    ///
-    /// A prepared read with an `ORDER BY` buffers and sorts the observed scan
-    /// stream by wrapping this source in a `SortingResultSetSource`; taking the
-    /// box back out keeps that transform outside the storage-facing observer.
-    #[must_use]
-    pub fn into_source(self) -> Box<dyn ResultSetSource + 'a> {
-        self.source.inner
-    }
-
     /// Retains the process-list statement until this result set is finished.
     #[must_use]
     pub fn with_process_statement(

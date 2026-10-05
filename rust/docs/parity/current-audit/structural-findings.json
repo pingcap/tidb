@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "server-tool-cleanup-validation.json",
-    "scope": "Retired two unused standalone server binaries, a dump-only statistics reader and an uncalled bootstrap alternative. Cargo binary targets fall from four to two; retained tests/scripts/manifests unchanged. No finding disposition changes."
+    "receipt": "aggregate-chain-cleanup-validation.json",
+    "scope": "Retired the disconnected aggregate/sort chain: 23 source files and 18 private harnesses, 106 registered obsolete tests and six unregistered orphan tests. Preserved the mixed variance metadata assertion verbatim in its existing owner suite; active SQL operators and retained tests unchanged."
   },
   "test_cleanup_history": [
     {
@@ -954,6 +954,11 @@
       "date": "2026-10-05",
       "receipt": "server-tool-cleanup-validation.json",
       "scope": "Retired two unused standalone server binaries, a dump-only statistics reader and an uncalled bootstrap alternative. Cargo binary targets fall from four to two; retained tests/scripts/manifests unchanged. No finding disposition changes."
+    },
+    {
+      "date": "2026-10-05",
+      "receipt": "aggregate-chain-cleanup-validation.json",
+      "scope": "Retired the disconnected aggregate/sort chain: 23 source files and 18 private harnesses, 106 registered obsolete tests and six unregistered orphan tests. Preserved the mixed variance metadata assertion verbatim in its existing owner suite; active SQL operators and retained tests unchanged."
     }
   ],
   "repair_history": [

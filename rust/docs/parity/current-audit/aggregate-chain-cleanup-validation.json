@@ -1,0 +1,344 @@
+{
+  "date": "2026-10-05",
+  "base": "fe8a0cbe328f475297cde9c2f646cea22affa72e",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retired the disconnected aggregate/sort chain: 23 source files and 18 private harnesses, 106 registered obsolete tests and six unregistered orphan tests. Preserved the mixed variance metadata assertion verbatim in its existing owner suite; active SQL operators and retained tests unchanged.",
+  "removed": [
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate.rs",
+      "sha256": "9f6420dca1d9d59c54095225c583988e774c49714445ba5849bac79d40070436",
+      "lines": 83,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate_distinct.rs",
+      "sha256": "be074aa9f0a3fcf565ffa200d5b411a3b690a00a1ec6fb64c1c51f990dd78e44",
+      "lines": 145,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/bit_agg.rs",
+      "sha256": "4b4928b3e64868eeb6035c6f9bb1477716ef6295a34867f27cca35c9272a91f4",
+      "lines": 170,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/first_row.rs",
+      "sha256": "fba51e9f38b270d302726993669939dce28eb582adaa31980428fbd5781d04f2",
+      "lines": 291,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/group_concat.rs",
+      "sha256": "72cb2574c30c82cb3802dca658ac47f46778744b199c93eb8fd982ac6def9a01",
+      "lines": 23,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/minmax_deque.rs",
+      "sha256": "3677536a4c3825076498425ad99005e2f9ff6a1e3451ce291f3bf6f9f22bd11e",
+      "lines": 316,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/order.rs",
+      "sha256": "4e3a71b7a960591b4f4d6955a7a2e4af514a8094476d97e989c57bfbb7b4aefa",
+      "lines": 788,
+      "private_tests": 9
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/mod.rs",
+      "sha256": "c32e03071f30991a77fbc11289f073846381b8ad976e79d619f90a415a59a81b",
+      "lines": 144,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/spill.rs",
+      "sha256": "14bf4e91270a3060e82b6936449187555cf4199d7e700fd69fd9b5e3fedb98e9",
+      "lines": 148,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/avg.rs",
+      "sha256": "c9c3ebca39611f8acefc51a99ec322b9116637754d9b79d866b1876776199f54",
+      "lines": 158,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/max_min.rs",
+      "sha256": "12ed525d587abc30782b311967eee5cf1b8f70b0d543789ea4920eef1b44dc7f",
+      "lines": 293,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/sum.rs",
+      "sha256": "a42dcf0d3a4bb572b5db1a547af72ab0a3b6024d277f6071997f735a92a916c0",
+      "lines": 352,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/variance.rs",
+      "sha256": "05a952f1896cae37f7a70d1389cf8d490e755066c4896a25e0979df4d42d1c70",
+      "lines": 287,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/count.rs",
+      "sha256": "620bd9162d2c14b5e6680c24b2a1bbdbfc9577648f621f871f8b8def8a51cd55",
+      "lines": 677,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/group_concat/mod.rs",
+      "sha256": "80bc02a7240b335ec4249e92c41907299ccc18299fa793f77d1cc8985a6a7d9a",
+      "lines": 25,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/group_concat/spill.rs",
+      "sha256": "3a803526cc82d7db901975cffe07d0fea4a1385c168d42d499580c6836344df9",
+      "lines": 45,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/group_concat/plain.rs",
+      "sha256": "5bf5adb5e82ab5c99b2cebbfc2d8ca2e45e2bd5174e579f012ea849d07c0e3e1",
+      "lines": 155,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/group_concat/ordered.rs",
+      "sha256": "db61184e6ec5fb39db2605d5ebd020b46e7e7c9eda3b76581b3f7387930260cc",
+      "lines": 206,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/aggregate/runtime/group_concat/distinct.rs",
+      "sha256": "f3188f149f2cda4cda9aad838a74fa94528dd1c6b9e9c278832dfbf56bb4c87f",
+      "lines": 72,
+      "private_tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-server/src/aggregate_result_set.rs",
+      "sha256": "2277187f64d606d27c86ad9177889c924ace83d1192a53666f597065d7048a8d",
+      "lines": 193,
+      "private_tests": 3
+    },
+    {
+      "path": "rust/crates/tidb-server/src/distinct_result_set.rs",
+      "sha256": "715f6ddd321b911c6fdafa29281da46e27d25ebfc88529c83511dd27da4cccde",
+      "lines": 271,
+      "private_tests": 6
+    },
+    {
+      "path": "rust/crates/tidb-server/src/sorting_result_set.rs",
+      "sha256": "a5ebd627aa1fd36617ec73ae3ef290a6041b46be3084d6c4b8fedd34c632e43f",
+      "lines": 210,
+      "private_tests": 3
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/group_concat_live_source.rs",
+      "sha256": "89af137eb3e25b8090989e7ba2c21c5a9fdd66c6d821382e68de6e01a8b721ed",
+      "lines": 132,
+      "private_tests": 6
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/core_aggregate_runtime_source.rs",
+      "sha256": "b8bb34dc71028432e6b979713ab3de256141176850338d13bca7fd297f32c59b",
+      "lines": 220,
+      "private_tests": 8
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/first_row_source.rs",
+      "sha256": "ddd64073b4d617d4ec2a4e98c76372d180f7cf6230812609b158253573228072",
+      "lines": 231,
+      "private_tests": 5
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/sum_float64_source.rs",
+      "sha256": "130c033dd0feb8a28f010d06d7b6b57f1ec1d87da23dc98b01df1dc687ee49d9",
+      "lines": 69,
+      "private_tests": 3
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/aggregate_distinct_source.rs",
+      "sha256": "9fc1b86b0c3fd6a1b729c03b5ec09add20d0e2644409962ec867f066e249b5a0",
+      "lines": 55,
+      "private_tests": 2
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/bit_live_aggregate_source.rs",
+      "sha256": "12f973b8c29524bc42a371ed1629537f8a2f01257bc8127f4e374b29ca7d4fa4",
+      "lines": 114,
+      "private_tests": 4
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/spill_count_source.rs",
+      "sha256": "afce725d410eefaf4626b9ef54973b905583263e285006d9f8717dca29525130",
+      "lines": 55,
+      "private_tests": 2
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/first_row_live_aggregate_source.rs",
+      "sha256": "73ea471696ed675abb9f033a2db28fd424ed7952e894cd639e594f55e2a848d6",
+      "lines": 50,
+      "private_tests": 2
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/max_min_runtime_source.rs",
+      "sha256": "84641cae53b0f95c1879ff42c60385d0dda97f6586c1f19c3586d366cf1337fa",
+      "lines": 270,
+      "private_tests": 6
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/max_min_count_runtime_source.rs",
+      "sha256": "350b9a14028313981ed5c22ea38659d8cb170eaa69cf2a5b7f0d0521f95a3c4f",
+      "lines": 164,
+      "private_tests": 5
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/variance_live_aggregate_source.rs",
+      "sha256": "b3f90ae333b9e8ed31ac2e6a931971b918c4aef63fd8b1dd19ba785fc3da681a",
+      "lines": 256,
+      "private_tests": 5
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/sum_int_source.rs",
+      "sha256": "4145678a09fb998bbf92a33672bad113a043d7f6e2e7b203ba1d47bc72bbc3a5",
+      "lines": 116,
+      "private_tests": 5
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/count_distinct_source.rs",
+      "sha256": "26d5f2d8a46fbb48026ed113504644c78b40a7f980597c7b1b55945c504eabe3",
+      "lines": 344,
+      "private_tests": 13
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/minmax_deque_source.rs",
+      "sha256": "2577f01b39c2dde5e831cfb0b7e1cef9c390e2f9051e878cbdece49110ca2bb3",
+      "lines": 103,
+      "private_tests": 4
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/group_concat_source.rs",
+      "sha256": "3d91707921a19961ce1d0c2f2ef49a2948d7bc86afc76a343443a2428ed7bfe3",
+      "lines": 85,
+      "private_tests": 4
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/bit_agg_source.rs",
+      "sha256": "41e0d33a0584d1ca54465ea0897239d7013414193af2241b872b33368e523d5b",
+      "lines": 86,
+      "private_tests": 3
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/count_distinct_int_source.rs",
+      "sha256": "3b6c3563aaad9a60b2eb0482bf254c653d457ca04643beeef858faaf3e186d7a",
+      "lines": 69,
+      "private_tests": 4
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/avg_float64_source.rs",
+      "sha256": "8158f2ff06eea72b92d1601cc9a7fd2301c7a33b750d3be80d09a149f09be7de",
+      "lines": 80,
+      "private_tests": 4
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/stream_agg.rs",
+      "sha256": "47c4189f44184589a48aae0e2be4fc93c6e82c8c8fa53be07da0fd848ba8ebfb",
+      "lines": 721,
+      "private_tests": 6
+    }
+  ],
+  "totals": {
+    "removed_files": 41,
+    "source_files": 23,
+    "private_harnesses": 18,
+    "deleted_file_lines": 8272,
+    "private_tests_retired": 112,
+    "previously_registered_tests_retired": 106,
+    "previously_unregistered_tests_retired": 6,
+    "tests_moved_verbatim": 1,
+    "net_rust_lines_removed": 8277
+  },
+  "caller_evidence": "All exported state types, module imports and wrapper constructors were traced across tracked Rust sources. Outside references are root exports, obsolete comments and an unrelated local Pair alias. No live operator depends on tidb-exec. All-target checks prove remaining compiled callers.",
+  "retained": {
+    "unchanged": 6034,
+    "changed": [
+      "rust/crates/tidb-exec/src/error.rs",
+      "rust/crates/tidb-exec/src/lib.rs",
+      "rust/crates/tidb-exec/tests/result_field_resolver_source.rs",
+      "rust/crates/tidb-server/src/lib.rs",
+      "rust/crates/tidb-server/src/sql_node.rs",
+      "rust/docs/test-build-cleanup-execplan.md",
+      "rust/docs/test-harness-retirement-execplan.md",
+      "rust/scripts/README.md",
+      "rust/testport/receipts/expression_aggregation_audit.md"
+    ],
+    "removed_files": 41,
+    "retained_tests_unchanged_except_verbatim_metadata_move": true,
+    "metadata_test_sha256": "78e5a281e4dfd24684a661e2778d29a5722761234c122991e99869be3a5d1461",
+    "live_owners_unchanged": {
+      "rust/crates/tidb-executor/src/hash_agg.rs": "a76443b04b92ca524dc9e404f15f287167e0a1496f8945981049c723a3987f10",
+      "rust/crates/tidb-executor/src/hash_agg/parallel.rs": "968eae012050b6cbd3ae715cb794db59f0f3fda51c71eb98ea10154465d2ae9d",
+      "rust/crates/tidb-executor/src/window.rs": "a700c77f17942b05c4d8c93dbb1f47b5cb45c63f03e7c3bc8ff31ac047e2aa1b",
+      "rust/crates/tidb-executor/src/sort.rs": "ab851107c0f5563245c3864dd064bdcf8954e1e71ff85b694be3ff4b1d884e03",
+      "rust/crates/tidb-session/src/tests_core/aggregates.rs": "0f62e4789eb454443c4ff49344862ad5b4bb64bebd97e74d3094be586c9655db",
+      "rust/crates/tidb-session/src/tests_window/aggregates.rs": "c497f57e0e9746e86ddbe993e314b9325220a253d436bb1036a36eda4ded8883"
+    },
+    "active_stream_owner": "rust/crates/tidb-executor/src/hash_agg.rs::StreamAggExec,GroupedStreamAggExec"
+  },
+  "original_go_obligations": {
+    "owners": [
+      "pkg/executor/aggfuncs",
+      "pkg/expression/aggregation",
+      "pkg/executor/sortexec"
+    ],
+    "coverage": "Retain every original source/test/generated/platform/build/fixture obligation. Live HashAgg/StreamAgg/window/sort suites cover many cases; they do not exhaust the original packages. Private model test removal does not accept memory accounting, binary spill layouts, error order, sliding/DISTINCT variants or any incomplete owner.",
+    "historical_inventory": "rust/testport/receipts/expression_aggregation_audit.md",
+    "recovery": "git show fe8a0cbe32:<removed path> preserves all original tests and anchors; external inventory.json lists every removed test name."
+  },
+  "validation": {
+    "status": "passed",
+    "all_targets": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-server --all-targets",
+    "metadata_tests": "cd rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-exec --test all -- result_field_resolver_source --test-threads=1",
+    "operator_tests": "cd rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-executor --lib -- hash_agg::tests::min_max_skip_nulls hash_agg::tests::max_min_count hash_agg::parallel::tests::typed_count_distinct hash_agg::tests::grouped_stream_agg hash_agg::tests::group_concat_stringifies --test-threads=1",
+    "lint": "make lint",
+    "diff": "git diff --check",
+    "publication": "Actual commit hook and fresh immediate-prepush cargo build --locked -p tidb-server required; post-commit results in external final-handoff.json.",
+    "test_results": {
+      "metadata-tests.log": {
+        "passed": 7,
+        "failed": 0,
+        "ignored": 0
+      },
+      "operator-tests.log": {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "registration": {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-exec/7c1db4a468b7b3bf/out/all_tests.rs",
+      "sha256": "d97e1a8763e842db2dd69267f21e7a4ff439b3c66a061aa009ec26d4a49a05bf",
+      "fresh_since_inventory": true,
+      "removed_harnesses_absent": 18,
+      "metadata_harness_present": true
+    },
+    "initial_selection": "Initial operator selection ran three tests; stream_agg filter matched none. Traced the file to an unregistered orphan, removed it and ran the registered hash_agg stream/group-concat owners. Final selection: eight passed. No zero-match filter counted as coverage."
+  },
+  "limits": [
+    "86 tracked /30 repaired /56 unresolved unchanged.",
+    "No full Go suite, live multi-node TiKV, complete package acceptance or measured speedup."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/aggregate-chain-cleanup",
+  "log_sha256": {
+    "check.log": "8b18ff85d1d51690f402963af8c2c09814425cf1095f2f472b4a79cf9849e47a",
+    "metadata-tests.log": "cc8ccbf82b239c4d1e0abe62b2eeb762b983ae5451621688abd8ddc9af9c9cd7",
+    "operator-tests.log": "c9e322a2896230062d979db618f936ab0156ce47443d2bc49c3d2357e2284893",
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "inventory.json": "2e2f47ee778b94a3a5a2f079707ceca64976c92f11ce84f28a51a3ef052b8e56"
+  }
+}

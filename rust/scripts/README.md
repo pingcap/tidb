@@ -31,13 +31,15 @@ The source-name transaction guard, kvcache documentation-path test binary and
 two mocked DDL-runner self-checks are retired. The Go LRU contract, ordinary
 transaction tests and maintained live DDL runners remain the validation owners.
 
-The VAR_POP/VAR_SAMP/STDDEV_POP/STDDEV_SAMP compatibility modules and
-adapter APIs are retired. Their nine adapter tests are retired: the existing
-live-aggregate suite covers the Go vectors through the canonical runtime:
+Aggregate, DISTINCT and sort execution belong to `tidb-executor`; the unused
+`tidb-exec` state models and three result-set wrappers are retired. Select
+existing live owner tests together, for example:
 
 ```bash
-cargo test --locked -p tidb-exec --test all -- variance_live_aggregate_source --test-threads=1
+cargo test --locked -p tidb-executor --lib -- hash_agg::tests::min_max_skip_nulls hash_agg::tests::max_min_count hash_agg::parallel::tests::typed_count_distinct --test-threads=1
 ```
+
+The variance result-metadata assertion remains in `result_field_resolver_source`.
 
 The shell snippet self-tests for access-path readiness/statistics and grant
 convergence are retired. Use the live runners that call those shared helpers;

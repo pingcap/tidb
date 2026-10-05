@@ -23,39 +23,14 @@
 //! for storage/scan seam types (`cluster_storage`, `remote_scan`,
 //! `tikv_scan_spec`, `StorageError`) -- no operator ever crosses.
 //!
-//! A SECOND, EARLIER query engine (`Database`/`Cluster`/`Session`: datum-based
-//! `Row = Vec<Datum>`, fully eager, linear-scan grouping, O(n^2) RANGE framing)
-//! used to live here alongside those subsystems. It was reachable only from
-//! tests, it duplicated SQL SEMANTICS rather than mechanics, and the two
-//! engines could therefore disagree. Its Go-evidenced behaviors were harvested
-//! onto the live path and it has been deleted.
-//!
-//! What remains of it is STATE, not operators, kept because the live path
-//! borrows it:
-//!
-//! * [`order`]'s total order over datums and the configured/prepared
-//!   `ORDER BY` key contracts, used by `tidb-server`'s
-//!   `sorting_result_set`.
-//! * [`aggregate`]'s per-kind partial states (`aggregate::runtime`) and tuple
-//!   DISTINCT identity (`aggregate::aggregate_distinct`), used by
-//!   `tidb-server`'s `aggregate_result_set` and `distinct_result_set`.
-//!
-//! ## Module layout
-//!
-//! Split by concern so unrelated features can be extended without touching the
-//! same file. The cluster subsystems are named by their `cluster_*` and
-//! `real_tikv_*` prefixes; the result-metadata contracts by `result_*`; the
-//! aggregate partial states by their Go function names. Window functions live
-//! in `tidb-executor::window`. This file
-//! keeps only the crate-level vocabulary the rest builds on (`Row`,
-//! `ResultSet`, `Outcome`, `ExecError`) and the re-export surface.
+//! SQL aggregation, DISTINCT, sorting and window execution are owned by
+//! `tidb-executor`. This crate provides cluster storage and result metadata;
+//! it does not keep a second operator or aggregate-state implementation.
 
 pub mod account_policy;
 pub mod adapter;
-pub mod aggregate;
 pub mod auto_pre_split;
 pub use tidb_executor::base_join_probe;
-pub mod bit_agg;
 pub mod catalog_reload;
 pub mod catalog_watch;
 pub mod cluster_account_write;
@@ -103,13 +78,11 @@ pub use tidb_executor::error_context;
 mod error_conversion;
 pub mod exec_details;
 pub mod explain;
-pub mod first_row;
 /// Go `GlobalSystemVariableInitialValue`, which lives with the rest of the
 /// `vardef` policy in [`tidb_vardef`] because the SESSION tier needs it too:
 /// `SET <var> = DEFAULT` resolves through it (Go `SetExecutor.getVarValue`),
 /// and `tidb-session` sits below this crate.
 pub use tidb_vardef::global_sysvar_initial;
-pub mod group_concat;
 pub use tidb_executor::hash_join_v2;
 pub use tidb_executor::hash_join_version;
 pub use tidb_executor::hash_table_v2;
@@ -119,13 +92,11 @@ pub use tidb_executor::join_table_meta;
 pub mod keydecoder;
 pub mod label_delivery;
 pub mod mdl_info_load;
-pub mod minmax_deque;
 pub mod multi_statement_transaction;
 pub mod mysql_bootstrap;
 pub mod mysql_system_tables;
 pub mod nontransactional;
 pub mod option_values;
-pub mod order;
 pub mod pd_approximate_count;
 pub mod pessimistic_lock_error;
 pub mod placement_delivery;

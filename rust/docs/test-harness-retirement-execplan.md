@@ -50,24 +50,13 @@ Final edits and validation complete. The 74 selected behavioral cases pass; thre
 
 Only Cargo test registrations and test/document/script files change. Shared aggregate generation, production APIs, dependencies, lockfile and mandatory hooks remain unchanged.
 
-## Canonical variance and runner cleanup continuation
+## Historical variance cleanup
 
-This continuation starts at local e66d8d43dd1b45d059abda6f35469d7c1c48fa33. Remove four standalone variance facades, the VarPopState wrapper and three exported finalizer adapters. Their only consumers were nine adapter tests. The existing variance_live_aggregate_source suite already covers their Go vectors, NULL/sample thresholds, partial merges and tuple size through the canonical runtime, with DISTINCT, SQL dispatch and metadata coverage as well. Preserve ordinary reset in that existing suite. Retire adapter tests, including fabricated negative intermediate states that cannot be supplied through the live state API. Go references remain pkg/executor/aggfuncs/func_{varpop,varsamp,stddevpop,stddevsamp}{,_test}.go at master 93a01d31f6da205ae4bf376825293903a6899fdb. This changes workspace API layout without changing SQL behavior or claiming a package complete.
-
-Retire test-access-path-readiness.sh, test-access-path-stats-counts.sh and test-convergence-global-grant.sh: these scrape shell snippets and feed artificial timing or SQL output. Keep the actual shared readiness/statistics helpers and live runners. Keep cleanup-path safety checks, authentication wire test and protobuf synchronization tests, which cover Rust tooling obligations.
-
-Milestones are caller/coverage migration and removal, followed by one combined live variance/core aggregate selection, affected all-target checking, make lint and the actual locked-build commit hook. Run from rust/: cargo test --locked -p tidb-exec --test all -- variance_live_aggregate_source core_aggregate_runtime_source --test-threads=1; cargo check --locked -p tidb-exec --all-targets. Run bash -n for retained runners/helpers and execute both cleanup-path safety scripts from repository root. Keep logs and hashes in /workspace/.cloud-setup/variance-cleanup. Git retains retired code for recovery; do not reset concurrent work. No pushes.
-
-### Progress
-
-- [x] Remove four facades, their adapters and nine redundant cases; migrate ordinary reset to existing live coverage and retire three shell self-tests.
-- [x] Final retained selection: 14 pass, zero failed/ignored; all-target checking, lint, formatting, safety checks and self-review pass. Normal commit hook and recovery/draft outcomes are recorded in /workspace/.cloud-setup/variance-cleanup/final-handoff.json.
-
-### Surprises, decisions and outcomes
-
-The initial edit moved nine cases beside the private finalizer, and that intermediate unit run passed. A broader comparison with the existing live variance suite showed those cases duplicated its Go obligations. Delete the intermediate migration and validate the retained integration owner instead. The final receipt must distinguish this intermediate nine-pass result from final retained coverage. Canonical production implementation stays byte-identical before the removed compatibility suffix. No extra binary retirement or measured speedup is claimed in this continuation.
-
-Final outcome: four facade source files, one compatibility state and three finalizer APIs, nine duplicate tests and three shell snippet checks are removed. The six existing variance cases and eight core aggregate cases pass. No finding is closed; 86 tracked, 29 repaired and 57 unresolved remain. No measured speedup, full suite, live-cluster acceptance or push is claimed.
+The earlier variance-facade cleanup is preserved in Git and
+parity/current-audit/test-harness-retirement-validation.json. Its private
+aggregate runtime and harnesses are now retired by the
+[current cleanup plan](test-build-cleanup-execplan.md). Use the live executor
+and result-field suites documented in scripts/README.md.
 
 ## Retire unused window models
 

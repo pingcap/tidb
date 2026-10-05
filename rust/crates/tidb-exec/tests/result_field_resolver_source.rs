@@ -14,7 +14,7 @@
 
 #![allow(missing_docs)]
 
-use tidb_ast::{BitLiteralValue, Expr, SelectField};
+use tidb_ast::{BitLiteralValue, Expr, SelectField, WindowDef, WindowOver};
 use tidb_datatype::{Collation, FieldTypeCode};
 use tidb_exec::{
     resolve_result_fields, resolve_select_fields, ResultFieldResolveError, ResultFieldSpec,
@@ -300,5 +300,45 @@ fn cast_target_metadata_follows_go_parse_cast_type() {
         assert_eq!(field_type.flags, flags, "flags for {target:?}");
         assert_eq!(field_type.flen, flen, "flen for {target:?}");
         assert_eq!(field_type.decimal, decimal, "decimal for {target:?}");
+    }
+}
+
+#[test]
+fn variance_result_metadata_is_always_double_23_with_unspecified_scale() {
+    // Direct Go source: base_func.go::typeInfer4PopOrSamp.
+    for name in [
+        "VAR_POP",
+        "VARIANCE",
+        "VAR_SAMP",
+        "STDDEV_POP",
+        "STDDEV",
+        "STD",
+        "STDDEV_SAMP",
+    ] {
+        for expression in [
+            Expr::Aggregate {
+                name: name.to_owned(),
+                distinct: false,
+                args: vec![Expr::Int("1".to_owned())],
+            },
+            Expr::Window {
+                name: name.to_owned(),
+                args: vec![Expr::Int("1".to_owned())],
+                distinct: false,
+                ignore_nulls: false,
+                from_last: false,
+                over: WindowOver::Def(WindowDef::default()),
+            },
+        ] {
+            let fields =
+                resolve_result_fields(&[ResultFieldSpec::new(expression)], Collation::Utf8Mb4Bin)
+                    .expect("variance metadata");
+            let field = &fields[0].field_type;
+            assert_eq!(field.code, FieldTypeCode::Double);
+            assert_eq!(field.flen, Some(23));
+            assert_eq!(field.decimal, None);
+            assert_eq!(field.flags, 0);
+            assert_eq!(field.collation, Collation::Binary);
+        }
     }
 }

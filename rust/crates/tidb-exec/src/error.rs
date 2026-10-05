@@ -61,7 +61,7 @@ pub enum ExecError {
     /// `ONLY_FULL_GROUP_BY` (real MySQL/TiDB's default `sql_mode`): a
     /// non-aggregated column in the select list, `HAVING`, or `ORDER BY`
     /// of a `GROUP BY`/aggregate query that is not itself one of the
-    /// `GROUP BY` expressions — see `crate::aggregate::check_group_by_scope`.
+    /// `GROUP BY` expressions.
     UngroupedColumn(String),
     /// An `INSERT` row has a column count the table does not match.
     ColumnCountMismatch,

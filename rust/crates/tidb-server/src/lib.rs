@@ -50,7 +50,6 @@ pub(crate) fn isolate_process_globals() -> bool {
     true
 }
 
-mod aggregate_result_set;
 mod auth_exchange;
 mod auth_identity;
 mod auth_plugin_registry;
@@ -68,7 +67,6 @@ mod configured_user_store;
 pub mod connection_resultset;
 mod connection_writers;
 mod cursor_state;
-mod distinct_result_set;
 mod global_config_sync;
 pub mod handshake;
 mod handshake_response;
@@ -92,11 +90,9 @@ mod session_transaction;
 mod set_global_vars;
 mod shutdown_signal;
 pub mod signal_exit;
-mod sorting_result_set;
 mod sql_node;
 mod unistore_node;
 pub mod wire_status;
-pub use aggregate_result_set::AggregateResultSetSource;
 pub use auth_exchange::{
     decode_client_packet, AuthClientResponse, AuthExchangeError, AuthMoreData, AuthSwitchRequest,
     AUTH_MORE_DATA_PREFIX, AUTH_SWITCH_REQUEST,
@@ -118,7 +114,6 @@ pub use cluster_session_node::{
 pub use configured_user_store::{
     AuthenticatedIdentity, AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError,
 };
-pub use distinct_result_set::DistinctResultSetSource;
 pub use handshake::{
     negotiate_capabilities, parse_response, parse_response_body,
     parse_response_body_into_with_attrs_state, parse_response_body_with_attrs_state,
@@ -151,7 +146,6 @@ pub use secure_transport::{
     SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,
 };
 pub use session_transaction::SessionTransaction;
-pub use sorting_result_set::SortingResultSetSource;
 pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
     ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead,

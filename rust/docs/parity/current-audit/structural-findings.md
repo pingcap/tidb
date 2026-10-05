@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [obsolete standalone server tools](server-tool-cleanup-validation.json). Two binary targets and their disconnected helper paths retired; all retained tests remain unchanged. Finding dispositions remain unchanged.
+Latest cleanup: [disconnected aggregate/sort chain](aggregate-chain-cleanup-validation.json). Forty-one obsolete files and 112 private tests retired; the live metadata assertion is preserved verbatim. Finding dispositions remain unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
