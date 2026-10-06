@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-06",
+  "base": "24f0e73699c7c0152604ebef5116324990b08804",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove unused tidb-exec error/result vocabulary and the synthetic compiler model: three files, 749 net Rust lines and nineteen private model tests. Preserve both formatter tests with all byte/order vectors in the actual shared differential formatter. Correct stale crate ownership comments; no broad finding closure.",
+  "continuity": {
+    "base": "24f0e73699c7c0152604ebef5116324990b08804",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "net_rust_lines_removed": 749,
+    "migrated_tests": 2,
+    "preserved_byte_vectors": 8,
+    "preserved_ordering_vectors": 2,
+    "retired_private_model_tests": 19,
+    "formatter_production_unchanged": true,
+    "duplicate_cell_and_hex_implementations_identical": true,
+    "live_session_executor_server_unchanged": true,
+    "removed_exports_no_imports_or_qualified_references": true
+  },
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/error.rs",
+      "lines": 103,
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/result.rs",
+      "lines": 151,
+      "tests": [
+        "go_format_cell_vectors_preserve_and_escape_bytes",
+        "result_set_label_sorts_only_unordered_rows"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/compiler.rs",
+      "lines": 524,
+      "tests": [
+        "physical_plan_below_threshold_keeps_priority",
+        "threshold_comparison_is_strictly_greater",
+        "fractional_estimate_is_truncated_before_comparison",
+        "any_descendant_over_threshold_lowers_priority",
+        "execute_recurses_into_inner_plan",
+        "dml_without_select_plan_never_lowers",
+        "dml_with_select_plan_walks_it",
+        "unknown_plan_kind_never_lowers",
+        "restricted_sql_is_never_counted",
+        "default_config_counts_by_type_with_empty_db_label",
+        "record_qps_by_db_wins_over_record_db_label",
+        "record_db_label_carries_resource_group",
+        "db_labelling_with_no_labels_emits_nothing",
+        "result_node_walk_descends_table_source_and_select",
+        "select_without_from_yields_nothing",
+        "nil_result_node_yields_nothing",
+        "unresolved_table_name_yields_nothing",
+        "join_keeps_left_right_order_and_duplicates",
+        "join_with_missing_side_skips_it"
+      ]
+    }
+  ],
+  "tests": {
+    "shared_result_helpers": [
+      {
+        "passed": 28,
+        "failed": 0
+      }
+    ]
+  },
+  "commands": [
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p difftest-result-tests --lib -- --test-threads=1",
+    "cd /workspace/tidb; make lint",
+    "cd /workspace/tidb; git diff --check"
+  ],
+  "retained_owners": {
+    "execution": "tidb-executor/src/executor.rs and driver/errors; tidb-session dispatch/planner integration",
+    "differential_format": "rust/difftests/result-tests/src/result_label.rs used by query_diff and table_diff",
+    "unrelated_live_support": "schema_validator, recordset_lifecycle and multi_statement_transaction retained after tracing callers"
+  },
+  "remaining_go_obligations": [
+    "Complete Compiler.Compile orchestration and package acceptance",
+    "Automatic expensive-query priority policy and complete database-label/QPS policy are not implemented by retiring unused surrogate trees"
+  ],
+  "gates": {
+    "lint": "passed",
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; external final handoff records completion"
+  },
+  "limits": [
+    "No full Go, SQL replay, live-cluster or benchmark run; no measured speedup claim",
+    "No broad finding disposition change or complete package acceptance",
+    "Out-of-tree consumers of removed public seed APIs must use maintained owners"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/compiler-result-cleanup/final-handoff.json"
+}

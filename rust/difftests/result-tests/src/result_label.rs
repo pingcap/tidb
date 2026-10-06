@@ -95,3 +95,38 @@ pub fn statement_is_ordered(stmt: &tidb_ast::Stmt) -> bool {
         tidb_ast::QueryStmt::SetOpr(set_opr) => !set_opr.order_by.is_empty(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{result_cell_label, rows_label};
+    use tidb_datatype::Datum;
+
+    /// These are the exact vectors from `rust/difftests/gorun/main_test.go`.
+    /// Keep this transport test next to the result owner: SQL coercion belongs
+    /// to `tidb-expr`, while this layer must only preserve the already-produced
+    /// bytes and keep marker-shaped text unambiguous.
+    #[test]
+    fn go_format_cell_vectors_preserve_and_escape_bytes() {
+        let cases = [
+            (Datum::Null, "<nil>"),
+            (Datum::new_string("TiDB"), "TiDB"),
+            (Datum::new_string(vec![b'a', 0, b'b']), "a\0b"),
+            (Datum::new_string(vec![0xff, 0, b'A']), "BYTES_HEX:FF0041"),
+            (Datum::new_string("a\nb"), "BYTES_HEX:610A62"),
+            (Datum::new_string("a\rb"), "BYTES_HEX:610D62"),
+            (Datum::new_string("BYTES_HEX:FF"), "TEXT:BYTES_HEX:FF"),
+            (Datum::new_string("TEXT:value"), "TEXT:TEXT:value"),
+        ];
+
+        for (value, expected) in cases {
+            assert_eq!(result_cell_label(&value), expected);
+        }
+    }
+
+    #[test]
+    fn result_set_label_sorts_only_unordered_rows() {
+        let rows = vec![vec![Datum::new_string("z")], vec![Datum::new_string("a")]];
+        assert_eq!(rows_label(&rows, false), "RS:a;z");
+        assert_eq!(rows_label(&rows, true), "RS:z;a");
+    }
+}

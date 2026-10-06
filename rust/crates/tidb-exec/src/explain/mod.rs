@@ -43,7 +43,7 @@ pub struct ExplainOptions {
 /// The payload is intentionally a string. Go's executor combines errors from
 /// Next and Close using their rendered text; keeping that contract here avoids
 /// converting an external executor's error vocabulary into a misleading
-/// ExecError::Unsupported variant.
+/// unsupported-error variant.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExplainError {
     /// The child analyze executor failed while opening, draining, or closing.

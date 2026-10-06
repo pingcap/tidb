@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "statement-boundary-cleanup-validation.json",
-    "scope": "Remove the disconnected statement-status and executor/protocol error-conversion chain: six files, 1180 net Rust lines, fifteen private tests and an unused result-stream method. Keep warning types and useful cap/batch/set vectors with the shared warning owner; retain live session, driver-error and packet/stream owners. Correct three stale boundary documents and five stale evaluation-origin expectations in the retained driver-error test. No broad finding closure.",
+    "receipt": "compiler-result-cleanup-validation.json",
+    "scope": "Remove unused tidb-exec error/result vocabulary and the synthetic compiler model: three files, 749 net Rust lines and nineteen private model tests. Preserve both formatter tests with all byte/order vectors in the actual shared differential formatter. Correct stale crate ownership comments; no broad finding closure.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1079,6 +1079,11 @@
     {
       "receipt": "statement-boundary-cleanup-validation.json",
       "scope": "Remove the disconnected statement-status and executor/protocol error-conversion chain: six files, 1180 net Rust lines, fifteen private tests and an unused result-stream method. Keep warning types and useful cap/batch/set vectors with the shared warning owner; retain live session, driver-error and packet/stream owners. Correct three stale boundary documents and five stale evaluation-origin expectations in the retained driver-error test. No broad finding closure.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "compiler-result-cleanup-validation.json",
+      "scope": "Remove unused tidb-exec error/result vocabulary and the synthetic compiler model: three files, 749 net Rust lines and nineteen private model tests. Preserve both formatter tests with all byte/order vectors in the actual shared differential formatter. Correct stale crate ownership comments; no broad finding closure.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

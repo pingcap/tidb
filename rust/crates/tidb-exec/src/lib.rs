@@ -18,10 +18,9 @@
 //! IT IS NOT THE QUERY ENGINE. The live operator tree -- the one every TCP
 //! connection and every in-process session executes -- is `tidb-executor`
 //! (`Executor` trait, chunk-based, pull-driven; `hash_agg`/`sort`/`limit`/
-//! `join`/`window`). `tidb-session` reaches it directly and does not depend on
-//! this crate at all. The edge runs `tidb-exec` -> `tidb-executor`, and only
-//! for storage/scan seam types (`cluster_storage`, `remote_scan`,
-//! `tikv_scan_spec`, `StorageError`) -- no operator ever crosses.
+//! `join`/`window`). `tidb-session` reaches it directly and uses this crate
+//! for cluster and session support. `tidb-exec` also uses shared executor
+//! storage/scan types; it does not provide a second query engine.
 //!
 //! SQL aggregation, DISTINCT, sorting and window execution are owned by
 //! `tidb-executor`. This crate provides cluster storage and result metadata;
@@ -52,7 +51,6 @@ pub mod cluster_stats_write;
 pub mod cluster_sysvar_load;
 pub mod cluster_sysvar_write;
 pub mod cluster_table_storage;
-pub mod compiler;
 pub mod tiflash_mpp_scan;
 pub mod tiflash_replica_manager;
 pub mod cop_scan;
@@ -71,7 +69,6 @@ pub mod mview_refresh_info_table;
 pub mod mview_schedule_derive;
 pub use deadlock_recording::configure_deadlock_history;
 pub mod distsql_recordset;
-mod error;
 pub mod exec_details;
 pub mod explain;
 pub mod hint_updatable_vars;
@@ -97,7 +94,6 @@ pub mod real_tikv_read;
 pub mod real_tikv_stats;
 pub mod real_tikv_stats_lock;
 pub mod recordset_lifecycle;
-mod result;
 mod result_field_resolver;
 mod result_metadata;
 pub mod runtime_stats;
@@ -121,8 +117,6 @@ pub mod upgrade_versions;
 pub mod warning_publication;
 pub mod wide_scan_selection;
 
-pub use error::ExecError;
-pub use result::{Outcome, ResultSet, Row};
 pub use result_field_resolver::{
     resolve_parsed_select_fields, resolve_result_fields, resolve_select_fields,
     ResolvedResultField, ResultFieldResolveError, ResultFieldSpec,

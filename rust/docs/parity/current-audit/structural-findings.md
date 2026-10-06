@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [disconnected statement/error boundaries](statement-boundary-cleanup-validation.json). Remove the disconnected statement-status and executor/protocol error-conversion chain: six files, 1180 net Rust lines, fifteen private tests and an unused result-stream method. Keep warning types and useful cap/batch/set vectors with the shared warning owner; retain live session, driver-error and packet/stream owners. Correct three stale boundary documents and five stale evaluation-origin expectations in the retained driver-error test. No broad finding closure.
+Latest cleanup: [unused compiler/result models](compiler-result-cleanup-validation.json). Remove unused tidb-exec error/result vocabulary and the synthetic compiler model: three files, 749 net Rust lines and nineteen private model tests. Preserve both formatter tests with all byte/order vectors in the actual shared differential formatter. Correct stale crate ownership comments; no broad finding closure.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
