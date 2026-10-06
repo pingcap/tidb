@@ -92,7 +92,6 @@ members = [
     "difftests",
     "difftests/parser-tests",
     "difftests/result-tests",
-    "difftests/transaction-tests",
 ]
 # `third_party/tikv-client-rs` is a vendored, re-synced copy of
 # `ngaut/client-rust` (see rust/docs/client-rust-migration-execplan.md) and

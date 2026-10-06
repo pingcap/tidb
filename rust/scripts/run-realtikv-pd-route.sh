@@ -165,9 +165,9 @@ fi
 # peer, store, and TiKV address metadata over the checked PD gRPC projection.
 export PD_ROUTE_PD_ADDR="${PD_ADDR}"
 cd "${RUST_ROOT}"
-cargo test --locked -p difftest-transaction-tests \
+cargo test --locked -p tidb-distsql \
   --test all \
-  realtikv_pd_route::pd_only_input_discovers_route_and_reaches_tikv \
+  transaction_runtime::realtikv_pd_route::pd_only_input_discovers_route_and_reaches_tikv \
   -- --ignored --exact --nocapture | tee "${RUST_LOG}"
 if ! grep -F 'test result: ok. 1 passed; 0 failed;' "${RUST_LOG}" >/dev/null; then
   echo "pd-route expected exactly one successful Rust test" >&2

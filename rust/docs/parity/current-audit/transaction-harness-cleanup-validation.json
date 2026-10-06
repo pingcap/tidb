@@ -1,0 +1,203 @@
+{
+  "date": "2026-10-06",
+  "base": "0f8a99306297fabece0c6575d7b060a955749807",
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "scope": "Retire the redundant difftest-transaction-tests package and target: move nine primitive suites to tidb-txnkv and five live DistSQL suites to tidb-distsql, preserving 49 tests, 27 shared fixture/generator files and seven runner safeguards. No new dependency or runtime behavior.",
+  "continuity": {
+    "moved_suites": 14,
+    "preserved_tests": 49,
+    "live_tests_ignored": 7,
+    "fixture_files_unchanged": 27,
+    "only_two_include_paths_changed": true,
+    "runner_changes_only_package_and_test_selection": true,
+    "seven_shell_syntax_checks": true,
+    "removed_package": true,
+    "existing_owner_tests_unchanged": true,
+    "locked_metadata": true,
+    "all_seven_exact_runner_selections_verified": true
+  },
+  "migration": [
+    {
+      "old": "rust/difftests/transaction-tests/tests/counter.rs",
+      "new": "rust/crates/tidb-txnkv/tests/primitives/counter.rs",
+      "sha256": "ce056b4c54670caa8ba4d195fa88c7a9e3fe59fefb9ef307ae1fc71f49e65ab3",
+      "fixture_path_only_change": false,
+      "tests": 2,
+      "ignored": 0
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/handle.rs",
+      "new": "rust/crates/tidb-txnkv/tests/primitives/handle.rs",
+      "sha256": "5770b8d701483c95c654668183f11bd05d757f3886620920f9f6aa6604b25895",
+      "fixture_path_only_change": true,
+      "tests": 5,
+      "ignored": 0
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/iteration.rs",
+      "new": "rust/crates/tidb-txnkv/tests/primitives/iteration.rs",
+      "sha256": "fd023b68e4640dde253efa35aadb776dd6b80fec1585a699e5fafaac08842cfa",
+      "fixture_path_only_change": false,
+      "tests": 7,
+      "ignored": 0
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/key_helpers.rs",
+      "new": "rust/crates/tidb-txnkv/tests/primitives/key_helpers.rs",
+      "sha256": "6aca796979f8716dc0e0ae61d84befc2ed202ebf828bd2b682707556b49e07ca",
+      "fixture_path_only_change": false,
+      "tests": 5,
+      "ignored": 0
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/key_version.rs",
+      "new": "rust/crates/tidb-txnkv/tests/primitives/key_version.rs",
+      "sha256": "30b340b2e5d9444478a6557ff9d99c78550c868949fb8a3c5162a62ef8f0b627",
+      "fixture_path_only_change": true,
+      "tests": 10,
+      "ignored": 0
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/keyspace.rs",
+      "new": "rust/crates/tidb-txnkv/tests/primitives/keyspace.rs",
+      "sha256": "2142dac81079a3cfee9e58dbdeae7bb5f91c63ee513fff0f432f31281402bee8",
+      "fixture_path_only_change": false,
+      "tests": 2,
+      "ignored": 0
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/mvcc_metadata.rs",
+      "new": "rust/crates/tidb-txnkv/tests/primitives/mvcc_metadata.rs",
+      "sha256": "7552c0f26edbd559c5e83dd758a34fe83a49535ea06a875c2545911246f0a656",
+      "fixture_path_only_change": false,
+      "tests": 6,
+      "ignored": 0
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/realtikv_lock_recovery.rs",
+      "new": "rust/crates/tidb-distsql/tests/transaction_runtime/realtikv_lock_recovery.rs",
+      "sha256": "4d25c0cc17950d1172d4ddae5dda10c3929a886a75205fb4efe763b13f543287",
+      "fixture_path_only_change": false,
+      "tests": 1,
+      "ignored": 1
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/realtikv_pd_route.rs",
+      "new": "rust/crates/tidb-distsql/tests/transaction_runtime/realtikv_pd_route.rs",
+      "sha256": "9bbbc328f76748bb89686cf8e1f47baf7f734f0e7e17cf96ce75d8a24613bea5",
+      "fixture_path_only_change": false,
+      "tests": 1,
+      "ignored": 1
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/realtikv_region_retry.rs",
+      "new": "rust/crates/tidb-distsql/tests/transaction_runtime/realtikv_region_retry.rs",
+      "sha256": "f8ae44fe9fde5be6bf651448ed7989c41d444eaf2b97680dc5e9885a42278315",
+      "fixture_path_only_change": false,
+      "tests": 1,
+      "ignored": 1
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/realtikv_replica_read.rs",
+      "new": "rust/crates/tidb-distsql/tests/transaction_runtime/realtikv_replica_read.rs",
+      "sha256": "eeb7ac1b651b209bb406bc5ebfaebc1832f3ab460ca9c79c27ccca6049e2fefd",
+      "fixture_path_only_change": false,
+      "tests": 3,
+      "ignored": 3
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/realtikv_transport_retry.rs",
+      "new": "rust/crates/tidb-distsql/tests/transaction_runtime/realtikv_transport_retry.rs",
+      "sha256": "a8891dd3bc6ea7b11297a77051f0cc28ba157b245accfbbfa6e4c6f5520507f0",
+      "fixture_path_only_change": false,
+      "tests": 1,
+      "ignored": 1
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/retry.rs",
+      "new": "rust/crates/tidb-txnkv/tests/primitives/retry.rs",
+      "sha256": "d3e8932ff4a663fa4c2ac8f6b85babaabd2130708df9881beca87c937757faed",
+      "fixture_path_only_change": false,
+      "tests": 3,
+      "ignored": 0
+    },
+    {
+      "old": "rust/difftests/transaction-tests/tests/txn_scope.rs",
+      "new": "rust/crates/tidb-txnkv/tests/primitives/txn_scope.rs",
+      "sha256": "f00ae75252c9a981fc39ab8aefd24183efd99d9de7ba6bb983f89c04934cbc9b",
+      "fixture_path_only_change": false,
+      "tests": 2,
+      "ignored": 0
+    }
+  ],
+  "runner_selections": [
+    {
+      "runner": "rust/scripts/run-realtikv-lock-recovery.sh",
+      "test": "transaction_runtime::realtikv_lock_recovery::committed_primary_resolves_secondary_then_publishes_one_cop_response"
+    },
+    {
+      "runner": "rust/scripts/run-realtikv-replica-read.sh",
+      "test": "transaction_runtime::realtikv_replica_read::follower_policy_reaches_a_live_nonleader_voter"
+    },
+    {
+      "runner": "rust/scripts/run-realtikv-transport-retry.sh",
+      "test": "transaction_runtime::realtikv_transport_retry::one_lazy_response_recovers_after_its_cached_tikv_leader_stops"
+    },
+    {
+      "runner": "rust/scripts/run-realtikv-adaptive-forwarding.sh",
+      "test": "transaction_runtime::realtikv_replica_read::adaptive_forwarding_reuses_proxy_then_recovers_direct"
+    },
+    {
+      "runner": "rust/scripts/run-realtikv-region-retry.sh",
+      "test": "transaction_runtime::realtikv_region_retry::same_process_survives_pd_removal_and_region_leader_transfer"
+    },
+    {
+      "runner": "rust/scripts/run-realtikv-pd-batch-topology.sh",
+      "test": "transaction_runtime::realtikv_replica_read::live_pd_prev_region_and_forwarded_batch_survive_same_address_restart"
+    },
+    {
+      "runner": "rust/scripts/run-realtikv-pd-route.sh",
+      "test": "transaction_runtime::realtikv_pd_route::pd_only_input_discovers_route_and_reaches_tikv"
+    }
+  ],
+  "tests": {
+    "owner_batch": [
+      {
+        "package": "tidb-distsql",
+        "passed": 0,
+        "failed": 0,
+        "ignored": 7,
+        "filtered_out": 255
+      },
+      {
+        "package": "tidb-txnkv",
+        "passed": 42,
+        "failed": 0,
+        "ignored": 0,
+        "filtered_out": 440
+      }
+    ]
+  },
+  "test_command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-txnkv -p tidb-distsql --test all -- primitives:: transaction_runtime:: --test-threads=1",
+  "checks": {
+    "make_lint": true,
+    "locked_metadata": true,
+    "seven_shell_syntax_checks": true,
+    "continuity": true,
+    "diff_check": true
+  },
+  "initial_attempt": {
+    "result": "Linker bus error with near-full disk; no test result",
+    "log": "/workspace/.cloud-setup/transaction-harness-cleanup/tests-initial-link-failure.log",
+    "recovery": "Removed identified inactive outputs and partial link output; unchanged command passed",
+    "artifacts": "/workspace/.cloud-setup/transaction-harness-cleanup/pruned-link-recovery.json"
+  },
+  "publication": "Actual hook, fresh pre-push locked build, remote SHA and Cloud checkpoint recorded after commit in /workspace/.cloud-setup/transaction-harness-cleanup/final-handoff.json",
+  "limits": [
+    "Seven real-cluster tests compiled/selected but not executed; no live multi-node claim",
+    "No complete Go package acceptance or finding closure",
+    "No measured speedup; one fewer Cargo package/test binary",
+    "No full Go suite, broad owner test sweep or benchmarks",
+    "Fresh Go unique-by-schema NDV/TopN and local-unique partition merge delta plus earlier FM-sketch delta are separate and not implemented by this cleanup"
+  ]
+}

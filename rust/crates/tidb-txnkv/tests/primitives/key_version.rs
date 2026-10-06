@@ -29,7 +29,7 @@ use tidb_txnkv::{
     REQ_TYPE_CHECKSUM, REQ_TYPE_DAG, REQ_TYPE_SELECT, TXN_RETRYABLE_MARK,
 };
 
-const PARTIAL_NEXT_FIXTURE: &str = include_str!("../fixtures/partial_next.hex");
+const PARTIAL_NEXT_FIXTURE: &str = include_str!("../../../../difftests/transaction-tests/fixtures/partial_next.hex");
 
 fn decode_hex(input: &str) -> Vec<u8> {
     assert_eq!(input.len() % 2, 0, "hex fixture length must be even");

@@ -626,18 +626,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "difftest-transaction-tests"
-version = "0.0.0"
-dependencies = [
- "prost 0.14.4",
- "tidb-codec",
- "tidb-datatype",
- "tidb-distsql",
- "tidb-proto",
- "tidb-txnkv",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

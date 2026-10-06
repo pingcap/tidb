@@ -25,6 +25,12 @@ Planner primitive source translations belong to the planner's existing aggregate
 cargo test --locked -p tidb-planner --test all -- primitives:: --test-threads=1
 ```
 
+Transaction primitives use `tidb-txnkv --test all -- primitives::`.
+Live transaction/DistSQL cases use `tidb-distsql --test all` under
+`transaction_runtime::`; use the maintained `run-realtikv-*.sh` runners for
+cluster setup and cleanup. The former transaction test package is retired;
+shared fixtures remain under `difftests/transaction-tests/fixtures`.
+
 Module-safe integration suites use their crate's `--test all -- <module>`
 aggregate. Register new suites explicitly in `tests/all.rs`; keep helper
 modules owned by another suite out of the aggregate root. Intentional isolated

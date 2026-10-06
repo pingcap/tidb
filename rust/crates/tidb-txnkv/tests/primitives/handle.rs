@@ -20,7 +20,7 @@ use tidb_codec::{decode_int, decode_one, encode_key};
 use tidb_datatype::{Datum, Decimal};
 use tidb_txnkv::{CommonHandle, Handle, HandleMap, IntHandle, PartitionHandle};
 
-const FIXTURE: &str = include_str!("../fixtures/handles.hex");
+const FIXTURE: &str = include_str!("../../../../difftests/transaction-tests/fixtures/handles.hex");
 
 fn fixture(name: &str) -> Vec<u8> {
     let prefix = format!("{name}=");

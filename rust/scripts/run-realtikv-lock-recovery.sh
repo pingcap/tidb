@@ -229,9 +229,9 @@ if [[ ! "${LOCK_RECOVERY_LOCK_TABLE_ID}" =~ ^[0-9]+$ ]] || [[ ! "${LOCK_RECOVERY
 fi
 
 cd "${RUST_ROOT}"
-cargo test --locked -p difftest-transaction-tests \
+cargo test --locked -p tidb-distsql \
   --test all \
-  realtikv_lock_recovery::committed_primary_resolves_secondary_then_publishes_one_cop_response \
+  transaction_runtime::realtikv_lock_recovery::committed_primary_resolves_secondary_then_publishes_one_cop_response \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {
   echo "lock-recovery Rust lock-recovery proof failed" >&2
   tail -180 "${RUST_LOG}" >&2

@@ -1629,7 +1629,8 @@ client-rust-backed code paths (both documents were themselves produced by
 source reading, not automated tests, per their own text — the safest
 apples-to-apples verification is the same method), with the re-check recorded
 in this plan's `Surprises & Discoveries`. Where a `RealTiKV` test exists for
-the affected path (see `rust/difftests/transaction-tests`,
+the affected path (see `rust/crates/tidb-distsql/tests/transaction_runtime`,
+`rust/crates/tidb-txnkv/tests`,
 `docs/agents/testing-flow.md` → RealTiKV tests), run it — a mock-only pass is
 not sufficient evidence for transaction-correctness-critical code per this
 workspace's own stated policy ("mocks are focused tests, not release

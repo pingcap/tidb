@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! All transaction differential tests in one process.
+//! Source-derived transaction cases owned by this crate.
 
-// Register module-safe suites here; isolated suites remain explicit Cargo targets.
 mod counter;
 mod handle;
 mod iteration;
@@ -22,10 +21,5 @@ mod key_helpers;
 mod key_version;
 mod keyspace;
 mod mvcc_metadata;
-mod realtikv_lock_recovery;
-mod realtikv_pd_route;
-mod realtikv_region_retry;
-mod realtikv_replica_read;
-mod realtikv_transport_retry;
 mod retry;
 mod txn_scope;

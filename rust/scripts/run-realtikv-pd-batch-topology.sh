@@ -239,9 +239,9 @@ printf '%s' "${TOPOLOGY_PHASE}" >"${PHASE_DIR}/topology-ready"
 export PD_BATCH_PD_SEED="${PD_SEED}"
 export PD_BATCH_PHASE_DIR="${PHASE_DIR}"
 cd "${RUST_ROOT}"
-cargo test --locked -p difftest-transaction-tests \
+cargo test --locked -p tidb-distsql \
   --test all \
-  realtikv_replica_read::live_pd_prev_region_and_forwarded_batch_survive_same_address_restart \
+  transaction_runtime::realtikv_replica_read::live_pd_prev_region_and_forwarded_batch_survive_same_address_restart \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
 

@@ -124,9 +124,9 @@ fi
 
 export ADAPTIVE_FORWARDING_PD_ADDR="${PD_ADDR}"
 cd "${RUST_ROOT}"
-cargo test --locked -p difftest-transaction-tests \
+cargo test --locked -p tidb-distsql \
   --test all \
-  realtikv_replica_read::adaptive_forwarding_reuses_proxy_then_recovers_direct \
+  transaction_runtime::realtikv_replica_read::adaptive_forwarding_reuses_proxy_then_recovers_direct \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {
   echo "adaptive-forwarding Rust adaptive-forwarding proof failed" >&2
   tail -200 "${RUST_LOG}" >&2

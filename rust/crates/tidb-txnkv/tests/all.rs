@@ -48,6 +48,7 @@ mod pessimistic_prewrite_recovery_realtikv_source;
 mod physical_channel_evidence_source;
 mod prefix_filter_source;
 mod prefix_ops_source;
+mod primitives;
 mod region_batch_locate_source;
 mod region_bucket_source;
 mod region_cache_source;

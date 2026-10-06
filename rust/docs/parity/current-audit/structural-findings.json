@@ -797,9 +797,9 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "utility-workflow-cleanup-validation.json",
-    "scope": "Remove 20 superseded utility audit plans (1338 lines), redirect current references to 19 byte-identical retained receipts, and keep unfinished implementation/validation plans. No executable code, tests, harnesses, scripts or build checks changed.",
-    "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17"
+    "receipt": "transaction-harness-cleanup-validation.json",
+    "scope": "Retire the redundant difftest-transaction-tests package and target: move nine primitive suites to tidb-txnkv and five live DistSQL suites to tidb-distsql, preserving 49 tests, 27 shared fixture/generator files and seven runner safeguards. No new dependency or runtime behavior.",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
   },
   "test_cleanup_history": [
     {
@@ -1145,6 +1145,11 @@
       "receipt": "utility-workflow-cleanup-validation.json",
       "scope": "Remove 20 superseded utility audit plans (1338 lines), redirect current references to 19 byte-identical retained receipts, and keep unfinished implementation/validation plans. No executable code, tests, harnesses, scripts or build checks changed.",
       "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17"
+    },
+    {
+      "receipt": "transaction-harness-cleanup-validation.json",
+      "scope": "Retire the redundant difftest-transaction-tests package and target: move nine primitive suites to tidb-txnkv and five live DistSQL suites to tidb-distsql, preserving 49 tests, 27 shared fixture/generator files and seven runner safeguards. No new dependency or runtime behavior.",
+      "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
     }
   ],
   "repair_history": [

@@ -210,9 +210,9 @@ fi
 export REGION_RETRY_PD_SEED="${PD_SEED}"
 export REGION_RETRY_PHASE_DIR="${PHASE_DIR}"
 cd "${RUST_ROOT}"
-cargo test --locked -p difftest-transaction-tests \
+cargo test --locked -p tidb-distsql \
   --test all \
-  realtikv_region_retry::same_process_survives_pd_removal_and_region_leader_transfer \
+  transaction_runtime::realtikv_region_retry::same_process_survives_pd_removal_and_region_leader_transfer \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
 

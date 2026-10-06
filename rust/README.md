@@ -40,7 +40,7 @@ but does not replace reading or translating the source.
 | `difftests` | differential infrastructure | Go helpers and checked corpora |
 | `difftests/parser-tests` | parser differential tests | lexer/parser/static Go oracle only |
 | `difftests/result-tests` | result-ring tests | expression, query, and table result parity |
-| `difftests/transaction-tests` | transaction differential and live-cluster proofs | `pkg/kv/**`, RealTiKV, retry, lock, and fault-injection behavior |
+| `difftests/transaction-tests/fixtures` | shared Go-generated transaction/codec fixtures | Tests run in the owning `tidb-txnkv` and `tidb-distsql` crates |
 
 The seed executor and evaluator are migration scaffolding, not a parity claim.
 `tidb-txnkv` owns the Rust `pkg/kv` contracts and the existing PD/TiKV region,

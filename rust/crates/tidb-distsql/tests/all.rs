@@ -55,4 +55,5 @@ mod stream_decode_source;
 mod table_handle_ranges_source;
 mod tiflash_replica_read_source;
 mod tikv_rpc_contract_source;
+mod transaction_runtime;
 mod transport_failure_source;

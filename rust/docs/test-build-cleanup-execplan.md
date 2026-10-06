@@ -1,85 +1,98 @@
-# Retire superseded utility audit workflows
+# Consolidate transaction tests in their owning crates
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Remove duplicated historical work instructions that prescribe old laptop
-paths, completed edits/publication steps and broad test sweeps. Retain the
-original package receipts and their limits. Work in /workspace/tidb on
-hparser-integration from ee1c97cedc77d374303d09d4f20ab4360a39451f.
-Fresh Go master remains 5b7e1eb8f5f8252391b6e68330d1648a26a80c17.
-No current Go-package acceptance follows from this documentation cleanup.
+Remove the redundant difftest-transaction-tests package and binary while
+preserving source-derived primitive cases and live-cluster tests. Work in
+/workspace/tidb on hparser-integration from
+0f8a99306297fabece0c6575d7b060a955749807. Nine primitive suites belong to
+tidb-txnkv; five suites using DistSQL belong to tidb-distsql. Both crates
+already have all required dependencies and an aggregate integration target.
+
+Fresh Go master is 3ca96b1d5df8da123e7a650512654eedab12c861. Its eight-file
+statistics delta changes unique-value NDV/TopN and local-unique partition NDV
+merging. The comparison export is refreshed after checking prior file bytes;
+that behavioral delta and the prior FM-sketch delta are not implemented here.
+Go module dependencies are unchanged.
 
 ## Progress
 
 
-- [x] Review 20 superseded plans and map their 19 retained receipts.
-- [x] Confirm publication ancestry and preserve before-image hashes.
-- [x] Remove plans, redirect references and collapse duplicate receipt links.
-- [x] Verify continuity, links, documentation-only scope and diff quality.
-- [ ] Complete actual hook, fresh pre-push build and publication checks.
+- [x] Inspect all suite dependencies, fixture paths and global-state needs.
+- [x] Move 14 suites and update all seven live runner selections.
+- [x] Remove redundant manifest/member/lock entry; retain shared fixtures.
+- [x] Run grouped primitive tests (42 passed) and compile seven ignored live cases.
+- [x] Verify all seven exact selections, shell syntax, continuity and lint.
+- [ ] Complete actual hook, fresh pre-push build, remote and Cloud checks.
 
 ## Milestones and Plan of Work
 
 
-Retire the plans listed in utility-workflow-cleanup-validation.json from
-rust/docs/operations. Keep all receipts under rust/testport/receipts byte
-identical. Redirect TESTPORT_EXECPLAN references to those receipts and update
-the operations/current-audit indexes and both finding registers. The remaining
-implementation, integration-test and blocked validation plans stay in place.
+Move nine primitive files to tidb-txnkv/tests/primitives and five realtikv
+files to tidb-distsql/tests/transaction_runtime, registering each namespace in
+its existing tests/all.rs. Change only two relative include_str fixture paths.
+Keep all 27 shared fixture and generator files at their existing paths for
+other consumers. Remove the old manifest, all.rs and Cargo member/lock entry.
 
-The removed DDL-checker and external-sort plans describe completed audits of
-unclaimed packages. Their receipts retain the missing ownership obligations;
-retiring those plans does not declare their implementations complete. Counts
-stay at 86 tracked, 30 repaired and 56 unresolved findings.
+Update the seven run-realtikv scripts to select tidb-distsql --test all and
+prefix their exact test names with transaction_runtime::. Preserve all cluster
+startup, cleanup, environment, transport checks and exit handling. Update
+current instructions; dated receipts retain their historical paths/results.
 
-## Validation and Acceptance
+## Concrete Steps and Acceptance
 
 
-From /workspace/tidb run the external continuity check under
-/workspace/.cloud-setup/utility-workflow-cleanup and git diff --check. Require
-all before-image/receipt hashes to match, all retired document last-change
-commits to be published ancestors, and no current reference to a removed plan.
-Only Markdown/JSON may change. No executable sources, tests, harnesses,
-scripts, dependencies, fixtures or Go/Bazel files change; no test sweep or
-make lint is warranted.
+Source /workspace/.cloud-setup/env.sh in each build shell. From rust/ run:
 
-Source /workspace/.cloud-setup/env.sh before normal commit; the actual hook
-must run cd rust && cargo build --locked -p tidb-server. Rerun from rust/
-CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server immediately before
-normal authorized push to pingcap/tidb hparser-integration. Verify remote SHA.
+    cargo metadata --locked --no-deps --format-version 1
+    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-txnkv -p tidb-distsql --test all -- primitives:: transaction_runtime:: --test-threads=1
+
+Expect 42 primitive cases to pass and seven live-cluster cases to remain
+ignored. Compilation and exact-name listing validate registration only, not
+live behavior. Match each runner's --exact selection to a compiled ignored
+test. Run bash -n on all seven scripts and make lint from the repository root.
+Compare moved bytes (apart from two includes), all fixtures and runner
+before-images. Run git diff --check. No Go/Bazel source changes are made.
+
+Commit normally so the actual hook runs its locked server build. Immediately
+before authorized push run CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server
+from rust/. Push normally to pingcap/tidb hparser-integration and verify SHA.
 
 ## Surprises & Discoveries
 
 
-Two plans describe the same disjoint-set audit. Several others remain open
-only to publish already-published documents or audit an unrelated next package.
-Plans for unfinished monitor/comparator owners, interrupted trace-event tests,
-and blocked Bazel validation remain. Original receipts distinguish historical
-host results, platform limits and unclaimed packages.
+The old test crate has no test-specific dependency or harness. DistSQL tests
+belong with the upper-layer owner; putting them in txnkv would require an
+unnecessary dependency back to DistSQL. Fixture generators have other users,
+so their existing directory is retained even though its Cargo package is gone.
 
 ## Decision Log
 
 
-Remove duplicated instructions in one batch and retain evidence once. Do not
-rerun runtime suites for unchanged executable files. Do not treat absence of
-a same-named Go test as proof a Rust correctness test is useless.
+Consolidate tests without deleting useful Go-derived cases or weakening live
+runner safeguards. Preserve ignored live tests and report compilation/listing
+separately from execution. Use one grouped validation, not seven cluster runs
+for unchanged test bodies. No new dependency, runtime behavior or package
+acceptance is claimed.
 
 ## Outcomes & Retrospective
 
 
-Twenty plans /1338 lines removed, 19 receipts preserved; continuity, ancestry,
-reference and documentation-scope checks passed. Publication evidence belongs
-in external final-handoff.json after commit. No behavior change, finding closure or measured speedup.
+Migration and validation complete; publication evidence belongs in external
+final-handoff.json after commit. The first test link failed with a bus error
+while disk was nearly full; after removing identified inactive artifacts and
+the partial output, the same command passed. One fewer Cargo
+package/test binary, 14 suites preserved, seven runner commands migrated.
+No measured speedup or finding closure.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Restore individual deleted documents from the base commit without overwriting
-concurrent work. Inventory, hashes and final-handoff.json live outside the
-checkout under /workspace/.cloud-setup/utility-workflow-cleanup. The durable
-receipt is rust/docs/parity/current-audit/utility-workflow-cleanup-validation.json.
-No dependency changes. Cloud draft save, Publish and fresh-task restoration
-remain distinct states.
+Restore only affected paths from the base commit if needed, preserving
+concurrent work. Inventory, Go refresh and final-handoff.json live under
+/workspace/.cloud-setup/transaction-harness-cleanup. The durable receipt is
+rust/docs/parity/current-audit/transaction-harness-cleanup-validation.json.
+Cloud draft saving, Publish and fresh-task restoration are separate states.
