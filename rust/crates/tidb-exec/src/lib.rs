@@ -12,7 +12,7 @@
 // limitations under the License.
 //! The cluster and session subsystems: catalog load and watch, DDL job and
 //! metadata plumbing, real-TiKV read/write, privileges, sysvars, `mysql.*`
-//! bootstrap, statistics, slow log, process info, DAG/coprocessor request
+//! bootstrap, statistics, statement summaries, process info, DAG/coprocessor request
 //! building, and the MySQL result-metadata contracts those paths publish.
 //!
 //! IT IS NOT THE QUERY ENGINE. The live operator tree -- the one every TCP
@@ -92,14 +92,12 @@ pub mod real_tikv_read;
 pub mod real_tikv_stats;
 pub mod real_tikv_stats_lock;
 pub mod recordset_lifecycle;
-mod result_field_resolver;
 mod result_metadata;
 pub mod runtime_stats;
 pub mod schema_validator;
 pub mod session_commit_protocol;
 pub mod stats_watch;
 pub mod storage_class;
-pub mod storage_reader;
 pub mod system_row_write;
 pub(crate) mod table_write_policy;
 pub mod table_info_build;
@@ -108,10 +106,6 @@ pub mod txn_summary;
 pub mod warning_publication;
 pub mod wide_scan_selection;
 
-pub use result_field_resolver::{
-    resolve_parsed_select_fields, resolve_result_fields, resolve_select_fields,
-    ResolvedResultField, ResultFieldResolveError, ResultFieldSpec,
-};
 pub use result_metadata::{
     col_names_to_result_fields, columns_from_adapted_fields, convert_result_field,
     AdaptedResultField, FieldNameMetadata, IdentifierMetadata, ResultFieldMetadata,

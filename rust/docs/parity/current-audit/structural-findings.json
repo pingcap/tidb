@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "slow-log-model-cleanup-validation.json",
-    "scope": "Remove the disconnected slow-log parser/matcher/threshold/formatter chain and unused adapter bookkeeping: nine Rust files, 3348 net Rust lines and 36 private tests. Preserve the live statement-summary policy and seven tests unchanged; move one canonical RU formatting test to its actual owner. Remove two obsolete audit plans and mark dated ownership receipts as historical.",
+    "receipt": "reader-resolver-cleanup-validation.json",
+    "scope": "Remove disconnected table/index reader and tableless result-field resolver with their private harnesses: six files, 2268 net Rust lines and 19 private tests. Retained DistSQL runtime, response lifecycle, coprocessor readers, result metadata conversion and all their existing tests remain byte-identical. Correct the crate description and mark obsolete reader ownership references as historical.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1099,6 +1099,11 @@
     {
       "receipt": "slow-log-model-cleanup-validation.json",
       "scope": "Remove the disconnected slow-log parser/matcher/threshold/formatter chain and unused adapter bookkeeping: nine Rust files, 3348 net Rust lines and 36 private tests. Preserve the live statement-summary policy and seven tests unchanged; move one canonical RU formatting test to its actual owner. Remove two obsolete audit plans and mark dated ownership receipts as historical.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "reader-resolver-cleanup-validation.json",
+      "scope": "Remove disconnected table/index reader and tableless result-field resolver with their private harnesses: six files, 2268 net Rust lines and 19 private tests. Retained DistSQL runtime, response lifecycle, coprocessor readers, result metadata conversion and all their existing tests remain byte-identical. Correct the crate description and mark obsolete reader ownership references as historical.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

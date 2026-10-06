@@ -1,5 +1,12 @@
 # Coprocessor request/response parity: Rust vs `pkg/distsql` + `pkg/store/copr` + `ToPB`
 
+Historical source audit; its laptop environment and source-line claims below
+are not current Cloud validation. The unconsumed `TableIndexReader` model
+mentioned in section 3.1 was retired. Use
+[current findings](parity/current-audit/README.md) and the
+[reader/resolver cleanup receipt](parity/current-audit/reader-resolver-cleanup-validation.json)
+for retained owners and current evidence.
+
 What we push to TiKV is executed *by TiKV*. A divergence here returns rows, not
 an error, and this tier's `EXPLAIN` never prints `cop[tikv]`, so a wrong request
 is invisible from the plan text. That is what this audit is for.

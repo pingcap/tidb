@@ -1,0 +1,122 @@
+{
+  "date": "2026-10-06",
+  "base": "5bdd923e92b8a42f19f1d9d9fa62d061800489ca",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove disconnected table/index reader and tableless result-field resolver with their private harnesses: six files, 2268 net Rust lines and 19 private tests. Retained DistSQL runtime, response lifecycle, coprocessor readers, result metadata conversion and all their existing tests remain byte-identical. Correct the crate description and mark obsolete reader ownership references as historical.",
+  "continuity": {
+    "base": "5bdd923e92b8a42f19f1d9d9fa62d061800489ca",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "removed_rust_files": 6,
+    "net_rust_lines_removed": 2268,
+    "private_tests_removed": 19,
+    "retained_production_and_tests_unchanged": true,
+    "dependencies_unchanged": true,
+    "retired_symbols_absent": true,
+    "only_module_registration_and_crate_description_changed": true
+  },
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/storage_reader.rs",
+      "lines": 27,
+      "sha256": "158e11bb827be5db22056f6339af20ac05d5340c7f51831f1eda9ac4493100a4",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/storage_reader/table_index_reader.rs",
+      "lines": 375,
+      "sha256": "ea257538031b3465db278bd431eb7e0526a81c0f2eff4d9e4b96ecf442b45e5f",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/table_index_reader_runtime_source.rs",
+      "lines": 416,
+      "sha256": "5b3ee79325bd55a4c8c6aeec6196f73cf0e738b6ea031eb4b65829d1e41770e8",
+      "tests": [
+        "table_and_index_reader_honor_every_required_rows_bound",
+        "open_transfers_each_response_once_and_consumes_requests_serially",
+        "explicit_reader_close_cancels_every_request_local_authority_only",
+        "temporary_table_reader_is_structurally_a_zero_send_path",
+        "close_before_drain_closes_every_opened_response_once",
+        "dropping_open_reader_closes_every_response_once",
+        "later_open_error_closes_earlier_response_and_terminally_closes_reader",
+        "non_dummy_reader_requires_a_real_built_request"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/direct_unary_table_index_reader_source.rs",
+      "lines": 408,
+      "sha256": "1d97d563c216405153c2e2b9a0d4b8d9c5ef6808e329440942afc3823553464a",
+      "tests": [
+        "exhausting_first_serial_request_does_not_cancel_its_sibling",
+        "table_and_index_readers_lazily_cross_the_unary_boundary_and_keep_row_budgets",
+        "close_after_open_discards_the_unpulled_unary_response",
+        "table_index_reader_preserves_typed_execution_cancellation_without_dispatch"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/result_field_resolver.rs",
+      "lines": 690,
+      "sha256": "18f482004a30edaed807f26e398b14b9522018afb68e7ad1ca4bd7ffcde85f7f",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/result_field_resolver_source.rs",
+      "lines": 344,
+      "sha256": "aee97787e7c02216540275a92419d4d99213f03bd88446abb1eec27fccb86b4f",
+      "tests": [
+        "tableless_literals_use_source_expression_names_and_types",
+        "binary_literal_metadata_uses_decoded_width_and_source_flags",
+        "qualified_column_keeps_source_qualifiers_when_type_is_supplied",
+        "unresolved_row_dependent_type_and_wildcard_are_explicit",
+        "explicit_alias_is_distinct_from_original_column_name",
+        "cast_target_metadata_follows_go_parse_cast_type",
+        "variance_result_metadata_is_always_double_23_with_unspecified_scale"
+      ]
+    }
+  ],
+  "tests": {
+    "retained_owners": [
+      {
+        "passed": 20,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  "commands": [
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-exec -p tidb-distsql --test all -- result_metadata_source:: select_iter_source:: query_runtime_source:: active_cancellation_source:: --test-threads=1",
+    "cd /workspace/tidb; make lint",
+    "cd /workspace/tidb; git diff --check"
+  ],
+  "go_owners": [
+    "pkg/executor/table_reader.go TableReaderExecutor",
+    "pkg/executor/distsql.go IndexReaderExecutor",
+    "pkg/executor/adapter.go recordSet.Fields and colNames2ResultFields"
+  ],
+  "retained_owners": [
+    "tidb-exec cop_scan/real_tikv_read/distsql_recordset",
+    "tidb-distsql InjectedQueryRuntime/SerialSelectResults and cancellation/response ownership",
+    "tidb-exec result_metadata; tidb-server pipeline_session protocol conversion",
+    "tidb-executor driver/planner type and result-field ownership"
+  ],
+  "remaining_go_obligations": [
+    "Complete TableReader/IndexReader physical-plan integration, ordering and storage-specific lifecycle parity",
+    "Complete planner-derived field names/types and protocol metadata parity; removing the tableless model does not implement missing inference"
+  ],
+  "gates": {
+    "lint": "passed",
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; external final handoff records completion"
+  },
+  "limits": [
+    "No full Go suite, SQL replay, live cluster or benchmark; no measured speedup",
+    "No broad finding disposition change or package acceptance",
+    "Out-of-tree callers of removed seed APIs need maintained owners"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/reader-resolver-cleanup/final-handoff.json"
+}

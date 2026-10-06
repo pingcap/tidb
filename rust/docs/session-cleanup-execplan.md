@@ -195,7 +195,9 @@ planner schema and names through colNames2ResultFields; the live Rust
 result_metadata path stays intact. The unconsumed result_response wrapper was
 subsequently retired by the result-path cleanup. Consolidate the real
 result_field_resolver tests into the existing aggregate, eliminating a fifth
-standalone link without deleting those assertions.
+standalone link without deleting those assertions at that checkpoint. The
+subsequent [reader/resolver cleanup](parity/current-audit/reader-resolver-cleanup-validation.json)
+retired this resolver after verifying that only its private harness called it.
 
 The same batch retires DistSQL error constructors that only their own tests
 call. Existing chunk_decode/query response owners already provide decoding
