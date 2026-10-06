@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-05",
+  "timezone": "America/Los_Angeles",
+  "base": "6492b8f2723415997d74f68ea480c4c74ead7d2f",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire four superseded test-retirement plans (257 lines) that prescribe removed harness generation and historical execution steps; preserve audit receipts and complete obligation ledgers, and point two historical links to immutable Git archives. No executable or finding disposition changes.",
+  "removed_plans": [
+    {
+      "path": "rust/docs/placeholder-test-removal-execplan.md",
+      "lines": 65,
+      "sha256": "0dc791e0d482898ede754ab46bc279a7375182fa4d2ca8b49596fec285276a9f",
+      "archive": "https://github.com/pingcap/tidb/blob/6492b8f2723415997d74f68ea480c4c74ead7d2f/rust/docs/placeholder-test-removal-execplan.md",
+      "receipt": "rust/docs/parity/current-audit/placeholder-test-removal-validation.json",
+      "receipt_sha256": "2a4815d01e315bd31f8f0a283979e6b39a373292979e7bd35e092aad4609cd99"
+    },
+    {
+      "path": "rust/docs/transport-expression-empty-test-removal-execplan.md",
+      "lines": 40,
+      "sha256": "836bb3bf12163ec514a999f6e4ab65ae613c81f6226afc3f015845d84e09b6ff",
+      "archive": "https://github.com/pingcap/tidb/blob/6492b8f2723415997d74f68ea480c4c74ead7d2f/rust/docs/transport-expression-empty-test-removal-execplan.md",
+      "receipt": "rust/docs/parity/current-audit/transport-expression-empty-test-removal-validation.json",
+      "receipt_sha256": "abdbf707f2c98204dfb956a63ebd6ad7c66be4fde2436286f5abeb2cfd50069a"
+    },
+    {
+      "path": "rust/docs/planner-empty-module-removal-execplan.md",
+      "lines": 67,
+      "sha256": "d8cce417fd23156aed758f7aa7dd3e571553fbdcf7cdfaad2f0f10becca20958",
+      "archive": "https://github.com/pingcap/tidb/blob/6492b8f2723415997d74f68ea480c4c74ead7d2f/rust/docs/planner-empty-module-removal-execplan.md",
+      "receipt": "rust/docs/parity/current-audit/planner-empty-module-removal-validation.json",
+      "receipt_sha256": "7fad98fbc30861ad9a2ce3754c74d1c77f79c28b7df4dbb72baf705463e3f7e4"
+    },
+    {
+      "path": "rust/docs/test-harness-retirement-execplan.md",
+      "lines": 85,
+      "sha256": "66e6feef2ac91b571e935bb52bf9e96090ebccd404f188adf38ba0edac8c77f7",
+      "archive": "https://github.com/pingcap/tidb/blob/6492b8f2723415997d74f68ea480c4c74ead7d2f/rust/docs/test-harness-retirement-execplan.md",
+      "receipt": "rust/docs/parity/current-audit/test-harness-retirement-validation.json",
+      "receipt_sha256": "d007204aba042bd8da150411ba71314dcdeda49b5cda5d18680c6b8f38bec888"
+    }
+  ],
+  "retained_obligation_ledgers": {
+    "rust/docs/parity/current-audit/placeholder-test-obligations.json": "6a7afe2a1f08e3ad39022b7400c09fa7d40d304e6f91aa2ee4dc6c6d04c49ef2",
+    "rust/docs/parity/current-audit/planner-empty-module-obligations.json": "907bb13adb429e625e326d1479f88141ae45bb369c638710f219f6a8b52f6e04",
+    "rust/docs/parity/current-audit/transport-expression-empty-test-obligations.json": "1ec113d83a2b0d29f356f68a7ad61cac2445ae2685dcce6ad4b385481e73e394"
+  },
+  "validation": {
+    "receipt_and_archive_continuity": "Passed: four archive blobs/validation receipts and three complete obligation ledgers verified; two links pinned to existing blobs; production/tests/fixtures/dependencies and findings unchanged.",
+    "diff_check": "passed",
+    "behavioral_tests": "Not rerun: no executable, test, manifest, dependency or fixture changes."
+  },
+  "publication": "Pending actual hook, fresh immediate-prepush locked build and remote verification; final evidence /workspace/.cloud-setup/retirement-plan-cleanup/final-handoff.json",
+  "limitations": [
+    "No Go package acceptance, parity repair or measured speedup",
+    "Historical inventory filenames remain historical data; unresolved obligations and known failures remain"
+  ]
+}

@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "utility-contract-cleanup-validation.json",
-    "scope": "Retire duplicate context/format carriers, the standard-library atomic test and compile-only filter check; preserve unique warning, ID, escaping and empty-write coverage in owners. Three files and one standalone target removed; 278 net Rust lines removed. No production or finding disposition changes.",
+    "receipt": "retirement-plan-cleanup-validation.json",
+    "scope": "Retire four superseded test-retirement plans (257 lines) that prescribe removed harness generation and historical execution steps; preserve audit receipts and complete obligation ledgers, and point two historical links to immutable Git archives. No executable or finding disposition changes.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1059,6 +1059,11 @@
     {
       "receipt": "utility-contract-cleanup-validation.json",
       "scope": "Retire duplicate context/format carriers, the standard-library atomic test and compile-only filter check; preserve unique warning, ID, escaping and empty-write coverage in owners. Three files and one standalone target removed; 278 net Rust lines removed. No production or finding disposition changes.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "retirement-plan-cleanup-validation.json",
+      "scope": "Retire four superseded test-retirement plans (257 lines) that prescribe removed harness generation and historical execution steps; preserve audit receipts and complete obligation ledgers, and point two historical links to immutable Git archives. No executable or finding disposition changes.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

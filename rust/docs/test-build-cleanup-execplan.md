@@ -1,86 +1,80 @@
-# Consolidate utility contract tests
+# Retire superseded test-harness plans
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Retire duplicate utility test carriers and checks of standard-library behavior.
+Remove four completed test-retirement plans that still prescribe the deleted
+rust/scripts/aggregate-tests.rs generator and superseded execution steps.
 Work in /workspace/tidb on hparser-integration from
-1620b1a549ac7d3ec27e6e707cd3086b36836cd5. Go master is
-b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. A carrier is an integration file
-that repeats tests already owned by the implementation's unit tests.
-Preserve distinct Go semantics and Rust correctness checks in their owners.
+6492b8f2723415997d74f68ea480c4c74ead7d2f. Go master remains
+b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Current explicit test registration
+and runtime instructions remain in source and the Cloud startup handoff.
 
 ## Progress
 
 
-- [x] Compare context, format, table-filter and tikvutil carriers with owners.
-- [x] Migrate unique assertions and retire three redundant carriers.
-- [x] Validate 22 grouped owner/consumer tests, lint, metadata and diff.
-- [ ] Commit through actual locked-build hook; fresh locked build, push and verify.
-- [ ] Save verified recovery bundle and reusable Cloud checkpoint.
+- [x] Inspect four plans, retained receipts/obligation ledgers and incoming references.
+- [x] Delete plans and replace two historical links with immutable Git archives.
+- [x] Verify archived bytes, retained evidence, executable continuity and diff.
+- [ ] Commit through actual build hook; fresh locked build, push and verify.
+- [ ] Verify recovery bundle and save/read back the Cloud checkpoint.
 
 ## Milestones and Plan of Work
 
 
-Remove context_contract.rs and format_contract.rs from tidb-util/tests and
-its all.rs registrations. Move warning JSON empty levels, append caps and
-callback assertions into context/warn.rs tests; preserve the context-ID check
-in context/mod.rs. Plan-cache tests already cover the removed scenarios.
-Move util escaping vectors into src/format.rs; the datatype formatter owner
-already tests the shared formatter, and receives the unique empty-write error.
-Remove table-filter's compile-only Send/Sync check while retaining its Unicode
-and config tests. Remove tikvutil's AtomicI32 test: it writes the expected
-initial value before reading it and otherwise tests Rust's standard library.
-Retain the config test that proves the actual runtime atomic consumer.
-No production semantics, dependencies or Go files change.
+Delete placeholder-test-removal, transport-expression-empty-test-removal,
+planner-empty-module-removal and test-harness-retirement ExecPlans from rust/docs.
+Their durable validation receipts remain under rust/docs/parity/current-audit;
+full upstream obligations stay in the three corresponding obligation ledgers.
+Keep historical deleted-path inventories as historical data. Update the two
+Markdown references to commit-pinned archives, and update the current cleanup
+index without changing any finding disposition. Keep import/cluster plans
+because those also serve as their removal receipts and boundary evidence.
 
-## Concrete Steps and Validation
+## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh, set CARGO_BUILD_JOBS=1, and work in rust/:
-
-    cargo test --locked -p tidb-util --lib -- context:: format::
-    cargo test --locked -p tidb-util --test all -- table_filter_contract::
-    cargo test --locked -p tidb-datatype --test all -- parser_format_package_source::
-    cargo test --locked -p tidb-config --lib -- test_get_tikv_config_uses_the_runtime_committer_concurrency
-
-Require nonzero passing tests for each selection. Run make lint and git diff
---check from root. Keep distinct failures visible. Do not broaden into unrelated
-suites. The real pre-commit hook must run cd rust && cargo build --locked -p
-tidb-server; rerun immediately before the authorized push to pingcap/tidb
-hparser-integration and verify remote SHA. Never bypass hooks or force push.
+Verify each archived blob's hash equals its deleted before-image. Verify all
+retained receipts and ledgers byte-for-byte. Require the tracked diff to contain
+only Markdown and the cleanup/index JSON; no executable, test, manifest or
+fixture changes. Run git diff --check. No behavioral suite rerun is needed.
+Source /workspace/.cloud-setup/env.sh and set CARGO_BUILD_JOBS=1. The actual
+pre-commit hook must run cd rust && cargo build --locked -p tidb-server.
+Repeat that exact build immediately before the authorized normal push to
+pingcap/tidb hparser-integration, then verify the remote SHA. Never force push
+or bypass hooks. Native client-rust remains unchanged.
 
 ## Surprises & Discoveries
 
 
-The existing handler_ext_and_cap test named the cap without exercising it.
-The retired carrier supplies that coverage. Util and parser OutputFormat differ
-in backslash escaping, so util's distinct vectors must remain.
+Three plans still describe generated test discovery even though static roots
+replaced that mechanism. Historical unchecked publication boxes are superseded
+by committed receipts and Cloud final handoffs, not new implementation work.
 
 ## Decision Log
 
 
-Remove only proven duplicate or language-only checks. Preserve callback panic,
-context-ID and invalid-UTF8 regressions even where Go has no matching test.
-Absence of a Go test alone does not make a Rust correctness assertion useless.
+Retire duplicate instructions, preserving receipt/obligation evidence and
+immutable history. Do not delete sole receipts or active implementation plans.
+This reduces stale guidance, not compilation time or unresolved parity counts.
 
 ## Outcomes & Retrospective
 
 
-Implementation and validation are complete: 22 tests pass, lint and metadata
-checks pass, 278 net Rust lines and three carriers removed. Publication pending.
-No structural findings are closed by harness maintenance and no measured
-performance improvement is claimed.
+Four plans (257 lines) removed; archive, receipt, ledger, executable continuity
+and diff checks pass. Publication remains pending. No finding repair
+or complete Go package acceptance is implied.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Restore individual before-images using git show 1620b1a:<path>, preserving
-concurrent changes. Logs are under /workspace/.cloud-setup/utility-contract-cleanup.
-Durable receipt: rust/docs/parity/current-audit/utility-contract-cleanup-validation.json.
-No interface/dependency changes. Publish and fresh-task restoration are separate
-from a saved Cloud draft. Update this document as checks complete.
+Restore individual files with git show 6492b8f272:<path>, preserving concurrent
+changes. Hashes and archive links live in current-audit/retirement-plan-cleanup-validation.json.
+Logs and final handoff live in /workspace/.cloud-setup/retirement-plan-cleanup.
+No dependencies change. Cloud draft save, Publish and fresh-task restoration
+remain distinct steps.
 
-Revision: replace completed JSON carrier plan with utility contract cleanup.
+Revision: replace the completed utility contract consolidation with retirement
+of duplicate historical harness plans.
