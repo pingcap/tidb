@@ -48,7 +48,6 @@ mod pd_approximate_count_source;
 mod placement_delivery_source;
 mod prepared_dml_lowering_source;
 mod prepared_write_persists_realtikv_source;
-mod process_info_source;
 mod real_tikv_authority_shutdown_source;
 mod real_tikv_bigint_selection_source;
 mod real_tikv_clustered_pk_range_source;

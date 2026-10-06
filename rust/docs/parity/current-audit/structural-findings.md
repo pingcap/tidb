@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [unused execution-context and RU wrappers](exec-details-cleanup-validation.json). Retire unconsumed statement execution-context lifecycle and the disconnected RU statistics wrapper: 545 net Rust lines and ten private RU tests removed. Replace two forwarding merge helpers at all seven call sites with native methods. Preserve collector/commit/TiFlash tests unchanged and retain every atomic snapshot field assertion against the canonical native API.
+Latest cleanup: [unused process/order metadata models](metadata-model-cleanup-validation.json). Remove the unconsumed process-info marker model and configured ORDER BY/LIMIT records: three Rust files, 450 net Rust lines and five private tests removed. Preserve the prepared-read direction enum/conversion and every live process/SQL/planner consumer and test. Remove one completed sessmgr audit plan and correct three historical ownership/command references.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

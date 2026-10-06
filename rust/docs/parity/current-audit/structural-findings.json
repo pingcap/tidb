@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "exec-details-cleanup-validation.json",
-    "scope": "Retire unconsumed statement execution-context lifecycle and the disconnected RU statistics wrapper: 545 net Rust lines and ten private RU tests removed. Replace two forwarding merge helpers at all seven call sites with native methods. Preserve collector/commit/TiFlash tests unchanged and retain every atomic snapshot field assertion against the canonical native API.",
+    "receipt": "metadata-model-cleanup-validation.json",
+    "scope": "Remove the unconsumed process-info marker model and configured ORDER BY/LIMIT records: three Rust files, 450 net Rust lines and five private tests removed. Preserve the prepared-read direction enum/conversion and every live process/SQL/planner consumer and test. Remove one completed sessmgr audit plan and correct three historical ownership/command references.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1109,6 +1109,11 @@
     {
       "receipt": "exec-details-cleanup-validation.json",
       "scope": "Retire unconsumed statement execution-context lifecycle and the disconnected RU statistics wrapper: 545 net Rust lines and ten private RU tests removed. Replace two forwarding merge helpers at all seven call sites with native methods. Preserve collector/commit/TiFlash tests unchanged and retain every atomic snapshot field assertion against the canonical native API.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "metadata-model-cleanup-validation.json",
+      "scope": "Remove the unconsumed process-info marker model and configured ORDER BY/LIMIT records: three Rust files, 450 net Rust lines and five private tests removed. Preserve the prepared-read direction enum/conversion and every live process/SQL/planner consumer and test. Remove one completed sessmgr audit plan and correct three historical ownership/command references.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

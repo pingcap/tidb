@@ -85,7 +85,10 @@ Command from rust/ (offline also updated the lockfile for the new local
 
     cargo test --offline -p tidb-session --lib global_config_explicit_sql_notifies_the_domain_owner
 
-The following commands pass from rust/:
+The following commands passed at this historical checkpoint from rust/.
+The `order::tests`, `configured_topn_source` and
+`configured_order_limit_contract_source` model targets have since been
+retired; use current-audit/README.md for maintained validation commands:
 
     cargo test --locked -p tidb-domain -p tidb-session -p tidb-pd-client -p tidb-server global_config
     cargo test --locked -p tidb-server --lib cluster_session_node::tests::global_variables

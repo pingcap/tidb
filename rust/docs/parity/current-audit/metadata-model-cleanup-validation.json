@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-06",
+  "base": "dd556ddcbb552e2127f3081a2966df617b02b559",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove the unconsumed process-info marker model and configured ORDER BY/LIMIT records: three Rust files, 450 net Rust lines and five private tests removed. Preserve the prepared-read direction enum/conversion and every live process/SQL/planner consumer and test. Remove one completed sessmgr audit plan and correct three historical ownership/command references.",
+  "continuity": {
+    "base": "dd556ddcbb552e2127f3081a2966df617b02b559",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "removed_rust_files": 3,
+    "removed_completed_plans": 1,
+    "net_rust_lines_removed": 450,
+    "private_tests_removed": 5,
+    "retained_direction_implementation_unchanged": true,
+    "retained_consumers_and_tests_unchanged": true,
+    "dependencies_unchanged": true,
+    "retired_symbols_absent": true
+  },
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/process_info.rs",
+      "lines": 79,
+      "sha256": "a17204e869f699450e44ce928c9d567d6344dff8de6d681bcdad085891b1b921",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/process_info_source.rs",
+      "lines": 90,
+      "sha256": "b107bcdaa9dc39e96f24d08d57e97dd16252fa659ad14dca12a9ced8568ea27a",
+      "tests": [
+        "process_info_clone_keeps_source_shallow_owners"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/configured_order_limit_contract_source.rs",
+      "lines": 94,
+      "sha256": "77eff68179270d434af7f6a0cbea3c2c5eb4de0c673a1b136a096e7b20ecc523",
+      "tests": [
+        "by_items_preserve_source_order_offset_and_direction",
+        "limit_window_computes_one_checked_exclusive_end",
+        "limit_window_rejects_offset_count_overflow",
+        "combined_spec_preserves_identity_and_rejects_limit_only_aliasing"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-sessmgr-audit-execplan.md",
+      "lines": 39,
+      "sha256": "de7c72e1c7deb0b9ae3706a821735dacf6815c92dd6f6fbc13ef68c9ae778a6d",
+      "tests": []
+    }
+  ],
+  "tests": {
+    "planner-tests": [
+      {
+        "passed": 19,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "session-tests": [
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  "commands": [
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-planner --test all -- read_only_prepared_order_source:: --test-threads=1",
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- tests_grants::processlist::show_processlist_lists_this_session --exact --test-threads=1",
+    "cd /workspace/tidb; make lint",
+    "cd /workspace/tidb; git diff --check"
+  ],
+  "retained_owners": [
+    "tidb-session process registry/process-list SQL and actual statement state",
+    "tidb-planner prepared-read lowering and ConfiguredOrderDirection/from_descending",
+    "Existing prepared SQL ordering/aggregate metadata tests and SHOW PROCESSLIST test"
+  ],
+  "remaining_go_obligations": [
+    "Full sessmgr live statement/refcount/tracker and manager/coordinator lifecycle parity",
+    "Complete planner sort/TopN/limit integration and semantic parity; retired records had no runtime consumers"
+  ],
+  "gates": {
+    "lint": "passed",
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; external final handoff records completion"
+  },
+  "limits": [
+    "No full Go suite, live cluster, TCP replay or benchmark; no measured speedup",
+    "No broad finding disposition change or package acceptance",
+    "Out-of-tree consumers of removed model APIs must use maintained owners"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/metadata-model-cleanup/final-handoff.json"
+}

@@ -27,7 +27,6 @@ mod casetest_parallel_apply_suite_source;
 mod casetest_physicalplantest_hint_plans_source;
 mod clustered_signed_bigint_ranger_source;
 mod configured_multi_relation_catalog_source;
-mod configured_order_limit_contract_source;
 mod core_expression_eval_source;
 mod core_logical_cte_topn_prune_source;
 mod core_logical_plans_source;

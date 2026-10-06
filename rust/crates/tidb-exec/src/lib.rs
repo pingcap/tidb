@@ -81,7 +81,6 @@ pub mod mysql_system_tables;
 pub mod pd_approximate_count;
 pub mod pessimistic_lock_error;
 pub mod placement_delivery;
-pub mod process_info;
 pub mod real_tikv_analyze;
 pub mod real_tikv_catalog;
 pub mod real_tikv_ddl;

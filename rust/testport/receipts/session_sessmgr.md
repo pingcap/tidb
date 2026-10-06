@@ -1,5 +1,11 @@
 # `pkg/session/sessmgr` — complete Go-master parity boundary receipt
 
+Current status (2026-10-06): the unused `tidb-exec::process_info` marker model
+and clone-only harness were retired. The actual session process registry,
+process-list SQL paths and their tests remain unchanged. The complete Go
+inventory below is historical evidence; broader sessmgr parity remains open.
+See [the cleanup receipt](../../docs/parity/current-audit/metadata-model-cleanup-validation.json).
+
 Comparison source: Go `origin/master` at commit
 `5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
 
