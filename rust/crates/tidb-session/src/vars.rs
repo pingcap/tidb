@@ -208,6 +208,8 @@ enum InstanceMutation {
 pub trait PdRegionPolicy: std::fmt::Debug + Send + Sync {
     /// Applies Go EnableFollowerHandle to the process PD client.
     fn set_follower_handle(&self, enabled: bool);
+    /// Applies Go EnableTSOFollowerProxy to the same process PD client.
+    fn set_tso_follower_proxy(&self, _enabled: bool) {}
 }
 
 /// Storage-oracle authority installed once by the process session factory.
@@ -495,22 +497,29 @@ impl GlobalSysvars {
             .resolved
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let index = crate::sysvar::sys_var_index_lookup(
-            tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION,
-        )
-        .expect("PD region policy is registered");
-        let value = resolved
-            .values
-            .get(index)
-            .and_then(|slot| slot.as_deref())
-            .map(str::to_owned)
-            .unwrap_or_else(|| crate::sysvar::effective_default(&crate::sysvar::SYS_VARS[index]));
+        let enabled = |name| {
+            let index = crate::sysvar::sys_var_index_lookup(name).expect("PD policy is registered");
+            let value = resolved
+                .values
+                .get(index)
+                .and_then(|slot| slot.as_deref())
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    crate::sysvar::effective_default(&crate::sysvar::SYS_VARS[index])
+                });
+            value.eq_ignore_ascii_case("ON") || value == "1"
+        };
         *self
             .pd_region_policy
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(policy.clone());
         if self.publishes_runtime_settings {
-            policy.set_follower_handle(value.eq_ignore_ascii_case("ON") || value == "1");
+            policy.set_follower_handle(enabled(
+                tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION,
+            ));
+            policy.set_tso_follower_proxy(enabled(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_TSO_FOLLOWER_PROXY,
+            ));
         }
         drop(resolved);
     }
@@ -675,6 +684,9 @@ impl GlobalSysvars {
         let pd_region_value = effective(tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION);
         let pd_region_enabled =
             pd_region_value.eq_ignore_ascii_case("ON") || pd_region_value == "1";
+        let tso_proxy_value = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_TSO_FOLLOWER_PROXY);
+        let tso_proxy_enabled =
+            tso_proxy_value.eq_ignore_ascii_case("ON") || tso_proxy_value == "1";
         let oom_action = tidb_executor::OomAction::parse(&effective(
             tidb_vardef::tidb_vars::TIDB_MEM_OOM_ACTION,
         ));
@@ -775,6 +787,7 @@ impl GlobalSysvars {
                 .clone();
             if let Some(policy) = policy {
                 policy.set_follower_handle(pd_region_enabled);
+                policy.set_tso_follower_proxy(tso_proxy_enabled);
             }
         }
     }

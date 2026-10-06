@@ -164,3 +164,8 @@ consolidation remain open. The other 53 unresolved roots retain carried evidence
 ## PD unary forwarding checkpoint — 2026-10-06
 
 Shared native/adapter selection, startup policy and metadata connect B01 with N03. Three duplicated failover loops are removed. [Validation](pd-forwarding-batch-validation.json) records four baseline failures and 336 selected passes. P03/T02/N03 stay partial; TSO proxy/router and broader package obligations remain open.
+
+
+## Shared TSO proxy checkpoint — 2026-10-06
+
+B01 discovery/stream ownership and B05 process policy advance P03/P06/N03 together. The [receipt](tso-proxy-batch-validation.json) records three baseline failures, shared transport removal, one native dispatcher and grouped validation. Automatic forwarding/bootstrap and full package obligations remain open; all 56 unresolved roots retain their assignments.

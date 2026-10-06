@@ -20,7 +20,7 @@
 //! and holds the retained TSO stream (`tso_client.go`) so a timestamp costs one
 //! stream round trip rather than one connection.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{mpsc, Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -79,39 +79,33 @@ pub(super) fn run_worker(
     }
     let mut discovery_worker =
         DiscoveryWorker::start(&runtime, &clients, timeout, state.clone(), shutdown.clone());
-    let mut tso_stream = None;
+    let mut tso_stream = HashMap::<String, RetainedTsoStream>::new();
     let mut last_timestamp = None;
     // Non-TSO commands displaced while draining the channel for TSO waiters.
     let mut deferred: VecDeque<WorkerCommand> = VecDeque::new();
     loop {
-        let command =
-            match deferred.pop_front() {
-                Some(command) => command,
-                None => {
-                    match receiver.recv_timeout(tikv_client::pd_service_discovery::UPDATE_INTERVAL)
-                    {
-                        Ok(command) => command,
-                        Err(mpsc::RecvTimeoutError::Timeout) => {
-                            if *shutdown.borrow() {
-                                // The owner signals cancellation before enqueueing
-                                // Close. Keep receiving until we acknowledge it.
-                                continue;
-                            }
-                            if let Ok(discovery) = clients.tso_discovery.try_lock() {
-                                if let Some((route, _, _)) = &discovery.route {
-                                    if tso_stream.as_ref().is_some_and(
-                                        |stream: &RetainedTsoStream| stream.route() != route,
-                                    ) {
-                                        tso_stream = None;
-                                    }
-                                }
-                            }
+        let command = match deferred.pop_front() {
+            Some(command) => command,
+            None => {
+                match receiver.recv_timeout(tikv_client::pd_service_discovery::UPDATE_INTERVAL) {
+                    Ok(command) => command,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        if *shutdown.borrow() {
+                            // The owner signals cancellation before enqueueing
+                            // Close. Keep receiving until we acknowledge it.
                             continue;
                         }
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        if let Ok(discovery) = clients.tso_discovery.try_lock() {
+                            if let Some((routes, _, _, _, _)) = &discovery.route {
+                                tso_stream.retain(|_, stream| routes.contains(stream.route()));
+                            }
+                        }
+                        continue;
                     }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
-            };
+            }
+        };
         if *shutdown.borrow() {
             match command {
                 WorkerCommand::RefreshMembers { reply } => {
@@ -152,7 +146,7 @@ pub(super) fn run_worker(
                 }
                 WorkerCommand::Close { reply } => {
                     discovery_worker.close();
-                    drop(tso_stream.take());
+                    tso_stream.clear();
                     let _ = reply.send(());
                     break;
                 }
@@ -172,7 +166,7 @@ pub(super) fn run_worker(
                     .as_ref()
                     .is_ok_and(|members| members.leader_url != previous_leader)
                 {
-                    tso_stream = None;
+                    tso_stream.clear();
                 }
                 let _ = reply.send(result);
             }
@@ -496,7 +490,7 @@ pub(super) fn run_worker(
             }
             WorkerCommand::Close { reply } => {
                 discovery_worker.close();
-                drop(tso_stream.take());
+                tso_stream.clear();
                 clients.close();
                 let _ = reply.send(());
                 break;
@@ -514,7 +508,7 @@ pub(super) fn get_timestamps_with_retry(
     control: RpcControl<'_>,
     spec: TsoBatchSpec,
     state: &Arc<RwLock<PdSharedState>>,
-    stream: &mut Option<RetainedTsoStream>,
+    stream: &mut HashMap<String, RetainedTsoStream>,
     last_timestamp: &mut Option<TimestampParts>,
 ) -> Result<TsoBatch, PdClientError> {
     let TsoBatchSpec { deadline, count } = spec;
@@ -525,26 +519,48 @@ pub(super) fn get_timestamps_with_retry(
     loop {
         let snapshot = state.read().expect("PD state lock poisoned").clone();
         let leader = snapshot.members.leader_url;
+        let mut selected_endpoint = None;
         let result: Result<TsoBatch, PdClientError> = (|| {
-            let route = discover_tso(
+            let routes = discover_tso(
                 runtime,
                 clients,
                 &leader,
+                &snapshot.members.member_urls,
                 snapshot.members.cluster_id,
                 deadline,
                 control.shutdown,
-                stream.is_none(),
+                stream.is_empty(),
             )?;
-            if stream
-                .as_ref()
-                .is_some_and(|stream| stream.route() != &route)
-            {
-                *stream = None;
-            }
-            let batch = if stream.is_none() {
+            stream.retain(|_, stream| routes.contains(stream.route()));
+            let route = tikv_client::pd_service_discovery::pick_stream_route(&routes)
+                .ok_or_else(|| PdClientError::Transport {
+                    operation: PdOperation::Tso,
+                    endpoint: leader.clone(),
+                    code: "Unavailable".into(),
+                    message: "no healthy timestamp service endpoint".into(),
+                })?
+                .clone();
+            let endpoint = route.endpoint.clone();
+            selected_endpoint = Some(endpoint.clone());
+            let batch = if let Some(retained) = stream.get_mut(&endpoint) {
+                match retained.request(
+                    runtime,
+                    snapshot.members.cluster_id,
+                    deadline,
+                    control.shutdown,
+                    &clients.tso_routes,
+                    count,
+                ) {
+                    Ok(batch) => batch,
+                    Err(error) => {
+                        stream.remove(&endpoint);
+                        return Err(error);
+                    }
+                }
+            } else {
                 let channel = {
                     let _guard = runtime.enter();
-                    clients.channel(&route.endpoint)?
+                    clients.channel(&endpoint)?
                 };
                 let (opened, timestamp) = RetainedTsoStream::open_and_request(
                     runtime,
@@ -553,21 +569,11 @@ pub(super) fn get_timestamps_with_retry(
                     snapshot.members.cluster_id,
                     deadline,
                     control.shutdown,
+                    &clients.tso_routes,
                     count,
                 )?;
-                *stream = Some(opened);
+                stream.insert(endpoint, opened);
                 timestamp
-            } else {
-                stream
-                    .as_mut()
-                    .expect("TSO stream exists before retained request")
-                    .request(
-                        runtime,
-                        snapshot.members.cluster_id,
-                        deadline,
-                        control.shutdown,
-                        count,
-                    )?
             };
             // The first timestamp of the batch must still advance past the
             // last one handed out; the rest advance by construction.
@@ -579,7 +585,10 @@ pub(super) fn get_timestamps_with_retry(
         match result {
             Ok(timestamp) => return Ok(timestamp),
             Err(error) => {
-                *stream = None;
+                // Validation failures also retire the selected stream.
+                if let Some(endpoint) = selected_endpoint {
+                    stream.remove(&endpoint);
+                }
                 // Go panics on a monotonicity violation
                 // (dispatcher.go:522-536) -- it is terminal there and stays
                 // terminal here (documented narrowing: error instead of
@@ -725,18 +734,19 @@ fn discover_tso(
     runtime: &tokio::runtime::Runtime,
     clients: &mut PdChannelCache,
     leader: &str,
+    members: &[String],
     cluster_id: u64,
     deadline: Instant,
     shutdown: &watch::Receiver<bool>,
     force: bool,
-) -> Result<tikv_client::pd_service_discovery::TsoRoute, PdClientError> {
+) -> Result<Vec<tikv_client::pd_service_discovery::TsoRoute>, PdClientError> {
     let timeout = remaining_tso_time(deadline, leader)?;
     let mut shutdown = shutdown.clone();
     runtime.block_on(async {
         tokio::select! {
             biased;
             () = super::shutdown_requested(&mut shutdown) => Err(PdClientError::Closed),
-            result = tokio::time::timeout(timeout, refresh_tso(clients, leader, cluster_id, timeout, force)) => result.unwrap_or_else(|_| Err(timeout_error(leader, timeout))),
+            result = tokio::time::timeout(timeout, refresh_tso(clients, leader, members, cluster_id, timeout, force)) => result.unwrap_or_else(|_| Err(timeout_error(leader, timeout))),
         }
     })
 }
@@ -744,16 +754,22 @@ fn discover_tso(
 async fn refresh_tso(
     clients: &PdChannelCache,
     leader: &str,
+    members: &[String],
     cluster_id: u64,
     timeout: Duration,
     force: bool,
-) -> Result<tikv_client::pd_service_discovery::TsoRoute, PdClientError> {
+) -> Result<Vec<tikv_client::pd_service_discovery::TsoRoute>, PdClientError> {
     // Only timestamp discovery serializes here. Metadata commands never wait
     // for the independent periodic probe or hold this guard.
     let mut shared = clients.tso_discovery.lock().await;
+    let proxy = clients.options.get_enable_tso_follower_proxy();
     if !force {
-        if let Some((route, checked, previous_leader)) = &shared.route {
+        if let Some((route, checked, previous_leader, previous_proxy, previous_members)) =
+            &shared.route
+        {
             if previous_leader == leader
+                && *previous_proxy == proxy
+                && previous_members == members
                 && checked.elapsed() < tikv_client::pd_service_discovery::UPDATE_INTERVAL
             {
                 return Ok(route.clone());
@@ -773,9 +789,37 @@ async fn refresh_tso(
             code: format!("{:?}", error.code()),
             message: error.message().to_owned(),
         })?;
+    let routes = discovery
+        .stream_routes(&route, members, proxy, timeout, |endpoint| {
+            let channel = clients.channel(&endpoint);
+            async move { channel.map_err(|error| tonic::Status::unavailable(error.to_string())) }
+        })
+        .await
+        .map_err(|error| PdClientError::Transport {
+            operation: PdOperation::Tso,
+            endpoint: leader.to_owned(),
+            code: format!("{:?}", error.code()),
+            message: error.message().to_owned(),
+        })?
+        .into_iter()
+        .map(|(route, _)| route)
+        .collect::<Vec<_>>();
+    clients.tso_routes.send_if_modified(|current| {
+        if *current == routes {
+            return false;
+        }
+        *current = routes.clone();
+        true
+    });
     shared.discovery = discovery;
-    shared.route = Some((route.clone(), Instant::now(), leader.to_owned()));
-    Ok(route)
+    shared.route = Some((
+        routes.clone(),
+        Instant::now(),
+        leader.to_owned(),
+        proxy,
+        members.to_vec(),
+    ));
+    Ok(routes)
 }
 
 struct DiscoveryWorker {
@@ -797,11 +841,15 @@ impl DiscoveryWorker {
         let worker = runtime.spawn(async move {
             let discover = async {
                 loop {
-                    tokio::time::sleep(tikv_client::pd_service_discovery::UPDATE_INTERVAL).await;
+                    tokio::select! {
+                        _ = tokio::time::sleep(tikv_client::pd_service_discovery::UPDATE_INTERVAL) => {},
+                        _ = async { clients.options.enable_tso_follower_proxy_ch.receiver.lock().await.recv().await } => {},
+                    }
                     let snapshot = state.read().expect("PD state lock poisoned").clone();
                     let _ = refresh_tso(
                         &clients,
                         &snapshot.members.leader_url,
+                        &snapshot.members.member_urls,
                         snapshot.members.cluster_id,
                         timeout,
                         true,

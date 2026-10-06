@@ -1,0 +1,214 @@
+{
+  "date": "2026-10-06",
+  "scope": "B01/B05: P03/P06/N03 healthy TSO follower proxy, shared wire ownership, single dispatcher and live SQL policy",
+  "baseline": {
+    "tidb": "6d6e8cf13e5a32018ee44d6018a6f3c62fd9c601",
+    "native": "512b33c1e86f2e151a975ed70e0e398bc6987871",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "pd": "v0.0.0-20260805103528-afa43111d149",
+    "native_published": "35395ca53dcf219ee26b69367a5a6e2f19fd8748"
+  },
+  "reproduced_before": {
+    "native": "Healthy follower receives no TSO request despite enabled proxy mode",
+    "adapter": "Healthy follower receives no forwarding metadata or TSO request",
+    "sql": "Binding the process policy does not publish the default proxy value",
+    "failures": 3,
+    "sql_api_shim": "The old trait received a compile-only default no-op method so the new callback regression could run before publication was implemented"
+  },
+  "repairs": [
+    "Preserve timestamp-group secondary URLs and admit healthy service endpoints independently of ordinary enable-forwarding",
+    "Share logical-primary forwarding metadata and PD/TSO wire stream exchange across native and adapter",
+    "Keep one native request queue, batch controller and deadline owner across retained proxy streams; route changes retire obsolete transports and explicit close clears retained channels",
+    "Adapter retains healthy streams, invalidates cached routing on same-leader membership changes, watches in-flight route retirement and retires only the failed selected stream",
+    "Publish persisted/default and successful global SQL option changes through the existing ordered process policy; dynamic changes wake discovery"
+  ],
+  "removals": [
+    "Duplicate adapter TSO open/send/receive transport and redundant route carrier",
+    "Single-endpoint adapter stream slot and native single-transport dispatcher assumption"
+  ],
+  "source_inventory": {
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "pd": "client@v0.0.0-20260805103528-afa43111d149",
+    "kind": "comparison inventory, not package acceptance",
+    "packages": {
+      "clients/tso": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "clients/tso/client.go",
+            "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1"
+          },
+          {
+            "path": "clients/tso/dispatcher.go",
+            "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820"
+          },
+          {
+            "path": "clients/tso/dispatcher_test.go",
+            "sha256": "14b85206ada0b37cff9a7615518c7bb2bab69035abef4fb43a9f687947f6b6eb"
+          },
+          {
+            "path": "clients/tso/request.go",
+            "sha256": "b3d69292c26b3da4ae46323f4af2ea4e4fbe32d1565c2628968385d7c38d523b"
+          },
+          {
+            "path": "clients/tso/request_test.go",
+            "sha256": "3ae4662de27a60b517f7ec2389abcdf43113b410e1a0b3eb210419567bb587a9"
+          },
+          {
+            "path": "clients/tso/stream.go",
+            "sha256": "3429bfeae2d3d9386a866708fcc6694c26245dc6e098bfed70356ce83951ca36"
+          },
+          {
+            "path": "clients/tso/stream_test.go",
+            "sha256": "755898f5b942a46639a0794e17ffc6ed85c4d08d7979f099b9549230a9eabe96"
+          }
+        ]
+      },
+      "servicediscovery": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "servicediscovery/callbacks.go",
+            "sha256": "5f927301227919e13a6c30a0466b749e25765e85e8ca69d73fa131972b318f25"
+          },
+          {
+            "path": "servicediscovery/mock_service_discovery.go",
+            "sha256": "bb36615732f3228f1078b74c347124837651fe81b5173144d4de456abc69e3a1"
+          },
+          {
+            "path": "servicediscovery/resource_manager_service_discovery.go",
+            "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e"
+          },
+          {
+            "path": "servicediscovery/resource_manager_service_discovery_test.go",
+            "sha256": "28c9cb214e9ab7beb4d4bf9d930c1e6203ae5b6a146f0bcc2c5264a5a7c24094"
+          },
+          {
+            "path": "servicediscovery/router_service_discovery.go",
+            "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e"
+          },
+          {
+            "path": "servicediscovery/service_discovery.go",
+            "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9"
+          },
+          {
+            "path": "servicediscovery/service_discovery_test.go",
+            "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf"
+          },
+          {
+            "path": "servicediscovery/tso_service_discovery.go",
+            "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de"
+          },
+          {
+            "path": "servicediscovery/tso_service_discovery_test.go",
+            "sha256": "a2379d4732fddd244d08d0c8e38e2e0f928d937ba2fd830ac5461c9091aa94a9"
+          }
+        ]
+      },
+      "opt": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "opt/option.go",
+            "sha256": "4799581c1573b9ec7dab1daab437146452e2ee3e1e33d26ece2d5e7727f272c1"
+          },
+          {
+            "path": "opt/option_test.go",
+            "sha256": "c17d90178b6373fa6e7d2ddc15530ce30276aa032b1fbab75204e5798f9a794e"
+          }
+        ]
+      },
+      "pkg/connectionctx": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "pkg/connectionctx/manager.go",
+            "sha256": "92778a87fb3af520cb4c5fd1161a2438f02ee8151ab52c242af0e7ad011c72c4"
+          },
+          {
+            "path": "pkg/connectionctx/manager_test.go",
+            "sha256": "b2473aa7e3705eeaddb7c1d3c6ba7aa7ecb62bc66f6fe2ec698b4b77bc685b15"
+          }
+        ]
+      },
+      "pkg/utils/grpcutil": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "pkg/utils/grpcutil/grpcutil.go",
+            "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273"
+          },
+          {
+            "path": "pkg/utils/grpcutil/grpcutil_test.go",
+            "sha256": "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b"
+          }
+        ]
+      }
+    }
+  },
+  "validation": {
+    "passed": {
+      "native-final": 272,
+      "adapter-final": 66,
+      "sql-final": 5
+    },
+    "distinct_total": 343,
+    "native_all_targets": true,
+    "integration_all_targets": true,
+    "lint": true,
+    "commands": [
+      "cd /workspace/client-rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib -- pd:: region_cache::test:: --test-threads=1",
+      "cd /workspace/client-rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked -p tikv-client --all-targets",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-pd-client --lib --test all --no-fail-fast -- tso_source:: pd_client_source:: client::worker_lifecycle_tests:: --test-threads=1",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- tso_proxy_batch_ pd_region_batch_ --test-threads=1",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-pd-client -p tidb-txnkv -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "cd /workspace/tidb && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 make lint",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server"
+    ]
+  },
+  "register": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "limits": [
+    "P03/P06/N03 remain partial; other53 unresolved roots retain carried evidence",
+    "Automatic network-failure forwarding, unreachable-primary bootstrap, router transport and broader PD discovery/grpcutil obligations remain open",
+    "Retained wire streams open on their first dispatched batch; complete Go stream-construction and metrics/platform/package acceptance is not claimed",
+    "No full Go suites, live multi-node TiKV, TLS-topology or performance acceptance",
+    "Historical unrelated parser/session/DDL failures were not rerun, removed or declared green"
+  ],
+  "diagnostics": [
+    "Initial adapter fixture used a duplicated URL scheme; corrected before the recorded behavioral baseline",
+    "Native production check caught test-only tokio_stream usage; replaced with existing futures utility and reran final gates",
+    "One redundant session aggregate compilation and unpublished ownership sketches were stopped before publication; only completed final runs count"
+  ],
+  "publication": "Actual TiDB commit hook, immediate prepush locked builds, remote SHA verification and Cloud checkpoint are recorded in /workspace/.cloud-setup/tso-proxy-batch/final-handoff.json after commit",
+  "logs": {
+    "lint.log": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+    "native-before-production-check.log": "d2ecf7a72422acb263bbe4d2e81a6f535e73d77cebac32a80a1efdff7460a4f5",
+    "native-final.log": "3d336f132fe5eed99243093f82ac1db508d839ef5e03abf3c329a52d8f81a6e0",
+    "adapter-check-before-route-review.log": "918d155009338775f27877e4d2969db395d18fb91b8b9f5ae51090d0de085033",
+    "adapter-fixture-diagnostic.log": "890f2e91c9dfec8b200f095bb67cf3113a560ee021e643002995150a1135e285",
+    "sync.log": "f054e07d6378514967a71325377934f515712b5515a4eb7c171726c981230a67",
+    "adapter-final.log": "4bb0c7a87c0f0fa91364e0f3d4cc3ccbecd400af97c590f0f974d58a9cecae20",
+    "sql-final.log": "36ec48aa6fb37571d38af69f3749c79a219af265838bc9cccfb52aeccbba694e",
+    "native-close-review-interrupted.log": "d7142e8a0408a4865030e99e45cdb5e7000db2d4a25eb70138c6c91c08c63c4a",
+    "native-prepush-build.log": "f24eb7af49b221c05959e6453f36ae890135c621542c06c7a6b67c33e48d54f5",
+    "native-commit.log": "1cf7032f0b5519357dcf6154c588644159331f15ea8b619b0def4fbcc1e30a2c",
+    "native-before.log": "c56c532e9daf25986118e9ae57bac0f0643eaa6e9b9a5df1c0a25753dc07638d",
+    "native-verify.log": "55e2219f66ba29c7622b946736995f2c97ba749f7cb63f974b5136b24467ebb1",
+    "adapter-before.log": "c78e56e96c3d288115f4f972a52b1fdde6e57b5a069ccc9262bea088ce8f9039",
+    "native-fetch.log": "1614b6e0226b4e5f8f08940617f5129aa71f7896c67ab0a426e3769858e8a690",
+    "native-push.log": "0e7e2c4a97bbb4ab499fb41b2a4eac15e3f4a2122ae9f85dcade571e82271c2e",
+    "native-compile-diagnostic.log": "bc3e573fe25bb628cc30010559457776c099f4c1c88db00c2be53a0dd55ade74",
+    "native-check.log": "195ac95b2123d73fb9b3c09906170f72f537ca9b0d3b045d99b96f942903cb97",
+    "native-dependency-diagnostic.log": "4b9c8284d012f1b6de40601bc9d4ef183e0426c422e2c6d23d2f9f6e93199320",
+    "sql-before.log": "2414f0f409487893bb7d5794853b463c38896d7287e114ba00cadd21ee215203",
+    "final-fetch.log": "795351e2a1c6eebfbc180faf010b3a7c0295ee1722d8f86ce007f02a4da472ee",
+    "adapter-sql-before.log": "ac190e4c8268c3f4576c852041641cd8b7e046cf1d20ed982e7e7b1d8662f6f6",
+    "adapter-check.log": "d3dae674dc0ab0b23013cef0c85f41dab5265f2af25174b278e1f17f15a48ea9"
+  }
+}

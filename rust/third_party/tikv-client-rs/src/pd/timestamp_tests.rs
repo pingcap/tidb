@@ -791,6 +791,7 @@ async fn source_tso_completed_result_survives_stream_retirement() {
                 request_tx,
                 cancellation: cancellation.clone(),
                 worker: Mutex::new(None),
+                routes: None,
             }),
         };
         let request = oracle.get_timestamp();
@@ -1570,6 +1571,15 @@ where
         Poll::Ready(Ok(()))
     }
     fn call(&mut self, request: http::Request<B>) -> Self::Future {
+        self.0.wire_routes.lock().unwrap().push((
+            request.uri().path().to_owned(),
+            request
+                .headers()
+                .get("pd-forwarded-host")
+                .map(|v| v.to_str().unwrap().to_owned()),
+            request.headers().contains_key("pd-allow-follower-handle"),
+        ));
+
         let service = self.clone();
         match request.uri().path() {
             "/tsopb.TSO/FindGroupByKeyspaceID" => Box::pin(async move {
@@ -2250,8 +2260,18 @@ async fn availability_pair() -> (Server, Server, Arc<RetryClient>) {
 }
 
 async fn availability_pair_with_forwarding(enabled: bool) -> (Server, Server, Arc<RetryClient>) {
+    availability_pair_with_proxy(enabled, false).await
+}
+
+async fn availability_pair_with_proxy(
+    enabled: bool,
+    proxy: bool,
+) -> (Server, Server, Arc<RetryClient>) {
     let leader = Server::start(Reply::Timestamp).await;
     let follower = Server::start(Reply::Timestamp).await;
+    if proxy {
+        leader.service.health_status.store(2, Ordering::SeqCst);
+    }
     let members = vec![
         pdpb::Member {
             member_id: 1,
@@ -2276,6 +2296,7 @@ async fn availability_pair_with_forwarding(enabled: bool) -> (Server, Server, Ar
                 let mut options = crate::pd::opt::Options::new();
                 options.timeout = Duration::from_secs(1);
                 options.enable_forwarding = enabled;
+                options.set_enable_tso_follower_proxy(proxy);
                 options
             },
             None,
@@ -2488,4 +2509,141 @@ async fn pd_forwarding_batch_leader_required_region_is_forwarded() {
         request.await.unwrap(),
         Err(crate::Error::ContextCanceled)
     ));
+}
+
+#[tokio::test]
+async fn tso_proxy_batch_healthy_follower_receives_logical_leader_metadata() {
+    let (leader, follower, client) = availability_pair_with_proxy(false, true).await;
+    let stamp = client.clone().get_timestamp().await.unwrap();
+    assert!(stamp.physical > 0);
+    let routed = follower.service.wire_routes.lock().unwrap().clone();
+    assert!(
+        routed
+            .iter()
+            .any(|(path, forward, local)| path == "/pdpb.PD/Tso"
+                && forward.as_deref() == Some(leader.service.endpoint.as_str())
+                && !local),
+        "healthy follower must proxy TSO even with ordinary forwarding disabled: {routed:?}"
+    );
+    assert_eq!(leader.service.received.load(Ordering::SeqCst), 0);
+    let old = client.tso_for_test().await;
+    client.reconnect_for_test().await.unwrap();
+    let retained = client.tso_for_test().await;
+    assert!(
+        Arc::ptr_eq(&old.inner, &retained.inner),
+        "unchanged healthy proxy is reused"
+    );
+    client.set_enable_tso_follower_proxy(false);
+    client.reconnect_for_test().await.unwrap();
+    assert!(
+        !old.inner.cancellation.is_cancelled(),
+        "proxy changes retain the single dispatcher"
+    );
+    client.clone().get_timestamp().await.unwrap();
+    wait_for_proxy_drop(&follower).await;
+    assert_eq!(leader.service.received.load(Ordering::SeqCst), 1);
+    assert!(leader
+        .service
+        .wire_routes
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(path, _, _)| path == "/pdpb.PD/Tso")
+        .all(|(_, host, _)| host.is_none()));
+    client.set_enable_tso_follower_proxy(true);
+    client.reconnect_for_test().await.unwrap();
+    client.clone().get_timestamp().await.unwrap();
+    let active = client.tso_for_test().await;
+    client.close().await;
+    assert!(active.inner.cancellation.is_cancelled());
+    assert!(active.inner.worker.lock().await.is_none());
+    assert!(active.inner.routes.as_ref().unwrap().borrow().is_empty());
+}
+
+#[tokio::test]
+async fn tso_proxy_batch_microservice_group_and_health_retirement() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let primary = Server::start(Reply::Timestamp).await;
+    let secondary = Server::start(Reply::Timestamp).await;
+    let group = tsopb::KeyspaceGroup {
+        id: 7,
+        members: vec![
+            tsopb::KeyspaceGroupMember {
+                address: primary.service.endpoint.clone(),
+                is_primary: true,
+            },
+            tsopb::KeyspaceGroupMember {
+                address: secondary.service.endpoint.clone(),
+                is_primary: false,
+            },
+        ],
+        ..Default::default()
+    };
+    *primary.service.group.write().unwrap() = group.clone();
+    *secondary.service.group.write().unwrap() = group;
+    primary.service.health_status.store(2, Ordering::SeqCst);
+    *pd.service.cluster_info.write().unwrap() = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+        tso_urls: vec![primary.service.endpoint.clone()],
+        ..Default::default()
+    });
+    let options = crate::pd::opt::Options::new();
+    options.set_enable_tso_follower_proxy(true);
+    let client = Arc::new(
+        RetryClient::connect_with_options(
+            &[pd.service.endpoint.clone()],
+            Arc::new(SecurityManager::default()),
+            options,
+            None,
+        )
+        .await
+        .unwrap(),
+    );
+    assert_eq!(client.clone().get_timestamp().await.unwrap().physical, 200);
+    assert_eq!(
+        secondary.service.tso_headers.lock().unwrap()[0].keyspace_group_id,
+        7
+    );
+    assert!(secondary
+        .service
+        .wire_routes
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(path, host, local)| path == "/tsopb.TSO/Tso"
+            && host.as_ref() == Some(&primary.service.endpoint)
+            && !local));
+    assert_eq!(pd.service.received.load(Ordering::SeqCst), 0);
+    assert_eq!(primary.service.received.load(Ordering::SeqCst), 0);
+    let old = client.tso_for_test().await;
+    // No stale stream survives a successful topology/health refresh with no healthy endpoints.
+    secondary.service.health_status.store(2, Ordering::SeqCst);
+    client.reconnect_for_test().await.unwrap();
+    assert!(
+        !old.inner.cancellation.is_cancelled(),
+        "proxy changes retain the single dispatcher"
+    );
+    wait_for_proxy_drop(&secondary).await;
+    primary.service.health_status.store(1, Ordering::SeqCst);
+    client.reconnect_for_test().await.unwrap();
+    client.clone().get_timestamp().await.unwrap();
+    assert!(primary
+        .service
+        .wire_routes
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(path, _, _)| path == "/tsopb.TSO/Tso")
+        .all(|(_, host, _)| host.is_none()));
+    client.close().await;
+}
+
+async fn wait_for_proxy_drop(server: &Server) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server.service.dropped.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
 }

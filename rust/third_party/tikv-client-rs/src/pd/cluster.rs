@@ -40,7 +40,7 @@ pub struct Cluster {
     members: pdpb::GetMembersResponse,
     discovery: TsoDiscovery,
     route: TsoRoute,
-    // Native mode has one leader stream. Its URL and cancellation lifetime
+    // One timestamp dispatcher owns every admitted wire stream. Its lifetime
     // belong to the same manager used by Go TSO, independently of metadata RPCs.
     tso: Manager<TimestampOracle>,
     // Keep joins owned until completion, including when a reconnect/close future
@@ -636,7 +636,7 @@ impl Cluster {
         self.keyspace_client = Some(keyspace_client);
         self.members = members;
         self.update_region_members();
-        let (discovery, route, channel) = timestamp?;
+        let (discovery, route, routes) = timestamp?;
         let url = route.endpoint.clone();
         let previous = self.tso.randomly_pick();
         let reuse = previous
@@ -644,7 +644,7 @@ impl Cluster {
             .is_some_and(|connection| self.route == route && !connection.ctx.is_cancelled());
         let mut rejected = None;
         if !reuse {
-            let candidate = tso_connection(self.id, route.clone(), channel, timeout)?;
+            let candidate = tso_connection(self.id, route.clone(), routes.clone(), timeout)?;
             // Go's dispatcher releases canceled contexts before reconnecting.
             // A canceled same-URL entry must not reject its replacement.
             self.tso.release(&url);
@@ -652,6 +652,9 @@ impl Cluster {
                 candidate.cancel();
                 rejected = Some(candidate);
             }
+        }
+        if reuse {
+            previous.as_ref().unwrap().stream.update_routes(routes);
         }
         self.discovery = discovery;
         self.route = route;
@@ -703,11 +706,11 @@ impl Drop for Cluster {
 fn tso_connection(
     cluster_id: u64,
     route: TsoRoute,
-    channel: Channel,
+    routes: Vec<(TsoRoute, Channel)>,
     timeout: Duration,
 ) -> Result<Arc<ConnectionCtx<TimestampOracle>>> {
     let url = route.endpoint.clone();
-    let oracle = TimestampOracle::discovered(cluster_id, route, channel, timeout)?;
+    let oracle = TimestampOracle::discovered(cluster_id, routes, timeout)?;
     let ctx = oracle.cancellation();
     let cancel = ctx.clone();
     Ok(Arc::new(ConnectionCtx::new(
@@ -728,7 +731,7 @@ pub(crate) struct LeaderConnection {
     client: RoutedPdClient,
     keyspace_client: keyspacepb::keyspace_client::KeyspaceClient<Channel>,
     members: pdpb::GetMembersResponse,
-    timestamp: Result<(TsoDiscovery, TsoRoute, Channel)>,
+    timestamp: Result<(TsoDiscovery, TsoRoute, Vec<(TsoRoute, Channel)>)>,
 }
 
 /// An object for connecting and reconnecting to a PD cluster.
@@ -804,9 +807,12 @@ impl Connection {
         } else {
             None
         };
-        let (route, channel) = self.discover(&mut discovery, id, &url, timeout).await?;
+        let (route, _) = self.discover(&mut discovery, id, &url, timeout).await?;
+        let routes = self
+            .stream_routes(&discovery, &route, &members, timeout)
+            .await?;
         let tso = Manager::new();
-        tso.store(&tso_connection(id, route.clone(), channel, timeout)?, false);
+        tso.store(&tso_connection(id, route.clone(), routes, timeout)?, false);
         let cluster = Cluster {
             connection: self.clone(),
             region_service: Arc::default(),
@@ -866,10 +872,16 @@ impl Connection {
             let (client, keyspace_client, members, url) =
                 connection.try_connect_leader(&members, timeout).await?;
             let id = members.header.as_ref().unwrap().cluster_id;
-            let timestamp = connection
-                .discover(&mut discovery, id, &url, timeout)
-                .await
-                .map(|(route, channel)| (discovery, route, channel));
+            let timestamp = async {
+                let (route, _) = connection
+                    .discover(&mut discovery, id, &url, timeout)
+                    .await?;
+                let routes = connection
+                    .stream_routes(&discovery, &route, &members, timeout)
+                    .await?;
+                Ok((discovery, route, routes))
+            }
+            .await;
             Ok(LeaderConnection {
                 client,
                 keyspace_client,
@@ -877,6 +889,32 @@ impl Connection {
                 timestamp,
             })
         }
+    }
+
+    async fn stream_routes(
+        &self,
+        discovery: &TsoDiscovery,
+        route: &TsoRoute,
+        members: &pdpb::GetMembersResponse,
+        timeout: Duration,
+    ) -> Result<Vec<(TsoRoute, Channel)>> {
+        let urls = members
+            .members
+            .iter()
+            .filter_map(|m| m.client_urls.first().cloned())
+            .collect::<Vec<_>>();
+        Ok(discovery
+            .stream_routes(
+                route,
+                &urls,
+                self.options.get_enable_tso_follower_proxy(),
+                timeout,
+                |url| {
+                    let connection = self.clone();
+                    async move { connection.channel(&url).await }
+                },
+            )
+            .await?)
     }
 
     async fn discover(

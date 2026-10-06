@@ -843,4 +843,7 @@ impl tidb_session::vars::PdRegionPolicy for ProcessPdRegionPolicy {
     fn set_follower_handle(&self, enabled: bool) {
         self.0.set_enable_follower_handle(enabled);
     }
+    fn set_tso_follower_proxy(&self, enabled: bool) {
+        self.0.set_enable_tso_follower_proxy(enabled);
+    }
 }

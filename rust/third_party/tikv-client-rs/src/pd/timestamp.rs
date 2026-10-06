@@ -36,6 +36,7 @@ struct OracleInner {
     request_tx: mpsc::Sender<TimestampRequest>,
     cancellation: Cancellation,
     worker: Mutex<Option<JoinHandle<Result<()>>>>,
+    routes: Option<tokio::sync::watch::Sender<Vec<(super::service_discovery::TsoRoute, Channel)>>>,
 }
 
 impl Drop for OracleInner {
@@ -53,17 +54,36 @@ pub(crate) struct TimestampOracle {
 enum Transport {
     #[cfg(test)]
     Pd(PdClient<Channel>),
-    Discovered(super::service_discovery::TsoRoute, Channel),
+    Discovered(tokio::sync::watch::Receiver<Vec<(super::service_discovery::TsoRoute, Channel)>>),
 }
 
 impl TimestampOracle {
     pub(crate) fn discovered(
         cluster_id: u64,
-        route: super::service_discovery::TsoRoute,
-        channel: Channel,
+        routes: Vec<(super::service_discovery::TsoRoute, Channel)>,
         timeout: Duration,
     ) -> Result<Self> {
-        Self::with_transport(cluster_id, Transport::Discovered(route, channel), timeout)
+        let (sender, receiver) = tokio::sync::watch::channel(routes);
+        let mut oracle =
+            Self::with_transport(cluster_id, Transport::Discovered(receiver), timeout)?;
+        Arc::get_mut(&mut oracle.inner).unwrap().routes = Some(sender);
+        Ok(oracle)
+    }
+
+    pub(crate) fn update_routes(&self, routes: Vec<(super::service_discovery::TsoRoute, Channel)>) {
+        if let Some(sender) = &self.inner.routes {
+            sender.send_if_modified(|current| {
+                if current
+                    .iter()
+                    .map(|(r, _)| r)
+                    .eq(routes.iter().map(|(r, _)| r))
+                {
+                    return false;
+                }
+                *current = routes;
+                true
+            });
+        }
     }
 
     fn with_transport(cluster_id: u64, transport: Transport, timeout: Duration) -> Result<Self> {
@@ -81,6 +101,7 @@ impl TimestampOracle {
                 request_tx,
                 cancellation,
                 worker: Mutex::new(Some(worker)),
+                routes: None,
             }),
         })
     }
@@ -115,6 +136,10 @@ impl TimestampOracle {
 
     pub(crate) async fn close(&self) {
         self.inner.cancellation.cancel();
+        // Retained request handles must not retain discovery channels after close.
+        if let Some(routes) = &self.inner.routes {
+            routes.send_replace(Vec::new());
+        }
         let mut worker = self.inner.worker.lock().await;
         if let Some(handle) = worker.as_mut() {
             // Keep ownership through the await so a cancelled close can be retried.
@@ -150,22 +175,93 @@ async fn run_tso(
         result = async {
             // Include response-header establishment in the stream cancellation
             // scope. The request stream starts each deadline before yielding its RPC.
-            let mut responses: super::service_discovery::TsoResponses = match transport {
+            match transport {
                 #[cfg(test)]
-                Transport::Pd(mut client) => Box::pin(client.tso(request_stream).await?.into_inner()),
-                Transport::Discovered(route, channel) => route.open(channel, request_stream).await?,
-            };
-            while let Some(response) = responses.next().await {
-                let response = response?;
-                allocate_timestamps(&response, &mut *pending_requests.lock().await)?;
+                Transport::Pd(mut client) => {
+                    let mut responses = client.tso(request_stream).await?.into_inner();
+                    while let Some(response) = responses.next().await {
+                        allocate_timestamps(&response?, &mut *pending_requests.lock().await)?;
+                    }
+                    Err(super::errs::ERR_CLIENT_TSO_STREAM_CLOSED.error().with_stack().into())
+                }
+                Transport::Discovered(routes) => {
+                    run_discovered(request_stream, routes, pending_requests.clone()).await
+                }
             }
-            Err(super::errs::ERR_CLIENT_TSO_STREAM_CLOSED.error().with_stack().into())
         } => result,
     };
     cancellation.cancel();
     watcher.close().await;
     pending_requests.lock().await.clear();
     result
+}
+
+async fn run_discovered(
+    requests: impl Stream<Item = TsoRequest>,
+    mut routes: tokio::sync::watch::Receiver<Vec<(super::service_discovery::TsoRoute, Channel)>>,
+    pending: Arc<Mutex<VecDeque<RequestGroup>>>,
+) -> Result<()> {
+    use super::service_discovery::{pick_stream_route, TsoStream};
+    let mut streams = std::collections::HashMap::<String, TsoStream>::new();
+    tokio::pin!(requests);
+    loop {
+        let snapshot = routes.borrow_and_update().clone();
+        streams.retain(|_, stream| snapshot.iter().any(|(route, _)| route == &stream.route));
+        let request = tokio::select! {
+            biased;
+            changed = routes.changed() => { if changed.is_err() { return Err(Error::ContextCanceled); } continue; },
+            request = requests.next() => request.ok_or(Error::ContextCanceled)?,
+        };
+        let candidates = snapshot.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>();
+        let Some(route) = pick_stream_route(&candidates).cloned() else {
+            // Fail this collected batch; future batches can use newly healthy routes.
+            for group in pending.lock().await.drain(..) {
+                group.done.complete();
+            }
+            continue;
+        };
+        let endpoint = route.endpoint.clone();
+        let channel = snapshot
+            .iter()
+            .find(|(r, _)| r == &route)
+            .unwrap()
+            .1
+            .clone();
+        let exchange = async {
+            if let Some(stream) = streams.get_mut(&endpoint) {
+                stream.request(request).await
+            } else {
+                let (stream, response) =
+                    TsoStream::open_and_request(route.clone(), channel, request).await?;
+                streams.insert(endpoint.clone(), stream);
+                Ok(response)
+            }
+        };
+        let response = {
+            tokio::pin!(exchange);
+            loop {
+                tokio::select! {
+                    biased;
+                    response = &mut exchange => break Some(response),
+                    changed = routes.changed() => {
+                        if changed.is_err() { return Err(Error::ContextCanceled); }
+                        if !routes.borrow().iter().any(|(current, _)| current == &route) {
+                            break None;
+                        }
+                    }
+                }
+            }
+        };
+        match response {
+            Some(Ok(response)) => allocate_timestamps(&response, &mut *pending.lock().await)?,
+            Some(Err(_)) | None => {
+                streams.remove(&endpoint);
+                for group in pending.lock().await.drain(..) {
+                    group.done.complete();
+                }
+            }
+        }
+    }
 }
 
 struct RequestGroup {

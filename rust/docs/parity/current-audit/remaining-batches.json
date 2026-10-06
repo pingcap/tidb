@@ -10,7 +10,7 @@
     "partial": 29
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "P03/T02/N03 rechecked and advanced; other53 unresolved roots retain carried evidence. TSO proxy/router/full packages remain open.",
+  "evidence_limit": "P03/P06/N03 advanced together; other53 unresolved roots retain carried evidence. See current receipt for automatic forwarding/bootstrap and full-package limits.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -517,6 +517,17 @@
   ],
   "latest_evidence": {
     "date": "2026-10-06",
+    "receipt": "tso-proxy-batch-validation.json",
+    "findings": [
+      "P03",
+      "P06",
+      "N03"
+    ],
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "scope": "B01/B05: P03/P06/N03 healthy TSO follower proxy, shared wire ownership, single dispatcher and live SQL policy"
+  },
+  "latest_source_maintenance": {
+    "date": "2026-10-06",
     "integration_start": "3a903f597731635739fdbefe34170bca4eee662e",
     "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
     "findings": [
@@ -531,22 +542,5 @@
     },
     "receipt": "pd-forwarding-batch-validation.json",
     "scope": "P03/T02/N03 shared PD unary forwarding, startup options, metadata and consolidated adapter failover"
-  },
-  "latest_source_maintenance": {
-    "date": "2026-10-06",
-    "integration_start": "41e1113eb5096b536a530cab5c928c07e0116f8e",
-    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
-    "findings": [
-      "P03",
-      "P06",
-      "T02"
-    ],
-    "statuses": {
-      "P03": "partial",
-      "P06": "partial",
-      "T02": "partial"
-    },
-    "receipt": "pd-availability-batch-validation.json",
-    "scope": "Shared PD network eligibility, region cooldown, member feedback and joined native/adapter health maintenance. Complete parent packages remain unaccepted."
   }
 }

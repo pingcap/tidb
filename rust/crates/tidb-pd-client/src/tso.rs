@@ -15,9 +15,8 @@
 use std::time::{Duration, Instant};
 
 use tidb_proto::pdpb;
-use tikv_client::pd_service_discovery::{TsoResponses, TsoRoute};
+use tikv_client::pd_service_discovery::{TsoRoute, TsoStream};
 use tokio::sync::watch;
-use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tonic::transport::Channel;
 
 use crate::{PdClientError, PdOperation};
@@ -200,9 +199,7 @@ impl TimestampParts {
 
 pub(crate) struct RetainedTsoStream {
     endpoint: String,
-    route: TsoRoute,
-    requests: tokio::sync::mpsc::Sender<pdpb::TsoRequest>,
-    responses: TsoResponses,
+    stream: TsoStream,
 }
 
 impl RetainedTsoStream {
@@ -213,39 +210,28 @@ impl RetainedTsoStream {
         cluster_id: u64,
         deadline: Instant,
         shutdown: &watch::Receiver<bool>,
+        routes: &watch::Sender<Vec<TsoRoute>>,
         count: u32,
     ) -> Result<(Self, TsoBatch), PdClientError> {
         let endpoint = route.endpoint.as_str();
         let timeout = remaining(deadline, endpoint)?;
-        let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let request = tso_request(cluster_id, count);
         if *shutdown.borrow() {
             return Err(PdClientError::Closed);
         }
         let mut cancellation = shutdown.clone();
+        let mut routes = routes.subscribe();
         let response = runtime.block_on(async {
             tokio::select! {
                 biased;
                 () = shutdown_requested(&mut cancellation) => None,
+                () = route_retired(&mut routes, &route) => Some(Ok(Err(tonic::Status::cancelled("TSO route retired")))),
                 response = tokio::time::timeout(timeout, async {
-                // PD may wait for its first inbound TSO request before it
-                // publishes response headers. Queue the request before
-                // polling the tonic open future, matching grpc-go's
-                // send-capable stream creation without an open-before-send
-                // cycle.
-                requests
-                    .send(request)
-                    .await
-                    .map_err(|_| tonic::Status::unavailable("PD Tso request stream is closed"))?;
-                let mut responses = route.open(channel, ReceiverStream::new(receiver)).await?;
-                let response = StreamExt::next(&mut responses).await.ok_or_else(|| {
-                    tonic::Status::unavailable("TSO response stream is closed")
-                })??;
-                Ok::<_, tonic::Status>((responses, response))
+                TsoStream::open_and_request(route.clone(), channel, request).await
                 }) => Some(response),
             }
         });
-        let (responses, response) = match response {
+        let (stream, response) = match response {
             Some(Ok(Ok(response))) => response,
             Some(Ok(Err(status))) => return Err(map_status(endpoint, status)),
             Some(Err(_)) => return Err(timeout_error(endpoint, timeout)),
@@ -255,16 +241,14 @@ impl RetainedTsoStream {
         Ok((
             Self {
                 endpoint: endpoint.to_owned(),
-                route,
-                requests,
-                responses,
+                stream,
             },
             timestamp,
         ))
     }
 
     pub(crate) fn route(&self) -> &TsoRoute {
-        &self.route
+        &self.stream.route
     }
 
     pub(crate) fn request(
@@ -273,25 +257,24 @@ impl RetainedTsoStream {
         cluster_id: u64,
         deadline: Instant,
         shutdown: &watch::Receiver<bool>,
+        routes: &watch::Sender<Vec<TsoRoute>>,
         count: u32,
     ) -> Result<TsoBatch, PdClientError> {
         let timeout = remaining(deadline, &self.endpoint)?;
         let request = tso_request(cluster_id, count);
+        let route = self.stream.route.clone();
         if *shutdown.borrow() {
             return Err(PdClientError::Closed);
         }
         let mut cancellation = shutdown.clone();
+        let mut routes = routes.subscribe();
         let response = runtime.block_on(async {
             tokio::select! {
                 biased;
                 () = shutdown_requested(&mut cancellation) => None,
+                () = route_retired(&mut routes, &route) => Some(Ok(Err(tonic::Status::cancelled("TSO route retired")))),
                 response = tokio::time::timeout(timeout, async {
-                    self.requests.send(request).await.map_err(|_| {
-                        tonic::Status::unavailable("PD Tso request stream is closed")
-                    })?;
-                    StreamExt::next(&mut self.responses).await.ok_or_else(|| {
-                        tonic::Status::unavailable("TSO response stream is closed")
-                    })?
+                    self.stream.request(request).await
                 })
                 => Some(response),
             }
@@ -303,6 +286,17 @@ impl RetainedTsoStream {
             None => return Err(PdClientError::Closed),
         };
         TimestampParts::from_response(&self.endpoint, cluster_id, response, count)
+    }
+}
+
+async fn route_retired(routes: &mut watch::Receiver<Vec<TsoRoute>>, route: &TsoRoute) {
+    loop {
+        if !routes.borrow_and_update().contains(route) {
+            return;
+        }
+        if routes.changed().await.is_err() {
+            return;
+        }
     }
 }
 

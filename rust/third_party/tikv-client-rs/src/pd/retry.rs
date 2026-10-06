@@ -304,6 +304,13 @@ impl RetryClient<Cluster> {
         Self::connect_for_keyspace(endpoints, security_mgr, timeout, None).await
     }
 
+    /// Reconciles timestamp streams after a live Go PD proxy-option change.
+    pub fn set_enable_tso_follower_proxy(&self, enabled: bool) {
+        self.connection
+            .options
+            .set_enable_tso_follower_proxy(enabled);
+    }
+
     /// Changes subsequent region requests without rebuilding discovery or TSO.
     pub fn set_enable_follower_handle(&self, enabled: bool) {
         self.connection.options.set_enable_follower_handle(enabled);
@@ -372,7 +379,10 @@ impl RetryClient<Cluster> {
         let worker = tokio::spawn(async move {
             let discover = async {
                 loop {
-                    sleep(super::service_discovery::UPDATE_INTERVAL).await;
+                    tokio::select! {
+                        _ = sleep(super::service_discovery::UPDATE_INTERVAL) => {},
+                        _ = async { connection.options.enable_tso_follower_proxy_ch.receiver.lock().await.recv().await } => {},
+                    }
                     let Some(cluster) = cluster.upgrade() else {
                         break;
                     };

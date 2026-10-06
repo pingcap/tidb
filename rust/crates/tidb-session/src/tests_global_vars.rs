@@ -2821,3 +2821,31 @@ fn pd_region_batch_sql_global_policy_publication() {
         .unwrap();
     assert!(policy.0.load(Ordering::SeqCst));
 }
+
+#[test]
+fn tso_proxy_batch_sql_global_policy_publication() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    #[derive(Debug)]
+    struct Policy(AtomicBool);
+    impl vars::PdRegionPolicy for Policy {
+        fn set_follower_handle(&self, _: bool) {}
+        fn set_tso_follower_proxy(&self, value: bool) {
+            self.0.store(value, Ordering::SeqCst);
+        }
+    }
+    let (mut session, mut peer, globals) = two_sessions_sharing_globals();
+    let policy = std::sync::Arc::new(Policy(AtomicBool::new(true)));
+    globals.set_pd_region_policy(policy.clone());
+    assert!(!policy.0.load(Ordering::SeqCst), "bind current default");
+    session
+        .run("SET GLOBAL tidb_enable_tso_follower_proxy = ON")
+        .unwrap();
+    assert!(policy.0.load(Ordering::SeqCst));
+    assert!(session
+        .run("SET GLOBAL tidb_enable_tso_follower_proxy = 'invalid'")
+        .is_err());
+    assert!(policy.0.load(Ordering::SeqCst));
+    peer.run("SET GLOBAL tidb_enable_tso_follower_proxy = OFF")
+        .unwrap();
+    assert!(!policy.0.load(Ordering::SeqCst));
+}

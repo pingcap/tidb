@@ -136,6 +136,8 @@ pub struct TsoRoute {
     pub endpoint: String,
     pub keyspace_id: u32,
     pub group_id: Option<u32>,
+    /// Logical primary when the physical endpoint is a proxy.
+    pub forwarded_host: Option<String>,
 }
 
 pub type TsoResponses = Pin<Box<dyn Stream<Item = Result<pdpb::TsoResponse, Status>> + Send>>;
@@ -150,10 +152,13 @@ impl TsoRoute {
     ) -> Result<TsoResponses, Status> {
         let Some(group_id) = self.group_id else {
             return Ok(Box::pin(
-                pdpb::pd_client::PdClient::new(channel)
-                    .tso(requests)
-                    .await?
-                    .into_inner(),
+                pdpb::pd_client::PdClient::with_interceptor(
+                    channel,
+                    super::region_service::Forwarding(self.forwarded_host.clone()),
+                )
+                .tso(requests)
+                .await?
+                .into_inner(),
             ));
         };
         let keyspace_id = self.keyspace_id;
@@ -169,10 +174,13 @@ impl TsoRoute {
             count: request.count,
             dc_location: request.dc_location,
         });
-        let responses = tsopb::tso_client::TsoClient::new(channel)
-            .tso(requests)
-            .await?
-            .into_inner();
+        let responses = tsopb::tso_client::TsoClient::with_interceptor(
+            channel,
+            super::region_service::Forwarding(self.forwarded_host.clone()),
+        )
+        .tso(requests)
+        .await?
+        .into_inner();
         Ok(Box::pin(responses.map(|response| {
             let response = response?;
             if let Some(error) = response.header.as_ref().and_then(|h| h.error.as_ref()) {
@@ -190,6 +198,63 @@ impl TsoRoute {
     }
 }
 
+/// One retained wire stream. Request batching and deadlines belong to the
+/// caller's single dispatcher, not to individual proxy endpoints.
+pub struct TsoStream {
+    pub route: TsoRoute,
+    requests: tokio::sync::mpsc::Sender<pdpb::TsoRequest>,
+    responses: TsoResponses,
+}
+
+impl TsoStream {
+    pub async fn open_and_request(
+        route: TsoRoute,
+        channel: Channel,
+        first: pdpb::TsoRequest,
+    ) -> Result<(Self, pdpb::TsoResponse), Status> {
+        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        // Servers may withhold response headers until the first request.
+        requests
+            .send(first)
+            .await
+            .map_err(|_| Status::unavailable("TSO request stream is closed"))?;
+        let mut responses = route
+            .open(
+                channel,
+                futures::stream::unfold(receiver, |mut receiver| async move {
+                    receiver.recv().await.map(|request| (request, receiver))
+                }),
+            )
+            .await?;
+        let response = responses
+            .next()
+            .await
+            .ok_or_else(|| Status::unavailable("TSO response stream is closed"))??;
+        Ok((
+            Self {
+                route,
+                requests,
+                responses,
+            },
+            response,
+        ))
+    }
+
+    pub async fn request(
+        &mut self,
+        request: pdpb::TsoRequest,
+    ) -> Result<pdpb::TsoResponse, Status> {
+        self.requests
+            .send(request)
+            .await
+            .map_err(|_| Status::unavailable("TSO request stream is closed"))?;
+        self.responses
+            .next()
+            .await
+            .ok_or_else(|| Status::unavailable("TSO response stream is closed"))?
+    }
+}
+
 /// Clone before refreshing, then publish only after discovery and dialing have
 /// succeeded. Failed RPCs must not overwrite the last accepted revision/route.
 #[derive(Clone, Debug)]
@@ -197,6 +262,7 @@ pub struct TsoDiscovery {
     keyspace_id: u32,
     assigned_group: bool,
     revision: u64,
+    service_urls: Vec<String>,
     cursor: Arc<Mutex<DiscoveryCursor>>,
 }
 
@@ -212,6 +278,7 @@ impl Default for TsoDiscovery {
             keyspace_id: NULL_KEYSPACE_ID,
             assigned_group: false,
             revision: 0,
+            service_urls: Vec::new(),
             cursor: Arc::new(Mutex::new(DiscoveryCursor::default())),
         }
     }
@@ -399,8 +466,10 @@ impl TsoDiscovery {
             endpoint: primary.address.clone(),
             keyspace_id: self.keyspace_id,
             group_id: Some(group.id),
+            forwarded_host: None,
         };
         let channel = dial(route.endpoint.clone()).await?;
+        self.service_urls = group.members.iter().map(|m| m.address.clone()).collect();
         self.revision = revision;
         Ok((route, channel))
     }
@@ -408,12 +477,68 @@ impl TsoDiscovery {
     fn classic(&mut self, leader: &str) -> TsoRoute {
         // A subsequent API-mode entry creates a new group discovery lifecycle.
         self.revision = 0;
+        self.service_urls.clear();
         *self.cursor.lock().expect("TSO discovery cursor poisoned") = DiscoveryCursor::default();
         TsoRoute {
             endpoint: leader.to_owned(),
             keyspace_id: self.keyspace_id,
             group_id: None,
+            forwarded_host: None,
         }
+    }
+
+    /// Go tryConnectToTSOWithProxy admits every healthy service endpoint.
+    /// PD members and keyspace-group members are separate service topologies.
+    /// A failed probe excludes only that endpoint; direct mode does not probe.
+    pub async fn stream_routes<F, Fut>(
+        &self,
+        primary: &TsoRoute,
+        pd_urls: &[String],
+        proxy: bool,
+        timeout: Duration,
+        dial: F,
+    ) -> Result<Vec<(TsoRoute, Channel)>, Status>
+    where
+        F: Fn(String) -> Fut,
+        Fut: Future<Output = Result<Channel, Status>>,
+    {
+        if !proxy {
+            return Ok(vec![(
+                primary.clone(),
+                dial(primary.endpoint.clone()).await?,
+            )]);
+        }
+        let urls = if primary.group_id.is_some() {
+            &self.service_urls
+        } else {
+            pd_urls
+        };
+        let mut routes = Vec::new();
+        for endpoint in urls {
+            if endpoint.is_empty()
+                || routes
+                    .iter()
+                    .any(|(r, _): &(TsoRoute, Channel)| &r.endpoint == endpoint)
+            {
+                continue;
+            }
+            let result = tokio::time::timeout(timeout, async {
+                let channel = dial(endpoint.clone()).await?;
+                if health_check(channel.clone(), timeout).await? != 1 {
+                    return Err(Status::unavailable("TSO endpoint is not serving"));
+                }
+                Ok(channel)
+            })
+            .await;
+            if let Ok(Ok(channel)) = result {
+                let mut route = primary.clone();
+                route.endpoint = endpoint.clone();
+                route.forwarded_host =
+                    (endpoint != &primary.endpoint).then(|| primary.endpoint.clone());
+                routes.push((route, channel));
+            }
+        }
+        Ok(routes)
     }
 
     async fn find_group<F, Fut>(
@@ -464,6 +589,13 @@ impl TsoDiscovery {
             response.mod_revision,
         ))
     }
+}
+
+/// The Go connection manager selects uniformly among admitted streams.
+/// Keeping selection here avoids adding a second routing policy to adapters.
+pub fn pick_stream_route(routes: &[TsoRoute]) -> Option<&TsoRoute> {
+    use rand::seq::SliceRandom;
+    routes.choose(&mut rand::thread_rng())
 }
 
 fn request<T>(message: T, timeout: Duration) -> Request<T> {

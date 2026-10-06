@@ -352,6 +352,11 @@ impl PdClient {
         }
     }
 
+    /// Updates timestamp proxy selection and wakes the owned discovery worker.
+    pub fn set_enable_tso_follower_proxy(&self, enabled: bool) {
+        self.shared.options.set_enable_tso_follower_proxy(enabled);
+    }
+
     /// Updates the shared PD region follower policy for subsequent requests.
     pub fn set_enable_follower_handle(&self, enabled: bool) {
         self.shared.options.set_enable_follower_handle(enabled);

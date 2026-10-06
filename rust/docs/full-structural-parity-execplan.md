@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [PD unary forwarding](pd-forwarding-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [TSO proxy lifecycle](tso-proxy-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -40,6 +40,9 @@ and validation results in those receipts apply only to their recorded point
 in time. This revision is a plan; it closes no production finding.
 
 ## Progress
+
+- [x] (2026-10-06, TSO proxy batch) Maintain P03/P06/N03 discovery, shared wire streams, single-dispatcher ownership and SQL option publication together. Three regressions failed before; 343 selected tests and affected checks pass. See `parity/current-audit/tso-proxy-batch-validation.json`; all parent/package boundaries remain explicit.
+
 
 - [x] (2026-10-06, PD forwarding batch) Connect P03/T02/N03 unary selection, canonical startup options, immutable metadata and all supported native/adapter callers; remove three duplicated failover loops. Four baseline socket failures precede 336 selected passes and affected checks. See `parity/current-audit/pd-forwarding-batch-validation.json`; TSO proxy/router and parent packages remain open.
 

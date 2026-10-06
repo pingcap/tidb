@@ -37,6 +37,9 @@ enum TsoReply {
 
 struct State {
     peers: std::collections::HashSet<std::net::SocketAddr>,
+    members: Option<pdpb::GetMembersResponse>,
+    health_status: i32,
+    forwarding: Vec<Option<String>>,
     cluster_info: Option<pdpb::GetClusterInfoResponse>,
     discovery_delay: Duration,
     discovery_requests: usize,
@@ -112,6 +115,12 @@ impl Pd for MockPd {
             .unwrap()
             .peers
             .extend(request.remote_addr());
+        self.state.lock().unwrap().forwarding.push(
+            request
+                .metadata()
+                .get("pd-forwarded-host")
+                .map(|v| v.to_str().unwrap().to_owned()),
+        );
         self.state.lock().unwrap().stream_opens += 1;
         let state = Arc::clone(&self.state);
         let mut requests = request.into_inner();
@@ -213,6 +222,9 @@ impl Pd for MockPd {
             .unwrap()
             .peers
             .extend(request.remote_addr());
+        if let Some(members) = self.state.lock().unwrap().members.clone() {
+            return Ok(tonic::Response::new(members));
+        }
         let member = pdpb::Member {
             name: "pd-1".to_owned(),
             member_id: 1,
@@ -286,6 +298,9 @@ impl Server {
         let endpoint = format!("http://{address}");
         let state = Arc::new(Mutex::new(State {
             peers: Default::default(),
+            members: None,
+            health_status: 1,
+            forwarding: Vec::new(),
             cluster_info: None,
             discovery_delay: Duration::ZERO,
             discovery_requests: 0,
@@ -312,6 +327,7 @@ impl Server {
                 .unwrap();
             runtime.block_on(async move {
                 let server = tonic::transport::Server::builder()
+                    .add_service(HealthServer(service.clone()))
                     .add_service(Microservice(service.clone()))
                     .add_service(PdServer::new(service))
                     .serve_with_shutdown(address, async {
@@ -864,5 +880,173 @@ fn source_channel_batch_adapter_periodic_discovery_uses_process_channel() {
     assert_eq!(
         peers, 1,
         "periodic probes must not create another connection fleet"
+    );
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct HealthRequest {
+    #[prost(string, tag = "1")]
+    service: String,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+struct HealthResponse {
+    #[prost(int32, tag = "1")]
+    status: i32,
+}
+#[derive(Clone)]
+struct HealthServer(MockPd);
+impl tonic::server::NamedService for HealthServer {
+    const NAME: &'static str = "grpc.health.v1.Health";
+}
+impl<B> tonic::codegen::Service<tonic::codegen::http::Request<B>> for HealthServer
+where
+    B: tonic::codegen::Body + Send + 'static,
+    B::Error: Into<tonic::codegen::StdError> + Send + 'static,
+{
+    type Response = tonic::codegen::http::Response<tonic::body::Body>;
+    type Error = std::convert::Infallible;
+    type Future = tonic::codegen::BoxFuture<Self::Response, Self::Error>;
+    fn poll_ready(
+        &mut self,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+    fn call(&mut self, request: tonic::codegen::http::Request<B>) -> Self::Future {
+        let service = self.clone();
+        Box::pin(async move {
+            Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                .unary(service, request)
+                .await)
+        })
+    }
+}
+impl tonic::server::UnaryService<HealthRequest> for HealthServer {
+    type Response = HealthResponse;
+    type Future = tonic::codegen::BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+    fn call(&mut self, request: tonic::Request<HealthRequest>) -> Self::Future {
+        assert!(request.get_ref().service.is_empty());
+        let status = self.0.state.lock().unwrap().health_status;
+        Box::pin(async move { Ok(tonic::Response::new(HealthResponse { status })) })
+    }
+}
+
+#[test]
+fn tso_proxy_batch_healthy_follower_and_disabled_mode() {
+    let leader = Server::start_auto_batching();
+    let follower = Server::start_auto_batching();
+    let leader_url = leader.address.clone();
+    let follower_url = follower.address.clone();
+    let members = vec![
+        pdpb::Member {
+            member_id: 1,
+            client_urls: vec![leader_url.clone()],
+            ..Default::default()
+        },
+        pdpb::Member {
+            member_id: 2,
+            client_urls: vec![follower_url],
+            ..Default::default()
+        },
+    ];
+    let membership = pdpb::GetMembersResponse {
+        header: Some(header()),
+        leader: Some(members[0].clone()),
+        members,
+        ..Default::default()
+    };
+    leader.state.lock().unwrap().members = Some(membership.clone());
+    leader.state.lock().unwrap().health_status = 2;
+    follower.state.lock().unwrap().members = Some(membership);
+    let options = tikv_client::pd_options::Options::new();
+    options.set_enable_tso_follower_proxy(true);
+    let client = PdClient::connect_seeds_with_options(
+        [leader.address.clone()],
+        Arc::new(tidb_pd_client::ClusterSecurity::default()),
+        options,
+    )
+    .unwrap();
+    client.get_timestamp().unwrap();
+    assert_eq!(
+        follower.state.lock().unwrap().forwarding,
+        vec![Some(leader_url)]
+    );
+    assert!(leader.state.lock().unwrap().requests.is_empty());
+    // Retain an unchanged healthy stream across ordinary metadata refresh.
+    client.refresh_members().unwrap();
+    client.get_timestamp().unwrap();
+    assert_eq!(follower.state.lock().unwrap().stream_opens, 1);
+    // Dynamic disabling restores the primary regardless of proxy health policy.
+    leader.state.lock().unwrap().auto_batch_physical = Some(1000);
+    client.set_enable_tso_follower_proxy(false);
+    client.get_timestamp().unwrap();
+    assert_eq!(leader.state.lock().unwrap().forwarding, vec![None]);
+    follower.state.lock().unwrap().auto_batch_physical = Some(2000);
+    client.set_enable_tso_follower_proxy(true);
+    client.get_timestamp().unwrap();
+    assert_eq!(follower.state.lock().unwrap().stream_opens, 2);
+    // A membership change under the same leader invalidates cached proxy routes.
+    let membership = leader.state.lock().unwrap().members.clone().unwrap();
+    let mut only_leader = membership.clone();
+    only_leader.members.retain(|member| member.member_id == 1);
+    leader.state.lock().unwrap().members = Some(only_leader);
+    leader.state.lock().unwrap().health_status = 1;
+    leader.state.lock().unwrap().auto_batch_physical = Some(3000);
+    client.refresh_members().unwrap();
+    let follower_requests = follower.state.lock().unwrap().requests.len();
+    client.get_timestamp().unwrap();
+    assert_eq!(
+        follower.state.lock().unwrap().requests.len(),
+        follower_requests
+    );
+    leader.state.lock().unwrap().members = Some(membership);
+    leader.state.lock().unwrap().health_status = 2;
+    follower.state.lock().unwrap().auto_batch_physical = Some(4000);
+    client.refresh_members().unwrap();
+    // Close cancels a pending proxy exchange and retires the shared wire owner.
+    follower
+        .state
+        .lock()
+        .unwrap()
+        .replies
+        .push_back(TsoReply::Delayed(
+            Duration::from_secs(10),
+            timestamp(5000, 1),
+        ));
+    let before = follower.state.lock().unwrap().requests.len();
+    let pending_client = client.clone();
+    let request = std::thread::spawn(move || pending_client.get_timestamp());
+    let until = std::time::Instant::now() + Duration::from_secs(2);
+    while follower.state.lock().unwrap().requests.len() == before {
+        assert!(std::time::Instant::now() < until);
+        std::thread::yield_now();
+    }
+    // A live policy update retires the blocked proxy and retries on the primary.
+    leader.state.lock().unwrap().auto_batch_physical = Some(6000);
+    client.set_enable_tso_follower_proxy(false);
+    assert!(request.join().unwrap().unwrap() >= (6000_u64 << 18));
+    follower.state.lock().unwrap().auto_batch_physical = Some(7000);
+    client.set_enable_tso_follower_proxy(true);
+    follower
+        .state
+        .lock()
+        .unwrap()
+        .replies
+        .push_back(TsoReply::Delayed(
+            Duration::from_secs(10),
+            timestamp(8000, 1),
+        ));
+    let before = follower.state.lock().unwrap().requests.len();
+    let pending_client = client.clone();
+    let request = std::thread::spawn(move || pending_client.get_timestamp());
+    let until = std::time::Instant::now() + Duration::from_secs(2);
+    while follower.state.lock().unwrap().requests.len() == before {
+        assert!(std::time::Instant::now() < until);
+        std::thread::yield_now();
+    }
+    client.shutdown().unwrap();
+    assert_eq!(
+        request.join().unwrap(),
+        Err(tidb_pd_client::PdClientError::Closed)
     );
 }
