@@ -58,59 +58,18 @@ were checked as consumers. Go master accepts `LEFT JOIN LATERAL`, rejects only
 RIGHT/NATURAL/USING variants, and clears NOT NULL from the inner columns in
 both visible Schema and FullSchema.
 
-## Rust change
+## Current ownership and validation limits
 
-`PlanBuilder::build_lateral_join` previously rejected LEFT JOIN with a
-Rust-only `ErrInvalidLateralJoin`. It now follows Go's branch: constructs a
-`LogicalApply` with `LeftOuter`, enables outer-join elimination/semi-join
-flags, and resets NOT NULL on the inner portion of both Schema and FullSchema.
-The existing ON-condition, output-name, full-schema, handle-map, and hint
-paths remain shared with INNER/CROSS LATERAL behavior. RIGHT JOIN, NATURAL, and
-USING remain rejected as in Go.
+The production plan-building owner remains
+`rust/crates/tidb-planner/src/plan_builder/from.rs`. It is unchanged by the
+[orphan storage/source cleanup](../../docs/parity/current-audit/orphan-storage-cleanup-validation.json).
+The old `plan_builder/from_tests.rs` carrier was not registered in the current
+crate and has been removed. Its historical one-test commands no longer execute
+those cases and must not be counted as current validation.
 
-Changed Rust owners:
-
-- `crates/tidb-planner/src/plan_builder/from.rs` — LEFT LATERAL construction;
-- `crates/tidb-planner/src/plan_builder/from_tests.rs` — positive nullable
-  LEFT LATERAL regression and narrowed RIGHT-only rejection test.
-
-## Regression evidence
-
-```text
-cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
-  -p tidb-planner --lib \
-  plan_builder::from_tests::test_left_lateral_builds_a_nullable_outer_apply \
-  -- --nocapture
-# passed: 1 test
-
-cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
-  -p tidb-planner --lib \
-  plan_builder::from_tests::test_lateral_refuses_the_clauses_go_refuses \
-  -- --nocapture
-# passed: 1 test
-```
-
-The positive regression verifies `LeftOuter`, `IsLateral`, the two outer-join
-optimization flags, and nullable inner columns in both Schema and FullSchema.
-
-## Ready validation
-
-The final batch validation is recorded after the commit and includes:
-
-```text
-cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
-# passed
-cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
-  -p tidb-planner
-# passed; existing warnings only
-git diff --check
-# passed
-PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
-GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-TMPDIR=/tmp/tidb-codex make lint
-# passed (dashboard linter and Go lint targets)
-```
-
-The broader Go testkit LATERAL execution cases and Rust SQL execution remain
-separate runtime boundaries; this batch closes the plan-builder LEFT LATERAL
-admission and nullability behavior.
+Keep LEFT LATERAL admission, nullable inner Schema/FullSchema, ON conditions,
+outer-join flags, RIGHT/NATURAL/USING rejection, and all original testkit/runtime
+obligations. The cleanup neither revalidates those historical outcomes nor
+accepts the whole planner package. The old implementation narrative and exact
+historical commands remain recoverable from Git at a4b2f46659; laptop paths in
+that history are not Cloud artifacts.

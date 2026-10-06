@@ -1,0 +1,189 @@
+{
+  "date": "2026-10-06",
+  "base": "a4b2f466595db9f65876cbbff656922df4613cd2",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retired six unregistered source carriers (48 never-run test declarations) and unused TikvMetaSnapshot/alternate catalog loader. 3523 Rust lines removed. Retained compiled owners and tests unchanged; no finding disposition or package acceptance changes.",
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-executor/src/index_lookup_join.rs",
+      "lines": 1104,
+      "sha256": "98bd3e624f75b9237388b738ed93fc19b65b64bbe5bb7ff09913275ebaa74da2",
+      "tests": [],
+      "ignored_attributes": 0,
+      "go_anchors": [
+        "pkg/executor/builder.go",
+        "pkg/executor/join/index_lookup_join.go",
+        "pkg/util/ranger/types.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/index_range_tests.rs",
+      "lines": 662,
+      "sha256": "5efd411923964f6eb1db7737d78bdb46c0a4754be6ae9a9621625a6b19b10fa6",
+      "tests": [
+        "derived_ranges_match_gos_explain_range_cell",
+        "shapes_go_plans_without_an_index_range_scan",
+        "negative_bounds_derive_ranges",
+        "a_disjunction_on_one_index_column_still_pins_it",
+        "a_bare_is_null_does_not_advance_the_walk",
+        "unsigned_and_overflow_rows_that_already_match_go",
+        "unsigned_and_overflow_ranges_match_go",
+        "prefix_index_range_scan_matches_go",
+        "prefix_index_ranges_match_go",
+        "a_cut_endpoint_widens_the_range_it_bounds",
+        "a_whole_key_part_is_never_cut"
+      ],
+      "ignored_attributes": 4,
+      "go_anchors": [
+        "pkg/executor/zz_dump_ranges_test.go",
+        "pkg/util/ranger/ranger_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/ast_rewrite.rs",
+      "lines": 122,
+      "sha256": "6aafc46de5800328f1640d89c3593a03b44364811b02e8be607240f53ec3a707",
+      "tests": [],
+      "ignored_attributes": 0,
+      "go_anchors": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/fragment.rs",
+      "lines": 359,
+      "sha256": "bf1ca555d8fbb5915eea306346ef5ca724ef6cdf9a4702071702e570d37be767",
+      "tests": [
+        "fragment_init_singleton_matches_exchange_matrix",
+        "local_cte_counts_use_each_tiflash_address"
+      ],
+      "ignored_attributes": 0,
+      "go_anchors": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/plan_builder/from_tests.rs",
+      "lines": 1084,
+      "sha256": "fbe16316dcc706943a7fd36b14b0238eb0796460b728af044c7adac77432b04e",
+      "tests": [
+        "extract_fd_source_join_and_apply_cases",
+        "test_inner_join_with_on_wraps_the_join_in_a_selection",
+        "test_outer_join_with_on_attaches_the_condition_to_the_join",
+        "test_straight_join_is_recorded_on_the_join",
+        "test_a_single_operand_join_node_unwraps_to_its_left",
+        "test_using_coalesces_the_common_column_and_orders_it_first",
+        "test_right_join_using_swaps_the_sides_and_the_redundant_flag",
+        "test_natural_join_matches_every_common_column",
+        "test_using_an_unknown_column_is_refused",
+        "test_lateral_derived_table_becomes_a_logical_apply",
+        "test_lateral_refuses_the_clauses_go_refuses",
+        "test_left_lateral_builds_a_nullable_outer_apply",
+        "test_derived_table_takes_the_alias_and_drops_the_database",
+        "test_lateral_column_alias_list_renames_the_output",
+        "test_a_column_alias_list_of_the_wrong_length_is_refused",
+        "test_a_derived_table_with_duplicate_output_names_is_refused",
+        "test_a_view_builds_a_projection_over_its_body",
+        "test_from_view_routes_through_the_view_builder_and_applies_the_alias",
+        "test_from_recursive_view_reaches_the_recursion_guard",
+        "test_a_recursive_view_is_refused",
+        "test_the_view_guard_refuses_a_reentrant_build",
+        "test_duplicate_table_aliases_are_refused",
+        "test_distinct_aliases_and_oracle_mode_are_allowed",
+        "test_extract_table_alias_rejects_a_conflicting_name_set",
+        "test_join_hints_set_the_preferred_type_on_the_named_side",
+        "test_leading_hint_is_retained_on_the_join",
+        "test_select_ast_join_hints_reach_the_logical_join",
+        "test_join_hints_match_the_current_query_block",
+        "test_select_builder_assigns_preorder_query_block_offsets",
+        "test_find_join_full_schema_looks_through_a_selection_but_not_a_projection",
+        "test_lateral_detection_walks_the_subtree_but_immediacy_does_not",
+        "test_a_cross_join_type_maps_to_an_inner_join",
+        "test_build_select_lock_carries_the_tail_handle_map",
+        "test_build_mem_table_produces_the_table_s_own_schema",
+        "test_derived_aggregate_takes_the_written_field_label"
+      ],
+      "ignored_attributes": 0,
+      "go_anchors": []
+    },
+    {
+      "path": "rust/crates/tidb-expr/src/vs_helper.rs",
+      "lines": 96,
+      "sha256": "05e038c34740630d748466f2a3dc43c2ac671f8d28a863f365069ffc9eed3d55",
+      "tests": [],
+      "ignored_attributes": 0,
+      "go_anchors": [
+        "pkg/expression/vs_helper.go"
+      ]
+    }
+  ],
+  "partial_removal": {
+    "path": "rust/crates/tidb-exec/src/real_tikv_catalog.rs",
+    "net_lines_removed": 96,
+    "declarations": [
+      "TikvMetaSnapshot",
+      "load_catalog_from_tikv_cluster"
+    ],
+    "reason": "Alternate loader has no callers; adapter is used only by that loader. Remaining file is byte-identical after deleting the two blocks.",
+    "before_sha256": "70ad8a9ca1809dc064671ac4af90a072fa966589ebbbc75c56ed2895dfc42985"
+  },
+  "totals": {
+    "files_removed": 6,
+    "net_rust_lines_removed": 3523,
+    "unregistered_test_declarations_removed": 48,
+    "ignore_attributes_in_unregistered_files": 4,
+    "registered_tests_removed": 0
+  },
+  "registration_evidence": [
+    "Workspace-wide mod/path/include and Cargo target tracing finds no registration for the six source carriers. Shared aggregate-tests.rs enumerates tests/ roots, not these src/ files.",
+    "Lexer generate_keyword is an explicit binary. Both server binaries are auto-discovered. All three retained.",
+    "Historical docs called fragment.rs and vs_helper.rs protected untracked drafts. Both are tracked at this baseline, last changed by 103e13a49e; no untracked/concurrent edits exist. Their exact bytes remain in Git and the recovery bundle.",
+    "TikvTransactionOpener and native driver are retained with real unistore tests and commit-outcome coverage."
+  ],
+  "retained": {
+    "all_retained_rust_sources_unchanged_except_exact_catalog_deletions": true,
+    "retained_test_bodies_unchanged": true,
+    "manifests_lockfiles_unchanged": true,
+    "catalog_retained_blocks_byte_identical": true,
+    "removed_files_absent_from_cargo_targets": true,
+    "standalone_binaries_retained": [
+      "generate_keyword",
+      "cluster-session-smoke",
+      "tidb-server"
+    ],
+    "live_owner_sha256": {
+      "rust/crates/tidb-executor/src/join.rs": "6f0c47e8bf6b833ca4101d8ab5734bed53c929aa6a316108c7cc3f838b70850e",
+      "rust/crates/tidb-executor/src/index_range.rs": "0281bc85e2143eaf6f611fb9e1411c3eef1d0eb81d74cf55af67436fe341f2ba",
+      "rust/crates/tidb-executor/src/driver/physical_builder.rs": "180fe0d2ee5cdf1c7d7d32136bbe3f3f853d4848daf5f832091c28dda29d8a0c",
+      "rust/crates/tidb-planner/src/plan_builder/from.rs": "fd6ed6a1b5f2de41bd5f99bebbb37787081f4127e01172f3d1c9576b5c6fb4ca",
+      "rust/crates/tidb-planner/src/task.rs": "de9966221fe154c1e0cb56af83fa6b74ab13f0241b8caf293c344789033e405c",
+      "rust/crates/tidb-txnkv/src/driver/tikv_opener.rs": "bd56d0a51f79f0f7329331fb9b76a3bf7a5e91dd41c76c3dcffeae6b58663b7b",
+      "rust/crates/tidb-unistore/tests/client_transaction.rs": "7c4811711df41245a87dfb968009de29a130752eb030113d085b59e0c731c6b3"
+    }
+  },
+  "original_go_obligations": [
+    "pkg/executor/join index lookup batching, outer ordering, reader integration, concurrency, errors and shutdown remain owned by live join.rs and its builder. Orphan source removal does not accept the whole package.",
+    "pkg/util/ranger and planner/core original range/prefix/unsigned/overflow, join/lateral/schema/nullability and error obligations remain. Removed carriers were not running coverage.",
+    "pkg/planner/core/operator/physicalop fragment/CTE/task placement and pkg/expression/vs_helper vector-search recognition still require complete live integration and original tests; deleting drafts does not repair these gaps.",
+    "Go Domain/infoschema loads continue through shared transaction and snapshot adapters; current catalog load/reload ownership is unchanged."
+  ],
+  "validation": {
+    "status": "passed",
+    "all_targets": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-server --all-targets",
+    "metadata": "cd rust && cargo metadata --locked --no-deps --format-version 1",
+    "lint": "make lint",
+    "diff": "git diff --check",
+    "runtime_tests": "Not rerun: only unregistered files and unused catalog declarations removed; retained test bodies and compiled algorithms unchanged.",
+    "publication": "Actual hook and fresh immediate-prepush cargo build --locked -p tidb-server required. Post-commit results in external final-handoff.json."
+  },
+  "limits": [
+    "Counts unchanged: 86 tracked /30 repaired /56 unresolved.",
+    "No complete package acceptance, full Go suite, live multi-node TiKV or measured speedup.",
+    "Never-run declarations are not passed/failed/skipped runtime cases. Original source obligations remain."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/orphan-storage-cleanup",
+  "log_sha256": {
+    "check.log": "16088fcacfe822a60d0a0156112c72f3a0288500d182bd391759ed7f30dee610",
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "metadata.json": "f03f51579d6fe0aff4adaa8ab18287ea6bfef723ddcbc582a1b7af90d750bdec",
+    "retained.json": "c8108dbcb2b0cec356035f713c333350436a9a5950e451b4d9d66061081631c5",
+    "inventory.json": "4c933d0c109a4f693c47c6d2895d37c340d36680aadff2a91ad4ddcb2a4ea51d"
+  }
+}

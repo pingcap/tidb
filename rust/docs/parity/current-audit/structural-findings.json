@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "aggregate-chain-cleanup-validation.json",
-    "scope": "Retired the disconnected aggregate/sort chain: 23 source files and 18 private harnesses, 106 registered obsolete tests and six unregistered orphan tests. Preserved the mixed variance metadata assertion verbatim in its existing owner suite; active SQL operators and retained tests unchanged."
+    "receipt": "orphan-storage-cleanup-validation.json",
+    "scope": "Retired six unregistered source carriers (48 never-run test declarations) and unused TikvMetaSnapshot/alternate catalog loader. 3523 Rust lines removed. Retained compiled owners and tests unchanged; no finding disposition or package acceptance changes."
   },
   "test_cleanup_history": [
     {
@@ -959,6 +959,11 @@
       "date": "2026-10-05",
       "receipt": "aggregate-chain-cleanup-validation.json",
       "scope": "Retired the disconnected aggregate/sort chain: 23 source files and 18 private harnesses, 106 registered obsolete tests and six unregistered orphan tests. Preserved the mixed variance metadata assertion verbatim in its existing owner suite; active SQL operators and retained tests unchanged."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "orphan-storage-cleanup-validation.json",
+      "scope": "Retired six unregistered source carriers (48 never-run test declarations) and unused TikvMetaSnapshot/alternate catalog loader. 3523 Rust lines removed. Retained compiled owners and tests unchanged; no finding disposition or package acceptance changes."
     }
   ],
   "repair_history": [
