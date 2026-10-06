@@ -20,19 +20,19 @@
 //! `ExecDetails.String()` rendering, and `GetIARemoteReadSegmentStats`.
 //!
 //! The client-go detail types reuse the canonical `tikv-client` types. As in
-//! Go, [`load_tikv_exec_details`] takes an atomic snapshot of the per-request
-//! execution and traffic counters.
+//! Go, the native client owns atomic snapshots of per-request execution and
+//! traffic counters.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+#[cfg(test)]
+use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_log::{Field, Value};
 
-use crate::runtime_stats::{
-    merge_commit_details, merge_lock_keys_details, DurationWithAddr, Percentile,
-};
+use crate::runtime_stats::{DurationWithAddr, Percentile};
 
 /// Go `CopTimeStr`: the sum of cop-task time spent in TiDB distSQL.
 pub const COP_TIME_STR: &str = "Cop_time";
@@ -240,225 +240,6 @@ impl P90Summary {
     }
 }
 
-/// Go `StmtExecDetails`: statement-local execution details and RUv2 metrics.
-#[derive(Debug, Default)]
-pub struct StmtExecDetails {
-    /// Go `WriteSQLRespDuration`.
-    pub write_sql_resp_duration: Duration,
-    ruv2_metrics: Option<std::sync::Arc<tidb_util::ruv2_metrics::RuV2Metrics>>,
-}
-
-/// Rust shared-pointer representation of Go `*StmtExecDetails`.
-pub type SharedStmtExecDetails = Arc<Mutex<StmtExecDetails>>;
-
-struct StmtExecDetailsContextKey;
-struct Ruv2MetricsContextKey;
-
-fn stmt_exec_details_from_context(
-    context: &tikv_client::trace::TraceContext,
-) -> Option<&SharedStmtExecDetails> {
-    context.value::<StmtExecDetailsContextKey, SharedStmtExecDetails>()
-}
-
-/// Go `ContextWithInitializedExecDetails`.
-#[must_use]
-pub fn context_with_initialized_exec_details(
-    context: &tikv_client::trace::TraceContext,
-) -> tikv_client::trace::TraceContext {
-    let mut stmt_details = StmtExecDetails::default();
-    stmt_details.ensure_ruv2_metrics();
-    let context = tikv_client::util::context_with_exec_details(
-        context,
-        Arc::new(tikv_client::util::ExecDetails::default()),
-    );
-    let context = tikv_client::util::context_with_ru_details(
-        &context,
-        Arc::new(tikv_client::RuDetails::new()),
-    );
-    context.with_value::<StmtExecDetailsContextKey, _>(Arc::new(Mutex::new(stmt_details)))
-}
-
-/// Go `ContextWithMissingExecDetailsInitialized`.
-#[must_use]
-pub fn context_with_missing_exec_details_initialized(
-    context: &tikv_client::trace::TraceContext,
-) -> tikv_client::trace::TraceContext {
-    let mut derived = context.clone();
-    if tikv_client::util::exec_details_from_context(&derived).is_none() {
-        derived = tikv_client::util::context_with_exec_details(
-            &derived,
-            Arc::new(tikv_client::util::ExecDetails::default()),
-        );
-    }
-    if tikv_client::util::ru_details_from_context(&derived).is_none() {
-        derived = tikv_client::util::context_with_ru_details(
-            &derived,
-            Arc::new(tikv_client::RuDetails::new()),
-        );
-    }
-
-    let stmt_details = match stmt_exec_details_from_context(&derived).cloned() {
-        Some(details) => details,
-        None => {
-            let inherited = derived
-                .value::<Ruv2MetricsContextKey, Arc<tidb_util::ruv2_metrics::RuV2Metrics>>()
-                .cloned();
-            let mut details = StmtExecDetails::default();
-            details.set_ruv2_metrics(inherited);
-            let details = Arc::new(Mutex::new(details));
-            derived = derived.with_value::<StmtExecDetailsContextKey, _>(details.clone());
-            details
-        }
-    };
-    let mut stmt_details = stmt_details.lock().expect("StmtExecDetails mutex poisoned");
-    if stmt_details.ruv2_metrics().is_none() {
-        if let Some(inherited) = derived
-            .value::<Ruv2MetricsContextKey, Arc<tidb_util::ruv2_metrics::RuV2Metrics>>()
-            .cloned()
-        {
-            stmt_details.set_ruv2_metrics(Some(inherited));
-        } else {
-            stmt_details.ensure_ruv2_metrics();
-        }
-    }
-    drop(stmt_details);
-    derived
-}
-
-/// Go `ContextWithInheritedRUV2Details`.
-#[must_use]
-pub fn context_with_inherited_ruv2_details(
-    context: &tikv_client::trace::TraceContext,
-    source: Option<&tikv_client::trace::TraceContext>,
-) -> tikv_client::trace::TraceContext {
-    let Some(source) = source else {
-        return context.clone();
-    };
-    let mut derived = context.clone();
-    if tikv_client::util::ru_details_from_context(&derived).is_none() {
-        if let Some(details) = tikv_client::util::ru_details_from_context(source) {
-            derived = tikv_client::util::context_with_ru_details(&derived, details.clone());
-        }
-    }
-    if ruv2_metrics_from_context(&derived).is_none() {
-        if let Some(metrics) = ruv2_metrics_from_context(source) {
-            derived = context_with_ruv2_metrics(&derived, Some(metrics));
-        }
-    }
-    derived
-}
-
-/// Go `ContextWithRUV2Metrics`.
-#[must_use]
-pub fn context_with_ruv2_metrics(
-    context: &tikv_client::trace::TraceContext,
-    metrics: Option<Arc<tidb_util::ruv2_metrics::RuV2Metrics>>,
-) -> tikv_client::trace::TraceContext {
-    let Some(metrics) = metrics else {
-        return context.clone();
-    };
-    if let Some(stmt_details) = stmt_exec_details_from_context(context) {
-        stmt_details
-            .lock()
-            .expect("StmtExecDetails mutex poisoned")
-            .set_ruv2_metrics(Some(metrics));
-        return context.clone();
-    }
-    context.with_value::<Ruv2MetricsContextKey, _>(metrics)
-}
-
-/// Go `RUV2MetricsFromContext`.
-#[must_use]
-pub fn ruv2_metrics_from_context(
-    context: &tikv_client::trace::TraceContext,
-) -> Option<Arc<tidb_util::ruv2_metrics::RuV2Metrics>> {
-    if let Some(stmt_details) = stmt_exec_details_from_context(context) {
-        if let Some(metrics) = stmt_details
-            .lock()
-            .expect("StmtExecDetails mutex poisoned")
-            .ruv2_metrics()
-            .cloned()
-        {
-            return Some(metrics);
-        }
-    }
-    context
-        .value::<Ruv2MetricsContextKey, Arc<tidb_util::ruv2_metrics::RuV2Metrics>>()
-        .cloned()
-}
-
-/// Go `SyncRUV2MetricsFromContext`.
-#[must_use]
-pub fn sync_ruv2_metrics_from_context(
-    context: &tikv_client::trace::TraceContext,
-) -> Option<Arc<tidb_util::ruv2_metrics::RuV2Metrics>> {
-    let metrics = ruv2_metrics_from_context(context)?;
-    tidb_util::ruv2_metrics::sync_ruv2_metrics_from_ru_details(
-        Some(&metrics),
-        tikv_client::util::ru_details_from_context(context).map(Arc::as_ref),
-    );
-    Some(metrics)
-}
-
-/// Go `LoadTiKVExecDetails`: snapshots every atomic field in client-go's
-/// `util.ExecDetails`. A nil detail maps to the zero value.
-#[must_use]
-pub fn load_tikv_exec_details(
-    detail: Option<&tikv_client::util::ExecDetails>,
-) -> tikv_client::util::ExecDetailsSnapshot {
-    detail.map_or_else(Default::default, tikv_client::util::ExecDetails::snapshot)
-}
-
-/// Go `GetExecDetailsFromContext`. The returned client execution details are
-/// an atomic snapshot; a missing RU detail is replaced by a fresh empty one.
-#[must_use]
-pub fn get_exec_details_from_context(
-    context: &tikv_client::trace::TraceContext,
-) -> (
-    Duration,
-    tikv_client::util::ExecDetailsSnapshot,
-    Arc<tikv_client::RuDetails>,
-) {
-    let write_sql_resp_duration = stmt_exec_details_from_context(context)
-        .map(|details| {
-            details
-                .lock()
-                .expect("StmtExecDetails mutex poisoned")
-                .write_sql_resp_duration
-        })
-        .unwrap_or_default();
-    let exec_details = load_tikv_exec_details(
-        tikv_client::util::exec_details_from_context(context).map(Arc::as_ref),
-    );
-    let ru_details = tikv_client::util::ru_details_from_context(context)
-        .cloned()
-        .unwrap_or_else(|| Arc::new(tikv_client::RuDetails::new()));
-    (write_sql_resp_duration, exec_details, ru_details)
-}
-
-impl StmtExecDetails {
-    /// Go `ensureRUV2Metrics`.
-    pub fn ensure_ruv2_metrics(&mut self) -> std::sync::Arc<tidb_util::ruv2_metrics::RuV2Metrics> {
-        self.ruv2_metrics
-            .get_or_insert_with(|| std::sync::Arc::new(tidb_util::ruv2_metrics::RuV2Metrics::new()))
-            .clone()
-    }
-
-    /// Go `getRUV2Metrics`.
-    #[must_use]
-    pub fn ruv2_metrics(&self) -> Option<&std::sync::Arc<tidb_util::ruv2_metrics::RuV2Metrics>> {
-        self.ruv2_metrics.as_ref()
-    }
-
-    /// Go `setRUV2Metrics`.
-    pub fn set_ruv2_metrics(
-        &mut self,
-        metrics: Option<std::sync::Arc<tidb_util::ruv2_metrics::RuV2Metrics>>,
-    ) {
-        self.ruv2_metrics = metrics;
-    }
-}
-
 /// Go `CopTasksSummary`: statement-summary subset of cop task statistics.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CopTasksSummary {
@@ -498,7 +279,7 @@ impl SyncExecDetails {
         };
         let mut inner = self.inner.lock().expect("SyncExecDetails mutex poisoned");
         match &mut inner.exec_details.commit_detail {
-            Some(existing) => merge_commit_details(existing, commit_details),
+            Some(existing) => existing.merge(commit_details),
             None => inner.exec_details.commit_detail = Some(commit_details.clone()),
         }
     }
@@ -547,7 +328,7 @@ impl SyncExecDetails {
         };
         let mut inner = self.inner.lock().expect("SyncExecDetails mutex poisoned");
         match &mut inner.exec_details.lock_keys_detail {
-            Some(existing) => merge_lock_keys_details(existing, lock_keys),
+            Some(existing) => existing.merge(lock_keys),
             None => inner.exec_details.lock_keys_detail = Some(lock_keys.clone()),
         }
     }
@@ -559,7 +340,7 @@ impl SyncExecDetails {
         };
         let mut inner = self.inner.lock().expect("SyncExecDetails mutex poisoned");
         match &mut inner.exec_details.shared_lock_keys_detail {
-            Some(existing) => merge_lock_keys_details(existing, lock_keys),
+            Some(existing) => existing.merge(lock_keys),
             None => inner.exec_details.shared_lock_keys_detail = Some(lock_keys.clone()),
         }
     }
@@ -1446,12 +1227,7 @@ mod tests {
 
     /// Port of Go `TestString/load tikv exec details snapshot`.
     #[test]
-    fn load_tikv_exec_details_snapshots_all_atomic_fields() {
-        assert_eq!(
-            tikv_client::util::ExecDetailsSnapshot::default(),
-            load_tikv_exec_details(None)
-        );
-
+    fn native_exec_details_snapshot_preserves_all_atomic_fields() {
         let details = tikv_client::util::ExecDetails::default();
         details.add_backoff(Duration::from_secs(3));
         details.add_backoff(Duration::ZERO);
@@ -1483,7 +1259,7 @@ mod tests {
                     received_mpp_cross_zone: 18,
                 },
             },
-            load_tikv_exec_details(Some(&details))
+            details.snapshot()
         );
     }
 }

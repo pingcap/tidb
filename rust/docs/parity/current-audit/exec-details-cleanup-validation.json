@@ -1,0 +1,71 @@
+{
+  "date": "2026-10-06",
+  "base": "d2c2d406864c55820be4da8886c68845db41dbe0",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire unconsumed statement execution-context lifecycle and the disconnected RU statistics wrapper: 545 net Rust lines and ten private RU tests removed. Replace two forwarding merge helpers at all seven call sites with native methods. Preserve collector/commit/TiFlash tests unchanged and retain every atomic snapshot field assertion against the canonical native API.",
+  "continuity": {
+    "base": "d2c2d406864c55820be4da8886c68845db41dbe0",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "changed_rust_files": 2,
+    "net_rust_lines_removed": 545,
+    "private_tests_removed": 10,
+    "retained_runtime_tests_unchanged": true,
+    "snapshot_assertions_preserved_at_native_api": true,
+    "merge_wrappers_previously_only_called_native_merge": true,
+    "all_seven_merge_calls_use_native_methods": true,
+    "other_sources_and_dependencies_unchanged": true,
+    "retired_symbols_absent": true
+  },
+  "before_inventory": [
+    {
+      "path": "rust/crates/tidb-exec/src/exec_details.rs",
+      "sha256": "1fe35587555842020f64abc1df3913bb6457f7241b6d9a4379310797d832d486",
+      "lines": 1489
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/runtime_stats.rs",
+      "sha256": "39d5d0a88d51134a0f1ba1995e1f7d41f1e9d7948654b8fb761a2f76ff321327",
+      "lines": 2481
+    }
+  ],
+  "tests": {
+    "retained_owners": [
+      {
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 10,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  "commands": [
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-exec -p tidb-util --lib -- runtime_stats::tests:: exec_details::tests:: tiflash_stats::tests:: ruv2_metrics::tests:: --test-threads=1",
+    "cd /workspace/tidb; make lint",
+    "cd /workspace/tidb; git diff --check"
+  ],
+  "retained_owners": [
+    "RuntimeStatsColl, Basic/Root/Cop runtime statistics and RuntimeStatsWithCommit/concurrency extension tests",
+    "SyncExecDetails uses native CommitDetails/LockKeysDetails.merge directly",
+    "Native ExecDetails.snapshot retains all field assertions",
+    "Canonical tidb-util RU metrics and TiFlash summaries"
+  ],
+  "remaining_go_obligations": [
+    "Live statement-context initialization, inheritance, lifetime and RU propagation",
+    "Current Go distinct RURuntimeStats/ExplainRURuntimeStats integration; the deleted combined wrapper had no production caller"
+  ],
+  "gates": {
+    "lint": "passed",
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; external final handoff records completion"
+  },
+  "limits": [
+    "No full Go suite, SQL replay, live cluster or benchmark; no measured speedup",
+    "No broad finding disposition change or package acceptance",
+    "Out-of-tree callers of removed seed APIs need maintained owners"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/exec-details-cleanup/final-handoff.json"
+}

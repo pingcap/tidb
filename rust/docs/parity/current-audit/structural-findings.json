@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "reader-resolver-cleanup-validation.json",
-    "scope": "Remove disconnected table/index reader and tableless result-field resolver with their private harnesses: six files, 2268 net Rust lines and 19 private tests. Retained DistSQL runtime, response lifecycle, coprocessor readers, result metadata conversion and all their existing tests remain byte-identical. Correct the crate description and mark obsolete reader ownership references as historical.",
+    "receipt": "exec-details-cleanup-validation.json",
+    "scope": "Retire unconsumed statement execution-context lifecycle and the disconnected RU statistics wrapper: 545 net Rust lines and ten private RU tests removed. Replace two forwarding merge helpers at all seven call sites with native methods. Preserve collector/commit/TiFlash tests unchanged and retain every atomic snapshot field assertion against the canonical native API.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1104,6 +1104,11 @@
     {
       "receipt": "reader-resolver-cleanup-validation.json",
       "scope": "Remove disconnected table/index reader and tableless result-field resolver with their private harnesses: six files, 2268 net Rust lines and 19 private tests. Retained DistSQL runtime, response lifecycle, coprocessor readers, result metadata conversion and all their existing tests remain byte-identical. Correct the crate description and mark obsolete reader ownership references as historical.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "exec-details-cleanup-validation.json",
+      "scope": "Retire unconsumed statement execution-context lifecycle and the disconnected RU statistics wrapper: 545 net Rust lines and ten private RU tests removed. Replace two forwarding merge helpers at all seven call sites with native methods. Preserve collector/commit/TiFlash tests unchanged and retain every atomic snapshot field assertion against the canonical native API.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

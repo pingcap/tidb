@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [disconnected reader and result resolver](reader-resolver-cleanup-validation.json). Remove disconnected table/index reader and tableless result-field resolver with their private harnesses: six files, 2268 net Rust lines and 19 private tests. Retained DistSQL runtime, response lifecycle, coprocessor readers, result metadata conversion and all their existing tests remain byte-identical. Correct the crate description and mark obsolete reader ownership references as historical.
+Latest cleanup: [unused execution-context and RU wrappers](exec-details-cleanup-validation.json). Retire unconsumed statement execution-context lifecycle and the disconnected RU statistics wrapper: 545 net Rust lines and ten private RU tests removed. Replace two forwarding merge helpers at all seven call sites with native methods. Preserve collector/commit/TiFlash tests unchanged and retain every atomic snapshot field assertion against the canonical native API.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

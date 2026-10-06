@@ -19,7 +19,7 @@
 //! [`StmtCopRuntimeStats`]/[`BasicRuntimeStats`]/[`RootRuntimeStats`]/
 //! [`RuntimeStatsColl`]/
 //! [`ConcurrencyInfo`]/[`RuntimeStatsWithConcurrencyInfo`]/
-//! [`RuntimeStatsWithCommit`]/[`RuRuntimeStats`] with their byte-exact
+//! [`RuntimeStatsWithCommit`] with their byte-exact
 //! `String()` renderings, `getPlanIDFromExecutionSummary`, and `util.go`'s
 //! `canGetFloat64`/[`Int64`]/[`Duration`]/[`DurationWithAddr`]/
 //! [`Percentile`]/[`format_duration`] (`FormatDuration`) surface.
@@ -31,17 +31,7 @@
 //!   [`crate::exec_details::TimeDetail`] representations.
 //! - client-go `*util.CommitDetails`/`*util.LockKeysDetails` reuse
 //!   [`crate::exec_details::CommitDetails`]/[`crate::exec_details::LockKeysDetails`];
-//!   their client-go `Merge` behavior is implemented by
-//!   [`merge_commit_details`]/[`merge_lock_keys_details`].
-//! - client-go `*util.RUDetails` reuses [`tikv_client::RuDetails`], including
-//!   its synchronized `Merge` and deep-clone behavior.
-//! - `*execdetails.RUV2Metrics` reuses
-//!   [`tidb_util::ruv2_metrics::RuV2Metrics`] and
-//!   [`tidb_util::ruv2_metrics::RuV2Weights`].
-//! - `rmclient.RUVersion` (pd client, source not on disk) → plain [`i64`]
-//!   ([`RU_VERSION_V1`] `= 1`, [`RU_VERSION_V2`] `= 2`), pinned by the Go
-//!   doc comment on `RURuntimeStats` ("1 (v1) … 2 (v2) … 0 / unknown
-//!   defaults to v1").
+//!   their native client `Merge` methods own detail accumulation.
 //! - `kv.StoreType` → [`StoreType`] with the `Name()` spellings from
 //!   `pkg/kv/kv.go`.
 //!
@@ -55,9 +45,10 @@
 //! `TestColumnarScanContextStats`) live in [`crate::tiflash_stats`]'s test
 //! module and drive these production types.
 //!
-//! The context lifecycle is implemented in [`crate::exec_details`], and
-//! percentile aggregation uses the algorithm and defaults of the pinned
-//! `github.com/influxdata/tdigest` dependency. Shared runtime-statistics
+//! The detached execution-context and RU EXPLAIN wrappers are retired; their
+//! live session integration remains an obligation. Percentile aggregation uses
+//! the algorithm and defaults of the pinned `github.com/influxdata/tdigest`
+//! dependency. Shared runtime-statistics
 //! state retains Go's mutex/atomic synchronization.
 
 use std::any::Any;
@@ -72,7 +63,6 @@ use tidb_proto::ExecutorExecutionSummary;
 use crate::exec_details::{
     format_go_duration, format_seconds_3, CommitDetails, LockKeysDetails, ScanDetail, TimeDetail,
 };
-use tidb_util::ruv2_metrics::RuV2Weights;
 use crate::tiflash_stats::{TiFlashNetworkTrafficSummary, TiflashStats};
 
 /// Go `TpBasicRuntimeStats`: the tp for `BasicRuntimeStats`.
@@ -115,18 +105,11 @@ pub const TP_UPDATE_RUNTIME_STATS: i32 = 16;
 pub const TP_FK_CHECK_RUNTIME_STATS: i32 = 17;
 /// Go `TpFKCascadeRuntimeStats`: the tp for `FKCascadeRuntimeStats`.
 pub const TP_FK_CASCADE_RUNTIME_STATS: i32 = 18;
-/// Go `TpRURuntimeStats`: the tp for `RURuntimeStats`.
-pub const TP_RU_RUNTIME_STATS: i32 = 19;
 
 /// Go `execdetails.MaxDetailsNumsForOneQuery` (`execdetails.go`): the max
 /// number of details kept exactly before [`Percentile`] switches to the
 /// digest.
 pub const MAX_DETAILS_NUMS_FOR_ONE_QUERY: usize = 1000;
-
-/// Go `rmclient.RUVersionV1` (pd client): RU accounting v1.
-pub const RU_VERSION_V1: i64 = 1;
-/// Go `rmclient.RUVersionV2` (pd client): RU accounting v2.
-pub const RU_VERSION_V2: i64 = 2;
 
 /// Go `kv.StoreType` (`pkg/kv/kv.go`): the type of storage engine, with
 /// Go's zero value (`TiKV`) as the default.
@@ -1428,16 +1411,6 @@ impl RuntimeStats for RuntimeStatsWithConcurrencyInfo {
     }
 }
 
-/// client-go `CommitDetails.Merge`.
-pub fn merge_commit_details(dst: &mut CommitDetails, src: &CommitDetails) {
-    dst.merge(src);
-}
-
-/// client-go `LockKeysDetails.Merge`.
-pub fn merge_lock_keys_details(dst: &mut LockKeysDetails, src: &LockKeysDetails) {
-    dst.merge(src);
-}
-
 /// Go `RuntimeStatsWithCommit`: the runtime stats with commit and lock-keys
 /// detail.
 #[derive(Clone, Debug, Default)]
@@ -1464,7 +1437,7 @@ impl RuntimeStatsWithCommit {
                 self.txn_cnt = 1;
             }
             Some(commit) => {
-                merge_commit_details(commit, detail);
+                commit.merge(detail);
                 self.txn_cnt += 1;
             }
         }
@@ -1679,20 +1652,19 @@ impl RuntimeStats for RuntimeStatsWithCommit {
         };
         self.txn_cnt += tmp.txn_cnt;
         if let Some(src) = &tmp.commit {
-            merge_commit_details(self.commit.get_or_insert_with(CommitDetails::default), src);
+            self.commit
+                .get_or_insert_with(CommitDetails::default)
+                .merge(src);
         }
         if let Some(src) = &tmp.lock_keys {
-            merge_lock_keys_details(
-                self.lock_keys.get_or_insert_with(LockKeysDetails::default),
-                src,
-            );
+            self.lock_keys
+                .get_or_insert_with(LockKeysDetails::default)
+                .merge(src);
         }
         if let Some(src) = &tmp.shared_lock_keys {
-            merge_lock_keys_details(
-                self.shared_lock_keys
-                    .get_or_insert_with(LockKeysDetails::default),
-                src,
-            );
+            self.shared_lock_keys
+                .get_or_insert_with(LockKeysDetails::default)
+                .merge(src);
         }
     }
 
@@ -1702,112 +1674,6 @@ impl RuntimeStats for RuntimeStatsWithCommit {
 
     fn tp(&self) -> i32 {
         TP_RUNTIME_STATS_WITH_COMMIT
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// Go `RURuntimeStats`: RU details and statement-level RU v2 metrics for
-/// EXPLAIN output. `ru_version` selects the accounting version — `1` (v1)
-/// shows RRU + WRU, `2` (v2) shows the v2 total, `0`/unknown defaults to
-/// v1.
-#[derive(Debug, Default)]
-pub struct RuRuntimeStats {
-    /// Go's embedded `*util.RUDetails`.
-    pub ru_details: Option<Arc<tikv_client::RuDetails>>,
-    /// Go `RURuntimeStats.Metrics`.
-    pub metrics: Option<Arc<tidb_util::ruv2_metrics::RuV2Metrics>>,
-    /// Go `RURuntimeStats.Weights`.
-    pub weights: RuV2Weights,
-    /// Go `RURuntimeStats.RUVersion` (`rmclient.RUVersion`, narrowed to a
-    /// plain integer).
-    pub ru_version: i64,
-}
-
-impl Clone for RuRuntimeStats {
-    fn clone(&self) -> Self {
-        Self {
-            ru_details: self
-                .ru_details
-                .as_ref()
-                .map(|details| Arc::new(details.cloned())),
-            metrics: self
-                .metrics
-                .as_ref()
-                .map(|metrics| Arc::new(metrics.as_ref().clone())),
-            weights: self.weights,
-            ru_version: self.ru_version,
-        }
-    }
-}
-
-impl RuRuntimeStats {
-    /// Go `RURuntimeStats.Clone`'s nil-receiver seam: cloning a nil
-    /// receiver yields the zero value.
-    #[must_use]
-    pub fn clone_nullable(stats: Option<&RuRuntimeStats>) -> RuRuntimeStats {
-        match stats {
-            None => RuRuntimeStats::default(),
-            Some(stats) => stats.clone(),
-        }
-    }
-}
-
-impl RuntimeStats for RuRuntimeStats {
-    fn string(&self) -> String {
-        if self.ru_version == RU_VERSION_V2 {
-            let (tikv_ru, tiflash_ru) = match &self.ru_details {
-                Some(details) => (details.tikv_ru_v2(), details.tiflash_ru()),
-                None => (0.0, 0.0),
-            };
-            let total_ru = tidb_util::ruv2_metrics::total_ru(
-                self.metrics.as_deref(),
-                self.weights,
-                tikv_ru,
-                tiflash_ru,
-            );
-            if total_ru == 0.0 {
-                return String::new();
-            }
-            return format!("RU:{total_ru:.2}");
-        }
-        // v1 or unknown.
-        match &self.ru_details {
-            Some(details) => format!("RU:{:.2}", details.read_ru() + details.write_ru()),
-            None => String::new(),
-        }
-    }
-
-    fn merge(&mut self, other: &dyn RuntimeStats) {
-        let Some(tmp) = other.as_any().downcast_ref::<RuRuntimeStats>() else {
-            return;
-        };
-        match (&self.ru_details, &tmp.ru_details) {
-            (Some(dst), Some(src)) => dst.merge(src),
-            (None, Some(src)) => self.ru_details = Some(Arc::new(src.cloned())),
-            _ => {}
-        }
-        match (&self.metrics, &tmp.metrics) {
-            (Some(metrics), Some(src)) => metrics.merge(src),
-            (None, Some(src)) => self.metrics = Some(Arc::new(src.as_ref().clone())),
-            _ => {}
-        }
-        if self.weights == RuV2Weights::default() {
-            self.weights = tmp.weights;
-        }
-        if self.ru_version == 0 {
-            self.ru_version = tmp.ru_version;
-        }
-    }
-
-    fn clone_box(&self) -> Box<dyn RuntimeStats> {
-        Box::new(self.clone())
-    }
-
-    fn tp(&self) -> i32 {
-        TP_RU_RUNTIME_STATS
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -1863,49 +1729,6 @@ mod tests {
             num_iterations: Some(num_iterations),
             ..ExecutorExecutionSummary::default()
         }
-    }
-
-    /// Go `defaultRUV2WeightsForTest`, seeded with the values of
-    /// `config.DefaultRUV2Config()` (`pkg/config/config.go`).
-    fn default_ruv2_weights_for_test() -> RuV2Weights {
-        RuV2Weights {
-            ru_scale: 2.01,
-            result_chunk_cells: 0.000_1,
-            executor_l1: 0.000_132_78,
-            executor_l2: 0.000_003_83,
-            executor_l3: 0.001_417_39,
-            executor_l5_insert_rows: 0.004_725_72,
-            plan_cnt: 0.153_922_17,
-            plan_derive_stats_paths: 0.249_681_82,
-            resource_manager_read_cnt: 0.020_720_03,
-            resource_manager_write_cnt: 0.071_797_79,
-            write_keys: 0.330_760_861_554_226,
-            session_parser_total: 0.192_304_99,
-            txn_cnt: 0.030_137_09,
-        }
-    }
-
-    fn empty_ruv2_metrics() -> Arc<tidb_util::ruv2_metrics::RuV2Metrics> {
-        Arc::new(tidb_util::ruv2_metrics::RuV2Metrics::new())
-    }
-
-    fn v1_ru_details(read_ru: f64, write_ru: f64) -> Arc<tikv_client::RuDetails> {
-        Arc::new(tikv_client::RuDetails::new_with(
-            read_ru,
-            write_ru,
-            StdDuration::ZERO,
-        ))
-    }
-
-    fn v2_ru_details() -> Arc<tikv_client::RuDetails> {
-        let details = Arc::new(tikv_client::RuDetails::new());
-        details.add_tikv_ru_v2(200.0);
-        details.update_tiflash(&tikv_client::proto::resource_manager::Consumption {
-            r_r_u: 100.0,
-            w_r_u: 200.0,
-            ..Default::default()
-        });
-        details
     }
 
     /// Port of Go `TestCopRuntimeStats` (`execdetails_test.go`), expected
@@ -2334,148 +2157,4 @@ mod tests {
         }
     }
 
-    /// Port of Go `TestRURuntimeStatsStringV1` (`execdetails_test.go`).
-    #[test]
-    fn ru_runtime_stats_string_v1() {
-        let stats = RuRuntimeStats {
-            ru_details: Some(v1_ru_details(10.5, 20.3)),
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ru_version: RU_VERSION_V1,
-        };
-        // v1: shows RRU + WRU.
-        assert_eq!("RU:30.80", stats.string());
-    }
-
-    /// Port of Go `TestRURuntimeStatsStringV1NilDetails`.
-    #[test]
-    fn ru_runtime_stats_string_v1_nil_details() {
-        let stats = RuRuntimeStats {
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ru_version: RU_VERSION_V1,
-            ..RuRuntimeStats::default()
-        };
-        // v1 with nil RUDetails returns empty.
-        assert_eq!("", stats.string());
-    }
-
-    /// Port of Go `TestRURuntimeStatsStringV2`. Go builds the details with
-    /// `AddTiKVRUV2(200)` and `UpdateTiFlash(&Consumption{RRU: 100, WRU:
-    /// 200})` (`TiKVRUV2() == 200`, `TiflashRU() == 300`).
-    #[test]
-    fn ru_runtime_stats_string_v2() {
-        let stats = RuRuntimeStats {
-            ru_details: Some(v2_ru_details()),
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ru_version: RU_VERSION_V2,
-        };
-        // v2: shows total RU from v2 metrics (tikvRU + tiflashRU + tidbRU).
-        assert_eq!("RU:500.00", stats.string());
-    }
-
-    /// Port of Go `TestRURuntimeStatsStringV2ZeroRU`.
-    #[test]
-    fn ru_runtime_stats_string_v2_zero_ru() {
-        let stats = RuRuntimeStats {
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ru_version: RU_VERSION_V2,
-            ..RuRuntimeStats::default()
-        };
-        // v2 with zero total RU returns empty.
-        assert_eq!("", stats.string());
-    }
-
-    /// Port of Go `TestRURuntimeStatsStringDefaultVersion`.
-    #[test]
-    fn ru_runtime_stats_string_default_version() {
-        // RUVersion=0 (zero value) should default to v1 for backward
-        // compatibility.
-        let stats = RuRuntimeStats {
-            ru_details: Some(v1_ru_details(10.5, 20.3)),
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ..RuRuntimeStats::default()
-        };
-        // default (v1): shows RRU + WRU.
-        assert_eq!("RU:30.80", stats.string());
-    }
-
-    /// Port of Go `TestRURuntimeStatsClonePreservesRUVersion`.
-    #[test]
-    fn ru_runtime_stats_clone_preserves_ru_version() {
-        let stats = RuRuntimeStats {
-            ru_details: Some(v1_ru_details(10.0, 20.0)),
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ru_version: RU_VERSION_V1,
-        };
-        let cloned = stats.clone_box();
-        let cloned = cloned.as_any().downcast_ref::<RuRuntimeStats>().unwrap();
-        assert_eq!(RU_VERSION_V1, cloned.ru_version);
-        // Verify the clone produces the same output.
-        assert_eq!(stats.string(), cloned.string());
-    }
-
-    /// Port of Go `TestRURuntimeStatsCloneNilPreservesZeroVersion`.
-    #[test]
-    fn ru_runtime_stats_clone_nil_preserves_zero_version() {
-        let cloned = RuRuntimeStats::clone_nullable(None);
-        assert_eq!(0, cloned.ru_version);
-    }
-
-    /// Port of Go `TestRURuntimeStatsMergeRUVersion`.
-    #[test]
-    fn ru_runtime_stats_merge_ru_version() {
-        // Merge takes RUVersion from other when receiver has zero value.
-        let mut dst = RuRuntimeStats {
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ..RuRuntimeStats::default()
-        };
-        let src = RuRuntimeStats {
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ru_version: RU_VERSION_V2,
-            ..RuRuntimeStats::default()
-        };
-        dst.merge(&src);
-        assert_eq!(RU_VERSION_V2, dst.ru_version);
-    }
-
-    /// Port of Go `TestRURuntimeStatsMergeKeepsExistingRUVersion`.
-    #[test]
-    fn ru_runtime_stats_merge_keeps_existing_ru_version() {
-        // Merge does NOT override a non-zero RUVersion.
-        let mut dst = RuRuntimeStats {
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ru_version: RU_VERSION_V1,
-            ..RuRuntimeStats::default()
-        };
-        let src = RuRuntimeStats {
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ru_version: RU_VERSION_V2,
-            ..RuRuntimeStats::default()
-        };
-        dst.merge(&src);
-        assert_eq!(RU_VERSION_V1, dst.ru_version);
-    }
-
-    /// Port of Go `TestRURuntimeStatsStringIncludesTiFlashRU`. Go builds
-    /// the details with `AddTiKVRUV2(200)` and
-    /// `UpdateTiFlash(&Consumption{RRU: 100, WRU: 200})`.
-    #[test]
-    fn ru_runtime_stats_string_includes_tiflash_ru() {
-        let stats = RuRuntimeStats {
-            ru_details: Some(v2_ru_details()),
-            metrics: Some(empty_ruv2_metrics()),
-            weights: default_ruv2_weights_for_test(),
-            ru_version: RU_VERSION_V2,
-        };
-        assert_eq!("RU:500.00", stats.string());
-    }
 }

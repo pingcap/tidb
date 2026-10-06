@@ -1,5 +1,11 @@
 # `pkg/util/execdetails` — Go-master parity boundary receipt
 
+Current cleanup status (2026-10-06): the detached Rust statement-context/RU
+wrapper and its private tests were retired. Canonical client detail merging,
+atomic snapshots and live runtime collectors remain. The upstream inventory
+below is historical evidence, not a claim that these context/EXPLAIN paths
+are integrated. See [the cleanup receipt](../../docs/parity/current-audit/exec-details-cleanup-validation.json).
+
 Status: audited, but unclaimed as a package-complete transcreation. The
 package is a cross-cutting execution-details owner whose current Rust pieces
 are explicitly `SEED`s; the missing context, client-go, protobuf, Prometheus,
