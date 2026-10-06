@@ -11,11 +11,11 @@ column+convert, advertisedstatus, util, dump, handshake) against
    instead of falling into `Unknown`; Go answers both
    (conn.go:1554/1567). The read-only Rust SQL node answers them with its
    declared unsupported-commands error, next to FieldList/ResetConnection.
-2. `error_conversion.rs` + `resultset_stream.rs`: an unrenderable result
-   datum now maps to `ErrorKind::InvalidType` (Go `err.ErrInvalidType`,
-   8057, column.go:175/238) via the new
-   `ResultSetStreamError::error_kind()`, instead of the 1105 unknown
-   fallback. Regression: `invalid_type_maps_to_go_err_invalid_type`.
+2. Historical invalid-type conversion proof was disconnected from the wire
+   path. Its unused error category/descriptor adapter and
+   `ResultSetStreamError::error_kind` were retired in the statement-boundary
+   cleanup. Retained result-stream tests exercise actual text-format failures;
+   the removed proof does not establish live wire errno 8057 parity.
 
 ## Documented obligations and narrowings
 

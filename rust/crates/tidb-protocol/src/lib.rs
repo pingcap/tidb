@@ -24,7 +24,6 @@ mod column;
 mod command;
 mod compression;
 mod error;
-mod error_conversion;
 mod error_packet;
 mod packet;
 mod prepared_statement;
@@ -55,12 +54,6 @@ pub use compression::{
     MAX_COMPRESSED_BATCH_SIZE, MIN_COMPRESS_LENGTH,
 };
 pub use error::PacketError;
-pub use error_conversion::{
-    error_packet_from_descriptor, ErrorDescriptor, ErrorKind, MYSQL_ERR_BAD_FIELD,
-    MYSQL_ERR_DATA_TOO_LONG, MYSQL_ERR_DUP_ENTRY, MYSQL_ERR_DUP_KEY_NAME,
-    MYSQL_ERR_NOT_SUPPORTED_YET, MYSQL_ERR_PARSE, MYSQL_ERR_UNKNOWN, MYSQL_ERR_UNKNOWN_TABLE,
-    MYSQL_ERR_WARN_DATA_OUT_OF_RANGE, MYSQL_ERR_WRONG_VALUE_COUNT_ON_ROW,
-};
 pub use error_packet::{encode_error_packet, ErrorPacket, ERR_HEADER};
 pub use packet::{
     PacketHeader, PacketIoReader, PacketIoWriter, PacketReader, PacketWriter,

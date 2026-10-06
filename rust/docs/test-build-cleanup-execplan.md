@@ -1,96 +1,91 @@
-# Retire disconnected context policy and forwarding harnesses
+# Retire disconnected statement and error boundaries
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Remove the unused executor ErrorContext/ErrorContextFlags/ErrorDisposition
-model and its private tests; use tidb_error::errctx directly in live consumers.
-Also remove RU-metrics and dynamic-default forwarding layers in tidb-exec.
-Work in /workspace/tidb on hparser-integration from
-69cdbf80ff06464f6227b0eba3ba1a62ea6a6123. Go master is
-b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Current Go enables adaptive-limit
-scan for every new install; Rust's TiKV-only initial-value guard is stale.
+Remove the unused statement-status model and executor/protocol error-conversion
+chain. Their private tests exercised models that the server never called.
+Work in /workspace/tidb on hparser-integration from bbe6da8779ecb93b847afa5187f64cc0e4120398.
+Fresh Go master is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed.
+The live owners are tidb-session/src/stmt_ctx.rs::publish_statement_status,
+tidb-executor/src/driver/errors and tidb-protocol/src/error_packet.rs.
 
 ## Progress
 
 
-- [x] Trace model consumers: only its own tests; identify shared live owners.
-- [x] Remove four files and migrate live imports plus useful assertions.
-- [x] Reproduce classic-store adaptive-limit default failure against unchanged owner.
-- [x] Remove stale store guard to match freshly fetched Go master.
-- [x] Validate grouped owner/consumer tests, lint, continuity and diff.
-- [ ] Pass actual hook, fresh pre-push build and remote verification.
-- [ ] Verify recovery bundle and save/read back Cloud checkpoint.
+- [x] Trace complete disconnected chain and retained owners against live sources.
+- [x] Remove six files, dead stream method and registrations; retain warning types and cap vectors.
+- [x] Run grouped warning, packet, stream and driver-owner tests; lint and diff review.
+- [ ] Pass actual hook build, fresh pre-push locked build and verify remote SHA.
+- [ ] Preserve recovery bundle and save/read back Cloud checkpoint.
 
 ## Milestones and Plan of Work
 
 
-Delete executor/src/error_context.rs, exec/src/ruv2_metrics.rs and the two
-exec test carriers error_context_source/global_sysvar_initial_source.
-Point executor stmt_context and statement_pushdown at tidb_error::errctx.
-Point exec execution details, runtime stats and slow-log RU types at tidb_util.
-Point bootstrap commit policy at tidb_vardef. Remove corresponding modules,
-forwarding exports and obsolete comments. Keep live error handling unchanged.
-
-Preserve group ordering/defaults and all ResolveErrLevel combinations in the
-existing errctx owner test. Move the conversion-warning sink test to its
-warning_publication implementation. Compact all twenty global-default vectors
-into the existing vardef owner test, correcting the one classic adaptive-limit
-expectation that conflicts with current Go. Its new ON expectation fails before
-the production guard removal. Keep the other nineteen vectors and original
-owner cases. Four tests solely exercising the disconnected model are retired;
-shared errctx context and live pushdown suites remain the behavior owners.
+Delete exec/src/statement_status.rs, exec/src/error_conversion.rs,
+protocol/src/error_conversion.rs and their three private test files. Remove
+unused root exports and ResultSetStreamError::error_kind (zero callers).
+Move StatementWarning and WarningLevel unchanged into warning_publication;
+keep their root exports. Extend the existing warning-handler test with the
+individual append cap and oversized batch/set vectors from the retired model.
+Keep live DriverError rendering, result streaming and raw ERR framing untouched.
+Correct three documents that describe the retired proof as a live boundary.
+The retained driver-error test exposed five old MysqlError expected values
+missing the existing evaluation-origin marker. Correct those expected values
+with from_evaluation(), preserving exact code/state/message assertions.
 
 ## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh and set CARGO_BUILD_JOBS=1. From rust/:
+Source /workspace/.cloud-setup/env.sh and use CARGO_BUILD_JOBS=1 in rust/:
 
-    cargo test --locked -p tidb-vardef -p tidb-exec --lib -- global_sysvar_initial:: exec_details:: runtime_stats:: slow_log_format:: session_commit_protocol:: warning_publication:: --test-threads=1
-    cargo test --locked -p tidb-error -p tidb-executor --test all -- errctx_source:: statement_pushdown_source:: --test-threads=1
+    cargo test --locked -p tidb-exec -p tidb-protocol --test all -- warning_publication_source:: error_packet_source:: resultset_stream_source:: --test-threads=1
+    cargo test --locked -p tidb-executor --lib -- driver::errors:: --test-threads=1
 
-Require nonzero passing runs for each target; record failures unchanged.
-Before the adaptive guard edit, global_system_variable_initial_value_table
-must fail with actual OFF versus Go ON; the same test must pass afterward.
-Verify all preserved vectors and import-only production changes outside that
-single policy correction. From root run make lint and git diff --check.
-The real pre-commit hook must pass cd rust && cargo build --locked -p
-tidb-server; rerun immediately before authorized normal push to pingcap/tidb
-hparser-integration, then verify remote SHA. Never bypass hooks or force push.
+Require nonzero passing tests for every selected target. Verify moved types
+unchanged and no remaining references to removed descriptors/models. Run root
+make lint and git diff --check. This is removal of disconnected code, not a
+behavior fix, so no invented fail-before regression. The real pre-commit hook
+must run cd rust && cargo build --locked -p tidb-server. Rerun immediately
+before authorized normal push; verify hparser-integration remote SHA.
 
 ## Surprises & Discoveries
 
 
-The ErrorContext doc claimed it was used by pushdown, but only its re-exported
-shared types had live callers. Its private model tests did not exercise SQL.
-Go's GlobalSystemVariableInitialValue no longer conditions adaptive-limit scan
-on the store. This is a real default-policy fix discovered during cleanup.
+The statement model's documentation named a retired Session consumer.
+The protocol error table and unused result-stream category method formed the
+other half of the same disconnected adapter; historical errno proof did not
+validate live wire behavior. The first driver-owner run had 9 passes and one stale expectation failure:
+actual code/state/message matched, but expected from_evaluation was false.
+Production rendering already marks evaluation errors true; five expected
+values need the same marker. Warning handlers remain a bounded Go utility;
+retaining them does not claim that every warning path shares their owner.
 
 ## Decision Log
 
 
-Delete the disconnected model, not the shared errctx owner. Keep source-backed
-assertions and Rust warning-sink coverage in actual owners. Fix the stale Go
-expectation with fail-before/pass-after evidence. Do not claim complete package
-acceptance or mark a broad finding repaired from this bounded maintenance.
+Remove the complete unused chain in one batch. Preserve warning cap/batch/set
+semantics in the actual utility owner tests, with u16 wrapping checked at the
+publication boundary. Keep live driver-error and protocol byte tests. No broad
+finding closure or full Go package acceptance is claimed by this cleanup.
 
 ## Outcomes & Retrospective
 
 
-Implementation and validation complete: 35 selected tests pass; lint,
-continuity and diff checks pass. The adaptive-limit case fails before and passes
-after the correction. Four files and 473 net Rust lines removed. Publication pending. No broad
-finding disposition changes. Native client-rust is unchanged.
+Implementation and grouped validation complete: 31 tests, lint, continuity
+and diff checks pass. Six files and 1180 net Rust lines removed.
+Commit/push and checkpoint gates remain pending in this committed receipt;
+external final-handoff.json records their eventual results. Native client-rust is unchanged.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Use git show 69cdbf80ff:<path> for individual before-images without overwriting
-concurrent changes. Logs and inventory live in
-/workspace/.cloud-setup/context-owner-cleanup. Durable receipt:
-rust/docs/parity/current-audit/context-owner-cleanup-validation.json.
-No dependency changes. Cloud draft save, Publish and fresh-task restoration
-remain separate. Revision: replace completed join forwarding cleanup with
-context/default/metrics ownership and stale adaptive-limit default repair.
+Before-images are recoverable with git show bbe6da8779:<path>; restore only
+individual files without overwriting concurrent work. Logs and inventory live
+in /workspace/.cloud-setup/statement-boundary-cleanup. Durable receipt is
+rust/docs/parity/current-audit/statement-boundary-cleanup-validation.json.
+No dependency changes. Cloud save, Publish and fresh-task restoration are
+separate. Revision: replace completed context-owner cleanup with retirement
+of the disconnected statement/error chain and its private tests.

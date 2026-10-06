@@ -46,18 +46,22 @@ it is the correct shape for a statement that has no evaluation phase. Go does
 the same thing — `SetSessionSystemVar` reaches `StmtCtx.AppendWarning` directly,
 not through a type-conversion context.
 
+The unused statement-status model was retired; warning entry types now live
+with `warning_publication.rs`. The live session publishes its own status in
+`tidb-session/src/stmt_ctx.rs::publish_statement_status`.
+
 ## Stack B — BOUNDED. `tidb-exec`, source-faithful `WarnHandler` port.
 
 | Site | Role |
 | --- | --- |
-| `tidb-exec/src/warning_publication.rs:53` `StaticWarningHandler` | source `StaticWarnHandler`: mutable sink with the `MaxUint16` cap |
-| `tidb-exec/src/warning_publication.rs:175` `IgnoreWarnings` | source `ignoreWarn`: no-op sink |
-| `tidb-exec/src/warning_publication.rs:286` `WarningPublication` | **read-only borrowed view**, no storage of its own |
-| `tidb-exec/src/statement_status.rs:114,262` | per-statement **status owner**; warnings are one field beside affected-rows and counters |
+| `tidb-exec/src/warning_publication.rs` `StaticWarningHandler` | source `StaticWarnHandler`: mutable sink with the `MaxUint16` cap |
+| `tidb-exec/src/warning_publication.rs` `IgnoreWarnings` | source `ignoreWarn`: no-op sink |
+| `tidb-exec/src/warning_publication.rs` `WarningPublication` | **read-only borrowed view**, no storage of its own |
 
-`tidb-session/Cargo.toml` does **not** depend on `tidb-exec`. This stack is
-reachable only from `tidb-exec`, its own tests, and the `ReadOnlyScanPlan`
-bounded proof tier documented in `read-tier-boundary.md`.
+`tidb-session` depends on `tidb-exec`, but the shared warning-handler types
+currently have no production consumers outside their utility implementation.
+Their retained source-backed tests validate the Go warning utility; they do
+not prove that the session routes warnings through this owner.
 
 ## Stack C — BOUNDED, and unwired past its own crate.
 

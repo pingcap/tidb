@@ -17,7 +17,6 @@
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
 mod binary_params_source;
 mod column_metadata_source;
-mod error_conversion_source;
 mod error_packet_source;
 mod packetio_source;
 mod prepared_statement_protocol_source;

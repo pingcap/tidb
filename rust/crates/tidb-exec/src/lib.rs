@@ -72,7 +72,6 @@ pub mod mview_schedule_derive;
 pub use deadlock_recording::configure_deadlock_history;
 pub mod distsql_recordset;
 mod error;
-mod error_conversion;
 pub mod exec_details;
 pub mod explain;
 pub mod hint_updatable_vars;
@@ -110,7 +109,6 @@ pub mod slow_log_match;
 pub mod slow_log_parse;
 pub mod slow_log_rules;
 pub mod slow_log_threshold;
-mod statement_status;
 pub mod stats_watch;
 pub mod storage_class;
 pub mod storage_reader;
@@ -124,7 +122,6 @@ pub mod warning_publication;
 pub mod wide_scan_selection;
 
 pub use error::ExecError;
-pub use error_conversion::{exec_error_descriptor, exec_error_kind, RenderedExecError};
 pub use result::{Outcome, ResultSet, Row};
 pub use result_field_resolver::{
     resolve_parsed_select_fields, resolve_result_fields, resolve_select_fields,
@@ -135,10 +132,7 @@ pub use result_metadata::{
     AdaptedResultField, FieldNameMetadata, IdentifierMetadata, ResultFieldMetadata,
     ResultFieldTypeMetadata, MAX_ALIAS_IDENTIFIER_LEN, NOT_FIXED_DEC, NOT_NULL_FLAG, UNSIGNED_FLAG,
 };
-pub use statement_status::{
-    PublishedStatementStatus, StatementKind, StatementStatus, StatementWarning, WarningLevel,
-};
 pub use warning_publication::{
-    warnings_from_json, warnings_to_json, IgnoreWarnings, StaticWarningHandler, WarningAppender,
-    WarningHandler, WarningPublication, WarningSummary,
+    warnings_from_json, warnings_to_json, IgnoreWarnings, StatementWarning, StaticWarningHandler,
+    WarningAppender, WarningHandler, WarningLevel, WarningPublication, WarningSummary,
 };

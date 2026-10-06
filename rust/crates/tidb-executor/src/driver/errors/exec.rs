@@ -362,11 +362,11 @@ mod tests {
             rendered(ExecError::Eval(EvalError::Sequence(
                 SequenceEvalError::RunOut("test.s1".to_owned())
             ))),
-            MysqlError::new(4135, "Sequence 'test.s1' has run out")
+            MysqlError::new(4135, "Sequence 'test.s1' has run out").from_evaluation()
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DivisionByZero)),
-            MysqlError::new(1365, "Division by 0")
+            MysqlError::new(1365, "Division by 0").from_evaluation()
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::WrongParameterCount(
@@ -375,7 +375,7 @@ mod tests {
             MysqlError::new(
                 1582,
                 "Incorrect parameter count in the call to native function 'aes_encrypt'"
-            )
+            ).from_evaluation()
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::IncorrectArguments(
@@ -384,14 +384,14 @@ mod tests {
             MysqlError::new(
                 1210,
                 "The initialization vector supplied to aes_encrypt is too short"
-            )
+            ).from_evaluation()
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DataOutOfRange {
                 value: "length",
                 expression: "random_bytes".to_string(),
             })),
-            MysqlError::new(1690, "length value is out of range in 'random_bytes'")
+            MysqlError::new(1690, "length value is out of range in 'random_bytes'").from_evaluation()
         );
     }
 

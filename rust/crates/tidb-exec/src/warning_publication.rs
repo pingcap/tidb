@@ -16,15 +16,43 @@
 //!
 //! [`StaticWarningHandler`] and [`IgnoreWarnings`] are the shared mutable and
 //! no-op warning sinks. [`WarningPublication`] is the borrowed publication
-//! view over their common [`StatementWarning`] entries and the entries already
-//! owned by [`super::statement_status::StatementStatus`].
+//! view over their common [`StatementWarning`] entries.
 
 use std::sync::Mutex;
 
 use tidb_datatype::ConversionWarningAppender;
 use tidb_error::terror::TerrorError;
 
-use super::statement_status::{StatementWarning, WarningLevel};
+/// SHOW WARNINGS-compatible warning levels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WarningLevel {
+    /// A hard error retained in the statement warning list.
+    Error,
+    /// An ordinary warning.
+    Warning,
+    /// An informational note.
+    Note,
+}
+
+/// One ordered statement warning.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatementWarning {
+    /// SHOW WARNINGS level.
+    pub level: WarningLevel,
+    /// Source error/note text. Error construction and SQL codes belong to the
+    /// future session/error-context owner.
+    pub message: String,
+}
+
+impl StatementWarning {
+    /// Creates a warning entry without inventing source error codes.
+    pub fn new(level: WarningLevel, message: impl Into<String>) -> Self {
+        Self {
+            level,
+            message: message.into(),
+        }
+    }
+}
 
 const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 

@@ -116,14 +116,11 @@ Nothing checks the state against the code, and the integration replay does not c
 output at all, so a disagreement between the two survives indefinitely. Every rank-2 finding
 below is an instance of that one cause.
 
-Note also that `rust/crates/tidb-protocol/src/error_conversion.rs` — which reads like the
-authoritative code table, complete with a documented policy on when to use `ErrUnknown` — is
-**dead code**. `error_packet_from_descriptor` and `exec_error_kind` are referenced only from
-`tidb-protocol/tests/error_conversion_source.rs` and
-`tidb-exec/tests/error_conversion_source.rs`. The live path is
-`DriverError::to_mysql_error` (`tidb-executor/src/driver/errors/mod.rs:105`) →
-`SqlQueryError` → `write_error`. Conclusions drawn from the protocol table do not describe
-wire behaviour.
+The disconnected `tidb-protocol`/`tidb-exec` error-conversion adapters and
+private tests were retired. They did not participate in wire error handling.
+The live path remains `DriverError::to_mysql_error`
+(`tidb-executor/src/driver/errors/mod.rs`) → `SqlQueryError` → `write_error`.
+Protocol framing remains in `tidb-protocol/src/error_packet.rs`.
 
 ## Ranked findings
 

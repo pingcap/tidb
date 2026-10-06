@@ -1,0 +1,124 @@
+{
+  "date": "2026-10-06",
+  "timezone": "Etc/UTC",
+  "base": "bbe6da8779ecb93b847afa5187f64cc0e4120398",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove the disconnected statement-status and executor/protocol error-conversion chain: six files, 1180 net Rust lines, fifteen private tests and an unused result-stream method. Keep warning types and useful cap/batch/set vectors with the shared warning owner; retain live session, driver-error and packet/stream owners. Correct three stale boundary documents and five stale evaluation-origin expectations in the retained driver-error test. No broad finding closure.",
+  "continuity": {
+    "base": "bbe6da8779ecb93b847afa5187f64cc0e4120398",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "removed_files": 6,
+    "removed_file_lines": 1205,
+    "retired_private_tests": 15,
+    "net_rust_lines_removed": 1180,
+    "warning_types_and_handler_unchanged": true,
+    "retained_live_files_unchanged": [
+      "rust/crates/tidb-session/src/stmt_ctx.rs",
+      "rust/crates/tidb-executor/src/driver/errors/mod.rs",
+      "rust/crates/tidb-protocol/src/error_packet.rs",
+      "rust/crates/tidb-protocol/tests/error_packet_source.rs",
+      "rust/crates/tidb-protocol/tests/resultset_stream_source.rs"
+    ],
+    "removed_chain_no_references": true
+  },
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/statement_status.rs",
+      "lines": 371,
+      "sha256": "7fc03ea73555da16ec990633dc127ef32a99132e581ed2c8eaf8438fbe5edeb3",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/error_conversion.rs",
+      "lines": 165,
+      "sha256": "6ac9be44cdf42a0ec2f74821a05da9e4e255cd1db184dc58a7cf0429d153b3a7",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/statement_status_source.rs",
+      "lines": 209,
+      "sha256": "926d9d648483b570fe3bba5d1b0d1e819c0e50e8090e2ba749311a01fe8d5eaa",
+      "tests": [
+        "dml_status_publishes_rows_last_insert_id_warnings_and_message",
+        "statement_kind_controls_row_count_and_previous_last_insert_id",
+        "begin_clears_current_execution_state_but_retry_keeps_publish_state",
+        "warnings_preserve_order_and_cap_at_source_u16_limit",
+        "batch_and_set_retain_65536_entries_and_publish_wrapping_counts",
+        "failed_publication_preserves_warning_order_and_marks_error_context"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/error_conversion_source.rs",
+      "lines": 171,
+      "sha256": "79e38b47cf280a047b233c976da0e4f353ca4f2c882e18528f7cfa751516900f",
+      "tests": [
+        "source_errno_categories_are_structural_and_message_is_unchanged",
+        "broad_categories_do_not_guess_not_supported_or_foreign_key_errno",
+        "parser_offset_and_variant_payloads_stay_with_executor_context",
+        "rendered_error_attaches_only_published_statement_context"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-protocol/src/error_conversion.rs",
+      "lines": 185,
+      "sha256": "d9f091a1411425882c7699e3547e2e814811099166cb2296917d8f6f30dd39d0",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-protocol/tests/error_conversion_source.rs",
+      "lines": 104,
+      "sha256": "64736423bba41a9a82cb8befd6f75a14cba76fa7d02967670354a797466587e9",
+      "tests": [
+        "terror_mysql_mapping_preserves_code_state_and_message",
+        "protocol_41_and_legacy_inputs_only_change_packet_state_flag",
+        "mapped_exec_categories_use_only_existing_mysql_codes",
+        "categories_without_an_exact_source_mapping_are_explicit_unknown",
+        "invalid_type_maps_to_go_err_invalid_type"
+      ]
+    }
+  ],
+  "retained_coverage": {
+    "warning_caps": "Two retired model tests folded into mutable_handler_preserves_levels_batch_cap_and_error_counts; individual append cap, last retained entry, oversized batch, set replacement, full storage counts and u16 publication/error-count wrapping",
+    "warning_order": "Existing warning_publication_source tests preserve level and message order, JSON, independent copies, truncation and ignore behavior",
+    "error_rendering": "Retained driver-error owner tests; five stale full-MysqlError expected values now include the existing evaluation-origin marker",
+    "packet_bytes": "Unchanged tidb-protocol/tests/error_packet_source: protocol 4.1, legacy, arbitrary errno/state and non-UTF8 message bytes",
+    "streaming": "Unchanged tidb-protocol/tests/resultset_stream_source: lifecycle, row types and framing",
+    "live_statement_status": "Unchanged tidb-session/src/stmt_ctx.rs::publish_statement_status; session behavior tests retained, not rerun"
+  },
+  "retirement_basis": "No workspace production caller constructs the removed status/descriptor models or invokes the removed conversion functions/stream method; their policy tables were disconnected from the actual driver error owner. Absent Go test-name correspondence alone is not a deletion criterion.",
+  "tests": {
+    "integration-tests": [
+      {
+        "passed": 8,
+        "failed": 0
+      },
+      {
+        "passed": 13,
+        "failed": 0
+      }
+    ],
+    "library-tests": [
+      {
+        "passed": 10,
+        "failed": 0
+      }
+    ]
+  },
+  "stale_expectations": {
+    "before": "9 passed, 1 failed; code/state/message equal, from_evaluation actual true versus expected false",
+    "change": "Correct five expected MysqlError values with from_evaluation(); production rendering unchanged",
+    "after": "10 driver-error tests pass"
+  },
+  "gates": {
+    "lint": "passed",
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; final external handoff records results"
+  },
+  "limits": [
+    "No broad finding repair or complete Go package acceptance",
+    "No full Go, live-cluster, session integration or benchmark run; no measured speedup claim",
+    "Removed public workspace-only models require out-of-tree consumers to migrate to live owners",
+    "Historical disconnected InvalidType test did not establish live errno 8057 parity"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/statement-boundary-cleanup/final-handoff.json"
+}

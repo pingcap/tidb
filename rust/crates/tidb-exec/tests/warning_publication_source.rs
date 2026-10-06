@@ -154,6 +154,32 @@ fn mutable_handler_preserves_levels_batch_cap_and_error_counts() {
     );
     handler.reset();
     assert_eq!(handler.warning_count(), 0);
+
+    // Go caps individual appends, but admits an entire batch below the cap.
+    for index in 0..=usize::from(u16::MAX) {
+        handler.append_warning(index.to_string());
+    }
+    assert_eq!(handler.warning_count(), usize::from(u16::MAX));
+    assert_eq!(handler.warnings_snapshot().last().unwrap().message, "65534");
+    handler.reset();
+    let warnings =
+        vec![StatementWarning::new(WarningLevel::Error, "error"); usize::from(u16::MAX) + 1];
+    handler.append_warnings(warnings.clone());
+    assert_eq!(handler.warning_count(), usize::from(u16::MAX) + 1);
+    assert_eq!(handler.num_error_warnings(), (0, usize::from(u16::MAX) + 1));
+    assert_eq!(
+        WarningPublication::new(&handler.warnings_snapshot()).warning_count(),
+        0
+    );
+    handler.reset();
+    handler.set_warnings(vec![StatementWarning::new(WarningLevel::Note, "replaced")]);
+    assert_eq!(
+        handler.warnings_snapshot(),
+        [StatementWarning::new(WarningLevel::Note, "replaced")]
+    );
+    handler.set_warnings(warnings);
+    assert_eq!(handler.warning_count(), usize::from(u16::MAX) + 1);
+    assert_eq!(handler.num_error_warnings(), (0, usize::from(u16::MAX) + 1));
 }
 
 #[test]
