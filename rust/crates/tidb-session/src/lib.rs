@@ -2747,8 +2747,6 @@ mod tests_derived_agg_pruning;
 #[cfg(test)]
 mod tests_dml_lock_keys;
 #[cfg(test)]
-mod tests_domain_plan_replayer_handle_source;
-#[cfg(test)]
 mod tests_domain_plan_replayer_source;
 #[cfg(test)]
 mod tests_domain_serverinfo_info_source;

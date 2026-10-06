@@ -1,0 +1,73 @@
+{
+  "date": "2026-10-06",
+  "base": "17d23b3e2e1b4193a5cc0c0b9a52ed727ec94f8a",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove duplicate plan-replayer SQL-table harness and two duplicate parser/channel tests; preserve collection, shared worker status and quoted origin-SQL assertions in existing Domain tests. Retain real filesystem GC coverage.",
+  "removed": {
+    "file": "rust/crates/tidb-session/src/tests_domain_plan_replayer_handle_source.rs",
+    "lines": 449,
+    "tests": [
+      "plan_replayer_handle_collect_task",
+      "plan_replayer_handle_dump_task",
+      "plan_replayer_gc",
+      "insert_plan_replayer_status_stores_the_origin_sql_verbatim"
+    ],
+    "duplicate_tests_in_retained_file": [
+      "dump_gc_file_parse_time",
+      "send_task_discards_when_the_channel_is_full"
+    ],
+    "net_rust_lines": 464,
+    "unused_support": "NoopExec InternalSqlExecutor implementation became unused after the channel duplicate was removed"
+  },
+  "retained_owners": {
+    "TestPlanReplayerHandleCollectTask": "plan_replayer::tests::collect_keeps_only_the_unhandled_tasks (extended with one/two/zero transitions and exact probe)",
+    "TestPlanReplayerHandleDumpTask": "only_a_non_continuous_task_is_removed_from_the_collector (extended with shared handle/worker status); only_a_continuous_capture_is_marked_finished; collect_keeps_only_the_unhandled_tasks",
+    "TestPlanReplayerGC": "deleting_a_replayer_file_clears_its_status_and_the_finished_set; the_gc_cutoff_is_inclusive_to_the_nanosecond; plan_replayer_different_gc",
+    "TestInsertPlanReplayerStatus": "records_are_routed_by_their_failed_reason (quoted SQL retained verbatim)",
+    "TestDumpGCFileParseTime": "dump_gc_file_parse_time (all eight generated-name combinations)",
+    "TestSendTask": "send_task_discards_when_the_channel_is_full"
+  },
+  "retained_filesystem_test": "tidb-session::tests_domain_plan_replayer_source::plan_replayer_different_gc body unchanged",
+  "production": "No production, manifest, dependency, generated-code or lockfile change",
+  "findings": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "validation": {
+    "status": "Owner tests, final session test-target compilation, rustfmt, lint, diff and continuity checks passed; publication gates recorded externally after commit.",
+    "commands_from_rust_after_sourcing_env": [
+      "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-domain --lib -- plan_replayer::tests:: --test-threads=1",
+      "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-session --tests"
+    ],
+    "commands_from_root": [
+      "make lint",
+      "git diff --check"
+    ],
+    "publication": "Actual hook and fresh immediate-prepush cargo build --locked -p tidb-server required; final results in external final-handoff.json",
+    "owner_tests": "32 passed; 0 failed/ignored; 130 unrelated filtered out",
+    "self_review": "94 original owner assertions retained; two send-task inputs explicitly enable capture and one retained key is cloned for additional checks. Production outside the owner test module and real filesystem GC body unchanged.",
+    "logs_sha256": {
+      "tests.log": "239c53f79ac9f0a75b9266967fb0ec74c5b0840bcf022123d6a2484950063b56",
+      "check.log": "b693b7a8175f30cea10c0df2a96f6f2403947e805a763d3ace5fcc9cb985d41f",
+      "check-final.log": "d3a477e7cac8077a411f48b436cdcf05ac779e6e597f4ce71b7186feceb51303",
+      "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+      "fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "limitations": [
+    "The deleted table model manually injected success rows; it did not validate SQL-triggered capture or persisted mysql.plan_replayer_status rows. Those original Go integration obligations remain.",
+    "Real filesystem GC test body retained, compilation checked; not rerun in this cleanup.",
+    "No complete Go package acceptance, full Go suite, live multi-node, benchmark or fresh environment restore. No measured speedup.",
+    "No behavior defect claimed or fabricated fail-before regression."
+  ],
+  "before_images": {
+    "rust/crates/tidb-domain/src/plan_replayer.rs": "d873ffdf62973f72562d6504fe16ac284902bcd64237e71760647c1acb7f9b24",
+    "rust/crates/tidb-session/src/lib.rs": "b7b18936a45418f501bb51430b54b3fa0b7faab238ea8dbc52d96374ac5c77ca",
+    "rust/crates/tidb-session/src/tests_domain_plan_replayer_source.rs": "ca6885138b5ee1f2c75e3d18af17c3ecacb4ed2883e0ae70b2b2af8f154252ca",
+    "rust/crates/tidb-session/src/tests_domain_plan_replayer_handle_source.rs": "9c676322652e253ce407f9bceb6b669c1e25191f5f285b30a8ef26a9cb4d657d"
+  },
+  "external_evidence": "/workspace/.cloud-setup/plan-replayer-cleanup"
+}

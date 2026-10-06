@@ -13,13 +13,11 @@
 // limitations under the License.
 
 //! Port of `pkg/domain/plan_replayer_test.go` (origin/master):
-//! `TestPlanReplayerDifferentGC`, `TestDumpGCFileParseTime`, and
-//! `TestSendTask`, against `tidb_domain::plan_replayer` — the
+//! `TestPlanReplayerDifferentGC`, against `tidb_domain::plan_replayer` — the
 //! transcreation of `pkg/domain/plan_replayer.go`.
 //!
 //! Go's failpoint-injected timestamps are represented as fixture data in the
-//! GC test. The parse-time test calls the real transcreated
-//! `GeneratePlanReplayerFileName` for all eight flag combinations.
+//! GC test. Filename parsing and channel capacity are covered in the Domain owner.
 
 #![cfg(test)]
 
@@ -30,10 +28,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use chrono::{DateTime, Utc};
 
 use tidb_domain::plan_replayer::{
-    parse_time, DumpFileGcChecker, DumpFileStorage, InternalSqlExecutor, PlanReplayerDumpTask,
-    PlanReplayerError, PlanReplayerHandle, PlanReplayerTaskCollectorHandle, RestrictedSqlExecutor,
+    DumpFileGcChecker, DumpFileStorage, PlanReplayerError, RestrictedSqlExecutor,
 };
-use tidb_domain::replayer::{generate_plan_replayer_file_name, get_plan_replayer_dir_name};
+use tidb_domain::replayer::get_plan_replayer_dir_name;
 
 /// `extstore.NewExtStorage(ctx, "file://<root>", "")`: real files under a
 /// scratch root, addressed by storage-relative paths.
@@ -105,18 +102,6 @@ struct NoopExec;
 impl RestrictedSqlExecutor for NoopExec {
     fn exec_restricted_sql(&self, _sql: &str, _params: &[&str]) -> Result<(), PlanReplayerError> {
         Ok(())
-    }
-}
-
-impl InternalSqlExecutor for NoopExec {
-    fn query_row_count(&self, _sql: &str) -> Result<Option<usize>, PlanReplayerError> {
-        Ok(None)
-    }
-    fn query_digest_pairs(
-        &self,
-        _sql: &str,
-    ) -> Result<Option<Vec<(String, String)>>, PlanReplayerError> {
-        Ok(None)
     }
 }
 
@@ -209,55 +194,4 @@ fn plan_replayer_different_gc() {
     }
     assert!(!storage.exists(&file_path2), "zero cutoff removes the rest");
     assert!(!storage.exists(&file_path4));
-}
-
-/// Go `pkg/domain/plan_replayer_test.go:101::TestDumpGCFileParseTime`.
-#[test]
-fn dump_gc_file_parse_time() {
-    let now_time = Utc::now();
-    let now_nanos = nanos(now_time);
-
-    let name1 = format!("replayer_single_xxxxxx_{now_nanos}.zip");
-    let pt = parse_time(&name1).expect("name1 parses");
-    assert_eq!(
-        pt.timestamp_nanos_opt(),
-        Some(now_nanos),
-        "pt.Equal(nowTime)"
-    );
-
-    // Appending one digit overflows ParseInt's int64, as in Go.
-    let name2 = format!("replayer_single_xxxxxx_{now_nanos}1.zip");
-    assert!(parse_time(&name2).is_err(), "name2 must not parse");
-
-    let name3 = format!("replayer_single_xxxxxx_{now_nanos}._zip");
-    assert!(parse_time(&name3).is_err(), "name3 must not parse");
-
-    let name4 = "extract_-brq6zKMarD9ayaifkHc4A==_1678168728477502000.zip";
-    assert!(parse_time(name4).is_ok(), "name4 parses");
-
-    // Every shape GeneratePlanReplayerFileName can produce parses.
-    for is_capture in [false, true] {
-        for is_continues_capture in [false, true] {
-            for hist in [false, true] {
-                let name = generate_plan_replayer_file_name(is_capture, is_continues_capture, hist)
-                    .expect("name generation succeeds");
-                assert!(
-                    parse_time(&name).is_ok(),
-                    "generated name {name} must parse"
-                );
-            }
-        }
-    }
-}
-
-/// Go `pkg/domain/plan_replayer_test.go:162::TestSendTask`: a task channel of
-/// capacity one accepts the first task and refuses the second.
-#[test]
-fn send_task_discards_when_the_channel_is_full() {
-    let h = PlanReplayerHandle::new(PlanReplayerTaskCollectorHandle::new(NoopExec), 1);
-    let task1 = PlanReplayerDumpTask::default();
-    let task2 = PlanReplayerDumpTask::default();
-    h.send_task(task1);
-    let success = h.send_task(task2);
-    assert!(!success);
 }

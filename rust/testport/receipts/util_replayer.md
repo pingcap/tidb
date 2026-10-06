@@ -97,3 +97,12 @@ exactly one unused-return diagnostic and passes after it. Ready evidence:
 
 This is Rust/testport-only work. No Go source, Go import, Go test, Bazel file,
 or module dependency changed, so `make bazel_prepare` is not required.
+
+## 2026-10-06 plan-replayer harness consolidation
+
+Historical mappings above describe the original run. The duplicate session
+handle carrier and parser/channel registrations are retired. Current owners and
+retained original Go integration obligations are recorded in
+[the cleanup receipt](../../docs/parity/current-audit/plan-replayer-cleanup-validation.json).
+The real filesystem GC carrier remains. This cleanup does not rerun or validate
+the historical laptop commands.

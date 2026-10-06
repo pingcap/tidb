@@ -1559,6 +1559,13 @@ mod tests {
                     token: String::new(),
                     failed_reason: "nope".to_owned(),
                 },
+                PlanReplayerStatusRecord {
+                    sql_digest: "s3".to_owned(),
+                    plan_digest: "p3".to_owned(),
+                    origin_sql: "\nSELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.columnA\n".to_owned(),
+                    token: "t3".to_owned(),
+                    failed_reason: String::new(),
+                },
             ],
         );
         let stmts = exec.statements.borrow();
@@ -1571,6 +1578,13 @@ mod tests {
         assert_eq!(
             stmts[1].1,
             vec!["s2", "p2", "select 2", "nope", "10.0.0.1:4000"]
+        );
+        // Go TestInsertPlanReplayerStatus: retain quoted origin SQL verbatim.
+        assert_eq!(stmts.len(), 3);
+        assert_eq!(stmts[2].0, INSERT_SUCCESS_STATUS_SQL);
+        assert_eq!(
+            stmts[2].1,
+            vec!["s3", "p3", "\nSELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.columnA\n", "t3", "10.0.0.1:4000"]
         );
     }
 
@@ -1676,9 +1690,29 @@ mod tests {
             status_rows: [("123".to_owned(), 1usize)].into_iter().collect(),
             ..MockExec::default()
         };
-        let handle = PlanReplayerTaskCollectorHandle::new(exec);
+        let mut handle = PlanReplayerTaskCollectorHandle::new(exec);
         handle.collect_plan_replayer_task().unwrap();
         assert_eq!(handle.get_tasks(), vec![task_key("345", "345")]);
+
+        assert!(handle
+            .sctx
+            .statements
+            .borrow()
+            .iter()
+            .any(|(sql, _)| *sql == check_unhandled_replayer_task_sql(&task_key("123", "123"))));
+        // A failed status is absent from the successful-row probe.
+        handle.sctx.status_rows.clear();
+        handle.collect_plan_replayer_task().unwrap();
+        let tasks = handle.get_tasks();
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.contains(&task_key("123", "123")));
+        assert!(tasks.contains(&task_key("345", "345")));
+        handle.sctx.task_rows = Some(vec![("123".to_owned(), "123".to_owned())]);
+        handle.collect_plan_replayer_task().unwrap();
+        assert_eq!(handle.get_tasks(), vec![task_key("123", "123")]);
+        handle.sctx.task_rows = Some(vec![]);
+        handle.collect_plan_replayer_task().unwrap();
+        assert!(handle.get_tasks().is_empty());
 
         let empty = PlanReplayerTaskCollectorHandle::new(MockExec {
             task_rows: Some(vec![]),
@@ -1963,14 +1997,33 @@ mod tests {
 
         assert!(h.send_task(PlanReplayerDumpTask {
             key: one_shot.clone(),
+            is_capture: true,
             ..PlanReplayerDumpTask::default()
         }));
         assert!(h.send_task(PlanReplayerDumpTask {
             key: continuous.clone(),
+            is_capture: true,
             is_continues_capture: true,
             ..PlanReplayerDumpTask::default()
         }));
-        assert_eq!(h.collector.get_tasks(), vec![continuous]);
+        assert_eq!(h.collector.get_tasks(), vec![continuous.clone()]);
+
+        // Share the handle's status with the worker, as Go's dump path does.
+        let status = h.dump_handle.get_task_status();
+        let worker = PlanReplayerTaskDumpWorker::new(
+            MockExec::default(),
+            MockDumper::default(),
+            Arc::clone(&status),
+        );
+        for key in [&one_shot, &continuous] {
+            let drained = h.dump_handle.drain_task().expect("queued task");
+            assert_eq!(&drained.key, key);
+            assert_eq!(worker.handle_task(&drained), (true, true, true));
+            assert_eq!(status.running_task_status_len(), 0);
+            assert_eq!(h.collector.get_tasks(), vec![continuous.clone()]);
+        }
+        status.clean_finished_task_status();
+        assert_eq!(status.finished_task_status_len(), 0);
 
         // A discarded task is not removed either: the channel is the gate.
         let full =
