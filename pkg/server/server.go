@@ -1166,14 +1166,33 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	maps.Copy(conns, s.clients)
 	s.rwlock.Unlock()
 
+	// Close the connections that are idle between statements right away, instead of reading and dropping
+	// their next command in `clientConn.Run`. The client then finds the connection closed before it sends
+	// anything, so drivers that check the connection before reusing it (for example go-sql-driver/mysql)
+	// can retry on a new connection transparently. The CAS fails for a connection that is executing a
+	// command; it is closed in `clientConn.Run` after the command finishes.
+	idleConns := make(map[uint64]struct{}, len(conns))
+	for id, conn := range conns {
+		if conn.getCtx().GetSessionVars().InTxn() || !conn.CompareAndSwapStatus(connStatusReading, connStatusWaitShutdown) {
+			continue
+		}
+		idleConns[id] = struct{}{}
+		if conn.bufReadConn != nil {
+			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+				logger.Warn("error setting read deadline for idle connection", zap.Error(err))
+			}
+		}
+	}
+
 	allDone := make(chan struct{})
 	quitWaitingForConns := make(chan struct{})
 	defer close(quitWaitingForConns)
 	go func() {
 		defer close(allDone)
-		for _, conn := range conns {
+		for id, conn := range conns {
+			_, idle := idleConns[id]
 			// Wait for the connections with explicit transaction or an executing auto-commit query.
-			if conn.getStatus() == connStatusReading && !conn.getCtx().GetSessionVars().InTxn() {
+			if idle || (conn.getStatus() == connStatusReading && !conn.getCtx().GetSessionVars().InTxn()) {
 				// The waitgroup is not protected by the `quitWaitingForConns`. However, the implementation
 				// of `client-go` will guarantee this `Wait` will return at least after killing the
 				// connections. We also wait for a similar `WaitGroup` on the store after killing the connections.
