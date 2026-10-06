@@ -1,104 +1,88 @@
-# Retire orphan source carriers and unused catalog adapters
+# Retire historical scratch baseline logs
 
 This living ExecPlan follows root PLANS.md. Earlier cleanup receipts remain
-indexed in parity/current-audit/README.md; Git preserves removed before-images.
+indexed in parity/current-audit/README.md.
 
 ## Purpose / Big Picture
 
 
-Remove unregistered execution/planner drafts and the unused alternate catalog
-adapter/loader together. Future searches will find the active owners rather than
-orphan implementations and never-run tests. This removes 3523 Rust lines; no
-build or workload speedup is claimed for files that were already unregistered.
+Remove obsolete test-run output from normal searches and make historical
+receipts point to immutable evidence. Old failure lists are not current gates.
+The batch removes 15 scratch files, 7964 lines and 591246 bytes; it does not
+change or speed up test execution.
 
 ## Context and Orientation
 
 
-Base a4b2f466595db9f65876cbbff656922df4613cd2 on hparser-integration in
-/workspace/tidb. Fresh Go master b36c940a4332c866d8b0e2afde88f5e7c2fd7fed;
-native master cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1 remains unchanged.
-A workspace-wide source-module scan identified six orphan Rust files. Cargo
-manifests, mod/path/include references and aggregate-tests.rs confirm none is a
-registered input. The lexer keyword generator is an explicit Cargo binary and
-both server binaries are automatically discovered, so all three are retained.
+Base 98371ab85edd89f7ff5c03000b6fb8083b38ce9c on hparser-integration in
+/workspace/tidb. Fresh Go master remains b36c940a4332c866d8b0e2afde88f5e7c2fd7fed.
+The retired rust/testport/scratch directory contains historical counts, failure
+lists and one 7273-line raw nextest log. No build or runtime consumer references
+these files. Ten receipts now point to exact Git before-images.
 
-Retired carriers are executor index_lookup_join.rs, index_range_tests.rs,
-driver/ast_rewrite.rs; planner fragment.rs and plan_builder/from_tests.rs; and
-expression vs_helper.rs. Active index joins use executor join.rs and its physical
-builder; ranges use index_range.rs, access_path.rs and registered suites. Planner
-join/MPP task and expression owners remain. Fragment/vector-search completeness
-is not established by these unregistered drafts and remains an original Go
-obligation. The 48 orphan test declarations include four ignore attributes;
-none was registered, passed, failed or skipped in this workspace's test runner.
-
-real_tikv_catalog.rs retains TransactionMetaSnapshot, SnapshotMetaSnapshot,
-load_catalog_from_cluster and reload_catalog_from_cluster unchanged. Only
-TikvMetaSnapshot and its sole caller load_catalog_from_tikv_cluster are removed.
-The alternate loader has no callers. TikvTransactionOpener is retained because
-real unistore transaction tests and native commit-outcome tests still consume it.
+The b099 scope inventory remains in baseline-log-cleanup-validation.json because
+it has no standalone receipt. b087's scratch divergences predate repairs recorded
+in receipts/b087.md. b106's integration-only enumeration and b118's differing
+baseline runs remain historical limitations. No old failure is declared fixed
+and no complete Go package is accepted by deletion.
 
 ## Progress
 
 
-- [x] Refresh refs and trace Cargo/source registrations and live owners.
-- [x] Remove six orphans and two disconnected catalog declarations.
-- [x] Verify retained source/test bytes; run affected checks and root lint.
-- [ ] Complete actual hook, fresh pre-push locked build, remote verification and cloud save.
+- [x] Trace references and preserve original inventories and limitations.
+- [x] Remove 15 files and migrate ten receipts to immutable archive links.
+- [x] Validate documentation scope, before-image hashes, links and diff hygiene.
+- [ ] Complete hook, fresh pre-push build, remote verification and cloud save.
 
 ## Milestones and Plan of Work
 
 
-Retire the entire orphan set without replacing or enabling its incomplete paths.
-Remove both alternate catalog blocks while keeping the shared transaction and
-snapshot adapters byte-identical. Record deleted file hashes, original test
-names, registration evidence and remaining Go obligations in
-parity/current-audit/orphan-storage-cleanup-validation.json. Update both cleanup
-register links without changing behavioral finding dispositions.
+Identify all tracked scratch files and references. Preserve hashes and otherwise
+orphaned Go obligations, then remove the full set and repair receipt references.
+Verify only historical documentation and audit metadata change. Tests, source,
+scripts, manifests and lockfiles must remain byte-identical.
 
-## Concrete Steps / Validation and Acceptance
+## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh. From rust/ run:
-
-    CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-server --all-targets
-    cargo metadata --locked --no-deps --format-version 1
-
-Run make lint and git diff --check at repository root. Verify all retained Rust,
-manifest and executable-script inputs against base hashes and confirm the six
-retired carriers have no Cargo target/registration. No new test is needed for
-unregistered-file and unused-function deletion; all retained test bodies and
-compiled algorithms remain unchanged. The normal commit must execute actual
-hooks/pre-commit with cd rust && cargo build --locked -p tidb-server. Repeat that
-locked build immediately before the authorized normal push and verify remote
-SHA. Preserve concurrent changes; never bypass hooks or force push.
+From /workspace/tidb, run python3
+/workspace/.cloud-setup/baseline-log-cleanup/verify.py, git diff --check and make lint.
+The verifier must validate archive links against pinned Git blobs, match all
+before-image hashes and reject executable input or finding changes. Runtime
+suites and all-target compilation are unnecessary for historical docs/logs.
+Source /workspace/.cloud-setup/env.sh and use CARGO_BUILD_JOBS=1. Normal git commit
+must execute hooks/pre-commit with cd rust && cargo build --locked -p tidb-server.
+Repeat that locked build immediately before the authorized normal push. Verify
+remote SHA; never force-push or bypass hooks. Postcommit results are recorded in
+/workspace/.cloud-setup/baseline-log-cleanup/final-handoff.json.
 
 ## Surprises & Discoveries
 
 
-The module scan's candidates included legitimate standalone binaries. Checking
-Cargo targets prevented their deletion. Native opener APIs also have meaningful
-real-storage test callers; no opener/driver or client-rust source is removed.
+The largest log contains obsolete compiler warnings as well as old failures.
+b087's receipt records subsequent repairs to both scratch divergences. The
+scratch files therefore cannot serve as current failure or acceptance records.
 
 ## Decision Log
 
 
-Remove unreachable drafts without claiming their Go packages implemented or
-their never-run tests passed. Preserve actual storage and query owners and all
-original package obligations. Date: 2026-10-06 UTC.
+On 2026-10-06, retire historical logs as one batch while preserving exact recovery
+and original obligations. Keep useful Go-contract and Rust-correctness tests;
+different names alone do not establish that a test is obsolete. No speedup claim.
 
 ## Recovery / Interfaces and Dependencies
 
 
-Recover individual before-images with git show a4b2f46659:<path> into temporary
-files for review. External inventory/logs are /workspace/.cloud-setup/orphan-storage-cleanup.
-No Cargo manifest, lockfile, dependency, hook or supported SQL interface changes.
-Rerun checks safely while preserving caches and concurrent work.
+Recover a file with git show
+98371ab85edd89f7ff5c03000b6fb8083b38ce9c:rust/testport/scratch/<name>
+into a temporary file. All archive links pin that revision. No dependency,
+supported interface, Go source, executable test or script changes.
 
 ## Outcomes & Retrospective
 
 
-All-target checking, root lint, Cargo target verification and diff checks pass.
-Retained source/test bodies and all remaining catalog blocks are byte-identical. Counts remain 86 tracked /
-30 repaired /56 unresolved. No complete package acceptance, full Go suite,
-live multi-node TiKV, runtime or performance validation is claimed for this
-cleanup. Final post-commit gates and cloud persistence are recorded externally.
+Scratch artifacts are removed and historical evidence remains recoverable.
+Archive/hash/scope verification, diff checking and root lint passed. Publication remains pending. The 56 unresolved findings are unchanged.
+
+This revision replaces the completed orphan-source cleanup plan; its evidence
+remains in parity/current-audit/orphan-storage-cleanup-validation.json.

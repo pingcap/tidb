@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [orphan source carriers and alternate catalog adapters](orphan-storage-cleanup-validation.json). Six unregistered files, 48 never-run test declarations and two unused catalog declarations retired. Finding dispositions remain unchanged.
+Latest cleanup: [obsolete scratch baseline logs](baseline-log-cleanup-validation.json). Fifteen historical artifacts (7964 lines) retired; original Go obligations and finding dispositions remain unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

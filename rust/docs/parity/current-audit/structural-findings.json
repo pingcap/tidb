@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "orphan-storage-cleanup-validation.json",
-    "scope": "Retired six unregistered source carriers (48 never-run test declarations) and unused TikvMetaSnapshot/alternate catalog loader. 3523 Rust lines removed. Retained compiled owners and tests unchanged; no finding disposition or package acceptance changes."
+    "receipt": "baseline-log-cleanup-validation.json",
+    "scope": "Remove 15 obsolete scratch baseline artifacts (7964 lines). Preserve receipt inventories and exact historical Git evidence. No executable tests, checks, source, scripts or manifests change."
   },
   "test_cleanup_history": [
     {
@@ -964,6 +964,11 @@
       "date": "2026-10-06",
       "receipt": "orphan-storage-cleanup-validation.json",
       "scope": "Retired six unregistered source carriers (48 never-run test declarations) and unused TikvMetaSnapshot/alternate catalog loader. 3523 Rust lines removed. Retained compiled owners and tests unchanged; no finding disposition or package acceptance changes."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "baseline-log-cleanup-validation.json",
+      "scope": "Remove 15 obsolete scratch baseline artifacts (7964 lines). Preserve receipt inventories and exact historical Git evidence. No executable tests, checks, source, scripts or manifests change."
     }
   ],
   "repair_history": [

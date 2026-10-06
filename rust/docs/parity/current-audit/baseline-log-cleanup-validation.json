@@ -1,0 +1,133 @@
+{
+  "date": "2026-10-06",
+  "base": "98371ab85edd89f7ff5c03000b6fb8083b38ce9c",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove 15 obsolete scratch baseline artifacts (7964 lines). Preserve receipt inventories and exact historical Git evidence. No executable tests, checks, source, scripts or manifests change.",
+  "removed": [
+    {
+      "path": "rust/testport/scratch/b069_baseline.md",
+      "lines": 6,
+      "bytes": 245,
+      "sha256": "e0ca2d34dbbcd67cfe1fd8ae5a93b3d45d97bd92c801c714bb4d1b531cee5bbc"
+    },
+    {
+      "path": "rust/testport/scratch/b075_baseline_notes.md",
+      "lines": 1,
+      "bytes": 192,
+      "sha256": "f7e5a1ce576b5bec4de7d5760aeff408123e4b6a1d51de27203cba6fc61ecdd1"
+    },
+    {
+      "path": "rust/testport/scratch/b099_gate_baseline.md",
+      "lines": 38,
+      "bytes": 2267,
+      "sha256": "79c1dfb717502f6a30b6cc219c18fa435aaa21f6a5f3f9a84ca857bfb53e8f04"
+    },
+    {
+      "path": "rust/testport/scratch/b109_gate_baseline.md",
+      "lines": 73,
+      "bytes": 7308,
+      "sha256": "b33e35ebdb0aee29bd30b6e07d9f415c6996b9b4a253e99a250b18761a42b84a"
+    },
+    {
+      "path": "rust/testport/scratch/b110_gate_baseline.md",
+      "lines": 53,
+      "bytes": 5419,
+      "sha256": "24eecf58394d517279587266d0769855caea07a8d2b501f7144ea4bfa9915dfd"
+    },
+    {
+      "path": "rust/testport/scratch/b111_gate_baseline.md",
+      "lines": 56,
+      "bytes": 5938,
+      "sha256": "74a85112f3fc7663962a80a0026c9f6caeec7e05746e2bcf68d6e8a98ea4381e"
+    },
+    {
+      "path": "rust/testport/scratch/b113_gate_baseline.txt",
+      "lines": 48,
+      "bytes": 3718,
+      "sha256": "a83112ce7ff5438b7bc47a3d2448b948c39be69f6e0d0c900e3d5c8b6620e86b"
+    },
+    {
+      "path": "rust/testport/scratch/b114_gate_baseline.md",
+      "lines": 48,
+      "bytes": 5259,
+      "sha256": "67749c849a9d970f912f497ed6f0b2abb7bb00c175857f64935609c91d115e65"
+    },
+    {
+      "path": "rust/testport/scratch/b115_gate_baseline.md",
+      "lines": 59,
+      "bytes": 4692,
+      "sha256": "158e1a0b1397266ac305e1cd68a2eebce0f15e5ab298ee8f2f3ed4256a2ebf25"
+    },
+    {
+      "path": "rust/testport/scratch/b116_gate_baseline.md",
+      "lines": 70,
+      "bytes": 4627,
+      "sha256": "329c25a8c752dc56a764b5f17b172eaabf287ff6ecfdf5440c72f68f862e1845"
+    },
+    {
+      "path": "rust/testport/scratch/pkg_ddl_part7_gate_baseline.md",
+      "lines": 40,
+      "bytes": 2349,
+      "sha256": "5a199a6b7320cb28fa5622dd30ac72263a485d7558d65bc776631b698ff258eb"
+    },
+    {
+      "path": "rust/testport/scratch/pkg_domain_part1_baseline_failures.txt",
+      "lines": 130,
+      "bytes": 11519,
+      "sha256": "ba4f2c69125c059033a4dc288fcb0e166176492a1d53f1df154e96f0171c2bb4"
+    },
+    {
+      "path": "rust/testport/scratch/pkg_domain_part1_gate_baseline_run.txt",
+      "lines": 7273,
+      "bytes": 534267,
+      "sha256": "aa1262e60fa693fedc09468947f5bffb26e3d37eabd7ffa9d855e4ca251baafa"
+    },
+    {
+      "path": "rust/testport/scratch/pkg_domain_part2_gate_baseline.md",
+      "lines": 40,
+      "bytes": 1882,
+      "sha256": "de93859dae0b84d07beda16df823f5480c7329a4f1f05773697fca51d7a9b6f9"
+    },
+    {
+      "path": "rust/testport/scratch/planner_part10_gate_baseline.md",
+      "lines": 29,
+      "bytes": 1564,
+      "sha256": "40be6eca4404e24f17335b1457da6b89f53aee81b4f3e63740286b81e8994e41"
+    }
+  ],
+  "updated_receipts": [
+    "rust/testport/receipts/b118.md",
+    "rust/testport/receipts/b111.md",
+    "rust/testport/receipts/b114.md",
+    "rust/testport/receipts/b110.md",
+    "rust/testport/receipts/b116.md",
+    "rust/testport/receipts/b115.md",
+    "rust/testport/receipts/b109.md",
+    "rust/testport/receipts/b106.md",
+    "rust/testport/receipts/b113.md",
+    "rust/testport/receipts/b117.md"
+  ],
+  "historical_scope_note": "Scope (pkg/planner.part22 = items 1261-1278 of 1278 on origin/master):\n  1261 pkg/planner/memo/group_test.go:196::TestGetInsertGroupImpl\n  1262 pkg/planner/memo/group_test.go:214::TestFirstElemAfterDelete\n  1263 pkg/planner/memo/group_test.go:233::TestBuildKeyInfo\n  1264 pkg/planner/memo/group_test.go:287::TestExploreMark\n  1265 pkg/planner/memo/main_test.go:24::TestMain\n  1266 pkg/planner/planctx/context_test.go:26::TestContextDetach\n  1267 pkg/planner/property/physical_property_test.go:26::TestNeedEnforceExchangerWithHashByEquivalence\n  1268 pkg/planner/util/column_test.go:29::TestIndexInfo2Cols\n  1269 pkg/planner/util/fixcontrol/fixcontrol_test.go:46::TestFixControl\n  1270 pkg/planner/util/fixcontrol/fixcontrol_test.go:92::TestParseToMapEmptyValue\n  1271 pkg/planner/util/fixcontrol/main_test.go:29::TestMain\n  1272 pkg/planner/util/main_test.go:24::TestMain\n  1273 pkg/planner/util/null_misc_test.go:36::TestNullRejectBuiltinRegistrySnapshot\n  1274 pkg/planner/util/null_misc_test.go:57::TestIsNullRejectedProofModes\n  1275 pkg/planner/util/path_test.go:30::TestCompareCol2Len\n  1276 pkg/planner/util/path_test.go:81::TestOnlyPointRange\n  1277 pkg/planner/util/slice_recursive_flatten_iter_test.go:37::TestSliceRecursiveFlattenIter\n  1278 pkg/planner/util/utilfuncp/func_pointer_misc_test.go:26::TestCloneConstantsForPlanCacheWithNilEntry\n\nPre-existing complete Rust coverage found while re-deriving (to be cited,\nnot duplicated):\n  - src/access_path.rs tests::test_only_point_range        -> item 1276 (in-gate)\n  - src/fix_control.rs tests::empty_value_is_a_present_empty_string -> item 1270 (in-gate)\n  - src/lib.rs recursive_flatten::tests::test_slice_recursive_flatten_iter -> item 1277 (in-gate)\n  - crates/tidb-expr/src/expression.rs tests::{test_null_reject_builtin_registry_snapshot,\n    test_is_null_rejected_proof_modes}                      -> items 1273+1274 (out-of-gate;\n    verify separately with -p tidb-expr)\n",
+  "historical_limits": [
+    "Old failures are neither reproduced nor declared fixed by deletion.",
+    "b087 receipt records later repairs to both BETWEEN coercion and cast nullability; its scratch file predates those repairs.",
+    "b106 scratch enumeration used integration rather than true master; its scope remains historical partial evidence.",
+    "b118 baseline has two runs with different failure sets; neither constitutes current acceptance.",
+    "b116 initial protoc failure was an environment failure, not an executed test failure."
+  ],
+  "validation": {
+    "artifact_recovery": "Each deletion matches its Git before-image SHA-256.",
+    "runtime": "Not rerun: only historical documentation/logs change.",
+    "publication": "Actual hook and fresh pre-push locked build required; final results in external final-handoff.json.",
+    "verified_archive_links": 15,
+    "original_receipt_tables_unchanged": true,
+    "executable_inputs_unchanged": true,
+    "finding_dispositions_unchanged": true,
+    "deleted_blob_hashes_verified": true,
+    "diff_check": "passed",
+    "lint": "passed"
+  },
+  "findings_changed": false,
+  "package_acceptance": false,
+  "measured_speedup": false
+}
