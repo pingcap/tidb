@@ -193,6 +193,7 @@ pub(super) fn run_worker(
                                 clients,
                                 endpoint,
                                 RpcControl {
+                                    forwarding: None,
                                     follower: false,
                                     timeout,
                                     shutdown: &shutdown,
@@ -233,6 +234,7 @@ pub(super) fn run_worker(
                                 clients,
                                 endpoint,
                                 RpcControl {
+                                    forwarding: None,
                                     follower: false,
                                     timeout,
                                     shutdown: &shutdown,
@@ -273,6 +275,7 @@ pub(super) fn run_worker(
                                 clients,
                                 endpoint,
                                 RpcControl {
+                                    forwarding: None,
                                     follower: false,
                                     timeout,
                                     shutdown: &shutdown,
@@ -312,6 +315,7 @@ pub(super) fn run_worker(
                                 clients,
                                 endpoint,
                                 RpcControl {
+                                    forwarding: None,
                                     timeout,
                                     shutdown: &shutdown,
                                     follower: false,
@@ -394,6 +398,7 @@ pub(super) fn run_worker(
                     &runtime,
                     &mut clients,
                     RpcControl {
+                        forwarding: None,
                         follower: false,
                         timeout,
                         shutdown: &shutdown,
@@ -433,6 +438,7 @@ pub(super) fn run_worker(
                         &mut clients,
                         &state.members.leader_url,
                         RpcControl {
+                            forwarding: None,
                             follower: false,
                             timeout: remaining,
                             shutdown: &shutdown,
@@ -478,6 +484,7 @@ pub(super) fn run_worker(
                         &mut clients,
                         &endpoint,
                         RpcControl {
+                            forwarding: None,
                             follower: false,
                             timeout: remaining,
                             shutdown: &shutdown,

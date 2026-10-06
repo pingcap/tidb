@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [typed user-variable ownership](user-variable-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [PD unary forwarding](pd-forwarding-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -40,6 +40,9 @@ and validation results in those receipts apply only to their recorded point
 in time. This revision is a plan; it closes no production finding.
 
 ## Progress
+
+- [x] (2026-10-06, PD forwarding batch) Connect P03/T02/N03 unary selection, canonical startup options, immutable metadata and all supported native/adapter callers; remove three duplicated failover loops. Four baseline socket failures precede 336 selected passes and affected checks. See `parity/current-audit/pd-forwarding-batch-validation.json`; TSO proxy/router and parent packages remain open.
+
 
 - [x] (2026-10-05, JSON numeric batch) Maintain K03/X01 through shared JSON source conversion, table warning/error completion, integer/real/decimal expression callers and typed cast batches. Four baseline Rust and six MySQL failures precede 129 Rust and seven MySQL passes (eleven existing ignored tests). See `parity/current-audit/json-numeric-batch-validation.json`; both parents and complete package acceptance remain partial.
 
@@ -2594,7 +2597,7 @@ The [shared MPP lifecycle batch](parity/current-audit/shared-mpp-lifecycle-repai
 ## Authentication durability checkpoint, 2026-10-04
 
 
-The [authentication durability plan](auth-durability-batch-execplan.md) advances A02/A03/N03 through shared login policy, pooled pessimistic SQL persistence and post-commit lock publication, plus canonical generated TLS material and renewal. Seven corrected real-server checks fail before repair;164 grouped Rust cases and18 MySQL/unistore assertions pass after repair. The duplicated configured-account source harness and in-memory-only TLS resolution paths are removed after caller migration. Counts remain86 tracked,29 repaired,57 unresolved(36 open,21 partial); parent package and mixed-node/platform obligations remain. [Exact validation](parity/current-audit/auth-durability-batch-validation.json) preserves failures and boundaries. No push.
+The [authentication durability plan](auth-durability-batch-execplan.md) advances A02/A03/N03 through shared login policy, pooled pessimistic SQL persistence and post-commit lock publication, plus canonical generated TLS material and renewal. Seven corrected real-server checks fail before repair;164 grouped Rust cases and18 MySQL/unistore assertions pass after repair. The duplicated configured-account source harness and in-memory-only TLS resolution paths are removed after caller migration. Counts remain 86 tracked,29 repaired,57 unresolved(36 open,21 partial); parent package and mixed-node/platform obligations remain. [Exact validation](parity/current-audit/auth-durability-batch-validation.json) preserves failures and boundaries. No push.
 
 ## Observed-plan maintenance checkpoint, 2026-10-04
 
@@ -2628,7 +2631,7 @@ P03/P06 now share native and adapter metadata, keyspace, discovery and TSO chann
 
 The [snapshot plan](snapshot-read-policy-batch-execplan.md) and [receipt](parity/current-audit/snapshot-read-policy-batch-validation.json) connect O13/N03 SQL policy, retained point estimates, deferred/MaxTS/explicit/prepared lifetimes and native timeout/resource groups. Native read overrides no longer replace prewrite/commit groups. T02 now has a concrete leader-only adapter fallback to repair at the shared routing owner. All three parents remain partial; counts stay 86 tracked, 30 repaired and 56 unresolved. No full-package, live multi-node or performance acceptance is claimed.
 
-The 2026-10-05 [internal-process batch](internal-process-batch-execplan.md) connects I01/N04/O09 through shared session entries, scoped system-task publication and cancellation, and leased internal timestamp diagnostics. See [receipt](parity/current-audit/internal-process-batch-validation.json). All three parents remain partial; no package acceptance or GC activation. Counts remain 86 tracked /30 repaired /56 unresolved; other53 unresolved roots are not freshly re-audited.
+The 2026-10-05 [internal-process batch](internal-process-batch-execplan.md) connects I01/N04/O09 through shared session entries, scoped system-task publication and cancellation, and leased internal timestamp diagnostics. See [receipt](parity/current-audit/internal-process-batch-validation.json). All three parents remain partial; no package acceptance or GC activation. Counts remain 86 tracked /30 repaired /56 unresolved; other 53 unresolved roots are not freshly re-audited.
 
 The 2026-10-05 [typed user-variable batch](user-variable-batch-execplan.md) connects S03/X01 through one session value/type owner, plan-time inline type publication, retained SET plans and independent migration maps. The duplicate map, value-derived read/type reconstruction and duplicate integration harness are removed. See [receipt](parity/current-audit/user-variable-batch-validation.json). Both parents remain partial; counts remain 86 tracked /30 repaired /56 unresolved. Other54 unresolved roots were not freshly reproduced.
 
@@ -2651,7 +2654,7 @@ The [statistics plan](statistics-ndv-batch-execplan.md) connects four current-Go
 
 ## PD region lifecycle checkpoint — 2026-10-06
 
-The [PD region plan](pd-region-batch-execplan.md) and [receipt](parity/current-audit/pd-region-batch-validation.json) connect native selection/metadata, both transports, cache flags/stale-response fallback, TiDB bridge and live SQL startup/mutation/reload policy. Native fixes are published then synchronized through maintained patches and protobuf regeneration. Complete discovery health/forwarding, TSO proxying, shared cache ownership and remaining settings stay open; no whole Go package is accepted. The other53 unresolved roots are carried evidence.
+The [PD region plan](pd-region-batch-execplan.md) and [receipt](parity/current-audit/pd-region-batch-validation.json) connect native selection/metadata, both transports, cache flags/stale-response fallback, TiDB bridge and live SQL startup/mutation/reload policy. Native fixes are published then synchronized through maintained patches and protobuf regeneration. Complete discovery health/forwarding, TSO proxying, shared cache ownership and remaining settings stay open; no whole Go package is accepted. The other 53 unresolved roots are carried evidence.
 
 
 ## PD service availability checkpoint — 2026-10-06

@@ -27,6 +27,7 @@ enum Reply {
 #[derive(Clone)]
 struct PdServer {
     endpoint: String,
+    wire_routes: Arc<std::sync::Mutex<Vec<(String, Option<String>, bool)>>>,
     leader_urls: Arc<std::sync::RwLock<Vec<String>>>,
     region_members: Arc<std::sync::RwLock<Option<Vec<pdpb::Member>>>>,
     region_metadata: Arc<std::sync::Mutex<Vec<bool>>>,
@@ -84,6 +85,14 @@ where
     }
 
     fn call(&mut self, request: http::Request<B>) -> Self::Future {
+        self.wire_routes.lock().unwrap().push((
+            request.uri().path().to_owned(),
+            request
+                .headers()
+                .get("pd-forwarded-host")
+                .map(|v| v.to_str().unwrap().to_owned()),
+            request.headers().contains_key("pd-allow-follower-handle"),
+        ));
         let service = self.clone();
         match request.uri().path() {
             "/pdpb.PD/GetMinTS" => Box::pin(async move {
@@ -215,6 +224,7 @@ impl tonic::server::UnaryService<pdpb::GetRegionRequest> for PdServer {
             .unwrap()
             .push(request.metadata().contains_key("pd-allow-follower-handle"));
         assert!(request.metadata().contains_key("grpc-timeout"));
+        let forwarded = request.metadata().contains_key("pd-forwarded-host");
         let request = request.into_inner();
         assert_eq!(request.header.unwrap().cluster_id, 42);
         let service = self.clone();
@@ -223,18 +233,17 @@ impl tonic::server::UnaryService<pdpb::GetRegionRequest> for PdServer {
                 service.region_entered.add_permits(1);
                 service.region_release.acquire().await.unwrap().forget();
             }
-            if service.region_failure.load(Ordering::SeqCst) == 1 {
+            if !forwarded && service.region_failure.load(Ordering::SeqCst) == 1 {
                 return Err(tonic::Status::unknown("follower transport failure"));
             }
             Ok(tonic::Response::new(pdpb::GetRegionResponse {
                 header: Some(ResponseHeader {
                     cluster_id: 42,
-                    error: (service.region_failure.load(Ordering::SeqCst) == 2).then_some(
-                        pdpb::Error {
+                    error: (!forwarded && service.region_failure.load(Ordering::SeqCst) == 2)
+                        .then_some(pdpb::Error {
                             r#type: pdpb::ErrorType::RegionNotFound as i32,
                             message: "missing follower region".to_owned(),
-                        },
-                    ),
+                        }),
                 }),
                 region: Some(metapb::Region {
                     id: service.region_id.load(Ordering::SeqCst) as u64,
@@ -450,6 +459,7 @@ impl Server {
             region_metadata: Arc::default(),
             region_failure: Arc::default(),
             health_status: Arc::new(AtomicUsize::new(1)),
+            wire_routes: Arc::default(),
             health_requests: Arc::default(),
             health_stall: Arc::default(),
             member_failures: Arc::new(AtomicUsize::new(0)),
@@ -2236,6 +2246,10 @@ async fn pd_region_batch_native_cache_permission_fallback_and_close() {
 }
 
 async fn availability_pair() -> (Server, Server, Arc<RetryClient>) {
+    availability_pair_with_forwarding(false).await
+}
+
+async fn availability_pair_with_forwarding(enabled: bool) -> (Server, Server, Arc<RetryClient>) {
     let leader = Server::start(Reply::Timestamp).await;
     let follower = Server::start(Reply::Timestamp).await;
     let members = vec![
@@ -2255,10 +2269,16 @@ async fn availability_pair() -> (Server, Server, Arc<RetryClient>) {
         *server.service.leader_urls.write().unwrap() = vec![leader.service.endpoint.clone()];
     }
     let client = Arc::new(
-        RetryClient::connect(
+        RetryClient::connect_with_options(
             &[leader.service.endpoint.clone()],
             Arc::new(SecurityManager::default()),
-            Duration::from_secs(1),
+            {
+                let mut options = crate::pd::opt::Options::new();
+                options.timeout = Duration::from_secs(1);
+                options.enable_forwarding = enabled;
+                options
+            },
+            None,
         )
         .await
         .unwrap(),
@@ -2324,4 +2344,148 @@ async fn pd_availability_batch_health_recovers_and_close_joins_stalled_probe() {
         leader.service.health_requests.load(Ordering::SeqCst),
         probes
     );
+}
+
+async fn unavailable_leader(leader: &Server) {
+    let previous = leader.service.health_requests.load(Ordering::SeqCst);
+    leader.service.health_status.store(2, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while leader.service.health_requests.load(Ordering::SeqCst) == previous {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn pd_forwarding_batch_metadata_policy_and_recovery() {
+    for enabled in [false, true] {
+        let (leader, follower, client) = availability_pair_with_forwarding(enabled).await;
+        unavailable_leader(&leader).await;
+        client.clone().get_all_stores().await.unwrap();
+        let seen = follower.service.wire_routes.lock().unwrap().clone();
+        let forwarded: Vec<_> = seen
+            .iter()
+            .filter(|(path, _, _)| path.ends_with("/GetAllStores"))
+            .collect();
+        assert_eq!(
+            forwarded.len(),
+            usize::from(enabled),
+            "startup forwarding must reach metadata routing"
+        );
+        if enabled {
+            assert_eq!(
+                forwarded[0].1.as_deref(),
+                Some(leader.service.endpoint.as_str())
+            );
+            assert!(!forwarded[0].2);
+        }
+        if enabled {
+            follower.service.region_failure.store(2, Ordering::SeqCst);
+            for _ in 0..2 {
+                client
+                    .clone()
+                    .get_region_for_cache(b"wire".to_vec(), false, false)
+                    .await
+                    .unwrap();
+            }
+            let seen = follower.service.wire_routes.lock().unwrap().clone();
+            let regions: Vec<_> = seen
+                .iter()
+                .filter(|(p, _, _)| p.ends_with("/GetRegion"))
+                .collect();
+            assert_eq!(regions.len(), 4);
+            for pair in regions.chunks_exact(2) {
+                assert!(
+                    pair[0].2 && pair[0].1.is_none(),
+                    "first region attempt preserves local permission even on API-ring fallback"
+                );
+                assert!(
+                    !pair[1].2 && pair[1].1.as_deref() == Some(leader.service.endpoint.as_str()),
+                    "error retry requires leader forwarding"
+                );
+            }
+        }
+        client.load_keyspace("DEFAULT").await.unwrap();
+        assert_eq!(
+            leader.service.keyspace_loads.load(Ordering::SeqCst),
+            1,
+            "Go keyspaceClient stays on the serving leader connection"
+        );
+        assert_eq!(follower.service.keyspace_loads.load(Ordering::SeqCst), 0);
+        leader.service.health_status.store(1, Ordering::SeqCst);
+        let previous = leader.service.health_requests.load(Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while leader.service.health_requests.load(Ordering::SeqCst) == previous {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        })
+        .await
+        .unwrap();
+        client.clone().get_all_stores().await.unwrap();
+        let count = follower
+            .service
+            .wire_routes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(p, _, _)| p.ends_with("/GetAllStores"))
+            .count();
+        assert_eq!(
+            count,
+            usize::from(enabled),
+            "healthy leader restores direct requests"
+        );
+        client.close().await;
+    }
+}
+
+#[tokio::test]
+async fn pd_forwarding_batch_leader_required_region_is_forwarded() {
+    let (leader, follower, client) = availability_pair_with_forwarding(true).await;
+    unavailable_leader(&leader).await;
+    client
+        .clone()
+        .get_region_for_cache(b"wire".to_vec(), false, true)
+        .await
+        .unwrap();
+    let seen = follower.service.wire_routes.lock().unwrap().clone();
+    let forwarded = seen
+        .iter()
+        .find(|(path, _, _)| path.ends_with("/GetRegion"))
+        .expect("leader-only region lookup must use forwarding");
+    assert_eq!(
+        forwarded.1.as_deref(),
+        Some(leader.service.endpoint.as_str())
+    );
+    assert!(
+        !forwarded.2,
+        "forwarding cannot ask follower to handle locally"
+    );
+    client.set_enable_follower_handle(false);
+    follower.service.stall_scans.store(true, Ordering::SeqCst);
+    let request_client = client.clone();
+    let request = tokio::spawn(async move {
+        request_client
+            .scan_regions(b"a".to_vec(), b"z".to_vec(), 1)
+            .await
+    });
+    tokio::time::timeout(
+        Duration::from_millis(500),
+        follower.service.region_entered.acquire(),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .forget();
+    tokio::time::timeout(Duration::from_millis(250), client.close())
+        .await
+        .unwrap();
+    assert!(matches!(
+        request.await.unwrap(),
+        Err(crate::Error::ContextCanceled)
+    ));
 }

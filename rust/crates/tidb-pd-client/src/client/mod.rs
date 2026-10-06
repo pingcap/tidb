@@ -146,6 +146,7 @@ struct PdMemberObservation {
 
 #[derive(Clone, Copy)]
 struct RpcControl<'a> {
+    forwarding: Option<&'a tikv_client::pd_region_service::Forwarding>,
     follower: bool,
     timeout: Duration,
     shutdown: &'a watch::Receiver<bool>,
@@ -251,6 +252,22 @@ impl PdClient {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        let mut options = tikv_client::pd_options::Options::new();
+        options.timeout = timeout;
+        Self::connect_seeds_with_options(seeds, security, options)
+    }
+
+    /// Use one immutable startup policy for discovery and all request consumers.
+    pub fn connect_seeds_with_options<I, S>(
+        seeds: I,
+        security: Arc<ClusterSecurity>,
+        options: tikv_client::pd_options::Options,
+    ) -> Result<Self, PdClientError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let timeout = options.timeout;
         let raw_seeds = seeds.into_iter().map(Into::into).collect::<Vec<String>>();
         let bootstrap_endpoint = raw_seeds
             .first()
@@ -263,7 +280,7 @@ impl PdClient {
         let (commands, receiver) = mpsc::channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (ready_tx, ready_rx) = mpsc::channel();
-        let options = Arc::new(tikv_client::pd_options::Options::new());
+        let options = Arc::new(options);
         let worker_options = options.clone();
         let worker_seeds = seeds.clone();
         let worker = std::thread::spawn(move || {

@@ -427,7 +427,6 @@ where
             Some(lease),
         ))
     }
-
 }
 
 /// Unique lifecycle owner for production PD, RegionCache, and TiKV transport.
@@ -660,8 +659,11 @@ impl ProductionReadProcessAuthority {
                 .tikv_client
                 .copr_cache,
         )?;
+        let mut pd_options = tikv_client::pd_options::Options::new();
+        pd_options.timeout = timeout;
+        pd_options.enable_forwarding = tidb_config::tikvcfg::get_global_config().enable_forwarding;
         let pd =
-            PdClient::connect_seeds_with_security(pd_endpoints, timeout, Arc::clone(&security))?;
+            PdClient::connect_seeds_with_options(pd_endpoints, Arc::clone(&security), pd_options)?;
         let cluster_id = pd.cluster_id();
         let timestamp_source = PdTimestampSource::new(pd.clone());
         let loader = PdRegionLoader::from_client(pd.clone());

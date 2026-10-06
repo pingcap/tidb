@@ -158,4 +158,9 @@ The [availability receipt](pd-availability-batch-validation.json) advances
 B01 P03/P06/T02 through shared member health, region API cooldown, topology
 publication and independently polled, joined maintenance in both clients.
 Duplicate health wire code is retired; forwarding, TSO proxy and shared cache
-consolidation remain open. The other53 unresolved roots retain carried evidence.
+consolidation remain open. The other 53 unresolved roots retain carried evidence.
+
+
+## PD unary forwarding checkpoint — 2026-10-06
+
+Shared native/adapter selection, startup policy and metadata connect B01 with N03. Three duplicated failover loops are removed. [Validation](pd-forwarding-batch-validation.json) records four baseline failures and 336 selected passes. P03/T02/N03 stay partial; TSO proxy/router and broader package obligations remain open.

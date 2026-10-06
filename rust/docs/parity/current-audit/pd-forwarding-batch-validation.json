@@ -1,0 +1,206 @@
+{
+  "date": "2026-10-06",
+  "scope": "P03/T02/N03 shared PD unary forwarding, startup options, metadata and consolidated adapter failover",
+  "baseline": {
+    "tidb": "3a903f597731635739fdbefe34170bca4eee662e",
+    "native": "194295ec1f40e3ce4c1115ef3ff74cb2c425d112",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "pd": "v0.0.0-20260805103528-afa43111d149",
+    "native_published": "512b33c1e86f2e151a975ed70e0e398bc6987871"
+  },
+  "source_inventory": [
+    {
+      "path": "servicediscovery/callbacks.go",
+      "sha256": "5f927301227919e13a6c30a0466b749e25765e85e8ca69d73fa131972b318f25",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "servicediscovery/mock_service_discovery.go",
+      "sha256": "bb36615732f3228f1078b74c347124837651fe81b5173144d4de456abc69e3a1",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "servicediscovery/resource_manager_service_discovery.go",
+      "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "servicediscovery/resource_manager_service_discovery_test.go",
+      "sha256": "28c9cb214e9ab7beb4d4bf9d930c1e6203ae5b6a146f0bcc2c5264a5a7c24094",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "servicediscovery/router_service_discovery.go",
+      "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "servicediscovery/service_discovery.go",
+      "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "servicediscovery/service_discovery_test.go",
+      "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "servicediscovery/tso_service_discovery.go",
+      "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "servicediscovery/tso_service_discovery_test.go",
+      "sha256": "a2379d4732fddd244d08d0c8e38e2e0f928d937ba2fd830ac5461c9091aa94a9",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "pkg/utils/grpcutil/grpcutil.go",
+      "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "pkg/utils/grpcutil/grpcutil_test.go",
+      "sha256": "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "opt/option.go",
+      "sha256": "4799581c1573b9ec7dab1daab437146452e2ee3e1e33d26ece2d5e7727f272c1",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "opt/option_test.go",
+      "sha256": "c17d90178b6373fa6e7d2ddc15530ce30276aa032b1fbab75204e5798f9a794e",
+      "acceptance": "unaccepted whole package; current maintenance touches shared routing contract only"
+    },
+    {
+      "path": "client.go",
+      "sha256": "a86903d73da7230b7fc0d3b6da20ddd63ba0be17097bef5f5cc0d4653e870cf8",
+      "acceptance": "Existing API source contract reviewed; complete root package remains unaccepted"
+    },
+    {
+      "path": "inner_client.go",
+      "sha256": "9e11e9d887c88c67cf95c1bdeb12eb31a9641717deee09e44538a49a23d8d39c",
+      "acceptance": "Existing API source contract reviewed; complete root package remains unaccepted"
+    },
+    {
+      "path": "keyspace_client.go",
+      "sha256": "860d64ad148a902b9c85c04fff4c805bdbb7cfd6b8bb2d6447f7c0ee8704129e",
+      "acceptance": "Existing API source contract reviewed; complete root package remains unaccepted"
+    },
+    {
+      "path": "gc_client.go",
+      "sha256": "f50908e58752ee9ef800ef75a6570b6edc07f34e85776952fa88284125d04647",
+      "acceptance": "Existing API source contract reviewed; complete root package remains unaccepted"
+    }
+  ],
+  "repairs": "Supported native and adapter unary PD calls now consume shared network-based forwarding selection and immutable per-attempt logical-leader metadata. Region-local cooldown and rotation do not suppress forwarding. Canonical startup enable-forwarding reaches both clients through one options owner; healthy leader recovery restores direct traffic. Membership/health probes and keyspace management remain direct, as Go requires. Region API fallback retains follower-local context when allowed; its error retry uses leader forwarding. Three duplicate adapter store/GC failover loops are retired into the existing shared loop, preserving old-server GC fallback and terminal errors. Forwarding-enabled ordinary calls make one selected RPC; errors cannot fall into an untagged direct-member retry. TSO forwarding/follower-proxy streams, router transport and complete package/platform obligations remain open.",
+  "before": {
+    "behavioral_failures": 4,
+    "support_scaffolding": "Options constructors and existing mock metadata capture staged before routing; same two transport regressions fail independently in both repos. Additional shutdown/caller coverage follows integration.",
+    "logs": [
+      {
+        "path": "/workspace/.cloud-setup/pd-forwarding-batch/native-before.log",
+        "sha256": "092e699b9208e3d40a1a0b743ccd6520977586834d2fab9e07bce443b1f9fc3f"
+      },
+      {
+        "path": "/workspace/.cloud-setup/pd-forwarding-batch/adapter-before.log",
+        "sha256": "0ce7a33a479a67e3e1104e494b9d810e7efaeac537cd84bec991d1fe94e52fa1"
+      }
+    ],
+    "compile_diagnostic": {
+      "path": "/workspace/.cloud-setup/pd-forwarding-batch/native-compile-diagnostic.log",
+      "sha256": "ee9bee599db95094ac06797b5e0fb25987e7b4f8b13069a47b78dc1401b6ea19"
+    },
+    "lint_environment_diagnostic": {
+      "path": "/workspace/.cloud-setup/pd-forwarding-batch/lint-environment-diagnostic.log",
+      "sha256": "2f947706e4e5a5924595b197894430da46353dd2f567de8d52366df0b5de4931"
+    },
+    "diagnostic_limits": "Initial lint invocation lacked the Cloud environment activation; corrected make lint passed. A pre-push runner was canceled before Git push to finish keyspace and region-fallback source review. Fresh native gates passed after correction."
+  },
+  "tests": {
+    "distinct_passed": 336,
+    "failed": 0,
+    "ignored_in_selected_runs": 0,
+    "native": {
+      "count": 270,
+      "cwd": "/workspace/client-rust",
+      "command": "CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib -- pd:: region_cache::test:: --test-threads=1",
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-forwarding-batch/native-final.log",
+        "sha256": "8b79430ef3a83dbae2bdb4d2795a757256b9c1875b3e5856040b0c2cf2d3f46a"
+      }
+    },
+    "adapter": {
+      "count": 66,
+      "pd_transport": 44,
+      "loader": 16,
+      "shutdown": 6,
+      "cwd": "/workspace/tidb/rust",
+      "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-pd-client -p tidb-txnkv --lib --test all --no-fail-fast -- pd_client_source:: pd_region_loader_source:: client::worker_lifecycle_tests:: --test-threads=1",
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-forwarding-batch/adapter-final.log",
+        "sha256": "9a74b6e7adcbc362ae662fa58dd68f5dbbad2182e75f7eed1491cfd770947d14"
+      }
+    }
+  },
+  "gates": {
+    "native_all_targets": {
+      "command": "CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked -p tikv-client --all-targets",
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-forwarding-batch/native-check.log",
+        "sha256": "7816c16fe22ba70567986996f0c49e410331164f6382374846324abae0fa2f5c"
+      }
+    },
+    "adapter_all_targets": {
+      "command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-pd-client -p tidb-txnkv -p tidb-exec -p tidb-server --all-targets",
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-forwarding-batch/adapter-check.log",
+        "sha256": "e116783f8ac55371f97e2fdc3890fc7f4233e4470cbdb34f67d4abb36218b25b"
+      }
+    },
+    "lint": {
+      "command": "make lint",
+      "exit_code": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-forwarding-batch/lint.log",
+        "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+      }
+    },
+    "maintained_sync": {
+      "path": "/workspace/.cloud-setup/pd-forwarding-batch/sync.log",
+      "sha256": "611a5d9b7fd0b433296d0c457e053a6a8c3cc54c078c6f9397e5ab8629a91939"
+    },
+    "native_prepush_build": {
+      "path": "/workspace/.cloud-setup/pd-forwarding-batch/native-prepush-build.log",
+      "sha256": "c532e721e58cc16900182a145fa9708c44f3a3afff1bda3438ada4384ac2b27f"
+    },
+    "actual_precommit": "Normal TiDB hook must pass cd rust && cargo build --locked -p tidb-server; final external handoff records completion.",
+    "fresh_prepush": "Required immediately before every native/TiDB push; no bypass or force push."
+  },
+  "register": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29,
+    "rechecked": [
+      "P03",
+      "T02",
+      "N03"
+    ],
+    "other_unresolved_not_freshly_reproduced": 53
+  },
+  "limits": [
+    "TSO forwarding/follower proxy, router transport, remaining discovery/platform/grpcutil and TiKV RequestSelector/cache consolidation remain open.",
+    "No complete Go package acceptance, full Go suite, live multi-node TiKV, TLS topology or performance validation.",
+    "Historical unrelated parser/table_diff/session/DDL failures are retained and were not rerun or called green.",
+    "Saved Cloud configuration does not establish publication or fresh-task restoration."
+  ],
+  "publication": {
+    "native": "512b33c1e86f2e151a975ed70e0e398bc6987871",
+    "native_remote_verified": true,
+    "tidb": "Source commit/push gates and final SHA recorded externally after immutable receipt in /workspace/.cloud-setup/pd-forwarding-batch/final-handoff.json"
+  }
+}

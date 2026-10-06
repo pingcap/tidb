@@ -319,11 +319,22 @@ impl RetryClient<Cluster> {
         timeout: Duration,
         keyspace: Option<&str>,
     ) -> Result<RetryClient> {
-        let connection = Connection::new(security_mgr);
-        // Keep the existing explicit timeout API while taking initialization
-        // defaults from PD's shared options owner.
         let mut options = super::opt::Options::new();
-        super::opt::with_custom_timeout_option(timeout)(&mut options);
+        options.timeout = timeout;
+        Self::connect_with_options(endpoints, security_mgr, options, keyspace).await
+    }
+
+    /// Initialize discovery and requests with one shared Go PD options owner.
+    pub async fn connect_with_options(
+        endpoints: &[String],
+        security_mgr: Arc<SecurityManager>,
+        options: super::opt::Options,
+        keyspace: Option<&str>,
+    ) -> Result<RetryClient> {
+        let timeout = options.timeout;
+        let options = Arc::new(options);
+        let mut connection = Connection::new(security_mgr);
+        connection.options = options.clone();
         if options.init_metrics {
             super::metrics::init_and_register_metrics(Default::default());
         }

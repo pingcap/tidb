@@ -16,7 +16,8 @@
 //! one.
 //!
 //! Go boundary: `pd/client/servicediscovery/service_discovery.go` — the leader is tried
-//! first, a transport-level failure walks the current member set in order, and
+//! first unless shared health selects configured forwarding. The retained retry
+//! owner walks accepted membership on failures, and
 //! a membership refresh is what makes a new leader visible. The shared native
 //! channel map retains endpoint connections until close, as Go's discovery
 //! owner does; metadata membership does not evict active TSO connections.
@@ -197,7 +198,7 @@ where
         RpcControl<'_>,
     ) -> Result<T, PdClientError>,
 {
-    if !clients.options.get_enable_follower_handle() {
+    if !clients.options.get_enable_follower_handle() && !clients.options.enable_forwarding {
         return foreground_with_failover(
             runtime,
             clients,
@@ -211,6 +212,7 @@ where
                     endpoint,
                     cluster_id,
                     RpcControl {
+                        forwarding: None,
                         timeout,
                         shutdown,
                         follower: false,
@@ -220,12 +222,14 @@ where
         );
     }
     let snapshot = state.read().expect("PD state lock poisoned").clone();
-    let target = clients.regions.select(
+    let target = clients.regions.select_with_forwarding(
         &snapshot.members.leader_url,
         &snapshot.members.member_urls,
-        true,
+        clients.options.get_enable_follower_handle(),
         allowed,
+        clients.options.enable_forwarding,
     );
+    let forwarding = tikv_client::pd_region_service::Forwarding(target.forwarded_host.clone());
     let deadline = std::time::Instant::now() + timeout;
     let result = action(
         runtime,
@@ -233,6 +237,7 @@ where
         &target.endpoint,
         snapshot.members.cluster_id,
         RpcControl {
+            forwarding: Some(&forwarding),
             timeout,
             shutdown,
             follower: target.follower,
@@ -254,12 +259,17 @@ where
             .filter(|duration| !duration.is_zero())
         {
             let current = state.read().expect("PD state lock poisoned").clone();
+            let (endpoint, forwarding) = clients.regions.forwarding_target(
+                &current.members.leader_url,
+                clients.options.enable_forwarding,
+            );
             return action(
                 runtime,
                 clients,
-                &current.members.leader_url,
+                &endpoint,
                 current.members.cluster_id,
                 RpcControl {
+                    forwarding: Some(&forwarding),
                     timeout: remaining,
                     shutdown,
                     follower: false,
@@ -282,6 +292,16 @@ where
     F: FnMut(&tokio::runtime::Runtime, &mut PdChannelCache, &str, u64) -> Result<T, PdClientError>,
 {
     let snapshot = state.read().expect("PD state lock poisoned").clone();
+    if clients.options.enable_forwarding {
+        // Go getClientAndContext selects one service for this RPC. A failed
+        // proxy must not enter the legacy direct-member walk without metadata.
+        return action(
+            runtime,
+            clients,
+            &snapshot.members.leader_url,
+            snapshot.members.cluster_id,
+        );
+    }
     let mut attempted = HashSet::new();
     attempted.insert(snapshot.active_endpoint.clone());
     match action(
@@ -291,6 +311,7 @@ where
         snapshot.members.cluster_id,
     ) {
         Ok(value) => Ok(value),
+        Err(error) if is_unimplemented(&error) => Err(error),
         Err(error) if needs_failover_probe(&error) => {
             let direct_failure = is_direct_failure(&error);
             let mut last_error = error;
@@ -312,6 +333,7 @@ where
                         set_active_endpoint(state, endpoint);
                         return Ok(value);
                     }
+                    Err(error) if is_unimplemented(&error) => return Err(error),
                     Err(error)
                         if is_retryable_endpoint_error(
                             &error,
@@ -356,68 +378,24 @@ pub(super) fn get_gc_state_with_failover(
     shutdown: &watch::Receiver<bool>,
     keyspace_id: Option<u32>,
 ) -> Result<PdGcState, PdClientError> {
-    let snapshot = state.read().expect("PD state lock poisoned").clone();
-    let mut attempted = HashSet::new();
-    attempted.insert(snapshot.active_endpoint.clone());
-    match get_gc_state(
+    foreground_with_failover(
         runtime,
         clients,
-        &snapshot.active_endpoint,
         timeout,
+        state,
         shutdown,
-        snapshot.members.cluster_id,
-        keyspace_id,
-    ) {
-        Ok(gc_state) => Ok(gc_state),
-        // An `Unimplemented` PD is uniformly old, so probing its peers would
-        // only repeat the same answer; the caller latches the fallback instead.
-        Err(error) if is_unimplemented(&error) => Err(error),
-        Err(error) if needs_failover_probe(&error) => {
-            let direct_failure = is_direct_failure(&error);
-            let mut last_error = error;
-            if let Err(error @ PdClientError::ClusterMismatch { .. }) =
-                refresh_membership(runtime, clients, timeout, state, shutdown)
-            {
-                return Err(error);
-            }
-            let current = state.read().expect("PD state lock poisoned").clone();
-            if !direct_failure && snapshot.active_endpoint == current.members.leader_url {
-                return Err(last_error);
-            }
-            for endpoint in endpoint_attempt_order(&current) {
-                if !attempted.insert(endpoint.clone()) {
-                    continue;
-                }
-                match get_gc_state(
-                    runtime,
-                    clients,
-                    &endpoint,
-                    timeout,
-                    shutdown,
-                    current.members.cluster_id,
-                    keyspace_id,
-                ) {
-                    Ok(gc_state) => {
-                        set_active_endpoint(state, endpoint);
-                        return Ok(gc_state);
-                    }
-                    Err(error) if is_unimplemented(&error) => return Err(error),
-                    Err(error)
-                        if is_retryable_endpoint_error(
-                            &error,
-                            &endpoint,
-                            &current.members.leader_url,
-                        ) =>
-                    {
-                        last_error = error;
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-            Err(last_error)
-        }
-        Err(error) => Err(error),
-    }
+        |runtime, clients, endpoint, cluster_id| {
+            get_gc_state(
+                runtime,
+                clients,
+                endpoint,
+                timeout,
+                shutdown,
+                cluster_id,
+                keyspace_id,
+            )
+        },
+    )
 }
 
 /// Whether PD rejected the call because it does not implement the method.
@@ -440,66 +418,18 @@ pub(super) fn get_store_with_failover(
     shutdown: &watch::Receiver<bool>,
     store_id: u64,
 ) -> Result<Option<PdStore>, PdClientError> {
-    let snapshot = state.read().expect("PD state lock poisoned").clone();
-    let mut attempted = HashSet::new();
-    attempted.insert(snapshot.active_endpoint.clone());
-    match get_store(
+    foreground_with_failover(
         runtime,
         clients,
-        &snapshot.active_endpoint,
         timeout,
+        state,
         shutdown,
-        snapshot.members.cluster_id,
-        store_id,
-    ) {
-        Ok(store) => Ok(store),
-        Err(error) if needs_failover_probe(&error) => {
-            let direct_failure = is_direct_failure(&error);
-            let mut last_error = error;
-            // A bad membership observation never erases the last accepted
-            // snapshot; its remaining direct endpoints are still candidates.
-            if let Err(error @ PdClientError::ClusterMismatch { .. }) =
-                refresh_membership(runtime, clients, timeout, state, shutdown)
-            {
-                return Err(error);
-            }
-            let current = state.read().expect("PD state lock poisoned").clone();
-            if !direct_failure && snapshot.active_endpoint == current.members.leader_url {
-                return Err(last_error);
-            }
-            for endpoint in endpoint_attempt_order(&current) {
-                if !attempted.insert(endpoint.clone()) {
-                    continue;
-                }
-                match get_store(
-                    runtime,
-                    clients,
-                    &endpoint,
-                    timeout,
-                    shutdown,
-                    current.members.cluster_id,
-                    store_id,
-                ) {
-                    Ok(store) => {
-                        set_active_endpoint(state, endpoint);
-                        return Ok(store);
-                    }
-                    Err(error)
-                        if is_retryable_endpoint_error(
-                            &error,
-                            &endpoint,
-                            &current.members.leader_url,
-                        ) =>
-                    {
-                        last_error = error;
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-            Err(last_error)
-        }
-        Err(error) => Err(error),
-    }
+        |runtime, clients, endpoint, cluster_id| {
+            get_store(
+                runtime, clients, endpoint, timeout, shutdown, cluster_id, store_id,
+            )
+        },
+    )
 }
 
 /// Go boundary: `client.go` -> `GetAllStores`, routed through the same
@@ -511,64 +441,16 @@ pub(super) fn get_all_stores_with_failover(
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
 ) -> Result<Vec<tidb_proto::metapb::Store>, PdClientError> {
-    let snapshot = state.read().expect("PD state lock poisoned").clone();
-    let mut attempted = HashSet::new();
-    attempted.insert(snapshot.active_endpoint.clone());
-    match get_all_stores(
+    foreground_with_failover(
         runtime,
         clients,
-        &snapshot.active_endpoint,
         timeout,
+        state,
         shutdown,
-        snapshot.members.cluster_id,
-    ) {
-        Ok(stores) => Ok(stores),
-        Err(error) if needs_failover_probe(&error) => {
-            let direct_failure = is_direct_failure(&error);
-            let mut last_error = error;
-            // A bad membership observation never erases the last accepted
-            // snapshot; its remaining direct endpoints are still candidates.
-            if let Err(error @ PdClientError::ClusterMismatch { .. }) =
-                refresh_membership(runtime, clients, timeout, state, shutdown)
-            {
-                return Err(error);
-            }
-            let current = state.read().expect("PD state lock poisoned").clone();
-            if !direct_failure && snapshot.active_endpoint == current.members.leader_url {
-                return Err(last_error);
-            }
-            for endpoint in endpoint_attempt_order(&current) {
-                if !attempted.insert(endpoint.clone()) {
-                    continue;
-                }
-                match get_all_stores(
-                    runtime,
-                    clients,
-                    &endpoint,
-                    timeout,
-                    shutdown,
-                    current.members.cluster_id,
-                ) {
-                    Ok(stores) => {
-                        set_active_endpoint(state, endpoint);
-                        return Ok(stores);
-                    }
-                    Err(error)
-                        if is_retryable_endpoint_error(
-                            &error,
-                            &endpoint,
-                            &current.members.leader_url,
-                        ) =>
-                    {
-                        last_error = error;
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-            Err(last_error)
-        }
-        Err(error) => Err(error),
-    }
+        |runtime, clients, endpoint, cluster_id| {
+            get_all_stores(runtime, clients, endpoint, timeout, shutdown, cluster_id)
+        },
+    )
 }
 
 pub(super) fn refresh_membership(
@@ -732,7 +614,51 @@ pub(super) fn tonic_client(
     runtime: &tokio::runtime::Runtime,
     clients: &PdChannelCache,
     endpoint: &str,
+) -> Result<
+    TonicPdClient<
+        tonic::service::interceptor::InterceptedService<
+            Channel,
+            tikv_client::pd_region_service::Forwarding,
+        >,
+    >,
+    PdClientError,
+> {
+    let _guard = runtime.enter();
+    let (endpoint, forwarding) = clients
+        .regions
+        .forwarding_target(endpoint, clients.options.enable_forwarding);
+    Ok(TonicPdClient::with_interceptor(
+        clients.channel(&endpoint)?,
+        forwarding,
+    ))
+}
+
+pub(super) fn direct_tonic_client(
+    runtime: &tokio::runtime::Runtime,
+    clients: &PdChannelCache,
+    endpoint: &str,
 ) -> Result<TonicPdClient<Channel>, PdClientError> {
     let _guard = runtime.enter();
     Ok(TonicPdClient::new(clients.channel(endpoint)?))
+}
+
+pub(super) fn region_tonic_client(
+    runtime: &tokio::runtime::Runtime,
+    clients: &PdChannelCache,
+    endpoint: &str,
+    control: RpcControl<'_>,
+) -> Result<
+    TonicPdClient<
+        tonic::service::interceptor::InterceptedService<
+            Channel,
+            tikv_client::pd_region_service::Forwarding,
+        >,
+    >,
+    PdClientError,
+> {
+    let _guard = runtime.enter();
+    Ok(TonicPdClient::with_interceptor(
+        clients.channel(endpoint)?,
+        control.forwarding.cloned().unwrap_or_default(),
+    ))
 }

@@ -1504,10 +1504,13 @@ impl PdRpcClient<TikvConnect, Cluster> {
                 .with_tikv_client_config(config.tikv_client.clone())
             },
             |security_mgr| async move {
-                RetryClient::connect_for_keyspace(
+                let mut options = super::opt::Options::new();
+                options.timeout = config.timeout;
+                options.enable_forwarding = config.enable_forwarding;
+                RetryClient::connect_with_options(
                     pd_endpoints,
                     security_mgr,
-                    config.timeout,
+                    options,
                     initial_keyspace_name.as_deref(),
                 )
                 .await

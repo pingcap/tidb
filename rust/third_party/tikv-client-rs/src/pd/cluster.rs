@@ -25,13 +25,17 @@ use crate::Result;
 use crate::SecurityManager;
 use crate::Timestamp;
 
+type RoutedChannel =
+    tonic::service::interceptor::InterceptedService<Channel, super::region_service::Forwarding>;
+type RoutedPdClient = pdpb::pd_client::PdClient<RoutedChannel>;
+
 /// A PD cluster.
 pub struct Cluster {
     connection: Connection,
     region_service: Arc<super::region_service::RegionService>,
     id: u64,
     channels: Arc<ChannelCache>,
-    client: Option<pdpb::pd_client::PdClient<Channel>>,
+    client: Option<RoutedPdClient>,
     keyspace_client: Option<keyspacepb::keyspace_client::KeyspaceClient<Channel>>,
     members: pdpb::GetMembersResponse,
     discovery: TsoDiscovery,
@@ -58,6 +62,28 @@ macro_rules! pd_request {
 // its connection and owned arguments across I/O. The static future lifetime
 // prevents a retry caller from accidentally holding the cluster lock while waiting.
 impl Cluster {
+    fn rpc_client(&self) -> impl Future<Output = Result<RoutedPdClient>> + Send + 'static {
+        let connection = self.connection.clone();
+        let regions = self.region_service.clone();
+        let leader = self
+            .members
+            .leader
+            .as_ref()
+            .and_then(|m| m.client_urls.first())
+            .cloned()
+            .unwrap_or_default();
+        let open = self.client.is_some();
+        async move {
+            if !open {
+                return Err(Error::ContextCanceled);
+            }
+            connection
+                .routed_client(&regions, &leader)
+                .await
+                .map_err(Error::from)
+        }
+    }
+
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
@@ -251,11 +277,11 @@ impl Cluster {
     where
         T: Clone + Send + Sync + 'static,
         R: PdResponse + Send + 'static,
-        F: Fn(pdpb::pd_client::PdClient<Channel>, Request<T>) -> Fut + Send + Sync + 'static,
+        F: Fn(RoutedPdClient, Request<T>) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = GrpcResult<R>> + Send,
     {
         let connection = self.connection.clone();
-        let leader_client = self.client.clone();
+        let leader_client = self.rpc_client();
         let leader = self
             .members
             .leader
@@ -269,22 +295,21 @@ impl Cluster {
             .iter()
             .filter_map(|member| member.client_urls.first().cloned())
             .collect::<Vec<_>>();
-        let target = self.region_service.select(
+        let target = self.region_service.select_with_forwarding(
             &leader,
             &urls,
             connection.options.get_enable_follower_handle(),
             allowed,
+            connection.options.enable_forwarding,
         );
         async move {
-            let leader_client = leader_client.ok_or(Error::ContextCanceled)?;
             let deadline = tokio::time::Instant::now() + timeout;
             let request = async {
                 let first = async {
-                    let client = if target.follower {
-                        pdpb::pd_client::PdClient::new(connection.channel(&target.endpoint).await?)
-                    } else {
-                        leader_client.clone()
-                    };
+                    let client = pdpb::pd_client::PdClient::with_interceptor(
+                        connection.channel(&target.endpoint).await?,
+                        super::region_service::Forwarding(target.forwarded_host.clone()),
+                    );
                     let mut request = target.request(value.clone());
                     request.set_timeout(
                         deadline.saturating_duration_since(tokio::time::Instant::now()),
@@ -302,6 +327,7 @@ impl Cluster {
                         .map(|error| error.r#type),
                 );
                 let response = if retry {
+                    let leader_client = leader_client.await?;
                     let mut request = Request::new(value);
                     request.set_timeout(
                         deadline.saturating_duration_since(tokio::time::Instant::now()),
@@ -333,9 +359,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::SplitRegionsResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let mut req = pd_request!(cluster_id, pdpb::SplitRegionsRequest);
             req.split_keys = split_keys;
             req.retry_limit = retry_limit;
@@ -349,9 +375,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::GetStoreResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let mut req = pd_request!(cluster_id, pdpb::GetStoreRequest);
             req.store_id = id;
             req.send(&mut client, timeout).await
@@ -363,9 +389,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::GetAllStoresResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let req = pd_request!(cluster_id, pdpb::GetAllStoresRequest);
             req.send(&mut client, timeout).await
         }
@@ -385,16 +411,16 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<Timestamp>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         let classic = self.route.group_id.is_none();
         let ordinary = self.get_timestamp();
         async move {
             // Go GetMinTS uses the ordinary provider in classic mode. API
             // compatibility falls back only when GetMinTS is unsupported.
-            let mut client = client.ok_or(Error::ContextCanceled)?;
             if classic {
                 return ordinary.await;
             }
+            let mut client = client.await?;
             let request = pd_request!(cluster_id, pdpb::GetMinTsRequest);
             match request.send(&mut client, timeout).await {
                 Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unimplemented => {
@@ -413,9 +439,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<()>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let mut request = pd_request!(cluster_id, pdpb::SetExternalTimestampRequest);
             request.timestamp = timestamp;
             request.send(&mut client, timeout).await.map(|_| ())
@@ -427,9 +453,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<u64>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let request = pd_request!(cluster_id, pdpb::GetExternalTimestampRequest);
             request
                 .send(&mut client, timeout)
@@ -444,9 +470,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::UpdateGcSafePointResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let mut req = pd_request!(cluster_id, pdpb::UpdateGcSafePointRequest);
             req.safe_point = safepoint;
             req.send(&mut client, timeout).await
@@ -459,9 +485,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::GetGcStateResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let mut req = pd_request!(cluster_id, pdpb::GetGcStateRequest);
             req.keyspace_scope = Some(keyspace_scope(keyspace_id));
             req.exclude_gc_barriers = true;
@@ -476,9 +502,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::AdvanceTxnSafePointResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let mut req = pd_request!(cluster_id, pdpb::AdvanceTxnSafePointRequest);
             req.keyspace_scope = Some(keyspace_scope(keyspace_id));
             req.target = target;
@@ -493,9 +519,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::AdvanceGcSafePointResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let mut req = pd_request!(cluster_id, pdpb::AdvanceGcSafePointRequest);
             req.keyspace_scope = Some(keyspace_scope(keyspace_id));
             req.target = target;
@@ -510,9 +536,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::ScatterRegionResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let mut req = pd_request!(cluster_id, pdpb::ScatterRegionRequest);
             req.regions_id = region_ids;
             req.group = group;
@@ -526,9 +552,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::GetOperatorResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let client = self.client.clone();
+        let client = self.rpc_client();
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut client = client.await?;
             let mut req = pd_request!(cluster_id, pdpb::GetOperatorRequest);
             req.region_id = region_id;
             req.send(&mut client, timeout).await
@@ -699,7 +725,7 @@ fn keyspace_scope(keyspace_id: u32) -> pdpb::KeyspaceScope {
 }
 
 pub(crate) struct LeaderConnection {
-    client: pdpb::pd_client::PdClient<Channel>,
+    client: RoutedPdClient,
     keyspace_client: keyspacepb::keyspace_client::KeyspaceClient<Channel>,
     members: pdpb::GetMembersResponse,
     timestamp: Result<(TsoDiscovery, TsoRoute, Channel)>,
@@ -716,6 +742,19 @@ pub struct Connection {
 }
 
 impl Connection {
+    async fn routed_client(
+        &self,
+        regions: &super::region_service::RegionService,
+        endpoint: &str,
+    ) -> GrpcResult<RoutedPdClient> {
+        let (endpoint, forwarding) =
+            regions.forwarding_target(endpoint, self.options.enable_forwarding);
+        Ok(pdpb::pd_client::PdClient::with_interceptor(
+            self.channel(&endpoint).await?,
+            forwarding,
+        ))
+    }
+
     pub(crate) fn security_manager(&self) -> Arc<SecurityManager> {
         self.security_mgr.clone()
     }
@@ -923,7 +962,7 @@ impl Connection {
         addr: &str,
         timeout: Duration,
     ) -> Result<(
-        pdpb::pd_client::PdClient<Channel>,
+        RoutedPdClient,
         keyspacepb::keyspace_client::KeyspaceClient<Channel>,
         pdpb::GetMembersResponse,
     )> {
@@ -944,12 +983,15 @@ impl Connection {
         addr: &str,
         deadline: tokio::time::Instant,
     ) -> Result<(
-        pdpb::pd_client::PdClient<Channel>,
+        RoutedPdClient,
         keyspacepb::keyspace_client::KeyspaceClient<Channel>,
         pdpb::GetMembersResponse,
     )> {
         let channel = self.channel(addr).await?;
-        let mut client = pdpb::pd_client::PdClient::new(channel.clone());
+        let mut client = pdpb::pd_client::PdClient::with_interceptor(
+            channel.clone(),
+            super::region_service::Forwarding::default(),
+        );
         let keyspace_client = keyspacepb::keyspace_client::KeyspaceClient::new(channel);
         let mut request = pdpb::GetMembersRequest::default().into_request();
         request.set_timeout(deadline.saturating_duration_since(tokio::time::Instant::now()));
@@ -981,7 +1023,7 @@ impl Connection {
         cluster_id: u64,
         timeout: Duration,
     ) -> Result<(
-        pdpb::pd_client::PdClient<Channel>,
+        RoutedPdClient,
         keyspacepb::keyspace_client::KeyspaceClient<Channel>,
         pdpb::GetMembersResponse,
     )> {
@@ -1018,7 +1060,7 @@ impl Connection {
         previous: &pdpb::GetMembersResponse,
         timeout: Duration,
     ) -> Result<(
-        pdpb::pd_client::PdClient<Channel>,
+        RoutedPdClient,
         keyspacepb::keyspace_client::KeyspaceClient<Channel>,
         pdpb::GetMembersResponse,
         String,
@@ -1096,7 +1138,7 @@ trait PdMessage: Sized {
 
 #[async_trait]
 impl PdMessage for pdpb::GetRegionRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::GetRegionResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1106,7 +1148,7 @@ impl PdMessage for pdpb::GetRegionRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::GetRegionByIdRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::GetRegionResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1116,7 +1158,7 @@ impl PdMessage for pdpb::GetRegionByIdRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::ScanRegionsRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::ScanRegionsResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1126,7 +1168,7 @@ impl PdMessage for pdpb::ScanRegionsRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::BatchScanRegionsRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::BatchScanRegionsResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1136,7 +1178,7 @@ impl PdMessage for pdpb::BatchScanRegionsRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::SplitRegionsRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::SplitRegionsResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1146,7 +1188,7 @@ impl PdMessage for pdpb::SplitRegionsRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::GetStoreRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::GetStoreResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1156,7 +1198,7 @@ impl PdMessage for pdpb::GetStoreRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::GetAllStoresRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::GetAllStoresResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1166,7 +1208,7 @@ impl PdMessage for pdpb::GetAllStoresRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::UpdateGcSafePointRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::UpdateGcSafePointResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1176,7 +1218,7 @@ impl PdMessage for pdpb::UpdateGcSafePointRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::GetGcStateRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::GetGcStateResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1186,7 +1228,7 @@ impl PdMessage for pdpb::GetGcStateRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::AdvanceTxnSafePointRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::AdvanceTxnSafePointResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1196,7 +1238,7 @@ impl PdMessage for pdpb::AdvanceTxnSafePointRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::AdvanceGcSafePointRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::AdvanceGcSafePointResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1206,7 +1248,7 @@ impl PdMessage for pdpb::AdvanceGcSafePointRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::ScatterRegionRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::ScatterRegionResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1216,7 +1258,7 @@ impl PdMessage for pdpb::ScatterRegionRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::GetOperatorRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::GetOperatorResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1226,7 +1268,7 @@ impl PdMessage for pdpb::GetOperatorRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::SetExternalTimestampRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::SetExternalTimestampResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1236,7 +1278,7 @@ impl PdMessage for pdpb::SetExternalTimestampRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::GetExternalTimestampRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::GetExternalTimestampResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
@@ -1246,7 +1288,7 @@ impl PdMessage for pdpb::GetExternalTimestampRequest {
 
 #[async_trait]
 impl PdMessage for pdpb::GetMinTsRequest {
-    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Client = RoutedPdClient;
     type Response = pdpb::GetMinTsResponse;
 
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {

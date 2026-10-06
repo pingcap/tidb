@@ -28,6 +28,25 @@ struct Members {
     urls: Vec<String>,
     candidates: Vec<Arc<Candidate>>,
     next: usize,
+    forward_next: usize,
+}
+
+impl Members {
+    fn forwarding_candidate(&mut self, enabled: bool) -> Option<Arc<Candidate>> {
+        let leader = self.candidates.first()?.clone();
+        if enabled && leader.member.network_failure.load(Ordering::Acquire) {
+            let count = self.candidates.len() - 1;
+            for _ in 0..count {
+                let index = 1 + self.forward_next % count;
+                self.forward_next = (self.forward_next + 1) % count;
+                let candidate = &self.candidates[index];
+                if !candidate.member.network_failure.load(Ordering::Acquire) {
+                    return Some(candidate.clone());
+                }
+            }
+        }
+        Some(leader)
+    }
 }
 
 #[derive(Debug)]
@@ -65,11 +84,31 @@ impl Candidate {
     }
 }
 
+/// Per-attempt logical destination. Channel caches retain physical connections;
+/// this metadata must never be stored in a cached connection or mutable global.
+#[derive(Clone, Debug, Default)]
+pub struct Forwarding(pub Option<String>);
+
+impl tonic::service::Interceptor for Forwarding {
+    fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
+        if let Some(leader) = &self.0 {
+            let value = leader
+                .parse()
+                .map_err(|_| Status::invalid_argument("invalid PD forwarding URL"))?;
+            request.metadata_mut().remove("pd-allow-follower-handle");
+            request.metadata_mut().insert("pd-forwarded-host", value);
+        }
+        Ok(request)
+    }
+}
+
 /// Immutable per-attempt destination, retaining its API and member identities.
 #[derive(Clone, Debug)]
 pub struct RegionTarget {
     pub endpoint: String,
     pub follower: bool,
+    pub forwarded_host: Option<String>,
+    region_feedback: bool,
     candidate: Arc<Candidate>,
 }
 
@@ -87,13 +126,14 @@ pub fn region_request<T>(value: T, follower: bool) -> Request<T> {
 
 impl RegionTarget {
     pub fn request<T>(&self, value: T) -> Request<T> {
-        region_request(value, self.follower)
+        region_request(value, self.follower && self.forwarded_host.is_none())
     }
 
     /// Only the region-specific PD error suppresses a follower. Other header
     /// errors and RPC errors retry the leader without starting/resetting cooldown.
     pub fn observe_error(&self, rpc_error: bool, header_error: Option<i32>) -> bool {
-        if self.follower
+        if self.region_feedback
+            && self.follower
             && header_error == Some(crate::proto::pdpb::ErrorType::RegionNotFound as i32)
         {
             let mut until = self
@@ -157,6 +197,7 @@ impl RegionService {
             urls: members,
             candidates,
             next: 0,
+            forward_next: 0,
         };
     }
 
@@ -167,26 +208,64 @@ impl RegionService {
         enabled: bool,
         allowed: bool,
     ) -> RegionTarget {
+        self.select_with_forwarding(leader, urls, enabled, allowed, false)
+    }
+
+    /// Select the region API first, then Go's ordinary service fallback. If
+    /// local follower handling was permitted, the fallback retains that mode;
+    /// a retry after its error uses the ordinary leader-forwarding context.
+    pub fn select_with_forwarding(
+        &self,
+        leader: &str,
+        urls: &[String],
+        enabled: bool,
+        allowed: bool,
+        forwarding: bool,
+    ) -> RegionTarget {
         self.update_members(leader, urls);
         let mut state = self.state.lock().expect("PD region service poisoned");
         // GetServiceClient is the source fallback when the universal ring has no
         // available member. Region-only eligibility must not hide that leader.
-        let mut candidate = state.candidates[0].clone();
+        let mut candidate = None;
         if enabled && allowed {
             for _ in 0..state.candidates.len() {
                 let selected = state.candidates[state.next].clone();
                 state.next = (state.next + 1) % state.candidates.len();
                 if selected.available() {
-                    candidate = selected;
+                    candidate = Some(selected);
                     break;
                 }
             }
         }
+        let region_feedback = candidate.is_some();
+        let candidate = candidate.unwrap_or_else(|| {
+            state
+                .forwarding_candidate(forwarding)
+                .expect("published PD leader")
+        });
         RegionTarget {
             endpoint: candidate.member.endpoint.clone(),
             follower: candidate.member.follower,
+            forwarded_host: (!region_feedback
+                && candidate.member.follower
+                && !(enabled && allowed))
+                .then(|| state.leader.clone()),
+            region_feedback,
             candidate,
         }
+    }
+
+    /// Ordinary unary calls use network health, independently of region-local
+    /// cooldown and its cursor. A missing eligible follower retains the leader.
+    pub fn forwarding_target(&self, endpoint: &str, enabled: bool) -> (String, Forwarding) {
+        let mut state = self.state.lock().expect("PD region service poisoned");
+        if endpoint == state.leader {
+            if let Some(candidate) = state.forwarding_candidate(enabled) {
+                let metadata = candidate.member.follower.then(|| state.leader.clone());
+                return (candidate.member.endpoint.clone(), Forwarding(metadata));
+            }
+        }
+        (endpoint.to_owned(), Forwarding::default())
     }
 
     /// One maintenance pass, without holding membership locks across I/O.
@@ -369,6 +448,65 @@ mod availability_tests {
         assert_eq!(
             fallback.endpoint, "leader",
             "empty eligible ring falls back to source leader"
+        );
+    }
+    #[tokio::test(start_paused = true)]
+    async fn forwarding_selection_is_independent_of_region_cooldown_and_topology() {
+        use tonic::service::Interceptor;
+        let service = RegionService::default();
+        service.update_members("leader", &urls());
+        assert_eq!(service.forwarding_target("leader", true).0, "leader");
+        let follower = follower(&service);
+        follower.observe_error(false, Some(ErrorType::RegionNotFound as i32));
+        service.state.lock().unwrap().candidates[0]
+            .member
+            .network_failure
+            .store(true, Ordering::Release);
+        assert_eq!(service.forwarding_target("leader", false).0, "leader");
+        let region = service.select_with_forwarding("leader", &urls(), true, true, true);
+        assert_eq!(region.endpoint, "follower");
+        assert!(
+            region
+                .request(())
+                .metadata()
+                .contains_key("pd-allow-follower-handle"),
+            "fallback preserves Go mustLeader=false"
+        );
+        assert!(region.forwarded_host.is_none());
+        assert!(
+            !region.region_feedback,
+            "fallback uses the forward API's error policy"
+        );
+        let leader_required = service.select_with_forwarding("leader", &urls(), true, false, true);
+        assert_eq!(leader_required.forwarded_host.as_deref(), Some("leader"));
+        let (physical, mut metadata) = service.forwarding_target("leader", true);
+        assert_eq!(
+            physical, "follower",
+            "region-local cooldown must not disable forwarding"
+        );
+        assert_eq!(service.forwarding_target("follower", true).0, "follower");
+        service.update_members("new-leader", &["new-leader".into(), "follower".into()]);
+        let request = metadata.call(region_request((), true)).unwrap();
+        assert_eq!(
+            request.metadata().get("pd-forwarded-host").unwrap(),
+            "leader",
+            "in-flight metadata keeps its selected logical destination"
+        );
+        assert!(!request.metadata().contains_key("pd-allow-follower-handle"));
+        assert_eq!(
+            service.forwarding_target("new-leader", true).0,
+            "new-leader"
+        );
+        for candidate in &service.state.lock().unwrap().candidates {
+            candidate
+                .member
+                .network_failure
+                .store(true, Ordering::Release);
+        }
+        assert_eq!(
+            service.forwarding_target("new-leader", true).0,
+            "new-leader",
+            "no eligible follower falls back to leader"
         );
     }
 }

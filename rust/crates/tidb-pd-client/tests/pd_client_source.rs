@@ -90,6 +90,7 @@ struct State {
     members: Reply<pdpb::GetMembersResponse>,
     members_after_first: Option<Reply<pdpb::GetMembersResponse>>,
     region: Reply<pdpb::GetRegionResponse>,
+    forwarded_region: Option<pdpb::GetRegionResponse>,
     prev_region: Reply<pdpb::GetRegionResponse>,
     region_by_id: Reply<pdpb::GetRegionResponse>,
     scan_regions: Reply<pdpb::ScanRegionsResponse>,
@@ -123,6 +124,14 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::GetExternalTimestampResponse>, tonic::Status> {
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push((
+                "external_get_requests".to_owned(),
+                request.metadata().contains_key("pd-allow-follower-handle"),
+                request
+                    .metadata()
+                    .get("pd-forwarded-host")
+                    .map(|v| v.to_str().unwrap().to_owned()),
+            ));
             state.external_get_requests.push(request.into_inner());
             state.external_get.clone()
         };
@@ -134,6 +143,14 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::SetExternalTimestampResponse>, tonic::Status> {
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push((
+                "external_set_requests".to_owned(),
+                request.metadata().contains_key("pd-allow-follower-handle"),
+                request
+                    .metadata()
+                    .get("pd-forwarded-host")
+                    .map(|v| v.to_str().unwrap().to_owned()),
+            ));
             state.external_set_requests.push(request.into_inner());
             state.external_set.clone()
         };
@@ -162,6 +179,14 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::GetAllStoresResponse>, tonic::Status> {
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push((
+                "all_stores_requests".to_owned(),
+                request.metadata().contains_key("pd-allow-follower-handle"),
+                request
+                    .metadata()
+                    .get("pd-forwarded-host")
+                    .map(|v| v.to_str().unwrap().to_owned()),
+            ));
             state.all_stores_requests.push(request.into_inner());
             state.all_stores.clone()
         };
@@ -172,9 +197,18 @@ impl Pd for MockPd {
         &self,
         request: tonic::Request<pdpb::GetStoreRequest>,
     ) -> Result<tonic::Response<pdpb::GetStoreResponse>, tonic::Status> {
+        let metadata = (
+            "store_requests".to_owned(),
+            request.metadata().contains_key("pd-allow-follower-handle"),
+            request
+                .metadata()
+                .get("pd-forwarded-host")
+                .map(|v| v.to_str().unwrap().to_owned()),
+        );
         let request = request.into_inner();
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push(metadata);
             state.store_requests.push(request.clone());
             state
                 .stores
@@ -197,6 +231,14 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::StoreGlobalConfigResponse>, tonic::Status> {
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push((
+                "global_config_requests".to_owned(),
+                request.metadata().contains_key("pd-allow-follower-handle"),
+                request
+                    .metadata()
+                    .get("pd-forwarded-host")
+                    .map(|v| v.to_str().unwrap().to_owned()),
+            ));
             state.global_config_requests.push(request.into_inner());
             state.global_config.clone()
         };
@@ -209,6 +251,14 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::GetGcStateResponse>, tonic::Status> {
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push((
+                "gc_state_requests".to_owned(),
+                request.metadata().contains_key("pd-allow-follower-handle"),
+                request
+                    .metadata()
+                    .get("pd-forwarded-host")
+                    .map(|v| v.to_str().unwrap().to_owned()),
+            ));
             state.gc_state_requests.push(request.into_inner());
             state.gc_state.clone()
         };
@@ -229,8 +279,17 @@ impl Pd for MockPd {
                     .get("pd-forwarded-host")
                     .map(|v| v.to_str().unwrap().to_owned()),
             ));
+            let forwarded = request.metadata().contains_key("pd-forwarded-host");
             state.region_requests.push(request.into_inner());
-            state.region.clone()
+            if forwarded {
+                state
+                    .forwarded_region
+                    .clone()
+                    .map(Reply::Value)
+                    .unwrap_or_else(|| state.region.clone())
+            } else {
+                state.region.clone()
+            }
         };
         reply.send().await
     }
@@ -603,6 +662,7 @@ fn valid_state() -> State {
             ..pdpb::GetMembersResponse::default()
         }),
         region: Reply::Value(region_response()),
+        forwarded_region: None,
         prev_region: Reply::Value(region_response()),
         region_by_id: Reply::Value(region_response()),
         scan_regions: Reply::Value(pdpb::ScanRegionsResponse {
@@ -2135,6 +2195,10 @@ fn timestamp_entrypoints_batch_pd_external_rpc_contract() {
 }
 
 fn follower_batch_pair() -> (Server, Server, PdClient) {
+    forwarding_pair(false)
+}
+
+fn forwarding_pair(enabled: bool) -> (Server, Server, PdClient) {
     let leader = Server::start(valid_state());
     let follower = Server::start(valid_state());
     let members = membership_response(
@@ -2144,7 +2208,15 @@ fn follower_batch_pair() -> (Server, Server, PdClient) {
     );
     leader.state.lock().unwrap().members = Reply::Value(members.clone());
     follower.state.lock().unwrap().members = Reply::Value(members);
-    let client = PdClient::connect(&leader.address, Duration::from_secs(1)).unwrap();
+    let mut options = tikv_client::pd_options::Options::new();
+    options.timeout = Duration::from_secs(1);
+    options.enable_forwarding = enabled;
+    let client = PdClient::connect_seeds_with_options(
+        [leader.address.clone()],
+        Arc::new(tidb_pd_client::ClusterSecurity::plaintext()),
+        options,
+    )
+    .unwrap();
     client.set_enable_follower_handle(true);
     (leader, follower, client)
 }
@@ -2412,4 +2484,128 @@ fn pd_availability_batch_health_recovery_and_joined_shutdown() {
     let probes = leader.state.lock().unwrap().health_requests;
     std::thread::sleep(Duration::from_millis(1100));
     assert_eq!(leader.state.lock().unwrap().health_requests, probes);
+}
+
+#[test]
+fn pd_forwarding_batch_metadata_policy_and_recovery() {
+    for enabled in [false, true] {
+        let (leader, follower, client) = forwarding_pair(enabled);
+        let previous = leader.state.lock().unwrap().health_requests;
+        leader.state.lock().unwrap().health = Reply::Value(HealthResponse { status: 2 });
+        await_health(&leader, previous);
+        client.all_stores().unwrap();
+        let seen = follower.state.lock().unwrap().routing_metadata.clone();
+        let forwarded: Vec<_> = seen
+            .iter()
+            .filter(|(p, _, _)| p == "all_stores_requests")
+            .collect();
+        assert_eq!(
+            forwarded.len(),
+            usize::from(enabled),
+            "startup forwarding must reach metadata routing"
+        );
+        if enabled {
+            assert_eq!(forwarded[0].2, Some(http_url(&leader)));
+            assert!(!forwarded[0].1);
+        }
+        if enabled {
+            {
+                let mut state = follower.state.lock().unwrap();
+                let mut missing = region_response();
+                missing.header.as_mut().unwrap().error = Some(pdpb::Error {
+                    r#type: pdpb::ErrorType::RegionNotFound as i32,
+                    message: "not locally present".into(),
+                });
+                state.region = Reply::Value(missing);
+                state.forwarded_region = Some(region_response());
+            }
+            for _ in 0..2 {
+                client.get_region(b"wire").unwrap();
+            }
+            let seen = follower.state.lock().unwrap().routing_metadata.clone();
+            let regions: Vec<_> = seen
+                .iter()
+                .filter(|(p, _, _)| p == "region_requests")
+                .collect();
+            assert_eq!(regions.len(), 4);
+            for pair in regions.chunks_exact(2) {
+                assert!(pair[0].1 && pair[0].2.is_none());
+                assert!(!pair[1].1 && pair[1].2.as_deref() == Some(http_url(&leader).as_str()));
+            }
+            client.external_timestamp(None).unwrap();
+            client.external_timestamp(Some(77)).unwrap();
+            client
+                .store_global_config("/forwarding-test", Vec::new())
+                .unwrap();
+            client.get_gc_state(None).unwrap();
+            client.get_store(101).unwrap();
+            let seen = follower.state.lock().unwrap().routing_metadata.clone();
+            for api in [
+                "external_get_requests",
+                "external_set_requests",
+                "global_config_requests",
+                "gc_state_requests",
+                "store_requests",
+            ] {
+                let request = seen
+                    .iter()
+                    .find(|(p, _, _)| p == api)
+                    .unwrap_or_else(|| panic!("missing forwarded {api}"));
+                assert_eq!(request.2, Some(http_url(&leader)));
+                assert!(!request.1);
+            }
+        }
+        if enabled {
+            follower.state.lock().unwrap().all_stores =
+                Reply::Status(tonic::Code::Unavailable, "proxy unavailable");
+            let before = follower.state.lock().unwrap().all_stores_requests.len();
+            assert!(client.all_stores().is_err());
+            assert_eq!(
+                follower.state.lock().unwrap().all_stores_requests.len(),
+                before + 1,
+                "forwarded RPC failure must not trigger an untagged direct-member retry"
+            );
+        }
+        let previous = leader.state.lock().unwrap().health_requests;
+        leader.state.lock().unwrap().health = Reply::Value(HealthResponse { status: 1 });
+        await_health(&leader, previous);
+        client.all_stores().unwrap();
+        assert_eq!(
+            follower.state.lock().unwrap().all_stores_requests.len(),
+            2 * usize::from(enabled)
+        );
+        client.shutdown().unwrap();
+    }
+}
+
+#[test]
+fn pd_forwarding_batch_leader_required_region_is_forwarded() {
+    let (leader, follower, client) = forwarding_pair(true);
+    client.set_enable_follower_handle(false);
+    let previous = leader.state.lock().unwrap().health_requests;
+    leader.state.lock().unwrap().health = Reply::Value(HealthResponse { status: 2 });
+    await_health(&leader, previous);
+    client.get_region(b"wire").unwrap();
+    let seen = follower.state.lock().unwrap().routing_metadata.clone();
+    let forwarded = seen
+        .iter()
+        .find(|(p, _, _)| p == "region_requests")
+        .expect("leader-only region lookup must use forwarding");
+    assert_eq!(forwarded.2, Some(http_url(&leader)));
+    assert!(!forwarded.1);
+    follower.state.lock().unwrap().region =
+        Reply::Delayed(Duration::from_secs(5), region_response());
+    let caller = client.clone();
+    let request = std::thread::spawn(move || caller.get_region(b"cancel"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while follower.state.lock().unwrap().region_requests.len() < 2 {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    client.shutdown().unwrap();
+    assert!(matches!(
+        request.join().unwrap(),
+        Err(tidb_pd_client::PdClientError::Closed)
+    ));
+    assert!(leader.state.lock().unwrap().region_requests.is_empty());
 }

@@ -29,7 +29,7 @@ use tokio::sync::watch;
 
 use crate::{PdClientError, PdGcState, PdOperation, PdRegion, PdStore};
 
-use super::failover::{tonic_client, PdChannelCache};
+use super::failover::{direct_tonic_client, region_tonic_client, tonic_client, PdChannelCache};
 use super::topology::{
     invalid_topology, project_extended_region, project_member_set, project_region,
     project_scan_regions, project_store,
@@ -50,7 +50,7 @@ pub(super) fn get_members(
     shutdown: &watch::Receiver<bool>,
     expected_cluster_id: Option<u64>,
 ) -> Result<PdMemberObservation, PdClientError> {
-    let mut client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = direct_tonic_client(runtime, clients, endpoint)?;
     let response = block_on_rpc(
         runtime,
         timeout,
@@ -93,7 +93,7 @@ pub(super) fn get_region(
     encoded_key: &[u8],
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
-    let mut client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = region_tonic_client(runtime, clients, endpoint, control)?;
     let response = block_on_rpc(
         runtime,
         control.timeout,
@@ -123,7 +123,7 @@ pub(super) fn get_prev_region(
     encoded_key: &[u8],
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
-    let mut client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = region_tonic_client(runtime, clients, endpoint, control)?;
     let response = block_on_rpc(
         runtime,
         control.timeout,
@@ -162,7 +162,7 @@ pub(super) fn get_region_by_id(
     region_id: u64,
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
-    let mut client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = region_tonic_client(runtime, clients, endpoint, control)?;
     let response = block_on_rpc(
         runtime,
         control.timeout,
@@ -200,7 +200,7 @@ pub(super) fn scan_regions(
     cluster_id: u64,
     request: &pdpb::ScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
-    let mut client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = region_tonic_client(runtime, clients, endpoint, control)?;
     let mut request = request.clone();
     request.header = Some(request_header(cluster_id));
     let response = block_on_rpc(
@@ -233,7 +233,7 @@ pub(super) fn batch_scan_regions(
     cluster_id: u64,
     request: &pdpb::BatchScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
-    let mut client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = region_tonic_client(runtime, clients, endpoint, control)?;
     let need_buckets = request.need_buckets;
     let mut request = request.clone();
     request.header = Some(request_header(cluster_id));
