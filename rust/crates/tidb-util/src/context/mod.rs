@@ -63,3 +63,25 @@ pub fn gen_context_id() -> u64 {
         .fetch_add(1, Ordering::SeqCst)
         .wrapping_add(1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::gen_context_id;
+
+    #[test]
+    fn context_ids_are_nonzero_and_unique_across_threads() {
+        let first = gen_context_id();
+        let second = gen_context_id();
+        assert!(first > 0);
+        assert!(second > first);
+
+        let mut ids = (0..64)
+            .map(|_| std::thread::spawn(gen_context_id))
+            .map(|thread| thread.join().expect("ID worker"))
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 64);
+        assert!(ids[0] > second);
+    }
+}

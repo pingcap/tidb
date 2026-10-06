@@ -1,5 +1,8 @@
 # `pkg/util/tikvutil` — complete Go-master parity receipt
 
+Current Cloud test ownership (2026-10-06): The old tikvutil_contract integration test was retired: it overwrote the default before checking it, then tested standard-library atomic operations. The runtime consumer remains covered by tidb-config test_get_tikv_config_uses_the_runtime_committer_concurrency and session variable tests. Historical commands and results below describe their original revision; they are not current startup commands. See [cleanup receipt](../../docs/parity/current-audit/utility-contract-cleanup-validation.json).
+
+
 Comparison source: Go `origin/master` at commit
 `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5` (2026-09-03). The package is
 unchanged from the earlier pinned audit; this receipt refreshes the rolling

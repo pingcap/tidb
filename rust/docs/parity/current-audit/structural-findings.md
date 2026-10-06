@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [JSON carrier retirement](json-carrier-retirement-validation.json). Retire eleven stale/duplicate JSON integration carriers (466 lines and eleven registrations), migrate 31 value cases and wildcard diagnostics into existing owners, retain stronger checks for eleven duplicate assertions, remove obsolete string-only JSON narratives and one repeated JSON_TABLE assertion. Net 331 Rust lines removed; no production or finding disposition changes.
+Latest cleanup: [utility contract consolidation](utility-contract-cleanup-validation.json). Retire duplicate context/format carriers, the standard-library atomic test and compile-only filter check; preserve unique warning, ID, escaping and empty-write coverage in owners. Three files and one standalone target removed; 278 net Rust lines removed. No production or finding disposition changes.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

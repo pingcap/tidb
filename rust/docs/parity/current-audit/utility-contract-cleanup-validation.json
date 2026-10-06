@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-06",
+  "base": "1620b1a549ac7d3ec27e6e707cd3086b36836cd5",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire duplicate context/format carriers, the standard-library atomic test and compile-only filter check; preserve unique warning, ID, escaping and empty-write coverage in owners. Three files and one standalone target removed; 278 net Rust lines removed. No production or finding disposition changes.",
+  "retired": [
+    {
+      "path": "rust/crates/tidb-tikvutil/tests/tikvutil_contract.rs",
+      "lines": 43,
+      "sha256": "bbb62b5d25b18a939973d8c03b8ee84952c57e72c56e1bd9a76c83817dbfd089"
+    },
+    {
+      "path": "rust/crates/tidb-util/tests/context_contract.rs",
+      "lines": 201,
+      "sha256": "30437c2c91802574c5b2f27b18e0e74d2502bde33a16cb9c74a89777b4744ad6"
+    },
+    {
+      "path": "rust/crates/tidb-util/tests/format_contract.rs",
+      "lines": 129,
+      "sha256": "333fe69493fc2df1325021067a2ac239b53ce25a5a5fc9815b7992cb23d165e4"
+    }
+  ],
+  "net_rust_lines_removed": 278,
+  "continuity": {
+    "warning_empty_levels": "context/warn.rs::sql_warn_json_round_trip",
+    "warning_single_and_batch_caps_and_callback": "context/warn.rs::handler_ext_and_cap (callback now checks levels and messages)",
+    "context_ids": "context/mod.rs::context_ids_are_nonzero_and_unique_across_threads (unchanged body)",
+    "duplicate_warning_copy_reset_truncation": "existing warn.rs unit owners",
+    "duplicate_plan_cache_fallback": "existing plancache.rs owners including Rust callback-panic regressions",
+    "util_escaping_invalid_utf8": "format.rs::output_format_preserves_go_string_byte_domain",
+    "formatter_vectors_short_writes": "datatype parser_format_package_source existing owners",
+    "empty_write_error": "datatype formatter_performs_one_source_write_and_propagates_errors",
+    "removed_atomic_check": "overwrote expected default; remaining assertions only exercised AtomicI32; runtime config consumer retained and passed",
+    "removed_send_sync_check": "traits already require Send+Sync; serde and Unicode runtime tests retained"
+  },
+  "tests": {
+    "util-lib": {
+      "passed": 11,
+      "failed": 0
+    },
+    "filter": {
+      "passed": 2,
+      "failed": 0
+    },
+    "format": {
+      "passed": 8,
+      "failed": 0
+    },
+    "config": {
+      "passed": 1,
+      "failed": 0
+    }
+  },
+  "gates": {
+    "lint": "passed",
+    "diff_check": "passed",
+    "metadata": "tikvutil integration target absent; util and datatype targets retained",
+    "hook_and_publication": "pending; final evidence in external final-handoff.json"
+  },
+  "finding_counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "limitations": [
+    "No production repair or complete Go package acceptance",
+    "No measured speedup",
+    "No full Go, live cluster or benchmarks",
+    "Existing unrelated behavioral failures retained"
+  ],
+  "external_evidence": "/workspace/.cloud-setup/utility-contract-cleanup"
+}

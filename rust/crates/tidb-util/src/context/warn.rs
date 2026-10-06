@@ -318,6 +318,15 @@ mod tests {
     // Rust counterpart (Cause-unwrapping is structural there, absent here).
     #[test]
     fn sql_warn_json_round_trip() {
+        for (input, message) in [
+            (r#"{"level":"","msg":"empty"}"#, "empty"),
+            (r#"{"msg":"missing"}"#, "missing"),
+        ] {
+            let warning: SqlWarn = serde_json::from_str(input).expect("Go accepts an empty level");
+            assert!(warning.level.is_empty());
+            assert_eq!(warning.err.to_string(), message);
+        }
+
         let terror = ERR_RESULT_UNDETERMINED.fast_generate(
             ERR_RESULT_UNDETERMINED.message(),
             &[FormatArg::from("unknown")],
@@ -425,6 +434,47 @@ mod tests {
     // SetWarnings/NumErrorWarnings) from the source, uncovered by Go's tests.
     #[test]
     fn handler_ext_and_cap() {
+        let handler = StaticWarnHandler::new(0);
+        handler.set_warnings(vec![
+            warn(WARN_LEVEL_WARNING, WarnErr::from("old"));
+            u16::MAX as usize - 1
+        ]);
+        handler.append_warning(WarnErr::from("last"));
+        handler.append_warning(WarnErr::from("dropped"));
+        assert_eq!(handler.warning_count(), u16::MAX as usize);
+        assert_eq!(
+            handler.get_warnings().last().unwrap().err.to_string(),
+            "last"
+        );
+
+        handler.set_warnings(vec![
+            warn(WARN_LEVEL_ERROR, WarnErr::from("old"));
+            u16::MAX as usize - 1
+        ]);
+        handler.append_warnings(vec![
+            warn(WARN_LEVEL_ERROR, WarnErr::from("batch 1")),
+            warn(WARN_LEVEL_ERROR, WarnErr::from("batch 2")),
+        ]);
+        assert_eq!(handler.warning_count(), u16::MAX as usize + 1);
+        assert_eq!(handler.num_error_warnings(), (0, u16::MAX as usize + 1));
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = calls.clone();
+        let appender = new_func_warn_appender_for_test(move |level: &str, err: WarnErr| {
+            captured
+                .lock()
+                .unwrap()
+                .push((level.to_owned(), err.to_string()));
+        });
+        appender.append_warning(WarnErr::from("function warning"));
+        appender.append_note(WarnErr::from("function note"));
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                (WARN_LEVEL_WARNING.to_owned(), "function warning".to_owned()),
+                (WARN_LEVEL_NOTE.to_owned(), "function note".to_owned())
+            ]
+        );
+
         let h = StaticWarnHandler::new(0);
         h.append_error(WarnErr::from("e0"));
         h.append_note(WarnErr::from("n0"));

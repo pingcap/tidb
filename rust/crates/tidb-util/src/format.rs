@@ -36,3 +36,21 @@ pub fn output_format(input: impl GoStringSource) -> String {
     }
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::output_format;
+
+    #[test]
+    fn output_format_preserves_go_string_byte_domain() {
+        assert_eq!(
+            output_format("slash\\quote'\0nul\nline\rcarriage"),
+            "slash\\\\quote''\\0nul\\nline\\rcarriage"
+        );
+
+        assert_eq!(
+            output_format(&b"bad:\xff|truncated:\xe2\x82|quote:'|slash:\\|nul:\0"[..]),
+            "bad:\u{fffd}|truncated:\u{fffd}\u{fffd}|quote:''|slash:\\\\|nul:\\0"
+        );
+    }
+}

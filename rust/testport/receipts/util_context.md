@@ -1,5 +1,8 @@
 # `pkg/util/context` — complete package transcreation
 
+Current Cloud test ownership (2026-10-06): Current tests live in tidb-util/src/context (warning, plan-cache, fallback and ID owners). Duplicate context_contract integration coverage was retired; unique assertions were migrated. Historical commands and results below describe their original revision; they are not current startup commands. See [cleanup receipt](../../docs/parity/current-audit/utility-contract-cleanup-validation.json).
+
+
 Go source: `origin/master` at
 `c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02), unchanged from
 extraction pin `e2788410d8d696605e8cb002585877a063ccc909`.

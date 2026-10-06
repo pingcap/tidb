@@ -1,105 +1,86 @@
-# Retire stale JSON test carriers
+# Consolidate utility contract tests
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Remove obsolete string-only JSON harnesses and duplicate test carriers while
-preserving their useful SQL checks in existing owner tests. Work in
-/workspace/tidb on hparser-integration from
-b0a7039c1a1eab52695bc7714557b00b88938500. Fresh Go master remains
-b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Go expression JSON signatures return
-ETJson/BinaryJSON; Go testkit renders those values through Datum.ToString.
-Rust now carries Datum::Json for these families, but eleven integration carriers
-and several comments still describe an older string-only implementation.
+Retire duplicate utility test carriers and checks of standard-library behavior.
+Work in /workspace/tidb on hparser-integration from
+1620b1a549ac7d3ec27e6e707cd3086b36836cd5. Go master is
+b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. A carrier is an integration file
+that repeats tests already owned by the implementation's unit tests.
+Preserve distinct Go semantics and Rust correctness checks in their owners.
 
 ## Progress
 
 
-- [x] Verify restored Cloud heads and clean trees; refresh Go master.
-- [x] Inspect eleven carriers, existing JSON owner tests and Go signatures/tests.
-- [x] Reproduce eleven original carriers: three passed and eight stale-string failures.
-- [x] Migrate 31 value vectors and exact wildcard diagnostics; retire eleven carriers.
-- [x] Pass sixteen owner tests and one focused diagnostic rerun; lint, metadata and continuity checks pass.
-- [ ] Commit through actual hook, fresh locked build, push and verify remote.
-- [ ] Save verified recovery bundle and Cloud checkpoint when tools are available.
+- [x] Compare context, format, table-filter and tikvutil carriers with owners.
+- [x] Migrate unique assertions and retire three redundant carriers.
+- [x] Validate 22 grouped owner/consumer tests, lint, metadata and diff.
+- [ ] Commit through actual locked-build hook; fresh locked build, push and verify.
+- [ ] Save verified recovery bundle and reusable Cloud checkpoint.
 
 ## Milestones and Plan of Work
 
 
-Retire the eleven json_*_source integration modules listed in the current-audit
-receipt, excluding json_search_source. Migrate unique constant expressions into
-existing json_value_functions and json_mutation_functions in
-rust/crates/tidb-session/src/tests_json.rs. Move JSON-column arrows/filtering
-into json_column_type and the bitwise vector into the existing math/builtin
-owner. Remove only duplicates with an explicit stronger retained assertion.
-Preserve JSON text, SQL NULL, invalid-path errors and unsigned arithmetic.
-For migrated JSON-returning constants assert the typed datum and JSON column
-metadata as well as the value. Remove stale comments claiming these families
-return strings or CAST loses JSON structure. Retain JSON_SEARCH's separately
-known text/result-type boundary and its tests.
+Remove context_contract.rs and format_contract.rs from tidb-util/tests and
+its all.rs registrations. Move warning JSON empty levels, append caps and
+callback assertions into context/warn.rs tests; preserve the context-ID check
+in context/mod.rs. Plan-cache tests already cover the removed scenarios.
+Move util escaping vectors into src/format.rs; the datatype formatter owner
+already tests the shared formatter, and receives the unique empty-write error.
+Remove table-filter's compile-only Send/Sync check while retaining its Unicode
+and config tests. Remove tikvutil's AtomicI32 test: it writes the expected
+initial value before reading it and otherwise tests Rust's standard library.
+Retain the config test that proves the actual runtime atomic consumer.
+No production semantics, dependencies or Go files change.
 
-## Validation and Acceptance
+## Concrete Steps and Validation
 
 
-Source /workspace/.cloud-setup/env.sh and use CARGO_BUILD_JOBS=1. First run the
-eleven original carriers together using a temporary filtered tests/all.rs,
-restoring that file byte-for-byte afterward. After migration run from rust/:
+Source /workspace/.cloud-setup/env.sh, set CARGO_BUILD_JOBS=1, and work in rust/:
 
-    cargo test --locked -p tidb-session --lib -- tests_json:: tests_core::builtins::math_and_conditional_builtins
+    cargo test --locked -p tidb-util --lib -- context:: format::
+    cargo test --locked -p tidb-util --test all -- table_filter_contract::
+    cargo test --locked -p tidb-datatype --test all -- parser_format_package_source::
+    cargo test --locked -p tidb-config --lib -- test_get_tikv_config_uses_the_runtime_committer_concurrency
 
-Verify every removed assertion has a retained owner or migrated vector; do not
-remove a failing expectation merely because it fails. Run make lint and git
-diff --check from root. No production, Go, Bazel, manifest or fixture change is
-planned. Do not run full unrelated suites. Record failures distinctly.
-
-Commit normally using executable hooks/pre-commit selected by core.hooksPath.
-The hook must pass cd rust && cargo build --locked -p tidb-server. Rerun the
-same locked build immediately before the authorized normal push to
-pingcap/tidb hparser-integration; verify remote SHA. Never bypass hooks or force
-push. Keep native client-rust unchanged.
+Require nonzero passing tests for each selection. Run make lint and git diff
+--check from root. Keep distinct failures visible. Do not broaden into unrelated
+suites. The real pre-commit hook must run cd rust && cargo build --locked -p
+tidb-server; rerun immediately before the authorized push to pingcap/tidb
+hparser-integration and verify remote SHA. Never bypass hooks or force push.
 
 ## Surprises & Discoveries
 
 
-Four stale JSON failures were recorded by the previous SQL-helper cleanup.
-The wider JSON carrier cluster contains the same outdated representation
-assumption. Existing owner tests already use shared row_text and include
-exact storage sizes and typed columns. JSON_SEARCH still has a distinct known
-text/result-type divergence, so it is not part of this retirement.
+The existing handler_ext_and_cap test named the cap without exercising it.
+The retired carrier supplies that coverage. Util and parser OutputFormat differ
+in backslash escaping, so util's distinct vectors must remain.
 
 ## Decision Log
 
 
-Remove carriers after mapping all 43 assertions: 41 value assertions, one
-wildcard-path rejection and one weak size bound. Retain duplicate semantic
-checks in their existing owner; move unique cases. No public production change
-or complete Go package acceptance is implied. Baseline-only temporary test
-executables may be pruned after validation if inactive and invalidated by
-restoring the normal test root; retain logs and record hashes/process checks.
+Remove only proven duplicate or language-only checks. Preserve callback panic,
+context-ID and invalid-UTF8 regressions even where Go has no matching test.
+Absence of a Go test alone does not make a Rust correctness assertion useless.
 
 ## Outcomes & Retrospective
 
 
-Eleven carriers (466 lines), eleven registrations and obsolete representation
-narratives are retired. Net 331 Rust lines removed. All 43 original assertions
-have retained owners; 17 migrated queries now check JSON datum/column types.
-The grouped sixteen owner tests and focused diagnostic rerun pass. Publication
-and checkpoint evidence remain pending. Counts remain 86 tracked,
-30 repaired, 56 unresolved (27 open, 29 partial). This is harness maintenance;
-no parity root repair or measured speedup is claimed.
+Implementation and validation are complete: 22 tests pass, lint and metadata
+checks pass, 278 net Rust lines and three carriers removed. Publication pending.
+No structural findings are closed by harness maintenance and no measured
+performance improvement is claimed.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Restore individual before-images with git show
-b0a7039c1a1eab52695bc7714557b00b88938500:<path>, preserving concurrent work.
-External inventory and logs live in
-/workspace/.cloud-setup/json-carrier-retirement. The durable receipt is
-rust/docs/parity/current-audit/json-carrier-retirement-validation.json.
-No dependency changes. Saving a Cloud draft, Publish and fresh-task restoration
-are distinct; report each only when verified.
+Restore individual before-images using git show 1620b1a:<path>, preserving
+concurrent changes. Logs are under /workspace/.cloud-setup/utility-contract-cleanup.
+Durable receipt: rust/docs/parity/current-audit/utility-contract-cleanup-validation.json.
+No interface/dependency changes. Publish and fresh-task restoration are separate
+from a saved Cloud draft. Update this document as checks complete.
 
-Revision: replace completed shared-helper cleanup with the JSON carrier and
-stale representation cleanup, preserving unique behavior in existing owners.
+Revision: replace completed JSON carrier plan with utility contract cleanup.

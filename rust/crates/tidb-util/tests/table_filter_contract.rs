@@ -12,22 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Public concurrency contract for Go `pkg/util/table-filter`.
+//! Public configuration and Unicode contracts for Go `pkg/util/table-filter`.
 
 use tidb_util::filter::Filter as ReplicationFilter;
 use tidb_util::table_filter::{
-    case_insensitive, parse, parse_column_filter, parse_column_filter_rules, ColumnFilter,
-    ColumnFilterRules, Filter, MySQLReplicationRules, Table,
+    case_insensitive, parse, parse_column_filter, parse_column_filter_rules, MySQLReplicationRules,
+    Table,
 };
-
-fn assert_send_sync<T: Send + Sync>() {}
-
-#[test]
-fn parsed_filter_objects_can_cross_and_be_shared_between_workers() {
-    assert_send_sync::<Box<dyn Filter>>();
-    assert_send_sync::<Box<dyn ColumnFilter>>();
-    assert_send_sync::<ColumnFilterRules>();
-}
 
 #[test]
 fn replication_rules_preserve_public_config_keys() {

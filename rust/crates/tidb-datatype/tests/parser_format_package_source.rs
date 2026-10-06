@@ -211,6 +211,22 @@ fn formatter_performs_one_source_write_and_propagates_errors() {
     drop(formatter);
     assert_eq!(writer.calls, 1);
     assert!(writer.bytes.is_empty());
+
+    let mut writer = BoundedWriter {
+        bytes: Vec::new(),
+        chunk_size: usize::MAX,
+        calls: 0,
+        fail: true,
+    };
+    let mut formatter = IndentFormatter::new(&mut writer, "  ");
+
+    assert_eq!(
+        formatter.format(&[]).unwrap_err().kind(),
+        io::ErrorKind::Other
+    );
+    drop(formatter);
+    assert_eq!(writer.calls, 1);
+    assert!(writer.bytes.is_empty());
 }
 
 #[test]

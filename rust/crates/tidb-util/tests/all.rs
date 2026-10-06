@@ -16,7 +16,5 @@
 //! Register new module-safe suites here; isolated suites belong in Cargo.toml.
 
 mod cgroup_source;
-mod context_contract;
-mod format_contract;
 mod sys_storage_source;
 mod table_filter_contract;
