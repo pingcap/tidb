@@ -188,7 +188,6 @@ mod multi_column_check_source;
 mod multi_partition_qualifier_source;
 mod multi_rename_source;
 mod multi_table_dml_join_source;
-mod multi_update_check_enforcement_source;
 mod multi_update_check_source;
 mod multibyte_length_source;
 mod multibyte_position_source;

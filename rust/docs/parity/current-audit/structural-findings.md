@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [PD bootstrap and provider policy](pd-bootstrap-policy-batch-validation.json). P03/P06/N03 connect lazy channels, accepted membership and static options. Eight baseline failures precede 364 selected passes; 86 tracked /30 repaired /56 unresolved (27 open,29 partial). Broad parents remain partial; no complete package acceptance.
 
-Latest cleanup: [parser harness consolidation](parser-harness-cleanup-validation.json). Consolidate three parser/lexer suites in difftest and retire the redundant difftest-parser-tests package plus automatic source-inventory test. Preserve all five behavioral tests, corpus, oracle and generators; no runtime behavior change.
+Latest cleanup: [duplicate behavioral-test retirement](duplicate-test-cleanup-validation.json). Remove 19 repeated cases and four redundant test files across seven crates; retain one executable owner for each behavior and migrate the unique planner fallback vector. Production behavior and finding dispositions are unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

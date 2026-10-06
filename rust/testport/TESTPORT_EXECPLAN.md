@@ -10527,7 +10527,7 @@ risks without claiming repository-wide parity.
   (via set global + CREATE in order), a violation on a LATER joined row
   fails the whole multi-table UPDATE with 3819 and leaves every row
   unchanged. Pinned in
-  `crates/tidb-session/tests/multi_update_check_enforcement_source.rs`.
+  `crates/tidb-session/tests/multi_update_check_source.rs`.
   (An earlier session-probe used a fixture whose CREATE predates the
   set-global, so its constraint was never attached — the "OK" there was a
   fixture artifact, not an enforcement gap.)

@@ -2669,3 +2669,5 @@ network health, ten-second region cooldown, topology-safe feedback and joined
 maintenance in native and TiDB. Native fixes are published then synchronized
 with the maintained codec patch and protobuf regeneration. P03/P06/T02 remain
 partial for their retained broader obligations; no complete package acceptance.
+
+The [duplicate-test cleanup](duplicate-test-cleanup-execplan.md) removes repeated behavioral cases across seven crates. Its [mapping and validation receipt](parity/current-audit/duplicate-test-cleanup-validation.json) identifies each retained owner; no root or complete package is newly accepted.

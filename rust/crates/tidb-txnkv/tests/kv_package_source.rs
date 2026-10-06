@@ -1083,17 +1083,6 @@ fn TestIsRequestTypeSupported() {
     assert!(!checker.is_request_type_supported(REQ_TYPE_CHECKSUM, 0));
 }
 
-/// Master's `TestIsRequestTypeSupported` (pkg/kv/checker_test.go) asserts that
-/// the aggregate expression types `tipb.ExprType_MaxCount` (3023) and
-/// `tipb.ExprType_MinCount` (3022) are supported for `ReqTypeSelect`, matching
-/// master's `checker.go::supportExpr`.
-#[test]
-fn master_max_count_and_min_count_expr_types_are_pushed_down() {
-    let checker = RequestTypeSupportedChecker;
-    assert!(checker.is_request_type_supported(REQ_TYPE_SELECT, 3023));
-    assert!(checker.is_request_type_supported(REQ_TYPE_SELECT, 3022));
-}
-
 #[test]
 fn cache_db_preserves_empty_values_and_table_deletion() {
     struct Snapshot {

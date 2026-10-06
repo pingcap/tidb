@@ -61,6 +61,11 @@ fn every_source_aggregate_has_its_factor() {
 fn unknown_and_uppercase_names_use_source_fallback() {
     assert_eq!(aggregation_factor("approx_count_distinct"), None);
     assert_eq!(aggregation_factor("COUNT"), None);
+    assert_eq!(aggregation_factor("unknown"), None);
+    assert_eq!(
+        aggregation_factor_or_default("unknown"),
+        DEFAULT_AGGREGATION_FACTOR
+    );
     assert_eq!(aggregation_factor_or_default("approx_count_distinct"), 1.5);
     assert_eq!(aggregation_factor_or_default("COUNT"), 1.5);
 }

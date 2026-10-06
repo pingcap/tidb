@@ -31,7 +31,6 @@ mod core_expression_eval_source;
 mod core_logical_cte_topn_prune_source;
 mod core_logical_plans_source;
 mod core_rule_list_flag_alignment_source;
-mod cost_factors_source;
 mod explain_source;
 mod fts_resolve_index_source;
 mod hint_optimizer_cost_factor_setvar_scenarios_source;

@@ -260,21 +260,6 @@ pub fn modify_type_to_string(tp: u8) -> &'static str {
 mod tests {
     use super::*;
 
-    // Go TestState: every listed job state stringifies non-empty.
-    #[test]
-    fn job_state_strings_non_empty() {
-        for state in [
-            JobState::RUNNING,
-            JobState::DONE,
-            JobState::CANCELLED,
-            JobState::ROLLINGBACK,
-            JobState::ROLLBACK_DONE,
-            JobState::SYNCED,
-        ] {
-            assert!(!state.to_string().is_empty());
-        }
-    }
-
     #[test]
     fn job_state_exact() {
         assert_eq!(JobState::NONE.to_string(), "none");

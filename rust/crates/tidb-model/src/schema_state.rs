@@ -82,21 +82,6 @@ impl std::fmt::Display for SchemaState {
 mod tests {
     use super::*;
 
-    // Go TestSchemaState: every non-none state has a non-empty string.
-    #[test]
-    fn state_strings_non_empty() {
-        for state in [
-            SchemaState::DELETE_ONLY,
-            SchemaState::WRITE_ONLY,
-            SchemaState::WRITE_REORGANIZATION,
-            SchemaState::DELETE_REORGANIZATION,
-            SchemaState::PUBLIC,
-            SchemaState::GLOBAL_TXN_ONLY,
-        ] {
-            assert!(!state.to_string().is_empty());
-        }
-    }
-
     // The exact strings and the none/unknown default, matching Go's switch.
     #[test]
     fn state_strings_exact() {

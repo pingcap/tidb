@@ -4966,7 +4966,6 @@ mod tests {
     #[derive(Default)]
     struct InfoColumns {
         current_user: Option<String>,
-        current_role: Option<String>,
         connection_id: Option<u64>,
         tidb_info: Option<String>,
     }
@@ -4978,10 +4977,6 @@ mod tests {
 
         fn current_user(&self) -> Option<String> {
             self.current_user.clone()
-        }
-
-        fn current_role(&self) -> Option<String> {
-            self.current_role.clone()
         }
 
         fn connection_id(&self) -> Option<u64> {
@@ -5195,24 +5190,6 @@ mod tests {
             eval_info("current_user", text_ft(), &InfoColumns::default()),
             Datum::Null
         );
-    }
-
-    // Go TestCurrentRole.
-    #[test]
-    fn test_current_role() {
-        for (roles, expected) in [
-            ("NONE", "NONE"),
-            ("`r_1`@`%`,`r_2`@`localhost`", "`r_1`@`%`,`r_2`@`localhost`"),
-        ] {
-            let ctx = InfoColumns {
-                current_role: Some(roles.to_owned()),
-                ..InfoColumns::default()
-            };
-            assert_eq!(
-                eval_info("current_role", text_ft(), &ctx),
-                Datum::new_string(expected.as_bytes().to_vec())
-            );
-        }
     }
 
     // Go TestConnectionID.

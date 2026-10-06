@@ -1,0 +1,275 @@
+{
+  "date": "2026-10-06",
+  "base": "c98418ea90ed2ef495188a3a99147430331aa549",
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "scope": "Remove reviewed duplicate behavioral tests and obsolete scaffolding across seven crates; correct the stale EXP overflow assertion against Go. No production semantics, manifests, feature gates or dependency changes.",
+  "removal": {
+    "copies_removed": 19,
+    "mappings": [
+      {
+        "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_identifier",
+        "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_identifier",
+        "normalized_body_sha256": "054a2bfc1c3436bcf05dd43aa1ecf3b384049ca0a026de6596dd720b743ce702",
+        "removed_block_sha256": "9844308f89f029d2d3c1145230b74eef86d0aad2a7f9546d9fb14f35b591162d",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_special_comment",
+        "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_special_comment",
+        "normalized_body_sha256": "5bc63c16f059046f8371e1e10e50308f04649d3021a5ee9670c26e8dbf59258c",
+        "removed_block_sha256": "628ba75c63273d1560a23e034f8a935efb22cc7636a0f70bdd98a68386ee3e14",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_optimizer_hint",
+        "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_optimizer_hint",
+        "normalized_body_sha256": "ca233b78c55f5aeeca0c370a548d0bf6c6e87fe068435cf90ff3b61a480eb37c",
+        "removed_block_sha256": "aabf5fdeabdb3b8179aab7dcfb4bfb8b5de6f191302c2a96671e21b78eb97e89",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_optimizer_hint_after_certain_keyword_only",
+        "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_optimizer_hint_after_certain_keyword_only",
+        "normalized_body_sha256": "86709b89d8f23e15200469c586161a0e2bf895593a0ba93c0fd0ff11c38a1f3f",
+        "removed_block_sha256": "3b303981b6295328ee798d9b848e94224b94538ca41c9a3ae193b16c3e923707",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_version_digits",
+        "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_version_digits",
+        "normalized_body_sha256": "55c2f89c8d46f47614ee54d626eb8505e257d9cd659f39f6d3833652f9596338",
+        "removed_block_sha256": "115d8a258cb9a4bca19be98be4caf2736ed9d91bdf6e844e42383d906ad2c275",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_feature_ids",
+        "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_feature_ids",
+        "normalized_body_sha256": "95dac309bd56c6b8063d648fe15c6ceaeb89fb3de3f13168e8207184c7a1f822",
+        "removed_block_sha256": "c4c52b708b61e6e0adab2e2f0e24b2b6963c917bd273722a14cb48f18422f959",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-model/src/job_enums.rs::job_state_strings_non_empty",
+        "retained": "rust/crates/tidb-model/src/job_tests.rs::go_test_state",
+        "normalized_body_sha256": "b7e07c3346ff416e18a3800b903e7d0b2e05a9101bc162d15092b4fea2e1f0e3",
+        "removed_block_sha256": "a687623fdbb6c777c5af8aa4da38f8f20f56095eca8d0e4106f288f94560d108",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-model/src/schema_state.rs::state_strings_non_empty",
+        "retained": "rust/crates/tidb-model/src/job_tests.rs::go_test_schema_state",
+        "normalized_body_sha256": "bf9642d041b4207ec36c4b03c9925f010d2e459fd98b4caf68dddbaa57dcaf7d",
+        "removed_block_sha256": "322826d61d8d78d4d1f554246b988f396202c2e65fbd9b5db107148cb405e17e",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-txnkv/tests/primitives/keyspace.rs::test_is_user_ks",
+        "retained": "rust/crates/tidb-txnkv/tests/kv_package_source.rs::TestIsUserKS",
+        "normalized_body_sha256": "5be09edc2dc9d136f20500d6d9c8820562e63a975e9e13ee641bf99cc2cb7223",
+        "removed_block_sha256": "c2cbf935762c13fbcf946cf290170f19762c06a9c8abf2c72bc14afe98378532",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-txnkv/tests/primitives/keyspace.rs::test_is_system_ks",
+        "retained": "rust/crates/tidb-txnkv/tests/kv_package_source.rs::TestIsSystemKS",
+        "normalized_body_sha256": "add3cac51a2338c245eb52535c34b81790599c0249dd3d4418f824f0496b5deb",
+        "removed_block_sha256": "729977d92e9596ebe4ed2557af37d9fa36ebe03467d67ac8dcf2218dc1ef9173",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-txnkv/src/txn_scope.rs::global_and_local_constructors_preserve_the_source_pair",
+        "retained": "rust/crates/tidb-txnkv/tests/primitives/txn_scope.rs::direct_constructors_keep_sql_and_oracle_scopes_distinct",
+        "normalized_body_sha256": "4259c4eb46d92e366898efcc198e2bf94f0cb0018043a3bc93d08c79eb46b8c1",
+        "removed_block_sha256": "16ef3571bf2a858d3c3660a697d4621593eb42ca553128486a3faacecb8d4dbc",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-txnkv/src/rpc/async_completion.rs::one_run_loop_drives_any_of_its_pending_requests",
+        "retained": "rust/crates/tidb-txnkv/tests/async_completion_source.rs::one_run_loop_drives_any_of_its_pending_requests",
+        "normalized_body_sha256": "13f32e14b2370d87de2bfe8b79a2ea24e7292580b81be11d472752e6666fd3a7",
+        "removed_block_sha256": "86146bef75735081007ad711185434feaff14c34c2485fd3efa44493743f966f",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-txnkv/tests/kv_package_source.rs::master_max_count_and_min_count_expr_types_are_pushed_down",
+        "retained": "rust/crates/tidb-txnkv/src/checker.rs::max_count_and_min_count_are_supported_for_select",
+        "normalized_body_sha256": "b43a42b2376f7064b74bbf637e8d88bb64184662bc40b804a84fa90db9a8f4de",
+        "removed_block_sha256": "bee6175eef42cfb83a678e8f932576ce9c10d2a07ef6f54a4a9444dcea8b1cfa",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-planner/tests/cost_factors_source.rs::planner_cost_constants_match_the_complete_go_package",
+        "retained": "rust/crates/tidb-planner/tests/primitives/cost_factors.rs::source_constants_are_stable",
+        "normalized_body_sha256": "6692e44f141715fad647a5687597611f9ca7ec5b1a0a0f04a782137d0140d3c2",
+        "removed_block_sha256": "0cf2abc8bac7eff448b48ea28323546cd947267409adefab4223a6a055eb5b07",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-expr/src/scalar_function.rs::test_current_role",
+        "retained": "rust/crates/tidb-expr/src/tests/builtin_info_json_math_source.rs::current_role",
+        "normalized_body_sha256": "c2a3bd04b18898fe12215f6d99a6a0b27d7314781694cb6082a06af6255e70c3",
+        "removed_block_sha256": "3d3628fc5d412083025d3dd03e06f1427cae928724e72f620593d10b0bf184fe",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-executor/src/tests_executor_part23_source.rs::insert_ignore_keeps_the_nonduplicate_rows_part23",
+        "retained": "rust/crates/tidb-executor/src/tests_executor_part22_source.rs::insert_ignore_keeps_the_nonduplicate_rows",
+        "normalized_body_sha256": "2557b88a1b7cb352b7e9c2ef5b15ab38b6564564ac63572d8b505661c75ca4b7",
+        "removed_block_sha256": "2496e501041e41fbe78cff12ee846e920f86a82ac7312b0501faf2d8f0397d54",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-executor/src/tests_executor_part23_source.rs::worker_pool_preserves_the_go_submission_contract_part23",
+        "retained": "rust/crates/tidb-executor/src/tests_executor_part22_source.rs::worker_pool_preserves_the_go_submission_contract",
+        "normalized_body_sha256": "3125a18d42e0909319827ff93369c0697c2c32d6556f2fe212a48c652c0c3e84",
+        "removed_block_sha256": "db47912df284f795a15b906887eba6c387f2a73c8118d7d804e2b3f98e8af04e",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-session/tests/multi_update_check_enforcement_source.rs::multi_table_update_check_violation_rolls_back",
+        "retained": "rust/crates/tidb-session/tests/multi_update_check_source.rs::check_violation_rolls_back_the_whole_multi_table_update",
+        "normalized_body_sha256": "785f442658448c0020e06c2bf1424ca2955fff9003f4dff21cea59116ac11a88",
+        "removed_block_sha256": "01afda550db51f8f96bf85839d27144d09655048e4dc7e923fed1c78df69f5c9",
+        "identical_body": true
+      },
+      {
+        "removed": "rust/crates/tidb-planner/tests/cost_factors_source.rs::aggregation_factor_lookup_matches_every_source_entry",
+        "retained": "rust/crates/tidb-planner/tests/primitives/cost_factors.rs::every_source_aggregate_has_its_factor + unknown_and_uppercase_names_use_source_fallback",
+        "identical_body": false,
+        "review": "Same 16 factor entries; retained suite also verifies fallback accessor for each. Migrated unknown-name case before deletion."
+      }
+    ],
+    "deleted_test_files": [
+      "rust/crates/tidb-txnkv/tests/primitives/keyspace.rs",
+      "rust/crates/tidb-planner/tests/cost_factors_source.rs",
+      "rust/crates/tidb-executor/src/tests_executor_part23_source.rs",
+      "rust/crates/tidb-session/tests/multi_update_check_enforcement_source.rs"
+    ]
+  },
+  "net_rust_lines_removed": 513,
+  "helpers_removed": [
+    "tidb-expr test InfoColumns.current_role field and override",
+    "tidb-txnkv::rpc::async_completion empty test module",
+    "executor part23 query_ctx/dml_ctx/int_value copies",
+    "four obsolete module registrations"
+  ],
+  "retired_plan": {
+    "path": "rust/docs/planner/cost-package-parity-execplan.md",
+    "sha256": "1d3bcda363836196423f33ee4b6db001e8b81b7b2995b261456d8f852808dbe5",
+    "lines": 41,
+    "archive": "https://github.com/pingcap/tidb/blob/c98418ea90ed2ef495188a3a99147430331aa549/rust/docs/planner/cost-package-parity-execplan.md",
+    "reason": "Completed historical plan points to retired duplicate test suite and obsolete --lib cost_factors command; current owner is tidb-planner --test all -- primitives::cost_factors::; historical receipt and limits retained in immutable archive."
+  },
+  "go_owners": [
+    "pkg/parser/lexer_test.go::TestIdentifier/TestSpecialComment/TestOptimizerHint/TestOptimizerHintAfterCertainKeywordOnly/TestVersionDigits/TestFeatureIDs",
+    "pkg/meta/model/job_test.go::TestState/TestSchemaState",
+    "pkg/kv/utils_test.go::TestIsUserKS/TestIsSystemKS",
+    "pkg/kv/checker_test.go::TestIsRequestTypeSupported",
+    "pkg/kv/txn_scope_var.go and pinned client-go util/async/runloop_test.go",
+    "pkg/planner/core/cost/factors_thresholds.go (no original test; retained Rust source-contract checks)",
+    "pkg/expression/builtin_info_test.go::TestCurrentRole",
+    "pkg/executor/test/writetest/write_test.go::TestInsertIgnore and pkg/executor/utils_test.go::TestWorkerPool",
+    "pkg/executor/write.go CHECK/statement rollback behavior; retained Rust later-row regression"
+  ],
+  "helper_review": "Compared helper calls as well as bodies: lexer first/tokens/kinds/assert_token, executor query_ctx/dml_ctx/int_value, expression eval_info/text_ft/current_role, and session integer_rows_with_sql resolve to the same behavior. Different-feature global-index tests and cross-crate codec wrappers were excluded from deletion.",
+  "stale_assertion": {
+    "test": "tests::builtin_info_json_math_source::exp",
+    "failed_before": true,
+    "passed_after": true,
+    "go": "pkg/expression/builtin_math_test.go::TestExp line142 expects [types:1690]DOUBLE value is out of range in exp(100000), quoted in source",
+    "old": "EvalError::FloatOverflow",
+    "new": {
+      "DataOutOfRange": {
+        "value": "DOUBLE",
+        "expression": "exp(100000)"
+      }
+    },
+    "production": "math_fn::exp already returns this structured error at baseline; executor driver/errors/exec.rs maps it to MySQL1690 and the exact message. No production fix needed."
+  },
+  "validation": {
+    "distinct_passed": 158,
+    "by_owner": {
+      "lexer_lib": 36,
+      "model_lib": 2,
+      "expr_lib": 61,
+      "executor_lib": 27,
+      "txnkv_lib": 6,
+      "planner_all": 3,
+      "session_all": 1,
+      "txnkv_all": 22
+    },
+    "ignored": 0,
+    "lint": true,
+    "diff_check": true,
+    "commands": [
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-lexer -p tidb-model -p tidb-expr -p tidb-executor -p tidb-txnkv --lib --no-fail-fast -- lexer_source:: lexer_parser_privileges_source:: go_test_state go_test_schema_state builtin_info_json_math_source:: scalar_function::tests::test_current_user scalar_function::tests::test_connection_id tests_executor_part22_source:: checker::tests:: txn_scope::tests:: --test-threads=1",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-txnkv -p tidb-planner -p tidb-session --test all --no-fail-fast -- async_completion_source:: kv_package_source::TestIsUserKS kv_package_source::TestIsSystemKS primitives::txn_scope:: primitives::cost_factors:: multi_update_check_source:: --test-threads=1",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-lexer -p tidb-model -p tidb-expr -p tidb-executor -p tidb-txnkv --lib --no-fail-fast -- builtin_info_json_math_source:: scalar_function::tests::test_current_user scalar_function::tests::test_connection_id --test-threads=1",
+      "cd /workspace/tidb && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 make lint",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && rustfmt --check --edition 2021 --config skip_children=true crates/tidb-planner/tests/primitives/cost_factors.rs",
+      "cd /workspace/tidb && git diff --check",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server"
+    ],
+    "initial_library_run": "131 pass /1 stale EXP assertion failure; expression rerun passes61. Do not count the repeated60 twice. Four zero-match binaries on the expression rerun preserve the original feature graph and contribute no coverage.",
+    "integration_retry": "Initial linker SIGBUS at zero free disk; five identified obsolete executables reclaimed746051120 bytes; final integration group26pass.",
+    "workspace_fmt": "cargo fmt --all -- --check fails on unchanged baseline files, first tidb-ast/tests/parser_ast_dml_import_package_source.rs. No workspace formatting sweep applied. New planner assertion checked with edition2021; deletion-only changes reviewed.",
+    "feature_graph": "Stopped a narrower standalone expression Cargo invocation when it began rebuilding dependencies; reran with the original package graph. No result claimed for the stopped attempt.",
+    "planner_assertion_format": true
+  },
+  "register": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29,
+    "findings_byte_equivalent": true
+  },
+  "limits": [
+    "No complete Go package is newly accepted; cleanup does not repair remaining production gaps.",
+    "No full Go suite, live cluster, complete workspace test/format pass or measured wall-clock speedup claimed.",
+    "Historical failures outside selected groups remain recorded and enabled."
+  ],
+  "logs": {
+    "lib-tests.log": {
+      "path": "/workspace/.cloud-setup/duplicate-test-cleanup/lib-tests.log",
+      "sha256": "76aa493b74cee1290c914986382c461d09c2c32c916e4f0282875126a778027e"
+    },
+    "integration-link-disk-failure.log": {
+      "path": "/workspace/.cloud-setup/duplicate-test-cleanup/integration-link-disk-failure.log",
+      "sha256": "b4cf197c274f8808b81e9380c6207d348ecc8f0557330e7db44e9b50336843ff"
+    },
+    "integration-tests.log": {
+      "path": "/workspace/.cloud-setup/duplicate-test-cleanup/integration-tests.log",
+      "sha256": "e8f6e78d35387f8811f3ba18831af58605e46bfd318e8914787a1d2aee538f0c"
+    },
+    "expression-feature-graph-diagnostic.log": {
+      "path": "/workspace/.cloud-setup/duplicate-test-cleanup/expression-feature-graph-diagnostic.log",
+      "sha256": "1f87c5eff6ee20cc269dcd8b4f3ff57d2ddabe3566d2f97e1224a0aeb617f572"
+    },
+    "expression-final.log": {
+      "path": "/workspace/.cloud-setup/duplicate-test-cleanup/expression-final.log",
+      "sha256": "6c7cb6f0179caa0f68bcea0810e351b4d86fa351c103b5366ccdd56396d91703"
+    },
+    "lint.log": {
+      "path": "/workspace/.cloud-setup/duplicate-test-cleanup/lint.log",
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    },
+    "fmt.log": {
+      "path": "/workspace/.cloud-setup/duplicate-test-cleanup/fmt.log",
+      "sha256": "773dbd06c839e68378e6955db6b5680ceeb44ca371e67d58317ec6bf21e36623"
+    },
+    "changed-format.log": {
+      "path": "/workspace/.cloud-setup/duplicate-test-cleanup/changed-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "validated-source-inputs.json": {
+      "path": "/workspace/.cloud-setup/duplicate-test-cleanup/validated-source-inputs.json",
+      "sha256": "a3aecc3f9d31e99a5d9a901fb667a9e308c79fc6fd8be1957e48b82f39e71532"
+    },
+    "retired-test-binaries.json": {
+      "path": "/workspace/.cloud-setup/duplicate-test-cleanup/retired-test-binaries.json",
+      "sha256": "cac52bc20f5c4b43467a840cd42d2c5517df04e67ccdb19e2aa71b066091f112"
+    }
+  },
+  "publication": "Actual hook and fresh pre-push locked builds plus remote verification are recorded after commit in /workspace/.cloud-setup/duplicate-test-cleanup/final-handoff.json."
+}

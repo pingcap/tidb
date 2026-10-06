@@ -94,17 +94,6 @@ mod tests {
     use super::{TxnScopeVar, GLOBAL_TXN_SCOPE, LOCAL_TXN_SCOPE};
 
     #[test]
-    fn global_and_local_constructors_preserve_the_source_pair() {
-        let global = TxnScopeVar::new_global();
-        assert_eq!(global.var_value(), GLOBAL_TXN_SCOPE);
-        assert_eq!(global.txn_scope(), GLOBAL_TXN_SCOPE);
-
-        let local = TxnScopeVar::new_local("zone-a");
-        assert_eq!(local.var_value(), LOCAL_TXN_SCOPE);
-        assert_eq!(local.txn_scope(), "zone-a");
-    }
-
-    #[test]
     fn configured_scope_only_selects_global_on_exact_match() {
         let global = TxnScopeVar::from_configured_scope(GLOBAL_TXN_SCOPE);
         assert_eq!(global, TxnScopeVar::new_global());

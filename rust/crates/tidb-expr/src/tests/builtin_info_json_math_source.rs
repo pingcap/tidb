@@ -1863,10 +1863,13 @@ fn exp() {
         math_call("EXP", &[Datum::new_string("tidb")]).unwrap(),
         Datum::Real(1.0)
     );
-    assert!(matches!(
+    assert_eq!(
         math_call("EXP", &[Datum::Real(100_000.0)]),
-        Err(EvalError::FloatOverflow)
-    ));
+        Err(EvalError::DataOutOfRange {
+            value: "DOUBLE",
+            expression: "exp(100000)".to_owned(),
+        })
+    );
 }
 
 /// Go `pkg/expression/builtin_math_test.go:177 TestFloor`.

@@ -311,8 +311,6 @@ mod tests_executor_internal_source;
 #[cfg(test)]
 mod tests_executor_part22_source;
 #[cfg(test)]
-mod tests_executor_part23_source;
-#[cfg(test)]
 mod tests_executor_suite_metadata_source;
 #[cfg(test)]
 mod tests_executor_suite_statements_source;
