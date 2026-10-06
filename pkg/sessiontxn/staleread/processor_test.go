@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -579,18 +580,24 @@ func TestStaleReadReplicaReadPolicy(t *testing.T) {
 	tk.MustQuery("select @@tidb_stale_read_above_safe_ts_replica_read, @@tidb_stale_read_within_safe_ts_replica_read").
 		Check(testkit.Rows("prefer-leader closest-replicas"))
 
-	// read ts above the min safe ts
+	// read ts above the min safe ts: policy type and sent as a non stale read
 	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, "return(1)"))
 	runStaleSelect()
 	require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
 	require.Equal(t, byte(kv.ReplicaReadPreferLeader), vars.StmtCtx.StaleReadReplicaRead)
 	require.Equal(t, kv.ReplicaReadPreferLeader, vars.GetReplicaRead())
+	require.True(t, vars.StmtCtx.StaleReadAsNonStale)
+	vars.StmtCtx.IsStaleness = true
+	require.False(t, staleread.UseStaleReadRequests(tk.Session()))
 
-	// read ts within the min safe ts
+	// read ts within the min safe ts: policy type and kept as a stale read
 	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, fmt.Sprintf("return(%d)", math.MaxInt64)))
 	runStaleSelect()
 	require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
 	require.Equal(t, kv.ReplicaReadClosest, vars.GetReplicaRead())
+	require.False(t, vars.StmtCtx.StaleReadAsNonStale)
+	vars.StmtCtx.IsStaleness = true
+	require.True(t, staleread.UseStaleReadRequests(tk.Session()))
 
 	// an explicit session level tidb_replica_read is never overridden
 	tk.MustExec("set @@tidb_replica_read = 'follower'")
@@ -618,6 +625,17 @@ func TestStaleReadReplicaReadPolicy(t *testing.T) {
 	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, "return(1)"))
 	runStaleSelect()
 	require.Equal(t, kv.ReplicaReadPreferLeader, vars.GetReplicaRead())
+	require.True(t, vars.StmtCtx.StaleReadAsNonStale)
+	// without the above-safe-ts variable a read above the safe ts stays a stale read
+	tk.MustExec("set @@tidb_stale_read_above_safe_ts_replica_read = ''")
+	tk.MustExec("set @@tidb_stale_read_within_safe_ts_replica_read = 'follower'")
+	runStaleSelect()
+	require.False(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.False(t, vars.StmtCtx.StaleReadAsNonStale)
+	vars.StmtCtx.IsStaleness = true
+	require.True(t, staleread.UseStaleReadRequests(tk.Session()))
+	tk.MustExec("set @@tidb_stale_read_above_safe_ts_replica_read = 'prefer-leader'")
+	tk.MustExec("set @@tidb_stale_read_within_safe_ts_replica_read = ''")
 	require.NoError(t, failpoint.Disable(injectStaleReadSafeTSFP))
 
 	// a non-stale read is not affected
@@ -705,4 +723,203 @@ func TestStaleReadNowDerivedTSNotInFuture(t *testing.T) {
 	tk.MustMatchErrMsg("select * from t as of timestamp now(6) + interval 1 hour", "cannot set read timestamp to a future time")
 	tk.MustMatchErrMsg("start transaction read only as of timestamp now(6) + interval 1 hour", "cannot set read timestamp to a future time")
 	tk.MustMatchErrMsg("select * from t as of timestamp '2038-01-18 03:14:07'", "cannot set read timestamp to a future time")
+}
+
+// TestStaleReadReplicaReadPolicyInTxn checks that the policy is decided for every read inside a stale read
+// transaction (`START TRANSACTION READ ONLY AS OF ...` or `SET TRANSACTION READ ONLY AS OF ...; BEGIN`).
+func TestStaleReadReplicaReadPolicyInTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+	time.Sleep(1200 * time.Millisecond)
+	vars := tk.Session().GetSessionVars()
+	tk.MustExec("set @@tidb_stale_read_above_safe_ts_replica_read = 'prefer-leader'")
+	tk.MustExec("set @@tidb_stale_read_within_safe_ts_replica_read = 'follower'")
+	defer func() { require.NoError(t, failpoint.Disable(injectStaleReadSafeTSFP)) }()
+
+	for _, c := range []struct {
+		safeTS     string
+		expected   kv.ReplicaReadType
+		asNonStale bool
+	}{
+		// above the safe ts: prefer-leader and sent as a non stale read
+		{"return(1)", kv.ReplicaReadPreferLeader, true},
+		// within the safe ts: follower and kept as a stale read
+		{fmt.Sprintf("return(%d)", math.MaxInt64), kv.ReplicaReadFollower, false},
+	} {
+		require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, c.safeTS))
+
+		tk.MustExec("start transaction read only as of timestamp now(6) - interval 1 second")
+		for range 3 {
+			tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+			require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+			require.Equal(t, c.expected, vars.GetReplicaRead())
+			require.Equal(t, c.asNonStale, vars.StmtCtx.StaleReadAsNonStale)
+			tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 1"))
+			require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+			require.Equal(t, c.expected, vars.GetReplicaRead())
+			require.Equal(t, c.asNonStale, vars.StmtCtx.StaleReadAsNonStale)
+		}
+		tk.MustExec("commit")
+
+		tk.MustExec("set transaction read only as of timestamp now(6) - interval 1 second")
+		tk.MustExec("begin")
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+		require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+		require.Equal(t, c.expected, vars.GetReplicaRead())
+		tk.MustExec("commit")
+	}
+
+	// a normal transaction is not a stale read and is not affected
+	tk.MustExec("begin")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	require.False(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.Equal(t, kv.ReplicaReadLeader, vars.GetReplicaRead())
+	require.False(t, vars.StmtCtx.StaleReadAsNonStale)
+	tk.MustExec("commit")
+}
+
+// TestStaleReadReplicaReadPolicyUDSConfig mirrors the session configuration and statement shape used by Airbnb UDS
+// against TiDB replicas: `tidb_replica_read` explicitly set (prefer-leader by default, closest-replicas by override),
+// `tidb_low_resolution_tso=ON`, REPEATABLE-READ, and server-side prepared statements carrying
+// `/*T! AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(NOW(6) - INTERVAL n MICROSECOND, NOW(6)) */`. The policy variables must
+// never override the explicitly configured replica read type.
+func TestStaleReadReplicaReadPolicyUDSConfig(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint primary key, v varchar(32))")
+	tk.MustExec("insert into t values (1, 'a'), (2, 'b')")
+	time.Sleep(1200 * time.Millisecond)
+	vars := tk.Session().GetSessionVars()
+
+	// cluster wide policies, as an operator might set them
+	tk.MustExec("set @@tidb_stale_read_above_safe_ts_replica_read = 'leader'")
+	tk.MustExec("set @@tidb_stale_read_within_safe_ts_replica_read = 'follower'")
+	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, "return(1)"))
+	defer func() { require.NoError(t, failpoint.Disable(injectStaleReadSafeTSFP)) }()
+
+	const udsQuery = "select v from t /*T! AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(NOW(6) - INTERVAL 1000000 MICROSECOND, NOW(6)) */ where id = ?"
+
+	for _, c := range []struct {
+		replicaRead string
+		expected    kv.ReplicaReadType
+	}{
+		// TIDB_REPLICA / TIDB_MASTER pools
+		{"prefer-leader", kv.ReplicaReadPreferLeader},
+		// Sitar override for same-AZ shards
+		{"closest-replicas", kv.ReplicaReadClosest},
+		// Sitar override to leader is indistinguishable from the default, so the policy type (leader) applies
+		{"leader", kv.ReplicaReadLeader},
+	} {
+		tk.MustExec("set @@tidb_replica_read = '" + c.replicaRead + "'")
+		tk.MustExec("set @@tidb_low_resolution_tso = ON")
+		tk.MustExec("set @@transaction_isolation = 'REPEATABLE-READ'")
+		tk.MustExec("prepare uds from '" + udsQuery + "'")
+		tk.MustExec("set @id = 1")
+		for range 3 {
+			tk.MustQuery("execute uds using @id").Check(testkit.Rows("a"))
+			require.True(t, vars.StmtCtx.HasStaleReadReplicaRead, c.replicaRead)
+			require.Equal(t, c.expected, vars.GetReplicaRead(), c.replicaRead)
+			// above the safe ts the bounded staleness read is sent as a non stale read with the session's type
+			require.True(t, vars.StmtCtx.StaleReadAsNonStale, c.replicaRead)
+		}
+		// the same statement as text protocol
+		tk.MustQuery(strings.Replace(udsQuery, "?", "2", 1)).Check(testkit.Rows("b"))
+		require.Equal(t, c.expected, vars.GetReplicaRead(), c.replicaRead)
+		require.True(t, vars.StmtCtx.StaleReadAsNonStale, c.replicaRead)
+		tk.MustExec("deallocate prepare uds")
+	}
+
+	// within the safe ts the read stays a stale read and the explicit replica read type is kept.
+	// TIDB_BOUNDED_STALENESS evaluates (and caches) the min safe ts first, so inject it there as well.
+	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, fmt.Sprintf("return(%d)", math.MaxInt64)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectSafeTS", fmt.Sprintf("return(%d)", math.MaxInt64)))
+	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectSafeTS")) }()
+	tk.MustExec("set @@tidb_replica_read = 'prefer-leader'")
+	tk.MustQuery(strings.Replace(udsQuery, "?", "1", 1)).Check(testkit.Rows("a"))
+	require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.False(t, vars.StmtCtx.StaleReadAsNonStale)
+	require.Equal(t, kv.ReplicaReadPreferLeader, vars.GetReplicaRead())
+
+	// UDS qsplit transactions are plain `BEGIN` without a stale read, they are never affected
+	tk.MustExec("begin")
+	tk.MustQuery("select v from t where id = 1").Check(testkit.Rows("a"))
+	require.False(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.False(t, vars.StmtCtx.StaleReadAsNonStale)
+	require.Equal(t, kv.ReplicaReadPreferLeader, vars.GetReplicaRead())
+	tk.MustExec("commit")
+}
+
+// TestStaleReadReplicaReadPolicyMusselConfig mirrors the session configuration and statement shapes used by Airbnb
+// Mussel: the query pool sets `tidb_replica_read='closest-replicas'` and `tidb_low_resolution_tso=ON` and rewrites
+// selects into `SELECT /*+ SET_VAR(...) */ ... FROM t AS OF TIMESTAMP NOW() - INTERVAL n SECOND ...`; the write pool
+// sets no replica read at all; the expiration service uses `tidb_read_staleness='-180'` with closest-replicas.
+func TestStaleReadReplicaReadPolicyMusselConfig(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(k varbinary(64) primary key, v blob)")
+	tk.MustExec("insert into t values ('k1', 'v1')")
+	// Mussel uses NOW() without fractional seconds, so `NOW() - INTERVAL 1 SECOND` can be almost 2 seconds old.
+	time.Sleep(2500 * time.Millisecond)
+	vars := tk.Session().GetSessionVars()
+
+	tk.MustExec("set @@tidb_stale_read_above_safe_ts_replica_read = 'prefer-leader'")
+	tk.MustExec("set @@tidb_stale_read_within_safe_ts_replica_read = 'follower'")
+	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, "return(1)"))
+	defer func() { require.NoError(t, failpoint.Disable(injectStaleReadSafeTSFP)) }()
+
+	const musselQuery = "SELECT /*+ SET_VAR(tikv_client_read_timeout=200) SET_VAR(max_execution_time=1000) */ v FROM t AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND WHERE k = 'k1'"
+
+	// query pool with enable_stale_read=true: explicit closest-replicas wins
+	tk.MustExec("set @@tidb_replica_read = 'closest-replicas'")
+	tk.MustExec("set @@tidb_low_resolution_tso = ON")
+	for range 3 {
+		tk.MustQuery(musselQuery).Check(testkit.Rows("v1"))
+		require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+		require.Equal(t, kv.ReplicaReadClosest, vars.GetReplicaRead())
+		require.True(t, vars.StmtCtx.StaleReadAsNonStale)
+	}
+	tk.MustExec("prepare mussel from '" + strings.ReplaceAll(musselQuery, "'", "''") + "'")
+	tk.MustQuery("execute mussel").Check(testkit.Rows("v1"))
+	require.Equal(t, kv.ReplicaReadClosest, vars.GetReplicaRead())
+	require.True(t, vars.StmtCtx.StaleReadAsNonStale)
+	tk.MustExec("deallocate prepare mussel")
+
+	// a SET_VAR(tidb_replica_read) hint in the Sitar runtime session variables wins as well
+	tk.MustQuery("SELECT /*+ SET_VAR(tidb_replica_read='leader-and-follower') */ v FROM t AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND WHERE k = 'k1'").Check(testkit.Rows("v1"))
+	require.Equal(t, kv.ReplicaReadMixed, vars.GetReplicaRead())
+	require.True(t, vars.StmtCtx.StaleReadAsNonStale)
+
+	// write pool (no tidb_replica_read set) reading with staleness: the policy applies
+	tk.MustExec("set @@tidb_replica_read = 'leader'")
+	tk.MustQuery(musselQuery).Check(testkit.Rows("v1"))
+	require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.Equal(t, kv.ReplicaReadPreferLeader, vars.GetReplicaRead())
+	require.True(t, vars.StmtCtx.StaleReadAsNonStale)
+
+	// without any AS OF clause the write pool is a normal read
+	tk.MustQuery("SELECT v FROM t WHERE k = 'k1'").Check(testkit.Rows("v1"))
+	require.False(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.False(t, vars.StmtCtx.StaleReadAsNonStale)
+	require.Equal(t, kv.ReplicaReadLeader, vars.GetReplicaRead())
+
+	// expiration service: tidb_read_staleness with closest-replicas
+	tk.MustExec("set @@tidb_replica_read = 'closest-replicas'")
+	tk.MustExec("set @@tidb_read_staleness = '-1'")
+	tk.MustQuery("SELECT v FROM t WHERE k = 'k1'").Check(testkit.Rows("v1"))
+	require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.Equal(t, kv.ReplicaReadClosest, vars.GetReplicaRead())
+	require.True(t, vars.StmtCtx.StaleReadAsNonStale)
+
+	// within the safe ts the Mussel read stays a stale read
+	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, fmt.Sprintf("return(%d)", math.MaxInt64)))
+	tk.MustExec("set @@tidb_read_staleness = 0")
+	tk.MustQuery(musselQuery).Check(testkit.Rows("v1"))
+	require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.False(t, vars.StmtCtx.StaleReadAsNonStale)
+	require.Equal(t, kv.ReplicaReadClosest, vars.GetReplicaRead())
 }
