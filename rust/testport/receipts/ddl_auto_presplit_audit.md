@@ -3,6 +3,19 @@
 Comparison source: Go `master` at commit
 `c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
+## Current status (2026-10-06)
+
+The disconnected `tidb-exec::auto_pre_split` planner and its four private
+tests were retired in planning-leaf-cleanup. It had no runtime caller.
+The parser/AST, durable `IndexArg` marker and catalog-write propagation
+remain unchanged with their Go-contract tests. The historical helper claims
+and commands below are evidence of the old prototype, not current validation
+targets or complete DDL package acceptance. Current Go owns statistics loading,
+shared deadlines, boundary caching and region splitting through
+`index_presplit.go::autoPreSplitIndexRegion`; that complete runtime integration
+remains unresolved. See
+`rust/docs/parity/current-audit/planning-leaf-cleanup-validation.json`.
+
 ## Complete package inventory
 
 The direct Go package inventory contains 139 artifacts and 89,091 Go/BUILD

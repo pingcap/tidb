@@ -26,7 +26,6 @@ mod hash_equaler;
 mod index_columns;
 mod index_range_policy;
 mod join;
-mod join_condition;
 mod out_of_range;
 mod physical_apply;
 mod physical_cte_table;

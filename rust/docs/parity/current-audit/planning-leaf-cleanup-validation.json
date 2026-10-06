@@ -1,0 +1,102 @@
+{
+  "date": "2026-10-06",
+  "base": "e48cdc301e7d609adbb4c5727b77c28c2607d952",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire disconnected join-condition classifier and automatic index-split planner: four Rust files, 1247 net Rust lines and ten private tests removed. Preserve live logical/session joins, parser/AST AUTO options, durable IndexArg and catalog-write propagation with their existing Go-contract tests. Correct historical AUTO planner coverage claims.",
+  "continuity": {
+    "base": "e48cdc301e7d609adbb4c5727b77c28c2607d952",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "removed_rust_files": 4,
+    "net_rust_lines_removed": 1247,
+    "private_tests_removed": 10,
+    "retained_consumers_and_tests_unchanged": true,
+    "dependencies_unchanged": true,
+    "retired_symbols_absent": true,
+    "finding_dispositions_unchanged": true
+  },
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/auto_pre_split.rs",
+      "lines": 414,
+      "sha256": "88b3b2492bedb66eee5295f6d8515383520acbc7b9740ab196e9cd5edc1f6287",
+      "tests": [
+        "topn_and_histogram_values_merge_before_quantile_sampling",
+        "one_value_crossing_multiple_thresholds_is_emitted_once"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/auto_pre_split_source.rs",
+      "lines": 138,
+      "sha256": "7383eff1b7e05c4c593b8d7eb15cabc28c07a145d12394993466a19ff446f964",
+      "tests": [
+        "auto_pre_split_merges_topn_and_histogram_before_sampling_keys",
+        "auto_pre_split_skips_unreliable_or_unsafe_statistics"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/join_condition.rs",
+      "lines": 531,
+      "sha256": "c1a82e5206b2ee825c9004783b30d4d0f90a774ea72120b9d7f280e43e2547da",
+      "tests": []
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/join_condition.rs",
+      "lines": 160,
+      "sha256": "b3d8bdc1d8bd71c2816863f663a24536034ded959e6feb2d1016cbd44ba75371",
+      "tests": [
+        "qualified_equality_normalizes_operand_order_and_full_schema_indices",
+        "unqualified_unique_names_bind_across_children",
+        "unqualified_using_names_do_not_become_their_own_qualifier",
+        "using_produces_one_three_valued_pair_per_name",
+        "null_safe_equality_has_distinct_null_contract",
+        "ambiguous_and_unsupported_shapes_are_never_join_keys"
+      ]
+    }
+  ],
+  "tests": {
+    "session-tests": [
+      {
+        "passed": 42,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "exec-tests": [
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  "commands": [
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- tests_coalesced_joins:: tests_join_predicate_placement:: --test-threads=1",
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-exec --test all -- cluster_ddl_source::create_index_auto_pre_split_marker_reaches_catalog_write --exact --test-threads=1",
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb; make lint",
+    "cd /workspace/tidb; git diff --check"
+  ],
+  "go_owners": [
+    "pkg/planner/core/logical_plan_builder.go::buildJoin, FullSchema in logicalop/logical_join.go",
+    "pkg/ddl/index_auto_presplit.go::planAutoPreSplitWithCache, pkg/ddl/index_presplit.go::autoPreSplitIndexRegion"
+  ],
+  "retained_owners": [
+    "tidb-planner logical/rewrite.rs, logical/join.rs, physical join construction",
+    "tidb-session tests_coalesced_joins and tests_join_predicate_placement with real SQL execution",
+    "tidb-parser/AST AUTO option, tidb-model IndexArg, tidb-exec cluster_ddl durable marker"
+  ],
+  "remaining_go_obligations": [
+    "Complete logical/physical join integration and original package/test obligations",
+    "AUTO statistics-provider loading, shared deadlines, boundary caching and actual region splitting integration; deleted helper was never called by live DDL"
+  ],
+  "gates": {
+    "lint": "passed after sourcing cloud environment; initial shell omitted env.sh and make rejected missing GOPATH before checks",
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; external final handoff records completion"
+  },
+  "limits": [
+    "No full Go suite, live cluster, TCP replay or benchmark; no measured speedup",
+    "No broad finding disposition change or package acceptance",
+    "Out-of-tree consumers of removed prototype APIs must use maintained owners"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/planning-leaf-cleanup/final-handoff.json"
+}

@@ -103,7 +103,6 @@ pub mod handle_cols;
 pub mod hash_equaler;
 pub mod index_columns;
 pub mod index_task;
-pub mod join_condition;
 pub mod joinorder;
 pub mod logical;
 pub mod logical_data_source;

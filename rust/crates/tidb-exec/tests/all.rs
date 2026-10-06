@@ -19,7 +19,6 @@ mod analyze_added_column_source;
 mod analyze_commit_size_source;
 mod analyze_generated_column_source;
 mod analyze_panic_error_source;
-mod auto_pre_split_source;
 mod autocommit_point_get_max_ts_source;
 mod catalog_reload_source;
 mod cluster_account_write_source;

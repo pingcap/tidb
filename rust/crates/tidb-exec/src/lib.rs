@@ -28,7 +28,6 @@
 
 pub mod account_policy;
 pub mod adapter;
-pub mod auto_pre_split;
 pub mod catalog_reload;
 pub mod catalog_watch;
 pub mod cluster_account_write;

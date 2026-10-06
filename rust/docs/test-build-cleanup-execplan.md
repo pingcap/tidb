@@ -1,82 +1,92 @@
-# Retire unused process and order-limit metadata models
+# Retire disconnected join and index-split planning leaves
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Remove two unused metadata models and their private harnesses in one batch.
+Remove two unused planning implementations and their private tests together.
 Work in /workspace/tidb on hparser-integration from
-dd556ddcbb552e2127f3081a2966df617b02b559. Refreshed Go master remains
-b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Go sessmgr owns actual process
-state and ByItems owns order expressions/direction. The removed process
-marker record and configured order-key/limit/spec records have no live users.
+e48cdc301e7d609adbb4c5727b77c28c2607d952. Fresh Go master remains
+b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. The standalone JoinSchema classifier
+has no caller in live planning: Go binds joins in PlanBuilder.buildJoin and
+maintains FullSchema in logical operators. The AUTO split helper likewise
+has no live caller; Go's autoPreSplitIndexRegion integrates stats loading,
+shared deadlines, boundary caching and region operations. Retiring isolated
+prototypes reduces maintained code without changing those runtime owners.
 
 ## Progress
 
 
-- [x] Trace types, imports, aliases and registrations across Rust sources.
-- [x] Remove unused records, private harnesses and the completed sessmgr plan.
-- [x] Retain prepared-read direction and actual session/process-list owners.
-- [x] Validate retained SQL/prepared-read cases, source continuity and lint.
-- [ ] Pass actual hook/fresh pre-push builds, remote and Cloud checkpoint checks.
+- [x] Trace both implementations, test-only callers and Go owner boundaries.
+- [x] Remove the two modules, two private carriers and four registrations.
+- [x] Correct the historical automatic index-split receipt.
+- [x] Validate retained join SQL and durable DDL marker, source continuity and lint.
+- [ ] Complete actual hook, fresh pre-push build, remote and Cloud checkpoint checks.
 
 ## Milestones and Plan of Work
 
 
-Delete tidb-exec process_info.rs and its test carrier. Trim planner
-configured_order_limit_contract.rs to ConfiguredOrderDirection and
-from_descending, keeping their implementation unchanged. Delete its private
-record tests and the unused is_descending method. Remove registrations.
-Retain existing read_only_prepared_order_source tests, which exercise real
-SQL lowering and both sort directions. Remove the completed sessmgr audit
-plan; keep its dated receipt with corrected current ownership. Mark retired
-historical order-test commands explicitly instead of recommending them.
+Remove rust/crates/tidb-planner/src/join_condition.rs and
+rust/difftests/planner-tests/tests/join_condition.rs. Remove
+rust/crates/tidb-exec/src/auto_pre_split.rs and its tests/auto_pre_split_source.rs.
+Unregister them from their lib.rs and tests/all.rs files. Preserve the actual
+logical join rewrite, session SQL paths, parser/AST options, durable IndexArg
+and cluster_ddl marker propagation byte-for-byte. Mark the old claims in
+rust/testport/receipts/ddl_auto_presplit_audit.md as historical; retain Go's
+full original package obligations. Update both structural registers and the
+current-audit index without closing findings.
 
 ## Validation and Acceptance
 
 
-Activate /workspace/.cloud-setup/env.sh; from /workspace/tidb/rust run:
+Source /workspace/.cloud-setup/env.sh in every build shell; work in
+/workspace/tidb/rust, with CARGO_BUILD_JOBS=1:
 
-    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-planner --test all -- read_only_prepared_order_source:: --test-threads=1
-    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- tests_grants::processlist::show_processlist_lists_this_session --exact --test-threads=1
+    cargo test --locked -p tidb-session --lib -- tests_coalesced_joins:: tests_join_predicate_placement:: --test-threads=1
+    cargo test --locked -p tidb-exec --test all -- cluster_ddl_source::create_index_auto_pre_split_marker_reaches_catalog_write --exact --test-threads=1
 
-Expect existing prepared ordering/aggregate metadata assertions and actual
-SHOW PROCESSLIST rows to pass. Verify all retained consumers/tests and the
-remaining direction code against before-images. From repository root run
-make lint and git diff --check. Normal commit must run the real hook's
-cd rust && cargo build --locked -p tidb-server; rerun immediately before push
-and verify remote SHA. No Go/Bazel/dependency/native changes are needed.
+Existing SQL rows, null semantics, USING visibility and join predicates must
+pass. The retained catalog-write test must preserve AUTO/manual precedence.
+Source continuity must show only deleted modules and registrations changed
+among Rust code; no dependency changes or surviving retired imports. Run
+make lint and git diff --check at root. Commit normally through the actual
+locked server-build hook; run cargo build --locked -p tidb-server immediately
+before authorized push and verify remote SHA. No Go/Bazel changes or new
+behavioral fixes, so no oracle regeneration or new regression required.
 
 ## Surprises & Discoveries
 
 
-The clone test only proves Arc cloning on empty marker types; it never
-exercises session ownership. Only the direction enum from the configured
-contract has live callers; prepared SQL tests already cover both values.
+The join model's sole consumer is under difftests/planner-tests, not the
+planner crate's own test tree. AUTO parser/catalog markers are active, but
+the statistics-to-keys helper is not called by any production source.
 
 ## Decision Log
 
 
-Preserve real SQL and Rust correctness tests. Retire disconnected records and
-constructor-only assertions after tracing all callers. Keep complete upstream
-obligations; this is neither sessmgr nor planner package acceptance.
+Remove test-only models and their private assertions after tracing all users.
+Preserve useful tests on actual owners and all original Go obligations.
+Do not equate prototype removal with implemented AUTO region splitting or
+complete join/package parity. Keep historical receipts explicitly dated.
 
 ## Outcomes & Retrospective
 
 
-Implementation and validation complete: 20 retained SQL/planner tests passed,
-along with lint and continuity/diff checks. Removed 450 net Rust lines and
-five private tests. Publication gates remain pending here; external
-final-handoff.json records their later results. No full Go suite,
-live cluster run or measured speedup is claimed.
+Implementation and validation complete: 43 retained-owner tests passed.
+Lint and source continuity passed. Removed 1247 net Rust lines and ten
+private tests. Publication gates remain pending in this committed receipt;
+external final-handoff.json records their completion. No measured build-speed claim, full
+Go suite, live region split or cluster acceptance is implied by this cleanup.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Before-images: git show dd556ddcbb:<path>. Restore individual files only and
-preserve concurrent work. External logs/inventory:
-/workspace/.cloud-setup/metadata-model-cleanup. Durable receipt:
-rust/docs/parity/current-audit/metadata-model-cleanup-validation.json.
-Draft save, Publish and future restore are separate. Revision: replace
-completed execution-detail cleanup with unused metadata model retirement.
+Restore individual before-images with git show e48cdc301e:<path>, preserving
+concurrent work. External logs/inventory live at
+/workspace/.cloud-setup/planning-leaf-cleanup. Durable evidence belongs in
+rust/docs/parity/current-audit/planning-leaf-cleanup-validation.json.
+Publication gates are recorded externally after the commit to avoid another
+source mutation solely for a receipt. Cloud draft save is separate from
+Publish and fresh-task restoration. Revision: replace completed metadata
+cleanup with disconnected join/AUTO planning retirement.
