@@ -10,7 +10,7 @@
     "partial": 29
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "K03/X01 rechecked and advanced by json-numeric-batch-validation.json; other54 unresolved roots retain prior evidence. No complete package acceptance.",
+  "evidence_limit": "P03/P06/T02 rechecked and advanced by pd-availability-batch-validation.json; other53 unresolved roots retain carried evidence. No complete package acceptance.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -516,19 +516,21 @@
     }
   ],
   "latest_evidence": {
-    "date": "2026-10-05",
-    "integration_start": "2b7793fa87cf14960afc26de0abcbb68e00bbb48",
-    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "date": "2026-10-06",
+    "integration_start": "41e1113eb5096b536a530cab5c928c07e0116f8e",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
     "findings": [
-      "S03",
-      "X01"
+      "P03",
+      "P06",
+      "T02"
     ],
     "statuses": {
-      "S03": "partial",
-      "X01": "partial"
+      "P03": "partial",
+      "P06": "partial",
+      "T02": "partial"
     },
-    "receipt": "user-variable-batch-validation.json",
-    "scope": "S03/X01 existing-owner maintenance: one live value/type store, plan-time inline types, SET plan-before-execute ordering, typed reads, independent migration maps and shared prepared/DML consumers. No complete package acceptance."
+    "receipt": "pd-availability-batch-validation.json",
+    "scope": "Shared PD network eligibility, region cooldown, member feedback and joined native/adapter health maintenance. Complete parent packages remain unaccepted."
   },
   "latest_source_maintenance": {
     "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",

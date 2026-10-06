@@ -238,12 +238,15 @@ where
             follower: target.follower,
         },
     );
-    let retry = target.needs_leader_retry(
+    let retry = target.observe_error(
         matches!(
             &result,
             Err(PdClientError::Transport { .. } | PdClientError::Timeout { .. })
         ),
-        matches!(&result, Err(PdClientError::HeaderError { .. })),
+        match &result {
+            Err(PdClientError::HeaderError { error_type, .. }) => Some(*error_type),
+            _ => None,
+        },
     );
     if retry && !*shutdown.borrow() {
         if let Some(remaining) = deadline
@@ -592,6 +595,9 @@ pub(super) fn refresh_membership(
                     let mut current = state.write().expect("PD state lock poisoned");
                     current.active_endpoint = members.leader_url.clone();
                     current.members = members.clone();
+                    clients
+                        .regions
+                        .update_members(&members.leader_url, &members.member_urls);
                     return Ok(members);
                 }
                 Err(error) => last_error = Some(error),
@@ -668,7 +674,7 @@ pub(super) fn is_retryable_endpoint_error(
 #[derive(Clone)]
 pub(crate) struct PdChannelCache {
     pub(super) options: Arc<tikv_client::pd_options::Options>,
-    regions: Arc<tikv_client::pd_region_service::RegionService>,
+    pub(super) regions: Arc<tikv_client::pd_region_service::RegionService>,
     channels: Arc<tikv_client::pd_service_discovery::ChannelCache>,
     security: Arc<ClusterSecurity>,
     pub(super) tso_discovery: Arc<tokio::sync::Mutex<TsoDiscoveryState>>,

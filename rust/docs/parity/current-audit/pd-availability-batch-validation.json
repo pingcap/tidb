@@ -1,0 +1,178 @@
+{
+  "date": "2026-10-06",
+  "scope": "P03/P06/T02 existing-owner availability maintenance across native PD and the TiDB adapter; no complete Go package acceptance",
+  "baseline": {
+    "tidb": "41e1113eb5096b536a530cab5c928c07e0116f8e",
+    "native": "0c8edfb4cccd3d44c075c9910b4d1bb40fb913dc",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "pd": "v0.0.0-20260805103528-afa43111d149",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+    "native_published": "194295ec1f40e3ce4c1115ef3ff74cb2c425d112"
+  },
+  "source_inventory": {
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "pd_module": "client@v0.0.0-20260805103528-afa43111d149",
+    "scope": "Inventory only; no whole-package acceptance. Includes the service-discovery production and original support/test obligations.",
+    "files": [
+      {
+        "path": "servicediscovery/resource_manager_service_discovery.go",
+        "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e"
+      },
+      {
+        "path": "servicediscovery/router_service_discovery.go",
+        "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e"
+      },
+      {
+        "path": "servicediscovery/service_discovery.go",
+        "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9"
+      },
+      {
+        "path": "servicediscovery/tso_service_discovery_test.go",
+        "sha256": "a2379d4732fddd244d08d0c8e38e2e0f928d937ba2fd830ac5461c9091aa94a9"
+      },
+      {
+        "path": "servicediscovery/callbacks.go",
+        "sha256": "5f927301227919e13a6c30a0466b749e25765e85e8ca69d73fa131972b318f25"
+      },
+      {
+        "path": "servicediscovery/mock_service_discovery.go",
+        "sha256": "bb36615732f3228f1078b74c347124837651fe81b5173144d4de456abc69e3a1"
+      },
+      {
+        "path": "servicediscovery/resource_manager_service_discovery_test.go",
+        "sha256": "28c9cb214e9ab7beb4d4bf9d930c1e6203ae5b6a146f0bcc2c5264a5a7c24094"
+      },
+      {
+        "path": "servicediscovery/tso_service_discovery.go",
+        "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de"
+      },
+      {
+        "path": "servicediscovery/service_discovery_test.go",
+        "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf"
+      }
+    ]
+  },
+  "repairs": [
+    "Shared network availability skips non-serving members, with leader fallback when no member is eligible.",
+    "REGION_NOT_FOUND starts a ten-second follower cooldown shared by all region APIs; unrelated RPC/header errors and missing payload retain distinct retry policy.",
+    "Unchanged topology retains rotation/health/cooldown; replaced API/member identities isolate late request and health observations. Network recovery never clears API suppression.",
+    "Cooldown expiry checks the current API ring after health I/O, including membership replacement while a probe is pending.",
+    "Both existing process runtimes independently poll health and TSO discovery, share cached channels, and cancel/join health work during close.",
+    "Health probes use Go one-second cadence, configured leader timeout and one-third-second follower budget across dialing, readiness and RPC.",
+    "PD and TiKV now share the health wire exchange while keeping their distinct status policies; adapter request construction no longer fabricates a target without feedback identity."
+  ],
+  "before": {
+    "behavioral_failures": 4,
+    "native": [
+      "pd_availability_batch_health_recovers_and_close_joins_stalled_probe",
+      "pd_region_batch_native_cache_permission_fallback_and_close"
+    ],
+    "adapter": [
+      "pd_availability_batch_health_recovery_and_joined_shutdown",
+      "pd_availability_batch_region_cooldown_survives_unchanged_topology_and_other_api"
+    ],
+    "logs": [
+      {
+        "path": "/workspace/.cloud-setup/pd-availability-batch/native-before-readable.log",
+        "sha256": "1a78ca08b46d6cf3fa6866c63bd5d352d158e2de3f275fd557747309fa1752c0"
+      },
+      {
+        "path": "/workspace/.cloud-setup/pd-availability-batch/adapter-before-valid.log",
+        "sha256": "c59dc4cff451cc43c2651e876f7225a4bc10e9937a4a132919d11ff23b273a4f"
+      }
+    ],
+    "diagnostics": "Initial fixture compilation required correcting a Rust Result alias and native/workspace tonic body/codec differences. One adapter command used the repository root instead of rust/ and failed before execution. These are not behavioral baseline failures. The native readable log also retains the initial diagnostic from overlapping log writers; its two test assertion failures and summary are explicit. The corrected adapter run selected zero txnkv tests; no coverage is claimed for that zero-match control."
+  },
+  "tests": {
+    "distinct_passed": 331,
+    "failed": 0,
+    "ignored_in_selected_runs": 0,
+    "native": {
+      "count": 267,
+      "cwd": "/workspace/client-rust",
+      "command": "CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib -- pd:: region_cache::test:: --test-threads=1",
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-availability-batch/native-current-ring.log",
+        "sha256": "6d1bc0d37625f1e7421cc8b4150d103bffffd86833cf51393a8f4b45398509cd"
+      }
+    },
+    "adapter": {
+      "count": 64,
+      "pd_transport": 42,
+      "region_loader": 16,
+      "shutdown_ownership": 6,
+      "cwd": "/workspace/tidb/rust",
+      "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-pd-client -p tidb-txnkv --lib --test all --no-fail-fast -- pd_client_source:: pd_region_loader_source:: client::worker_lifecycle_tests:: --test-threads=1",
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-availability-batch/adapter-final.log",
+        "sha256": "9d37ef122f99dfd9a4ffd8372f6d2f4b327b0955a51885ac08a32c756dcbbbc7"
+      }
+    }
+  },
+  "gates": {
+    "native_all_targets": {
+      "command": "CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked -p tikv-client --all-targets",
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-availability-batch/native-check-final.log",
+        "sha256": "9cd27e79bd0ee7c48fbfc71ed355ee198d15242c15cd15630378511b78060aea"
+      }
+    },
+    "tidb_all_targets": {
+      "command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-pd-client -p tidb-txnkv -p tidb-server --all-targets",
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-availability-batch/adapter-check-final.log",
+        "sha256": "4ccdd6c2739167bd649b561345d468a414ef256ea7ac1e24f38080b81f197fa3"
+      }
+    },
+    "lint": {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "exit_code": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-availability-batch/lint.log",
+        "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+      }
+    },
+    "native_sync": {
+      "path": "/workspace/.cloud-setup/pd-availability-batch/sync-final.log",
+      "sha256": "1c3e89eb5f43e2289c8222388ee0812d95f42b9347ae8febef21ef12e3071e8e"
+    },
+    "actual_precommit": "Required executable hooks/pre-commit selected by core.hooksPath=hooks; final source commit must pass cd rust && cargo build --locked -p tidb-server. Exact completion is recorded outside the self-referential source commit in final-handoff.json.",
+    "immediate_prepush": "The same locked server build immediately precedes every native and TiDB push; no hooks or force-push bypass."
+  },
+  "self_review": [
+    "Typed region errors retain identity before projection; generic failures do not start cooldown.",
+    "No locks are held across health I/O and no probe is detached.",
+    "Publication preserves unchanged members; old handles cannot mutate replacement state.",
+    "Review found current-ring expiry after a stalled probe; corrected in the native follow-up and covered by the existing paused-clock concurrency case.",
+    "Native/workspace tonic version compatibility is maintained in patch030, not by editing the vendor copy.",
+    "No Go files/imports, Bazel metadata or module dependencies changed; bazel_prepare is not required. The obsolete Ready skill path is absent; current AGENTS.md and docs/agents/testing-flow.md supply the applicable gates."
+  ],
+  "register": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29,
+    "rechecked": [
+      "P03",
+      "P06",
+      "T02"
+    ],
+    "other_unresolved_not_freshly_reproduced": 53
+  },
+  "limits": [
+    "Full Go test suites and complete PD/service-discovery/TSO/grpcutil package acceptance were not run or granted.",
+    "Forwarding, TSO proxy, router transport, remaining discovery/security/platform obligations and TiKV RequestSelector/cache consolidation remain open.",
+    "Live multi-node TiKV, TLS topology changes and workload performance were not validated.",
+    "Unrelated historical parser/table_diff/session/DDL failures retain their existing receipts; this batch neither deletes them nor calls them green.",
+    "Cloud draft saving, publication and fresh-task restoration are distinct; restoration remains unverified."
+  ],
+  "publication": {
+    "native_destination": "ngaut/client-rust master",
+    "native_commit": "194295ec1f40e3ce4c1115ef3ff74cb2c425d112",
+    "native_remote_verified": true,
+    "tidb_destination": "pingcap/tidb hparser-integration",
+    "tidb": "Final source commit/push pending at receipt creation; final-handoff.json records actual gates and remote identity."
+  }
+}

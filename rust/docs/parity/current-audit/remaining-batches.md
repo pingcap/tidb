@@ -150,3 +150,12 @@ The previously unimplemented uniqueness and FM-sketch deltas now share collectio
 ## PD region lifecycle checkpoint — 2026-10-06
 
 The [PD region receipt](pd-region-batch-validation.json) connects B01 discovery and cache request options with N03 live global policy. Selection, metadata, same-deadline leader fallback, cache stale-response fallback and ID/scan caller distinctions share one batch. P03/T02/N03 remain partial; all 56 broader unresolved assignments are retained.
+
+
+## PD service availability checkpoint — 2026-10-06
+
+The [availability receipt](pd-availability-batch-validation.json) advances
+B01 P03/P06/T02 through shared member health, region API cooldown, topology
+publication and independently polled, joined maintenance in both clients.
+Duplicate health wire code is retired; forwarding, TSO proxy and shared cache
+consolidation remain open. The other53 unresolved roots retain carried evidence.

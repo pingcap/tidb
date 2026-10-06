@@ -2652,3 +2652,13 @@ The [statistics plan](statistics-ndv-batch-execplan.md) connects four current-Go
 ## PD region lifecycle checkpoint — 2026-10-06
 
 The [PD region plan](pd-region-batch-execplan.md) and [receipt](parity/current-audit/pd-region-batch-validation.json) connect native selection/metadata, both transports, cache flags/stale-response fallback, TiDB bridge and live SQL startup/mutation/reload policy. Native fixes are published then synchronized through maintained patches and protobuf regeneration. Complete discovery health/forwarding, TSO proxying, shared cache ownership and remaining settings stay open; no whole Go package is accepted. The other53 unresolved roots are carried evidence.
+
+
+## PD service availability checkpoint — 2026-10-06
+
+The [availability plan](pd-availability-batch-execplan.md) and
+[receipt](parity/current-audit/pd-availability-batch-validation.json) compose
+network health, ten-second region cooldown, topology-safe feedback and joined
+maintenance in native and TiDB. Native fixes are published then synchronized
+with the maintained codec patch and protobuf regeneration. P03/P06/T02 remain
+partial for their retained broader obligations; no complete package acceptance.

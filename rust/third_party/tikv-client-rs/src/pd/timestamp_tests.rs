@@ -31,6 +31,9 @@ struct PdServer {
     region_members: Arc<std::sync::RwLock<Option<Vec<pdpb::Member>>>>,
     region_metadata: Arc<std::sync::Mutex<Vec<bool>>>,
     region_failure: Arc<AtomicUsize>,
+    health_status: Arc<AtomicUsize>,
+    health_requests: Arc<AtomicUsize>,
+    health_stall: Arc<std::sync::atomic::AtomicBool>,
     member_failures: Arc<AtomicUsize>,
     member_requests: Arc<AtomicUsize>,
     connections: Arc<AtomicUsize>,
@@ -370,6 +373,63 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
     }
 }
 
+// The pinned gRPC health protocol has two scalar fields; exercise the actual
+// endpoint, including cancellation of a server that never replies.
+#[derive(Clone, PartialEq, prost::Message)]
+struct HealthRequest {
+    #[prost(string, tag = "1")]
+    service: String,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+struct HealthResponse {
+    #[prost(int32, tag = "1")]
+    status: i32,
+}
+#[derive(Clone)]
+struct HealthServer(PdServer);
+impl tonic::server::NamedService for HealthServer {
+    const NAME: &'static str = "grpc.health.v1.Health";
+}
+impl<B> Service<http::Request<B>> for HealthServer
+where
+    B: Body + Send + 'static,
+    B::Error: Into<StdError> + Send + 'static,
+{
+    type Response = http::Response<tonic::body::BoxBody>;
+    type Error = Infallible;
+    type Future = BoxFuture<Self::Response, Self::Error>;
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+    fn call(&mut self, request: http::Request<B>) -> Self::Future {
+        let service = self.clone();
+        Box::pin(async move {
+            Ok(
+                tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                    .unary(service, request)
+                    .await,
+            )
+        })
+    }
+}
+impl tonic::server::UnaryService<HealthRequest> for HealthServer {
+    type Response = HealthResponse;
+    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+    fn call(&mut self, request: tonic::Request<HealthRequest>) -> Self::Future {
+        assert!(request.get_ref().service.is_empty());
+        let service = self.0.clone();
+        Box::pin(async move {
+            service.health_requests.fetch_add(1, Ordering::SeqCst);
+            if service.health_stall.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+            Ok(tonic::Response::new(HealthResponse {
+                status: service.health_status.load(Ordering::SeqCst) as i32,
+            }))
+        })
+    }
+}
+
 struct Server {
     service: PdServer,
     task: JoinHandle<()>,
@@ -389,6 +449,9 @@ impl Server {
             region_members: Arc::default(),
             region_metadata: Arc::default(),
             region_failure: Arc::default(),
+            health_status: Arc::new(AtomicUsize::new(1)),
+            health_requests: Arc::default(),
+            health_stall: Arc::default(),
             member_failures: Arc::new(AtomicUsize::new(0)),
             member_requests: Arc::new(AtomicUsize::new(0)),
             connections: Arc::new(AtomicUsize::new(0)),
@@ -424,6 +487,7 @@ impl Server {
         let connections = service.connections.clone();
         let task = tokio::spawn(async move {
             tonic::transport::Server::builder()
+                .add_service(HealthServer(task_service.clone()))
                 .add_service(KeyspaceServer(task_service.clone()))
                 .add_service(TsoServer(task_service.clone()))
                 .add_service(task_service)
@@ -2100,34 +2164,7 @@ async fn source_channel_batch_concurrent_dials_publish_one_winner() {
 
 #[tokio::test]
 async fn pd_region_batch_native_cache_permission_fallback_and_close() {
-    let leader = Server::start(Reply::Timestamp).await;
-    let follower = Server::start(Reply::Timestamp).await;
-    let members = vec![
-        pdpb::Member {
-            member_id: 1,
-            client_urls: vec![leader.service.endpoint.clone()],
-            ..Default::default()
-        },
-        pdpb::Member {
-            member_id: 2,
-            client_urls: vec![follower.service.endpoint.clone()],
-            ..Default::default()
-        },
-    ];
-    for server in [&leader, &follower] {
-        *server.service.region_members.write().unwrap() = Some(members.clone());
-        *server.service.leader_urls.write().unwrap() = vec![leader.service.endpoint.clone()];
-    }
-    let client = Arc::new(
-        RetryClient::connect(
-            &[leader.service.endpoint.clone()],
-            Arc::new(SecurityManager::default()),
-            Duration::from_secs(1),
-        )
-        .await
-        .unwrap(),
-    );
-    client.set_enable_follower_handle(true);
+    let (leader, follower, client) = availability_pair().await;
     for _ in 0..2 {
         client
             .clone()
@@ -2174,7 +2211,11 @@ async fn pd_region_batch_native_cache_permission_fallback_and_close() {
             .await
             .unwrap();
     }
-    assert_eq!(follower.service.region_metadata.lock().unwrap().len(), 4);
+    assert_eq!(
+        follower.service.region_metadata.lock().unwrap().len(),
+        3,
+        "REGION_NOT_FOUND suppresses the follower across region API variants"
+    );
     assert!(leader
         .service
         .region_metadata
@@ -2192,4 +2233,95 @@ async fn pd_region_batch_native_cache_permission_fallback_and_close() {
     ));
     drop(leader);
     drop(follower);
+}
+
+async fn availability_pair() -> (Server, Server, Arc<RetryClient>) {
+    let leader = Server::start(Reply::Timestamp).await;
+    let follower = Server::start(Reply::Timestamp).await;
+    let members = vec![
+        pdpb::Member {
+            member_id: 1,
+            client_urls: vec![leader.service.endpoint.clone()],
+            ..Default::default()
+        },
+        pdpb::Member {
+            member_id: 2,
+            client_urls: vec![follower.service.endpoint.clone()],
+            ..Default::default()
+        },
+    ];
+    for server in [&leader, &follower] {
+        *server.service.region_members.write().unwrap() = Some(members.clone());
+        *server.service.leader_urls.write().unwrap() = vec![leader.service.endpoint.clone()];
+    }
+    let client = Arc::new(
+        RetryClient::connect(
+            &[leader.service.endpoint.clone()],
+            Arc::new(SecurityManager::default()),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap(),
+    );
+    client.set_enable_follower_handle(true);
+    (leader, follower, client)
+}
+
+#[tokio::test]
+async fn pd_availability_batch_health_recovers_and_close_joins_stalled_probe() {
+    let (leader, follower, client) = availability_pair().await;
+    follower.service.health_status.store(2, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while follower.service.health_requests.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        // Let the health response be consumed before asserting the next route.
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    })
+    .await
+    .expect("idle PD client must check health independently of TSO discovery");
+    for _ in 0..4 {
+        client
+            .clone()
+            .get_region_for_cache(b"wire".to_vec(), false, false)
+            .await
+            .unwrap();
+    }
+    assert!(follower.service.region_metadata.lock().unwrap().is_empty());
+    follower.service.health_status.store(1, Ordering::SeqCst);
+    let probes = follower.service.health_requests.load(Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while follower.service.health_requests.load(Ordering::SeqCst) == probes {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    })
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        client
+            .clone()
+            .get_region_for_cache(b"wire".to_vec(), false, false)
+            .await
+            .unwrap();
+    }
+    assert_eq!(follower.service.region_metadata.lock().unwrap().len(), 1);
+    leader.service.health_stall.store(true, Ordering::SeqCst);
+    let probes = leader.service.health_requests.load(Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while leader.service.health_requests.load(Ordering::SeqCst) == probes {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_millis(250), client.close())
+        .await
+        .expect("close must cancel and join a stalled health RPC");
+    let probes = leader.service.health_requests.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert_eq!(
+        leader.service.health_requests.load(Ordering::SeqCst),
+        probes
+    );
 }

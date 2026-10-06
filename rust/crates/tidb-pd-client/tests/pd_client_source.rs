@@ -20,6 +20,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use prost::Message;
+use std::convert::Infallible;
+use std::task::{Context, Poll};
 use tidb_pd_client::{
     PdClient, PdKeyRange, PdNodeState, PdStoreState, BATCH_SCAN_REGIONS_PATH, GET_MEMBERS_PATH,
     GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH,
@@ -28,6 +30,7 @@ use tidb_pd_client::{
 use tidb_proto::metapb;
 use tidb_proto::pdpb;
 use tidb_proto::test_pd_server::{Pd, PdServer};
+use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
 
 const CLUSTER_ID: u64 = 42;
 const SELF_URL: &str = "http://127.0.0.1:0";
@@ -77,6 +80,8 @@ impl<T> Reply<T> {
 }
 
 struct State {
+    health: Reply<HealthResponse>,
+    health_requests: usize,
     routing_metadata: Vec<(String, bool, Option<String>)>,
     external_get: Reply<pdpb::GetExternalTimestampResponse>,
     external_set: Reply<pdpb::SetExternalTimestampResponse>,
@@ -311,6 +316,55 @@ impl Pd for MockPd {
     }
 }
 
+#[derive(Clone, PartialEq, prost::Message)]
+struct HealthRequest {
+    #[prost(string, tag = "1")]
+    service: String,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+struct HealthResponse {
+    #[prost(int32, tag = "1")]
+    status: i32,
+}
+#[derive(Clone)]
+struct HealthServer(MockPd);
+impl tonic::server::NamedService for HealthServer {
+    const NAME: &'static str = "grpc.health.v1.Health";
+}
+impl<B> Service<http::Request<B>> for HealthServer
+where
+    B: Body + Send + 'static,
+    B::Error: Into<StdError> + Send + 'static,
+{
+    type Response = http::Response<tonic::body::Body>;
+    type Error = Infallible;
+    type Future = BoxFuture<Self::Response, Self::Error>;
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+    fn call(&mut self, request: http::Request<B>) -> Self::Future {
+        let service = self.clone();
+        Box::pin(async move {
+            Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                .unary(service, request)
+                .await)
+        })
+    }
+}
+impl tonic::server::UnaryService<HealthRequest> for HealthServer {
+    type Response = HealthResponse;
+    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+    fn call(&mut self, request: tonic::Request<HealthRequest>) -> Self::Future {
+        assert!(request.get_ref().service.is_empty());
+        let reply = {
+            let mut state = self.0.state.lock().unwrap();
+            state.health_requests += 1;
+            state.health.clone()
+        };
+        Box::pin(async move { reply.send().await })
+    }
+}
+
 struct Server {
     address: String,
     state: Arc<Mutex<State>>,
@@ -337,6 +391,7 @@ impl Server {
                 .unwrap();
             runtime.block_on(async move {
                 let server = tonic::transport::Server::builder()
+                    .add_service(HealthServer(service.clone()))
                     .add_service(PdServer::new(service))
                     .serve_with_shutdown(address, async {
                         let _ = shutdown_rx.await;
@@ -529,6 +584,8 @@ fn store_record(
 
 fn valid_state() -> State {
     State {
+        health: Reply::Value(HealthResponse { status: 1 }),
+        health_requests: 0,
         external_get: Reply::Value(pdpb::GetExternalTimestampResponse {
             header: Some(header(CLUSTER_ID)),
             timestamp: 42,
@@ -2279,4 +2336,80 @@ fn pd_region_batch_owner_shutdown_cancels_follower_without_retry() {
         Err(tidb_pd_client::PdClientError::Closed)
     ));
     assert_eq!(leader.state.lock().unwrap().region_requests.len(), 1);
+}
+
+#[test]
+fn pd_availability_batch_region_cooldown_survives_unchanged_topology_and_other_api() {
+    let (leader, follower, client) = follower_batch_pair();
+    let mut value = region_response();
+    value.header.as_mut().unwrap().error = Some(pdpb::Error {
+        r#type: pdpb::ErrorType::RegionNotFound as i32,
+        message: "region unavailable on follower".to_owned(),
+    });
+    follower.state.lock().unwrap().region = Reply::Value(value);
+    for _ in 0..2 {
+        client.get_region_routed(b"wire", false, false).unwrap();
+    }
+    assert_eq!(follower.state.lock().unwrap().region_requests.len(), 1);
+    client.refresh_members().unwrap();
+    for _ in 0..4 {
+        client
+            .get_prev_region_routed(b"wire", false, false)
+            .unwrap();
+    }
+    assert!(
+        follower
+            .state
+            .lock()
+            .unwrap()
+            .prev_region_requests
+            .is_empty(),
+        "REGION_NOT_FOUND must suppress the shared region service until cooldown expires"
+    );
+    assert_eq!(leader.state.lock().unwrap().prev_region_requests.len(), 4);
+}
+
+fn await_health(server: &Server, previous: usize) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while server.state.lock().unwrap().health_requests == previous {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "idle client did not probe health"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    std::thread::sleep(Duration::from_millis(30));
+}
+
+#[test]
+fn pd_availability_batch_health_recovery_and_joined_shutdown() {
+    let (leader, follower, client) = follower_batch_pair();
+    follower.state.lock().unwrap().health = Reply::Value(HealthResponse { status: 2 });
+    await_health(&follower, 0);
+    for _ in 0..4 {
+        client.get_region_routed(b"wire", false, false).unwrap();
+    }
+    assert!(follower.state.lock().unwrap().region_requests.is_empty());
+    let probes = {
+        let mut state = follower.state.lock().unwrap();
+        state.health = Reply::Value(HealthResponse { status: 1 });
+        state.health_requests
+    };
+    await_health(&follower, probes);
+    for _ in 0..2 {
+        client.get_region_routed(b"wire", false, false).unwrap();
+    }
+    assert_eq!(follower.state.lock().unwrap().region_requests.len(), 1);
+    let probes = {
+        let mut state = leader.state.lock().unwrap();
+        state.health = Reply::Delayed(Duration::from_secs(5), HealthResponse { status: 1 });
+        state.health_requests
+    };
+    await_health(&leader, probes);
+    let started = std::time::Instant::now();
+    client.shutdown().unwrap();
+    assert!(started.elapsed() < Duration::from_millis(250));
+    let probes = leader.state.lock().unwrap().health_requests;
+    std::thread::sleep(Duration::from_millis(1100));
+    assert_eq!(leader.state.lock().unwrap().health_requests, probes);
 }

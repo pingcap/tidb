@@ -1,24 +1,15 @@
-diff --git a/src/pd/client.rs b/src/pd/client.rs
-index 06240ad..206737c 100644
---- a/src/pd/client.rs
-+++ b/src/pd/client.rs
-@@ -11,6 +11,7 @@ use futures::stream::BoxStream;
- use log::info;
- use tokio::sync::{watch, Mutex, RwLock};
- use tonic::codegen::http::uri::PathAndQuery;
-+use tonic_prost::ProstCodec;
- 
- use crate::compat::stream_fn;
- use crate::kv::{ReplicaReadConfig, ReplicaReadType};
-@@ -566,7 +567,7 @@ async fn send_store_health_check(
-                 service: String::new(),
-             }),
-             PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
--            tonic::codec::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
-+            ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
-         )
-         .await
-         .map_err(crate::Error::from)
+diff --git a/src/pd/service_discovery.rs b/src/pd/service_discovery.rs
+--- a/src/pd/service_discovery.rs
++++ b/src/pd/service_discovery.rs
+@@ -42,7 +42,7 @@
+                 tonic::codegen::http::uri::PathAndQuery::from_static(
+                     "/grpc.health.v1.Health/Check",
+                 ),
+-                tonic::codec::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
++                tonic_prost::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
+             )
+             .await?;
+         Ok(response.into_inner().status)
 diff --git a/src/store/mockserver.rs b/src/store/mockserver.rs
 index 6986fbc..e4092fc 100644
 --- a/src/store/mockserver.rs

@@ -10,8 +10,6 @@ use futures::prelude::*;
 use futures::stream::BoxStream;
 use log::info;
 use tokio::sync::{watch, Mutex, RwLock};
-use tonic::codegen::http::uri::PathAndQuery;
-use tonic_prost::ProstCodec;
 
 use crate::compat::stream_fn;
 use crate::kv::{ReplicaReadConfig, ReplicaReadType};
@@ -894,18 +892,6 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     region_cache: Arc<RegionCache<CodecPdClient<RetryClient<Cl>>>>,
 }
 
-#[derive(Clone, PartialEq, prost::Message)]
-struct HealthCheckRequest {
-    #[prost(string, tag = "1")]
-    service: String,
-}
-
-#[derive(Clone, PartialEq, prost::Message)]
-struct HealthCheckResponse {
-    #[prost(int32, tag = "1")]
-    status: i32,
-}
-
 const HEALTH_SERVING: i32 = 1;
 const HEALTH_UNKNOWN: i32 = 0;
 const HEALTH_SERVICE_UNKNOWN: i32 = 3;
@@ -945,39 +931,18 @@ async fn probe_store_liveness(
 ) -> StoreLiveness {
     let request = async {
         let channel = security_mgr.connect(&target, |channel| channel).await?;
-        send_store_health_check(channel).await
+        crate::pd::service_discovery::health_check(channel, timeout)
+            .await
+            .map_err(crate::Error::from)
     };
     match tokio::time::timeout(timeout, request).await {
-        Ok(Ok(response)) => source_health_status_liveness(response.into_inner().status),
+        Ok(Ok(response)) => source_health_status_liveness(response),
         Ok(Err(error)) => {
             log::debug!("source store liveness check failed for {target}: {error}");
             StoreLiveness::Unreachable
         }
         Err(_) => StoreLiveness::Unreachable,
     }
-}
-
-async fn send_store_health_check(
-    channel: tonic::transport::Channel,
-) -> Result<tonic::Response<HealthCheckResponse>> {
-    let mut client = tonic::client::Grpc::new(channel);
-    // Tonic's low-level Grpc client does not acquire the Channel buffer permit
-    // for callers. Generated clients always await readiness before dispatch;
-    // doing the same here prevents concurrent liveness probes from calling a
-    // full Tower buffer and panicking the request runtime.
-    client.ready().await.map_err(|error| {
-        crate::Error::StringError(format!("store health service unavailable: {error}"))
-    })?;
-    client
-        .unary(
-            tonic::Request::new(HealthCheckRequest {
-                service: String::new(),
-            }),
-            PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
-            ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
-        )
-        .await
-        .map_err(crate::Error::from)
 }
 
 async fn request_store_liveness_singleflight<F, Fut>(target: String, probe: F) -> StoreLiveness
@@ -2203,9 +2168,12 @@ pub mod test {
     #[tokio::test]
     async fn low_level_store_health_check_awaits_channel_readiness() {
         let channel = tonic::transport::Channel::from_static("http://127.0.0.1:1").connect_lazy();
-        let result = tokio::time::timeout(Duration::from_secs(2), send_store_health_check(channel))
-            .await
-            .expect("an unavailable local endpoint must fail promptly");
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            crate::pd::service_discovery::health_check(channel, Duration::from_secs(1)),
+        )
+        .await
+        .expect("an unavailable local endpoint must fail promptly");
 
         assert!(result.is_err());
     }

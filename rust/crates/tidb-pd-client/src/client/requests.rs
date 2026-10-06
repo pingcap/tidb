@@ -37,11 +37,7 @@ use super::topology::{
 use super::{block_on_rpc, PdMemberObservation, RpcCompletion, RpcControl};
 
 fn region_request<T>(value: T, control: RpcControl<'_>) -> tonic::Request<T> {
-    let target = tikv_client::pd_region_service::RegionTarget {
-        endpoint: String::new(),
-        follower: control.follower,
-    };
-    let mut request = target.request(value);
+    let mut request = tikv_client::pd_region_service::region_request(value, control.follower);
     request.set_timeout(control.timeout);
     request
 }

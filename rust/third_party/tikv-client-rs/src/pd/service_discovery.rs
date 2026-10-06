@@ -10,6 +10,47 @@ use std::sync::{Arc, Mutex};
 use std::{future::Future, pin::Pin, time::Duration};
 use tonic::{transport::Channel, Request, Status};
 
+#[derive(Clone, PartialEq, prost::Message)]
+struct HealthCheckRequest {
+    #[prost(string, tag = "1")]
+    service: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct HealthCheckResponse {
+    #[prost(int32, tag = "1")]
+    status: i32,
+}
+
+/// Shared wire exchange for PD and TiKV health. Callers retain their distinct
+/// status policy: PD accepts only SERVING; TiKV also models UNKNOWN separately.
+/// Readiness, response and server metadata all consume the same caller budget.
+pub async fn health_check(channel: Channel, timeout: Duration) -> Result<i32, Status> {
+    tokio::time::timeout(timeout, async {
+        let mut client = tonic::client::Grpc::new(channel);
+        client
+            .ready()
+            .await
+            .map_err(|error| Status::unavailable(error.to_string()))?;
+        let mut request = Request::new(HealthCheckRequest {
+            service: String::new(),
+        });
+        request.set_timeout(timeout);
+        let response = client
+            .unary(
+                request,
+                tonic::codegen::http::uri::PathAndQuery::from_static(
+                    "/grpc.health.v1.Health/Check",
+                ),
+                tonic_prost::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
+            )
+            .await?;
+        Ok(response.into_inner().status)
+    })
+    .await
+    .map_err(|_| Status::deadline_exceeded("health check timed out"))?
+}
+
 /// Discovery-owned endpoint connections, shared by metadata, keyspace and
 /// timestamp consumers (Go serviceDiscovery.clientConns/GetOrCreateGRPCConn).
 /// Exact URL keys remain retained until close; membership changes do not

@@ -359,23 +359,37 @@ impl RetryClient<Cluster> {
         let cancellation = self.cancellation.clone();
         let timeout = self.timeout;
         let worker = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => break,
-                    _ = sleep(super::service_discovery::UPDATE_INTERVAL) => {},
+            let discover = async {
+                loop {
+                    sleep(super::service_discovery::UPDATE_INTERVAL).await;
+                    let Some(cluster) = cluster.upgrade() else {
+                        break;
+                    };
+                    if let Err(error) =
+                        refresh_cluster(&cluster, &connection, &refresh, timeout, 0, None).await
+                    {
+                        log::warn!("PD service discovery refresh: {error}");
+                    }
                 }
-                let Some(cluster) = cluster.upgrade() else {
-                    break;
-                };
-                let result = tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => break,
-                    result = refresh_cluster(&cluster, &connection, &refresh, timeout, 0, None) => result,
-                };
-                if let Err(error) = result {
-                    log::warn!("PD service discovery refresh: {error}");
+            };
+            let health = async {
+                let period = super::region_service::HEALTH_CHECK_INTERVAL;
+                let mut ticks =
+                    tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+                ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    ticks.tick().await;
+                    let Some(cluster) = cluster.upgrade() else {
+                        break;
+                    };
+                    let probe = cluster.read().await.0.check_health(timeout);
+                    probe.await;
                 }
+            };
+            tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => {},
+                _ = async { tokio::join!(discover, health); } => {},
             }
         });
         *self.discovery_worker.lock().await = Some(worker);

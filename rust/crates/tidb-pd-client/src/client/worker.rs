@@ -71,6 +71,12 @@ pub(super) fn run_worker(
     state: Arc<RwLock<PdSharedState>>,
     shutdown: watch::Receiver<bool>,
 ) {
+    {
+        let current = state.read().expect("PD state lock poisoned");
+        clients
+            .regions
+            .update_members(&current.members.leader_url, &current.members.member_urls);
+    }
     let mut discovery_worker =
         DiscoveryWorker::start(&runtime, &clients, timeout, state.clone(), shutdown.clone());
     let mut tso_stream = None;
@@ -782,20 +788,45 @@ impl DiscoveryWorker {
         let clients = clients.clone();
         let (stop, mut stopped) = tokio::sync::oneshot::channel();
         let worker = runtime.spawn(async move {
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = &mut stopped => break,
-                    () = super::shutdown_requested(&mut shutdown) => break,
-                    () = tokio::time::sleep(tikv_client::pd_service_discovery::UPDATE_INTERVAL) => {},
+            let discover = async {
+                loop {
+                    tokio::time::sleep(tikv_client::pd_service_discovery::UPDATE_INTERVAL).await;
+                    let snapshot = state.read().expect("PD state lock poisoned").clone();
+                    let _ = refresh_tso(
+                        &clients,
+                        &snapshot.members.leader_url,
+                        snapshot.members.cluster_id,
+                        timeout,
+                        true,
+                    )
+                    .await;
                 }
-                let snapshot = state.read().expect("PD state lock poisoned").clone();
-                tokio::select! {
-                    biased;
-                    _ = &mut stopped => break,
-                    () = super::shutdown_requested(&mut shutdown) => break,
-                    _ = refresh_tso(&clients, &snapshot.members.leader_url, snapshot.members.cluster_id, timeout, true) => {},
+            };
+            let health = async {
+                let period = tikv_client::pd_region_service::HEALTH_CHECK_INTERVAL;
+                let mut ticks =
+                    tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+                ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    ticks.tick().await;
+                    clients
+                        .regions
+                        .check_health(timeout, |endpoint| {
+                            let channel = clients
+                                .channel(&endpoint)
+                                .map_err(|error| tonic::Status::unavailable(error.to_string()));
+                            async { channel }
+                        })
+                        .await;
                 }
+            };
+            // Poll both maintenance owners independently. Dropping their joined
+            // future cancels in-flight dialing/RPCs before this task completes.
+            tokio::select! {
+                biased;
+                _ = &mut stopped => {},
+                () = super::shutdown_requested(&mut shutdown) => {},
+                _ = async { tokio::join!(discover, health); } => {},
             }
         });
         Self {

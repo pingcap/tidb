@@ -292,14 +292,14 @@ impl Cluster {
                     call(client, request).await
                 }
                 .await;
-                let retry = target.needs_leader_retry(
+                let retry = target.observe_error(
                     first.is_err(),
                     first
                         .as_ref()
                         .ok()
                         .and_then(|r| r.header())
                         .and_then(|h| h.error.as_ref())
-                        .is_some(),
+                        .map(|error| error.r#type),
                 );
                 let response = if retry {
                     let mut request = Request::new(value);
@@ -557,6 +557,39 @@ impl Cluster {
 }
 
 impl Cluster {
+    fn update_region_members(&self) {
+        let leader = self
+            .members
+            .leader
+            .as_ref()
+            .and_then(|member| member.client_urls.first())
+            .map(String::as_str)
+            .unwrap_or_default();
+        let urls = self
+            .members
+            .members
+            .iter()
+            .filter_map(|member| member.client_urls.first().cloned())
+            .collect::<Vec<_>>();
+        self.region_service.update_members(leader, &urls);
+    }
+
+    pub(crate) fn check_health(
+        &self,
+        timeout: Duration,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        let service = self.region_service.clone();
+        let connection = self.connection.clone();
+        async move {
+            service
+                .check_health(timeout, |endpoint| {
+                    let connection = connection.clone();
+                    async move { connection.channel(&endpoint).await }
+                })
+                .await;
+        }
+    }
+
     pub(crate) fn install_leader(
         &mut self,
         leader: LeaderConnection,
@@ -576,6 +609,7 @@ impl Cluster {
         self.client = Some(client);
         self.keyspace_client = Some(keyspace_client);
         self.members = members;
+        self.update_region_members();
         let (discovery, route, channel) = timestamp?;
         let url = route.endpoint.clone();
         let previous = self.tso.randomly_pick();
@@ -747,6 +781,7 @@ impl Connection {
             tso,
             retired_tso: Vec::new(),
         };
+        cluster.update_region_members();
         Ok((cluster, meta))
     }
 
