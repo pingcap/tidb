@@ -1,93 +1,85 @@
-# Retire superseded planner and ranger models
+# Retire superseded utility audit workflows
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Remove obsolete alternate representations instead of maintaining their private
-tests. Work in /workspace/tidb on hparser-integration from
-887c4d9f4c483d581f0f2cc0893398a3686a93f9. Fresh Go master remains
-5b7e1eb8f5f8252391b6e68330d1648a26a80c17. Go baseimpl.Plan and ranger/detacher.go
-operate on actual plan/expression owners; the deleted normalized models had
-no runtime callers. Live PhysicalPlan, BasePlan and ranger::detacher already
-supply those operations and tests.
+Remove duplicated historical work instructions that prescribe old laptop
+paths, completed edits/publication steps and broad test sweeps. Retain the
+original package receipts and their limits. Work in /workspace/tidb on
+hparser-integration from ee1c97cedc77d374303d09d4f20ab4360a39451f.
+Fresh Go master remains 5b7e1eb8f5f8252391b6e68330d1648a26a80c17.
+No current Go-package acceptance follows from this documentation cleanup.
 
 ## Progress
 
 
-- [x] Verify complete Rust callers and compare Go owners.
-- [x] Remove five obsolete files and their registrations.
-- [x] Move two live executor cases intact; retain duplicate-candidate coverage
-  on the real Expression condition-list helper.
-- [x] Run grouped owner tests (23 passed), lint, continuity and self-review.
-- [ ] Complete actual precommit build, fresh pre-push build and publication.
+- [x] Review 20 superseded plans and map their 19 retained receipts.
+- [x] Confirm publication ancestry and preserve before-image hashes.
+- [x] Remove plans, redirect references and collapse duplicate receipt links.
+- [x] Verify continuity, links, documentation-only scope and diff quality.
+- [ ] Complete actual hook, fresh pre-push build and publication checks.
 
 ## Milestones and Plan of Work
 
 
-Delete planner src/plan.rs and src/range_detacher.rs plus their tests/primitives
-suites. Delete executor src/ranger_detacher.rs, whose generic integer helpers
-and Boolean model tests have no live callers. Move its two actual index-range
-cases with their helper functions to src/index_range/detacher_tests.rs and
-register that test-only module in index_range.rs. Preserve byte-equivalent
-function bodies. Extend the existing expression-owner condition-set test with
-the removed duplicate-candidate and empty-input checks; no new test harness.
-Update historical receipt guidance and both finding registers.
+Retire the plans listed in utility-workflow-cleanup-validation.json from
+rust/docs/operations. Keep all receipts under rust/testport/receipts byte
+identical. Redirect TESTPORT_EXECPLAN references to those receipts and update
+the operations/current-audit indexes and both finding registers. The remaining
+implementation, integration-test and blocked validation plans stay in place.
 
-Keep index_columns and its original Go cases: no verified migration exists.
-Do not remove actual planner/ranger owners, mandatory build checks or useful
-Rust-specific correctness tests merely because test names differ from Go.
+The removed DDL-checker and external-sort plans describe completed audits of
+unclaimed packages. Their receipts retain the missing ownership obligations;
+retiring those plans does not declare their implementations complete. Counts
+stay at 86 tracked, 30 repaired and 56 unresolved findings.
 
-## Concrete Steps and Acceptance
+## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh in each build shell. From rust/ run:
+From /workspace/tidb run the external continuity check under
+/workspace/.cloud-setup/utility-workflow-cleanup and git diff --check. Require
+all before-image/receipt hashes to match, all retired document last-change
+commits to be published ancestors, and no current reference to a removed plan.
+Only Markdown/JSON may change. No executable sources, tests, harnesses,
+scripts, dependencies, fixtures or Go/Bazel files change; no test sweep or
+make lint is warranted.
 
-    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-planner -p tidb-executor --lib -- ranger::detacher::tests:: plan_base::tests:: physical::tests::tree_construction_and_base_accessors index_range::detacher_tests:: --test-threads=1
-
-All selected live-owner cases must pass. From repository root run make lint
-and git diff --check. Verify deleted symbols have no executable references,
-retained test/helper bodies match the before-image and production function
-bodies in retained files are unchanged. No Go/Bazel changes require regeneration.
-Commit normally with the actual locked server build hook, then from rust/
-run CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server immediately before
+Source /workspace/.cloud-setup/env.sh before normal commit; the actual hook
+must run cd rust && cargo build --locked -p tidb-server. Rerun from rust/
+CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server immediately before
 normal authorized push to pingcap/tidb hparser-integration. Verify remote SHA.
 
 ## Surprises & Discoveries
 
 
-The deleted PlanNode test cited a Go planbuilder line now testing ALTER DDL
-jobs; its string metadata carrier is not a live Go plan. Real plan-tree tests
-already cover preorder, IDs and missing statistics. The normalized ranger
-model's assertion that expression owners do not exist is stale: the live
-ranger uses Expression, ConditionChecker and semantic equality. Executor
-integer-list helpers duplicate those live operations but have no callers.
+Two plans describe the same disjoint-set audit. Several others remain open
+only to publish already-published documents or audit an unrelated next package.
+Plans for unfinished monitor/comparator owners, interrupted trace-event tests,
+and blocked Bazel validation remain. Original receipts distinguish historical
+host results, platform limits and unclaimed packages.
 
 ## Decision Log
 
 
-Retire the complete unused models as one batch. Preserve the two real range
-cases by moving them, preserve semantic list coverage on its actual owner,
-and retain original index-column cases until a proper migration. Tests of
-removed private models are not evidence of complete Go-package coverage.
+Remove duplicated instructions in one batch and retain evidence once. Do not
+rerun runtime suites for unchanged executable files. Do not treat absence of
+a same-named Go test as proof a Rust correctness test is useless.
 
 ## Outcomes & Retrospective
 
 
-Implementation and grouped validation complete: 23 passed; make lint,
-continuity and diff checks passed. Publication evidence is recorded after
-commit in external final-handoff.json. Five
-files removed, two live tests retained, eleven private test declarations
-removed; 827 net Rust lines deleted. No finding closure, complete package acceptance or measured speedup.
+Twenty plans /1338 lines removed, 19 receipts preserved; continuity, ancestry,
+reference and documentation-scope checks passed. Publication evidence belongs
+in external final-handoff.json after commit. No behavior change, finding closure or measured speedup.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Before-images are recoverable from the base commit; restore affected paths
-only, preserving concurrent work. External inventory and validation live in
-/workspace/.cloud-setup/planner-model-cleanup; the durable receipt is
-rust/docs/parity/current-audit/planner-model-cleanup-validation.json.
-Postcommit publication and Cloud draft results belong in final-handoff.json.
-No new dependencies. Draft save, Publish and fresh-task restoration remain
-separate states.
+Restore individual deleted documents from the base commit without overwriting
+concurrent work. Inventory, hashes and final-handoff.json live outside the
+checkout under /workspace/.cloud-setup/utility-workflow-cleanup. The durable
+receipt is rust/docs/parity/current-audit/utility-workflow-cleanup-validation.json.
+No dependency changes. Cloud draft save, Publish and fresh-task restoration
+remain distinct states.

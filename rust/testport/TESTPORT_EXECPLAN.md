@@ -3459,8 +3459,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   and startup consumers preserve source behavior without Rust-only policy.
   Current and exact detached Go tests used the failpoint wrapper; both Rust
   source tests, owner/scheduler/server checks, formatting, and diff checks pass.
-  Updated `receipts/util_cpu.md` and added the Ready documentation-only plan at
-  `docs/operations/util-cpu-audit-execplan.md`.
+  Updated `receipts/util_cpu.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/errmsg` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three tracked artifacts, 288
@@ -3471,8 +3470,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   concurrent publication, and raw packet bytes without Rust-only behavior.
   Current and exact detached Go tests, all five Rust source tests, owner/server
   checks, formatting, and diff checks pass. Updated
-  `receipts/util_errmsg.md` and added the Ready documentation-only plan at
-  `docs/operations/util-errmsg-audit-execplan.md`.
+  `receipts/util_errmsg.md`.
 
 - 2026-09-02: fixed the Rust-only `#[must_use]` diagnostics in the complete
   Go-master `pkg/util/engine` owner. The package has three tracked artifacts
@@ -3493,8 +3491,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   consumers retain Go rune and arbitrary-byte semantics without Rust-only
   behavior. Current and exact detached Go tests, both Rust owner tests, planner
   consumer check, formatting, and diff checks pass. Updated
-  `receipts/util_texttree.md` and added the Ready documentation-only plan at
-  `docs/operations/util-texttree-audit-execplan.md`.
+  `receipts/util_texttree.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/paging` inventory at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four tracked artifacts, 162
@@ -3622,7 +3619,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   channel-range cleanup, with no Rust-only policy or missing behavior found.
   Revalidated the exact detached and current Go package checks plus all 523
   `tidb-util` library tests, refreshed both channel receipts, and recorded the
-  Ready documentation-only gate in `docs/operations/channel-audit-execplan.md`.
+  Ready documentation-only gate in `receipts/util_channel.md`.
 
 - 2026-09-01: audited the complete Go-master `pkg/sessionctx` root package
   before editing: four tracked artifacts and 319 lines containing six public
@@ -5481,8 +5478,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Rust-only scheduler recommendation wrappers, and added complete source
   memory/CPU fixture matrices plus public unsupported-platform checks. The
   inventory, integration boundary, and host validation limits are recorded in
-  `receipts/util_cgroup.md` and
-  `docs/operations/cgroup-audit-execplan.md`; the package commit was pushed to
+  `receipts/util_cgroup.md`; the package commit was pushed to
   `hparser-integration`, and the latest authority remains unchanged.
 
 - 2026-08-31: re-audited and completed pinned `pkg/statistics/util`. Corrected
@@ -5622,7 +5618,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   variant-free, and re-ran the existing source-derived integration regression.
   No Rust-only behavior or missing Go behavior remained in the owner, so this
   boundary is a receipt/ExecPlan refresh only. Details are in
-  `receipts/util_sli.md` and `docs/operations/util-sli-audit-execplan.md`.
+  `receipts/util_sli.md`.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/slice` package.
   Removed Rust-only `must_use` diagnostics from `Int64sToStrings` and
   `DeepClone`; all production behavior and the sole source test identity were
@@ -5742,16 +5738,14 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   target. The existing `tidb-executor::deadlock_history` owner preserves
   bounded retention, IDs, datum/null rules, timestamp precision, digest
   conversion, and resize behavior; current and detached Go suites plus the
-  four Rust owner tests pass. Details are in `receipts/util_deadlockhistory.md`
-  and `docs/operations/util-deadlockhistory-audit-execplan.md`.
+  four Rust owner tests pass. Details are in `receipts/util_deadlockhistory.md`.
 - 2026-09-02: refreshed the complete Go-master `pkg/util/disttask` inventory
   at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: three artifacts and 133
   lines, including the single source vector and flaky BUILD target. The
   existing `tidb-domain::disttask` owner preserves JoinHostPort formatting,
   first-match/`-1` lookup, and infosync error/missing-ID behavior; current and
   detached Go tests plus the Rust source-vector test pass. Details are in
-  `receipts/util_disttask.md` and
-  `docs/operations/util-disttask-audit-execplan.md`.
+  `receipts/util_disttask.md`.
 - 2026-08-29: completed the pinned Go `pkg/util/keydecoder` package (one
   production file, one source test, one test harness, and `BUILD.bazel`). Read
   the complete package first, then removed four supplemental Rust test
@@ -5912,8 +5906,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   nested packages. The existing `tidb-domain::domainutil` owner preserves the
   process-global repair registry, Go lowercasing, quarantine/removal rules,
   and session-key strings; current and detached Go no-test checks plus the
-  Rust owner compile pass. Details are in `receipts/util_domainutil.md` and
-  `docs/operations/util-domainutil-audit-execplan.md`.
+  Rust owner compile pass. Details are in `receipts/util_domainutil.md`.
 - 2026-08-29: audited every production and build artifact in pinned Go
   `pkg/util/trxevents` and its ordinary Distsql callback path. Replaced owned
   deep-copy payloads with source-shaped shared pointers, removed value equality
@@ -6014,8 +6007,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   target. The existing `tidb-util::disjointset` owner preserves dense/sparse
   union, signed native-width indices, path compression, and current-value
   lookup; current and detached Go suites plus all three Rust owner tests pass.
-  Details are in `receipts/util_disjointset.md` and
-  `docs/operations/util-disjointset-audit-execplan.md`.
+  Details are in `receipts/util_disjointset.md`.
 - 2026-08-28: audited the complete pinned Go `pkg/util/dbterror` root package
   and its distinct `exeerrors` and `plannererrors` subpackages without mixing
   their atomic inventories. Restored the root package's missing 19-code
@@ -6268,9 +6260,8 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 - [x] Complete the current Go-master `pkg/util/sli` package in its
       `tidb-util` owner; retain the existing source-shaped accumulator and
       session/executor integration after a complete 132-line inventory. The
-      current receipt and package ExecPlan record the no-delta audit and Ready
-      evidence: `receipts/util_sli.md` and
-      `docs/operations/util-sli-audit-execplan.md`.
+      current receipt records the no-delta audit and Ready
+      evidence: `receipts/util_sli.md`.
 - [x] Complete the current Go-master `pkg/util/set` package in its `tidb-util`
       owner:
       restore all five concrete memory-aware constructors and tracker rules,
@@ -6894,8 +6885,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       The existing `tidb-util::column_mapping` owner preserves the prior
       signed partition, numeric conversion, DDL tuple, and lowercase fixes, so
       no new source change was justified. Details are in
-      `receipts/util_column_mapping.md` and
-      `docs/operations/util-column-mapping-audit-execplan.md`.
+      `receipts/util_column_mapping.md`.
 - 2026-09-02: fixed the Rust-only `#[must_use]` diagnostic on
       `tidb-util::format::output_format`. The complete Go-master
       `pkg/util/format` package is four artifacts and 318 lines at authority
@@ -6918,8 +6908,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       unchanged. The existing Rust owner preserves signed empty results,
       duplicate handling, fallback depth, and the percentile consumer, so no
       new source change was justified. Details are in
-      `receipts/util_selection.md` and
-      `docs/operations/util-selection-audit-execplan.md`.
+      `receipts/util_selection.md`.
 - 2026-09-02: fixed four Rust-only `#[must_use]` diagnostics in the complete
       `pkg/util/filter` owner (`is_system_schema`, `apply_on`, `apply`, and
       `matches`). The Go package remains six artifacts and 914 lines at
@@ -7176,8 +7165,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       dependency-closed mock SQL executor, parser table-existence classifier,
       or upstream `SHOW CREATE TABLE` syncer; the package remains explicitly
       unclaimed. Current and detached `-tags=intest` Go tests pass. Details are
-      in `receipts/util_ddl_checker.md` and
-      `docs/operations/util-ddl-checker-audit-execplan.md`.
+      in `receipts/util_ddl_checker.md`.
 - 2026-09-01: re-audited all three Go-master `pkg/util/memoryusagealarm`
       artifacts (744 lines, including the race-enabled flaky test target and
       Go-runtime goroutine-profile cases). Rust already has a source-shaped
@@ -7193,8 +7181,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       Pebble/SSTable or Lightning importer owner, so executor row-spill sorting
       is not a substitute; current and detached complete Go suites pass. The
       package remains explicitly unclaimed. Details are in
-      `receipts/util_extsort.md` and
-      `docs/operations/util-extsort-audit-execplan.md`.
+      `receipts/util_extsort.md`.
 - 2026-09-02: re-audited all Go-master `pkg/util/gcutil` artifacts at
       `c6054025ed4c32ab3672a2a24ea46892714d21ec` (109 lines: GC toggles,
       safe-point SQL loader, snapshot validation, and Bazel target). Its

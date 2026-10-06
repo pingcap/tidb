@@ -1,0 +1,194 @@
+{
+  "date": "2026-10-06",
+  "base": "ee1c97cedc77d374303d09d4f20ab4360a39451f",
+  "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17",
+  "scope": "Remove 20 superseded utility audit plans (1338 lines), redirect current references to 19 byte-identical retained receipts, and keep unfinished implementation/validation plans. No executable code, tests, harnesses, scripts or build checks changed.",
+  "continuity": {
+    "removed_plans": 20,
+    "removed_plan_lines": 1338,
+    "retained_receipts": 19,
+    "receipt_bytes_unchanged": true,
+    "current_references_redirected": 15,
+    "publication_ancestry_verified": true,
+    "executable_files_unchanged": true,
+    "finding_dispositions_unchanged": true
+  },
+  "removed_plans": [
+    {
+      "path": "rust/docs/operations/arena-audit-execplan.md",
+      "lines": 143,
+      "sha256": "f792ba32209c3bcc4849200419414ea80105bb47a018766151a93d3a24c717a7",
+      "last_change": "2142aa0d4108c6929a80f31d7e26ccba679fa67c",
+      "receipt": "rust/testport/receipts/util_arena.md",
+      "receipt_sha256": "e3f7741bf69c0138555a6bc0a40d868cacfac4b34c05f77d2a76e48a73be43e6"
+    },
+    {
+      "path": "rust/docs/operations/bitmap-audit-execplan.md",
+      "lines": 134,
+      "sha256": "bebc920d4fb41a3f2b7aae4a0300bc7044bc78c3861c489fac9fc6d46c8601dc",
+      "last_change": "2fcda9007d7f15bfdc50c271bcce416056a4ea53",
+      "receipt": "rust/testport/receipts/util_bitmap.md",
+      "receipt_sha256": "25f0a291f8dd998e3660b4826829ac9d07c9d7e08a6b356fd99d35dbbae0614c"
+    },
+    {
+      "path": "rust/docs/operations/cgroup-audit-execplan.md",
+      "lines": 143,
+      "sha256": "cc1fa4327fb626b64b8a1a335a5b0ccbd9974fb64af7de948ca73f1f9ee46b08",
+      "last_change": "5d45c1994e4120b346f672cb520f739a3cd4cdb2",
+      "receipt": "rust/testport/receipts/util_cgroup.md",
+      "receipt_sha256": "b734b1e76e6bacd818f4fbdf79d55b9533c74904abf264c98a68bc7c84972e32"
+    },
+    {
+      "path": "rust/docs/operations/channel-audit-execplan.md",
+      "lines": 37,
+      "sha256": "4f568e52a384f913f96571785417b9c2dedbcfde1bbc17c40b0d94ac18492468",
+      "last_change": "983c990c95c2a20558df9597c59162b344ac6ef4",
+      "receipt": "rust/testport/receipts/util_channel.md",
+      "receipt_sha256": "609d3af0bfa04d8a0815f59af861ff0770bc4624580a61510cd20ec6fdc785d5"
+    },
+    {
+      "path": "rust/docs/operations/collate-audit-execplan.md",
+      "lines": 63,
+      "sha256": "0580ce8ea308f1165e07d225f496dfef59b1d3bc115196471d0bc6d243e88824",
+      "last_change": "20ef93242ab55e88165760ad9d3231189371d0b6",
+      "receipt": "rust/testport/receipts/util_collate.md",
+      "receipt_sha256": "96f0b09d82b2c3603cf1a615face4329cef9c445cdbed87f5b365a5f9633e028"
+    },
+    {
+      "path": "rust/docs/operations/disjointset-audit-execplan.md",
+      "lines": 43,
+      "sha256": "d849b646d94d3e99c6beb6a161e026abb80bb49f7f1a17c0576ce864dc013636",
+      "last_change": "a9c6e434a2fc4ef7829b6386a57616943331ec8e",
+      "receipt": "rust/testport/receipts/util_disjointset.md",
+      "receipt_sha256": "657c91e7d5d5055c7be4945b6e82fc6cb62bcef3aacba2ed0aced099b8e12cb8"
+    },
+    {
+      "path": "rust/docs/operations/intset-audit-execplan.md",
+      "lines": 48,
+      "sha256": "ed66d27f99208f67d283436a267534a4629e0ff3789cf8d3ddacc070ef92cfc1",
+      "last_change": "a9c6e434a2fc4ef7829b6386a57616943331ec8e",
+      "receipt": "rust/testport/receipts/util_intset.md",
+      "receipt_sha256": "d3505391960391fdaacc807fe041980a140ee483a66ae3b6d09d69465d98d594"
+    },
+    {
+      "path": "rust/docs/operations/util-disjointset-audit-execplan.md",
+      "lines": 63,
+      "sha256": "907f84d40f3174ef43b1c81cc3b3bbd0b1176ca773ac39035ac89ec3f17c514b",
+      "last_change": "c5069564ced43536b021993f30bdab43e1d76928",
+      "receipt": "rust/testport/receipts/util_disjointset.md",
+      "receipt_sha256": "657c91e7d5d5055c7be4945b6e82fc6cb62bcef3aacba2ed0aced099b8e12cb8"
+    },
+    {
+      "path": "rust/docs/operations/util-sli-audit-execplan.md",
+      "lines": 67,
+      "sha256": "ef37eb337e325452d6ff8efe50a1dc768cce1e541262b718763e5bb15ae281f3",
+      "last_change": "cc994d2a4de799905c7f40f15b38abbd5ab77b6a",
+      "receipt": "rust/testport/receipts/util_sli.md",
+      "receipt_sha256": "794d16400b7320b1f56ea31296259241d6ff45089150b1fc619249c72dc5dec6"
+    },
+    {
+      "path": "rust/docs/operations/util-ddl-checker-audit-execplan.md",
+      "lines": 62,
+      "sha256": "0df04f3f54c949a9467f6ac3065b347027468e0473d2bc7fd16f068bf0ed09a2",
+      "last_change": "d10c2fa78fa6019ff6872c377d9efe888b2c1348",
+      "receipt": "rust/testport/receipts/util_ddl_checker.md",
+      "receipt_sha256": "9b3dd0c7905c54b1a30cdee18a1d0d1cc9ad0127af56c8cd83eafe21f7c78fe5"
+    },
+    {
+      "path": "rust/docs/operations/util-selection-audit-execplan.md",
+      "lines": 57,
+      "sha256": "3c0f33c122b96684ccb98f11898bc3c831311091bc0eb10690fddc170b173be7",
+      "last_change": "3e4af00ed59e84325c8bccc1fc4d2c816775f99a",
+      "receipt": "rust/testport/receipts/util_selection.md",
+      "receipt_sha256": "7b9687e11e22120a522f0702e21c0d639984d2ed74145e8b9f26547147f8a2f7"
+    },
+    {
+      "path": "rust/docs/operations/util-errmsg-audit-execplan.md",
+      "lines": 35,
+      "sha256": "103a58ccacac048e64c5e44adcbbffec264ebd5eabbd5e0f7da067b2ab2b78cc",
+      "last_change": "b108a0f5aaf65bf29e9ac478149a83bc1577b3bf",
+      "receipt": "rust/testport/receipts/util_errmsg.md",
+      "receipt_sha256": "0cca17de1bdca624995c7d2b03b8851add4ef6305425d8f27a1e400e909a685b"
+    },
+    {
+      "path": "rust/docs/operations/util-texttree-audit-execplan.md",
+      "lines": 36,
+      "sha256": "ff7320de6a25b2800e0d0339b57c8dc52748bd0472f19321fa540062277db2c1",
+      "last_change": "a9c5ad1e45319f080aeeb09a89c2da56c8446e6c",
+      "receipt": "rust/testport/receipts/util_texttree.md",
+      "receipt_sha256": "d6eb7dbf5f65a88b768426f3d1fb875219f3ae786f49c9be2bcd93fc938b8515"
+    },
+    {
+      "path": "rust/docs/operations/util-cpu-audit-execplan.md",
+      "lines": 39,
+      "sha256": "a651886e0f3d529d6f4c88af0d20df01e3fbbec251c8fc6c994c3cf6daf1e9df",
+      "last_change": "96b1c6a52e904a0496de269a6e71537d9cff76bd",
+      "receipt": "rust/testport/receipts/util_cpu.md",
+      "receipt_sha256": "5875887e0c444e280d27ffc1496cf4068908afa2f71cf197b617389a7ada0359"
+    },
+    {
+      "path": "rust/docs/operations/util-cdcutil-audit-execplan.md",
+      "lines": 61,
+      "sha256": "0e23bbc59bd83eabd32f5fea5e0afb4f297f0383cf69b143dfc94f25b76b47c9",
+      "last_change": "8199c539ac6260c67cdc825d2b84667d6ba10d38",
+      "receipt": "rust/testport/receipts/util_cdcutil.md",
+      "receipt_sha256": "dc5af37ffee28f0ed59051b51a608c9a1947c6701031a1fbc669acafa1a2f7c7"
+    },
+    {
+      "path": "rust/docs/operations/util-extsort-audit-execplan.md",
+      "lines": 62,
+      "sha256": "3f8aa28a11ca593f81f25a653975667ed64bb41b310a3eec81e72c0b5312700a",
+      "last_change": "0bb5eae81e165d1a5b0257b3268de50b5e16a5f1",
+      "receipt": "rust/testport/receipts/util_extsort.md",
+      "receipt_sha256": "62ad5cf9c5384a5506137443cb8ea86dc8caf724a23958eb6edd37841d8b4b8d"
+    },
+    {
+      "path": "rust/docs/operations/util-domainutil-audit-execplan.md",
+      "lines": 63,
+      "sha256": "7ac4f00722fe9b76400800dc99aabd8a1f592d536de54d6d97a4b78148710778",
+      "last_change": "2cdc99da14060da97cfa41d30fba38d7913f4e55",
+      "receipt": "rust/testport/receipts/util_domainutil.md",
+      "receipt_sha256": "5ed5be5424e1447e9c4aaf9a48be5a4c3be608d2ba0ac79f146db6b67ffa3954"
+    },
+    {
+      "path": "rust/docs/operations/util-disttask-audit-execplan.md",
+      "lines": 59,
+      "sha256": "24cc7059aceb546a56c10bf67abe1accb26f336312e74aca6318face630f712b",
+      "last_change": "e3cd6a0741d787f5a89b9b8748f027a451f8a7d3",
+      "receipt": "rust/testport/receipts/util_disttask.md",
+      "receipt_sha256": "4d57ae1999e5ea96fa2143ef7c10b8daec72867a83b31443b22fab8e77d82fe6"
+    },
+    {
+      "path": "rust/docs/operations/util-deadlockhistory-audit-execplan.md",
+      "lines": 65,
+      "sha256": "6155611cb03e67f9fb85a35c8352524da8cb4ff5167a696f1f721bc8fbdab772",
+      "last_change": "aeb5629d37f842d16ea0a1fa1c373bccd9cafce4",
+      "receipt": "rust/testport/receipts/util_deadlockhistory.md",
+      "receipt_sha256": "3562331df95a974a595ce4246a5d9d47069a01423905ea9a0f869a5f26c7295c"
+    },
+    {
+      "path": "rust/docs/operations/util-column-mapping-audit-execplan.md",
+      "lines": 58,
+      "sha256": "fed231af031b1d9774293d61f5f724146b1ce2b860cd4900c87bbe88d4db2df5",
+      "last_change": "15187afa3b98b1cf0decedfcde5e8f906572d285",
+      "receipt": "rust/testport/receipts/util_column_mapping.md",
+      "receipt_sha256": "170f0ed8932f404f66a0fd7d903e478e436e784adda1f615dae5765ee8e94ae0"
+    }
+  ],
+  "tests": {},
+  "validation": [
+    "All plan before-image and retained receipt SHA256 hashes verified",
+    "Every retired plan last-change commit is an ancestor of the published integration base",
+    "Current references resolve to retained receipts; duplicate receipt references collapsed",
+    "Only Markdown/JSON changes; git diff --check",
+    "No test sweep or make lint needed for documentation-only scope"
+  ],
+  "limits": [
+    "Document retirement does not prove current Go package acceptance or repair findings",
+    "DDL-checker and external-sort ownership remains explicitly unclaimed in retained receipts",
+    "Existing platform, benchmark and broader validation limits remain in original receipts",
+    "No measured speedup or runtime behavior change",
+    "Go FM-sketch JSON/storage delta remains separate and unimplemented"
+  ],
+  "publication": "Actual hook, fresh pre-push locked build, remote SHA and Cloud checkpoint recorded after commit in /workspace/.cloud-setup/utility-workflow-cleanup/final-handoff.json"
+}
