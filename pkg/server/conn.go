@@ -394,6 +394,17 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	return err
 }
 
+// closeTransport closes the network connection, so that a blocked or later read on it fails. It is
+// safe to call concurrently with `clientConn.Run`, which releases the rest of the connection's resources
+// when its read fails. For a TLS connection it closes the connection under TLS: `tls.Conn.Close` first
+// writes a close_notify alert, which can block for up to 5 seconds if the client doesn't read.
+func (cc *clientConn) closeTransport() error {
+	if cc.tlsConn != nil {
+		return cc.tlsConn.NetConn().Close()
+	}
+	return cc.bufReadConn.Close()
+}
+
 func (cc *clientConn) Close() error {
 	// Be careful, this function should be re-entrant. It might be called more than once for a single connection.
 	// Any logic which is not idempotent should be in closeConn() and wrapped with `cc.closeOnce.Do`, like decresing
@@ -1204,8 +1215,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 
 		// Close connection between txn when we are going to shutdown server.
-		// Note the current implementation when shutting down, for an idle connection, the connection may block at readPacket()
-		// consider provider a way to close the connection directly after sometime if we can not read any data.
+		// A connection that is idle in readPacket() is closed by `Server.DrainClients`.
 		if cc.server.inShutdownMode.Load() {
 			if !sessVars.InTxn() {
 				return
@@ -1224,6 +1234,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		// default 28800(8h), FIXME: should not block at here when we kill the connection.
 		waitTimeout := cc.getWaitTimeout(ctx)
 		cc.pkt.SetReadTimeout(time.Duration(waitTimeout) * time.Second)
+		failpoint.InjectCall("beforeReadPacket", cc.connectionID, cc.lastPacket)
 		start := time.Now()
 		data, err := cc.readPacket()
 		if err != nil {

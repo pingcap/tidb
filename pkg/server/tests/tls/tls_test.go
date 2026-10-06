@@ -15,6 +15,7 @@
 package tls
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -26,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -774,4 +776,84 @@ func TestTLSAuto(t *testing.T) {
 	require.NoError(t, err)
 
 	server.Close()
+}
+
+// TestDrainClientsClosesIdleTLSConnection checks that `DrainClients` closes a TLS connection that is idle
+// between statements right away, while a busy one keeps the drain running.
+func TestDrainClientsClosesIdleTLSConnection(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	cli := testserverclient.NewTestServerClient()
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Status.ReportStatus = false
+	cfg.Security.AutoTLS = true
+	cfg.Security.RSAKeySize = 1024 // Reduces unittest runtime
+	require.NoError(t, os.MkdirAll(cfg.TempStoragePath, 0700))
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+
+	// With "skip-verify", the client fails to connect if the server doesn't use TLS.
+	db, err := sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	}))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+	ctx := context.Background()
+	newConn := func() (*sql.Conn, uint64) {
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		var id uint64
+		require.NoError(t, conn.QueryRowContext(ctx, "select connection_id()").Scan(&id))
+		return conn, id
+	}
+	idleConn, idleID := newConn()
+	defer idleConn.Close()
+	busyConn, busyID := newConn()
+	defer busyConn.Close()
+
+	busyResult := make(chan error, 1)
+	go func() {
+		var v int
+		busyResult <- busyConn.QueryRowContext(ctx, "select sleep(3)").Scan(&v)
+	}()
+	require.Eventually(t, func() bool {
+		pi, ok := server.ShowProcessList()[busyID]
+		return ok && strings.Contains(pi.Info, "sleep")
+	}, 5*time.Second, 10*time.Millisecond)
+
+	drainWait := 10 * time.Second
+	drained := make(chan time.Duration, 1)
+	go func() {
+		begin := time.Now()
+		server.Close()
+		server.DrainClients(drainWait, time.Second)
+		drained <- time.Since(begin)
+	}()
+
+	require.Eventually(t, func() bool {
+		_, ok := server.ShowProcessList()[idleID]
+		return !ok
+	}, time.Second, 10*time.Millisecond)
+	_, ok := server.ShowProcessList()[busyID]
+	require.True(t, ok)
+
+	require.NoError(t, <-busyResult)
+	select {
+	case elapsed := <-drained:
+		require.Less(t, elapsed, drainWait)
+	case <-time.After(drainWait):
+		require.Fail(t, "drain clients did not finish")
+	}
 }
