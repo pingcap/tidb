@@ -14,7 +14,10 @@
 package types
 
 import (
+	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -185,7 +188,7 @@ func TestFlattenPathValues(t *testing.T) {
 	for _, tc := range testCases {
 		bj, err := ParseBinaryJSONFromString(tc.input)
 		require.NoError(t, err)
-		entries, err := bj.FlattenPathValues()
+		entries, err := bj.FlattenPathValues(0)
 		require.NoError(t, err)
 		require.Equal(t, tc.expected, entries, tc.input)
 	}
@@ -209,7 +212,7 @@ func TestFlattenPathValuesContainment(t *testing.T) {
 	}
 	docJSON, err := ParseBinaryJSONFromString(doc)
 	require.NoError(t, err)
-	docEntries, err := docJSON.FlattenPathValues()
+	docEntries, err := docJSON.FlattenPathValues(0)
 	require.NoError(t, err)
 	docSet := make(map[string]struct{}, len(docEntries))
 	for _, e := range docEntries {
@@ -223,11 +226,72 @@ func TestFlattenPathValuesContainment(t *testing.T) {
 			continue
 		}
 		containedCount++
-		candEntries, err := candJSON.FlattenPathValues()
+		candEntries, err := candJSON.FlattenPathValues(0)
 		require.NoError(t, err)
 		for _, e := range candEntries {
 			require.Contains(t, docSet, e, "candidate %s", c)
 		}
 	}
 	require.Equal(t, 7, containedCount)
+}
+
+func TestFlattenPathValuesMaxLen(t *testing.T) {
+	const maxLen = FlattenMinMaxLen
+	flatten := func(doc string, maxLen int) []string {
+		bj, err := ParseBinaryJSONFromString(doc)
+		require.NoError(t, err)
+		entries, err := bj.FlattenPathValues(maxLen)
+		require.NoError(t, err)
+		return entries
+	}
+	isShortened := func(entry string) bool {
+		if utf8.RuneCountInString(entry) != maxLen {
+			return false
+		}
+		hash := entry[len(entry)-flattenHashLen:]
+		for _, c := range hash {
+			if !strings.ContainsRune("0123456789abcdef", c) {
+				return false
+			}
+		}
+		return entry[len(entry)-flattenHashLen-1] == '#'
+	}
+
+	// Short entries are unchanged.
+	require.Equal(t, []string{`$.a="x"`}, flatten(`{"a": "x"}`, maxLen))
+
+	// `$.a=` plus a string of n characters in quotes is 6+n characters.
+	exact := fmt.Sprintf(`{"a": "%s"}`, strings.Repeat("x", maxLen-6))
+	require.Equal(t, maxLen, utf8.RuneCountInString(flatten(exact, maxLen)[0]))
+	require.False(t, isShortened(flatten(exact, maxLen)[0]))
+	require.Equal(t, flatten(exact, 0), flatten(exact, maxLen))
+
+	over := fmt.Sprintf(`{"a": "%s"}`, strings.Repeat("x", maxLen-5))
+	entry := flatten(over, maxLen)[0]
+	require.True(t, isShortened(entry), entry)
+	require.True(t, strings.HasPrefix(entry, `$.a="xxx`))
+
+	// Characters are counted, not bytes, and the prefix is cut on a character boundary.
+	wide := fmt.Sprintf(`{"a": "%s"}`, strings.Repeat("中", 100))
+	entry = flatten(wide, maxLen)[0]
+	require.True(t, utf8.ValidString(entry))
+	require.True(t, isShortened(entry), entry)
+
+	// Shortening is deterministic, and values that differ only after the prefix still differ.
+	longA := fmt.Sprintf(`{"a": "%sA"}`, strings.Repeat("x", 200))
+	longB := fmt.Sprintf(`{"a": "%sB"}`, strings.Repeat("x", 200))
+	require.Equal(t, flatten(longA, maxLen), flatten(longA, maxLen))
+	require.NotEqual(t, flatten(longA, maxLen), flatten(longB, maxLen))
+
+	// A candidate flattened with the same limit matches the shortened entries of the document.
+	doc := fmt.Sprintf(`{"cells": {"c1": {"note": "%s", "state": "error"}}}`, strings.Repeat("n", 300))
+	cand := fmt.Sprintf(`{"cells": {"c1": {"note": "%s"}}}`, strings.Repeat("n", 300))
+	docSet := make(map[string]struct{})
+	for _, e := range flatten(doc, maxLen) {
+		require.LessOrEqual(t, utf8.RuneCountInString(e), maxLen)
+		docSet[e] = struct{}{}
+	}
+	for _, e := range flatten(cand, maxLen) {
+		require.Contains(t, docSet, e)
+	}
 }

@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"hash/crc32"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -914,6 +915,29 @@ func TestTiDBJSONFlatten(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 0, types.CompareBinaryJSON(expected, d.GetMysqlJSON()), "input %v got %s", tt.input, d.GetMysqlJSON())
 	}
+
+	// With max_length, long entries are shortened to exactly max_length characters.
+	long := `{"a": "` + strings.Repeat("x", 100) + `"}`
+	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(long, 64)))
+	require.NoError(t, err)
+	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	entry, err := d.GetMysqlJSON().ArrayGetElem(0).Unquote()
+	require.NoError(t, err)
+	require.Len(t, entry, 64)
+	require.True(t, strings.HasPrefix(entry, `$.a="xxx`))
+	require.Equal(t, byte('#'), entry[64-33])
+
+	// A NULL max_length returns NULL; one below 64 is an error.
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(long, nil)))
+	require.NoError(t, err)
+	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, d.IsNull())
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(long, 63)))
+	require.NoError(t, err)
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.Error(t, err)
 }
 func TestJSONDepth(t *testing.T) {
 	ctx := createContext(t)

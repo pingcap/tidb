@@ -1954,7 +1954,11 @@ func (c *tidbJSONFlattenFunctionClass) getFunction(ctx BuildContext, args []Expr
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, types.ETJson)
+	argTps := []types.EvalType{types.ETJson}
+	if len(args) == 2 {
+		argTps = append(argTps, types.ETInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1963,8 +1967,10 @@ func (c *tidbJSONFlattenFunctionClass) getFunction(ctx BuildContext, args []Expr
 	return sig, nil
 }
 
-// builtinTiDBJSONFlattenSig implements TIDB_JSON_FLATTEN(json_doc), which returns a JSON
-// array of "<path>=<value>" strings, one per scalar leaf. See BinaryJSON.FlattenPathValues.
+// builtinTiDBJSONFlattenSig implements TIDB_JSON_FLATTEN(json_doc[, max_length]), which returns a JSON
+// array of "<path>=<value>" strings, one per scalar leaf. With max_length, longer entries are shortened
+// to max_length characters ending in a hash, so they fit a CHAR(max_length) multi-valued index.
+// See BinaryJSON.FlattenPathValues.
 type builtinTiDBJSONFlattenSig struct {
 	baseBuiltinFunc
 	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
@@ -1983,7 +1989,18 @@ func (b *builtinTiDBJSONFlattenSig) evalJSON(ctx EvalContext, row chunk.Row) (re
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	entries, err := doc.FlattenPathValues()
+	maxLen := 0
+	if len(b.args) == 2 {
+		n, isNull, err := b.args[1].EvalInt(ctx, row)
+		if isNull || err != nil {
+			return res, isNull, err
+		}
+		if n < types.FlattenMinMaxLen {
+			return res, true, errIncorrectArgs.GenWithStackByArgs(ast.TiDBJSONFlatten)
+		}
+		maxLen = int(n)
+	}
+	entries, err := doc.FlattenPathValues(maxLen)
 	if err != nil {
 		return res, true, err
 	}

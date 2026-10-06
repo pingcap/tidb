@@ -16,6 +16,7 @@ package types
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -1427,7 +1428,11 @@ func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...JSONPathExp
 // JSON_CONTAINS it. Integral floats are written as integers so that 7 and 7.0
 // share an entry, as they compare equal. Empty objects and arrays produce no
 // entries. Duplicate entries are removed, and order follows the document.
-func (bj BinaryJSON) FlattenPathValues() ([]string, error) {
+//
+// If maxLen > 0, an entry longer than maxLen characters is shortened to exactly
+// maxLen characters; see shortenFlattenEntry. maxLen must then be at least
+// FlattenMinMaxLen.
+func (bj BinaryJSON) FlattenPathValues(maxLen int) ([]string, error) {
 	var (
 		entries []string
 		seen    = make(map[string]struct{})
@@ -1461,6 +1466,9 @@ func (bj BinaryJSON) FlattenPathValues() ([]string, error) {
 		if entry, err = bj.appendFlattenValue(entry); err != nil {
 			return err
 		}
+		if maxLen > 0 && utf8.RuneCount(entry) > maxLen {
+			entry = shortenFlattenEntry(entry, maxLen)
+		}
 		if _, ok := seen[string(entry)]; !ok {
 			s := string(entry)
 			seen[s] = struct{}{}
@@ -1472,6 +1480,34 @@ func (bj BinaryJSON) FlattenPathValues() ([]string, error) {
 		return nil, err
 	}
 	return entries, nil
+}
+
+// FlattenMinMaxLen is the smallest length limit FlattenPathValues accepts, so a
+// shortened entry keeps a readable prefix before its hash.
+const FlattenMinMaxLen = 64
+
+// flattenHashLen is the number of hex characters of the SHA-256 kept in a shortened entry.
+const flattenHashLen = 32
+
+// shortenFlattenEntry replaces entry by its first maxLen-33 characters, then '#'
+// and 32 hex characters of the SHA-256 of the whole entry, so the result is
+// exactly maxLen characters. The same entry always shortens to the same string,
+// so a candidate document flattened with the same limit still matches. A
+// shortened entry can't equal an entry that wasn't shortened: those end with a
+// JSON value (a closing quote, a digit, true, false or null), never with '#'
+// and hex digits.
+func shortenFlattenEntry(entry []byte, maxLen int) []byte {
+	sum := sha256.Sum256(entry)
+	prefixLen := maxLen - 1 - flattenHashLen
+	cut := 0
+	for range prefixLen {
+		_, size := utf8.DecodeRune(entry[cut:])
+		cut += size
+	}
+	out := make([]byte, 0, cut+1+flattenHashLen)
+	out = append(out, entry[:cut]...)
+	out = append(out, '#')
+	return hex.AppendEncode(out, sum[:flattenHashLen/2])
 }
 
 // appendFlattenValue appends the JSON encoding of a scalar for FlattenPathValues.

@@ -559,3 +559,24 @@ admin check table t;
 -- error 3907
 insert into t (id, meta) values (10, json_object('note', repeat('x', 300)));
 drop table t;
+
+# TestTiDBJSONFlattenMaxLength
+select tidb_json_flatten('{"a":"x"}', 64), tidb_json_flatten('{"a":"x"}', null);
+select json_unquote(json_extract(tidb_json_flatten(json_object('a', repeat('x', 100)), 64), '$[0]')) as entry;
+select char_length(json_unquote(json_extract(tidb_json_flatten(json_object('a', repeat('中', 100)), 64), '$[0]'))) as len;
+-- error 1210
+select tidb_json_flatten('{"a":"x"}', 63);
+drop table if exists t;
+create table t (id bigint primary key, meta json,
+  index idx_meta ((cast(tidb_json_flatten(meta, 256) as char(256) array))));
+insert into t values
+ (1, json_object('cells', json_object('ccf_1', json_object('note', repeat('x', 300), 'state', 'error')))),
+ (2, json_object('cells', json_object('ccf_1', json_object('note', repeat('y', 300), 'state', 'error')))),
+ (3, '{"cells":{"ccf_1":{"state":"results"}}}');
+admin check table t;
+explain format='brief' select id from t where json_contains(tidb_json_flatten(meta, 256), tidb_json_flatten(json_object('cells', json_object('ccf_1', json_object('note', repeat('x', 300)))), 256));
+select id from t where json_contains(tidb_json_flatten(meta, 256), tidb_json_flatten(json_object('cells', json_object('ccf_1', json_object('note', repeat('x', 300)))), 256));
+select id from t where '$.cells.ccf_1.state="error"' member of (tidb_json_flatten(meta, 256)) order by id;
+# Without the same max_length, the expression doesn't match the index.
+explain format='brief' select id from t where '$.cells.ccf_1.state="error"' member of (tidb_json_flatten(meta));
+drop table t;
