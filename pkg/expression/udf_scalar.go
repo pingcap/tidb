@@ -862,8 +862,12 @@ func (c *cursorContext) getCursor(name string) *cursorState {
 	return c.cursors[strings.ToLower(name)]
 }
 
-// executeProcedureBlock executes a BEGIN...END block.
+// executeProcedureBlock executes a BEGIN...END block for a stored function.
+// Stored functions do NOT allow DDL statements (CREATE, ALTER, DROP, TRUNCATE).
 func executeProcedureBlock(ctx EvalContext, block *ast.ProcedureBlock, paramMap map[string]types.Datum) (types.Datum, bool, error) {
+	// Set execution mode to function (DDL not allowed)
+	setExecMode(paramMap, execModeFunction)
+
 	result, err := executeProcedureBlockInternal(ctx, block, paramMap, "")
 	if err != nil {
 		return types.Datum{}, true, err
@@ -877,7 +881,11 @@ func executeProcedureBlock(ctx EvalContext, block *ast.ProcedureBlock, paramMap 
 
 // executeProcedureBlockNoReturn executes a stored procedure body without requiring a RETURN statement.
 // This is used for stored procedures (as opposed to functions which must return a value).
+// Stored procedures DO allow DDL statements (CREATE, ALTER, DROP, TRUNCATE).
 func executeProcedureBlockNoReturn(ctx EvalContext, block *ast.ProcedureBlock, paramMap map[string]types.Datum) error {
+	// Set execution mode to procedure (DDL allowed)
+	setExecMode(paramMap, execModeProcedure)
+
 	_, err := executeProcedureBlockInternal(ctx, block, paramMap, "")
 	return err
 }
@@ -887,6 +895,33 @@ const cursorContextKey = "__cursor_ctx__"
 
 // handlerContextKey is the special key used to store handler context in vars map.
 const handlerContextKey = "__handler_ctx__"
+
+// execModeKey is the special key used to store execution mode in vars map.
+// This distinguishes between stored functions and stored procedures.
+const execModeKey = "__exec_mode__"
+
+// Execution mode constants
+const (
+	execModeFunction  = "function"  // Stored function - DDL not allowed
+	execModeProcedure = "procedure" // Stored procedure - DDL allowed
+)
+
+// isInProcedureMode checks if we're executing in stored procedure mode (DDL allowed).
+func isInProcedureMode(vars map[string]types.Datum) bool {
+	if d, ok := vars[execModeKey]; ok {
+		if mode, err := d.ToString(); err == nil {
+			return mode == execModeProcedure
+		}
+	}
+	return false
+}
+
+// setExecMode sets the execution mode in the vars map.
+func setExecMode(vars map[string]types.Datum, mode string) {
+	var d types.Datum
+	d.SetString(mode, mysql.DefaultCollationName)
+	vars[execModeKey] = d
+}
 
 // getCursorContext retrieves the cursor context from vars map.
 func getCursorContext(vars map[string]types.Datum) *cursorContext {
@@ -1129,6 +1164,33 @@ func executeStatement(ctx EvalContext, stmt ast.StmtNode, vars map[string]types.
 
 	case *ast.ResignalStmt:
 		return executeResignalStmt(ctx, s, vars)
+
+	// Transaction control statements
+	case *ast.BeginStmt:
+		return executeBeginStmt(ctx, s)
+
+	case *ast.CommitStmt:
+		return executeCommitStmt(ctx, s)
+
+	case *ast.RollbackStmt:
+		return executeRollbackStmt(ctx, s)
+
+	case *ast.SavepointStmt:
+		return executeSavepointStmt(ctx, s)
+
+	case *ast.ReleaseSavepointStmt:
+		return executeReleaseSavepointStmt(ctx, s)
+
+	case *ast.CallStmt:
+		return executeCallStmt(ctx, s, vars)
+
+	// DDL statements - only allowed in stored procedures, not in stored functions
+	// Note: DROP VIEW uses DropTableStmt with IsView=true, so it's covered by DropTableStmt
+	case *ast.CreateTableStmt, *ast.AlterTableStmt, *ast.DropTableStmt, *ast.TruncateTableStmt,
+		*ast.CreateIndexStmt, *ast.DropIndexStmt,
+		*ast.CreateDatabaseStmt, *ast.DropDatabaseStmt, *ast.AlterDatabaseStmt,
+		*ast.CreateViewStmt, *ast.RenameTableStmt:
+		return executeDDLStmt(ctx, s, vars)
 
 	default:
 		return executionResult{}, errors.Errorf("unsupported statement type in SQL function: %T", stmt)
@@ -1557,6 +1619,197 @@ func executeResignalStmt(ctx EvalContext, stmt *ast.ResignalStmt, vars map[strin
 	sqlErr := mysql.NewErr(mysql.ErrSignalException, messageText)
 	sqlErr.State = sqlState
 	return executionResult{}, sqlErr
+}
+
+// executeBeginStmt executes START TRANSACTION / BEGIN statement within a stored procedure.
+// This allows procedures to explicitly start a transaction.
+func executeBeginStmt(ctx EvalContext, stmt *ast.BeginStmt) (executionResult, error) {
+	executor := getSQLExecutor(ctx)
+	if executor == nil {
+		return executionResult{}, errors.New("START TRANSACTION requires session context with SQL executor")
+	}
+
+	// Build the SQL statement
+	var sql string
+	if stmt.ReadOnly {
+		sql = "START TRANSACTION READ ONLY"
+	} else if stmt.Mode != "" {
+		sql = fmt.Sprintf("START TRANSACTION %s", stmt.Mode)
+	} else {
+		sql = "START TRANSACTION"
+	}
+
+	// Execute using current session to control the session's transaction
+	sqlCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	_, _, err := executor.ExecRestrictedSQL(sqlCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
+	if err != nil {
+		return executionResult{}, errors.Wrap(err, "START TRANSACTION failed")
+	}
+
+	return executionResult{}, nil
+}
+
+// executeCommitStmt executes COMMIT statement within a stored procedure.
+// This commits the current transaction.
+func executeCommitStmt(ctx EvalContext, stmt *ast.CommitStmt) (executionResult, error) {
+	executor := getSQLExecutor(ctx)
+	if executor == nil {
+		return executionResult{}, errors.New("COMMIT requires session context with SQL executor")
+	}
+
+	sql := "COMMIT"
+	if stmt.CompletionType == ast.CompletionTypeChain {
+		sql = "COMMIT AND CHAIN"
+	} else if stmt.CompletionType == ast.CompletionTypeRelease {
+		sql = "COMMIT RELEASE"
+	}
+
+	sqlCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	_, _, err := executor.ExecRestrictedSQL(sqlCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
+	if err != nil {
+		return executionResult{}, errors.Wrap(err, "COMMIT failed")
+	}
+
+	return executionResult{}, nil
+}
+
+// executeRollbackStmt executes ROLLBACK statement within a stored procedure.
+// This rolls back the current transaction or to a specific savepoint.
+func executeRollbackStmt(ctx EvalContext, stmt *ast.RollbackStmt) (executionResult, error) {
+	executor := getSQLExecutor(ctx)
+	if executor == nil {
+		return executionResult{}, errors.New("ROLLBACK requires session context with SQL executor")
+	}
+
+	var sql string
+	if stmt.SavepointName != "" {
+		// ROLLBACK TO SAVEPOINT savepoint_name
+		// Use backticks to properly quote the identifier
+		sql = fmt.Sprintf("ROLLBACK TO SAVEPOINT `%s`", stmt.SavepointName)
+	} else {
+		sql = "ROLLBACK"
+		if stmt.CompletionType == ast.CompletionTypeChain {
+			sql = "ROLLBACK AND CHAIN"
+		} else if stmt.CompletionType == ast.CompletionTypeRelease {
+			sql = "ROLLBACK RELEASE"
+		}
+	}
+
+	sqlCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	_, _, err := executor.ExecRestrictedSQL(sqlCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
+	if err != nil {
+		return executionResult{}, errors.Wrap(err, "ROLLBACK failed")
+	}
+
+	return executionResult{}, nil
+}
+
+// executeSavepointStmt executes SAVEPOINT statement within a stored procedure.
+// This creates a savepoint within the current transaction.
+func executeSavepointStmt(ctx EvalContext, stmt *ast.SavepointStmt) (executionResult, error) {
+	executor := getSQLExecutor(ctx)
+	if executor == nil {
+		return executionResult{}, errors.New("SAVEPOINT requires session context with SQL executor")
+	}
+
+	// Use backticks to properly quote the identifier
+	sql := fmt.Sprintf("SAVEPOINT `%s`", stmt.Name)
+
+	sqlCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	_, _, err := executor.ExecRestrictedSQL(sqlCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
+	if err != nil {
+		return executionResult{}, errors.Wrap(err, "SAVEPOINT failed")
+	}
+
+	return executionResult{}, nil
+}
+
+// executeReleaseSavepointStmt executes RELEASE SAVEPOINT statement within a stored procedure.
+// This releases a savepoint within the current transaction.
+func executeReleaseSavepointStmt(ctx EvalContext, stmt *ast.ReleaseSavepointStmt) (executionResult, error) {
+	executor := getSQLExecutor(ctx)
+	if executor == nil {
+		return executionResult{}, errors.New("RELEASE SAVEPOINT requires session context with SQL executor")
+	}
+
+	// Use backticks to properly quote the identifier
+	sql := fmt.Sprintf("RELEASE SAVEPOINT `%s`", stmt.Name)
+
+	sqlCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	_, _, err := executor.ExecRestrictedSQL(sqlCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
+	if err != nil {
+		return executionResult{}, errors.Wrap(err, "RELEASE SAVEPOINT failed")
+	}
+
+	return executionResult{}, nil
+}
+
+// executeCallStmt executes a CALL statement within a stored procedure.
+// This allows nested procedure calls.
+func executeCallStmt(ctx EvalContext, stmt *ast.CallStmt, vars map[string]types.Datum) (executionResult, error) {
+	executor := getSQLExecutor(ctx)
+	if executor == nil {
+		return executionResult{}, errors.New("CALL requires session context with SQL executor")
+	}
+
+	// Substitute local variable references with their values in the arguments
+	modifiedStmt := substituteVariables(stmt, vars)
+
+	// Restore the modified statement to SQL using pooled builder
+	sb := stringBuilderPool.Get().(*strings.Builder)
+	sb.Reset()
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, sb)
+	if err := modifiedStmt.Restore(restoreCtx); err != nil {
+		stringBuilderPool.Put(sb)
+		return executionResult{}, errors.Wrap(err, "failed to restore CALL statement")
+	}
+
+	// Execute the CALL statement using current session to inherit database context
+	sqlCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	_, _, err := executor.ExecRestrictedSQL(sqlCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sb.String())
+	stringBuilderPool.Put(sb)
+	if err != nil {
+		return executionResult{}, errors.Wrap(err, "CALL failed")
+	}
+
+	return executionResult{}, nil
+}
+
+// executeDDLStmt executes a DDL statement within a stored procedure.
+// DDL statements (CREATE, ALTER, DROP, TRUNCATE) are only allowed in stored procedures,
+// not in stored functions. This follows MySQL behavior.
+func executeDDLStmt(ctx EvalContext, stmt ast.StmtNode, vars map[string]types.Datum) (executionResult, error) {
+	// Check if we're in procedure mode - DDL is only allowed in stored procedures
+	if !isInProcedureMode(vars) {
+		return executionResult{}, errors.New("DDL statements are not allowed in stored functions")
+	}
+
+	executor := getSQLExecutor(ctx)
+	if executor == nil {
+		return executionResult{}, errors.New("DDL execution requires session context with SQL executor")
+	}
+
+	// Substitute local variable references with their values in the AST
+	modifiedStmt := substituteVariables(stmt, vars)
+
+	// Restore the modified statement to SQL using pooled builder
+	sb := stringBuilderPool.Get().(*strings.Builder)
+	sb.Reset()
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, sb)
+	if err := modifiedStmt.Restore(restoreCtx); err != nil {
+		stringBuilderPool.Put(sb)
+		return executionResult{}, errors.Wrap(err, "failed to restore DDL statement")
+	}
+
+	// Execute the DDL statement using current session to inherit database context
+	sqlCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	_, _, err := executor.ExecRestrictedSQL(sqlCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sb.String())
+	stringBuilderPool.Put(sb)
+	if err != nil {
+		return executionResult{}, errors.Wrap(err, "DDL execution failed")
+	}
+
+	return executionResult{}, nil
 }
 
 // executeProcedureFetchInto fetches the next row from a cursor into variables.

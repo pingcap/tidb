@@ -10764,7 +10764,7 @@ SelectStmt:
 		}
 		$$ = st
 	}
-	/* MySQL-compatible SELECT ... INTO var_list FROM ... syntax */
+/* MySQL-compatible SELECT ... INTO var_list FROM ... syntax */
 |	SelectStmtBasic "INTO" ColumnNameOrUserVariableList "FROM" TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause WindowClauseOptional OrderByOptional SelectStmtLimitOpt SelectLockOpt
 	{
 		st := $1.(*ast.SelectStmt)
@@ -10803,7 +10803,7 @@ SelectStmt:
 		}
 		$$ = st
 	}
-	/* SELECT ... INTO OUTFILE (without FROM clause, export to file) */
+/* SELECT ... INTO OUTFILE (without FROM clause, export to file) */
 |	SelectStmtBasic "INTO" "OUTFILE" stringLit Fields Lines
 	{
 		st := $1.(*ast.SelectStmt)
@@ -10820,7 +10820,7 @@ SelectStmt:
 		st.SelectIntoOpt = x
 		$$ = st
 	}
-	/* SELECT ... INTO var_list (without FROM clause, for expressions like SELECT 1+1 INTO @var) */
+/* SELECT ... INTO var_list (without FROM clause, for expressions like SELECT 1+1 INTO @var) */
 |	SelectStmtBasic "INTO" ColumnNameOrUserVariableList
 	{
 		st := $1.(*ast.SelectStmt)
@@ -17978,13 +17978,28 @@ ProcedureStatementStmt:
 |	UseStmt
 |	InsertIntoStmt
 |	ReplaceIntoStmt
+|	BeginTransactionStmt
 |	CommitStmt
 |	RollbackStmt
+|	SavepointStmt
+|	ReleaseSavepointStmt
 |	ExplainStmt
 |	SetOprStmt
 |	DeleteFromStmt
 |	AnalyzeTableStmt
 |	TruncateTableStmt
+|	CallStmt
+// DDL statements allowed in stored procedures (but NOT in stored functions - checked at runtime)
+|	CreateTableStmt
+|	AlterTableStmt
+|	DropTableStmt
+|	CreateIndexStmt
+|	DropIndexStmt
+|	CreateDatabaseStmt
+|	DropDatabaseStmt
+|	AlterDatabaseStmt
+|	CreateViewStmt
+|	RenameTableStmt
 
 ProcedureCursorSelectStmt:
 	SelectStmt
