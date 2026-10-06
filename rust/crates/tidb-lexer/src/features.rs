@@ -89,5 +89,12 @@ mod tests {
         assert!(!can_parse_feature(&[FEATURE_ID_TIDB]));
         assert!(!can_parse_feature(&[FEATURE_ID_RESOURCE_GROUP]));
         assert!(!can_parse_feature(&[FEATURE_ID_TTL, "unknown"]));
+        assert!(can_parse_feature(&[FEATURE_ID_AFFINITY]));
+        assert!(can_parse_feature(&[FEATURE_ID_SPLIT_REGION]));
+        assert!(can_parse_feature(&[
+            FEATURE_ID_AFFINITY,
+            FEATURE_ID_SPLIT_REGION
+        ]));
+        assert!(!can_parse_feature(&["nonsense"]));
     }
 }

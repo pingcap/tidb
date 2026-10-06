@@ -803,8 +803,8 @@
     "scope": "B01/B05: P03/P06/N03 lazy discovery connections, accepted membership, endpoint options and forced PD timestamp provider"
   },
   "latest_test_cleanup": {
-    "receipt": "duplicate-test-cleanup-validation.json",
-    "scope": "Remove 19 repeated cases, four test files, one empty module and unused fixture fields across seven crates; retain canonical behavior and migrate the unique planner fallback vector. Retire one completed stale planner plan. Production behavior and finding dispositions unchanged.",
+    "receipt": "lexer-info-cleanup-validation.json",
+    "scope": "Retire two redundant lexer modules and the duplicate scalar information fixture; merge all unique scanner, keyword, escape, feature and builtin vectors into their owning suites. Remove 12 repeated registrations and 756 net Rust lines. Production behavior and finding dispositions unchanged.",
     "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
   },
   "test_cleanup_history": [
@@ -1169,6 +1169,11 @@
     {
       "receipt": "duplicate-test-cleanup-validation.json",
       "scope": "Remove 19 repeated cases, four test files, one empty module and unused fixture fields across seven crates; retain canonical behavior and migrate the unique planner fallback vector. Retire one completed stale planner plan. Production behavior and finding dispositions unchanged.",
+      "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+    },
+    {
+      "receipt": "lexer-info-cleanup-validation.json",
+      "scope": "Retire two redundant lexer modules and the duplicate scalar information fixture; merge all unique scanner, keyword, escape, feature and builtin vectors into their owning suites. Remove 12 repeated registrations and 756 net Rust lines. Production behavior and finding dispositions unchanged.",
       "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
     }
   ],

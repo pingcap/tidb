@@ -1209,14 +1209,8 @@ mod tests {
     #[path = "charset_digester_sm3_source.rs"]
     mod charset_digester_sm3_source;
 
-    #[path = "lexer_parser_privileges_source.rs"]
-    mod lexer_parser_privileges_source;
-
     #[path = "parser_parse_restore_source.rs"]
     mod parser_parse_restore_source;
-
-    #[path = "field_type_terror_source.rs"]
-    mod field_type_terror_source;
 
     /// Renders a SQL string to its space-joined token labels for compact
     /// assertions (the terminal `Eof` is dropped).

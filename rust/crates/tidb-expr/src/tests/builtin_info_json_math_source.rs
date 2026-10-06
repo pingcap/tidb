@@ -144,6 +144,7 @@ fn math_call(name: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
 /// evaluator reads `Columns::sysvar("version")`.
 #[derive(Default)]
 struct InfoColumns {
+    current_user: Option<String>,
     current_role: Option<String>,
     connection_id: Option<u64>,
     version: Option<String>,
@@ -156,6 +157,10 @@ struct InfoColumns {
 impl Columns for InfoColumns {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
+    }
+
+    fn current_user(&self) -> Option<String> {
+        self.current_user.clone()
     }
 
     fn current_role(&self) -> Option<String> {
@@ -202,6 +207,23 @@ fn eval_info(name: &str, result_type: FieldType, ctx: &InfoColumns) -> Datum {
 // ---------------------------------------------------------------------------
 // builtin_info_test.go
 // ---------------------------------------------------------------------------
+
+/// Go `pkg/expression/builtin_info_test.go::TestCurrentUser`.
+#[test]
+fn current_user() {
+    let ctx = InfoColumns {
+        current_user: Some("root@localhost".to_owned()),
+        ..InfoColumns::default()
+    };
+    assert_eq!(
+        eval_info("current_user", text_ft(), &ctx),
+        Datum::new_string(b"root@localhost".to_vec())
+    );
+    assert_eq!(
+        eval_info("current_user", text_ft(), &InfoColumns::default()),
+        Datum::Null
+    );
+}
 
 /// Go `pkg/expression/builtin_info_test.go:113 TestCurrentRole`.
 #[test]
@@ -318,15 +340,19 @@ fn row_count() {
 /// Go `pkg/expression/builtin_info_test.go:249 TestTiDBVersion`.
 #[test]
 fn tidb_version() {
-    let expected = get_tidb_info();
-    let ctx = InfoColumns {
-        tidb_info: Some(expected.clone()),
-        ..InfoColumns::default()
-    };
-    assert_eq!(
-        eval_info("tidb_version", text_ft(), &ctx),
-        Datum::new_string(expected.into_bytes())
-    );
+    for expected in [
+        get_tidb_info(),
+        "Release Version: test\nKernel Type: Classic".to_owned(),
+    ] {
+        let ctx = InfoColumns {
+            tidb_info: Some(expected.clone()),
+            ..InfoColumns::default()
+        };
+        assert_eq!(
+            eval_info("tidb_version", text_ft(), &ctx),
+            Datum::new_string(expected.into_bytes())
+        );
+    }
 }
 
 /// Go `pkg/expression/builtin_info_test.go:258 TestLastInsertID`.

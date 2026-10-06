@@ -32,3 +32,14 @@ Retain Go-derived coverage and Rust lifetime/concurrency checks. Remove only rev
 ## Outcomes & Retrospective
 
 Removed 19 duplicates, four test files, one empty module and unused fixture code; migrated the distinct cost-factor vector and corrected the stale EXP assertion. All 158 distinct selected tests and lint pass. Workspace-wide formatting drift remains outside scope; changed assertion formatting and diff checks pass. Detailed mappings, commands and limits are recorded in parity/current-audit/duplicate-test-cleanup-validation.json; external logs belong in /workspace/.cloud-setup/duplicate-test-cleanup. Finding dispositions remain unchanged.
+
+## Continuation: consolidate lexer and information-test owners
+
+Baseline 7b1c2d0b19752441589009054414b24ab7c4bddc; freshly fetched Go master is unchanged. Retire lexer_parser_privileges_source.rs and field_type_terror_source.rs after merging scanner assertions into lexer_source.rs, escape vectors into escape.rs, and feature combinations into features.rs. Consolidate the scalar information fixture into builtin_info_json_math_source.rs. Preserve parser-owned obligations and all unique vectors; historical receipts continue to describe their original commit.
+
+- [x] Compare keyword arrays: retained 190/188 rows contain all retired 189/185 rows, including the four additional retained spellings.
+- [x] Merge raw/decoded string and integer assertions, ANSI quoting, unique lexical contracts, all 15 escape vectors and feature combinations; remove 12 repeated test registrations and two files.
+- [x] Validate 71 lexer tests and 60 information/JSON/math tests (131 distinct passes); lint, changed formatting, source preservation and deletion review pass.
+- [x] Prepare publication through the actual locked-build hook and fresh prepush gate; final commit, remote and Cloud checkpoint results are recorded externally in final-handoff.json.
+
+This batch changes test ownership only. It does not close any production finding or establish complete upstream package acceptance. Commands, mappings, logs and limits belong in parity/current-audit/lexer-info-cleanup-validation.json and /workspace/.cloud-setup/lexer-info-cleanup.

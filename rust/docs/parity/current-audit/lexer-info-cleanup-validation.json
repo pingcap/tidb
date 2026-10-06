@@ -1,0 +1,173 @@
+{
+  "date": "2026-10-06",
+  "base": "7b1c2d0b19752441589009054414b24ab7c4bddc",
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "scope": "Consolidate scanner, byte escape, feature allowlist and information-builtin test ownership. Production functions and dependencies unchanged.",
+  "removed_repeated_test_registrations": 12,
+  "removed_test_files": 2,
+  "net_rust_lines_removed": 756,
+  "keyword_comparison": {
+    "reserved_kws": {
+      "retained_rows": 190,
+      "retired_rows": 189,
+      "retained_extra": [
+        "over"
+      ],
+      "retired_unique": []
+    },
+    "unreserved_kws": {
+      "retained_rows": 188,
+      "retired_rows": 185,
+      "retained_extra": [
+        "operate",
+        "sql_cache",
+        "sql_no_cache"
+      ],
+      "retired_unique": []
+    }
+  },
+  "mappings": [
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_scan_string",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_scan_string",
+      "action": "merge raw/decoded/token assertions; retain all existing vectors"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_scan_string_with_no_backslash_escapes_mode",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_scan_string_with_no_backslash_escapes_mode",
+      "action": "merge raw/decoded/token assertions; retain all existing vectors"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_feature_ids_comment",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_feature_ids_comment",
+      "action": "retain canonical superset"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_int",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_int",
+      "action": "merge raw/decoded/token assertions; retain all existing vectors"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_sql_mode_ansi_quotes",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_sql_mode_ansi_quotes",
+      "action": "merge raw/decoded/token assertions; retain all existing vectors"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_illegal",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_illegal",
+      "action": "retain canonical superset"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_simple",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_simple",
+      "action": "move unchanged except stricter general/window keyword membership in test_simple"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_special_comments",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_special_comments",
+      "action": "move unchanged except stricter general/window keyword membership in test_simple"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_builtin_func_as_identifier",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_builtin_func_as_identifier",
+      "action": "move unchanged except stricter general/window keyword membership in test_simple"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_hint_error",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_hint_error",
+      "action": "move unchanged except stricter general/window keyword membership in test_simple"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/lexer_parser_privileges_source.rs::test_parser_err_msg",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_parser_err_msg",
+      "action": "move unchanged except stricter general/window keyword membership in test_simple"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/field_type_terror_source.rs::simple_reserved_keywords_are_lexical_tokens",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_simple",
+      "action": "retained table is superset; preserve stronger general/window membership and qualified tokens"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/field_type_terror_source.rs::simple_unreserved_keywords_are_not_reserved",
+      "retained": "rust/crates/tidb-lexer/src/tests/lexer_source.rs::test_simple",
+      "action": "retained table is superset; preserve stronger general/window membership and qualified tokens"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/field_type_terror_source.rs::table_affinity_option_feature_id_allowlist",
+      "retained": "rust/crates/tidb-lexer/src/features.rs::tests::complete_source_registry_and_variadic_semantics",
+      "action": "merge exact feature combinations"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/field_type_terror_source.rs::split_partition_feature_id_allowlist",
+      "retained": "rust/crates/tidb-lexer/src/features.rs::tests::complete_source_registry_and_variadic_semantics",
+      "action": "merge exact feature combinations"
+    },
+    {
+      "removed": "rust/crates/tidb-lexer/src/tests/field_type_terror_source.rs::unescape_char_go_table",
+      "retained": "rust/crates/tidb-lexer/src/escape.rs::tests::unescape_char_go_table",
+      "action": "move unchanged fifteen-vector table"
+    },
+    {
+      "removed": "rust/crates/tidb-expr/src/scalar_function.rs::tests::test_current_user",
+      "retained": "rust/crates/tidb-expr/src/tests/builtin_info_json_math_source.rs::current_user",
+      "action": "move root@localhost and missing-user cases unchanged"
+    },
+    {
+      "removed": "rust/crates/tidb-expr/src/scalar_function.rs::tests::test_connection_id",
+      "retained": "rust/crates/tidb-expr/src/tests/builtin_info_json_math_source.rs::connection_id",
+      "action": "same LongLong unsigned result and UInt(1) assertion already retained"
+    },
+    {
+      "removed": "rust/crates/tidb-expr/src/scalar_function.rs::tests::test_tidb_version",
+      "retained": "rust/crates/tidb-expr/src/tests/builtin_info_json_math_source.rs::tidb_version",
+      "action": "merge injected version string into current-printer table"
+    }
+  ],
+  "go_contracts": [
+    "pkg/parser/lexer_test.go: TestScanString, TestScanStringWithNoBackslashEscapesMode, TestFeatureIDsComment, TestInt, TestSQLModeANSIQuotes, TestIllegal",
+    "pkg/parser/parser_test.go: lexical portions of TestSimple, TestSpecialComments, TestBuiltinFuncAsIdentifier, TestHintError, TestParserErrMsg",
+    "pkg/parser/util/escape_test.go: TestUnescapeChar",
+    "pkg/parser/tidb/features.go: feature allowlist",
+    "pkg/expression/builtin_info_test.go: TestCurrentUser, TestConnectionID, TestTiDBVersion"
+  ],
+  "validation": [
+    {
+      "command": "cd rust && cargo test --locked -p tidb-lexer --lib",
+      "passed": 71,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/lexer-info-cleanup/lexer-tests.log",
+      "sha256": "17ad0ba2f9a5cb36425f90dca8d18fcc6589698833b746d3facda1eba88537d2"
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-lexer -p tidb-model -p tidb-expr -p tidb-executor -p tidb-txnkv --lib --no-fail-fast -- builtin_info_json_math_source:: --test-threads=1",
+      "passed": 60,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/lexer-info-cleanup/expression-tests.log",
+      "sha256": "c403a6727dc3a64262ee96f5741e835de1955ccb355eb631da1ed1324a7b0843"
+    },
+    {
+      "command": "make lint",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/lexer-info-cleanup/lint.log"
+    },
+    {
+      "command": "rustfmt --edition 2021 --check rust/crates/tidb-lexer/src/tests/lexer_source.rs rust/crates/tidb-lexer/src/escape.rs rust/crates/tidb-lexer/src/features.rs",
+      "status": "passed; changed expression functions independently match rustfmt stdout"
+    },
+    {
+      "command": "git diff --check",
+      "status": "passed"
+    }
+  ],
+  "limits": [
+    "No finding disposition changes: 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).",
+    "No complete Go package accepted; parser grammar/AST obligations remain with their owners.",
+    "Go isolated non-UTF-8 scanner vectors remain unrepresented by the Rust &str API; unchanged limitation.",
+    "No full Go suite, live cluster, complete workspace test/format pass or measured speedup claimed.",
+    "Historical cleanup receipts are immutable evidence for their original commits, not current file indexes."
+  ],
+  "test_selection": "Entire lexer unit suite plus complete information/JSON/math source suite. Other four filtered package binaries ran zero selected tests and contribute no coverage; their selection preserves the cached unified feature graph.",
+  "publication_gates": "Actual hooks/pre-commit must run cd rust && cargo build --locked -p tidb-server; fresh same build immediately before normal push. External final-handoff.json records final results and remote SHA."
+}

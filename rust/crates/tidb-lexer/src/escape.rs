@@ -30,3 +30,37 @@ pub fn unescape_char(byte: u8) -> Vec<u8> {
         _ => vec![byte],
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Go: pkg/parser/util/escape_test.go, TestUnescapeChar.
+    #[test]
+    fn unescape_char_go_table() {
+        let cases: &[(u8, &[u8])] = &[
+            // Standard single-byte escapes
+            (b'n', b"\n"),
+            (b'0', &[0]),
+            (b'b', &[8]),
+            (b'Z', &[26]),
+            (b'r', b"\r"),
+            (b't', b"\t"),
+            // Preserve both backslash and character
+            (b'%', b"\\%"),
+            (b'_', b"\\_"),
+            // Self-escaping characters (backslash removed)
+            (b'\\', b"\\"),
+            (b'\'', b"'"),
+            (b'"', b"\""),
+            // Any other character just returns itself (backslash removed)
+            (b'a', b"a"),
+            (b'z', b"z"),
+            (b'1', b"1"),
+            (b' ', b" "),
+        ];
+        for (input, want) in cases {
+            assert_eq!(&unescape_char(*input), want, "UnescapeChar({input:?})");
+        }
+    }
+}
