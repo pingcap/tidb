@@ -64,7 +64,7 @@ use crate::dag_request::{
     construct_read_only_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
 };
 use crate::distsql_recordset::DistSqlRecordSet;
-use crate::statement_pushdown::select_push_down_flags;
+use tidb_executor::statement_pushdown::select_push_down_flags;
 
 /// Parses and types one configured prepared point read without opening PD or
 /// TiKV. The returned template retains the parser-owned marker and can only be

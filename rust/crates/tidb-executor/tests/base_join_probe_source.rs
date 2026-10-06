@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Tests for [`tidb_exec::base_join_probe`], the port of
+//! Tests for [`tidb_executor::base_join_probe`], the port of
 //! `pkg/executor/join/base_join_probe.go`.
 //!
 //! **These tests are WRITTEN, not ported.** Go has no
@@ -28,15 +28,15 @@ use tidb_codec::{JoinKeyColumns, SerializeMode};
 
 use tidb_datatype::{FieldType, FieldTypeCode};
 
-use tidb_exec::base_join_probe::{
+use tidb_executor::base_join_probe::{
     common_init_for_scan_row_table, is_key_matched, new_join_probe, BaseJoinProbe, BuildRowSource,
     MatchedRowInfo, OffsetAndLength, ProbeContext, ProbeError, RowBytesMap, BATCH_BUILD_ROW_SIZE,
 };
-use tidb_exec::hash_table_v2::HashTableV2;
-use tidb_exec::join_row_table::{RowLayoutMeta, RowTable, RowTableSegment, SIZE_OF_NEXT_PTR};
-use tidb_exec::join_table_meta::KeyMode;
-use tidb_exec::row_table_builder::{fnv64, BuildContext, PartitionInfo, RowTableBuilder};
-use tidb_exec::tagged_ptr::TagPtrHelper;
+use tidb_executor::hash_table_v2::HashTableV2;
+use tidb_executor::join_row_table::{RowLayoutMeta, RowTable, RowTableSegment, SIZE_OF_NEXT_PTR};
+use tidb_executor::join_table_meta::KeyMode;
+use tidb_executor::row_table_builder::{fnv64, BuildContext, PartitionInfo, RowTableBuilder};
+use tidb_executor::tagged_ptr::TagPtrHelper;
 use tidb_executor::joiner::JoinType;
 
 // ---------------------------------------------------------------------------
@@ -263,7 +263,7 @@ fn set_chunk_for_probe_hashes_buckets_and_resolves_headers() {
     // that row's stored key must be 20.
     let head = probe.matched_rows_headers()[0];
     assert_ne!(head, 0, "an existing key must resolve to a bucket head");
-    let address = tidb_exec::hash_table_v2::row_address_of(&fixture.tag_helper, head);
+    let address = tidb_executor::hash_table_v2::row_address_of(&fixture.tag_helper, head);
     let row = fixture.hash_table.row_bytes(address);
     assert!(is_key_matched(
         KeyMode::OneInt64,
@@ -301,7 +301,7 @@ fn set_chunk_for_probe_zeroes_headers_for_filtered_and_null_key_rows() {
         ),
     );
     let filter =
-        tidb_exec::base_join_probe::JoinFilter::new(tidb_expr::NoColumns, vec![predicate], true);
+        tidb_executor::base_join_probe::JoinFilter::new(tidb_expr::NoColumns, vec![predicate], true);
     probe
         .set_chunk_for_probe(
             &ctx,
@@ -320,7 +320,7 @@ fn set_chunk_for_probe_zeroes_headers_for_filtered_and_null_key_rows() {
     // The same VectorizedFilter failure must reach the probe owner unchanged.
     let parameter =
         tidb_expr::constant::Constant::new(tidb_datatype::Datum::Int(0), int_fields(1)[0].clone());
-    let failing_filter = tidb_exec::base_join_probe::JoinFilter::new(
+    let failing_filter = tidb_executor::base_join_probe::JoinFilter::new(
         tidb_expr::NoColumns,
         vec![tidb_expr::expression::Expression::ScalarFunction(
             tidb_expr::expression::ScalarFunction::new(
@@ -606,7 +606,7 @@ fn a_bucket_chain_walks_every_row_that_shares_a_hash_bucket() {
     let mut current = probe.matched_rows_headers()[0];
     let mut matched = 0;
     while current != 0 {
-        let address = tidb_exec::hash_table_v2::row_address_of(&fixture.tag_helper, current);
+        let address = tidb_executor::hash_table_v2::row_address_of(&fixture.tag_helper, current);
         let row = fixture.hash_table.row_bytes(address);
         if is_key_matched(
             KeyMode::OneInt64,

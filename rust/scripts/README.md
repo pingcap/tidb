@@ -86,6 +86,11 @@ receipt commands describe historical validation and may name retired targets.
 Archive links and the retained package inventories are indexed in
 [the retirement receipt](../docs/parity/current-audit/semantic-workflow-cleanup-validation.json).
 
+Hash-join components, version selection, statement pushdown and used-statistics
+formatting tests now run directly in `tidb-executor --test all`, with their
+existing `*_source` module filters. Their `tidb-exec` forwarding exports are
+retired; import the executor owner directly. Behavioral cases are preserved.
+
 Go test cases and their fixtures are the correctness reference. Do not add
 Rust source-shape, call-count, file-size, or historical test-count gates.
 Statistics discard-return lint tests and comment-only test/benchmark shells

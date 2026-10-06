@@ -41,15 +41,15 @@ use tidb_codec::{JoinKeyColumns, SerializeMode};
 
 use tidb_datatype::{FieldType, FieldTypeCode};
 
-use tidb_exec::hash_table_v2::{
+use tidb_executor::hash_table_v2::{
     get_hash_table_length_by_row_len, get_hash_table_length_by_row_table,
     get_hash_table_memory_usage, next_power_of_two, row_address_of, HashTableV2, SubTable,
     MINIMAL_HASH_TABLE_LEN, TAGGED_POINTER_LEN,
 };
-use tidb_exec::join_row_table::{next_row_address, RowLayoutMeta, RowTable, RowTableSegment};
-use tidb_exec::join_table_meta::{ColumnType, JoinTableMeta};
-use tidb_exec::row_table_builder::{BuildContext, PartitionInfo, RowTableBuilder};
-use tidb_exec::tagged_ptr::TagPtrHelper;
+use tidb_executor::join_row_table::{next_row_address, RowLayoutMeta, RowTable, RowTableSegment};
+use tidb_executor::join_table_meta::{ColumnType, JoinTableMeta};
+use tidb_executor::row_table_builder::{BuildContext, PartitionInfo, RowTableBuilder};
+use tidb_executor::tagged_ptr::TagPtrHelper;
 
 /// Deterministic stand-in for `math/rand`, which the Go fixtures use only to
 /// vary segment sizes and key values.
@@ -398,7 +398,7 @@ fn check_row_iter(table: &HashTableV2, scan_concurrency: u64) {
 
 #[test]
 fn row_iter_covers_every_row_once() {
-    use tidb_exec::base_join_probe::BuildRowSource;
+    use tidb_executor::base_join_probe::BuildRowSource;
     // Source: pkg/executor/join/hash_table_v2.go:146-229 (rowPos, rowIter,
     // createRowPos, createRowIter).
     // Direct Go coverage: pkg/executor/join/hash_table_v2_test.go:255

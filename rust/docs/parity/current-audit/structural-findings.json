@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "retirement-plan-cleanup-validation.json",
-    "scope": "Retire four superseded test-retirement plans (257 lines) that prescribe removed harness generation and historical execution steps; preserve audit receipts and complete obligation ledgers, and point two historical links to immutable Git archives. No executable or finding disposition changes.",
+    "receipt": "executor-owner-cleanup-validation.json",
+    "scope": "Remove eleven tidb-exec forwarding exports after migrating three live callers; move ten join/statement-policy suites (6397 lines, 80 unchanged cases) to tidb-executor, preserving bodies/fixtures except crate paths and registering each once. No algorithm, dependency or finding disposition changes.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1064,6 +1064,11 @@
     {
       "receipt": "retirement-plan-cleanup-validation.json",
       "scope": "Retire four superseded test-retirement plans (257 lines) that prescribe removed harness generation and historical execution steps; preserve audit receipts and complete obligation ledgers, and point two historical links to immutable Git archives. No executable or finding disposition changes.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "executor-owner-cleanup-validation.json",
+      "scope": "Remove eleven tidb-exec forwarding exports after migrating three live callers; move ten join/statement-policy suites (6397 lines, 80 unchanged cases) to tidb-executor, preserving bodies/fixtures except crate paths and registering each once. No algorithm, dependency or finding disposition changes.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

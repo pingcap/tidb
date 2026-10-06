@@ -1,0 +1,132 @@
+{
+  "date": "2026-10-05",
+  "timezone": "America/Los_Angeles",
+  "base": "8046b8718917696c5b3c652f8aca752b3465b2ad",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove eleven tidb-exec forwarding exports after migrating three live callers; move ten join/statement-policy suites (6397 lines, 80 unchanged cases) to tidb-executor, preserving bodies/fixtures except crate paths and registering each once. No algorithm, dependency or finding disposition changes.",
+  "go_owners": [
+    "pkg/executor/join",
+    "pkg/executor/join/joinversion",
+    "pkg/sessionctx/stmtctx"
+  ],
+  "continuity": {
+    "base": "8046b8718917696c5b3c652f8aca752b3465b2ad",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "migrated_modules": 10,
+    "migrated_lines": 6397,
+    "preserved_tests": 80,
+    "byte_identity_except_crate_path": true,
+    "registered_once_in_owner": true,
+    "removed_reexports": 11,
+    "live_callers_migrated": [
+      "tidb-session/src/stmt_ctx.rs",
+      "tidb-exec/src/real_tikv_read.rs",
+      "tidb-exec/src/slow_log_format.rs"
+    ],
+    "dependencies_changed": false
+  },
+  "moved_suites": [
+    {
+      "from": "rust/crates/tidb-exec/tests/base_join_probe_source.rs",
+      "to": "rust/crates/tidb-executor/tests/base_join_probe_source.rs",
+      "lines": 785,
+      "tests": 16,
+      "before_sha256": "687656bb03ca1c96e568a1a7c249da5cd9a5bb6a7b4c277060ef52223cf8c9a2",
+      "after_sha256": "0d1c55d51804e5c9d68b0b61bc8e47937410ab7fbb14dd085ca3bab4ef2e61d6"
+    },
+    {
+      "from": "rust/crates/tidb-exec/tests/concurrent_entry_map_source.rs",
+      "to": "rust/crates/tidb-executor/tests/concurrent_entry_map_source.rs",
+      "lines": 98,
+      "tests": 2,
+      "before_sha256": "b49c70888887ef0f96b224dcbd4f4eb7a63b7c49010bf3041bf9dd5f8b1ce63a",
+      "after_sha256": "17afb5529a2f9f206032a2c4421c46f7bb54f8947780d6f367fcb6a46d90ea5d"
+    },
+    {
+      "from": "rust/crates/tidb-exec/tests/hash_join_version_source.rs",
+      "to": "rust/crates/tidb-executor/tests/hash_join_version_source.rs",
+      "lines": 37,
+      "tests": 1,
+      "before_sha256": "6c3bdbef0c87e2b438c2cb65541e6e275fce989856bd9fdaa12cee51dcff50b8",
+      "after_sha256": "7e42182c8a713cc6355253f82594ed03f652fe585bd62da2d0ea3c2e2dc22e82"
+    },
+    {
+      "from": "rust/crates/tidb-exec/tests/hash_join_v2_source.rs",
+      "to": "rust/crates/tidb-executor/tests/hash_join_v2_source.rs",
+      "lines": 3907,
+      "tests": 31,
+      "before_sha256": "a1b4de3ad68cfda13f5e976d3158968f35086108ca16f42acdb44e6e9449be85",
+      "after_sha256": "d6d7ec51e5c0d140f1703f2ced8579249b207e8b701e4650c3ddce5f9dfe4a62"
+    },
+    {
+      "from": "rust/crates/tidb-exec/tests/hash_table_v2_source.rs",
+      "to": "rust/crates/tidb-executor/tests/hash_table_v2_source.rs",
+      "lines": 477,
+      "tests": 7,
+      "before_sha256": "1f3add300a2b3af569f057334145d051c1ec1376dbf36a9b6107ad44c5141239",
+      "after_sha256": "81601c5aa6a5a97ed29767b821e44d5cc8d440063e9cca2409ce4b9ff3fa5934"
+    },
+    {
+      "from": "rust/crates/tidb-exec/tests/join_row_table_source.rs",
+      "to": "rust/crates/tidb-executor/tests/join_row_table_source.rs",
+      "lines": 184,
+      "tests": 6,
+      "before_sha256": "68927a7ecdd94e3fcc32e63980d441c9babd93e9a1956c620667f6744eb1e28a",
+      "after_sha256": "b3b54ddab8dc072b66a20795ff032a4734b10501b46e2fd0d621e3ad5d0c8da8"
+    },
+    {
+      "from": "rust/crates/tidb-exec/tests/join_table_meta_source.rs",
+      "to": "rust/crates/tidb-executor/tests/join_table_meta_source.rs",
+      "lines": 438,
+      "tests": 6,
+      "before_sha256": "2d7665abd14a2257f6ad5f2a5251fdeaf5a370abd7e7d4fe91e83363382fe639",
+      "after_sha256": "e14ccd92c25ce065f3f96e95da5daf251f869e69ec10c91c9be2e94fdab06a6f"
+    },
+    {
+      "from": "rust/crates/tidb-exec/tests/tagged_ptr_source.rs",
+      "to": "rust/crates/tidb-executor/tests/tagged_ptr_source.rs",
+      "lines": 78,
+      "tests": 3,
+      "before_sha256": "fc2c78cfd75fbcc0c2954ecd45a637af12a77f20a56bd2b14f3c1445ffa7cf3b",
+      "after_sha256": "2bd43a122dd4e60a3c8041088fad66af71dd540957614b7ef4636b1c5489e4a3"
+    },
+    {
+      "from": "rust/crates/tidb-exec/tests/statement_pushdown_source.rs",
+      "to": "rust/crates/tidb-executor/tests/statement_pushdown_source.rs",
+      "lines": 256,
+      "tests": 4,
+      "before_sha256": "bb72c9a80810f2c82f54b91d01f9300d30a59590a66718bc52ad7bc2d03a2d74",
+      "after_sha256": "90047b3d0256caa8eb972f57aa6edd339393cda8c09c5553c19974647d9456f6"
+    },
+    {
+      "from": "rust/crates/tidb-exec/tests/used_stats_source.rs",
+      "to": "rust/crates/tidb-executor/tests/used_stats_source.rs",
+      "lines": 137,
+      "tests": 4,
+      "before_sha256": "2da71258b5cde1ca7b2388f007c333f74dc0af6acd1817433eb48fa0dd37a074",
+      "after_sha256": "9799dcb553e2265447fc8b1ee82dae1c1335300ed8d990a439a218a7ed8ac1ba"
+    }
+  ],
+  "tests": {
+    "owner-tests": {
+      "passed": 80,
+      "failed": 0
+    },
+    "slow-log-tests": {
+      "passed": 6,
+      "failed": 0
+    }
+  },
+  "gates": {
+    "lint": "passed",
+    "diff": "passed",
+    "actual_hook_and_fresh_prepush_build": "pending; final external handoff records results"
+  },
+  "removed_api": "Internal workspace clients now import tidb_executor directly; downstream users of these tidb_exec aliases must make the same import change. Actual executor APIs are unchanged.",
+  "limits": [
+    "No complete upstream package acceptance or parity finding closure",
+    "No measured compilation/runtime speedup",
+    "No full Go/live-cluster/benchmark run; existing unrelated failures remain"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/executor-owner-cleanup/final-handoff.json"
+}

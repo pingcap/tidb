@@ -2314,7 +2314,7 @@ context added; it was not relaxed to accept the wrong error. Red evidence is
 /tmp/tidb-probe-migration-detail.log. The matrix passes after the fix.
 
 Changed files in this checkpoint: the probe stage production file,
-rust/crates/tidb-exec/tests/hash_join_v2_source.rs, restoration of the DDL
+rust/crates/tidb-executor/tests/hash_join_v2_source.rs, restoration of the DDL
 aggregate marker/Cargo target, and this plan. Source formatting changes were
 confined to new lines. Validation commands from rust/:
 

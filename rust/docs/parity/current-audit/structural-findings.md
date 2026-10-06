@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [retired harness plans](retirement-plan-cleanup-validation.json). Retire four superseded test-retirement plans (257 lines) that prescribe removed harness generation and historical execution steps; preserve audit receipts and complete obligation ledgers, and point two historical links to immutable Git archives. No executable or finding disposition changes.
+Latest cleanup: [executor test ownership](executor-owner-cleanup-validation.json). Remove eleven tidb-exec forwarding exports after migrating three live callers; move ten join/statement-policy suites (6397 lines, 80 unchanged cases) to tidb-executor, preserving bodies/fixtures except crate paths and registering each once. No algorithm, dependency or finding disposition changes.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

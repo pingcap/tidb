@@ -26,7 +26,7 @@
 //! - `SlowQueryLogItems.UsedStats` (Go `*stmtctx.UsedStatsInfo`, an unported
 //!   map wrapper with `Keys`/`GetUsedInfo`) narrows to a
 //!   `BTreeMap<i64, UsedStatsInfoForTable>` over the already-ported
-//!   [`crate::used_stats`] leaf; the sorted map iteration is Go's
+//!   [`tidb_executor::used_stats`] leaf; the sorted map iteration is Go's
 //!   `slices.Sort(keys)` walk.
 //! - `KVExecDetail` uses the canonical atomic snapshot returned by
 //!   `execdetails.LoadTiKVExecDetails`.
@@ -63,7 +63,7 @@ use crate::exec_details::{
 };
 use crate::ruv2_metrics::{format_ruv2_summary, RuV2Metrics, RuV2Weights};
 use crate::slow_log_float::format_go_float64;
-use crate::used_stats::UsedStatsInfoForTable;
+use tidb_executor::used_stats::UsedStatsInfoForTable;
 use tidb_hack::GoToLower;
 
 /// Go `SlowLogRowPrefixStr`: slow log row prefix.
@@ -373,7 +373,7 @@ pub struct SlowQueryLogItems {
     /// Go `SlowQueryLogItems.BinaryPlan`.
     pub binary_plan: String,
     /// Go `SlowQueryLogItems.UsedStats` (`*stmtctx.UsedStatsInfo`), narrowed
-    /// to table-ID → per-table info over [`crate::used_stats`]; sorted map
+    /// to table-ID → per-table info over [`tidb_executor::used_stats`]; sorted map
     /// iteration is Go's `slices.Sort(keys)` walk. An empty map is Go's
     /// nil/empty info.
     pub used_stats: BTreeMap<i64, UsedStatsInfoForTable>,

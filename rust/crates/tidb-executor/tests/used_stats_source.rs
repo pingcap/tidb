@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use tidb_exec::used_stats::UsedStatsInfoForTable;
+use tidb_executor::used_stats::UsedStatsInfoForTable;
 
 #[test]
 fn used_stats_slow_log_matches_source_cases() {

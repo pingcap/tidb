@@ -14,7 +14,7 @@
 
 //! Source-backed tests for high-bit tagged pointer metadata.
 
-use tidb_exec::tagged_ptr::{
+use tidb_executor::tagged_ptr::{
     get_tagged_bits_from_usize, TagPtrHelper, MAX_TAGGED_BITS, MAX_TAGGED_MASK,
 };
 

@@ -31,13 +31,13 @@
 //!   is a tautology the compiler settles, not a runtime fact about the
 //!   target.
 
-use tidb_exec::join_row_table::{
+use tidb_executor::join_row_table::{
     initialize_bit_masks, RowLayoutMeta, RowTable, RowTableSegment, BIT_MASK_IN_UINT32,
     FAKE_ADDR_PLACE_HOLDER_LEN, SIZE_OF_ELEMENT_SIZE, SIZE_OF_NEXT_PTR, SIZE_OF_UINTPTR,
     SIZE_OF_UNSAFE_POINTER, USED_FLAG_MASK,
 };
-use tidb_exec::join_table_meta::KeyMode;
-use tidb_exec::tagged_ptr::TagPtrHelper;
+use tidb_executor::join_table_meta::KeyMode;
+use tidb_executor::tagged_ptr::TagPtrHelper;
 
 #[test]
 fn fixed_offset_in_row_layout_matches_source() {

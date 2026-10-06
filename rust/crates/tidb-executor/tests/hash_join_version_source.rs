@@ -14,7 +14,7 @@
 
 //! Source-backed tests for hash-join version selection.
 
-use tidb_exec::hash_join_version::{
+use tidb_executor::hash_join_version::{
     is_optimized_version, HASH_JOIN_VERSION_LEGACY, HASH_JOIN_VERSION_OPTIMIZED,
     TIFLASH_HASH_JOIN_VERSION_DEFAULT,
 };

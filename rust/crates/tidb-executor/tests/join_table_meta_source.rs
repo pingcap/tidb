@@ -14,7 +14,7 @@
 
 //! Source-backed tests for hash-join row metadata decisions.
 
-use tidb_exec::join_table_meta::{ColumnType, JoinTableMeta, KeyMode, SerializeMode};
+use tidb_executor::join_table_meta::{ColumnType, JoinTableMeta, KeyMode, SerializeMode};
 
 fn meta(
     keys: &[usize],

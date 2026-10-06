@@ -17,7 +17,7 @@
 use std::sync::Arc;
 use std::thread;
 
-use tidb_exec::concurrent_entry_map::{ConcurrentEntryMap, RowPointer, SHARD_COUNT};
+use tidb_executor::concurrent_entry_map::{ConcurrentEntryMap, RowPointer, SHARD_COUNT};
 
 #[test]
 fn concurrent_map_preserves_source_insert_and_lookup_contract() {
