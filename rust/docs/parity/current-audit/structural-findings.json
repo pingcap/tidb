@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "utility-proto-harness-cleanup-validation.json",
-    "scope": "Consolidate thirteen module-safe utility/protocol suites into two integration harnesses; retain two isolated utility binaries. Remove one Go-absent statfs equality check that compares non-atomic filesystem samples."
+    "receipt": "domain-test-owner-cleanup-validation.json",
+    "scope": "Retire four session-side Domain test carriers: duplicate RU-statistics/TopN/error-code tests and ignored scripted schema-validator harness. Remove miniature SQL-table simulator; preserve Local timezone and expired-row ordering vectors in existing Domain owners."
   },
   "test_cleanup_history": [
     {
@@ -979,6 +979,11 @@
       "date": "2026-10-06",
       "receipt": "utility-proto-harness-cleanup-validation.json",
       "scope": "Consolidate thirteen module-safe utility/protocol suites into two integration harnesses; retain two isolated utility binaries. Remove one Go-absent statfs equality check that compares non-atomic filesystem samples."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "domain-test-owner-cleanup-validation.json",
+      "scope": "Retire four session-side Domain test carriers: duplicate RU-statistics/TopN/error-code tests and ignored scripted schema-validator harness. Remove miniature SQL-table simulator; preserve Local timezone and expired-row ordering vectors in existing Domain owners."
     }
   ],
   "repair_history": [

@@ -385,6 +385,20 @@ mod tests {
         slow_query.remove_expired(now + Duration::from_secs(6));
         assert_eq!(slow_query.user.data.len(), 4);
         assert_eq!(slow_query.user.data[0].duration, Duration::from_nanos(0));
+        let kept: Vec<_> = slow_query
+            .query_top(6, AdminShowSlowTopScope::Default)
+            .into_iter()
+            .map(|info| info.duration)
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                Duration::from_nanos(2),
+                Duration::from_nanos(2),
+                Duration::from_nanos(1),
+                Duration::from_nanos(0),
+            ]
+        );
     }
 
     /// Go `TestQueue` (`:98`): the FIFO evicts oldest-first and answers

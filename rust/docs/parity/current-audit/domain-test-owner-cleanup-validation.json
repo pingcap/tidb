@@ -1,0 +1,99 @@
+{
+  "date": "2026-10-06",
+  "base": "13d1bc836009c3cba540995e00eda76fefd91bad",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire four session-side Domain test carriers: duplicate RU-statistics/TopN/error-code tests and ignored scripted schema-validator harness. Remove miniature SQL-table simulator; preserve Local timezone and expired-row ordering vectors in existing Domain owners.",
+  "removed": [
+    {
+      "path": "rust/crates/tidb-session/src/tests_domain_domain_utils_source.rs",
+      "sha256": "6b4b8c441131953f128abb9d4b2393491c860f721c33df5213114bd34fb71a40",
+      "lines": 43,
+      "registered_tests": 1,
+      "ignored_tests": 0,
+      "functions": [
+        "error_code"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_domain_ru_stats_source.rs",
+      "sha256": "802b4819c345e61915adbc3731f77c9aa8d5996e7a39f37dee97c28f51ce8518",
+      "lines": 395,
+      "registered_tests": 2,
+      "ignored_tests": 0,
+      "functions": [
+        "get_last_expected_time_matches_upstream_cases",
+        "write_ru_statistics_day_by_day"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_domain_schema_checker_source.rs",
+      "sha256": "5ad7432813fbeda3973938ef0c4bdbbe3fe41bf9c3549a9ddbdca5c2bbef99e7",
+      "lines": 163,
+      "registered_tests": 1,
+      "ignored_tests": 1,
+      "functions": [
+        "unix_nanos_now",
+        "schema_checker_simple"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_domain_topn_slow_query_source.rs",
+      "sha256": "607b31c2a714baf0e80e39a8101a1e8671051ec205a9dec58d1c81bae2f28e65",
+      "lines": 190,
+      "registered_tests": 3,
+      "ignored_tests": 0,
+      "functions": [
+        "ms",
+        "with_duration",
+        "user_kept",
+        "push_replaces_the_heap_top_exactly_when_slower",
+        "remove_expired_drops_by_start_plus_period",
+        "the_recent_queue_answers_newest_first"
+      ]
+    }
+  ],
+  "removed_registrations": 7,
+  "removed_active_registrations": 6,
+  "removed_ignored_registrations": 1,
+  "retained_coverage": {
+    "ru_stats": "Existing owner tests retain all ten interval cases, day-by-day 350/150 -> 400 -> none -> 50 deltas, same-bucket suppression, and GC cutoff. Add chrono::Local to existing named-zone/UTC matrices. Delete only homemade SQL parser/storage model.",
+    "topn_slow_query": "Owner already retains Go heap replacement, expiration and FIFO vectors. Move exact remaining sorted [2,2,1,0] assertion into expiration test.",
+    "schema_checker": "Owner error_codes_and_messages_match_the_catalog retains 8027/8028. Owner retry/forwarding tests retain checker semantics; real validator unit tests remain in tidb-exec. No real-ring composition claim."
+  },
+  "go_sources": [
+    "pkg/domain/ru_stats_test.go",
+    "pkg/domain/topn_slow_query_test.go",
+    "pkg/domain/domain_utils_test.go",
+    "pkg/domain/schema_checker_test.go"
+  ],
+  "remaining_obligations": [
+    "Go RU test executes SQL against real mysql.request_unit_by_group; removed simulator and retained statement tests do not establish that integration.",
+    "Go TestSchemaCheckerSimple composes a real isvalidator ring; removed scripted verdicts did not test that composition.",
+    "Complete Domain package/lifecycle obligations remain; no finding disposition change."
+  ],
+  "validation": {
+    "status": "passed",
+    "tests_command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-domain --lib -- ru_stats::tests topn_slow_query::tests schema_checker::tests --test-threads=1",
+    "tests_result": "35 passed, zero failed or ignored; 127 unrelated filtered out",
+    "check_command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-session --tests",
+    "check_result": "passed",
+    "lint": "make lint passed",
+    "diff_check": "passed",
+    "verification": {
+      "removed_files": 4,
+      "removed_registrations": 7,
+      "active_duplicates_removed": 6,
+      "ignored_scripted_test_removed": 1,
+      "production_unchanged": true,
+      "original_owner_assertions_preserved": true,
+      "local_timezone_migrated_to_three_existing_cases": true,
+      "both_changed_group_inputs_preserved": true,
+      "sorted_expiration_vector_preserved": true,
+      "owner_tests_passed": 35,
+      "finding_dispositions_unchanged": true
+    },
+    "publication": "Actual hook and fresh pre-push builds, remote SHA and saved checkpoint recorded after commit in external final-handoff.json"
+  },
+  "measured_speedup": false,
+  "net_rust_lines_removed": 765
+}

@@ -835,7 +835,7 @@ mod tests {
         "Australia/Lord_Howe".parse().unwrap()
     }
 
-    fn at(tz: Tz, y: i32, m: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Tz> {
+    fn at<Z: TimeZone>(tz: Z, y: i32, m: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Z> {
         tz.with_ymd_and_hms(y, m, d, h, mi, s).unwrap()
     }
 
@@ -844,53 +844,58 @@ mod tests {
     #[test]
     fn get_last_expected_time_matches_upstream_cases() {
         for tz in [shanghai(), lord_howe(), Tz::UTC] {
-            let now = at(tz, 2023, 12, 28, 10, 46, 23);
-            let expect = |h, mi| at(tz, 2023, 12, 28, h, mi, 0);
-            assert_eq!(
-                get_last_expected_time_tz(&now, Duration::minutes(5), &tz),
-                expect(10, 45)
-            );
-            assert_eq!(
-                get_last_expected_time_tz(
-                    &at(tz, 2023, 12, 28, 10, 45, 0),
-                    Duration::minutes(5),
-                    &tz
-                ),
-                expect(10, 45)
-            );
-            assert_eq!(
-                get_last_expected_time_tz(&now, Duration::minutes(10), &tz),
-                expect(10, 40)
-            );
-            assert_eq!(
-                get_last_expected_time_tz(&now, Duration::minutes(30), &tz),
-                expect(10, 30)
-            );
-            assert_eq!(
-                get_last_expected_time_tz(&now, Duration::hours(1), &tz),
-                expect(10, 0)
-            );
-            assert_eq!(
-                get_last_expected_time_tz(&now, Duration::hours(3), &tz),
-                expect(9, 0)
-            );
-            assert_eq!(
-                get_last_expected_time_tz(&now, Duration::hours(4), &tz),
-                expect(8, 0)
-            );
-            assert_eq!(
-                get_last_expected_time_tz(&now, Duration::hours(12), &tz),
-                expect(0, 0)
-            );
-            assert_eq!(
-                get_last_expected_time_tz(&now, RU_STATS_INTERVAL, &tz),
-                expect(0, 0)
-            );
-            assert_eq!(
-                get_last_expected_time_tz(&at(tz, 2023, 12, 28, 0, 0, 0), RU_STATS_INTERVAL, &tz),
-                expect(0, 0)
-            );
+            check_get_last_expected_time_matches_upstream_cases(tz);
         }
+        check_get_last_expected_time_matches_upstream_cases(chrono::Local);
+    }
+
+    fn check_get_last_expected_time_matches_upstream_cases<Z: TimeZone + Copy>(tz: Z) {
+        let now = at(tz, 2023, 12, 28, 10, 46, 23);
+        let expect = |h, mi| at(tz, 2023, 12, 28, h, mi, 0);
+        assert_eq!(
+            get_last_expected_time_tz(&now, Duration::minutes(5), &tz),
+            expect(10, 45)
+        );
+        assert_eq!(
+            get_last_expected_time_tz(
+                &at(tz, 2023, 12, 28, 10, 45, 0),
+                Duration::minutes(5),
+                &tz
+            ),
+            expect(10, 45)
+        );
+        assert_eq!(
+            get_last_expected_time_tz(&now, Duration::minutes(10), &tz),
+            expect(10, 40)
+        );
+        assert_eq!(
+            get_last_expected_time_tz(&now, Duration::minutes(30), &tz),
+            expect(10, 30)
+        );
+        assert_eq!(
+            get_last_expected_time_tz(&now, Duration::hours(1), &tz),
+            expect(10, 0)
+        );
+        assert_eq!(
+            get_last_expected_time_tz(&now, Duration::hours(3), &tz),
+            expect(9, 0)
+        );
+        assert_eq!(
+            get_last_expected_time_tz(&now, Duration::hours(4), &tz),
+            expect(8, 0)
+        );
+        assert_eq!(
+            get_last_expected_time_tz(&now, Duration::hours(12), &tz),
+            expect(0, 0)
+        );
+        assert_eq!(
+            get_last_expected_time_tz(&now, RU_STATS_INTERVAL, &tz),
+            expect(0, 0)
+        );
+        assert_eq!(
+            get_last_expected_time_tz(&at(tz, 2023, 12, 28, 0, 0, 0), RU_STATS_INTERVAL, &tz),
+            expect(0, 0)
+        );
     }
 
     /// WRITTEN. The interval walk is absolute-time arithmetic from local
@@ -944,7 +949,7 @@ mod tests {
         let _ = get_last_expected_time_tz(&at(tz, 2023, 12, 28, 1, 0, 0), Duration::zero(), &tz);
     }
 
-    fn writer(deps: MockDeps, start: DateTime<Tz>, tz: Tz) -> RuStatsWriter<MockDeps, Tz> {
+    fn writer<Z: TimeZone>(deps: MockDeps, start: DateTime<Z>, tz: Z) -> RuStatsWriter<MockDeps, Z> {
         RuStatsWriter::new(deps, start, tz)
     }
 
@@ -992,57 +997,66 @@ mod tests {
     #[test]
     fn write_ru_statistics_day_by_day() {
         for tz in [shanghai(), lord_howe(), Tz::UTC] {
-            let deps = default_and_test_groups();
-            let mut w = writer(deps, at(tz, 2023, 12, 26, 0, 0, 1), tz);
-
-            w.do_write_ru_statistics().unwrap();
-            assert_eq!(
-                last_statement(&w.deps),
-                "REPLACE INTO mysql.request_unit_by_group(start_time, end_time, resource_group, total_ru) VALUES (\"2023-12-25 00:00:00\", \"2023-12-26 00:00:00\", \"default\", 350),(\"2023-12-25 00:00:00\", \"2023-12-26 00:00:00\", \"test\", 150);"
-            );
-
-            // after 1 day, only 1 group has delta ru.
-            w.deps.groups.borrow_mut()[1].ru_stats = Some(Consumption {
-                rru: 500.0,
-                wru: 50.0,
-            });
-            w.start_time = at(tz, 2023, 12, 27, 0, 0, 1);
-            w.do_write_ru_statistics().unwrap();
-            assert_eq!(
-                last_statement(&w.deps),
-                "REPLACE INTO mysql.request_unit_by_group(start_time, end_time, resource_group, total_ru) VALUES (\"2023-12-26 00:00:00\", \"2023-12-27 00:00:00\", \"test\", 400);"
-            );
-
-            // after 1 day with 0 delta ru, no statement at all.
-            w.start_time = at(tz, 2023, 12, 28, 0, 0, 1);
-            let before = w.deps.statements.borrow().len();
-            w.do_write_ru_statistics().unwrap();
-            assert_eq!(w.deps.statements.borrow().len(), before);
-
-            w.start_time = at(tz, 2023, 12, 29, 0, 0, 0);
-            w.deps.groups.borrow_mut()[0].ru_stats = Some(Consumption {
-                rru: 200.0,
-                wru: 200.0,
-            });
-            w.do_write_ru_statistics().unwrap();
-            assert_eq!(
-                last_statement(&w.deps),
-                "REPLACE INTO mysql.request_unit_by_group(start_time, end_time, resource_group, total_ru) VALUES (\"2023-12-28 00:00:00\", \"2023-12-29 00:00:00\", \"default\", 50);"
-            );
-
-            // After less than a day, even with changed ru, nothing new: the
-            // probe reports the row is there. (Upstream relies on the real
-            // table; here the probe is scripted, which is the same signal.)
-            *w.deps.inserted_probe.borrow_mut() = true;
-            w.deps.groups.borrow_mut()[0].ru_stats = Some(Consumption {
-                rru: 1000.0,
-                wru: 200.0,
-            });
-            w.start_time = at(tz, 2023, 12, 29, 1, 0, 0);
-            let before = w.deps.statements.borrow().len();
-            w.do_write_ru_statistics().unwrap();
-            assert_eq!(w.deps.statements.borrow().len(), before);
+            check_write_ru_statistics_day_by_day(tz);
         }
+        check_write_ru_statistics_day_by_day(chrono::Local);
+    }
+
+    fn check_write_ru_statistics_day_by_day<Z: TimeZone + Copy>(tz: Z) {
+        let deps = default_and_test_groups();
+        let mut w = writer(deps, at(tz, 2023, 12, 26, 0, 0, 1), tz);
+
+        w.do_write_ru_statistics().unwrap();
+        assert_eq!(
+            last_statement(&w.deps),
+            "REPLACE INTO mysql.request_unit_by_group(start_time, end_time, resource_group, total_ru) VALUES (\"2023-12-25 00:00:00\", \"2023-12-26 00:00:00\", \"default\", 350),(\"2023-12-25 00:00:00\", \"2023-12-26 00:00:00\", \"test\", 150);"
+        );
+
+        // after 1 day, only 1 group has delta ru.
+        w.deps.groups.borrow_mut()[1].ru_stats = Some(Consumption {
+            rru: 500.0,
+            wru: 50.0,
+        });
+        w.start_time = at(tz, 2023, 12, 27, 0, 0, 1);
+        w.do_write_ru_statistics().unwrap();
+        assert_eq!(
+            last_statement(&w.deps),
+            "REPLACE INTO mysql.request_unit_by_group(start_time, end_time, resource_group, total_ru) VALUES (\"2023-12-26 00:00:00\", \"2023-12-27 00:00:00\", \"test\", 400);"
+        );
+
+        // after 1 day with 0 delta ru, no statement at all.
+        w.start_time = at(tz, 2023, 12, 28, 0, 0, 1);
+        let before = w.deps.statements.borrow().len();
+        w.do_write_ru_statistics().unwrap();
+        assert_eq!(w.deps.statements.borrow().len(), before);
+
+        w.start_time = at(tz, 2023, 12, 29, 0, 0, 0);
+        w.deps.groups.borrow_mut()[0].ru_stats = Some(Consumption {
+            rru: 200.0,
+            wru: 200.0,
+        });
+        w.do_write_ru_statistics().unwrap();
+        assert_eq!(
+            last_statement(&w.deps),
+            "REPLACE INTO mysql.request_unit_by_group(start_time, end_time, resource_group, total_ru) VALUES (\"2023-12-28 00:00:00\", \"2023-12-29 00:00:00\", \"default\", 50);"
+        );
+
+        // After less than a day, even with changed ru, nothing new: the
+        // probe reports the row is there. (Upstream relies on the real
+        // table; here the probe is scripted, which is the same signal.)
+        *w.deps.inserted_probe.borrow_mut() = true;
+        w.deps.groups.borrow_mut()[0].ru_stats = Some(Consumption {
+            rru: 1000.0,
+            wru: 200.0,
+        });
+        w.deps.groups.borrow_mut()[1].ru_stats = Some(Consumption {
+            rru: 500.0,
+            wru: 2000.0,
+        });
+        w.start_time = at(tz, 2023, 12, 29, 1, 0, 0);
+        let before = w.deps.statements.borrow().len();
+        w.do_write_ru_statistics().unwrap();
+        assert_eq!(w.deps.statements.borrow().len(), before);
     }
 
     /// TRANSCREATED from `ru_stats_test.go:116-119`: GC called with
@@ -1050,13 +1064,19 @@ mod tests {
     /// the boundary as inclusive.
     #[test]
     fn gc_boundary_is_inclusive_of_the_endpoint() {
-        let tz = shanghai();
+        for tz in [shanghai(), lord_howe(), Tz::UTC] {
+            check_gc_boundary(tz);
+        }
+        check_gc_boundary(chrono::Local);
+    }
+
+    fn check_gc_boundary<Z: TimeZone + Copy>(tz: Z) {
         let deps = MockDeps {
             gc_count: Some(2),
             ..MockDeps::default()
         };
         let start = at(tz, 2023, 12, 26, 0, 0, 0) + Duration::hours(92 * 24);
-        let w = writer(deps, start, tz);
+        let w = writer(deps, start.clone(), tz);
         w.gc_outdated_records(&start.fixed_offset()).unwrap();
         let stmts = w.deps.statements.borrow();
         assert_eq!(

@@ -1,96 +1,97 @@
-# Consolidate utility and protocol integration harnesses
+# Consolidate Domain tests at their existing owners
 
-This living ExecPlan follows root PLANS.md. Prior evidence remains indexed in
-parity/current-audit/README.md.
+This living ExecPlan follows root PLANS.md. Earlier cleanup receipts remain
+indexed in parity/current-audit/README.md.
 
 ## Purpose / Big Picture
 
 
-Reduce integration-test binaries from fifteen to four across tidb-util and
-tidb-proto. Thirteen module-safe suites share two harnesses; the logger and
-infinite clock-monitor suites remain isolated. Remove one racy Rust-only check
-that assumes two filesystem free-space samples are identical. No production
-behavior changes, and no measured wall-clock speedup is claimed.
+Remove four session-side Domain carriers and their repeated fixtures, including
+a miniature SQL-table interpreter and a scripted schema-checker harness. Keep
+useful vectors in existing tidb-domain tests so future changes exercise the
+owning crate directly. No production behavior or complete package claim changes.
 
 ## Context and Orientation
 
 
-Base cdc7d7256f27f352df2a1f8555115c6713330fce on hparser-integration in
-/workspace/tidb. Refreshed Go master is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed.
-Cargo auto-discovered seven utility and eight protocol integration roots.
-Existing custom build scripts own version/protobuf generation and remain intact.
-The new tests/all.rs roots explicitly declare module-safe suites. Set autotests
-false and declare all plus the two retained utility targets in Cargo.toml.
-Future suite additions must be registered in these roots or explicit targets.
+Base 13d1bc836009c3cba540995e00eda76fefd91bad in /workspace/tidb on
+hparser-integration. Go master remains b36c940a4332c866d8b0e2afde88f5e7c2fd7fed.
+The session carriers tests_domain_ru_stats_source.rs,
+tests_domain_topn_slow_query_source.rs, tests_domain_domain_utils_source.rs and
+tests_domain_schema_checker_source.rs duplicate owner tests or script outcomes
+that Go obtains from real storage/validator composition. Remove their four
+cfg(test) module declarations from session/src/lib.rs.
 
-All existing suite files retain their bytes except sys_storage_source.rs, which
-loses uses_statfs_available_bytes. Concurrent disk activity can change statfs
-between calls; Go pkg/util/sys/storage/sys_test.go checks positive capacity only.
-Keep that original case and the missing-path OS-error regression. Keep cgroup's
-non-Linux case compiled conditionally, even though it does not run on Linux.
+Domain ru_stats.rs already covers all interval cases, day-by-day SQL generation,
+same-bucket suppression and inclusive GC. Generalize only its test helpers to
+retain chrono::Local alongside named zones/UTC, including the GC case; preserve
+both changed group counters before the same-bucket suppression check. Domain
+topn_slow_query.rs already carries original heap/FIFO vectors; move the remaining
+sorted [2,2,1,0] expiration assertion there. schema_checker.rs already verifies
+both MySQL codes and checker retry behavior. All production bodies stay unchanged.
 
 ## Progress
 
 
-- [x] Trace all fifteen suites, process isolation and maintained command callers.
-- [x] Consolidate thirteen suites and remove the racy capacity comparison.
-- [x] Run both aggregate suites, verify metadata/input continuity and run lint.
+- [x] Map duplicate checks and unique vectors to existing Domain owners.
+- [x] Remove four carriers/seven registrations; migrate unique vectors.
+- [x] Run grouped owner tests, session test-target check, lint and continuity checks.
 - [ ] Complete hook, fresh pre-push build, remote verification and cloud checkpoint.
 
 ## Milestones and Plan of Work
 
 
-Preserve baseline Cargo metadata and test hashes. Add two small module roots and
-explicit Cargo targets without changing build scripts or dependencies. Update
-rust/scripts/README.md with current commands; historical receipts keep their
-original invocations. Prove every old suite remains registered once, with only
-the documented racy case removed, before publication.
+Trace Go TestWriteRUStatistics, TestGetLastExpectedTime, TestPush,
+TestRemoveExpired, TestQueue, TestErrorCode and TestSchemaCheckerSimple.
+Preserve exact before-images and document retained owners and original integration
+obligations. Delete the repeated session scaffolding only after moving unique
+vectors. Update historical b117/b118 receipt notes and both current registers.
 
 ## Validation and Acceptance
 
 
 Source /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust run:
 
-    cargo metadata --locked --no-deps --format-version 1
-    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-util -p tidb-proto --test all
+    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-domain --lib -- ru_stats::tests topn_slow_query::tests schema_checker::tests --test-threads=1
+    CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-session --tests
 
-Expected Linux result is 44 protocol and 14 utility tests, zero failures or
-ignored cases. The non-Linux cgroup case is conditional, not a skipped Linux test.
-The two isolated suites are unchanged and not rerun. Verify before/after target
-counts 15 to 4, all suite hashes except the exact statfs block, manifests changed
-only for target registration, and unchanged build scripts/lockfile/production.
-Run root make lint and git diff --check. Normal commit must execute the actual
-hooks/pre-commit locked server build. Immediately before the authorized normal
-push repeat cd rust && cargo build --locked -p tidb-server with CARGO_BUILD_JOBS=1.
-Verify remote SHA; no force-push or hook bypass. Postcommit evidence is external
-/workspace/.cloud-setup/utility-proto-harness-cleanup/final-handoff.json.
+Verify all selected tests ran and passed, then root make lint and git diff --check.
+The external domain-test-owner-cleanup/verify.py must confirm unchanged production,
+all original owner assertions, exact session module removal and unchanged findings.
+Normal commit executes actual hooks/pre-commit and its locked server build.
+Immediately before the authorized push repeat cd rust && cargo build --locked
+-p tidb-server with CARGO_BUILD_JOBS=1. Verify remote SHA; never bypass hooks or
+force-push. Postcommit evidence is external final-handoff.json.
 
 ## Surprises & Discoveries
 
 
-Blind aggregation would share a process with a permanently running time monitor
-and a global logger reset. Those suites retain isolation. Two-sample statfs
-comparison is absent from Go and is invalid under concurrent filesystem writes.
+The RU carrier's apparent table checks use a hand-written string parser, not
+TiDB storage. The schema carrier scripts every verdict and never exercises the
+Go validator ring. Neither establishes the original Go integration. The removed
+registrations comprise six active tests and one ignored test; useful overlapping
+behavior remains in the owner tests and unique vectors are migrated.
 
 ## Decision Log
 
 
-On 2026-10-06, retain behavioral and native type-identity coverage while removing
-redundant executable harnesses. Use explicit module roots because both crates
-already have custom build scripts; preserve those generation/version owners.
-The supported platform cases and original Go obligations remain unchanged.
+On 2026-10-06, remove repeated Domain scaffolding as one owner batch. Preserve
+Local timezone, changed-group inputs and sorted-expiration vectors. Keep serverinfo,
+plan-replayer and real session integration suites, whose behavior differs.
+Do not declare real RU table persistence or checker/ring integration verified.
 
 ## Recovery / Interfaces and Dependencies
 
 
-Recover files with git show cdc7d7256f27f352df2a1f8555115c6713330fce:<path>.
-External inventories/logs live in /workspace/.cloud-setup/utility-proto-harness-cleanup.
-No production API, dependency version, lockfile or native-client source changes.
+Recover any before-image using git show 13d1bc836009c3cba540995e00eda76fefd91bad:<path>.
+External artifacts live in /workspace/.cloud-setup/domain-test-owner-cleanup.
+No manifest, lockfile, dependency, generated code or native-client change.
 
 ## Outcomes & Retrospective
 
 
-Eleven redundant integration harnesses and one racy check are retired. Both suites
-passed (58 tests), target/input verification and lint passed; publication remains. All 56 behavioral findings remain unchanged; no package acceptance.
-This replaces the completed placeholder cleanup plan, whose receipt remains
-placeholder-macro-cleanup-validation.json.
+Four carriers are removed and unique assertions are migrated. All 35 selected
+owner tests, session test-target compilation, lint and continuity checks passed.
+Publication remains. All 56 unresolved findings and complete original Go obligations remain.
+This replaces the completed utility/protocol harness plan; its receipt remains
+utility-proto-harness-cleanup-validation.json.
