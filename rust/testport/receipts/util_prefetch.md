@@ -26,8 +26,8 @@ cancel/join, error return, and idempotence order.
 
 The test module now contains exactly the four Go source tests. Two
 supplemental Rust close tests were removed; their extra scenarios are not
-artifacts of this Go package. The current living ExecPlan is
-`rust/docs/operations/util-prefetch-audit-execplan.md`.
+artifacts of this Go package. The completed audit plan is [archived](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-prefetch-audit-execplan.md);
+this receipt retains its inventory and validation boundaries.
 
 ## Validation
 

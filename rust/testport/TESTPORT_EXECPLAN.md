@@ -3387,7 +3387,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `tidb-util` owner, vendored client hooks, structured fields/context, and
   source-derived tests remain aligned; current/detached Go suites and twelve
   focused Rust tests pass. Details are in `receipts/util_traceevent.md` and
-  `docs/operations/util-traceevent-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-traceevent-audit-execplan.md).
 
 - 2026-09-02: re-audited the complete root `pkg/util/tracing` boundary at
   current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: six artifacts
@@ -3506,7 +3506,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   detached Go tests, both Rust owner tests, the consumer default-authority test,
   formatting, and diff checks pass. Updated `receipts/util_paging.md` and
   added the Ready documentation-only plan at
-  `docs/operations/util-paging-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-paging-audit-execplan.md).
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/vitess` inventory at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four tracked artifacts, 154
@@ -3517,7 +3517,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   exact detached Go tests, focused Rust vector test, consumer check,
   formatting, and diff checks pass. Updated `receipts/util_vitess.md` and
   added the Ready documentation-only plan at
-  `docs/operations/util-vitess-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-vitess-audit-execplan.md).
 
 - 2026-09-02: fixed the Rust-only `must_use` diagnostics in the complete
   Go-master `pkg/util/fastrand` owner. The Go package remains five artifacts and
@@ -3539,14 +3539,14 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   without Rust-only behavior. Current and exact detached Go tests, the
   focused Rust test, all-target check, formatting, and diff checks pass.
       Updated `receipts/util_backoff.md` and added the Ready documentation-only
-      plan at `docs/operations/util-backoff-audit-execplan.md`.
+      plan at [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-backoff-audit-execplan.md).
 - 2026-09-02: re-audited the complete Go-master `pkg/util/backoff` inventory
       at current authority `c6054025ed4c32ab3672a2a24ea46892714d21ec`; all
       three artifacts and 113 lines remain unchanged. Re-read the production,
       test, and Bazel files and confirmed the existing Rust owner and source
       vector still preserve signed-duration arithmetic, reset-on-zero, and
       multiplier/cap behavior. Details are in `receipts/util_backoff.md` and
-      `docs/operations/util-backoff-audit-execplan.md`.
+      [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-backoff-audit-execplan.md).
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/zeropool` inventory
   at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: three tracked artifacts,
@@ -3569,7 +3569,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Current and exact detached Go tests, the focused Rust test, formatting, and
   diff checks pass. Updated `receipts/util_watcher.md` and added the Ready
   documentation-only plan at
-  `docs/operations/util-watcher-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-watcher-audit-execplan.md).
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/size` inventory at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two tracked artifacts, 86
@@ -3580,7 +3580,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Rust-only behavior or missing Go behavior. Current and exact detached Go
   checks, Rust owner check, formatting, and diff checks pass. Updated
   `receipts/util_size.md` and added the Ready documentation-only plan at
-  `docs/operations/util-size-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-size-audit-execplan.md).
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/tikvutil` inventory
   at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two tracked artifacts, 31
@@ -3591,7 +3591,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   semantics without Rust-only behavior. Current and exact detached Go checks,
   Rust owner/consumer checks, formatting, and diff checks pass. Updated
   `receipts/util_tikvutil.md` and added the Ready documentation-only plan at
-  `docs/operations/util-tikvutil-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-tikvutil-audit-execplan.md).
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/nocopy` inventory at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two tracked artifacts, 32
@@ -3602,7 +3602,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Go behavior was found. Current and exact detached Go checks, Rust owner
   check, formatting, and diff checks pass. Updated
   `receipts/util_nocopy.md` and added the Ready documentation-only plan at
-  `docs/operations/util-nocopy-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-nocopy-audit-execplan.md).
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/slice` inventory at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four tracked artifacts, 149
@@ -3613,7 +3613,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   and the source test identity. Current and exact detached Go tests, the Rust
   source test and sole consumer check, formatting, and diff checks pass. The
   refreshed receipt and Ready documentation-only plan are in
-  `receipts/util_slice.md` and `docs/operations/util-slice-audit-execplan.md`.
+  `receipts/util_slice.md` and [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-slice-audit-execplan.md).
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/channel` inventory
   (two artifacts, 30 lines, one generic production function, and no source
@@ -4729,7 +4729,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   batch; pooled gzip ownership, statistics block integration, four focused
   stream regressions, and the explicit ingest-control boundary remain intact.
   The dedicated audit ExecPlan is
-  `docs/operations/util-compress-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-compress-audit-execplan.md).
   Updated `receipts/util_compress_audit.md` with current-master hashes.
 
 - 2026-09-01: refreshed the complete Go-master `pkg/util/nocopy` inventory
@@ -5013,7 +5013,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   metadata were re-read and validated in both worktrees. Rust has independent
   SQL, privilege, stats, table-mode, and retry fragments but no dependency-
   closed `dbutil` owner; the Ready receipt and living plan are recorded in
-  `receipts/util_dbutil.md` and `operations/util-dbutil-audit-execplan.md` with
+  `receipts/util_dbutil.md` and [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-dbutil-audit-execplan.md) with
   no speculative Rust behavior.
 
 - 2026-09-02: refreshed the complete current Go-master `pkg/util/mock`
@@ -5024,7 +5024,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   both worktrees. Rust has only crate-local trait-specific mocks, not a
   dependency-closed package owner; the Ready receipt and living plan are
   recorded in `receipts/util_mock.md` and
-  `operations/util-mock-audit-execplan.md`, with no speculative Rust behavior.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-mock-audit-execplan.md), with no speculative Rust behavior.
 
 - 2026-09-01: audited all ten current Go-master `pkg/util/schemacmp`
   artifacts (3,293 lines), including charset/collation, lattice, table/type
@@ -5038,7 +5038,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   dependency-closed `tidb-schemacmp` owner and nine source-derived tests remain
   aligned with no Go source delta or Rust-only duplicate behavior. Details are
   in `receipts/util_schemacmp.md` and
-  `docs/operations/util-schemacmp-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-schemacmp-audit-execplan.md).
 
 - 2026-09-01: revalidated the complete ten-artifact `pkg/util/table-filter`
   package against current Go master. The concrete `ColumnFilterRules` API,
@@ -5077,7 +5077,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   failpoint/random-error test infrastructure; Rust has no dependency-closed
   failpoint registry or matching production consumer. The explicit boundary is
   recorded in `receipts/util_injectfailpoint.md`, with the dedicated ExecPlan
-  at `docs/operations/util-injectfailpoint-audit-execplan.md`; no Rust-only
+  at [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-injectfailpoint-audit-execplan.md); no Rust-only
   replacement was added.
 
 - 2026-09-02: refreshed the complete two-artifact Go-master
@@ -5086,7 +5086,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   failpoint-backed session callback). Rust still has no failpoint runtime or
   session-context hook, so the package remains explicitly unclaimed. The
   current-authority receipt is `receipts/util_breakpoint.md`, with the
-  dedicated ExecPlan at `docs/operations/util-breakpoint-audit-execplan.md`.
+  dedicated ExecPlan at [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-breakpoint-audit-execplan.md).
 
 - 2026-09-01: revalidated the complete four-artifact
   `pkg/util/column-mapping` package against current Go master. The source,
@@ -5115,8 +5115,8 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   helpers or package-wide lock type identity/deadlock detector. The explicit
   Go-only boundaries are recorded in `receipts/util_skip.md` and
   `receipts/util_syncutil.md`, with package ExecPlans at
-  `docs/operations/util-skip-audit-execplan.md` and
-  `docs/operations/util-syncutil-audit-execplan.md`; no source changed.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-skip-audit-execplan.md) and
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-syncutil-audit-execplan.md); no source changed.
 
 - 2026-09-01: audited both current Go-master `pkg/util/regionsplit` artifacts
   (`BUILD.bazel` and `split_handle.go`, 256 lines total) in full, including
@@ -5142,7 +5142,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   active worktree's older `OWNERS` routing differs. The Rust validator owner
   and its two consumers remain aligned, with the current source/owner
   validation recorded in `receipts/util_naming.md` and
-  `docs/operations/util-naming-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-naming-audit-execplan.md).
 
 - 2026-09-01: audited both current Go-master `pkg/util/tableutil` artifacts
   (58 lines: interface/global factory and Bazel library), confirming there are
@@ -5207,7 +5207,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   behavior that still crosses context, protobuf, metrics, and executor seams;
   no partial Rust fix was introduced. See
   `receipts/util_execdetails_audit.md` and
-  `docs/operations/util-execdetails-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-execdetails-audit-execplan.md).
 
 - 2026-09-02: restored the current Go-master `pkg/util/execdetails` source
   delta as one Go-package batch at
@@ -5469,7 +5469,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   earlier Rust-only surface removal; current and detached Go probes plus the
   focused distsql consumer test pass. The Ready receipt and living plan are in
   `receipts/util_tiflash.md` and
-  `operations/util-tiflash-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-tiflash-audit-execplan.md).
 
 - 2026-09-02: completed and re-audited the unclaimed Go `pkg/util/cgroup`
   package against latest master `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
@@ -5644,7 +5644,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Current and exact detached Go probes, the zero-test owner, the production
   consumer, Ready formatting, and diff hygiene pass. Details are in
   `receipts/util_ppcpuusage.md` and
-  `docs/operations/util-ppcpuusage-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-ppcpuusage-audit-execplan.md).
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/texttree` package.
   Removed Rust-only `must_use` diagnostics, its arbitrary-byte supplemental
   regression, and the corresponding temporary-probe narrative; exactly the
@@ -5933,7 +5933,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   manifest, and stale standalone audit plan; the ordinary printer remains the
   source-shaped consumer. Complete inventory and Ready gates are recorded in
   `receipts/util_israce.md`; the living plan is
-  `docs/operations/util-israce-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-israce-audit-execplan.md).
 - 2026-09-02: re-audited all three Go-master `pkg/util/prefetch` artifacts and
   300 lines at `c6054025ed4c32ab3672a2a24ea46892714d21ec`. The native owner
   retains the exact four source tests, unbuffered handoff, alternating
@@ -5941,7 +5941,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Rust-only no-close constructor, Drop-time close, and two supplemental tests
   remain removed. Current and exact detached Go tests plus all four Rust owner
   tests pass. Details are in `receipts/util_prefetch.md` and
-  `docs/operations/util-prefetch-audit-execplan.md`.
+  [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-prefetch-audit-execplan.md).
 - 2026-08-29: audited the complete pinned Go `pkg/util/versioninfo` package
   and re-read every `pkg/util/printer` artifact before changing its consumers.
   Removed Rust's twelve-field per-node/per-session `VersionInfo` snapshots and
@@ -6307,7 +6307,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       consume vardef's three canonical spellings, retain the threshold and
       distsql propagation, and remove alias/adapter/constant/test extras. The
       atomic inventory and Ready gates are in `receipts/util_tiflash.md` and
-      `operations/util-tiflash-audit-execplan.md`.
+      [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-tiflash-audit-execplan.md).
 - [x] Complete the pinned `pkg/util/disk` package in `tidb-util`: restore the
       exact temp-directory lifecycle and both tracker constructors, route its
       real server/chunk/memory-alarm consumers through them, and remove the
@@ -6325,7 +6325,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       remove Rust-only public/test surfaces, and port both source benchmarks.
       The atomic inventory and Ready gates are in
       `receipts/util_traceevent.md` and
-      `docs/operations/util-traceevent-audit-execplan.md`.
+      [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-traceevent-audit-execplan.md).
 - [x] Inventory the nested `pkg/util/traceevent/test` package independently:
       two artifacts and 461 lines, four next-gen session/flight-recorder
       integration tests, and its flaky Bazel target. The root Rust owner covers
@@ -7002,7 +7002,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       no Rust-only behavior was added. Ready lint and diff checks pass; Bazel
       preparation is blocked only by the missing local executable. Details are
       in `receipts/util_gctuner_audit.md` and
-      `docs/operations/util-gctuner-audit-execplan.md`.
+      [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-gctuner-audit-execplan.md).
 - 2026-09-01: inventoried all five Go-master `pkg/domain/serverinfo`
       artifacts (2,295 lines, including the embedded-etcd/fault harness and
       Bazel target). Added the missing status-endpoint claim to the ordinary
@@ -7156,7 +7156,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       endpoint would be Rust-only behavior. Host, Windows, and JS/WASM Go
       selections plus the adjacent Rust server library compile. Details are in
       `receipts/util_signal.md` and
-      `docs/operations/util-signal-audit-execplan.md`.
+      [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-signal-audit-execplan.md).
 - 2026-09-01: audited both Go-master `pkg/util/linter/constructor` artifacts
       (34 lines: public Bazel library and the zero-sized `Constructor` marker).
       It is static-analysis-only metadata consumed by the Go constructor
@@ -7203,7 +7203,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       conversion, TiDB errors, and TiKV GC state without one dependency-closed
       Rust helper. The package remains explicitly unclaimed; details are in
       `receipts/util_gcutil.md` and
-      `docs/operations/util-gcutil-audit-execplan.md`.
+      [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-gcutil-audit-execplan.md).
 - 2026-09-02: re-audited all three Go-master `pkg/util/httputil` artifacts at
       `c6054025ed4c32ab3672a2a24ea46892714d21ec` (199 lines: TLS-aware
       30-second client construction, context GET/JSON/text helpers, non-200
@@ -7212,7 +7212,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       composition root with this contract, so no adapter was added. The
       package remains explicitly unclaimed; details are in
       `receipts/util_httputil.md` and
-      `docs/operations/util-httputil-audit-execplan.md`.
+      [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-httputil-audit-execplan.md).
 - 2026-09-02: re-audited all three Go-master `pkg/util/metricsutil` artifacts
       at `c6054025ed4c32ab3672a2a24ea46892714d21ec` (269 lines: process/BR
       metrics registration, keyspace labels, PD retry, one source test, and
@@ -7220,7 +7220,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       family and BR/PD consumer; Rust has only split collector fragments and
       no dependency-closed registry owner. The package remains explicitly
       unclaimed; details are in `receipts/util_metricsutil.md` and
-      `docs/operations/util-metricsutil-audit-execplan.md`.
+      [archived plan](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-metricsutil-audit-execplan.md).
 - 2026-09-01: audited both Go-master `pkg/util/gcutil` artifacts (109 lines:
       GC enable toggles, restricted `tikv_gc_safe_point` lookup, Oracle
       timestamp conversion, snapshot validation, and Bazel target). Rust has

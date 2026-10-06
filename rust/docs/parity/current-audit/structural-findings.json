@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "model-carrier-cleanup-validation.json",
-    "scope": "Retire the 606-line mixed model carrier; consolidate eight cases into existing owners and two retained registrations, remove type-name/native-size probes and replace synthetic labels with direct behavioral assertions."
+    "receipt": "utility-plan-cleanup-validation.json",
+    "scope": "Retire thirty completed utility audit plans (1177 lines), retaining package inventories and validation limits in receipts and replacing stale plan pointers with immutable archive links. No executable changes."
   },
   "test_cleanup_history": [
     {
@@ -1019,6 +1019,11 @@
       "date": "2026-10-06",
       "receipt": "model-carrier-cleanup-validation.json",
       "scope": "Retire the 606-line mixed model carrier; consolidate eight cases into existing owners and two retained registrations, remove type-name/native-size probes and replace synthetic labels with direct behavioral assertions."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "utility-plan-cleanup-validation.json",
+      "scope": "Retire thirty completed utility audit plans (1177 lines), retaining package inventories and validation limits in receipts and replacing stale plan pointers with immutable archive links. No executable changes."
     }
   ],
   "repair_history": [

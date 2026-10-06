@@ -1,109 +1,107 @@
-# Retire the mixed metadata test carrier
+# Retire completed utility audit plans
 
-This living ExecPlan follows root PLANS.md. The preceding model target cleanup
-is published as 7328420b5007703491f11edf2f88ef186cc2d4ee; its final evidence is in
-/workspace/.cloud-setup/model-test-owner-cleanup/final-handoff.json.
+This living ExecPlan follows root PLANS.md. The preceding model carrier cleanup
+was published as ed663646e2841f22efc9e609006007752802caab; its final evidence is in
+/workspace/.cloud-setup/model-carrier-cleanup/final-handoff.json.
 
 ## Purpose and Context
 
 
-Remove repeated metadata test setup and synthetic representation checks while
-retaining Go behavior coverage. Work in /workspace/tidb on hparser-integration.
-The refreshed Go master is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. The Rust owner
-is rust/crates/tidb-model; the source contract is pkg/meta/model. Its mixed
-src/tests_pkg_meta_model_part2.rs carrier contains eight tests spanning column,
-index, table, TTL and partition owners. Owners already cover several cases.
+Remove duplicated historical audit instructions so future work starts from
+current findings and maintained test owners. Work in /workspace/tidb on
+hparser-integration. Refreshed Go master remains
+b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Thirty completed utility plans under
+rust/docs/operations repeat inventories and validation boundaries retained in
+rust/testport/receipts. They describe September pins as current and carry
+completed publication instructions. They are historical records, not current
+Cloud startup or package-acceptance gates.
 
 ## Progress
 
 
-- [x] Compare the eight cases with Go and current owning tests.
-- [x] Retire the carrier, migrate unique vectors, and remove representation probes.
-- [x] Complete grouped tests, continuity checks, lint and diff review.
-- [ ] Commit through the actual hook, fresh locked prepush build and normal push.
-- [ ] Verify the remote and save the cloud checkpoint.
+- [x] Read candidate plans and compare retained receipt inventories and limits.
+- [x] Remove thirty completed plans and repair current/historical references.
+- [x] Verify Cargo metadata and retained receipt/source/test continuity.
+- [x] Complete root lint, final diff and reference review.
+- [ ] Commit through the actual hook; fresh locked build and normal push.
+- [ ] Verify the remote SHA and save the cloud checkpoint.
 
 ## Milestones and Plan of Work
 
 
-First merge the five-case legacy/current plain/BIT JSON matrix into
-column.rs::tests::default_value, retaining its stronger SQL error checks and
-existing extra_column_constructors assertions. Move the complete index prefix,
-FK partial-condition and pointer-identity case into index.rs::tests, with its
-fixture helpers local to that test. Move TestModelBasic to table_info.rs::tests;
-discard only its unused local clone/toggle, which no assertion observes.
+First inventory the thirty reviewed plans listed in
+rust/docs/parity/current-audit/utility-plan-cleanup-validation.json. Preserve
+all thirty package receipts. Plans with unchecked work remain. Also keep codec,
+serialization, SQLKiller and stringutil plans outside this reviewed removal
+inventory; their separate consumer corrections and historical build limits are
+not silently discarded.
 
-Next retire the duplicate movement case and check_offsets helper: the existing
-move_column_ports_the_exact_upstream_sequence_and_signed_panics tests every
-source transition and additional signed/panic behavior. Extend table_tests.rs
-clone and interval tests with TTL mutation isolation, 200h and both parsed
-source defaults. Set HASH before the existing partition reset test, preserving
-the removed test's nonzero input. Remove the carrier and its lib.rs registration.
+Next delete the selected plans. Replace 31 references in
+rust/testport/TESTPORT_EXECPLAN.md with immutable Git archive links. In israce,
+ppcpuusage and prefetch receipts, change only the obsolete current-plan pointer
+to an archive link. Keep dated command transcripts unchanged, including old
+paths within historical commands. Add a short operations README directing new
+work to the current parity register, maintained workflow and retained receipts.
 
-Finally remove the GoAny type-name substring and native flag-size probes from
-pkg_meta_model_package_anchors.rs. The retained high-bit flag roundtrip and GoAny
-behavior owners exercise the contracts. Replace synthetic string labels with
-direct map allocation, JSON inequality, clone identity and placement assertions.
-Update b008's eight mappings and the historical materialized-view receipt's
-reference. Finding dispositions and complete package obligations stay unchanged.
+Finally record exact removed-file and retained-receipt hashes. Update both
+finding registers' cleanup pointers without changing findings or counts.
+Validate the complete documentation batch once, then publish through the normal
+repository gates. Do not run unrelated behavioral suites for unchanged code.
 
 ## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh, then from /workspace/tidb/rust run:
+Source /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust compare before
+and after cargo metadata --locked --no-deps --format-version 1 byte-for-byte.
+Require every production source, test, script, manifest and lockfile to remain
+unchanged. Twenty-seven receipts must be byte-identical; three may differ only
+in their archive-pointer text. Every removed plan must have an archive link
+anchored at ed663646e2841f22efc9e609006007752802caab and an existing retained receipt.
+Check historical references resolve to those archives. From repository root run
+make lint and git diff --check. No Go/Bazel changes require bazel_prepare.
 
-    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-model --lib -- column::tests index::tests table_info::tests table::tests partition::tests --test-threads=1
-    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-model --test all -- --test-threads=1
-    cargo metadata --locked --no-deps --format-version 1
-
-Require actual selected tests to pass. Verify metadata is byte-identical and
-production source prefixes before cfg(test) are unchanged; lib.rs only loses a
-test module declaration. Compare the complete moved index case and model-basic
-body against their before-images. From repository root run make lint,
-git diff --check and rustfmt --check on edited Rust files. No Go or Bazel change
-requires bazel_prepare. No production bug or speedup is claimed by this cleanup.
-
-Commit with executable hooks/pre-commit selected by core.hooksPath=hooks; it must
-run cd rust && cargo build --locked -p tidb-server. Repeat the same locked build
-immediately before normal push to origin hparser-integration, and verify the
-remote SHA. Do not bypass hooks or force-push.
+Commit normally with executable hooks/pre-commit selected by core.hooksPath=hooks.
+It must pass cd rust && cargo build --locked -p tidb-server. Repeat the same
+locked build immediately before normal push to origin hparser-integration and
+verify the remote SHA. Never bypass hooks or force-push.
 
 ## Surprises & Discoveries
 
 
-The movement owner already executes all eight source moves plus signed-offset
-failure cases. The carrier's pk_col clone is toggled and then never read. Anchor
-checks include type_name text and native size assertions despite retained
-behavioral flag roundtrips. These checks do not establish Go semantics.
+Completed audit plans repeat old authority-refresh and publication steps even
+when receipts preserve the inventories independently. Three receipts still call
+their completed plans current. Some historical receipts disagree about earlier
+owner completeness; retain their dated evidence and use the current structural
+register for present dispositions rather than treating deletion as acceptance.
 
 ## Decision Log
 
 
-On 2026-10-06 remove the mixed carrier as a unit. Preserve the five JSON cases,
-all FK vectors and source clone/reset inputs rather than deleting meaningful
-Rust assertions solely because their names differ from Go. Use existing owner
-fixtures and one grouped validation boundary. Keep NextGen acceptance unresolved.
+On 2026-10-06 retire only the reviewed completed utility-plan set. Preserve
+inventories, missing consumers, platform limits and original validation evidence
+in receipts. Archive old plan links rather than rewriting dated evidence into
+claims about current Go master. Keep executable tests and source untouched.
+This reduces stale instructions, not measured compilation/runtime cost.
 
 ## Outcomes & Retrospective
 
 
-Implementation removes the 606-line carrier, six net test registrations and two
-representation-only probes; meaningful cases move to existing owners. Net Rust
-reduction is 289 lines. All 116 selected tests, lint, formatting, metadata and
-source continuity pass. Publication remains pending; external final-handoff.json
-will record the completed hook, prepush build, remote SHA and cloud checkpoint. Production behavior and all 56 unresolved
-structural findings are unchanged.
+Thirty plans and 1177 lines removed; 31 historical links and three current-plan
+pointers repaired. Metadata is byte-identical and code/tests/scripts are
+unchanged. Root lint and diff/reference review passed. Publication is pending;
+external final-handoff.json records its completed gates and remote verification. All 86 findings retain
+30 repaired and 56 unresolved (27 open, 29 partial); no package acceptance claim.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Before-images are available with git show 7328420b5007703491f11edf2f88ef186cc2d4ee:<path>.
-Do not overwrite concurrent work. Durable evidence belongs in
-rust/docs/parity/current-audit/model-carrier-cleanup-validation.json and external
-logs in /workspace/.cloud-setup/model-carrier-cleanup. Dependencies, APIs and
-Cargo target declarations remain unchanged. The previous static tests/all.rs
-registration and process-default isolation remain mandatory. Cloud draft saving
-does not establish environment Publish or fresh-task restoration.
+Restore a reviewed before-image with git show
+ed663646e2841f22efc9e609006007752802caab:<path>, preserving concurrent changes.
+The retirement receipt contains immutable archive links and hashes; external
+logs and final publication/checkpoint results live in
+/workspace/.cloud-setup/utility-plan-cleanup. No dependency, API, test target or
+build script changes. Cloud draft persistence is distinct from Publish and
+validation in a fresh task.
 
-Revision 2026-10-06: replace the completed target-consolidation plan with removal
-of the mixed test carrier and direct behavioral assertions.
+Revision 2026-10-06: replace the completed model cleanup plan with retirement of
+superseded utility audit instructions and explicit preservation of their evidence.

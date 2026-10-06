@@ -28,8 +28,8 @@ The audit changed every mutex acquisition to recover the protected state after
 a poisoned owner, removing a Rust-only failure mode that Go's `sync.Mutex`
 does not have. All Rust-only unit tests and the `must_use` diagnostic were
 removed because this Go package has no test artifact or equivalent diagnostic.
-The current living ExecPlan is
-`rust/docs/operations/util-ppcpuusage-audit-execplan.md`.
+The completed audit plan is [archived](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-ppcpuusage-audit-execplan.md);
+this receipt retains its inventory and validation boundaries.
 
 ## Validation
 

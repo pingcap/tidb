@@ -23,8 +23,8 @@ ordinary printer consumes the value just as Go's printer does.
 The earlier audit removed two Rust-only unit tests and the retired semantic-
 gate manifest. These
 artifacts had no Go counterparts and duplicated compile-time selection that is
-validated by compiling both feature variants. The current living ExecPlan is
-`rust/docs/operations/util-israce-audit-execplan.md`.
+validated by compiling both feature variants. The completed audit plan is [archived](https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-israce-audit-execplan.md);
+this receipt retains its inventory and validation boundaries.
 
 ## Validation
 

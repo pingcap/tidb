@@ -1,0 +1,312 @@
+{
+  "date": "2026-10-06",
+  "base": "ed663646e2841f22efc9e609006007752802caab",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire thirty completed utility audit plans (1177 lines), retaining package inventories and validation limits in receipts and replacing stale plan pointers with immutable archive links. No executable changes.",
+  "continuity": {
+    "metadata_byte_identical": true,
+    "source_tests_manifests_lockfiles_scripts_unchanged": true,
+    "retained_receipts": 30,
+    "receipts_byte_identical": 27,
+    "receipt_edits_only_archive_pointer": 3,
+    "removed_plans": 30,
+    "removed_lines": 1177,
+    "history_archive_links": 31,
+    "production_behavior_changed": false
+  },
+  "removed_plans": [
+    {
+      "plan": "rust/docs/operations/util-backoff-audit-execplan.md",
+      "plan_lines": 41,
+      "plan_sha256": "7bd98d5211ce9f7f1cf7d19edd8b4fdb31a6a1c281bc5fdd3187b77630c1e226",
+      "receipt": "rust/testport/receipts/util_backoff.md",
+      "receipt_sha256": "480862d0845f6f6a966adffee8d1be5a08c25f1dd8ab1009b6c70c3d6b9defbe",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-backoff-audit-execplan.md",
+      "receipt_after_sha256": "480862d0845f6f6a966adffee8d1be5a08c25f1dd8ab1009b6c70c3d6b9defbe"
+    },
+    {
+      "plan": "rust/docs/operations/util-breakpoint-audit-execplan.md",
+      "plan_lines": 36,
+      "plan_sha256": "95d8223a2afedf2cb47d199038fad14d1fe44d92d383eddb50155bb85e9c2644",
+      "receipt": "rust/testport/receipts/util_breakpoint.md",
+      "receipt_sha256": "1128ba22e2dc4a18ff06ae8ee32c9c4bc690b211dc848c2643d3665c948d6972",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-breakpoint-audit-execplan.md",
+      "receipt_after_sha256": "1128ba22e2dc4a18ff06ae8ee32c9c4bc690b211dc848c2643d3665c948d6972"
+    },
+    {
+      "plan": "rust/docs/operations/util-compress-audit-execplan.md",
+      "plan_lines": 37,
+      "plan_sha256": "b4ee9c8529b8ee94adf55bc800c7961d015c739e7ec562acfecdb59c23195dca",
+      "receipt": "rust/testport/receipts/util_compress_audit.md",
+      "receipt_sha256": "c969ee110b895e9fc72a498e20adae7b1feee1179665aeb6d87e52558e90e868",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-compress-audit-execplan.md",
+      "receipt_after_sha256": "c969ee110b895e9fc72a498e20adae7b1feee1179665aeb6d87e52558e90e868"
+    },
+    {
+      "plan": "rust/docs/operations/util-dbutil-audit-execplan.md",
+      "plan_lines": 43,
+      "plan_sha256": "0cfaa1fab787da115f45034c670776bfdac0a184aac3db084bc0f058d2e6533c",
+      "receipt": "rust/testport/receipts/util_dbutil.md",
+      "receipt_sha256": "18c7c76df2274edd035d9422bdf36ab50d25d622c1cf33f671117b5403e57e1b",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-dbutil-audit-execplan.md",
+      "receipt_after_sha256": "18c7c76df2274edd035d9422bdf36ab50d25d622c1cf33f671117b5403e57e1b"
+    },
+    {
+      "plan": "rust/docs/operations/util-execdetails-audit-execplan.md",
+      "plan_lines": 49,
+      "plan_sha256": "c2f4b6818bda71136dec9c55461286369e03d9cb9698f1562faba266146c727d",
+      "receipt": "rust/testport/receipts/util_execdetails_audit.md",
+      "receipt_sha256": "954a4dcc8429d4fe8c12dc1c6414abf79d26b6b9f873aba0049fce684ed356b1",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-execdetails-audit-execplan.md",
+      "receipt_after_sha256": "954a4dcc8429d4fe8c12dc1c6414abf79d26b6b9f873aba0049fce684ed356b1"
+    },
+    {
+      "plan": "rust/docs/operations/util-gctuner-audit-execplan.md",
+      "plan_lines": 44,
+      "plan_sha256": "f0a27bb8221ff44d4bab190b3a1bbd2261a14285b0fa005dd5bd617e93b6da63",
+      "receipt": "rust/testport/receipts/util_gctuner_audit.md",
+      "receipt_sha256": "d3545760c600371aeb05da2938f53ca155eb5729f5249bc6d296d443b0ba391a",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-gctuner-audit-execplan.md",
+      "receipt_after_sha256": "d3545760c600371aeb05da2938f53ca155eb5729f5249bc6d296d443b0ba391a"
+    },
+    {
+      "plan": "rust/docs/operations/util-gcutil-audit-execplan.md",
+      "plan_lines": 46,
+      "plan_sha256": "1d3a51eaa0558646fa240e82d09e5d29185bccae308f62a1e5ab3d641f95ea82",
+      "receipt": "rust/testport/receipts/util_gcutil.md",
+      "receipt_sha256": "38af3f6782037a08c9aaec845c35b95e021d1fcf26297a35c229e0490021c3e7",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-gcutil-audit-execplan.md",
+      "receipt_after_sha256": "38af3f6782037a08c9aaec845c35b95e021d1fcf26297a35c229e0490021c3e7"
+    },
+    {
+      "plan": "rust/docs/operations/util-httputil-audit-execplan.md",
+      "plan_lines": 46,
+      "plan_sha256": "ee31eaa197866b7031b64762fdd499929f3b5037ef8ec62e9633949595d8cc2d",
+      "receipt": "rust/testport/receipts/util_httputil.md",
+      "receipt_sha256": "9bd1a0fe5ef99a78e4691424f9ce47d11a5cb205b53bfff39263cc6b9eb6024f",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-httputil-audit-execplan.md",
+      "receipt_after_sha256": "9bd1a0fe5ef99a78e4691424f9ce47d11a5cb205b53bfff39263cc6b9eb6024f"
+    },
+    {
+      "plan": "rust/docs/operations/util-injectfailpoint-audit-execplan.md",
+      "plan_lines": 37,
+      "plan_sha256": "dcb3992d25c602ef2463daeab88711838c251c35003f48a33377eae7f3c28994",
+      "receipt": "rust/testport/receipts/util_injectfailpoint.md",
+      "receipt_sha256": "dd5777fc648136cfa9f5ac6aba256a09f74a80c826122e297456dbd09890bd38",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-injectfailpoint-audit-execplan.md",
+      "receipt_after_sha256": "dd5777fc648136cfa9f5ac6aba256a09f74a80c826122e297456dbd09890bd38"
+    },
+    {
+      "plan": "rust/docs/operations/util-israce-audit-execplan.md",
+      "plan_lines": 35,
+      "plan_sha256": "9a4ab85723c14b2a6d794f8648b76c0e12b08955f86e2520c3fb45100d909f7e",
+      "receipt": "rust/testport/receipts/util_israce.md",
+      "receipt_sha256": "da96b7404993f85e4bb27e36b17b768d7208367446a61383784bbf9d83b3fd60",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-israce-audit-execplan.md",
+      "receipt_after_sha256": "391a40b255cac607aa8b3769db1617525cd89d55e71b9e9db4cd39e970c1ea36"
+    },
+    {
+      "plan": "rust/docs/operations/util-mathutil-audit-execplan.md",
+      "plan_lines": 39,
+      "plan_sha256": "a1ed270c0ab9e54fe0fd149bc91546edc81befc532e8ee9a861205c93d1f69c1",
+      "receipt": "rust/testport/receipts/util_mathutil.md",
+      "receipt_sha256": "92d4f7d6e7e1fa925345233c723464547db724377d76e1eed6fccf2427f5a74c",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-mathutil-audit-execplan.md",
+      "receipt_after_sha256": "92d4f7d6e7e1fa925345233c723464547db724377d76e1eed6fccf2427f5a74c"
+    },
+    {
+      "plan": "rust/docs/operations/util-metricsutil-audit-execplan.md",
+      "plan_lines": 48,
+      "plan_sha256": "112208e9da5808050925268525ebd8461d2f4ab2c9e49a7667227279c784ebe9",
+      "receipt": "rust/testport/receipts/util_metricsutil.md",
+      "receipt_sha256": "74a767d8d3add0bf72dfc16972a0e50206c319e56cf5d403c0c9a5257a401930",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-metricsutil-audit-execplan.md",
+      "receipt_after_sha256": "74a767d8d3add0bf72dfc16972a0e50206c319e56cf5d403c0c9a5257a401930"
+    },
+    {
+      "plan": "rust/docs/operations/util-mock-audit-execplan.md",
+      "plan_lines": 44,
+      "plan_sha256": "93e3c07763185c6c57c0f1af8487ddc0f2af4604f07df2a5b4aac6f69a48b165",
+      "receipt": "rust/testport/receipts/util_mock.md",
+      "receipt_sha256": "eeef55a86f39a1a3359abf6d357cafa4c90553324b9fffe4009ee9505a79469e",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-mock-audit-execplan.md",
+      "receipt_after_sha256": "eeef55a86f39a1a3359abf6d357cafa4c90553324b9fffe4009ee9505a79469e"
+    },
+    {
+      "plan": "rust/docs/operations/util-naming-audit-execplan.md",
+      "plan_lines": 33,
+      "plan_sha256": "8f3b4e691be962d199611971551acbf70fc8c217d62c48bbc8a14f9b8f0df2f7",
+      "receipt": "rust/testport/receipts/util_naming.md",
+      "receipt_sha256": "8725ffd6c16121a1c74261066c0cea8bb282177fd215a62cc6993c8516cd50a6",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-naming-audit-execplan.md",
+      "receipt_after_sha256": "8725ffd6c16121a1c74261066c0cea8bb282177fd215a62cc6993c8516cd50a6"
+    },
+    {
+      "plan": "rust/docs/operations/util-nocopy-audit-execplan.md",
+      "plan_lines": 35,
+      "plan_sha256": "e7ae2c4256bfff875ace142e51efc10986a6b12dfae7558278c417076e0c7066",
+      "receipt": "rust/testport/receipts/util_nocopy.md",
+      "receipt_sha256": "6e2488928b3677a560a4ac55e241507e8b5e046e193d5981bd889347010c3acd",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-nocopy-audit-execplan.md",
+      "receipt_after_sha256": "6e2488928b3677a560a4ac55e241507e8b5e046e193d5981bd889347010c3acd"
+    },
+    {
+      "plan": "rust/docs/operations/util-paging-audit-execplan.md",
+      "plan_lines": 36,
+      "plan_sha256": "1844f0cb42b92cb1bbd2dfffd55245c82b5b8a2eb9b6a6b8b5cd1210fae7d203",
+      "receipt": "rust/testport/receipts/util_paging.md",
+      "receipt_sha256": "a3cf7af4c7b5e78eaaf5a6aaca555d770b7fdc5dfd6feb075badacb9584a3bdb",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-paging-audit-execplan.md",
+      "receipt_after_sha256": "a3cf7af4c7b5e78eaaf5a6aaca555d770b7fdc5dfd6feb075badacb9584a3bdb"
+    },
+    {
+      "plan": "rust/docs/operations/util-ppcpuusage-audit-execplan.md",
+      "plan_lines": 36,
+      "plan_sha256": "d759e545ebe750d6add821f8d0938c90e9629b39a69afad516bde1b8ea48860c",
+      "receipt": "rust/testport/receipts/util_ppcpuusage.md",
+      "receipt_sha256": "1e76d204bec3f400ee1dabfaeccf750d6db2d7e230de2e67357e971f472045e4",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-ppcpuusage-audit-execplan.md",
+      "receipt_after_sha256": "1fc8072affabaf349b8271d592bd4f60426cf37c4aa3b98035ad8626ca2a5c25"
+    },
+    {
+      "plan": "rust/docs/operations/util-prefetch-audit-execplan.md",
+      "plan_lines": 35,
+      "plan_sha256": "2b51296ffd1ab24ed30d58bf421294445030a5c1eaec52a59684a681955310f5",
+      "receipt": "rust/testport/receipts/util_prefetch.md",
+      "receipt_sha256": "5c091a9b9c9c8718f8d51fcdb587f1e240f20c0760cfde83f6a10b9da8b29ca5",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-prefetch-audit-execplan.md",
+      "receipt_after_sha256": "41d66d5c6d943c73771fd2963134c53c55de6c9b3720414a554ad1786eefde7b"
+    },
+    {
+      "plan": "rust/docs/operations/util-regionsplit-audit-execplan.md",
+      "plan_lines": 32,
+      "plan_sha256": "bc2e4b69f6b4416aff0401af27bdccc4dba27377020527ceaf38a4389d0b7531",
+      "receipt": "rust/testport/receipts/util_regionsplit.md",
+      "receipt_sha256": "987ce883d6bdabc419100b11986fbdecf217ba8e23ac7970387cf1d7f18a0957",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-regionsplit-audit-execplan.md",
+      "receipt_after_sha256": "987ce883d6bdabc419100b11986fbdecf217ba8e23ac7970387cf1d7f18a0957"
+    },
+    {
+      "plan": "rust/docs/operations/util-schemacmp-audit-execplan.md",
+      "plan_lines": 40,
+      "plan_sha256": "214faecea7309c56a1e37326b1577fed010e35dcae9224aafd7a6e8d5289c970",
+      "receipt": "rust/testport/receipts/util_schemacmp.md",
+      "receipt_sha256": "20a382dd1f5cd99556ea968b6362019d14f7c72e954837dbe08e8e9e29a68617",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-schemacmp-audit-execplan.md",
+      "receipt_after_sha256": "20a382dd1f5cd99556ea968b6362019d14f7c72e954837dbe08e8e9e29a68617"
+    },
+    {
+      "plan": "rust/docs/operations/util-signal-audit-execplan.md",
+      "plan_lines": 38,
+      "plan_sha256": "27ed85c46d4c06cb7a2482fb02371608e029c06c8734bb2ffc7209b91a9a0418",
+      "receipt": "rust/testport/receipts/util_signal.md",
+      "receipt_sha256": "40b2b279dda42b4b288d564dd84dc3922f799b66ecc3ca8956d6b230ec934023",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-signal-audit-execplan.md",
+      "receipt_after_sha256": "40b2b279dda42b4b288d564dd84dc3922f799b66ecc3ca8956d6b230ec934023"
+    },
+    {
+      "plan": "rust/docs/operations/util-size-audit-execplan.md",
+      "plan_lines": 35,
+      "plan_sha256": "0998a03e4efe63600c3df3700d2c24d5cc205e07390b2c904f2c5b2f2cd9e856",
+      "receipt": "rust/testport/receipts/util_size.md",
+      "receipt_sha256": "f37e75b6f6a09b01b834185ada9486d5bd0212660ee362e3f7c6791d582cd8bf",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-size-audit-execplan.md",
+      "receipt_after_sha256": "f37e75b6f6a09b01b834185ada9486d5bd0212660ee362e3f7c6791d582cd8bf"
+    },
+    {
+      "plan": "rust/docs/operations/util-skip-audit-execplan.md",
+      "plan_lines": 37,
+      "plan_sha256": "d452fbb2ed00ef4b37c14257d0e8bbc383eba6ba43d8492e56546d0e2b606558",
+      "receipt": "rust/testport/receipts/util_skip.md",
+      "receipt_sha256": "8fb24b4de6076486a670849bf846fa4cd08f8fbf3dcf91c0247b06b9e24863cc",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-skip-audit-execplan.md",
+      "receipt_after_sha256": "8fb24b4de6076486a670849bf846fa4cd08f8fbf3dcf91c0247b06b9e24863cc"
+    },
+    {
+      "plan": "rust/docs/operations/util-slice-audit-execplan.md",
+      "plan_lines": 35,
+      "plan_sha256": "4ccfc93af295abfde153b424b76a6ecd96d3bfed5dbc92501fbbb6488106ce2b",
+      "receipt": "rust/testport/receipts/util_slice.md",
+      "receipt_sha256": "5c00cedc8a0f430689730947e2d28ec7172b376389cf928d8410e48afe6f0bf4",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-slice-audit-execplan.md",
+      "receipt_after_sha256": "5c00cedc8a0f430689730947e2d28ec7172b376389cf928d8410e48afe6f0bf4"
+    },
+    {
+      "plan": "rust/docs/operations/util-syncutil-audit-execplan.md",
+      "plan_lines": 41,
+      "plan_sha256": "a7588c7b41b8a088bba0ceaea76d9170b38aab8064eb59f1a6975929105a0faf",
+      "receipt": "rust/testport/receipts/util_syncutil.md",
+      "receipt_sha256": "853d0a441f7e57c80bbb45849a8852a868d75d6b93093a068d721e07b15f4355",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-syncutil-audit-execplan.md",
+      "receipt_after_sha256": "853d0a441f7e57c80bbb45849a8852a868d75d6b93093a068d721e07b15f4355"
+    },
+    {
+      "plan": "rust/docs/operations/util-tiflash-audit-execplan.md",
+      "plan_lines": 41,
+      "plan_sha256": "a5241a7d9c662eac34b18b24ef22bed66b3348d77131e3a91a3492f87196dda2",
+      "receipt": "rust/testport/receipts/util_tiflash.md",
+      "receipt_sha256": "eb9fc7e19a8aede46b33a4cf4fa8460112a69c3a6aac36f9382224b697723e06",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-tiflash-audit-execplan.md",
+      "receipt_after_sha256": "eb9fc7e19a8aede46b33a4cf4fa8460112a69c3a6aac36f9382224b697723e06"
+    },
+    {
+      "plan": "rust/docs/operations/util-tikvutil-audit-execplan.md",
+      "plan_lines": 36,
+      "plan_sha256": "51b9d8a844809f4e7ce2bf1135e88c6b5e6b27fd0b87b3806b3f166443300c90",
+      "receipt": "rust/testport/receipts/util_tikvutil.md",
+      "receipt_sha256": "4da2d973ad42d9f17a87d070b1a659170f74df8d33702c2e16113b9f47acf2bf",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-tikvutil-audit-execplan.md",
+      "receipt_after_sha256": "4da2d973ad42d9f17a87d070b1a659170f74df8d33702c2e16113b9f47acf2bf"
+    },
+    {
+      "plan": "rust/docs/operations/util-traceevent-audit-execplan.md",
+      "plan_lines": 47,
+      "plan_sha256": "66b92e7e2667d9c90bcae6faa277c4f17db696622fb2354cdc1de287b9e03b03",
+      "receipt": "rust/testport/receipts/util_traceevent.md",
+      "receipt_sha256": "501b59ecc024814cd122b5188aab69d1d7236f4b624f7f7914eceb42c4d4c6bd",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-traceevent-audit-execplan.md",
+      "receipt_after_sha256": "501b59ecc024814cd122b5188aab69d1d7236f4b624f7f7914eceb42c4d4c6bd"
+    },
+    {
+      "plan": "rust/docs/operations/util-vitess-audit-execplan.md",
+      "plan_lines": 37,
+      "plan_sha256": "a3ee8f6f1c6ffd4db83df3efe1aa9b399cf4477537a8a31667aa4f83236cecda",
+      "receipt": "rust/testport/receipts/util_vitess.md",
+      "receipt_sha256": "cf887c48ffaa0d155e132e51c91b04e13f98b9096a139a493f0dd29f47689b6e",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-vitess-audit-execplan.md",
+      "receipt_after_sha256": "cf887c48ffaa0d155e132e51c91b04e13f98b9096a139a493f0dd29f47689b6e"
+    },
+    {
+      "plan": "rust/docs/operations/util-watcher-audit-execplan.md",
+      "plan_lines": 38,
+      "plan_sha256": "6cdcc87e679033d75037c8acbf41bdf610197ce26f9ee33e5d96192013fea6e5",
+      "receipt": "rust/testport/receipts/util_watcher.md",
+      "receipt_sha256": "9bbaa1540005f8d86dd63fa6a59a698d9ae0f2360d780f3cddb8a0e6e7274512",
+      "archive": "https://github.com/pingcap/tidb/blob/ed663646e2841f22efc9e609006007752802caab/rust/docs/operations/util-watcher-audit-execplan.md",
+      "receipt_after_sha256": "9bbaa1540005f8d86dd63fa6a59a698d9ae0f2360d780f3cddb8a0e6e7274512"
+    }
+  ],
+  "receipt_pointer_edits": [
+    "rust/testport/receipts/util_israce.md",
+    "rust/testport/receipts/util_ppcpuusage.md",
+    "rust/testport/receipts/util_prefetch.md"
+  ],
+  "historical_commands": "Dated transcript paths remain historical evidence, not active workflow instructions. Package obligations and findings remain unchanged.",
+  "validation": {
+    "metadata": "cargo metadata --locked --no-deps --format-version 1 is byte-identical",
+    "lint": "make lint passed",
+    "diff": "git diff --check passed",
+    "tests": "Not rerun: all source, executable tests, scripts and target/dependency declarations are unchanged. Prior 116-test model cleanup evidence remains in its own receipt.",
+    "publication": "Actual hook, fresh immediate-prepush build, remote SHA and checkpoint recorded after completion in external final-handoff.json."
+  },
+  "limits": [
+    "No fresh whole-package parity review or acceptance.",
+    "No Go suite, live multi-node, NextGen, benchmark or fresh-task restoration run.",
+    "No measured build/runtime speedup claimed."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/utility-plan-cleanup",
+  "evidence_sha256": {
+    "lint.log": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4",
+    "continuity.json": "b17de5d782af230f07eb7e694d61cedb06bc6d0a37030ca720d724fc991c60e3"
+  }
+}

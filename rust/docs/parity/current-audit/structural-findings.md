@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [mixed model carrier](model-carrier-cleanup-validation.json). Removed the 606-line carrier, six net registrations and type-name/native-size probes; retained Go behavior cases in their owners. All 116 selected tests pass. Production behavior and finding dispositions are unchanged.
+Latest cleanup: [completed utility plans](utility-plan-cleanup-validation.json). Thirty superseded plans (1177 lines) retired; package receipts and archived history retain their inventories and limits. No executable source, test or finding disposition changes.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
