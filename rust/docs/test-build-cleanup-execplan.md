@@ -1,101 +1,102 @@
-# Remove stale system-variable test scaffolding
+# Retire the unused semantic validation workflow
 
-This living ExecPlan follows root PLANS.md. Previous chunk-owner cleanup was
-pushed at 3af4618443fd3d41801bb1639b64c582eed6e853; its external final-handoff.json
-records successful publication and cloud draft readback.
+This living ExecPlan follows root PLANS.md. Keep progress, discoveries, decisions
+and outcomes current. The previous vardef cleanup is committed as
+88bcdc4d81fab9c4c280abc0ad3f516dc3b65764: 55 tests, lint, formatting and its actual
+commit-hook build passed. Its pre-push build was interrupted by cloud transport
+failure. Recovery confirmed the same clean local commit and remote 3af4618443;
+no completed pre-push build or push log exists. Include both commits in the next
+normal, validated publication rather than repeating the previous source edits.
 
 ## Purpose and Context
 
 
-Replace copied literal checks and stale partial-port wrappers with tests of the
-actual shared owners. In /workspace/tidb, hparser-integration, start at the commit
-above. Fresh Go master remains b36c940a4332c866d8b0e2afde88f5e7c2fd7fed.
-A carrier is a separately registered test source; the three retired carriers
-live under rust/crates/tidb-vardef/src. Production constants and conversion
-helpers live beside their owner tests. The live variable registry and validation
-belong to rust/crates/tidb-session/src/sysvar.rs.
+Remove misleading commands and superseded plans so future work uses the actual
+owner tests and current validation workflow. Work in /workspace/tidb on
+hparser-integration, at the base above. Fresh Go master remains
+b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Seven .semantic.toml files under crate
+test directories belong to the already removed semantic-package-gate.py. They
+are not Cargo manifests and have no maintained executable consumer.
 
 ## Progress
 
 
-- [x] Compare three carriers with Go variable/vardef and current Rust owners.
-- [x] Migrate production-backed default/name assertions and initialization tables.
-- [x] Remove copied registry, local bounds checks, private closure and stale prose.
-- [x] Verify unchanged production code and preserved meaningful assertions.
-- [x] Run all eight vardef library tests: eight passed, none failed or ignored.
-- [x] Complete grouped session owner tests (47 passed), lint, formatting and self-review.
-- [ ] Normal commit hook, fresh prepush locked build and verified normal push.
-- [ ] Verify recovery bundle and save/read back cloud startup checkpoint.
+- [x] Recover the environment; verify checkout, native HEAD and interrupted push.
+- [x] Inventory all seven manifests and seven associated package audit plans.
+- [x] Verify retained package receipts contain original Go artifact obligations.
+- [x] Delete obsolete manifests/plans and update the current workflow index.
+- [x] Compare source/target continuity, root lint and final diff.
+- [ ] Commit through actual hook; fresh locked build immediately before push.
+- [ ] Verify remote SHA, recovery bundle and saved cloud startup instructions.
 
 ## Milestones and Plan of Work
 
 
-Remove tests_vardef_port.rs, tests_sysvar_port.rs, tests_variable_p2_port.rs and
-their lib.rs registrations after migrating useful checks. defaults.rs and
-tidb_vars.rs retain existing owner assertions plus real constant comparisons.
-modes.rs retains the bogus clustered-mode input. global_sysvar_initial.rs owns
-the two moved initialization tables; NextGen checks both in_test values.
+Remove manifests for globalconn, intest, keydecoder, kvcache, logutil, sem and
+size, together with their matching rust/docs/operations/*-audit-execplan.md
+plans. Preserve rust/testport/receipts/util_*.md byte-for-byte: each owns the
+Go inventory, historical validation and language/platform limits. The cleanup
+receipt stores hashes and immutable Git archive links for removed files. Keep
+historical citations as dated evidence, not current executable instructions.
 
-In the existing sysvar registry test, check lowercase for every actual entry,
-including the final one; preserve sort and case-insensitive lookup assertions.
-The existing GOGC validation test compares real registry defaults for Go's
-threshold relationship. Remove the test-local threshold and private optimized
-join predicate. Keep actual SessionVars join-version and analyze hook cases.
+Update rust/scripts/README.md and current-audit indexes to use maintained owner
+commands. Preserve every source, executable test, build target, dependency and
+lockfile. This batch changes documentation and unused metadata only.
 
 ## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust run:
+Source /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust, compare before
+and after output of cargo metadata --locked --no-deps --format-version 1;
+package targets, features and dependencies must be identical. No .semantic.toml
+files or gate consumers may remain. Verify all seven retained receipt hashes
+and that the Git diff contains only this documented removal/edit inventory.
+Run make lint and git diff --check from repository root. No executable behavior
+changes, so do not rerun unrelated Rust suites; the previous 55 tests remain
+the evidence for the carried vardef commit.
 
-    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-vardef --lib
-    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- sysvar::tests tests_global_vars::analyze_default_bucket_and_topn_global_hooks_match_go tests_core::session_state::hash_join_versions_accept_only_legacy_or_optimized --test-threads=1
-
-Expect retained owner tests to pass, with named filters actually executing.
-Run root make lint and git diff --check; check changed Rust formatting without
-unrelated churn. Compare production code and migrated assertions to the base.
-Commit normally through executable hooks/pre-commit selected by core.hooksPath:
-it must pass cd rust && cargo build --locked -p tidb-server. Repeat that exact
-locked build immediately before authorized push to origin hparser-integration,
-then verify remote SHA. Do not bypass hooks or force-push.
+Commit normally with executable hooks/pre-commit selected by core.hooksPath=hooks.
+It must pass cd rust && cargo build --locked -p tidb-server. Repeat that exact
+locked build immediately before authorized normal push to origin
+hparser-integration, then verify the remote SHA. Never force-push or bypass hooks.
 
 ## Surprises & Discoveries
 
 
-The 489-row alleged registry table contains only quoted literals, so neither
-lowercase test observes production names. The registry already exists and has
-its own tests. Flashback concurrency's real constant also already exists;
-local constants asserting equality to themselves provide no coverage. Similar
-analyze checks ignore the maintained SQL clamping/publication tests.
+The seven manifests survived retirement of their runner. Several point at tests
+or source files already removed by later repairs. Superseded plans still suggest
+historical broad sweeps, laptop tool paths and reviving the old gate through Git.
+Their seven package receipts retain the actual Go inventories independently.
 
 ## Decision Log
 
 
-On 2026-10-06 consolidate the real 55 production constant/default assertions,
-12 name pairs and initialization inputs before removing all three carriers.
-Move Go's threshold relation to the real registry rather than leaving a
-hardcoded tuner threshold. Preserve Rust ownership and process-global tests;
-absence of an identical Go test name does not make these redundant.
+On 2026-10-06 remove the entire unused metadata workflow together, retaining
+package evidence and immutable before-image links. Do not remove tests merely
+because their Rust names differ from Go. No Go, Bazel or Cargo build metadata
+changes, so no Bazel preparation or unrelated behavioral suite is needed.
 
 ## Outcomes & Retrospective
 
 
-Three carriers (2053 lines) are removed, with 37 net registrations and 1885 net
-Rust lines removed after migration. All eight vardef tests and 47 session owner tests pass, with zero failures or
-ignored tests; 1975 unrelated session tests were filtered. Root lint and
-formatting passed. Publication and checkpoint remain pending; their final
-results go in external final-handoff.json. No production behavior changes,
-complete package acceptance, structural finding closures or measured speedup.
+Fourteen files (1437 lines, 29 obsolete command declarations) removed. Cargo
+metadata is identical; all seven package receipts are byte-identical. Source,
+test, dependency and lockfile continuity, root lint and diff checks passed.
+Publication and cloud checkpoint remain pending; external final-handoff.json
+will record their final results.
+No production code or executable test registration changes. The 56 unresolved
+structural findings and complete Go-package obligations remain unchanged.
 
 ## Recovery, Interfaces and Dependencies
 
 
-Recover before-images with git show 3af4618443fd3d41801bb1639b64c582eed6e853:<path>;
-preserve concurrent changes. Dependencies, Cargo manifests and locks are
-unchanged. The complete migration map is rust/docs/parity/current-audit/
-vardef-test-owner-cleanup-validation.json. Logs and continuity verification live
-under /workspace/.cloud-setup/vardef-test-owner-cleanup. Both finding registers
-retain all 86 dispositions. Replace the recovery bundle only after verification.
-Saving the cloud draft does not prove Publish or fresh-task restoration.
+Recover removed files with git show 88bcdc4d81fab9c4c280abc0ad3f516dc3b65764:<path>.
+Do not overwrite concurrent changes. The inventory and archive links live in
+rust/docs/parity/current-audit/semantic-workflow-cleanup-validation.json;
+external metadata comparisons and logs live in
+/workspace/.cloud-setup/semantic-workflow-cleanup. Verify the replacement recovery
+bundle before replacing the old one. Saving startup instructions is distinct
+from environment Publish and validation in a new task.
 
-Revision 2026-10-06: replace the completed chunk plan with the connected vardef
-cleanup, preserving the previous receipt and final publication evidence.
+Revision 2026-10-06: replace the committed vardef plan with metadata retirement;
+carry its interrupted publication explicitly until remote verification succeeds.

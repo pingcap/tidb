@@ -1,0 +1,213 @@
+{
+  "date": "2026-10-06",
+  "base": "88bcdc4d81fab9c4c280abc0ad3f516dc3b65764",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire seven unconsumed semantic command manifests and seven superseded package audit plans from the removed semantic-package-gate workflow. Preserve all executable tests, package receipts, Go inventories and structural dispositions.",
+  "removed_files": 14,
+  "removed_lines": 1437,
+  "packages": [
+    {
+      "go_package": "pkg/util/keydecoder",
+      "manifest_source_pin": "b2f2faaa95bff642920560c24e3714957bcb4c74",
+      "manifest": {
+        "path": "rust/crates/tidb-exec/tests/keydecoder.semantic.toml",
+        "lines": 25,
+        "sha256": "8293c2177e8e771e370ff527b7c6b9d8d99aad26b67e1c18ec1c7b0077082238",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/crates/tidb-exec/tests/keydecoder.semantic.toml"
+      },
+      "superseded_plan": {
+        "path": "rust/docs/operations/keydecoder-audit-execplan.md",
+        "lines": 173,
+        "sha256": "496722da0eaa00bb129232314a23588bae264056be26f0924619da64a2a49aa8",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/docs/operations/keydecoder-audit-execplan.md"
+      },
+      "retained_package_receipt": {
+        "path": "rust/testport/receipts/util_keydecoder.md",
+        "lines": 79,
+        "sha256": "75c6182f948e4e4d7b5dc8e2c6d178fce68624551a3830289eb15a6655f87dc0",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/testport/receipts/util_keydecoder.md"
+      },
+      "declared_commands": 3,
+      "missing_evidence_paths": []
+    },
+    {
+      "go_package": "pkg/util/kvcache",
+      "manifest_source_pin": "e2788410d8d696605e8cb002585877a063ccc909",
+      "manifest": {
+        "path": "rust/crates/tidb-kvcache/tests/kvcache.semantic.toml",
+        "lines": 31,
+        "sha256": "1cb6a691b6e1fd91e9131c7aa1f5b4bf6d444b50b45dde138d4fc505bc78cfd5",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/crates/tidb-kvcache/tests/kvcache.semantic.toml"
+      },
+      "superseded_plan": {
+        "path": "rust/docs/operations/kvcache-audit-execplan.md",
+        "lines": 199,
+        "sha256": "5b5c3d725db32d3f1bd1d57e1aa864085f6cac9e990991e859b6b032e3893e9c",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/docs/operations/kvcache-audit-execplan.md"
+      },
+      "retained_package_receipt": {
+        "path": "rust/testport/receipts/util_kvcache.md",
+        "lines": 105,
+        "sha256": "dd501eb09ffefba590cb52d975abdb9ce61bb04a28f8f9be55676de0d4def090",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/testport/receipts/util_kvcache.md"
+      },
+      "declared_commands": 7,
+      "missing_evidence_paths": []
+    },
+    {
+      "go_package": "pkg/util/globalconn",
+      "manifest_source_pin": "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f",
+      "manifest": {
+        "path": "rust/crates/tidb-util/tests/globalconn.semantic.toml",
+        "lines": 19,
+        "sha256": "598281b532fecd5f20a1667595ad717149d227e2ece7923b4dd47da0960ee91a",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/crates/tidb-util/tests/globalconn.semantic.toml"
+      },
+      "superseded_plan": {
+        "path": "rust/docs/operations/globalconn-audit-execplan.md",
+        "lines": 161,
+        "sha256": "4aa07e4cc1908a5663a2c7bcafacb1e5c76fd438b8169f426d91ec69cbc620ed",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/docs/operations/globalconn-audit-execplan.md"
+      },
+      "retained_package_receipt": {
+        "path": "rust/testport/receipts/util_globalconn.md",
+        "lines": 70,
+        "sha256": "a69d77302c66635902870eeae449bd6d3cf667f4ed3bf10e58e9dff840801e97",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/testport/receipts/util_globalconn.md"
+      },
+      "declared_commands": 5,
+      "missing_evidence_paths": [
+        "rust/crates/tidb-util/tests/globalconn_contract.rs"
+      ]
+    },
+    {
+      "go_package": "pkg/util/intest",
+      "manifest_source_pin": "e2788410d8d696605e8cb002585877a063ccc909",
+      "manifest": {
+        "path": "rust/crates/tidb-util/tests/intest.semantic.toml",
+        "lines": 22,
+        "sha256": "6417b846297129d094509979b39f7c18c471e591c310cd226a7b615da7571a32",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/crates/tidb-util/tests/intest.semantic.toml"
+      },
+      "superseded_plan": {
+        "path": "rust/docs/operations/intest-audit-execplan.md",
+        "lines": 166,
+        "sha256": "9fecde43cca416a2cc79594dea2ec8bbfbf61893c4ad74dadf31284e223572f4",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/docs/operations/intest-audit-execplan.md"
+      },
+      "retained_package_receipt": {
+        "path": "rust/testport/receipts/util_intest.md",
+        "lines": 66,
+        "sha256": "00ef50de70ad9df6ecc19ceb062831ebb44b94327880c66afcf2128765738d90",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/testport/receipts/util_intest.md"
+      },
+      "declared_commands": 8,
+      "missing_evidence_paths": [
+        "rust/crates/tidb-util/tests/intest_contract.rs"
+      ]
+    },
+    {
+      "go_package": "pkg/util/logutil",
+      "manifest_source_pin": "3606de5c43fcf4fa5206596c41cd0793403b9818",
+      "manifest": {
+        "path": "rust/crates/tidb-util/tests/logutil.semantic.toml",
+        "lines": 18,
+        "sha256": "165a9efca95e3ce2e9d4b8899c034784dc692b16ccc37a1558e8cd58c139fd1d",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/crates/tidb-util/tests/logutil.semantic.toml"
+      },
+      "superseded_plan": {
+        "path": "rust/docs/operations/logutil-audit-execplan.md",
+        "lines": 254,
+        "sha256": "d68c009528334c690cb8c8c8dbf8322bc13c0afe32009d64bbb2687054d9c00d",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/docs/operations/logutil-audit-execplan.md"
+      },
+      "retained_package_receipt": {
+        "path": "rust/testport/receipts/util_logutil.md",
+        "lines": 99,
+        "sha256": "6f41a4c927e7d76ab04248839e559fa8155745a1fbd8e563897514dc098a2ad0",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/testport/receipts/util_logutil.md"
+      },
+      "declared_commands": 3,
+      "missing_evidence_paths": []
+    },
+    {
+      "go_package": "pkg/util/sem",
+      "manifest_source_pin": "69f71e4ab14ab9ff9099fc5cf332734fde22ba6a",
+      "manifest": {
+        "path": "rust/crates/tidb-util/tests/sem.semantic.toml",
+        "lines": 17,
+        "sha256": "93fa516d8def39ae2ab916bfbd40b03f7605b2151d900a4cb606e9a399b6a4d3",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/crates/tidb-util/tests/sem.semantic.toml"
+      },
+      "superseded_plan": {
+        "path": "rust/docs/operations/sem-audit-execplan.md",
+        "lines": 200,
+        "sha256": "7ab779b9fc577678e76958dce2f6bbaf2a19050a8954b094e270042db24371dc",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/docs/operations/sem-audit-execplan.md"
+      },
+      "retained_package_receipt": {
+        "path": "rust/testport/receipts/util_sem.md",
+        "lines": 63,
+        "sha256": "306c90a77215d34b32bef3de32a9ae5c3bff102197bb3d60aae90eb660a22d22",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/testport/receipts/util_sem.md"
+      },
+      "declared_commands": 2,
+      "missing_evidence_paths": []
+    },
+    {
+      "go_package": "pkg/util/size",
+      "manifest_source_pin": "51e1e13494f5e547be10601a302d6cb9cf88ae64",
+      "manifest": {
+        "path": "rust/crates/tidb-util/tests/size.semantic.toml",
+        "lines": 9,
+        "sha256": "949518865d415adf252679ae98eb48673c2f042b7f5e4aafc79a0a0bcd741ae8",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/crates/tidb-util/tests/size.semantic.toml"
+      },
+      "superseded_plan": {
+        "path": "rust/docs/operations/size-audit-execplan.md",
+        "lines": 143,
+        "sha256": "e28b432ea4b6875ec5971f1ac7d93ca8352db07e35cab9be8ab8776d82711002",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/docs/operations/size-audit-execplan.md"
+      },
+      "retained_package_receipt": {
+        "path": "rust/testport/receipts/util_size.md",
+        "lines": 67,
+        "sha256": "f37e75b6f6a09b01b834185ada9486d5bd0212660ee362e3f7c6791d582cd8bf",
+        "archive": "https://github.com/pingcap/tidb/blob/88bcdc4d81fab9c4c280abc0ad3f516dc3b65764/rust/testport/receipts/util_size.md"
+      },
+      "declared_commands": 1,
+      "missing_evidence_paths": []
+    }
+  ],
+  "evidence": [
+    "semantic-package-gate.py is absent; no maintained script, Cargo declaration or CI consumer reads these manifests.",
+    "Manifests still refer to removed contracts, paths and filters; plans retain retired gate commands, historical laptop paths and already superseded implementation instructions.",
+    "Seven retained package receipts preserve original Go artifact inventories, source pins, platform/build obligations and validation limits. Their contents are unchanged.",
+    "All archived plans remain recoverable at the base commit; historical citations retain their original meaning.",
+    "The prior vardef cleanup commit is locally preserved; remote hparser-integration was still 3af4618443fd3d41801bb1639b64c582eed6e853 when execution recovered. The interrupted pre-push build had no completion or push log. Both commits will use fresh publication gates."
+  ],
+  "validation": {
+    "source_and_target_continuity": {
+      "base": "88bcdc4d81fab9c4c280abc0ad3f516dc3b65764",
+      "removed_files": 14,
+      "removed_lines": 1437,
+      "retired_command_declarations": 29,
+      "retained_receipts_identical": 7,
+      "cargo_metadata_identical": true,
+      "source_tests_dependencies_locks_unchanged": true,
+      "finding_dispositions_unchanged": true
+    },
+    "make_lint": "passed",
+    "publication": "pending normal actual-hook build, fresh immediate-prepush locked build, remote SHA and checkpoint; final results in external final-handoff.json",
+    "log_sha256": {
+      "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    }
+  },
+  "limits": [
+    "This is removal of unused metadata and obsolete documentation; zero executable test registrations removed.",
+    "No new package acceptance, behavioral repair, live cluster execution or measured build speedup.",
+    "86 tracked findings: 30 repaired, 56 unresolved (27 open, 29 partial), unchanged.",
+    "Current instance recovery is verified; future environment Publish and fresh-task restoration remain unverified."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/semantic-workflow-cleanup"
+}

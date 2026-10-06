@@ -79,6 +79,13 @@ cargo test --locked -p tidb-executor --test all -- window_executor_source --test
 
 Test-only modules are gated at their parent declarations so ordinary server builds do not load their source. Unicode runtime tests consume the checked-in Go fixture; run `python3 rust/scripts/generate-go-simple-case.py --check` from the repository root when maintaining the generated table, rather than spawning a generator check from each ordinary test run.
 
+The remaining `.semantic.toml` command manifests and their superseded audit
+plans are retired with the old semantic-package gate. Use the maintained owner
+commands here and the package receipts under `rust/testport/receipts/`; dated
+receipt commands describe historical validation and may name retired targets.
+Archive links and the retained package inventories are indexed in
+[the retirement receipt](../docs/parity/current-audit/semantic-workflow-cleanup-validation.json).
+
 Go test cases and their fixtures are the correctness reference. Do not add
 Rust source-shape, call-count, file-size, or historical test-count gates.
 Statistics discard-return lint tests and comment-only test/benchmark shells
