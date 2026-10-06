@@ -27,6 +27,8 @@ use crate::Timestamp;
 
 /// A PD cluster.
 pub struct Cluster {
+    connection: Connection,
+    region_service: Arc<super::region_service::RegionService>,
     id: u64,
     channels: Arc<ChannelCache>,
     client: Option<pdpb::pd_client::PdClient<Channel>>,
@@ -74,15 +76,39 @@ impl Cluster {
         timeout: Duration,
         need_buckets: bool,
     ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
-        let cluster_id = self.id;
-        let client = self.client.clone();
-        async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
-            let mut req = pd_request!(cluster_id, pdpb::GetRegionRequest);
-            req.region_key = key;
-            req.need_buckets = need_buckets;
-            req.send(&mut client, timeout).await
-        }
+        self.get_region_routed(key, timeout, need_buckets, false, false)
+    }
+
+    /// Region-cache lookup with explicit follower permission and previous-key selection.
+    pub fn get_region_routed(
+        &self,
+        key: Vec<u8>,
+        timeout: Duration,
+        need_buckets: bool,
+        previous: bool,
+        allow_follower: bool,
+    ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
+        let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
+        req.region_key = key;
+        req.need_buckets = need_buckets;
+        self.region_request(
+            req,
+            timeout,
+            allow_follower,
+            move |mut client, request| async move {
+                if previous {
+                    client
+                        .get_prev_region(request)
+                        .await
+                        .map(tonic::Response::into_inner)
+                } else {
+                    client
+                        .get_region(request)
+                        .await
+                        .map(tonic::Response::into_inner)
+                }
+            },
+        )
     }
 
     pub fn get_prev_region(
@@ -99,21 +125,7 @@ impl Cluster {
         timeout: Duration,
         need_buckets: bool,
     ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
-        let cluster_id = self.id;
-        let client = self.client.clone();
-        async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
-            let mut request = pd_request!(cluster_id, pdpb::GetRegionRequest).into_request();
-            request.get_mut().region_key = key;
-            request.get_mut().need_buckets = need_buckets;
-            request.set_timeout(timeout);
-            let response = client.get_prev_region(request).await?.into_inner();
-            if let Some(error) = response.header().and_then(|header| header.error.as_ref()) {
-                Err(internal_err!(error.message))
-            } else {
-                Ok(response)
-            }
-        }
+        self.get_region_routed(key, timeout, need_buckets, true, false)
     }
 
     pub fn get_region_by_id(
@@ -130,15 +142,31 @@ impl Cluster {
         timeout: Duration,
         need_buckets: bool,
     ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
-        let cluster_id = self.id;
-        let client = self.client.clone();
-        async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
-            let mut req = pd_request!(cluster_id, pdpb::GetRegionByIdRequest);
-            req.region_id = id;
-            req.need_buckets = need_buckets;
-            req.send(&mut client, timeout).await
-        }
+        self.get_region_by_id_routed(id, timeout, need_buckets, false)
+    }
+
+    /// Region-ID lookup with explicit per-request follower permission.
+    pub fn get_region_by_id_routed(
+        &self,
+        id: u64,
+        timeout: Duration,
+        need_buckets: bool,
+        allow_follower: bool,
+    ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
+        let mut req = pd_request!(self.id, pdpb::GetRegionByIdRequest);
+        req.region_id = id;
+        req.need_buckets = need_buckets;
+        self.region_request(
+            req,
+            timeout,
+            allow_follower,
+            |mut client, request| async move {
+                client
+                    .get_region_by_id(request)
+                    .await
+                    .map(tonic::Response::into_inner)
+            },
+        )
     }
 
     /// Fetches at most `limit` consecutive PD regions from `start_key` through
@@ -151,16 +179,33 @@ impl Cluster {
         limit: usize,
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::ScanRegionsResponse>> + Send + 'static {
-        let cluster_id = self.id;
-        let client = self.client.clone();
-        async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
-            let mut req = pd_request!(cluster_id, pdpb::ScanRegionsRequest);
-            req.start_key = start_key;
-            req.end_key = end_key;
-            req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
-            req.send(&mut client, timeout).await
-        }
+        self.scan_regions_routed(start_key, end_key, limit, timeout, false)
+    }
+
+    /// Legacy scan excludes router service but can explicitly permit PD followers.
+    pub fn scan_regions_routed(
+        &self,
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+        limit: usize,
+        timeout: Duration,
+        allow_follower: bool,
+    ) -> impl Future<Output = Result<pdpb::ScanRegionsResponse>> + Send + 'static {
+        let mut req = pd_request!(self.id, pdpb::ScanRegionsRequest);
+        req.start_key = start_key;
+        req.end_key = end_key;
+        req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
+        self.region_request(
+            req,
+            timeout,
+            allow_follower,
+            |mut client, request| async move {
+                client
+                    .scan_regions(request)
+                    .await
+                    .map(tonic::Response::into_inner)
+            },
+        )
     }
 
     pub fn batch_scan_regions(
@@ -170,21 +215,114 @@ impl Cluster {
         options: super::retry::RegionScanOptions,
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::BatchScanRegionsResponse>> + Send + 'static {
-        let cluster_id = self.id;
-        let client = self.client.clone();
+        let mut req = pd_request!(self.id, pdpb::BatchScanRegionsRequest);
+        req.ranges = ranges;
+        req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
+        req.need_buckets = options.need_buckets;
+        req.contain_all_key_range = options.output_must_contain_all_key_range;
+        let future = self.region_request(
+            req,
+            timeout,
+            options.allow_follower_handle,
+            |mut client, request| async move {
+                client
+                    .batch_scan_regions(request)
+                    .await
+                    .map(tonic::Response::into_inner)
+            },
+        );
         async move {
-            let mut client = client.ok_or(Error::ContextCanceled)?;
-            let mut req = pd_request!(cluster_id, pdpb::BatchScanRegionsRequest);
-            req.ranges = ranges;
-            req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
-            req.need_buckets = options.need_buckets;
-            req.contain_all_key_range = options.output_must_contain_all_key_range;
-            match req.send(&mut client, timeout).await {
+            match future.await {
                 Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unimplemented => {
                     Err(Error::Unimplemented)
                 }
                 result => result,
             }
+        }
+    }
+
+    fn region_request<T, R, F, Fut>(
+        &self,
+        value: T,
+        timeout: Duration,
+        allowed: bool,
+        call: F,
+    ) -> impl Future<Output = Result<R>> + Send + 'static
+    where
+        T: Clone + Send + Sync + 'static,
+        R: PdResponse + Send + 'static,
+        F: Fn(pdpb::pd_client::PdClient<Channel>, Request<T>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = GrpcResult<R>> + Send,
+    {
+        let connection = self.connection.clone();
+        let leader_client = self.client.clone();
+        let leader = self
+            .members
+            .leader
+            .as_ref()
+            .and_then(|member| member.client_urls.first())
+            .cloned()
+            .unwrap_or_default();
+        let urls = self
+            .members
+            .members
+            .iter()
+            .filter_map(|member| member.client_urls.first().cloned())
+            .collect::<Vec<_>>();
+        let target = self.region_service.select(
+            &leader,
+            &urls,
+            connection.options.get_enable_follower_handle(),
+            allowed,
+        );
+        async move {
+            let leader_client = leader_client.ok_or(Error::ContextCanceled)?;
+            let deadline = tokio::time::Instant::now() + timeout;
+            let request = async {
+                let first = async {
+                    let client = if target.follower {
+                        pdpb::pd_client::PdClient::new(connection.channel(&target.endpoint).await?)
+                    } else {
+                        leader_client.clone()
+                    };
+                    let mut request = target.request(value.clone());
+                    request.set_timeout(
+                        deadline.saturating_duration_since(tokio::time::Instant::now()),
+                    );
+                    call(client, request).await
+                }
+                .await;
+                let retry = target.needs_leader_retry(
+                    first.is_err(),
+                    first
+                        .as_ref()
+                        .ok()
+                        .and_then(|r| r.header())
+                        .and_then(|h| h.error.as_ref())
+                        .is_some(),
+                );
+                let response = if retry {
+                    let mut request = Request::new(value);
+                    request.set_timeout(
+                        deadline.saturating_duration_since(tokio::time::Instant::now()),
+                    );
+                    call(leader_client, request).await?
+                } else {
+                    first?
+                };
+                if let Some(error) = response.header().and_then(|h| h.error.as_ref()) {
+                    Err(internal_err!(error.message))
+                } else {
+                    Ok(response)
+                }
+            };
+            tokio::time::timeout_at(deadline, request)
+                .await
+                .map_err(|_| {
+                    Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                        "PD region request timed out",
+                    ))
+                })?
         }
     }
 
@@ -536,6 +674,7 @@ pub(crate) struct LeaderConnection {
 /// An object for connecting and reconnecting to a PD cluster.
 #[derive(Clone)]
 pub struct Connection {
+    pub(crate) options: Arc<super::opt::Options>,
     security_mgr: Arc<SecurityManager>,
     channels: Arc<ChannelCache>,
     // Initialization retries share probe selection before a Cluster exists.
@@ -549,6 +688,7 @@ impl Connection {
 
     pub fn new(security_mgr: Arc<SecurityManager>) -> Connection {
         Connection {
+            options: Arc::new(super::opt::Options::new()),
             security_mgr,
             channels: Arc::new(ChannelCache::default()),
             discovery: TsoDiscovery::default(),
@@ -595,6 +735,8 @@ impl Connection {
         let tso = Manager::new();
         tso.store(&tso_connection(id, route.clone(), channel, timeout)?, false);
         let cluster = Cluster {
+            connection: self.clone(),
+            region_service: Arc::default(),
             id,
             channels: self.channels.clone(),
             client: Some(client),

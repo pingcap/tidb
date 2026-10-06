@@ -187,6 +187,7 @@ pub(super) fn run_worker(
                                 clients,
                                 endpoint,
                                 RpcControl {
+                                    follower: false,
                                     timeout,
                                     shutdown: &shutdown,
                                 },
@@ -226,6 +227,7 @@ pub(super) fn run_worker(
                                 clients,
                                 endpoint,
                                 RpcControl {
+                                    follower: false,
                                     timeout,
                                     shutdown: &shutdown,
                                 },
@@ -265,6 +267,7 @@ pub(super) fn run_worker(
                                 clients,
                                 endpoint,
                                 RpcControl {
+                                    follower: false,
                                     timeout,
                                     shutdown: &shutdown,
                                 },
@@ -299,7 +302,15 @@ pub(super) fn run_worker(
                         &state,
                         |runtime, clients, endpoint, cluster_id| {
                             scan_regions(
-                                runtime, clients, endpoint, timeout, &shutdown, cluster_id,
+                                runtime,
+                                clients,
+                                endpoint,
+                                RpcControl {
+                                    timeout,
+                                    shutdown: &shutdown,
+                                    follower: false,
+                                },
+                                cluster_id,
                                 &request,
                             )
                         },
@@ -316,7 +327,11 @@ pub(super) fn run_worker(
                 };
                 let _ = reply.send(result);
             }
-            WorkerCommand::BatchScanRegions { request, reply } => {
+            WorkerCommand::BatchScanRegions {
+                request,
+                allow_follower,
+                reply,
+            } => {
                 let result = batch_scan_regions_with_failover(
                     &runtime,
                     &mut clients,
@@ -324,6 +339,7 @@ pub(super) fn run_worker(
                     &state,
                     &shutdown,
                     &request,
+                    allow_follower,
                 );
                 let _ = reply.send(result);
             }
@@ -372,6 +388,7 @@ pub(super) fn run_worker(
                     &runtime,
                     &mut clients,
                     RpcControl {
+                        follower: false,
                         timeout,
                         shutdown: &shutdown,
                     },
@@ -410,6 +427,7 @@ pub(super) fn run_worker(
                         &mut clients,
                         &state.members.leader_url,
                         RpcControl {
+                            follower: false,
                             timeout: remaining,
                             shutdown: &shutdown,
                         },
@@ -454,6 +472,7 @@ pub(super) fn run_worker(
                         &mut clients,
                         &endpoint,
                         RpcControl {
+                            follower: false,
                             timeout: remaining,
                             shutdown: &shutdown,
                         },

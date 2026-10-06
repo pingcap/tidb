@@ -28,6 +28,9 @@ enum Reply {
 struct PdServer {
     endpoint: String,
     leader_urls: Arc<std::sync::RwLock<Vec<String>>>,
+    region_members: Arc<std::sync::RwLock<Option<Vec<pdpb::Member>>>>,
+    region_metadata: Arc<std::sync::Mutex<Vec<bool>>>,
+    region_failure: Arc<AtomicUsize>,
     member_failures: Arc<AtomicUsize>,
     member_requests: Arc<AtomicUsize>,
     connections: Arc<AtomicUsize>,
@@ -179,13 +182,19 @@ impl tonic::server::UnaryService<GetMembersRequest> for PdServer {
             client_urls: self.leader_urls.read().unwrap().clone(),
             ..member.clone()
         };
+        let members = self
+            .region_members
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| vec![member.clone()]);
         Box::pin(async move {
             Ok(tonic::Response::new(GetMembersResponse {
                 header: Some(ResponseHeader {
                     cluster_id: 42,
                     ..Default::default()
                 }),
-                members: vec![member.clone()],
+                members,
                 leader: Some(leader),
                 ..Default::default()
             }))
@@ -198,6 +207,10 @@ impl tonic::server::UnaryService<pdpb::GetRegionRequest> for PdServer {
     type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
 
     fn call(&mut self, request: tonic::Request<pdpb::GetRegionRequest>) -> Self::Future {
+        self.region_metadata
+            .lock()
+            .unwrap()
+            .push(request.metadata().contains_key("pd-allow-follower-handle"));
         assert!(request.metadata().contains_key("grpc-timeout"));
         let request = request.into_inner();
         assert_eq!(request.header.unwrap().cluster_id, 42);
@@ -207,10 +220,18 @@ impl tonic::server::UnaryService<pdpb::GetRegionRequest> for PdServer {
                 service.region_entered.add_permits(1);
                 service.region_release.acquire().await.unwrap().forget();
             }
+            if service.region_failure.load(Ordering::SeqCst) == 1 {
+                return Err(tonic::Status::unknown("follower transport failure"));
+            }
             Ok(tonic::Response::new(pdpb::GetRegionResponse {
                 header: Some(ResponseHeader {
                     cluster_id: 42,
-                    ..Default::default()
+                    error: (service.region_failure.load(Ordering::SeqCst) == 2).then_some(
+                        pdpb::Error {
+                            r#type: pdpb::ErrorType::RegionNotFound as i32,
+                            message: "missing follower region".to_owned(),
+                        },
+                    ),
                 }),
                 region: Some(metapb::Region {
                     id: service.region_id.load(Ordering::SeqCst) as u64,
@@ -251,6 +272,10 @@ impl tonic::server::UnaryService<pdpb::ScanRegionsRequest> for PdServer {
     type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
 
     fn call(&mut self, request: tonic::Request<pdpb::ScanRegionsRequest>) -> Self::Future {
+        self.region_metadata
+            .lock()
+            .unwrap()
+            .push(request.metadata().contains_key("pd-allow-follower-handle"));
         assert!(request.metadata().contains_key("grpc-timeout"));
         assert_eq!(request.get_ref().header.as_ref().unwrap().cluster_id, 42);
         let request = request.into_inner();
@@ -361,6 +386,9 @@ impl Server {
         let service = PdServer {
             endpoint: endpoint.clone(),
             leader_urls: Arc::new(std::sync::RwLock::new(vec![endpoint.clone()])),
+            region_members: Arc::default(),
+            region_metadata: Arc::default(),
+            region_failure: Arc::default(),
             member_failures: Arc::new(AtomicUsize::new(0)),
             member_requests: Arc::new(AtomicUsize::new(0)),
             connections: Arc::new(AtomicUsize::new(0)),
@@ -2068,4 +2096,100 @@ async fn source_channel_batch_concurrent_dials_publish_one_winner() {
         "only the published winner serves both RPCs: {counts:?}"
     );
     cache.close();
+}
+
+#[tokio::test]
+async fn pd_region_batch_native_cache_permission_fallback_and_close() {
+    let leader = Server::start(Reply::Timestamp).await;
+    let follower = Server::start(Reply::Timestamp).await;
+    let members = vec![
+        pdpb::Member {
+            member_id: 1,
+            client_urls: vec![leader.service.endpoint.clone()],
+            ..Default::default()
+        },
+        pdpb::Member {
+            member_id: 2,
+            client_urls: vec![follower.service.endpoint.clone()],
+            ..Default::default()
+        },
+    ];
+    for server in [&leader, &follower] {
+        *server.service.region_members.write().unwrap() = Some(members.clone());
+        *server.service.leader_urls.write().unwrap() = vec![leader.service.endpoint.clone()];
+    }
+    let client = Arc::new(
+        RetryClient::connect(
+            &[leader.service.endpoint.clone()],
+            Arc::new(SecurityManager::default()),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap(),
+    );
+    client.set_enable_follower_handle(true);
+    for _ in 0..2 {
+        client
+            .clone()
+            .get_region_for_cache(b"wire".to_vec(), false, false)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        *follower.service.region_metadata.lock().unwrap(),
+        vec![true]
+    );
+    client
+        .clone()
+        .get_region_for_cache(b"wire".to_vec(), false, true)
+        .await
+        .unwrap();
+    client.set_enable_follower_handle(false);
+    client
+        .clone()
+        .get_region_for_cache(b"wire".to_vec(), false, false)
+        .await
+        .unwrap();
+    assert_eq!(follower.service.region_metadata.lock().unwrap().len(), 1);
+    client.set_enable_follower_handle(true);
+    for failure in [1, 2] {
+        follower
+            .service
+            .region_failure
+            .store(failure, Ordering::SeqCst);
+        for _ in 0..2 {
+            client
+                .clone()
+                .get_region_for_cache(b"wire".to_vec(), false, false)
+                .await
+                .unwrap();
+        }
+    }
+    assert_eq!(follower.service.region_metadata.lock().unwrap().len(), 3);
+    follower.service.region_failure.store(0, Ordering::SeqCst);
+    for _ in 0..2 {
+        client
+            .clone()
+            .scan_regions(b"a".to_vec(), b"z".to_vec(), 1)
+            .await
+            .unwrap();
+    }
+    assert_eq!(follower.service.region_metadata.lock().unwrap().len(), 4);
+    assert!(leader
+        .service
+        .region_metadata
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|allowed| !allowed));
+    client.close().await;
+    assert!(matches!(
+        client
+            .clone()
+            .get_region_for_cache(b"wire".to_vec(), false, false)
+            .await,
+        Err(crate::Error::ContextCanceled)
+    ));
+    drop(leader);
+    drop(follower);
 }

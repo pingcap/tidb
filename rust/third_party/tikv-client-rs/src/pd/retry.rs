@@ -53,8 +53,8 @@ pub trait RetryClientTrait {
     }
 
     /// One cache lookup attempt. Retries must bypass follower/router metadata.
-    /// The built-in client already connects to the PD leader; adapters with
-    /// follower reads must override this method and honor `leader_only`.
+    /// Clients supporting follower reads override this compatibility default
+    /// and honor `leader_only` independently of the process-wide option.
     async fn get_region_for_cache(
         self: Arc<Self>,
         key: Vec<u8>,
@@ -304,6 +304,11 @@ impl RetryClient<Cluster> {
         Self::connect_for_keyspace(endpoints, security_mgr, timeout, None).await
     }
 
+    /// Changes subsequent region requests without rebuilding discovery or TSO.
+    pub fn set_enable_follower_handle(&self, enabled: bool) {
+        self.connection.options.set_enable_follower_handle(enabled);
+    }
+
     pub(crate) fn initial_keyspace(&self) -> Option<&keyspacepb::KeyspaceMeta> {
         self.initial_keyspace.as_ref()
     }
@@ -438,6 +443,24 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
+    async fn get_region_for_cache(
+        self: Arc<Self>,
+        key: Vec<u8>,
+        previous: bool,
+        leader_only: bool,
+    ) -> Result<RegionWithLeader> {
+        retry!(self, "get_region_for_cache", |cluster| {
+            let key = key.clone();
+            cluster
+                .get_region_routed(key.clone(), self.timeout, true, previous, !leader_only)
+                .map(move |result| {
+                    result.and_then(|resp| {
+                        region_from_response(resp, || Error::RegionForKeyNotFound { key })
+                    })
+                })
+        })
+    }
+
     async fn get_region_with_buckets(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
         retry!(self, "get_region_with_buckets", |cluster| {
             let key = key.clone();
@@ -515,7 +538,13 @@ impl RetryClientTrait for RetryClient<Cluster> {
     ) -> Result<Vec<RegionWithLeader>> {
         retry!(self, "scan_regions", |cluster| {
             cluster
-                .scan_regions(start_key.clone(), end_key.clone(), limit, self.timeout)
+                .scan_regions_routed(
+                    start_key.clone(),
+                    end_key.clone(),
+                    limit,
+                    self.timeout,
+                    true,
+                )
                 .map(|result| result.and_then(regions_from_scan_response))
         })
     }

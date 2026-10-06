@@ -1,0 +1,300 @@
+{
+  "date": "2026-10-06",
+  "tidb_base": "ccf2717fc0284d1777d5dbee150c11d4e1daea83",
+  "native_base": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "native_commits": [
+    "84d77e529982ff92b3b2063c9a1ee747a57ce9e5",
+    "0c8edfb4cccd3d44c075c9910b4d1bb40fb913dc"
+  ],
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "scope": [
+    "Shared native PD region member selection and follower permission metadata",
+    "Same-deadline leader retry on follower transport/header errors; missing payload/cancellation remain distinct",
+    "Native cache batch/legacy-scan permission producers and sticky stale-payload fallback",
+    "TiDB bridge batch permission and leader-only ID loads",
+    "Loaded/default and live SQL SET GLOBAL/reload/reset policy publication; detached validation isolation and ordered concurrent publication"
+  ],
+  "findings": [
+    "P03",
+    "T02",
+    "N03"
+  ],
+  "finding_dispositions_changed": false,
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "integration_correction": {
+    "log": "tidb-transport-timeout-failure.log",
+    "failed": 1,
+    "cause": "Tonic grpc-timeout exposes typed local TimeoutExpired as Cancelled; preserve Timeout classification by source-chain type without reclassifying remote cancellation by text."
+  },
+  "baseline": {
+    "transport_failed": 3,
+    "settings_failed": 2,
+    "cache_failed": 1,
+    "concurrent_publication_failed": 1,
+    "method": "Initial transport and setting baselines retain support interfaces/recorders but omit routing/publication. Cache baseline is against native 84d77e5 before fixing producer flags; combined scripted responses cover RPC error then stale metadata then RPC error. Separate newly added bridge/SQL cases are post-change integration coverage, not claimed as independently captured baselines."
+  },
+  "tests": {
+    "native_pd": [
+      {
+        "passed": 174,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 1380
+      }
+    ],
+    "native_cache": [
+      {
+        "passed": 90,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 1464
+      }
+    ],
+    "tidb_transport_bridge": [
+      {
+        "passed": 40,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 21
+      },
+      {
+        "passed": 16,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 467
+      }
+    ],
+    "sql_policy": [
+      {
+        "passed": 71,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 1956
+      }
+    ],
+    "pd_owner": [
+      {
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 22
+      }
+    ]
+  },
+  "distinct_passed": 397,
+  "commands": [
+    "cd /workspace/client-rust && CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib -- pd:: region_cache::tests:: --test-threads=1",
+    "cd /workspace/client-rust && CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib -- region_cache::test:: --test-threads=1",
+    "cd /workspace/client-rust && CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked -p tikv-client --all-targets",
+    "cd /workspace/tidb && CARGO_BUILD_JOBS=1 bash rust/scripts/sync-tikv-client-rs.sh",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-pd-client -p tidb-txnkv --test all --no-fail-fast -- pd_client_source:: pd_region_loader_source:: --test-threads=1",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-pd-client --lib -- client:: --test-threads=1",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- pd_region_batch tests_global_vars:: --test-threads=1",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-pd-client -p tidb-txnkv -p tidb-session -p tidb-server --all-targets",
+    "cd /workspace/tidb && make lint",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server"
+  ],
+  "command_note": "Source /workspace/.cloud-setup/env.sh first. Native PD final invocation also contained a nonmatching region_cache::tests:: filter; it ran174 PD cases. Corrected region_cache::test:: invocation separately ran90 cache cases without recompilation. Counts exclude repeated early PD runs.",
+  "source": [
+    {
+      "path": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149/client.go",
+      "sha256": "a86903d73da7230b7fc0d3b6da20ddd63ba0be17097bef5f5cc0d4653e870cf8",
+      "bytes": 53651
+    },
+    {
+      "path": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149/inner_client.go",
+      "sha256": "9e11e9d887c88c67cf95c1bdeb12eb31a9641717deee09e44538a49a23d8d39c",
+      "bytes": 11746
+    },
+    {
+      "path": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149/servicediscovery/service_discovery.go",
+      "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9",
+      "bytes": 36195
+    },
+    {
+      "path": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149/servicediscovery/service_discovery_test.go",
+      "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf",
+      "bytes": 15988
+    },
+    {
+      "path": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149/opt/option.go",
+      "sha256": "4799581c1573b9ec7dab1daab437146452e2ee3e1e33d26ece2d5e7727f272c1",
+      "bytes": 12290
+    },
+    {
+      "path": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149/opt/option_test.go",
+      "sha256": "c17d90178b6373fa6e7d2ddc15530ce30276aa032b1fbab75204e5798f9a794e",
+      "bytes": 5058
+    },
+    {
+      "path": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149/pkg/utils/grpcutil/grpcutil.go",
+      "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273",
+      "bytes": 8136
+    },
+    {
+      "path": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149/pkg/utils/grpcutil/grpcutil_test.go",
+      "sha256": "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b",
+      "bytes": 1759
+    },
+    {
+      "path": "/workspace/.cloud-setup/go-master/pkg/domain/domain_sysvars.go",
+      "sha256": "8a22e6265929053cb7404d36c17e7adba4494a73241f748e3713bb3b0bf924bd",
+      "bytes": 5424
+    },
+    {
+      "path": "/workspace/.cloud-setup/go-master/pkg/sessionctx/variable/sysvar.go",
+      "sha256": "2f6aef4039ed9b9d2d5656aaa9e8e20736348bc53bce0d570fa5025bb03ea46b",
+      "bytes": 262038
+    },
+    {
+      "path": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/client-go/v2@v2.0.8-0.20260928031501-8edb23f6c7ee/internal/locate/region_cache.go",
+      "bytes": 116911,
+      "sha256": "c4f04a1ed08ddfb80ff7735e72820d7fee14359fdb9076e627a6c3f6b7a17755"
+    }
+  ],
+  "logs": {
+    "lint.log": {
+      "bytes": 2164,
+      "sha256": "a7eb796070b8114d1f73c2f3afaedbc4641c1058aa4b25a97d4468a4e2a0ac87"
+    },
+    "settings-after.log": {
+      "bytes": 104666,
+      "sha256": "2c3fbe16adae6de6cd589f8d3daa94187c36d6eb35228aa8b85ebb5c738d02bf"
+    },
+    "native-followup-push.log": {
+      "bytes": 80,
+      "sha256": "66c34e27977f83e123d8a9fb5db935376efa0dddaefa3bf83dbc1b505d2b59ca"
+    },
+    "native-final.log": {
+      "bytes": 15446,
+      "sha256": "5e23fac8923d4c52d3dbee2c089d4267ab50602eee1506bcdf8faa127ed0dfac"
+    },
+    "check-before-ordering-fix.log": {
+      "bytes": 120522,
+      "sha256": "d2b8e440e78f0ead9921cdac94c0ca23456d9b7193638b83acb4cc7b028923f3"
+    },
+    "before.log": {
+      "bytes": 3325,
+      "sha256": "16a142e8db0eb54f00a6dc2f798dd2694512dd86655c9bb51783b4c6aee5e408"
+    },
+    "native-prepush-server-build.log": {
+      "bytes": 113393,
+      "sha256": "72d107916cf1ce3b3136e5d57849c61ccbf517c7666421c3977986996a2aa298"
+    },
+    "native-after.log": {
+      "bytes": 15582,
+      "sha256": "ec0e75ba663a309c124f55ece6baceb191d41744f0decfe482955cb015d5f292"
+    },
+    "native-followup-prepush-build.log": {
+      "bytes": 113393,
+      "sha256": "c1eba53c6f48d9881b0e6b10671bca7be0b34e6f6728425c208bbc22eceaa254"
+    },
+    "wrong-cwd.log": {
+      "bytes": 80,
+      "sha256": "35ce3709dec79165813a3ce0ada38d7b0823a4aa8f4f4679a7e64a5931c669a5"
+    },
+    "sync.log": {
+      "bytes": 1882,
+      "sha256": "3c71006fa6141a4ce7179da1fa702bd01ef4669c33a558351007fd2f122574cf"
+    },
+    "cache-before.log": {
+      "bytes": 1037,
+      "sha256": "38dfbbf33013a41d103dadd42366fdf8c132da5f841f64dfb4fe80bd3ac17bb7"
+    },
+    "native-commit.log": {
+      "bytes": 169,
+      "sha256": "b3d307a9813cd739fa183216d97a5b8819b1a8aba9289ef02035d6121e245cb9"
+    },
+    "settings-before-ordering-fix.log": {
+      "bytes": 107149,
+      "sha256": "78245a12a5176b79a3d527081ebfba3c33e52a86c155c302b4effe4bd4ded2e5"
+    },
+    "native-final-check.log": {
+      "bytes": 487,
+      "sha256": "90aff41fd886c8dca1fbb353f44d8a99ce67cd604286d2be2c1fc99f055d96f7"
+    },
+    "cache-after.log": {
+      "bytes": 7771,
+      "sha256": "4a4e8690c129d95cd2055e26c1c4351ddf023e10fafeb7d31572e92e7b2cd0e3"
+    },
+    "native-push.log": {
+      "bytes": 80,
+      "sha256": "022c23ed167cc7c1d4110b7846457764dd9f83a619ad120fc30862fc414bcae2"
+    },
+    "native-compile-error.log": {
+      "bytes": 1480,
+      "sha256": "ace7f60b29abbe1bcdb6c02d095a6f44ca5c5afc0b66f4d0b247eee7d2a5ec8c"
+    },
+    "check-fixture-failure.log": {
+      "bytes": 122448,
+      "sha256": "83c86c3c0fbe29c440d1f8b2fd11a676dd792f2b453021087bd34ee93d42080a"
+    },
+    "pd-owner-tests.log": {
+      "bytes": 1378,
+      "sha256": "6daf6a476510edd0dbca79aa732fa583ec451cb4cb89922a02494fcc4cd34436"
+    },
+    "tidb-transport-timeout-failure.log": {
+      "bytes": 14264,
+      "sha256": "740c934103508cbff5c346aedd8fb6dd766d977afd79d0abcc30e41e693123ec"
+    },
+    "native-followup-commit.log": {
+      "bytes": 132,
+      "sha256": "cbbaeb77f48ee6bd5d4f6a7b938aadb22c5b3a719a52009e3240bbf177bd53e3"
+    },
+    "native-check.log": {
+      "bytes": 623,
+      "sha256": "e3cdd474eb72e680c1cd340de078088be19d11260769e5b49384b594f952037b"
+    },
+    "native-disk-failure.log": {
+      "bytes": 300,
+      "sha256": "42a7783b08847db717895cc846fc2983a130a20cb37f1cbf46302088c32155b9"
+    },
+    "settings-before.log": {
+      "bytes": 102686,
+      "sha256": "0b2b063783fc6c8c24ad8f13521afed3172c887999df955a8a232c3fe0642741"
+    },
+    "check.log": {
+      "bytes": 118598,
+      "sha256": "9a218dbd85e313ab83c362e468c36697256b15abd54c539efd9e94c07cd1a962"
+    },
+    "concurrent-before.log": {
+      "bytes": 100794,
+      "sha256": "ceedb4656bfc1b20067f2a2183b88513f86b43a5d02f6f2153861f3a5cbaf1e7"
+    },
+    "tidb-transport.log": {
+      "bytes": 13023,
+      "sha256": "c71b013be1f39a187b74a0117f8f50bf7341d405ee1760a9fc32bff52fbdb5b5"
+    },
+    "sync-final.log": {
+      "bytes": 1892,
+      "sha256": "65aad2cfe55636d5eed35ff1f360fb01952260e9c05dfead6122483794dd025b"
+    }
+  },
+  "native_publication": "Both native normal pushes passed their fresh immediately preceding locked TiDB server builds; remote SHAs verified. Maintained final sync applied all patches and regenerated protobuf output.",
+  "tidb_publication": "Actual hook, immediately preceding locked build, normal push, remote SHA and saved-draft readback are recorded after this commit in /workspace/.cloud-setup/pd-region-batch/final-handoff.json; do not infer success from this prepublication receipt.",
+  "removals": "TiDB single-method special region routing is replaced by the common region request owner; existing Go-contract and Rust lifecycle regressions retained. No measured performance claim.",
+  "limits": [
+    "No complete upstream Go package acceptance.",
+    "P03/T02/N03 remain partial; other53 unresolved roots are carried evidence, not freshly reproduced.",
+    "Discovery service health/forwarding, TSO follower proxy, router-service transport and remaining region-cache ownership are not completed by this batch. TiDB legacy cache batch scans remain leader-bound; native cache scans and its TiDB bridge carry follower permission.",
+    "No full Go suite, live multi-node TiKV or benchmark run. Local loopback PD servers exercise real gRPC; SQL policy checks use the session engine, not a live distributed cluster.",
+    "Historical unrelated parser/DDL failures were not rerun or removed.",
+    "Draft persistence, Publish and fresh-task restoration are distinct; restoration remains unverified."
+  ],
+  "fixture_correction": {
+    "log": "check-fixture-failure.log",
+    "cause": "PD shutdown-test constructor needed the new shared options field. Its six ownership tests and the final all-target recheck pass."
+  }
+}

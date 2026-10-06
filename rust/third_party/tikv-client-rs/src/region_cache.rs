@@ -2029,6 +2029,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         if count == 0 || ranges.is_empty() {
             return Ok(Vec::new());
         }
+        let mut allow_follower = true;
         loop {
             let scan_started = Instant::now();
             let scanned = pd_region_meta_call(self.inner_client.clone().batch_scan_regions(
@@ -2036,6 +2037,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 count,
                 RegionScanOptions {
                     need_buckets,
+                    allow_follower_handle: allow_follower,
+                    allow_router_service_handle: allow_follower,
                     output_must_contain_all_key_range: true,
                     ..Default::default()
                 },
@@ -2052,6 +2055,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     regions
                 }
                 Ok(_) => {
+                    allow_follower = false;
                     crate::stats::increment_stale_region_from_pd();
                     backoffer
                         .backoff(
@@ -2079,6 +2083,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 })
                 .collect::<Vec<_>>();
             if valid_regions.is_empty() {
+                allow_follower = false;
                 crate::stats::increment_stale_region_from_pd();
                 backoffer
                     .backoff(
@@ -3909,6 +3914,7 @@ mod test {
         pub batch_scan_count: AtomicU64,
         pub batch_scan_unimplemented: AtomicBool,
         pub batch_scan_options: StdMutex<Vec<RegionScanOptions>>,
+        pub batch_scan_responses: Mutex<VecDeque<Result<Vec<RegionWithLeader>>>>,
     }
 
     #[async_trait]
@@ -4050,6 +4056,9 @@ mod test {
         ) -> Result<Vec<RegionWithLeader>> {
             self.batch_scan_count.fetch_add(1, SeqCst);
             self.batch_scan_options.lock().unwrap().push(options);
+            if let Some(response) = self.batch_scan_responses.lock().await.pop_front() {
+                return response;
+            }
             if self.batch_scan_unimplemented.load(SeqCst) {
                 return Err(Error::Unimplemented);
             }
@@ -7142,6 +7151,59 @@ mod test {
         }
     }
 
+    #[tokio::test]
+    async fn pd_region_batch_cache_permission_and_stale_fallback() -> Result<()> {
+        // Go RegionCache.batchScanRegions keeps permission after RPC errors,
+        // but a stale payload pins every subsequent attempt to the leader.
+        for stale in [
+            Vec::new(),
+            vec![region_with_leader(1, b"b", b"z")],
+            vec![RegionWithLeader {
+                leader: None,
+                ..region_with_leader(1, b"a", b"z")
+            }],
+        ] {
+            let client = Arc::new(MockRetryClient::default());
+            let valid = region_with_leader(1, b"a", b"z");
+            client.batch_scan_responses.lock().await.extend([
+                Err(Error::StringError("PD unavailable".to_owned())),
+                Ok(stale),
+                Err(Error::StringError("leader unavailable".to_owned())),
+                Ok(vec![valid]),
+            ]);
+            let cache = RegionCache::new(client.clone());
+            let regions = cache
+                .batch_scan_regions(
+                    &[key_range(b"a", b"z")],
+                    10,
+                    true,
+                    true,
+                    &mut RetryBackoffer::new(Cancellation::default(), 10_000),
+                )
+                .await?;
+            assert_eq!(region_ids(&regions), vec![1]);
+            let options = client.batch_scan_options.lock().unwrap();
+            assert_eq!(
+                options
+                    .iter()
+                    .map(|o| o.allow_follower_handle)
+                    .collect::<Vec<_>>(),
+                vec![true, true, false, false]
+            );
+            assert_eq!(
+                options
+                    .iter()
+                    .map(|o| o.allow_router_service_handle)
+                    .collect::<Vec<_>>(),
+                vec![true, true, false, false]
+            );
+            assert!(options
+                .iter()
+                .all(|o| o.need_buckets && o.output_must_contain_all_key_range));
+        }
+        Ok(())
+    }
+
     async fn source_batch_locate_reuses_cache_and_falls_back_to_scan_regions() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         for (id, start, end) in [
@@ -7180,6 +7242,8 @@ mod test {
             &[RegionScanOptions {
                 need_buckets: true,
                 output_must_contain_all_key_range: true,
+                allow_follower_handle: true,
+                allow_router_service_handle: true,
                 ..Default::default()
             }]
         );

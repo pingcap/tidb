@@ -1162,3 +1162,84 @@ fn tidb_pd_bridge_get_region_for_cache_honors_leader_only() {
     assert_eq!(leader.state.lock().unwrap().region_requests.len(), 2);
     assert_eq!(follower.state.lock().unwrap().region_requests.len(), 1);
 }
+
+#[test]
+fn pd_region_batch_bridge_retains_scan_permission_and_leader_only_ids() {
+    use tikv_client::{RegionScanOptions, RetryClientTrait};
+    let leader = Server::start(valid_state());
+    let follower = Server::start(valid_state());
+    let members = membership_response(
+        &format!("http://{}", leader.address),
+        &format!("http://{}", follower.address),
+    );
+    leader.state.lock().unwrap().members = Some(members.clone());
+    follower.state.lock().unwrap().members = Some(members);
+    let pd = Arc::new(
+        tidb_pd_client::PdClient::connect(&leader.address, Duration::from_secs(2)).unwrap(),
+    );
+    pd.set_enable_follower_handle(true);
+    let bridge = Arc::new(TidbPdBridge::new(pd));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut loader = PdRegionLoader::from_client(bridge.client().as_ref().clone());
+    for _ in 0..2 {
+        loader.load_region_by_id(7, true).unwrap();
+    }
+    assert!(follower
+        .state
+        .lock()
+        .unwrap()
+        .region_by_id_requests
+        .is_empty());
+    runtime.block_on(async {
+        for _ in 0..2 {
+            bridge
+                .clone()
+                .get_region_by_id_with_buckets(7)
+                .await
+                .unwrap();
+            bridge.clone().get_region_by_id(7).await.unwrap();
+        }
+        assert!(follower
+            .state
+            .lock()
+            .unwrap()
+            .region_by_id_requests
+            .is_empty());
+        for allowed in [false, false, true, true] {
+            bridge
+                .clone()
+                .batch_scan_regions(
+                    vec![pdpb::KeyRange {
+                        start_key: encoded(b"a"),
+                        end_key: encoded(b"z"),
+                    }],
+                    10,
+                    RegionScanOptions {
+                        allow_follower_handle: allowed,
+                        need_buckets: true,
+                        output_must_contain_all_key_range: true,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            leader
+                .state
+                .lock()
+                .unwrap()
+                .batch_scan_region_requests
+                .len(),
+            3
+        );
+        let follower = follower.state.lock().unwrap();
+        assert_eq!(follower.batch_scan_region_requests.len(), 1);
+        let request = &follower.batch_scan_region_requests[0];
+        assert!(request.need_buckets && request.contain_all_key_range);
+        assert_eq!(request.limit, 10);
+    });
+}

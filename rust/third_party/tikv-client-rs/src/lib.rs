@@ -259,6 +259,7 @@ pub use crate::pd::circuitbreaker as pd_circuitbreaker;
 pub use crate::pd::metrics as pd_metrics;
 #[doc(inline)]
 pub use crate::pd::opt as pd_options;
+pub use crate::pd::region_service as pd_region_service;
 #[doc(inline)]
 pub use crate::pd::service_discovery as pd_service_discovery;
 #[doc(inline)]

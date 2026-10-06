@@ -2794,3 +2794,30 @@ fn global_config_notifies_default_and_scratch_writes_but_not_cache_reloads() {
         ]
     );
 }
+
+#[test]
+fn pd_region_batch_sql_global_policy_publication() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    #[derive(Debug)]
+    struct Policy(AtomicBool);
+    impl vars::PdRegionPolicy for Policy {
+        fn set_follower_handle(&self, value: bool) {
+            self.0.store(value, Ordering::SeqCst);
+        }
+    }
+    let (mut session, mut peer, globals) = two_sessions_sharing_globals();
+    let policy = std::sync::Arc::new(Policy(AtomicBool::new(false)));
+    globals.set_pd_region_policy(policy.clone());
+    assert!(policy.0.load(Ordering::SeqCst));
+    session
+        .run("SET GLOBAL pd_enable_follower_handle_region = OFF")
+        .unwrap();
+    assert!(!policy.0.load(Ordering::SeqCst));
+    assert!(session
+        .run("SET GLOBAL pd_enable_follower_handle_region = 'invalid'")
+        .is_err());
+    assert!(!policy.0.load(Ordering::SeqCst));
+    peer.run("SET GLOBAL pd_enable_follower_handle_region = ON")
+        .unwrap();
+    assert!(policy.0.load(Ordering::SeqCst));
+}

@@ -532,7 +532,7 @@
   },
   "latest_source_maintenance": {
     "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
-    "receipt": "statistics-ndv-batch-validation.json",
-    "scope": "Connected current-Go statistics maintenance: shared schema uniqueness and exact non-NULL ANALYZE NDV; local-unique partition NDV in blocking, asynchronous and in-process consumers; FM-sketch JSON, canonical table, LOAD STATS write and dump preservation. Retire duplicate in-process global sketch merging. Four related statistics gaps and T01 restricted-statement tombstone lock policy repaired; T01 stays partial and no complete package is newly accepted."
+    "receipt": "pd-region-batch-validation.json",
+    "scope": "Connected P03/T02/N03 PD region request lifecycle; existing broader dispositions unchanged."
   }
 }

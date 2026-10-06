@@ -77,6 +77,7 @@ impl<T> Reply<T> {
 }
 
 struct State {
+    routing_metadata: Vec<(String, bool, Option<String>)>,
     external_get: Reply<pdpb::GetExternalTimestampResponse>,
     external_set: Reply<pdpb::SetExternalTimestampResponse>,
     external_get_requests: Vec<pdpb::GetExternalTimestampRequest>,
@@ -215,6 +216,14 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push((
+                "region_requests".to_owned(),
+                request.metadata().contains_key("pd-allow-follower-handle"),
+                request
+                    .metadata()
+                    .get("pd-forwarded-host")
+                    .map(|v| v.to_str().unwrap().to_owned()),
+            ));
             state.region_requests.push(request.into_inner());
             state.region.clone()
         };
@@ -227,6 +236,14 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push((
+                "prev_region_requests".to_owned(),
+                request.metadata().contains_key("pd-allow-follower-handle"),
+                request
+                    .metadata()
+                    .get("pd-forwarded-host")
+                    .map(|v| v.to_str().unwrap().to_owned()),
+            ));
             state.prev_region_requests.push(request.into_inner());
             state.prev_region.clone()
         };
@@ -239,6 +256,14 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push((
+                "region_by_id_requests".to_owned(),
+                request.metadata().contains_key("pd-allow-follower-handle"),
+                request
+                    .metadata()
+                    .get("pd-forwarded-host")
+                    .map(|v| v.to_str().unwrap().to_owned()),
+            ));
             state.region_by_id_requests.push(request.into_inner());
             state.region_by_id.clone()
         };
@@ -251,6 +276,14 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::ScanRegionsResponse>, tonic::Status> {
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push((
+                "scan_region_requests".to_owned(),
+                request.metadata().contains_key("pd-allow-follower-handle"),
+                request
+                    .metadata()
+                    .get("pd-forwarded-host")
+                    .map(|v| v.to_str().unwrap().to_owned()),
+            ));
             state.scan_region_requests.push(request.into_inner());
             state.scan_regions.clone()
         };
@@ -263,6 +296,14 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::BatchScanRegionsResponse>, tonic::Status> {
         let reply = {
             let mut state = self.state.lock().unwrap();
+            state.routing_metadata.push((
+                "batch_scan_region_requests".to_owned(),
+                request.metadata().contains_key("pd-allow-follower-handle"),
+                request
+                    .metadata()
+                    .get("pd-forwarded-host")
+                    .map(|v| v.to_str().unwrap().to_owned()),
+            ));
             state.batch_scan_region_requests.push(request.into_inner());
             state.batch_scan_regions.clone()
         };
@@ -581,6 +622,7 @@ fn valid_state() -> State {
         gc_state_requests: Vec::new(),
         global_config: Reply::Value(pdpb::StoreGlobalConfigResponse::default()),
         global_config_requests: Vec::new(),
+        routing_metadata: Vec::new(),
     }
 }
 
@@ -1875,6 +1917,12 @@ fn region_and_store_transport_or_timeout_make_one_attempt_only() {
     );
     assert_eq!(client.get_store(302).unwrap_err().kind(), "timeout");
     assert_eq!(server.state.lock().unwrap().store_requests.len(), 2);
+
+    // A remote cancellation with tonic's local-timeout text is still a
+    // transport error: only the typed local cause establishes a timeout.
+    server.state.lock().unwrap().region = Reply::Status(tonic::Code::Cancelled, "Timeout expired");
+    assert_eq!(client.get_region(b"wire").unwrap_err().kind(), "transport");
+    assert_eq!(server.state.lock().unwrap().region_requests.len(), 3);
 }
 
 fn assert_exact_header(header: &pdpb::RequestHeader) {
@@ -2027,4 +2075,208 @@ fn timestamp_entrypoints_batch_pd_external_rpc_contract() {
         closed.external_timestamp(None),
         Err(tidb_pd_client::PdClientError::Closed)
     );
+}
+
+fn follower_batch_pair() -> (Server, Server, PdClient) {
+    let leader = Server::start(valid_state());
+    let follower = Server::start(valid_state());
+    let members = membership_response(
+        CLUSTER_ID,
+        &[(1, http_url(&leader)), (2, http_url(&follower))],
+        1,
+    );
+    leader.state.lock().unwrap().members = Reply::Value(members.clone());
+    follower.state.lock().unwrap().members = Reply::Value(members);
+    let client = PdClient::connect(&leader.address, Duration::from_secs(1)).unwrap();
+    client.set_enable_follower_handle(true);
+    (leader, follower, client)
+}
+
+#[test]
+fn pd_region_batch_routes_all_region_apis_and_toggles_live() {
+    let (leader, follower, client) = follower_batch_pair();
+    for _ in 0..2 {
+        client.get_region_routed(b"wire", false, false).unwrap();
+    }
+    for _ in 0..2 {
+        client.get_prev_region_routed(b"wire", true, false).unwrap();
+    }
+    for _ in 0..2 {
+        client.get_region_by_id_routed(9, true, false).unwrap();
+    }
+    for _ in 0..2 {
+        client.scan_regions_routed(b"a", b"z", 7, false).unwrap();
+    }
+    // Batch scans carry an explicit permission, independent of the live option.
+    for _ in 0..2 {
+        client
+            .batch_scan_regions_routed(&[], 7, true, false, true)
+            .unwrap();
+    }
+    let seen = follower.state.lock().unwrap().routing_metadata.clone();
+    assert_eq!(
+        seen.len(),
+        5,
+        "every region API should balance to a follower"
+    );
+    assert!(seen
+        .iter()
+        .all(|(_, allow, forwarded)| *allow && forwarded.is_none()));
+    assert!(leader
+        .state
+        .lock()
+        .unwrap()
+        .routing_metadata
+        .iter()
+        .all(|(_, allow, forwarded)| !allow && forwarded.is_none()));
+    client.set_enable_follower_handle(false);
+    for _ in 0..3 {
+        client.get_region(b"wire").unwrap();
+    }
+    client.set_enable_follower_handle(true);
+    for _ in 0..3 {
+        client.get_prev_region_routed(b"wire", false, true).unwrap();
+    }
+    assert_eq!(follower.state.lock().unwrap().routing_metadata.len(), 5);
+    assert!(
+        !leader
+            .state
+            .lock()
+            .unwrap()
+            .prev_region_requests
+            .last()
+            .unwrap()
+            .need_buckets
+    );
+}
+
+#[test]
+fn pd_region_batch_follower_errors_retry_leader_without_permission_metadata() {
+    for transport_error in [false, true] {
+        let (leader, follower, client) = follower_batch_pair();
+        follower.state.lock().unwrap().region = if transport_error {
+            Reply::Status(tonic::Code::Unknown, "follower not ready")
+        } else {
+            let mut response = match valid_state().region {
+                Reply::Value(v) => v,
+                _ => unreachable!(),
+            };
+            response.header.as_mut().unwrap().error = Some(pdpb::Error {
+                r#type: pdpb::ErrorType::RegionNotFound as i32,
+                message: "follower missing region".to_owned(),
+            });
+            Reply::Value(response)
+        };
+        for _ in 0..2 {
+            client.get_region_routed(b"retry-key", true, false).unwrap();
+        }
+        assert_eq!(follower.state.lock().unwrap().region_requests.len(), 1);
+        let leader = leader.state.lock().unwrap();
+        assert_eq!(leader.region_requests.len(), 2);
+        assert!(leader
+            .region_requests
+            .iter()
+            .all(|r| r.region_key == b"retry-key" && r.need_buckets));
+        assert!(leader
+            .routing_metadata
+            .iter()
+            .all(|(_, allow, forwarded)| !allow && forwarded.is_none()));
+    }
+}
+
+#[test]
+fn pd_region_batch_membership_refresh_retains_cursor_for_unchanged_members() {
+    let (leader, follower, client) = follower_batch_pair();
+    client.get_region(b"wire").unwrap();
+    client.refresh_members().unwrap();
+    client.get_region(b"wire").unwrap();
+    assert_eq!(leader.state.lock().unwrap().region_requests.len(), 1);
+    assert_eq!(follower.state.lock().unwrap().region_requests.len(), 1);
+}
+
+#[test]
+fn pd_region_batch_explicit_batch_permission_controls_destination() {
+    let (leader, follower, client) = follower_batch_pair();
+    client
+        .batch_scan_regions_routed(&[], 3, false, true, true)
+        .unwrap();
+    // This must not consume the next follower rotation slot.
+    client
+        .batch_scan_regions_routed(&[], 4, true, false, false)
+        .unwrap();
+    client
+        .batch_scan_regions_routed(&[], 5, true, true, true)
+        .unwrap();
+    let follower = follower.state.lock().unwrap();
+    assert_eq!(follower.batch_scan_region_requests.len(), 1);
+    let request = &follower.batch_scan_region_requests[0];
+    assert_eq!(request.limit, 5);
+    assert!(request.need_buckets && request.contain_all_key_range);
+    assert_eq!(
+        leader
+            .state
+            .lock()
+            .unwrap()
+            .batch_scan_region_requests
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn pd_region_batch_missing_payload_does_not_trigger_service_retry() {
+    let (leader, follower, client) = follower_batch_pair();
+    client.get_region(b"wire").unwrap();
+    follower.state.lock().unwrap().region = Reply::Value(pdpb::GetRegionResponse {
+        header: Some(header(CLUSTER_ID)),
+        ..Default::default()
+    });
+    assert!(client.get_region(b"missing").is_err());
+    assert_eq!(follower.state.lock().unwrap().region_requests.len(), 1);
+    assert_eq!(leader.state.lock().unwrap().region_requests.len(), 1);
+}
+
+#[test]
+fn pd_region_batch_follower_deadline_does_not_start_fresh_leader_budget() {
+    let (leader, follower, client) = follower_batch_pair();
+    client.get_region(b"wire").unwrap();
+    let value = match valid_state().region {
+        Reply::Value(value) => value,
+        _ => unreachable!(),
+    };
+    follower.state.lock().unwrap().region = Reply::Delayed(Duration::from_millis(1100), value);
+    assert!(client.get_region(b"slow").is_err());
+    assert_eq!(follower.state.lock().unwrap().region_requests.len(), 1);
+    assert_eq!(
+        leader.state.lock().unwrap().region_requests.len(),
+        1,
+        "expired original deadline must not issue another RPC"
+    );
+}
+
+#[test]
+fn pd_region_batch_owner_shutdown_cancels_follower_without_retry() {
+    let (leader, follower, client) = follower_batch_pair();
+    client.get_region(b"wire").unwrap();
+    let value = match valid_state().region {
+        Reply::Value(value) => value,
+        _ => unreachable!(),
+    };
+    follower.state.lock().unwrap().region = Reply::Delayed(Duration::from_secs(5), value);
+    let request = client.clone();
+    let worker = std::thread::spawn(move || request.get_region(b"cancel"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while follower.state.lock().unwrap().region_requests.is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "follower request never arrived"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    client.shutdown().unwrap();
+    assert!(matches!(
+        worker.join().unwrap(),
+        Err(tidb_pd_client::PdClientError::Closed)
+    ));
+    assert_eq!(leader.state.lock().unwrap().region_requests.len(), 1);
 }

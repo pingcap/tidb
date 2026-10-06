@@ -145,3 +145,8 @@ partial; this is existing-owner maintenance, not whole-package acceptance.
 
 
 The previously unimplemented uniqueness and FM-sketch deltas now share collection, blocking/asynchronous/in-process merging, canonical conversion, JSON and storage owners. [Validation](statistics-ndv-batch-validation.json) records 220 Rust tests and 15 TCP checks passing. This maintenance retires duplicate global sketch merging; broad B01–B10 assignments and finding dispositions remain unchanged.
+
+
+## PD region lifecycle checkpoint — 2026-10-06
+
+The [PD region receipt](pd-region-batch-validation.json) connects B01 discovery and cache request options with N03 live global policy. Selection, metadata, same-deadline leader fallback, cache stale-response fallback and ID/scan caller distinctions share one batch. P03/T02/N03 remain partial; all 56 broader unresolved assignments are retained.

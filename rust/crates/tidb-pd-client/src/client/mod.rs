@@ -99,6 +99,7 @@ enum WorkerCommand {
         reply: mpsc::Sender<Result<Vec<PdRegion>, PdClientError>>,
     },
     BatchScanRegions {
+        allow_follower: bool,
         request: pdpb::BatchScanRegionsRequest,
         reply: mpsc::Sender<Result<Vec<PdRegion>, PdClientError>>,
     },
@@ -145,11 +146,13 @@ struct PdMemberObservation {
 
 #[derive(Clone, Copy)]
 struct RpcControl<'a> {
+    follower: bool,
     timeout: Duration,
     shutdown: &'a watch::Receiver<bool>,
 }
 
 struct PdClientShared {
+    options: Arc<tikv_client::pd_options::Options>,
     bootstrap_endpoint: String,
     timeout: Duration,
     cluster_id: u64,
@@ -260,6 +263,8 @@ impl PdClient {
         let (commands, receiver) = mpsc::channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (ready_tx, ready_rx) = mpsc::channel();
+        let options = Arc::new(tikv_client::pd_options::Options::new());
+        let worker_options = options.clone();
         let worker_seeds = seeds.clone();
         let worker = std::thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -274,6 +279,7 @@ impl PdClient {
                 }
             };
             let mut clients = PdChannelCache::new(security);
+            clients.options = worker_options;
             let members = match bootstrap_members(
                 &runtime,
                 &mut clients,
@@ -306,6 +312,7 @@ impl PdClient {
                     .cluster_id;
                 Ok(Self {
                     shared: Arc::new(PdClientShared {
+                        options,
                         bootstrap_endpoint,
                         timeout,
                         cluster_id,
@@ -326,6 +333,11 @@ impl PdClient {
                 Err(PdClientError::Runtime(error.to_string()))
             }
         }
+    }
+
+    /// Updates the shared PD region follower policy for subsequent requests.
+    pub fn set_enable_follower_handle(&self, enabled: bool) {
+        self.shared.options.set_enable_follower_handle(enabled);
     }
 
     /// Returns the cluster identity obtained from GetMembers.
@@ -500,13 +512,13 @@ impl PdClient {
         response.recv().unwrap_or(Err(PdClientError::Closed))
     }
 
-    /// Loads one region identity with the exact bucket request flag.
+    /// Loads one region identity from the leader with the exact bucket request flag.
     pub fn get_region_by_id(
         &self,
         region_id: u64,
         need_buckets: bool,
     ) -> Result<PdRegion, PdClientError> {
-        self.get_region_by_id_routed(region_id, need_buckets, false)
+        self.get_region_by_id_routed(region_id, need_buckets, true)
     }
 
     /// Loads one region identity through the active endpoint or PD leader.
@@ -572,10 +584,23 @@ impl PdClient {
         need_buckets: bool,
         contain_all_key_range: bool,
     ) -> Result<Vec<PdRegion>, PdClientError> {
+        self.batch_scan_regions_routed(ranges, limit, need_buckets, contain_all_key_range, false)
+    }
+
+    /// Batch scan with the native caller's explicit follower permission.
+    pub fn batch_scan_regions_routed(
+        &self,
+        ranges: &[PdKeyRange],
+        limit: i32,
+        need_buckets: bool,
+        contain_all_key_range: bool,
+        allow_follower: bool,
+    ) -> Result<Vec<PdRegion>, PdClientError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands
             .send(WorkerCommand::BatchScanRegions {
+                allow_follower,
                 request: pdpb::BatchScanRegionsRequest {
                     header: None,
                     need_buckets,
@@ -846,6 +871,7 @@ mod worker_lifecycle_tests {
         let worker: JoinHandle<()> = std::thread::spawn(move || worker(receiver, shutdown_rx));
         PdClient {
             shared: Arc::new(PdClientShared {
+                options: Arc::new(tikv_client::pd_options::Options::new()),
                 bootstrap_endpoint: "http://127.0.0.1:2379".to_owned(),
                 timeout: Duration::from_secs(30),
                 cluster_id: 42,

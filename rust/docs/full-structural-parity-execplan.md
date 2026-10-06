@@ -2647,3 +2647,8 @@ Go package or performance acceptance is claimed.
 
 
 The [statistics plan](statistics-ndv-batch-execplan.md) connects four current-Go gaps across collection, schema admission, three partition merge consumers, JSON, canonical tables and durable sketch writes. [Validation](parity/current-audit/statistics-ndv-batch-validation.json) records five baseline Rust failures and three baseline TCP failures, then 220 Rust and 15 TCP passes. Duplicate in-process global sketch merging is removed. Full package acceptance, live multi-node TiKV and performance remain unverified; the 56 broader unresolved roots keep their existing dispositions.
+
+
+## PD region lifecycle checkpoint — 2026-10-06
+
+The [PD region plan](pd-region-batch-execplan.md) and [receipt](parity/current-audit/pd-region-batch-validation.json) connect native selection/metadata, both transports, cache flags/stale-response fallback, TiDB bridge and live SQL startup/mutation/reload policy. Native fixes are published then synchronized through maintained patches and protobuf regeneration. Complete discovery health/forwarding, TSO proxying, shared cache ownership and remaining settings stay open; no whole Go package is accepted. The other53 unresolved roots are carried evidence.

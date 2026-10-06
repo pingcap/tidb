@@ -165,6 +165,7 @@ fn parse_ttl_offset(value: &str) -> Option<i32> {
 /// documented gap the account/privilege/process registries carry.
 #[derive(Clone, Debug)]
 pub struct GlobalSysvars {
+    pd_region_policy: Arc<RwLock<Option<Arc<dyn PdRegionPolicy>>>>,
     external_timestamp: Arc<RwLock<Option<Arc<dyn ExternalTimestampProvider>>>>,
     values: Arc<Mutex<HashMap<String, String>>>,
     /// The INSTANCE tier: Go `vardef.ScopeInstance`. A per-node value, held
@@ -200,6 +201,15 @@ enum InstanceMutation {
     Reset(String),
 }
 
+/// Process-owned PD setting consumer. Detached cluster validation images do
+/// not publish to this owner; committed reloads retain the installed binding.
+/// Publication runs under the global image lock; implementations must not
+/// reenter global-variable APIs from this callback.
+pub trait PdRegionPolicy: std::fmt::Debug + Send + Sync {
+    /// Applies Go EnableFollowerHandle to the process PD client.
+    fn set_follower_handle(&self, enabled: bool);
+}
+
 /// Storage-oracle authority installed once by the process session factory.
 pub trait ExternalTimestampProvider: std::fmt::Debug + Send + Sync {
     /// Reads the current timestamp from the storage authority.
@@ -212,6 +222,7 @@ impl Default for GlobalSysvars {
     fn default() -> Self {
         Self {
             external_timestamp: Arc::default(),
+            pd_region_policy: Arc::default(),
             values: Arc::default(),
             instances: Arc::default(),
             instance_mutations: None,
@@ -476,6 +487,34 @@ impl GlobalSysvars {
         }
     }
 
+    /// Installs the node's PD policy and applies the current persisted/default value.
+    pub fn set_pd_region_policy(&self, policy: Arc<dyn PdRegionPolicy>) {
+        // Bind and initialize under the image lock so a concurrent publication
+        // cannot be overwritten by an older value read before binding.
+        let resolved = self
+            .resolved
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let index = crate::sysvar::sys_var_index_lookup(
+            tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION,
+        )
+        .expect("PD region policy is registered");
+        let value = resolved
+            .values
+            .get(index)
+            .and_then(|slot| slot.as_deref())
+            .map(str::to_owned)
+            .unwrap_or_else(|| crate::sysvar::effective_default(&crate::sysvar::SYS_VARS[index]));
+        *self
+            .pd_region_policy
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(policy.clone());
+        if self.publishes_runtime_settings {
+            policy.set_follower_handle(value.eq_ignore_ascii_case("ON") || value == "1");
+        }
+        drop(resolved);
+    }
+
     /// Installs the live storage oracle used by external timestamp callbacks.
     pub fn set_external_timestamp_provider(&self, provider: Arc<dyn ExternalTimestampProvider>) {
         *self
@@ -633,6 +672,9 @@ impl GlobalSysvars {
                     crate::sysvar::effective_default(&crate::sysvar::SYS_VARS[index])
                 })
         };
+        let pd_region_value = effective(tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION);
+        let pd_region_enabled =
+            pd_region_value.eq_ignore_ascii_case("ON") || pd_region_value == "1";
         let oom_action = tidb_executor::OomAction::parse(&effective(
             tidb_vardef::tidb_vars::TIDB_MEM_OOM_ACTION,
         ));
@@ -723,6 +765,16 @@ impl GlobalSysvars {
             if publish_stats_cache_mem_quota {
                 tidb_vardef::STATS_CACHE_MEM_QUOTA
                     .store(stats_cache_mem_quota, std::sync::atomic::Ordering::SeqCst);
+            }
+            // Keep the callback ordered with the image and other process
+            // options; dropping this lock first can publish an older value last.
+            let policy = self
+                .pd_region_policy
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if let Some(policy) = policy {
+                policy.set_follower_handle(pd_region_enabled);
             }
         }
     }
@@ -5446,4 +5498,115 @@ pub(crate) fn parse_read_timestamp(
         .to_datetime(zone)
         .map_err(|_| invalid())?;
     Ok((instant.timestamp_millis() as u64) << 18)
+}
+
+#[cfg(test)]
+mod pd_region_batch_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[derive(Debug, Default)]
+    struct Policy(AtomicBool);
+    impl PdRegionPolicy for Policy {
+        fn set_follower_handle(&self, value: bool) {
+            self.0.store(value, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn pd_region_batch_concurrent_publication_keeps_the_latest_value() {
+        use std::sync::{mpsc, Mutex};
+        use std::time::Duration;
+        #[derive(Debug)]
+        struct BlockingPolicy {
+            value: AtomicBool,
+            block: AtomicBool,
+            entered: mpsc::Sender<()>,
+            release: Mutex<mpsc::Receiver<()>>,
+        }
+        impl PdRegionPolicy for BlockingPolicy {
+            fn set_follower_handle(&self, value: bool) {
+                if value && self.block.swap(false, Ordering::SeqCst) {
+                    self.entered.send(()).unwrap();
+                    self.release.lock().unwrap().recv().unwrap();
+                }
+                self.value.store(value, Ordering::SeqCst);
+            }
+        }
+        let name = tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION;
+        let globals = GlobalSysvars::default();
+        globals.set(name, "OFF".to_owned()).unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let policy = Arc::new(BlockingPolicy {
+            value: AtomicBool::new(false),
+            block: AtomicBool::new(true),
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        });
+        globals.set_pd_region_policy(policy.clone());
+        let first_globals = globals.clone();
+        let first = std::thread::spawn(move || first_globals.set(name, "ON".to_owned()).unwrap());
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let second_globals = globals.clone();
+        let (done_tx, done_rx) = mpsc::channel();
+        let second = std::thread::spawn(move || {
+            second_globals.set(name, "OFF".to_owned()).unwrap();
+            done_tx.send(()).unwrap();
+        });
+        // A correct publication lock keeps the second callback behind the
+        // first. The old unlocked callback lets OFF complete before stale ON.
+        let _ = done_rx.recv_timeout(Duration::from_millis(100));
+        release_tx.send(()).unwrap();
+        first.join().unwrap();
+        second.join().unwrap();
+        assert_eq!(globals.get(name).unwrap(), "OFF");
+        assert!(!policy.value.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn pd_region_batch_setting_default_commit_reload_and_reset() {
+        let globals = GlobalSysvars::default();
+        let policy = Arc::new(Policy::default());
+        let name = tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION;
+        globals.set_pd_region_policy(policy.clone());
+        assert!(policy.0.load(Ordering::SeqCst));
+        globals.set(name, "OFF".to_owned()).unwrap();
+        assert!(!policy.0.load(Ordering::SeqCst));
+        let scratch = GlobalSysvars::from_cluster_rows([(name.to_owned(), "OFF".to_owned())]);
+        scratch.set_pd_region_policy(policy.clone());
+        scratch.set(name, "ON".to_owned()).unwrap();
+        assert!(
+            !policy.0.load(Ordering::SeqCst),
+            "uncommitted validation must not publish"
+        );
+        globals.replace_from(&scratch);
+        assert!(policy.0.load(Ordering::SeqCst));
+        globals.set_startup(name, "OFF".to_owned());
+        assert!(!policy.0.load(Ordering::SeqCst));
+        globals.replace_from(&GlobalSysvars::from_cluster_rows([]));
+        assert!(
+            policy.0.load(Ordering::SeqCst),
+            "missing row restores Go default"
+        );
+        globals.set(name, "OFF".to_owned()).unwrap();
+        globals.reset(name).unwrap();
+        assert!(policy.0.load(Ordering::SeqCst));
+        assert!(globals.set(name, "invalid".to_owned()).is_err());
+        assert!(policy.0.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn pd_region_batch_changed_name_publication_preserves_other_settings() {
+        let globals = GlobalSysvars::default();
+        let policy = Arc::new(Policy(AtomicBool::new(true)));
+        let name = tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION;
+        globals.set_pd_region_policy(policy.clone());
+        let scratch = GlobalSysvars::from_cluster_rows([(name.to_owned(), "OFF".to_owned())]);
+        globals.publish_global_changes_from(&scratch, &[name.to_owned()]);
+        assert!(!policy.0.load(Ordering::SeqCst));
+        globals.set("max_connections", "333".to_owned()).unwrap();
+        assert!(!policy.0.load(Ordering::SeqCst));
+        assert_eq!(globals.get("max_connections").unwrap(), "333");
+    }
 }

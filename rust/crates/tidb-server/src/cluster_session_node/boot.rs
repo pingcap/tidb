@@ -134,6 +134,11 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // authority's shutdown drain, like the catalog reloader below.
     let (users, privilege_reloader) = node_accounts(&config, &authority)?;
     crate::real_tikv_node::load_cluster_startup_variables(&users, &authority.transaction_opener())?;
+    if let Some(pd) = authority.pd_client() {
+        users
+            .global_vars()
+            .set_pd_region_policy(Arc::new(ProcessPdRegionPolicy(pd)));
+    }
     // The cluster-session path owns one process-wide sysvar reloader below.
     // Its persisted boot image was installed synchronously above, before this
     // reloader and, crucially, before bind. This is independent of
@@ -824,5 +829,18 @@ mod status_tests {
                 assert!(response.contains("tidb_monitor_time_jump_back_total"));
             }
         }
+    }
+}
+
+struct ProcessPdRegionPolicy(tidb_pd_client::PdClient);
+impl std::fmt::Debug for ProcessPdRegionPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProcessPdRegionPolicy")
+            .finish_non_exhaustive()
+    }
+}
+impl tidb_session::vars::PdRegionPolicy for ProcessPdRegionPolicy {
+    fn set_follower_handle(&self, enabled: bool) {
+        self.0.set_enable_follower_handle(enabled);
     }
 }

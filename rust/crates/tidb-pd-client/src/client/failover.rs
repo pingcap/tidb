@@ -52,66 +52,25 @@ pub(super) fn get_region_with_failover(
     encoded_key: &[u8],
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
-    let snapshot = state.read().expect("PD state lock poisoned").clone();
-    let mut attempted = HashSet::new();
-    attempted.insert(snapshot.active_endpoint.clone());
-    match get_region(
+    region_with_failover(
         runtime,
         clients,
-        &snapshot.active_endpoint,
-        RpcControl { timeout, shutdown },
-        snapshot.members.cluster_id,
-        encoded_key,
-        need_buckets,
-    ) {
-        Ok(region) => Ok(region),
-        Err(error) if needs_failover_probe(&error) => {
-            let direct_failure = is_direct_failure(&error);
-            let mut last_error = error;
-            // A bad membership observation never erases the last accepted
-            // snapshot; its remaining direct endpoints are still candidates.
-            if let Err(error @ PdClientError::ClusterMismatch { .. }) =
-                refresh_membership(runtime, clients, timeout, state, shutdown)
-            {
-                return Err(error);
-            }
-            let current = state.read().expect("PD state lock poisoned").clone();
-            if !direct_failure && snapshot.active_endpoint == current.members.leader_url {
-                return Err(last_error);
-            }
-            for endpoint in endpoint_attempt_order(&current) {
-                if !attempted.insert(endpoint.clone()) {
-                    continue;
-                }
-                match get_region(
-                    runtime,
-                    clients,
-                    &endpoint,
-                    RpcControl { timeout, shutdown },
-                    current.members.cluster_id,
-                    encoded_key,
-                    need_buckets,
-                ) {
-                    Ok(region) => {
-                        set_active_endpoint(state, endpoint);
-                        return Ok(region);
-                    }
-                    Err(error)
-                        if is_retryable_endpoint_error(
-                            &error,
-                            &endpoint,
-                            &current.members.leader_url,
-                        ) =>
-                    {
-                        last_error = error;
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-            Err(last_error)
-        }
-        Err(error) => Err(error),
-    }
+        timeout,
+        state,
+        shutdown,
+        true,
+        |runtime, clients, endpoint, cluster_id, control| {
+            get_region(
+                runtime,
+                clients,
+                endpoint,
+                control,
+                cluster_id,
+                encoded_key,
+                need_buckets,
+            )
+        },
+    )
 }
 
 pub(super) fn get_prev_region_with_failover(
@@ -123,18 +82,19 @@ pub(super) fn get_prev_region_with_failover(
     encoded_key: &[u8],
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
-    foreground_with_failover(
+    region_with_failover(
         runtime,
         clients,
         timeout,
         state,
         shutdown,
-        |runtime, clients, endpoint, cluster_id| {
+        true,
+        |runtime, clients, endpoint, cluster_id, control| {
             get_prev_region(
                 runtime,
                 clients,
                 endpoint,
-                RpcControl { timeout, shutdown },
+                control,
                 cluster_id,
                 encoded_key,
                 need_buckets,
@@ -152,18 +112,19 @@ pub(super) fn get_region_by_id_with_failover(
     region_id: u64,
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
-    foreground_with_failover(
+    region_with_failover(
         runtime,
         clients,
         timeout,
         state,
         shutdown,
-        |runtime, clients, endpoint, cluster_id| {
+        true,
+        |runtime, clients, endpoint, cluster_id, control| {
             get_region_by_id(
                 runtime,
                 clients,
                 endpoint,
-                RpcControl { timeout, shutdown },
+                control,
                 cluster_id,
                 region_id,
                 need_buckets,
@@ -180,16 +141,15 @@ pub(super) fn scan_regions_with_failover(
     shutdown: &watch::Receiver<bool>,
     request: &pdpb::ScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
-    foreground_with_failover(
+    region_with_failover(
         runtime,
         clients,
         timeout,
         state,
         shutdown,
-        |runtime, clients, endpoint, cluster_id| {
-            scan_regions(
-                runtime, clients, endpoint, timeout, shutdown, cluster_id, request,
-            )
+        true,
+        |runtime, clients, endpoint, cluster_id, control| {
+            scan_regions(runtime, clients, endpoint, control, cluster_id, request)
         },
     )
 }
@@ -201,19 +161,110 @@ pub(super) fn batch_scan_regions_with_failover(
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
     request: &pdpb::BatchScanRegionsRequest,
+    allow_follower: bool,
 ) -> Result<Vec<PdRegion>, PdClientError> {
-    foreground_with_failover(
+    region_with_failover(
         runtime,
         clients,
         timeout,
         state,
         shutdown,
-        |runtime, clients, endpoint, cluster_id| {
-            batch_scan_regions(
-                runtime, clients, endpoint, timeout, shutdown, cluster_id, request,
-            )
+        allow_follower,
+        |runtime, clients, endpoint, cluster_id, control| {
+            batch_scan_regions(runtime, clients, endpoint, control, cluster_id, request)
         },
     )
+}
+
+// Region metadata may be served locally by a follower only when both policy
+// layers permit it. A follower error gets one leader attempt within the same
+// deadline; projection errors and cancellation are not service retry signals.
+fn region_with_failover<T, F>(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
+    allowed: bool,
+    mut action: F,
+) -> Result<T, PdClientError>
+where
+    F: FnMut(
+        &tokio::runtime::Runtime,
+        &mut PdChannelCache,
+        &str,
+        u64,
+        RpcControl<'_>,
+    ) -> Result<T, PdClientError>,
+{
+    if !clients.options.get_enable_follower_handle() {
+        return foreground_with_failover(
+            runtime,
+            clients,
+            timeout,
+            state,
+            shutdown,
+            |runtime, clients, endpoint, cluster_id| {
+                action(
+                    runtime,
+                    clients,
+                    endpoint,
+                    cluster_id,
+                    RpcControl {
+                        timeout,
+                        shutdown,
+                        follower: false,
+                    },
+                )
+            },
+        );
+    }
+    let snapshot = state.read().expect("PD state lock poisoned").clone();
+    let target = clients.regions.select(
+        &snapshot.members.leader_url,
+        &snapshot.members.member_urls,
+        true,
+        allowed,
+    );
+    let deadline = std::time::Instant::now() + timeout;
+    let result = action(
+        runtime,
+        clients,
+        &target.endpoint,
+        snapshot.members.cluster_id,
+        RpcControl {
+            timeout,
+            shutdown,
+            follower: target.follower,
+        },
+    );
+    let retry = target.needs_leader_retry(
+        matches!(
+            &result,
+            Err(PdClientError::Transport { .. } | PdClientError::Timeout { .. })
+        ),
+        matches!(&result, Err(PdClientError::HeaderError { .. })),
+    );
+    if retry && !*shutdown.borrow() {
+        if let Some(remaining) = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .filter(|duration| !duration.is_zero())
+        {
+            let current = state.read().expect("PD state lock poisoned").clone();
+            return action(
+                runtime,
+                clients,
+                &current.members.leader_url,
+                current.members.cluster_id,
+                RpcControl {
+                    timeout: remaining,
+                    shutdown,
+                    follower: false,
+                },
+            );
+        }
+    }
+    result
 }
 
 pub(super) fn foreground_with_failover<T, F>(
@@ -616,6 +667,8 @@ pub(super) fn is_retryable_endpoint_error(
 /// clones; discovery, membership and TSO retain the same connection map.
 #[derive(Clone)]
 pub(crate) struct PdChannelCache {
+    pub(super) options: Arc<tikv_client::pd_options::Options>,
+    regions: Arc<tikv_client::pd_region_service::RegionService>,
     channels: Arc<tikv_client::pd_service_discovery::ChannelCache>,
     security: Arc<ClusterSecurity>,
     pub(super) tso_discovery: Arc<tokio::sync::Mutex<TsoDiscoveryState>>,
@@ -635,6 +688,8 @@ impl PdChannelCache {
     pub(super) fn new(security: Arc<ClusterSecurity>) -> Self {
         Self {
             channels: Arc::new(tikv_client::pd_service_discovery::ChannelCache::default()),
+            options: Arc::new(tikv_client::pd_options::Options::new()),
+            regions: Arc::default(),
             security,
             tso_discovery: Default::default(),
         }

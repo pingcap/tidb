@@ -240,7 +240,7 @@ impl RetryClientTrait for TidbPdBridge {
     }
 
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
-        self.dispatch(move |client| client.get_region_by_id(region_id, false))
+        self.dispatch(move |client| client.get_region_by_id_routed(region_id, false, true))
             .await
             .map(region_with_leader)
     }
@@ -249,7 +249,7 @@ impl RetryClientTrait for TidbPdBridge {
         self: Arc<Self>,
         region_id: RegionId,
     ) -> Result<RegionWithLeader> {
-        self.dispatch(move |client| client.get_region_by_id(region_id, true))
+        self.dispatch(move |client| client.get_region_by_id_routed(region_id, true, true))
             .await
             .map(region_with_leader)
     }
@@ -283,11 +283,12 @@ impl RetryClientTrait for TidbPdBridge {
         })?;
         let ranges: Vec<_> = ranges.into_iter().map(key_range).collect();
         self.dispatch(move |client| {
-            client.batch_scan_regions(
+            client.batch_scan_regions_routed(
                 &ranges,
                 limit,
                 options.need_buckets,
                 options.output_must_contain_all_key_range,
+                options.allow_follower_handle,
             )
         })
         .await

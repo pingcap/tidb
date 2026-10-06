@@ -36,6 +36,16 @@ use super::topology::{
 };
 use super::{block_on_rpc, PdMemberObservation, RpcCompletion, RpcControl};
 
+fn region_request<T>(value: T, control: RpcControl<'_>) -> tonic::Request<T> {
+    let target = tikv_client::pd_region_service::RegionTarget {
+        endpoint: String::new(),
+        follower: control.follower,
+    };
+    let mut request = target.request(value);
+    request.set_timeout(control.timeout);
+    request
+}
+
 pub(super) fn get_members(
     runtime: &tokio::runtime::Runtime,
     clients: &mut PdChannelCache,
@@ -93,11 +103,14 @@ pub(super) fn get_region(
         control.timeout,
         control.shutdown,
         PdOperation::GetRegion,
-        client.get_region(pdpb::GetRegionRequest {
-            header: Some(request_header(cluster_id)),
-            region_key: encoded_key.to_vec(),
-            need_buckets,
-        }),
+        client.get_region(region_request(
+            pdpb::GetRegionRequest {
+                header: Some(request_header(cluster_id)),
+                region_key: encoded_key.to_vec(),
+                need_buckets,
+            },
+            control,
+        )),
     );
     let response =
         map_rpc_result(response, PdOperation::GetRegion, endpoint, control.timeout)?.into_inner();
@@ -120,11 +133,14 @@ pub(super) fn get_prev_region(
         control.timeout,
         control.shutdown,
         PdOperation::GetPrevRegion,
-        client.get_prev_region(pdpb::GetRegionRequest {
-            header: Some(request_header(cluster_id)),
-            region_key: encoded_key.to_vec(),
-            need_buckets,
-        }),
+        client.get_prev_region(region_request(
+            pdpb::GetRegionRequest {
+                header: Some(request_header(cluster_id)),
+                region_key: encoded_key.to_vec(),
+                need_buckets,
+            },
+            control,
+        )),
     );
     let response = map_rpc_result(
         response,
@@ -156,11 +172,14 @@ pub(super) fn get_region_by_id(
         control.timeout,
         control.shutdown,
         PdOperation::GetRegionById,
-        client.get_region_by_id(pdpb::GetRegionByIdRequest {
-            header: Some(request_header(cluster_id)),
-            region_id,
-            need_buckets,
-        }),
+        client.get_region_by_id(region_request(
+            pdpb::GetRegionByIdRequest {
+                header: Some(request_header(cluster_id)),
+                region_id,
+                need_buckets,
+            },
+            control,
+        )),
     );
     let response = map_rpc_result(
         response,
@@ -181,8 +200,7 @@ pub(super) fn scan_regions(
     runtime: &tokio::runtime::Runtime,
     clients: &mut PdChannelCache,
     endpoint: &str,
-    timeout: Duration,
-    shutdown: &watch::Receiver<bool>,
+    control: RpcControl<'_>,
     cluster_id: u64,
     request: &pdpb::ScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
@@ -191,13 +209,18 @@ pub(super) fn scan_regions(
     request.header = Some(request_header(cluster_id));
     let response = block_on_rpc(
         runtime,
-        timeout,
-        shutdown,
+        control.timeout,
+        control.shutdown,
         PdOperation::ScanRegions,
-        client.scan_regions(request),
+        client.scan_regions(region_request(request, control)),
     );
-    let response =
-        map_rpc_result(response, PdOperation::ScanRegions, endpoint, timeout)?.into_inner();
+    let response = map_rpc_result(
+        response,
+        PdOperation::ScanRegions,
+        endpoint,
+        control.timeout,
+    )?
+    .into_inner();
     validate_response_header(
         PdOperation::ScanRegions,
         response.header.as_ref(),
@@ -210,8 +233,7 @@ pub(super) fn batch_scan_regions(
     runtime: &tokio::runtime::Runtime,
     clients: &mut PdChannelCache,
     endpoint: &str,
-    timeout: Duration,
-    shutdown: &watch::Receiver<bool>,
+    control: RpcControl<'_>,
     cluster_id: u64,
     request: &pdpb::BatchScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
@@ -221,13 +243,18 @@ pub(super) fn batch_scan_regions(
     request.header = Some(request_header(cluster_id));
     let response = block_on_rpc(
         runtime,
-        timeout,
-        shutdown,
+        control.timeout,
+        control.shutdown,
         PdOperation::BatchScanRegions,
-        client.batch_scan_regions(request),
+        client.batch_scan_regions(region_request(request, control)),
     );
-    let response =
-        map_rpc_result(response, PdOperation::BatchScanRegions, endpoint, timeout)?.into_inner();
+    let response = map_rpc_result(
+        response,
+        PdOperation::BatchScanRegions,
+        endpoint,
+        control.timeout,
+    )?
+    .into_inner();
     validate_response_header(
         PdOperation::BatchScanRegions,
         response.header.as_ref(),
@@ -342,6 +369,22 @@ pub(super) fn get_gc_state(
     })
 }
 
+// Tonic maps its local grpc-timeout expiration to Cancelled, retaining the
+// typed cause. Do not classify a peer's Cancelled status by its message text.
+fn is_rpc_timeout(status: &tonic::Status) -> bool {
+    if status.code() == tonic::Code::DeadlineExceeded {
+        return true;
+    }
+    let mut source = std::error::Error::source(status);
+    while let Some(error) = source {
+        if error.is::<tonic::TimeoutExpired>() {
+            return true;
+        }
+        source = error.source();
+    }
+    false
+}
+
 pub(super) fn map_rpc_result<T>(
     result: RpcCompletion<T>,
     operation: PdOperation,
@@ -350,7 +393,7 @@ pub(super) fn map_rpc_result<T>(
 ) -> Result<tonic::Response<T>, PdClientError> {
     match result {
         RpcCompletion::Completed(Ok(response)) => Ok(response),
-        RpcCompletion::Completed(Err(status)) if status.code() == tonic::Code::DeadlineExceeded => {
+        RpcCompletion::Completed(Err(status)) if is_rpc_timeout(&status) => {
             Err(timeout_error(operation, endpoint, timeout))
         }
         RpcCompletion::Completed(Err(status)) => Err(PdClientError::Transport {
