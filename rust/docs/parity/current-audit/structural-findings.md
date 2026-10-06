@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [unused Domain sysvar facade and stale audit guidance](domain-facade-cleanup-validation.json). Remove the unused Domain sysvar facade, its twelve mock-only tests, two superseded audit documents and obsolete crate-level planning narrative: 745 net Rust lines removed. Preserve live session/server sysvar consumers and original Go TopN/CDC algorithms and case tables unchanged.
+Latest cleanup: [superseded server/session audit plans](server-session-plan-cleanup-validation.json). Remove 32 superseded server/session audit plans (1267 lines), redirect six TESTPORT references to 33 unchanged retained receipts, and collapse the repeated 62-link cleanup chronology into a preserved historical index. Keep unfinished handler-test validation, all executable tests, scripts, safety checks and production code unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

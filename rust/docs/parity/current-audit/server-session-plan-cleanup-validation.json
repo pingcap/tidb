@@ -1,0 +1,282 @@
+{
+  "date": "2026-10-06",
+  "base": "8a1d95106e9eb4c66402cd7f7a92842fccd3633f",
+  "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17",
+  "scope": "Remove 32 superseded server/session audit plans (1267 lines), redirect six TESTPORT references to 33 unchanged retained receipts, and collapse the repeated 62-link cleanup chronology into a preserved historical index. Keep unfinished handler-test validation, all executable tests, scripts, safety checks and production code unchanged.",
+  "continuity": {
+    "base": "8a1d95106e9eb4c66402cd7f7a92842fccd3633f",
+    "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17",
+    "removed_plans": 32,
+    "removed_plan_lines": 1267,
+    "retained_receipts": 33,
+    "receipt_bytes_unchanged": true,
+    "unfinished_handler_plan_unchanged": true,
+    "all_executable_sources_tests_scripts_dependencies_unchanged": true,
+    "six_current_references_redirected": true,
+    "historical_command_reference_retained": true,
+    "finding_dispositions_unchanged": true,
+    "comparison_export_verified": true
+  },
+  "removed_plans": [
+    {
+      "path": "rust/docs/operations/server-connection-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_connection.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-err-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_err.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-handler-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_handler.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-handler-extractorhandler-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_handler_extractorhandler.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-handler-optimizor-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_handler_optimizor.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-handler-tikvhandler-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_handler_tikvhandler.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-handler-ttlhandler-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_handler_ttlhandler.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-handshake-parse-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_internal_handshake.md",
+        "rust/testport/receipts/server_internal_parse.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-internal-dump-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_internal_dump.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-internal-testserverclient-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_internal_testserverclient.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-internal-testutil-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_internal_testutil.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-internal-util-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_internal_util.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-metrics-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_metrics.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/server-resultset-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/server_internal_resultset.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-cursor-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_cursor.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-nontransactional-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_nontransactional.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-nontransactionaltest-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_nontransactionaltest.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-sessionapi-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_sessionapi.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-syssession-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_syssession.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-bootstraptest-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_bootstraptest.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-clusteredindextest-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_clusteredindextest.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-common-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_common.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-meta-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_meta.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-nontransactionaltest-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_nontransactionaltest.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-privileges-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_privileges.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-resourcegrouptest-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_resourcegrouptest.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-schematest-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_schematest.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-temporarytabletest-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_temporarytabletest.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-txn-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_txn.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-variable-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_variable.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-test-vars-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_test_vars.md"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/session-txninfo-audit-execplan.md",
+      "receipts": [
+        "rust/testport/receipts/session_txninfo.md"
+      ]
+    }
+  ],
+  "before_images": "git show 8a1d95106e:<path>; hashes, line counts and publication ancestry are in /workspace/.cloud-setup/server-session-plan-cleanup/removed-inventory.json",
+  "historical_cleanup_index": "https://github.com/pingcap/tidb/blob/8a1d95106e9eb4c66402cd7f7a92842fccd3633f/rust/docs/parity/current-audit/README.md",
+  "go_refresh": {
+    "old": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "new": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17",
+    "files": [
+      {
+        "path": "pkg/statistics/handle/globalstats/global_stats.go",
+        "before_sha256": "1ab074d8d3528f8d14a8f81d6925617c7f25e7ffec93c914866253f97dfcb040",
+        "after_sha256": "fbb0c7200446028270778beaa1d0a7854e954f79b87387526e66549b13f3474f"
+      },
+      {
+        "path": "pkg/statistics/handle/storage/BUILD.bazel",
+        "before_sha256": "496fbf4798e97f4bc76be95fc0edcd28f373bc70eb30b44acac3db9b4771e023",
+        "after_sha256": "8420bedcfa504eac8152b83cb326d55b7229f7c89cac5705548304cb52b8237d"
+      },
+      {
+        "path": "pkg/statistics/handle/storage/dump_test.go",
+        "before_sha256": "c01109ba99aba2f490dc01b3ae45a2258737d93190d7287fc4fcdfaf7778cceb",
+        "after_sha256": "02ff8875fea15f1f616da8a29737eaf72bba491ab4b6a437a894828502e6666e"
+      },
+      {
+        "path": "pkg/statistics/handle/storage/json.go",
+        "before_sha256": "c495fa76a7efb5d37875a409d7ac3acdcfb2f0bae726f430ffe2be3e8fa6798d",
+        "after_sha256": "dfceb5c3dbfabe0789d1cc5ef89fe9da84f177051d6346b26fb81c62ec95043d"
+      },
+      {
+        "path": "pkg/statistics/handle/storage/save.go",
+        "before_sha256": "ac475156d5654e1e867817bd9f73c828380d55f5396dfaf76aa98ddaeb524adf",
+        "after_sha256": "ac7b26bcb25524b6ecee81821cb8e0a7324511beef4d379fcc224c1b1d825591"
+      },
+      {
+        "path": "pkg/statistics/handle/storage/stats_read_writer.go",
+        "before_sha256": "c077f52d1597446ed68e959f825d87c07d45fe4d9e76a84b9f198c3f6850a4ce",
+        "after_sha256": "051022ab495b3781c538fe7966bd7d6aaf0ca5b8bcba38292c7a798014035c35"
+      },
+      {
+        "path": "pkg/statistics/handle/types/interfaces.go",
+        "before_sha256": "f7b32771914b985d226d623881092a83c532500bdfd8ab36ea71157eec9821ea",
+        "after_sha256": "5d844e4e30cd892e5f76485c8273c81813e81f88373ddc5ab87b11766fa12b9c"
+      }
+    ],
+    "go_mod_unchanged": true,
+    "delta": "FMSketch preservation through statistics JSON dump/load and storage writes; globalstats passes nil. New Go regression and Bazel registration. Rust behavior not changed or validated by this documentation cleanup."
+  },
+  "tests": {},
+  "commands": [
+    "python3 /workspace/.cloud-setup/server-session-plan-cleanup/continuity.py",
+    "cd /workspace/tidb; git diff --check"
+  ],
+  "gates": {
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; external final handoff records completion",
+    "test_sweeps_and_lint": "not run: documentation-only; executable sources, tests, harnesses and scripts unchanged"
+  },
+  "limits": [
+    "No new behavior or broad finding disposition change; no package acceptance",
+    "Historical runtime/Bazel gaps remain in retained receipts and handler-test plan",
+    "Fresh Go FM-sketch persistence delta identified but not implemented or behaviorally checked in this cleanup",
+    "No full Go suite, live cluster or benchmark; no measured performance gain"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/server-session-plan-cleanup/final-handoff.json",
+  "link_validation": {
+    "historical_index_at_published_base": true,
+    "historical_receipt_links_retained": 62,
+    "current_audit_links_resolve": true
+  }
+}

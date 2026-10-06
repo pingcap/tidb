@@ -797,9 +797,9 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "domain-facade-cleanup-validation.json",
-    "scope": "Remove the unused Domain sysvar facade, its twelve mock-only tests, two superseded audit documents and obsolete crate-level planning narrative: 745 net Rust lines removed. Preserve live session/server sysvar consumers and original Go TopN/CDC algorithms and case tables unchanged.",
-    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    "receipt": "server-session-plan-cleanup-validation.json",
+    "scope": "Remove 32 superseded server/session audit plans (1267 lines), redirect six TESTPORT references to 33 unchanged retained receipts, and collapse the repeated 62-link cleanup chronology into a preserved historical index. Keep unfinished handler-test validation, all executable tests, scripts, safety checks and production code unchanged.",
+    "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17"
   },
   "test_cleanup_history": [
     {
@@ -1125,6 +1125,11 @@
       "receipt": "domain-facade-cleanup-validation.json",
       "scope": "Remove the unused Domain sysvar facade, its twelve mock-only tests, two superseded audit documents and obsolete crate-level planning narrative: 745 net Rust lines removed. Preserve live session/server sysvar consumers and original Go TopN/CDC algorithms and case tables unchanged.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "server-session-plan-cleanup-validation.json",
+      "scope": "Remove 32 superseded server/session audit plans (1267 lines), redirect six TESTPORT references to 33 unchanged retained receipts, and collapse the repeated 62-link cleanup chronology into a preserved historical index. Keep unfinished handler-test validation, all executable tests, scripts, safety checks and production code unchanged.",
+      "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17"
     }
   ],
   "repair_history": [

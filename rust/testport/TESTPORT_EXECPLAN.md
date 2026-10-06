@@ -3406,8 +3406,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   state machine and timer integration; active and detached failpoint-wrapped
   Go suites pass after the documented flaky retry, with fourteen Rust owner
   tests and eight timer integration tests passing. Details are in
-  `receipts/session_syssession.md` and
-  `docs/operations/session-syssession-audit-execplan.md`.
+  `receipts/session_syssession.md`.
 
 - 2026-09-02: refreshed the complete `pkg/util/sqlexec/mock` boundary at
   current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: three
@@ -6345,8 +6344,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       with the full owner/operation/pool lifecycle, remove ignored empty
       carriers, and migrate timer storage off its local session/pool
       imitation. The atomic inventory and Ready gates are in
-      `receipts/session_syssession.md` and
-      `docs/operations/session-syssession-audit-execplan.md`.
+      `receipts/session_syssession.md`.
 - [x] Complete the pinned `pkg/util/sqlexec/mock` support package in a
       distinct `tidb-sqlexec-mock` owner: preserve the context-key identity
       and the generated restricted-executor mock's full three-method
@@ -8471,8 +8469,9 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   with byte-preserving attributes. The parser emits Go-equivalent diagnostics
   through `tidb-log`, and focused source regressions cover exact field shape,
   malformed attributes, truncation, duplicate keys, NULL frames, and metric
-  boundaries. Go tests, both focused Rust filters, and lint pass. See the two
-  package receipts and `server-handshake-parse-audit-execplan.md`.
+  boundaries. Go tests, both focused Rust filters, and lint pass. See
+  `rust/testport/receipts/server_internal_handshake.md` and
+  `rust/testport/receipts/server_internal_parse.md`.
 - `pkg/server/metrics` is byte-identical to Go master across its two artifacts
   and 135 lines. It is a Go server-facing Prometheus wiring layer with no
   dependency-closed Rust connection-loop owner; the audit records this explicit
@@ -8517,22 +8516,19 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   snapshots), but no dependency-closed handler owner; the complete package
   remains an explicit boundary after the failpoint-wrapped Go suite and
   `tidb-domain` owner suite pass. See
-  `rust/testport/receipts/server_handler_optimizor.md` and
-  `rust/docs/operations/server-handler-optimizor-audit-execplan.md`.
+  `rust/testport/receipts/server_handler_optimizor.md`.
 - `pkg/server/handler/tikvhandler` was missing Go master's TiFlash replica
   summary and DXF task-cleanup batch-size APIs. The complete five-file
   production/build inventory is restored (plus focused parser and handler
   regressions), the columnar-storage sysvar required by the summary is
   restored, and the HTTP routes and API documentation now match Go master.
   The package remains a Go HTTP/domain boundary with no dependency-closed Rust
-  HTTP owner. See `rust/testport/receipts/server_handler_tikvhandler.md` and
-  `rust/docs/operations/server-handler-tikvhandler-audit-execplan.md`.
+  HTTP owner. See `rust/testport/receipts/server_handler_tikvhandler.md`.
 - The parent `pkg/server/handler` inventory covers all six Go-master artifacts
   and 773 lines, including the auto-ID owner test, TiKV/MVCC helpers, upgrade
   state handler, and response utilities. It is byte-identical to Go master and
   remains an explicit Go HTTP/domain boundary because Rust has no complete
-  dependency-closed owner. See `rust/testport/receipts/server_handler.md` and
-  `rust/docs/operations/server-handler-audit-execplan.md`.
+  dependency-closed owner. See `rust/testport/receipts/server_handler.md`.
 - `pkg/server/handler/tests` now restores Go-master coverage for the DXF
   cleanup-size endpoint, next-gen user-keyspace route isolation, and live
   TiFlash summary lifecycle. All five test/build artifacts were inventoried;
