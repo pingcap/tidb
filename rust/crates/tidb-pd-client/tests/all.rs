@@ -14,4 +14,9 @@
 
 //! All topology-independent `tidb-pd-client` integration tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod engine_source;
+mod pd_client_source;
+mod pd_worker_lifecycle_source;
+mod tls_handshake_source;
+mod tso_source;

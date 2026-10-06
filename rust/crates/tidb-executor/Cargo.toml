@@ -8,7 +8,6 @@ repository.workspace = true
 description = "TiDB executor: the wired execution engine spine (Executor trait + operators) (Rust rewrite)."
 
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [dependencies]
 prometheus = { version = "0.14", default-features = false }

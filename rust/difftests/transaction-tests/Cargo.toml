@@ -8,7 +8,6 @@ repository.workspace = true
 description = "Source-translated transaction primitive tests for tidb-txnkv."
 publish = false
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true
@@ -24,7 +23,3 @@ tidb-txnkv = { path = "../../crates/tidb-txnkv" }
 [[test]]
 name = "all"
 path = "tests/all.rs"
-
-[[test]]
-name = "realtikv_transport_retry"
-path = "tests/realtikv_transport_retry.rs"

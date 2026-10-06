@@ -8,7 +8,6 @@ repository.workspace = true
 description = "Parser and lexer differential tests against TiDB's Go implementation."
 publish = false
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

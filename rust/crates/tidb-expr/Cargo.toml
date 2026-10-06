@@ -8,7 +8,6 @@ repository.workspace = true
 description = "Constant-expression evaluator over the TiDB AST (Phase 0/1 seed of tidb-expr)."
 
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

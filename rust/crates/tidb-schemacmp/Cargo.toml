@@ -8,7 +8,6 @@ repository.workspace = true
 description = "Go pkg/util/schemacmp: schema comparison and joining over a lattice model."
 
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

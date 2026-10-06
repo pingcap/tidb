@@ -14,4 +14,32 @@
 
 //! All ordinary `tidb-stats` integration tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod analysis_policy_source;
+mod analyze_jobs_source;
+mod analyze_version_policy_source;
+mod builder_source;
+mod cmsketch_source;
+mod column_source;
+mod constants_source;
+mod correlation_source;
+mod datum_map_cache_source;
+mod estimate_source;
+mod existence_map_source;
+mod fmsketch_source;
+mod global_stats_source;
+mod histogram_source;
+mod index_query_source;
+mod index_source;
+mod memory_usage_source;
+mod overlap_geometry_source;
+mod pkg_statistics_go_tests_source;
+mod row_estimate_source;
+mod row_sample_memory_quota_source;
+mod sample_bytes_source;
+mod scalar_enum_source;
+mod scalar_geometry_source;
+mod sorted_builder_source;
+mod stats_version_source;
+mod status_source;
+mod table_source;

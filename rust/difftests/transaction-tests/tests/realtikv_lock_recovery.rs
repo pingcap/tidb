@@ -14,8 +14,7 @@
 
 #![allow(missing_docs)]
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use prost::Message;
@@ -48,7 +47,7 @@ struct Evidence {
 
 struct RecordingClient {
     inner: TonicCoprocessorClient,
-    evidence: Rc<RefCell<Evidence>>,
+    evidence: Arc<Mutex<Evidence>>,
 }
 
 impl DirectUnaryClient for RecordingClient {
@@ -58,7 +57,7 @@ impl DirectUnaryClient for RecordingClient {
         request: &DirectUnaryRequest,
         timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        let mut evidence = self.evidence.borrow_mut();
+        let mut evidence = self.evidence.lock().unwrap();
         evidence.cop_attempts += 1;
         evidence.cop_addresses.push(address.to_owned());
         drop(evidence);
@@ -71,7 +70,7 @@ impl DirectUnaryClient for RecordingClient {
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        let mut evidence = self.evidence.borrow_mut();
+        let mut evidence = self.evidence.lock().unwrap();
         evidence.cop_attempts += 1;
         evidence.cop_addresses.push(address.to_owned());
         drop(evidence);
@@ -120,14 +119,14 @@ impl LockRecoveryClient for RecordingClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
-        let mut evidence = self.evidence.borrow_mut();
+        let mut evidence = self.evidence.lock().unwrap();
         evidence.checks.push(request.clone());
         evidence.check_addresses.push(address.to_owned());
         drop(evidence);
         let response = self
             .inner
             .check_txn_status(address, request, context, call)?;
-        self.evidence.borrow_mut().check_commit_ts = response.commit_version;
+        self.evidence.lock().unwrap().check_commit_ts = response.commit_version;
         Ok(response)
     }
 
@@ -147,7 +146,7 @@ impl LockRecoveryClient for RecordingClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
-        let mut evidence = self.evidence.borrow_mut();
+        let mut evidence = self.evidence.lock().unwrap();
         evidence.resolves.push(request.clone());
         evidence.resolve_addresses.push(address.to_owned());
         drop(evidence);
@@ -191,10 +190,10 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
 
     let loader = PdRegionLoader::connect(pd_address, Duration::from_secs(5))
         .expect("connect sole PD-backed loader");
-    let evidence = Rc::new(RefCell::new(Evidence::default()));
+    let evidence = Arc::new(Mutex::new(Evidence::default()));
     let client = RecordingClient {
         inner: TonicCoprocessorClient::new().expect("construct sole unary client"),
-        evidence: Rc::clone(&evidence),
+        evidence: Arc::clone(&evidence),
     };
     let transport = DirectUnaryQueryTransport::new_injected(
         client,
@@ -246,7 +245,7 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
         "only one response may publish"
     );
 
-    let evidence = evidence.borrow();
+    let evidence = evidence.lock().unwrap();
     assert_eq!(evidence.cop_attempts, 2, "locked response plus exact retry");
     assert_eq!(evidence.cop_addresses.len(), 2);
     assert_eq!(evidence.checks.len(), 1);

@@ -8,7 +8,6 @@ repository.workspace = true
 description = "Single source-backed MySQL and TiDB error catalog for the TiDB Rust rewrite."
 
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

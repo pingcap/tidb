@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "TiDB cluster and session subsystems: catalog, DDL, real-TiKV read/write, privileges, sysvars, bootstrap, statistics (Rust rewrite)."
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

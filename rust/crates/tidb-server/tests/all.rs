@@ -14,4 +14,29 @@
 
 //! All topology-independent `tidb-server` integration tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod auth_exchange_source;
+mod auth_identity_source;
+mod auth_plugin_registry_source;
+mod concurrent_mysql_sessions_source;
+mod configured_user_store_source;
+mod distsql_streaming_response_source;
+mod fallible_process_shutdown_source;
+mod grants_wire_protocol_source;
+mod handshake_response_package_source;
+mod handshake_source;
+mod hashing_plugin_auth_source;
+mod initial_database_tcp_source;
+mod mysql_client_lifecycle_source;
+mod mysql_native_auth_lifecycle_source;
+mod mysql_tls_source;
+mod native_password_source;
+mod node_config_source;
+mod panic_recovery_source;
+mod parse_go_source;
+mod pipeline_mysql_client_source;
+mod require_ssl_login_source;
+mod resultset_writer_source;
+mod secure_transport_source;
+mod server_internal_packetio_source;
+mod sql_node_lifecycle_source;

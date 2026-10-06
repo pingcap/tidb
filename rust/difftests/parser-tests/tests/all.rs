@@ -14,4 +14,7 @@
 
 //! Parser and lexer differential tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod integration_parser_diff;
+mod lexer_diff;
+mod parser_diff;

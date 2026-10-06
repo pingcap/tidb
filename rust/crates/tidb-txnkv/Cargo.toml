@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "Source-backed transactional KV primitives for the TiDB Rust rewrite."
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

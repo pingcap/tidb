@@ -8,7 +8,6 @@ repository.workspace = true
 description = "Go pkg/timer/api: timer records, schedule policies, store and client."
 
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

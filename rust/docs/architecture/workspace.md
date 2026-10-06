@@ -82,12 +82,14 @@ commands; there is no second rewrite workflow.
 
 ## Test process layout
 
-Crates with many independent files under `tests/` use
-`scripts/aggregate-tests.rs` as a shared Cargo build script. It includes each
-source file as a private module in one integration harness, so test ownership
-and source paths stay intact without compiling and launching hundreds of tiny
-binaries. A source that requires integration-crate-root topology carries the
-`aggregate-test: standalone` marker and remains an explicit Cargo target.
+Crates with many independent files under `tests/` register private modules in
+`tests/all.rs`, with one explicit `all` integration target and `autotests = false`
+in Cargo.toml. Add each new module-safe suite to that root. A helper loaded by
+another suite must not also be registered there. Suites requiring their own
+process or integration-crate-root topology remain explicit Cargo targets and
+are excluded from `all.rs`.
 
 Cargo runs the aggregate harnesses with its normal test runner. The aggregation
 removes repeated compile and process startup without adding a custom scheduler.
+Test lists no longer require a build script or generated OUT_DIR files. Editing
+a test does not invalidate production builds through a test-directory watcher.

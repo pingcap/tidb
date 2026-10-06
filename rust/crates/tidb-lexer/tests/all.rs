@@ -14,4 +14,6 @@
 
 //! Single integration-test binary for all `tidb-lexer` source tests.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod parser_keywords_source;
+mod parser_util_package_source;

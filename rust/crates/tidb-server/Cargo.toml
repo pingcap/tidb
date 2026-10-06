@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "Source-shaped TiDB SQL connection dispatch (Rust)."
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

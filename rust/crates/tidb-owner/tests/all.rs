@@ -14,4 +14,5 @@
 
 //! Aggregated source-derived owner package tests.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod manager_source;

@@ -7,7 +7,6 @@ license = "Apache-2.0"
 description = "Transcreation of TiDB pkg/config leaf packages (configtypes, deploymode, kerneltype)"
 
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [features]
 # Go build tag `nextgen`: selects the Next Generation kernel type.

@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "Source-backed MySQL packet framing for the TiDB Rust rewrite."
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [dependencies]
 flate2.workspace = true

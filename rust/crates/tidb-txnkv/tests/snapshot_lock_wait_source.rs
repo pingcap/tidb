@@ -28,7 +28,6 @@
 //! implements, because a lock that stays alive for exactly N probes cannot be
 //! produced on demand against a live cluster.
 
-// aggregate-test: standalone (mutates the process configuration)
 
 #![allow(missing_docs)]
 

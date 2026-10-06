@@ -14,4 +14,13 @@
 
 //! All topology-independent `tidb-timer` integration tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod client_test;
+mod runtime_cache_test;
+mod runtime_runtime_test;
+mod runtime_worker_test;
+mod schedule_policy_test;
+mod store_integration_test;
+mod store_test;
+mod table_store_sql_test;
+mod timer_test;

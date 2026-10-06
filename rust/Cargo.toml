@@ -255,8 +255,8 @@ missing_docs = "warn"
 [workspace.lints.clippy]
 all = "warn"
 
-# Dev builds link one binary per integration-test file (hundreds across this
-# workspace), so full DWARF dominates both link time and disk. Line tables keep
+# Dev builds include large aggregate integration-test binaries, so full DWARF
+# dominates both link time and disk. Line tables keep
 # file/line in panics and backtraces at a fraction of the cost.
 [profile.dev]
 debug = "line-tables-only"

@@ -1,0 +1,280 @@
+{
+  "date": "2026-10-06",
+  "base": "9c253898c5cc631624301c73668a4fd9c9c4cda7",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Replace test-list-only build scripts across 26 consumers with explicit tests/all.rs registrations. Preserve 852 modules, all isolated targets and helper ownership; remove production test-directory watchers and five obsolete standalone markers. Retire duplicate transport-retry binary and two private primed loaders; repair four stale live harnesses against shared Send ownership and monotonic health instants.",
+  "packages": [
+    {
+      "package": "tidb-ast",
+      "manifest": "rust/crates/tidb-ast/Cargo.toml",
+      "module_count": 16,
+      "module_inventory_sha256": "1cab071b912133782fe3d50b063329e5fb63294896c7b7aba7152e9e8e2915f5",
+      "excluded": []
+    },
+    {
+      "package": "tidb-codec",
+      "manifest": "rust/crates/tidb-codec/Cargo.toml",
+      "module_count": 25,
+      "module_inventory_sha256": "1dc9bba43e970adce34f196e7f31cce63668608015f2007895b89f2cdd3fec33",
+      "excluded": []
+    },
+    {
+      "package": "tidb-config",
+      "manifest": "rust/crates/tidb-config/Cargo.toml",
+      "module_count": 8,
+      "module_inventory_sha256": "37438b7b70ae230ab3f3b24a6b182a17cea7d2df052bc84881da8974966ef862",
+      "excluded": []
+    },
+    {
+      "package": "tidb-datatype",
+      "manifest": "rust/crates/tidb-datatype/Cargo.toml",
+      "module_count": 12,
+      "module_inventory_sha256": "afcdfa470390fea5c56b9c873a44b866579a0e3e16254f1c940f5d27c3967be2",
+      "excluded": []
+    },
+    {
+      "package": "tidb-distsql",
+      "manifest": "rust/crates/tidb-distsql/Cargo.toml",
+      "module_count": 41,
+      "module_inventory_sha256": "db8442cce8da7439aad9d1df21d19f8f1720a862bc77257a27c5ae918f385a52",
+      "excluded": []
+    },
+    {
+      "package": "tidb-error",
+      "manifest": "rust/crates/tidb-error/Cargo.toml",
+      "module_count": 6,
+      "module_inventory_sha256": "5170b177a7015a2bea8934255a2339257cccc8acdf94d251fb052b581649f4b2",
+      "excluded": []
+    },
+    {
+      "package": "tidb-exec",
+      "manifest": "rust/crates/tidb-exec/Cargo.toml",
+      "module_count": 68,
+      "module_inventory_sha256": "4f7da061033e438f543db25c8efd39f0cec1fedf20fb7a9ea9792df9bfa95909",
+      "excluded": [
+        {
+          "file": "direct_unary_table_index_reader_source.rs",
+          "standalone": false,
+          "included_by": [
+            "table_index_reader_runtime_source.rs"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "tidb-executor",
+      "manifest": "rust/crates/tidb-executor/Cargo.toml",
+      "module_count": 79,
+      "module_inventory_sha256": "a401b688f59b46b06703e328c7c9aa2f370b409f697199e552ef2f57afcaed12",
+      "excluded": []
+    },
+    {
+      "package": "tidb-expr",
+      "manifest": "rust/crates/tidb-expr/Cargo.toml",
+      "module_count": 5,
+      "module_inventory_sha256": "b90c674009db9693d4ac0dc6d2a3a7c1eed1ff96fc3453ef1757570e579f0e9a",
+      "excluded": []
+    },
+    {
+      "package": "tidb-lexer",
+      "manifest": "rust/crates/tidb-lexer/Cargo.toml",
+      "module_count": 2,
+      "module_inventory_sha256": "85d3a8959f0272709bc1fe87ecd71923d2d59b48d38530aa1d5d938de8205ebf",
+      "excluded": []
+    },
+    {
+      "package": "tidb-meta",
+      "manifest": "rust/crates/tidb-meta/Cargo.toml",
+      "module_count": 9,
+      "module_inventory_sha256": "258ce0e979a8b69c3759cd062cd2e51a40b182e5c4f7b9ee41980c20e943a11e",
+      "excluded": []
+    },
+    {
+      "package": "tidb-owner",
+      "manifest": "rust/crates/tidb-owner/Cargo.toml",
+      "module_count": 1,
+      "module_inventory_sha256": "4c4b0221a79fb15c8e216dc5e9618ccc5dfbf979a6b831b37ddf197338a23260",
+      "excluded": []
+    },
+    {
+      "package": "tidb-parser",
+      "manifest": "rust/crates/tidb-parser/Cargo.toml",
+      "module_count": 15,
+      "module_inventory_sha256": "1c2e06315bd358f1787b5ffbca93d598b457ad5d8330172d61db41e764a82208",
+      "excluded": []
+    },
+    {
+      "package": "tidb-pd-client",
+      "manifest": "rust/crates/tidb-pd-client/Cargo.toml",
+      "module_count": 5,
+      "module_inventory_sha256": "6db2d9f23e01d55742e86e461fe40ada584b79399efed10f66c12930500f2298",
+      "excluded": []
+    },
+    {
+      "package": "tidb-planner",
+      "manifest": "rust/crates/tidb-planner/Cargo.toml",
+      "module_count": 46,
+      "module_inventory_sha256": "59c6b722134ed0c4921931f6a9012dca3225b3e46247a4c25656ec8d6d0285e3",
+      "excluded": []
+    },
+    {
+      "package": "tidb-protocol",
+      "manifest": "rust/crates/tidb-protocol/Cargo.toml",
+      "module_count": 13,
+      "module_inventory_sha256": "767be46466d3ce41fb4d9620f5afe3e91ca0ddf61cbc868f3302fffcd0dcd574",
+      "excluded": []
+    },
+    {
+      "package": "tidb-schemacmp",
+      "manifest": "rust/crates/tidb-schemacmp/Cargo.toml",
+      "module_count": 4,
+      "module_inventory_sha256": "4b1654ccf7b1d2bd5af2ef43088a149dd6d13a72fdfe9a7fe8e377162555b345",
+      "excluded": []
+    },
+    {
+      "package": "tidb-server",
+      "manifest": "rust/crates/tidb-server/Cargo.toml",
+      "module_count": 25,
+      "module_inventory_sha256": "4c89cbde1da0157108bd6ca161adcdfd212d1970ee78e786f8ea4daed5d389a3",
+      "excluded": []
+    },
+    {
+      "package": "tidb-session",
+      "manifest": "rust/crates/tidb-session/Cargo.toml",
+      "module_count": 308,
+      "module_inventory_sha256": "a771446697419510825c86c480e4eb8878486b0e789784927c07dea26b6044f0",
+      "excluded": [
+        {
+          "file": "cardinality_stats_loading.rs",
+          "standalone": true,
+          "included_by": []
+        },
+        {
+          "file": "topn_assisted_string_match.rs",
+          "standalone": true,
+          "included_by": []
+        }
+      ]
+    },
+    {
+      "package": "tidb-stats",
+      "manifest": "rust/crates/tidb-stats/Cargo.toml",
+      "module_count": 28,
+      "module_inventory_sha256": "d21148c3d1484ec12bdfa0692228fba21f57c27bf5f28ddaf1c88eab5da052f7",
+      "excluded": []
+    },
+    {
+      "package": "tidb-tablecodec",
+      "manifest": "rust/crates/tidb-tablecodec/Cargo.toml",
+      "module_count": 3,
+      "module_inventory_sha256": "506f8f9094b39c863ea1248eb98246f38f59da747d68a369b6007bc89e64f4c9",
+      "excluded": []
+    },
+    {
+      "package": "tidb-timer",
+      "manifest": "rust/crates/tidb-timer/Cargo.toml",
+      "module_count": 9,
+      "module_inventory_sha256": "f573fed82183b7bb4b844e4816c7eac0ed17cc9b9316c25f5a4e90b35183d20c",
+      "excluded": []
+    },
+    {
+      "package": "tidb-txnkv",
+      "manifest": "rust/crates/tidb-txnkv/Cargo.toml",
+      "module_count": 71,
+      "module_inventory_sha256": "434398d43f2594f04f51df5f5ae6011a57ec40b2379f7fe22f1f23ff26da7f18",
+      "excluded": [
+        {
+          "file": "lock_resolver_source.rs",
+          "standalone": true,
+          "included_by": []
+        },
+        {
+          "file": "snapshot_lock_wait_source.rs",
+          "standalone": true,
+          "included_by": []
+        },
+        {
+          "file": "transaction_size_limits_source.rs",
+          "standalone": true,
+          "included_by": []
+        }
+      ]
+    },
+    {
+      "package": "difftest-parser-tests",
+      "manifest": "rust/difftests/parser-tests/Cargo.toml",
+      "module_count": 3,
+      "module_inventory_sha256": "2bc0043fd7314747a5094cf081f3c70469117239ae193db0a1e3717e5520c708",
+      "excluded": []
+    },
+    {
+      "package": "difftest-planner-tests",
+      "manifest": "rust/difftests/planner-tests/Cargo.toml",
+      "module_count": 36,
+      "module_inventory_sha256": "ba14bef52b93c9cc55ae4b47dc5e050073aeca5a2d0b28731dd6ac319b65f115",
+      "excluded": []
+    },
+    {
+      "package": "difftest-transaction-tests",
+      "manifest": "rust/difftests/transaction-tests/Cargo.toml",
+      "module_count": 14,
+      "module_inventory_sha256": "10b28d72e0d45b9bb3ee870648a44e967b70a347f6d8bebe87f7c651b5453012",
+      "excluded": []
+    }
+  ],
+  "preservation": {
+    "packages": 26,
+    "registered_modules": 852,
+    "unchanged_test_sources": 854,
+    "standalone_markers_removed": 5,
+    "duplicate_helper_excluded": true,
+    "non_build_targets_unchanged_except_one_duplicate": true,
+    "duplicate_transport_target_removed": true,
+    "maintained_live_harnesses": 4,
+    "original_live_assertions_preserved": 101,
+    "production_sources_and_lockfile_unchanged": true,
+    "finding_dispositions_unchanged": true
+  },
+  "removed_script": "rust/scripts/aggregate-tests.rs (26 custom-build targets)",
+  "test_registrations_removed": 1,
+  "dependency_changes": false,
+  "before_image_recovery": "git show 9c253898c5cc631624301c73668a4fd9c9c4cda7:<path>; original generator executed separately for each manifest, with output and source hashes in external before.json/before/",
+  "validation": {
+    "status": "26 aggregate targets compile; 53 representative tests pass, zero failed/ignored/filtered. Formatting, bash syntax, metadata/source equivalence, lint and diff checks passed. Publication gates recorded externally after commit.",
+    "cwd": "/workspace/tidb/rust; source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+    "commands": [
+      "cargo check --locked -p tidb-ast -p tidb-codec -p tidb-config -p tidb-datatype -p tidb-distsql -p tidb-error -p tidb-exec -p tidb-executor -p tidb-expr -p tidb-lexer -p tidb-meta -p tidb-owner -p tidb-parser -p tidb-pd-client -p tidb-planner -p tidb-protocol -p tidb-schemacmp -p tidb-server -p tidb-session -p tidb-stats -p tidb-tablecodec -p tidb-timer -p tidb-txnkv -p difftest-parser-tests -p difftest-planner-tests -p difftest-transaction-tests --test all",
+      "cargo test --locked -p tidb-lexer -p tidb-error -p tidb-config --test all -- --test-threads=1"
+    ],
+    "root_commands": [
+      "make lint",
+      "git diff --check"
+    ],
+    "publication": "Normal executable precommit hook must build cargo build --locked -p tidb-server from rust/. Repeat immediately before push; postcommit results recorded in external final-handoff.json.",
+    "failure_before": "Initial full check found 13 errors in four live harnesses (Send, RegionQueryLoader and HealthInstant); the old generated registration reproduces the same 13 errors before fixture maintenance. Other 25 aggregate roots passed separately.",
+    "live_harness_maintenance": "Remove both SharedPrimedLoader adapters; warm RegionCache<PdRegionLoader> before phase handoffs and assert the same region/leader identities. Use Arc<Mutex<_>> for trace records crossing the existing shared owner thread; use Instant for health observations. All 101 original assertions retained. This is compile validation, not a live integration pass.",
+    "duplicate_runner": "run-realtikv-transport-retry.sh now uses --test all and the exact realtikv_transport_retry::one_lazy_response_recovers_after_its_cached_tikv_leader_stops filter. bash -n passed; live runner unrun.",
+    "logs_sha256": {
+      "check.log": "efe519629c2f3e387a961ac93045cf7d06dd35fb400ec77382ead84841023b3f",
+      "check-remaining.log": "eb781ea250f88998cd0e5d0f817d798a3a1d5b3018074f755544265ff3b9ef50",
+      "old-registration-failure.log": "fef8289e29a8952594eb0c74049c97f8b9557981a8ec4e5dbdd432ae91d7adc6",
+      "check-final.log": "4c48b18ffe24618b8cc1f8f25161e3e4f926cd8f6c6e2792c42abffb461552db",
+      "tests.log": "bf7e724756cde5c9010df5b275802352497b89ab0e7c0a35a7f97b3dff8b1c2f",
+      "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+      "fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "build_effect": "The removed script emitted rerun-if-changed for tests directory and each source during ordinary Cargo builds. Those 26 custom-build targets no longer exist; no elapsed-time speedup is claimed. Production generators in other crates are retained.",
+  "operational_change": "New module-safe suites require explicit registration in tests/all.rs; standalone targets remain in Cargo.toml. Historical auto-discovery instructions are superseded by scripts/README.md and docs/architecture/workspace.md.",
+  "cache_cleanup": {
+    "inactive_test_executables": 31,
+    "bytes_reclaimed": 2286287128,
+    "scope": "Only old test executables in affected packages, verified inactive and single-link; library/dependency caches and server executable preserved."
+  },
+  "limits": [
+    "No production behavior change or complete Go package acceptance. All 56 unresolved findings unchanged.",
+    "All 26 changed aggregate roots compile; 53 tests in config/error/lexer ran. Remaining modules and live multi-node scenarios were not executed.",
+    "No full Go suite, external service/TiKV integration, benchmark or fresh environment restore."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/static-test-roots"
+}

@@ -14,4 +14,10 @@
 
 //! All topology-independent `tidb-error` integration tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod errctx_source;
+mod error_catalog_source;
+mod infoschema_source;
+mod parser_mysql_package_source;
+mod server_err_source;
+mod terror_source;

@@ -14,4 +14,17 @@
 
 //! All `tidb-protocol` integration tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod binary_params_source;
+mod column_metadata_source;
+mod error_conversion_source;
+mod error_packet_source;
+mod packetio_source;
+mod prepared_statement_protocol_source;
+mod result_source;
+mod resultset_source;
+mod resultset_stream_source;
+mod server_internal_testutil_source;
+mod server_internal_util_source;
+mod textrow_go_vectors;
+mod textrow_source;

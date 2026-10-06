@@ -26,11 +26,21 @@ Utility and protocol suites use `--test all -- <module>` as well. The utility
 printer suite keeps its own binary because it changes the process logger; the
 system-time monitor keeps its own binary because its background loop never ends.
 Those two retain `--test printer_contract` and `--test systimemon_source`.
-New utility/protocol module-safe suites must be registered in `tests/all.rs`;
+New module-safe suites in aggregated crates must be registered in `tests/all.rs`;
 intentional isolated targets belong in their crate's Cargo.toml. Their existing
-custom build scripts remain unchanged. The repeated-statfs equality check is
+production code-generation build scripts remain unchanged. The test-list-only
+`aggregate-tests.rs` build script and its standalone markers are retired across
+all 26 consumers, including the three differential-test crates. Historical
+receipts describing automatic discovery or generated `OUT_DIR/all_tests.rs`
+refer to the old layout; `all.rs` now owns registration. Keep helper modules
+owned by another suite out of the aggregate root to avoid duplicate tests.
+The repeated-statfs equality check is
 retired: unrelated filesystem writes can change capacity between two samples.
 Go's positive-capacity case and the OS-error regression remain.
+
+The transport-retry live runner selects its existing module in `--test all`;
+its duplicate standalone target is retired. The required PD/TiKV phase runner
+and all assertions remain.
 
 Snapshot lock-wait, transaction-size settings and lock-resolver metric suites
 remain isolated because they touch process-global configuration or counters.

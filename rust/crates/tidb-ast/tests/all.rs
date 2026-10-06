@@ -14,4 +14,20 @@
 
 //! Single integration-test binary for all `tidb-ast` source tests.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod parser_ast_ddl_package_source;
+mod parser_ast_dml_import_package_source;
+mod parser_ast_dml_package_source;
+mod parser_ast_expressions_package_source;
+mod parser_ast_flag_package_source;
+mod parser_ast_format_package_source;
+mod parser_ast_functions_package_source;
+mod parser_ast_misc_package_source;
+mod parser_ast_model_package_source;
+mod parser_ast_node_restore_source;
+mod parser_ast_procedure_package_source;
+mod parser_ast_sem_package_source;
+mod parser_ast_stats_package_source;
+mod parser_ast_util_package_source;
+mod parser_format_package_source;
+mod parser_opcode_package_source;

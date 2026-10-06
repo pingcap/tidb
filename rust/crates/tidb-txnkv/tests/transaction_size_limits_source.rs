@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// aggregate-test: standalone
 // Global size settings must be isolated from parallel transaction fixtures.
 use std::sync::Arc;
 use tidb_txnkv::{Key, TikvMemBufferError, TikvTransactionDriver, TikvTransactionError};

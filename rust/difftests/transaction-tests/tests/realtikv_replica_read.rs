@@ -14,10 +14,9 @@
 
 #![allow(missing_docs)]
 
-use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -58,7 +57,7 @@ struct ObservedDispatch {
 #[derive(Clone)]
 struct RecordingClient {
     inner: TonicCoprocessorClient,
-    dispatches: Rc<RefCell<Vec<ObservedDispatch>>>,
+    dispatches: Arc<Mutex<Vec<ObservedDispatch>>>,
 }
 
 impl RecordingClient {
@@ -73,7 +72,7 @@ impl RecordingClient {
             .peer
             .as_ref()
             .expect("production transport must attach one selected peer");
-        self.dispatches.borrow_mut().push(ObservedDispatch {
+        self.dispatches.lock().unwrap().push(ObservedDispatch {
             address: address.to_owned(),
             forwarded_host: forwarded_host.map(str::to_owned),
             peer_id: peer.id,
@@ -268,11 +267,11 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
         "runner must expose a nonleader voter"
     );
 
-    let dispatches = Rc::new(RefCell::new(Vec::new()));
+    let dispatches = Arc::new(Mutex::new(Vec::new()));
     let read_authority = SharedReadAuthority::start(
         RecordingClient {
             inner: TonicCoprocessorClient::new().expect("construct live unary client"),
-            dispatches: Rc::clone(&dispatches),
+            dispatches: Arc::clone(&dispatches),
         },
         cache,
     )
@@ -322,7 +321,7 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
         )
         .expect("enter through InjectedQueryRuntime and production transport");
     assert!(
-        dispatches.borrow().is_empty(),
+        dispatches.lock().unwrap().is_empty(),
         "production response must remain lazy until first pull"
     );
     let raw = result
@@ -363,7 +362,7 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
         "successful follower dispatch must not promote or replace the cached leader"
     );
 
-    let dispatches = dispatches.borrow();
+    let dispatches = dispatches.lock().unwrap();
     assert_eq!(dispatches.len(), 1, "one logical region dispatch expected");
     let selected = &dispatches[0];
     let selected_peer = location
@@ -418,7 +417,7 @@ fn adaptive_forwarding_reuses_proxy_then_recovers_direct() {
         "runner must expose exactly three region peers"
     );
 
-    let busy_now = Duration::from_secs(1);
+    let busy_now = Instant::now();
     let mut busy_selector = cache
         .request_selector(region, ReadPolicy::default())
         .expect("build live busy selector");
@@ -500,11 +499,11 @@ fn adaptive_forwarding_reuses_proxy_then_recovers_direct() {
     );
     let target_address = direct.target().address.clone();
 
-    let dispatches = Rc::new(RefCell::new(Vec::new()));
+    let dispatches = Arc::new(Mutex::new(Vec::new()));
     let read_authority = SharedReadAuthority::start(
         RecordingClient {
             inner: TonicCoprocessorClient::new().expect("construct live unary client"),
-            dispatches: Rc::clone(&dispatches),
+            dispatches: Arc::clone(&dispatches),
         },
         cache,
     )
@@ -557,7 +556,7 @@ fn adaptive_forwarding_reuses_proxy_then_recovers_direct() {
         })
         .expect("lock the maintained live cache");
 
-    let dispatches = dispatches.borrow();
+    let dispatches = dispatches.lock().unwrap();
     assert_eq!(
         dispatches.len(),
         3,

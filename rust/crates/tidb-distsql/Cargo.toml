@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "Source-shaped read-only DistSQL request context primitives for the TiDB Rust rewrite."
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 # The context is integrated once its session consumer exists; request routing
 # and RPC remain separate capabilities with their own future crates.

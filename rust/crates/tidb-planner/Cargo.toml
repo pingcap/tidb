@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "Source-backed TiDB planner primitives (Rust)."
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

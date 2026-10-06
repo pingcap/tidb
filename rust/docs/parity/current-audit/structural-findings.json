@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "plan-replayer-cleanup-validation.json",
-    "scope": "Remove duplicate plan-replayer SQL-table harness and two duplicate parser/channel tests; preserve collection, shared worker status and quoted origin-SQL assertions in existing Domain tests. Retain real filesystem GC coverage."
+    "receipt": "static-test-roots-cleanup-validation.json",
+    "scope": "Replace test-list-only build scripts across 26 consumers with explicit tests/all.rs registrations. Preserve 852 modules, all isolated targets and helper ownership; remove production test-directory watchers and five obsolete standalone markers. Retire duplicate transport-retry binary and two private primed loaders; repair four stale live harnesses against shared Send ownership and monotonic health instants."
   },
   "test_cleanup_history": [
     {
@@ -989,6 +989,11 @@
       "date": "2026-10-06",
       "receipt": "plan-replayer-cleanup-validation.json",
       "scope": "Remove duplicate plan-replayer SQL-table harness and two duplicate parser/channel tests; preserve collection, shared worker status and quoted origin-SQL assertions in existing Domain tests. Retain real filesystem GC coverage."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "static-test-roots-cleanup-validation.json",
+      "scope": "Replace test-list-only build scripts across 26 consumers with explicit tests/all.rs registrations. Preserve 852 modules, all isolated targets and helper ownership; remove production test-directory watchers and five obsolete standalone markers. Retire duplicate transport-retry binary and two private primed loaders; repair four stale live harnesses against shared Send ownership and monotonic health instants."
     }
   ],
   "repair_history": [

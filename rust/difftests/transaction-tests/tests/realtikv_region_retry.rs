@@ -14,10 +14,9 @@
 
 #![allow(missing_docs)]
 
-use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -27,10 +26,7 @@ use tidb_distsql::{
     QueryResultContext, RequestKeyRange, RequestKeyRanges, RequestType, SelectInput, StoreType,
     TransportRequest, WarningCollector,
 };
-use tidb_txnkv::region::{
-    RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
-    RegionRecoveryLoader, StoreLiveness,
-};
+use tidb_txnkv::region::{RegionCache, RegionLoader, StoreLiveness};
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::PdRegionLoader;
 
@@ -38,41 +34,7 @@ const PHASE_TIMEOUT: Duration = Duration::from_secs(120);
 
 struct RecordingClient {
     inner: TonicCoprocessorClient,
-    addresses: Rc<RefCell<Vec<String>>>,
-}
-
-struct SharedPrimedLoader {
-    shared: Rc<RefCell<PdRegionLoader>>,
-    primed: Rc<RefCell<Option<RegionLocation>>>,
-}
-
-impl RegionLoader for SharedPrimedLoader {
-    fn cluster_id(&self) -> u64 {
-        self.shared.borrow().cluster_id()
-    }
-
-    fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
-        if let Some(location) = self.primed.borrow_mut().take() {
-            return Ok(location);
-        }
-        self.shared.borrow_mut().load_region(key)
-    }
-}
-
-impl RegionRecoveryLoader for SharedPrimedLoader {
-    fn hydrate_region(
-        &mut self,
-        metadata: &RegionMetadata,
-        leader_store_id: u64,
-        resolved_stores: &mut std::collections::BTreeMap<
-            u64,
-            Option<tidb_txnkv::region::StoreMetadata>,
-        >,
-    ) -> Result<RegionLocation, RegionLoadError> {
-        self.shared
-            .borrow_mut()
-            .hydrate_region(metadata, leader_store_id, resolved_stores)
-    }
+    addresses: Arc<Mutex<Vec<String>>>,
 }
 
 impl DirectUnaryClient for RecordingClient {
@@ -82,7 +44,7 @@ impl DirectUnaryClient for RecordingClient {
         request: &DirectUnaryRequest,
         timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        self.addresses.borrow_mut().push(address.to_owned());
+        self.addresses.lock().unwrap().push(address.to_owned());
         self.inner.send_request(address, request, timeout)
     }
 
@@ -92,7 +54,7 @@ impl DirectUnaryClient for RecordingClient {
         request: &DirectUnaryRequest,
         call: &tidb_txnkv::UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        self.addresses.borrow_mut().push(address.to_owned());
+        self.addresses.lock().unwrap().push(address.to_owned());
         self.inner.send_request_with_context(address, request, call)
     }
 
@@ -172,16 +134,9 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
     );
     assert!(phase_dir.is_dir(), "phase directory must already exist");
 
-    let shared_loader = Rc::new(RefCell::new(
-        PdRegionLoader::connect(pd_seed, Duration::from_secs(5))
-            .expect("bootstrap live PD region loader from the sole seed"),
-    ));
-    let primed = Rc::new(RefCell::new(None));
-    let cache = RegionCache::new(SharedPrimedLoader {
-        shared: Rc::clone(&shared_loader),
-        primed: Rc::clone(&primed),
-    });
-    let members = shared_loader.borrow().member_set();
+    let mut loader = PdRegionLoader::connect(pd_seed, Duration::from_secs(5))
+        .expect("bootstrap live PD region loader from the sole seed");
+    let members = loader.member_set();
     assert_eq!(members.member_urls.len(), 3, "runner must expose three PDs");
     let mut member_phase = format!(
         "cluster_id={}\nleader_url={}\n",
@@ -196,11 +151,10 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
     // This call must outlive loss of the bootstrap/leader endpoint using only
     // the member URLs learned above. No region, store, or TiKV address enters
     // the process through the environment or phase files.
-    let discovered = shared_loader
-        .borrow_mut()
+    let discovered = loader
         .load_region(&[])
         .expect("discover region through a surviving PD member");
-    let active_pd = shared_loader.borrow().active_endpoint();
+    let active_pd = loader.active_endpoint();
     assert_ne!(
         active_pd, members.leader_url,
         "removed PD must not remain active"
@@ -226,14 +180,18 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
         route_phase.push_str(&format!("store_address={}\n", store.address));
         route_phase.push_str(&format!("store_route={}\t{}\n", store.id, store.address));
     }
-    *primed.borrow_mut() = Some(discovered);
+    // Warm the production cache before the runner transfers the leader.
+    let mut cache = RegionCache::new(loader);
+    let cached = cache.locate_key(&[]).expect("prime the old live route");
+    assert_eq!(cached.region, discovered.region);
+    assert_eq!(cached.leader_peer_id, discovered.leader_peer_id);
     write_phase(&phase_dir, "route-ready", &route_phase);
     wait_for_phase(&phase_dir, "region-moved");
 
-    let addresses = Rc::new(RefCell::new(Vec::new()));
+    let addresses = Arc::new(Mutex::new(Vec::new()));
     let client = RecordingClient {
         inner: TonicCoprocessorClient::new().expect("construct live unary client"),
-        addresses: Rc::clone(&addresses),
+        addresses: Arc::clone(&addresses),
     };
     let transport = DirectUnaryQueryTransport::new_injected(
         client,
@@ -290,7 +248,7 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
         "movement proof must cross both surviving control and data planes: {message}"
     );
 
-    let addresses = addresses.borrow();
+    let addresses = addresses.lock().unwrap();
     assert!(
         addresses.len() >= 2,
         "leader movement must require a resend"

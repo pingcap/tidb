@@ -14,11 +14,9 @@
 
 #![allow(missing_docs)]
 
-use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -31,10 +29,7 @@ use tidb_distsql::{
     TransportRequest, WarningCollector,
 };
 use tidb_proto::CoprocessorResponse;
-use tidb_txnkv::region::{
-    RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
-    RegionRecoveryLoader, StoreLiveness,
-};
+use tidb_txnkv::region::{RegionCache, RegionLoader, StoreLiveness};
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::PdRegionLoader;
 
@@ -59,7 +54,7 @@ struct DispatchTrace {
 
 struct RecordingClient {
     inner: TonicCoprocessorClient,
-    trace: Rc<RefCell<TransportTrace>>,
+    trace: Arc<Mutex<TransportTrace>>,
 }
 
 impl RecordingClient {
@@ -74,62 +69,20 @@ impl RecordingClient {
                 decoded.region_error.is_none() && decoded.other_error.is_empty()
             })
         });
-        self.trace.borrow_mut().dispatches.push(DispatchTrace {
+        self.trace.lock().unwrap().dispatches.push(DispatchTrace {
             region_id: request.context.region_id,
             address: address.to_owned(),
             usable_response,
         });
         if let Err(error) = result {
             if let Some(connection) = error.connection() {
-                self.trace.borrow_mut().failures.push((
+                self.trace.lock().unwrap().failures.push((
                     request.context.region_id,
                     connection.address().to_owned(),
                     connection.version(),
                 ));
             }
         }
-    }
-}
-
-struct SharedPrimedLoader {
-    shared: Rc<RefCell<PdRegionLoader>>,
-    primed: Rc<RefCell<VecDeque<RegionLocation>>>,
-}
-
-impl RegionLoader for SharedPrimedLoader {
-    fn cluster_id(&self) -> u64 {
-        self.shared.borrow().cluster_id()
-    }
-
-    fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
-        let primed_index = self.primed.borrow().iter().position(|location| {
-            location.start_key.as_slice() <= key
-                && (location.end_key.is_empty() || key < location.end_key.as_slice())
-        });
-        if let Some(index) = primed_index {
-            return Ok(self
-                .primed
-                .borrow_mut()
-                .remove(index)
-                .expect("primed index was observed under the same single-threaded owner"));
-        }
-        self.shared.borrow_mut().load_region(key)
-    }
-}
-
-impl RegionRecoveryLoader for SharedPrimedLoader {
-    fn hydrate_region(
-        &mut self,
-        metadata: &RegionMetadata,
-        leader_store_id: u64,
-        resolved_stores: &mut std::collections::BTreeMap<
-            u64,
-            Option<tidb_txnkv::region::StoreMetadata>,
-        >,
-    ) -> Result<RegionLocation, RegionLoadError> {
-        self.shared
-            .borrow_mut()
-            .hydrate_region(metadata, leader_store_id, resolved_stores)
     }
 }
 
@@ -175,7 +128,8 @@ impl DirectUnaryClient for RecordingClient {
     ) -> Result<StoreLiveness, DirectUnaryClientError> {
         let liveness = self.inner.liveness(address, timeout)?;
         self.trace
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .liveness
             .push((address.to_owned(), liveness));
         Ok(liveness)
@@ -237,12 +191,9 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
         ));
     assert!(phase_dir.is_dir(), "phase directory must already exist");
 
-    let shared_loader = Rc::new(RefCell::new(
-        PdRegionLoader::connect(pd_seed, Duration::from_secs(5))
-            .expect("bootstrap live PD region loader"),
-    ));
-    let split_source = shared_loader
-        .borrow_mut()
+    let mut loader = PdRegionLoader::connect(pd_seed, Duration::from_secs(5))
+        .expect("bootstrap live PD region loader");
+    let split_source = loader
         .load_region(TABLE_START)
         .expect("discover the region which the runner will split");
     let mut encoded_split_key = Vec::new();
@@ -261,12 +212,10 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
     write_phase(&phase_dir, "split-source", &split_source_phase);
     wait_for_phase(&phase_dir, "split-complete");
 
-    let left_after_split = shared_loader
-        .borrow_mut()
+    let left_after_split = loader
         .load_region(TABLE_START)
         .expect("discover left split region");
-    let right_after_split = shared_loader
-        .borrow_mut()
+    let right_after_split = loader
         .load_region(SPLIT_KEY)
         .expect("discover right split region");
     assert_ne!(
@@ -286,12 +235,10 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
     write_phase(&phase_dir, "split-regions", &split_regions_phase);
     wait_for_phase(&phase_dir, "leaders-aligned");
 
-    let left = shared_loader
-        .borrow_mut()
+    let left = loader
         .load_region(TABLE_START)
         .expect("reload aligned left region");
-    let right = shared_loader
-        .borrow_mut()
+    let right = loader
         .load_region(SPLIT_KEY)
         .expect("reload aligned right region");
     assert_ne!(left.region, right.region);
@@ -325,15 +272,17 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
         "live proof requires an alternate voter"
     );
     let old_address = leader_store.address.clone();
-    let primed = Rc::new(RefCell::new(VecDeque::from([left.clone(), right.clone()])));
-    let cache = RegionCache::new(SharedPrimedLoader {
-        shared: Rc::clone(&shared_loader),
-        primed,
-    });
-    let trace = Rc::new(RefCell::new(TransportTrace::default()));
+    // Warm both real cache entries before the runner interrupts their store.
+    let mut cache = RegionCache::new(loader);
+    for (expected, key) in [(&left, TABLE_START), (&right, SPLIT_KEY)] {
+        let cached = cache.locate_key(key).expect("prime aligned live region");
+        assert_eq!(cached.region, expected.region);
+        assert_eq!(cached.leader_peer_id, expected.leader_peer_id);
+    }
+    let trace = Arc::new(Mutex::new(TransportTrace::default()));
     let client = RecordingClient {
         inner: TonicCoprocessorClient::new().expect("construct live unary client"),
-        trace: Rc::clone(&trace),
+        trace: Arc::clone(&trace),
     };
     let transport = DirectUnaryQueryTransport::new_injected(
         client,
@@ -376,7 +325,7 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
         )
         .expect("bind one lazy response while the cached leader is alive");
     assert!(
-        trace.borrow().dispatches.is_empty(),
+        trace.lock().unwrap().dispatches.is_empty(),
         "binding must not dispatch before the runner stops the cached leader"
     );
 
@@ -403,7 +352,7 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
     }
     assert_eq!(structured_results, 2, "one result per split region");
 
-    let trace = trace.borrow();
+    let trace = trace.lock().unwrap();
     let failure = trace
         .failures
         .iter()

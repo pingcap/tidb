@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [plan-replayer harness consolidation](plan-replayer-cleanup-validation.json). Six redundant registrations retired; distinct vectors retained in Domain owners and real filesystem GC retained. Finding dispositions unchanged.
+Latest cleanup: [static test roots](static-test-roots-cleanup-validation.json). Removed 26 test-list build targets; all 852 modules and five isolated suites retained. Removed one duplicate transport-retry binary and two private loaders; repaired four stale live harnesses without removing their assertions. Finding dispositions unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

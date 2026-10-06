@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "TiDB mem-comparable scalar and datum-key codec."
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

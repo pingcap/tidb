@@ -14,4 +14,16 @@
 
 //! Single integration-test binary for all `tidb-datatype` source tests.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod collation_key_go_vectors;
+mod conversion_context_source;
+mod datum_sentinel_order_source;
+mod field_type_source;
+mod json_binary_go_vectors;
+mod json_ops_go_source;
+mod parser_charset_package_source;
+mod parser_format_package_source;
+mod truncate_policy_source;
+mod value_context_format_source;
+mod value_expr_source;
+mod vector_source;

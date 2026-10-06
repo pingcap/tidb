@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "Faithful Rust port of the TiDB SQL scanner (pkg/parser/lexer.go)."
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [[test]]
 name = "all"

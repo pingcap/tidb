@@ -14,4 +14,13 @@
 
 //! All topology-independent `tidb-meta` integration tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod go_vectors;
+mod iter_databases_source;
+mod job_name_go_vectors;
+mod key_prefix_and_element_source;
+mod meta_test_go_parity;
+mod meta_test_part2_go_parity;
+mod meta_test_part3_go_parity;
+mod structure_source;
+mod transaction_source;

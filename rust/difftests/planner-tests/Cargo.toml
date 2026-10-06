@@ -8,7 +8,6 @@ repository.workspace = true
 description = "Source-translated planner primitive tests."
 publish = false
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

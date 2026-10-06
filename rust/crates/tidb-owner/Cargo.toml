@@ -8,7 +8,6 @@ repository.workspace = true
 description = "TiDB etcd owner election and local mock owner manager"
 
 autotests = false
-build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true

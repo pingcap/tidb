@@ -14,4 +14,8 @@
 
 //! All topology-independent `tidb-schemacmp` integration tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod charset_collation_test;
+mod lattice_test;
+mod table_test;
+mod type_test;

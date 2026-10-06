@@ -14,4 +14,40 @@
 
 //! All planner source-translation tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod base_traits;
+mod by_item;
+mod cardinality;
+mod column_length;
+mod cost_factors;
+mod cross_estimation;
+mod fix_control;
+mod hash_equaler;
+mod index_columns;
+mod index_range_policy;
+mod join;
+mod join_condition;
+mod out_of_range;
+mod physical_apply;
+mod physical_cte_table;
+mod physical_limit;
+mod physical_lock;
+mod physical_max_one_row;
+mod physical_projection;
+mod physical_property;
+mod physical_selection;
+mod physical_show;
+mod physical_sort;
+mod physical_table_dual;
+mod physical_table_reader;
+mod physical_topn;
+mod physical_union_all;
+mod plan;
+mod projection_elimination;
+mod range_detacher;
+mod row_count_column;
+mod row_size;
+mod selectivity_greedy;
+mod stats_info;
+mod task_type;
+mod uniform;

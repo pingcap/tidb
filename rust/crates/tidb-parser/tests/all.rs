@@ -14,4 +14,19 @@
 
 //! Single integration-test binary for all `tidb-parser` source tests.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod arena_source;
+mod parser_auth_package_source;
+mod parser_digester_source;
+mod parser_duration_package_source;
+mod parser_hint_source;
+mod parser_integration_source;
+mod parser_regressions_source;
+mod parser_root_source;
+mod parser_run_test_builtin_source;
+mod parser_run_test_ddl_source;
+mod parser_run_test_helper;
+mod parser_run_test_source;
+mod parser_util_consumer_source;
+mod reserved_words_mysql_source;
+mod util_parser_package_source;

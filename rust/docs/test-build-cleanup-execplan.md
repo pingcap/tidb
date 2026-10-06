@@ -1,86 +1,104 @@
-# Consolidate plan-replayer tests in the Domain owner
+# Remove test-list generation from production builds
 
 This living ExecPlan follows root PLANS.md. Keep progress, discoveries, decisions
-and outcomes current. Previous Domain-owner cleanup completed at 17d23b3e2e;
+and outcomes current. Previous plan-replayer cleanup completed at 9c253898c5;
 its external final-handoff.json records publication and checkpoint validation.
 
 ## Purpose and Context
 
 
-Remove duplicate plan-replayer scaffolding so future fixes maintain one SQL
-executor mock and one set of parser/channel assertions. Work in /workspace/tidb
-on hparser-integration, base 17d23b3e2e1b4193a5cc0c0b9a52ed727ec94f8a.
-Go comparison is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed, freshly fetched.
-The session handle carrier repeats Domain's SQL table model. Its apparent
-post-dump persistence is manually inserted fixture state, not storage integration.
+Stop test-only edits from invalidating ordinary library/server builds through a
+shared test-directory watcher. Use /workspace/tidb, hparser-integration, base
+9c253898c5cc631624301c73668a4fd9c9c4cda7. Go master freshly fetched remains
+b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. This is Rust build maintenance, not a
+behavioral parity claim. All Go package obligations and 56 findings remain.
 
 ## Progress
 
 
-- [x] Map all six removed registrations to existing Domain owners.
-- [x] Move quoted SQL, collector transitions and shared worker-lifecycle checks.
-- [x] Remove the handle carrier/module and duplicate parser/channel functions.
-- [x] Grouped owner tests, session test compilation, lint and self-review.
+- [x] Execute the original generator for every manifest; inventory 26 consumers.
+- [x] Replace all generated includes with 852 explicit module registrations.
+- [x] Remove 26 build declarations, shared script and five obsolete markers.
+- [x] Preserve helper ownership, isolated suites and production generators.
+- [x] Reproduce 13 stale live-harness errors with original generated registration.
+- [x] Remove two private loaders and duplicate transport binary; retain all assertions.
+- [x] Update current workflow documentation and verify Cargo metadata equivalence.
+- [x] Check all 26 aggregate targets and run 53 representative tests.
+- [x] Final formatting, bash syntax, metadata/source equivalence, lint and diff checks.
 - [ ] Normal commit hook, immediate-prepush build, remote SHA and cloud checkpoint.
 
 ## Milestones and Plan of Work
 
 
-Extend existing tests in rust/crates/tidb-domain/src/plan_replayer.rs using its
-MockExec, MockDumper and status owner. Remove session's
-tests_domain_plan_replayer_handle_source.rs and its lib.rs declaration.
-Trim only parser/channel duplicates and imports/docs from
-tests_domain_plan_replayer_source.rs. Keep its actual filesystem GC body unchanged.
-Update both finding registers, README and historical receipt pointers without
-changing dispositions. No production or dependency change is intended.
+Read the complete package list in static-test-roots-cleanup-validation.json.
+For each manifest, remove only build = ../../scripts/aggregate-tests.rs; keep
+all targets and dependencies except the duplicate transport-retry standalone target. In tests/all.rs register exactly the modules
+emitted by the original generator in the same order. Keep direct_unary_table_index_reader_source
+owned by table_index_reader_runtime_source rather than registering it twice.
+Keep five standalone session/transaction suites as explicit Cargo targets.
+Delete the shared generator only after every consumer, including three difftest
+crates, is migrated. Remove obsolete markers and update workspace architecture,
+scripts/README and the outdated Cargo profile comment. Existing test registrations and Rust
+correctness assertions stay intact apart from that duplicate registration. No generated production artifact is edited.
 
 ## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust run:
+Activate /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust with
+CARGO_BUILD_JOBS=1, run the exact 26-package cargo check --locked --test all
+command in the receipt. Then run:
 
-    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-domain --lib -- plan_replayer::tests:: --test-threads=1
-    CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-session --tests
+    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-lexer -p tidb-error -p tidb-config --test all -- --test-threads=1
 
-From repository root run make lint and git diff --check. Verify production
-before/after bytes, retained filesystem test and all original owner assertions.
-Do not rerun broad unrelated suites. Commit normally: actual executable
-hooks/pre-commit must pass cd rust && cargo build --locked -p tidb-server.
-Repeat that same locked build immediately before the authorized normal push to
-origin hparser-integration, with CARGO_BUILD_JOBS=1; verify the remote SHA.
+Compare the original generator output with static roots; verify 854 retained
+test source bodies unchanged and all 101 assertions in four maintained live
+harnesses preserved. Non-build targets change only by retiring the duplicate
+transport-retry target; its script selects the same case from all.rs. No remaining
+Rust/Cargo consumer may refer to aggregate-tests.rs or all_tests.rs. Run root
+make lint and git diff --check. Do not run unrelated suites or claim all 852
+modules executed. Commit normally through hooks/pre-commit, which must pass
+cd rust && cargo build --locked -p tidb-server. Repeat immediately before the
+normal authorized push to origin hparser-integration, then verify remote SHA.
 
 ## Surprises & Discoveries
 
 
-Go handle tests drive actual SQL capture and persistent system tables. Both Rust
-mock copies only validate boundary behavior. Removing a second handwritten model
-does not establish or remove real storage integration. The filesystem-backed GC
-test is distinct and retained. Domain already tests GC errors and exact cutoffs.
+Initial crate-only discovery found 23 users, but exhaustive manifest search found
+three differential-test crates too. The old script watched every test source
+and the tests directory even in ordinary builds. Removing it requires a one-time
+workspace rebuild. One helper and five process-isolated suites are excluded.
+Existing real code-generation scripts and their platform obligations remain.
+The transaction harness also registered transport retry both in all.rs and as a
+standalone Cargo target. Remove the duplicate and update its runner exact filter.
 
 ## Decision Log
 
 
-On 2026-10-06, consolidate collection, dump lifecycle, GC, insertion, filename and
-channel checks as one batch. Preserve useful Rust error-path tests even when
-their names do not appear in Go. Keep unique filesystem coverage and migrate the
-quoted SQL vector exactly; no unsupported package-completion claim.
+On 2026-10-06 replace dynamic discovery with explicit conventional Rust modules,
+keeping test count and process layout. Adding a suite now requires registering
+it in all.rs; document this tradeoff rather than adding another source scanner.
+Reclaim 31 identified inactive obsolete test executables (2286287128 bytes) for
+the metadata transition; preserve library caches and current server executable.
+No cargo clean, broad cache purge, force push or hook bypass.
 
 ## Outcomes & Retrospective
 
 
-Source cleanup removes 464 net Rust lines. All 32 selected owner tests passed,
-with zero failed/ignored and 130 unrelated filtered out. Final session test-target
-compilation, formatting, lint, diff and continuity checks passed. Publication
-results belong in the external final-handoff.json after commit. All 56 unresolved findings
-and original Go integration/package obligations remain unchanged. Six duplicate
-registrations are retired. Compilation/test speedup has not been measured.
+Implementation and registration equivalence passed. All 26 aggregate targets
+compile; 53 representative tests pass with zero failed/ignored/filtered. Four
+live harnesses initially failed on stale APIs; the original generator reproduced
+the same 13 errors. Removing two private primed loaders in favor of warming the
+production cache, using thread-safe recorders and the actual monotonic clock type
+restores compilation. Their multi-node execution remains unverified. This removes a production build dependency on tests without deleting
+coverage. No measured timing improvement or complete Go package acceptance.
 
 ## Recovery, Interfaces and Dependencies
 
 
-Recover before-images with git show 17d23b3e2e1b4193a5cc0c0b9a52ed727ec94f8a:<path>.
-No manifests, lockfiles, generated sources or native-client files change.
-Evidence: rust/docs/parity/current-audit/plan-replayer-cleanup-validation.json;
-external logs and postcommit handoff: /workspace/.cloud-setup/plan-replayer-cleanup.
-Preserve concurrent work; no force push or hook bypass. Saved setup configuration
-does not prove environment Publish or fresh-task restoration.
+Recover any before-image with git show 9c253898c5cc631624301c73668a4fd9c9c4cda7:<path>.
+No production bodies, dependencies or Cargo.lock changed. Four live test harnesses
+use existing production APIs directly; their original assertions remain. Retired cache outputs
+are regeneratable. Evidence and exact command: rust/docs/parity/current-audit/static-test-roots-cleanup-validation.json.
+External original outputs, source hashes, logs, pruned paths and final handoff
+live in /workspace/.cloud-setup/static-test-roots. Saved setup configuration does
+not prove environment Publish or fresh-task restoration.

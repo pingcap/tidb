@@ -14,4 +14,12 @@
 
 //! All topology-independent `tidb-config` integration tests in one process.
 
-include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));
+// Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod auto_scaler_source;
+mod config_basics_source;
+mod config_extras_source;
+mod config_load_source;
+mod external_workload_source;
+mod keyspace_observability_source;
+mod removed_variable_source;
+mod store_source;
