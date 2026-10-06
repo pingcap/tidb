@@ -22,6 +22,16 @@ Standalone catalog-reload, scan-limit, CTE storage, engine classification
 and resource-group-tag suites now run in
 their crate's `all` target as well. Historical receipts retain their original
 `--test <suite>` commands; use `--test all -- <suite>` to select retained cases.
+Utility and protocol suites use `--test all -- <module>` as well. The utility
+printer suite keeps its own binary because it changes the process logger; the
+system-time monitor keeps its own binary because its background loop never ends.
+Those two retain `--test printer_contract` and `--test systimemon_source`.
+New utility/protocol module-safe suites must be registered in `tests/all.rs`;
+intentional isolated targets belong in their crate's Cargo.toml. Their existing
+custom build scripts remain unchanged. The repeated-statfs equality check is
+retired: unrelated filesystem writes can change capacity between two samples.
+Go's positive-capacity case and the OS-error regression remain.
+
 Snapshot lock-wait, transaction-size settings and lock-resolver metric suites
 remain isolated because they touch process-global configuration or counters.
 The session TopN/collation and statistics-loading suites also retain isolation

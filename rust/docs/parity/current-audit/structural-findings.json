@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "placeholder-macro-cleanup-validation.json",
-    "scope": "Retire 26 documentary test registrations: 11 macro-generated empty aggregate cases, 12 panic-only mockstore cases, two empty memory cases and one empty Domain constant case. Retained executable bodies and production code unchanged."
+    "receipt": "utility-proto-harness-cleanup-validation.json",
+    "scope": "Consolidate thirteen module-safe utility/protocol suites into two integration harnesses; retain two isolated utility binaries. Remove one Go-absent statfs equality check that compares non-atomic filesystem samples."
   },
   "test_cleanup_history": [
     {
@@ -974,6 +974,11 @@
       "date": "2026-10-06",
       "receipt": "placeholder-macro-cleanup-validation.json",
       "scope": "Retire 26 documentary test registrations: 11 macro-generated empty aggregate cases, 12 panic-only mockstore cases, two empty memory cases and one empty Domain constant case. Retained executable bodies and production code unchanged."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "utility-proto-harness-cleanup-validation.json",
+      "scope": "Consolidate thirteen module-safe utility/protocol suites into two integration harnesses; retain two isolated utility binaries. Remove one Go-absent statfs equality check that compares non-atomic filesystem samples."
     }
   ],
   "repair_history": [

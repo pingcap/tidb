@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tidb-util"
 version.workspace = true
 edition.workspace = true
@@ -144,3 +145,15 @@ harness = false
 [[bench]]
 name = "zeropool"
 harness = false
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "printer_contract"
+path = "tests/printer_contract.rs"
+
+[[test]]
+name = "systimemon_source"
+path = "tests/systimemon_source.rs"

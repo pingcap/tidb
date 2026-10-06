@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [macro-generated and panic-only placeholders](placeholder-macro-cleanup-validation.json). Twenty-six documentary registrations retired; useful tests, original Go obligations and finding dispositions remain unchanged.
+Latest cleanup: [utility/protocol harness consolidation](utility-proto-harness-cleanup-validation.json). Eleven redundant test binaries and one racy capacity check retired; useful coverage and finding dispositions remain.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

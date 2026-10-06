@@ -1,92 +1,96 @@
-# Retire macro-generated and panic-only test placeholders
+# Consolidate utility and protocol integration harnesses
 
-This living ExecPlan follows root PLANS.md. Earlier receipts remain indexed in
+This living ExecPlan follows root PLANS.md. Prior evidence remains indexed in
 parity/current-audit/README.md.
 
 ## Purpose / Big Picture
 
 
-Remove 26 documentary registrations from four compiled test owners. Empty bodies
-and unconditional panic placeholders cannot validate their Go contracts; their
-contract notes belong in the audit receipt. Useful behavioral tests remain.
-This reduces test compilation/registration inputs; no measured speedup is claimed.
+Reduce integration-test binaries from fifteen to four across tidb-util and
+tidb-proto. Thirteen module-safe suites share two harnesses; the logger and
+infinite clock-monitor suites remain isolated. Remove one racy Rust-only check
+that assumes two filesystem free-space samples are identical. No production
+behavior changes, and no measured wall-clock speedup is claimed.
 
 ## Context and Orientation
 
 
-Base f511259253227d7007745d45f63d30decb83d0e0 in /workspace/tidb on
-hparser-integration. Refreshed Go master b36c940a4332c866d8b0e2afde88f5e7c2fd7fed
-is exported at /workspace/.cloud-setup/go-master. No deeper Rust AGENTS.md applies.
+Base cdc7d7256f27f352df2a1f8555115c6713330fce on hparser-integration in
+/workspace/tidb. Refreshed Go master is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed.
+Cargo auto-discovered seven utility and eight protocol integration roots.
+Existing custom build scripts own version/protobuf generation and remain intact.
+The new tests/all.rs roots explicitly declare module-safe suites. Set autotests
+false and declare all plus the two retained utility targets in Cargo.toml.
+Future suite additions must be registered in these roots or explicit targets.
 
-Remove gap_evaluator and its eleven invocations from tidb-expr's
-src/tests/aggregation_arithmetic_cast_source.rs; twelve panic-only cases from
-tidb-unistore/src/tests_mockstore_part1_go_parity.rs; two empty cases from
- tidb-util/src/memory/tracker.rs; and server_id_constant from
- tidb-session/src/tests_domain_domain_utils_source.rs. Preserve all other code.
-These cases are ignored registrations, never useful passing validation. Preserve
-exact original names and contract comments in placeholder-macro-cleanup-validation.json.
-Original Go packages and behaviors remain obligations; old absence claims are
-historical and are not accepted as newly reproduced findings.
+All existing suite files retain their bytes except sys_storage_source.rs, which
+loses uses_statfs_available_bytes. Concurrent disk activity can change statfs
+between calls; Go pkg/util/sys/storage/sys_test.go checks positive capacity only.
+Keep that original case and the missing-path OS-error regression. Keep cgroup's
+non-Linux case compiled conditionally, even though it does not run on Linux.
 
 ## Progress
 
 
-- [x] Trace Go anchors, module registrations and placeholder bodies.
-- [x] Remove 26 placeholders and update stale module/receipt descriptions.
-- [x] Verify retained code, check affected test targets and run lint.
-- [ ] Complete actual hook, fresh pre-push build, remote verification and cloud save.
+- [x] Trace all fifteen suites, process isolation and maintained command callers.
+- [x] Consolidate thirteen suites and remove the racy capacity comparison.
+- [x] Run both aggregate suites, verify metadata/input continuity and run lint.
+- [ ] Complete hook, fresh pre-push build, remote verification and cloud checkpoint.
 
 ## Milestones and Plan of Work
 
 
-Retire macro-generated empty tests and panic-only bodies as one batch. Preserve
-before-image hashes and every original contract. Update the historical b025,
-b061, b066 and b117 receipts to distinguish old skipped counts from current
-registrations. Keep both finding registers' dispositions unchanged. Verify all
-retained executable bodies and production code before committing.
+Preserve baseline Cargo metadata and test hashes. Add two small module roots and
+explicit Cargo targets without changing build scripts or dependencies. Update
+rust/scripts/README.md with current commands; historical receipts keep their
+original invocations. Prove every old suite remains registered once, with only
+the documented racy case removed, before publication.
 
 ## Validation and Acceptance
 
 
 Source /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust run:
 
-    CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-expr -p tidb-util -p tidb-unistore -p tidb-session --tests
+    cargo metadata --locked --no-deps --format-version 1
+    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-util -p tidb-proto --test all
 
-From repository root run make lint, git diff --check and the external
-/workspace/.cloud-setup/placeholder-macro-cleanup/verify.py. Verify removed bodies
-are only empty or unconditional panic stubs; all retained executable inputs
-must match their before-images. Runtime suites are not rerun for this deletion.
-Normal commit must execute hooks/pre-commit and its locked tidb-server build.
-Immediately before pushing rerun cd rust && cargo build --locked -p tidb-server
-with CARGO_BUILD_JOBS=1, then normal push and remote SHA verification. Never
-bypass hooks or force-push. Final publication evidence is external final-handoff.json.
+Expected Linux result is 44 protocol and 14 utility tests, zero failures or
+ignored cases. The non-Linux cgroup case is conditional, not a skipped Linux test.
+The two isolated suites are unchanged and not rerun. Verify before/after target
+counts 15 to 4, all suite hashes except the exact statfs block, manifests changed
+only for target registration, and unchanged build scripts/lockfile/production.
+Run root make lint and git diff --check. Normal commit must execute the actual
+hooks/pre-commit locked server build. Immediately before the authorized normal
+push repeat cd rust && cargo build --locked -p tidb-server with CARGO_BUILD_JOBS=1.
+Verify remote SHA; no force-push or hook bypass. Postcommit evidence is external
+/workspace/.cloud-setup/utility-proto-harness-cleanup/final-handoff.json.
 
 ## Surprises & Discoveries
 
 
-The aggregate macro escaped earlier empty-function cleanup and still cited the
-retired tidb-exec aggregate runtime. Twelve mock-store cases do no work before
-panicking. The skipped memory/Domain cases contain comments alone. Other ignored
-tests exercise behavior or isolated helpers and remain untouched.
+Blind aggregation would share a process with a permanently running time monitor
+and a global logger reset. Those suites retain isolation. Two-sample statfs
+comparison is absent from Go and is invalid under concurrent filesystem writes.
 
 ## Decision Log
 
 
-On 2026-10-06, remove documentary registrations while preserving their exact
-Go obligations outside the test runner. Do not remove real regressions based on
-language-specific names, and do not claim skipped placeholders passed.
+On 2026-10-06, retain behavioral and native type-identity coverage while removing
+redundant executable harnesses. Use explicit module roots because both crates
+already have custom build scripts; preserve those generation/version owners.
+The supported platform cases and original Go obligations remain unchanged.
 
 ## Recovery / Interfaces and Dependencies
 
 
-Use git show f511259253227d7007745d45f63d30decb83d0e0:<path> for before-images.
-External inventories/logs live in /workspace/.cloud-setup/placeholder-macro-cleanup.
-No production interface, dependency, manifest, lockfile or native-client change.
+Recover files with git show cdc7d7256f27f352df2a1f8555115c6713330fce:<path>.
+External inventories/logs live in /workspace/.cloud-setup/utility-proto-harness-cleanup.
+No production API, dependency version, lockfile or native-client source changes.
 
 ## Outcomes & Retrospective
 
 
-Twenty-six placeholder registrations are removed. Affected test-target compilation,
-root lint, retained-body verification and diff checking passed; publication remains.
-The 56 unresolved findings remain unchanged. This revision replaces the completed
-scratch-log cleanup plan; baseline-log-cleanup-validation.json retains its evidence.
+Eleven redundant integration harnesses and one racy check are retired. Both suites
+passed (58 tests), target/input verification and lint passed; publication remains. All 56 behavioral findings remain unchanged; no package acceptance.
+This replaces the completed placeholder cleanup plan, whose receipt remains
+placeholder-macro-cleanup-validation.json.

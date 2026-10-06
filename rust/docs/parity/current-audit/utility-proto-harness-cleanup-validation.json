@@ -1,0 +1,252 @@
+{
+  "date": "2026-10-06",
+  "base": "cdc7d7256f27f352df2a1f8555115c6713330fce",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Consolidate thirteen module-safe utility/protocol suites into two integration harnesses; retain two isolated utility binaries. Remove one Go-absent statfs equality check that compares non-atomic filesystem samples.",
+  "integration_targets_before": 15,
+  "integration_targets_after": 4,
+  "redundant_harnesses_removed": 11,
+  "tests_removed": [
+    "tidb-util::sys_storage_source::uses_statfs_available_bytes"
+  ],
+  "reason": "Two successive statfs calls need not return equal free-space values under concurrent filesystem writes. Go sys_test.go checks positive capacity, not sample equality. Keep the original positive-capacity case and OS-error propagation regression.",
+  "source_anchor": "pkg/util/sys/storage/sys_test.go::TestGetTargetDirectoryCapacity",
+  "suite_inventory": {
+    "tidb-util": [
+      {
+        "path": "rust/crates/tidb-util/tests/cgroup_source.rs",
+        "sha256": "0244e771206befa592703aee357709c2af5095768668dd528be8810a1b00921c",
+        "tests": [
+          "unsupported_platform_matches_go_public_fallbacks"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-util/tests/context_contract.rs",
+        "sha256": "30437c2c91802574c5b2f27b18e0e74d2502bde33a16cb9c74a89777b4744ad6",
+        "tests": [
+          "warning_json_accepts_the_sources_empty_level",
+          "context_ids_are_nonzero_and_unique_across_threads",
+          "warning_json_and_handlers_preserve_the_public_contract",
+          "warning_retention_matches_single_and_batch_append_rules",
+          "plan_cache_and_range_fallback_publish_source_ordered_decisions"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-util/tests/format_contract.rs",
+        "sha256": "333fe69493fc2df1325021067a2ac239b53ce25a5a5fc9815b7992cb23d165e4",
+        "tests": [
+          "format_package_semantics",
+          "output_format_preserves_go_string_byte_domain",
+          "formatter_performs_one_source_write_and_returns_its_count",
+          "empty_format_still_observes_the_source_writer"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-util/tests/printer_contract.rs",
+        "sha256": "3a8640eb804ef12ca65cfef32468f7bb857b5e0e3b3e4862e0d4625eaed3be7a",
+        "tests": [
+          "print_tidb_info_source"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-util/tests/sys_storage_source.rs",
+        "sha256": "31478102bac499c89d1279539ea7aa3ad2796af77df63cf7d13c9e17c3d05a3c",
+        "tests": [
+          "current_directory_has_positive_capacity",
+          "uses_statfs_available_bytes",
+          "missing_directory_returns_the_operating_system_error"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-util/tests/systimemon_source.rs",
+        "sha256": "9bd984e4a466c428c80e23de0262ee2d5cdeaae9de690f11b2a18a026f074e40",
+        "tests": [
+          "test_systime_monitor"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-util/tests/table_filter_contract.rs",
+        "sha256": "1bef96bc84e3471d66fb22181f0a04e789a4fbe69bba6bc201890ae359a648c4",
+        "tests": [
+          "parsed_filter_objects_can_cross_and_be_shared_between_workers",
+          "replication_rules_preserve_public_config_keys",
+          "case_insensitive_filters_use_go_simple_unicode_folding"
+        ]
+      }
+    ],
+    "tidb-proto": [
+      {
+        "path": "rust/crates/tidb-proto/tests/analyze_wire_source.rs",
+        "sha256": "dd315a7dce6d242c802502563686ae9039b564e15c234f7bcabdb780590b6a6c",
+        "tests": [
+          "full_sampling_request_preserves_go_wire_contract",
+          "full_sampling_response_preserves_counts_and_sample_weights"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-proto/tests/batch_commands_wire_source.rs",
+        "sha256": "bcf3b76a30fbd39b77b221c5d1e972e659598eb75f39d2dc727c326ecc39a689",
+        "tests": [
+          "coprocessor_request_body_keeps_pinned_tag_22",
+          "empty_response_and_feedback_presence_keep_pinned_fields",
+          "missing_command_presence_remains_observable",
+          "batch_decode_shares_the_encoded_command_buffer",
+          "complete_tikv_service_and_messages_preserve_the_upstream_contract"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-proto/tests/coprocessor_mpp_wire_source.rs",
+        "sha256": "391168241898db166b4b7627f3dfe1a3002a2a7eccfa60cd0a6efe8cea8553d4",
+        "tests": [
+          "complete_coprocessor_requests_retain_batch_and_versioned_ranges",
+          "complete_mpp_dispatch_retains_partition_table_regions",
+          "complete_coprocessor_response_retains_merged_task_marker",
+          "mpp_preserves_keyspace_presence_and_shares_the_native_type"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-proto/tests/pd_wire_source.rs",
+        "sha256": "df1c26e686a9beec3d2f61e9182cb9c6363b632271ccfd2dec4d4e43fdb86404",
+        "tests": [
+          "pd_request_projection_keeps_source_field_numbers_and_presence",
+          "region_peer_store_projection_round_trips_sparse_source_tags",
+          "bucket_and_scan_projection_keeps_every_pinned_source_tag",
+          "pd_complete_owner_preserves_keyspace_zero_and_new_response_fields",
+          "pd_and_backup_use_the_native_complete_type_identity",
+          "etcd_watch_progress_request_is_not_discarded",
+          "gc_global_barriers_preserve_the_original_go_compatibility_cases"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-proto/tests/region_error_wire_source.rs",
+        "sha256": "d088753a3129a7efa733ff6458e531804b18632bdb176081369d32d1d93ddb5d",
+        "tests": [
+          "not_leader_restores_exact_nested_peer_field",
+          "epoch_not_match_restores_exact_repeated_current_regions_field"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-proto/tests/tipb_selection_expression_source.rs",
+        "sha256": "316aeed405459b7f6eb7e3c673719da62ce7c0c53c93df7051db25832b0fd111",
+        "tests": [
+          "complete_contract_retains_master_executor_and_expression_fields",
+          "complete_contract_recognizes_the_master_executor_vocabulary",
+          "bounded_selection_contract_keeps_upstream_numeric_values",
+          "selection_executor_and_nonnullable_defaults_keep_exact_wire_tags",
+          "field_type_preserves_every_upstream_scalar_field_presence",
+          "complete_expression_enum_keeps_value_list_distinct_from_null"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-proto/tests/tipb_spfresh_source.rs",
+        "sha256": "1e686d9c61f992ecc42f2c449f02ef0dedb667921bcb80f5d7e6f4c1bb93db4f",
+        "tests": [
+          "filter_expr_column_source_wire_values",
+          "filter_expr_column_missing_source_is_unspecified",
+          "eval_context_preserves_sql_mode",
+          "search_request_max_response_bytes_wire_field",
+          "search_response_result_is_exclusive",
+          "ann_stats_wire_round_trip",
+          "search_stats_field_numbers",
+          "index_corruption_code",
+          "response_too_large_code"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-proto/tests/transaction_wire_source.rs",
+        "sha256": "73c52af7a12a6d10964dc30fee926867ebb7b436c786c3b952098c4a358c36c9",
+        "tests": [
+          "transaction_requests_match_pinned_kvproto_wire",
+          "transaction_responses_preserve_region_and_key_error_presence",
+          "transaction_messages_keep_exact_batchcommands_tags",
+          "point_read_responses_preserve_complete_execution_details",
+          "shared_context_preserves_resource_control_penalty",
+          "shared_errors_preserve_full_region_metadata",
+          "shared_packages_use_the_native_type_identity",
+          "shared_lock_lost_matches_upstream_wire_contract",
+          "coprocessor_details_preserve_native_scan_counters"
+        ]
+      }
+    ]
+  },
+  "module_registrations": {
+    "tidb-util": [
+      "cgroup_source",
+      "context_contract",
+      "format_contract",
+      "sys_storage_source",
+      "table_filter_contract"
+    ],
+    "tidb-proto": [
+      "analyze_wire_source",
+      "batch_commands_wire_source",
+      "coprocessor_mpp_wire_source",
+      "pd_wire_source",
+      "region_error_wire_source",
+      "tipb_selection_expression_source",
+      "tipb_spfresh_source",
+      "transaction_wire_source"
+    ]
+  },
+  "isolation": {
+    "printer_contract": "mutates the global logger",
+    "systimemon_source": "starts an infinite background monitor"
+  },
+  "validation": {
+    "status": "passed",
+    "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-util -p tidb-proto --test all",
+    "result": "44 protocol plus 14 utility tests passed; zero failed, ignored or filtered out",
+    "metadata_command": "cargo metadata --locked --no-deps --format-version 1",
+    "verification": {
+      "targets": {
+        "tidb-util": {
+          "before": [
+            "cgroup_source",
+            "context_contract",
+            "format_contract",
+            "printer_contract",
+            "sys_storage_source",
+            "systimemon_source",
+            "table_filter_contract"
+          ],
+          "after": [
+            "all",
+            "printer_contract",
+            "systimemon_source"
+          ]
+        },
+        "tidb-proto": {
+          "before": [
+            "analyze_wire_source",
+            "batch_commands_wire_source",
+            "coprocessor_mpp_wire_source",
+            "pd_wire_source",
+            "region_error_wire_source",
+            "tipb_selection_expression_source",
+            "tipb_spfresh_source",
+            "transaction_wire_source"
+          ],
+          "after": [
+            "all"
+          ]
+        }
+      },
+      "targets_before": 15,
+      "targets_after": 4,
+      "redundant_harnesses_removed": 11,
+      "retained_test_bodies_unchanged": true,
+      "production_and_build_scripts_unchanged": true,
+      "dependency_declarations_and_lockfile_unchanged": true,
+      "linux_aggregate_tests_passed": 58,
+      "non_linux_case": "retained conditionally; not executed on Linux",
+      "isolated_suites": "both targets and sources unchanged; not rerun",
+      "finding_dispositions_unchanged": true
+    },
+    "lint": "make lint passed",
+    "diff_check": "passed",
+    "publication": "Actual hook/fresh pre-push builds and remote SHA recorded after commit in external final-handoff.json"
+  },
+  "original_go_obligations": "All original Go tests, platform variants and package acceptance requirements remain. No complete package acceptance or finding repair.",
+  "finding_dispositions_changed": false,
+  "measured_wall_clock_speedup": false
+}

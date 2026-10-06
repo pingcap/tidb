@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tidb-proto"
 version.workspace = true
 edition.workspace = true
@@ -22,3 +23,7 @@ workspace = true
 
 [dev-dependencies]
 prost-types = "0.14.4"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

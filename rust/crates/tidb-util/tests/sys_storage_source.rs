@@ -23,19 +23,6 @@ fn current_directory_has_positive_capacity() {
     assert!(capacity >= 1, "could not get capacity: {capacity}");
 }
 
-/// Go multiplies `syscall.Statfs_t.Bavail` by `syscall.Statfs_t.Bsize`.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-#[test]
-fn uses_statfs_available_bytes() {
-    let stat = rustix::fs::statfs(".").expect("current directory statfs");
-    // Go: `stat.Bavail * uint64(stat.Bsize)`; `f_bsize` is `i64` on Linux.
-    #[allow(clippy::cast_sign_loss)]
-    let block_size = stat.f_bsize as u64;
-    let expected = stat.f_bavail.wrapping_mul(block_size);
-    let capacity = get_target_directory_capacity(".").expect("current directory capacity");
-    assert_eq!(capacity, expected);
-}
-
 /// Regression for the supported-platform `syscall.Statfs` error boundary.
 /// Go returns the operating-system error for a path that does not exist; the
 /// Rust adapter must not silently turn that failure into a zero capacity.
