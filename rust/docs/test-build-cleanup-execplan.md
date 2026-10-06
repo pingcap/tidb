@@ -1,95 +1,105 @@
-# Share session SQL test helpers
+# Retire stale JSON test carriers
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Remove repeated executable harness code while preserving every SQL case and
-assertion. Work in /workspace/tidb on hparser-integration from
-cb1d4eb031beb75272134dc851cbac6ac35eb60e. Refreshed Go master is
-b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Go pkg/testkit centralizes query
-execution and result rendering. The Rust session integration target already
-shares one executable, but 223 modules still repeat 245 helper bodies.
+Remove obsolete string-only JSON harnesses and duplicate test carriers while
+preserving their useful SQL checks in existing owner tests. Work in
+/workspace/tidb on hparser-integration from
+b0a7039c1a1eab52695bc7714557b00b88938500. Fresh Go master remains
+b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Go expression JSON signatures return
+ETJson/BinaryJSON; Go testkit renders those values through Datum.ToString.
+Rust now carries Datum::Json for these families, but eleven integration carriers
+and several comments still describe an older string-only implementation.
 
 ## Progress
 
 
-- [x] Refresh Go master and inspect Go testkit ownership and repeated Rust helpers.
-- [x] Replace 245 copies with 27 shared helpers; preserve other module bytes.
-- [x] Run all 256 affected SQL tests: 246 pass, ten identical baseline failures; verify source continuity.
-- [x] Pass lint, metadata, formatting and diff checks; record validation and update pointers.
+- [x] Verify restored Cloud heads and clean trees; refresh Go master.
+- [x] Inspect eleven carriers, existing JSON owner tests and Go signatures/tests.
+- [x] Reproduce eleven original carriers: three passed and eight stale-string failures.
+- [x] Migrate 31 value vectors and exact wildcard diagnostics; retire eleven carriers.
+- [x] Pass sixteen owner tests and one focused diagnostic rerun; lint, metadata and continuity checks pass.
 - [ ] Commit through actual hook, fresh locked build, push and verify remote.
-- [ ] Save verified recovery bundle and Cloud checkpoint.
+- [ ] Save verified recovery bundle and Cloud checkpoint when tools are available.
 
 ## Milestones and Plan of Work
 
 
-Move identical helpers from rust/crates/tidb-session/tests into support/mod.rs.
-Register support once in all.rs. Import the original local function name in each
-caller. Retain distinct integer, string, byte, NULL, error-length and statement
-result conventions; do not normalize expectations or delete failing cases.
-The new module is test support, not a new production or Cargo target.
-
-Compare every modified caller to its before-image after substituting its shared
-import back with the original function: the complete file must match byte for
-byte. Compare shared function bodies to the originals after renaming. Run all
-223 affected module filters in one Cargo invocation; preserve and investigate
-any failures against the original helpers. Then run make lint and git diff
---check, update this plan and the current-audit cleanup receipt and pointers.
+Retire the eleven json_*_source integration modules listed in the current-audit
+receipt, excluding json_search_source. Migrate unique constant expressions into
+existing json_value_functions and json_mutation_functions in
+rust/crates/tidb-session/src/tests_json.rs. Move JSON-column arrows/filtering
+into json_column_type and the bitwise vector into the existing math/builtin
+owner. Remove only duplicates with an explicit stronger retained assertion.
+Preserve JSON text, SQL NULL, invalid-path errors and unsigned arithmetic.
+For migrated JSON-returning constants assert the typed datum and JSON column
+metadata as well as the value. Remove stale comments claiming these families
+return strings or CAST loses JSON structure. Retain JSON_SEARCH's separately
+known text/result-type boundary and its tests.
 
 ## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh in build shells; run Cargo from rust/.
-Use cargo test --locked -p tidb-session --test all -- followed by the affected
-module filters listed in the receipt. All SQL inputs, assertions, test names,
-attributes and registrations remain identical. No production code, dependencies,
-fixtures or Go/Bazel files change. Compare Cargo metadata before/after; no target
-change is expected. No new redundant helper tests are necessary.
+Source /workspace/.cloud-setup/env.sh and use CARGO_BUILD_JOBS=1. First run the
+eleven original carriers together using a temporary filtered tests/all.rs,
+restoring that file byte-for-byte afterward. After migration run from rust/:
 
-From repository root run make lint and git diff --check. Commit normally with
-core.hooksPath=hooks; the actual hook must pass cd rust && cargo build --locked
--p tidb-server. Repeat that locked build immediately before normal push to
-origin hparser-integration, then verify remote SHA. Never bypass hooks or force
+    cargo test --locked -p tidb-session --lib -- tests_json:: tests_core::builtins::math_and_conditional_builtins
+
+Verify every removed assertion has a retained owner or migrated vector; do not
+remove a failing expectation merely because it fails. Run make lint and git
+diff --check from root. No production, Go, Bazel, manifest or fixture change is
+planned. Do not run full unrelated suites. Record failures distinctly.
+
+Commit normally using executable hooks/pre-commit selected by core.hooksPath.
+The hook must pass cd rust && cargo build --locked -p tidb-server. Rerun the
+same locked build immediately before the authorized normal push to
+pingcap/tidb hparser-integration; verify remote SHA. Never bypass hooks or force
 push. Keep native client-rust unchanged.
 
 ## Surprises & Discoveries
 
 
-The same SQL helper is copied up to 38 times. Two groups differ only in their
-local function name and share one implementation. Other differences include
-panic context, NULL spelling and error truncation; these remain explicit.
+Four stale JSON failures were recorded by the previous SQL-helper cleanup.
+The wider JSON carrier cluster contains the same outdated representation
+assumption. Existing owner tests already use shared row_text and include
+exact storage sizes and typed columns. JSON_SEARCH still has a distinct known
+text/result-type divergence, so it is not part of this retirement.
 
 ## Decision Log
 
 
-Move only exact duplicates, preserving function bodies and import aliases.
-This follows shared Go testkit ownership without claiming complete testkit
-transcreation. Keep unique helpers and all existing behavioral tests. The
-unrelated lint-only and atomic-only tests reviewed earlier are outside this
-connected session-harness batch.
+Remove carriers after mapping all 43 assertions: 41 value assertions, one
+wildcard-path rejection and one weak size bound. Retain duplicate semantic
+checks in their existing owner; move unique cases. No public production change
+or complete Go package acceptance is implied. Baseline-only temporary test
+executables may be pruned after validation if inactive and invalidated by
+restoring the normal test root; retain logs and record hashes/process checks.
 
 ## Outcomes & Retrospective
 
 
-Implementation removes 218 duplicated helper definitions and 3531 net Rust
-harness lines. The selected suites report 246 passes and ten failures, zero ignored.
-All ten failure messages reproduce identically with original helpers.
-Metadata, source continuity, shared-module formatting, lint and diff checks pass.
-Publication remains pending. No parity root closes: 86 tracked, 30 repaired,
-56 unresolved (27 open, 29 partial). No measured speedup is claimed.
+Eleven carriers (466 lines), eleven registrations and obsolete representation
+narratives are retired. Net 331 Rust lines removed. All 43 original assertions
+have retained owners; 17 migrated queries now check JSON datum/column types.
+The grouped sixteen owner tests and focused diagnostic rerun pass. Publication
+and checkpoint evidence remain pending. Counts remain 86 tracked,
+30 repaired, 56 unresolved (27 open, 29 partial). This is harness maintenance;
+no parity root repair or measured speedup is claimed.
 
 ## Recovery, Artifacts and Dependencies
 
 
 Restore individual before-images with git show
-cb1d4eb031beb75272134dc851cbac6ac35eb60e:<path>, preserving concurrent work.
-External inventory, migration and command logs live in
-/workspace/.cloud-setup/session-sql-helper-cleanup. The committed receipt will be
-rust/docs/parity/current-audit/session-sql-helper-cleanup-validation.json.
-Saving the Cloud draft, publishing settings and testing a fresh restore are
-distinct operations. No dependencies change.
+b0a7039c1a1eab52695bc7714557b00b88938500:<path>, preserving concurrent work.
+External inventory and logs live in
+/workspace/.cloud-setup/json-carrier-retirement. The durable receipt is
+rust/docs/parity/current-audit/json-carrier-retirement-validation.json.
+No dependency changes. Saving a Cloud draft, Publish and fresh-task restoration
+are distinct; report each only when verified.
 
-Revision: replace completed statistics documentation retirement with the
-connected session SQL helper cleanup and exact source-continuity checks.
+Revision: replace completed shared-helper cleanup with the JSON carrier and
+stale representation cleanup, preserving unique behavior in existing owners.

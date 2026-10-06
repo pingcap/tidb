@@ -98,23 +98,7 @@ fn json_storage_functions_reach_chunk_evaluation() {
     assert!(session.run("SELECT JSON_STORAGE_FREE('not json')").is_err());
 }
 
-/// `JSON_TABLE` is REFUSED, and this test records WHY rather than
-/// leaving it looking like an unfinished port.
-///
-/// The Go side of this branch does not parse it AT ALL. Captured from
-/// `testkit.CreateMockStore` on `hparser-integration`:
-///
-/// ```text
-/// SQL:  select * from json_table('[1,2]', '$[*]' columns (v int path '$')) jt
-/// ERR:  [parser:1064]You have an error in your SQL syntax; ... near
-///       "'[1,2]', '$[*]' columns (v int path '$')) jt"
-/// ```
-///
-/// The `FOR ORDINALITY` and lateral (`FROM t, JSON_TABLE(t.j, ...)`)
-/// forms fail the same way, and `grep -rni json_table pkg/` finds only
-/// the UNRELATED statistics-dump `JSONTable` struct -- no grammar rule,
-/// no AST node, no executor. There is therefore no Go source to
-/// transcreate; this is a HARD SKIP, not a deferral.
+/// Go's parser rejects JSON_TABLE, including FOR ORDINALITY syntax.
 #[test]
 fn json_table_is_unsupported_upstream() {
     let mut session = Session::new();
@@ -637,22 +621,8 @@ fn approx_count_distinct_matches_go_above_the_sketch_threshold() {
     );
 }
 
-/// The JSON family's first slice: JSON evaluated as VALUES.
-///
-/// Every expectation below is a `testkit.CreateMockStore` capture of real
-/// TiDB on the same statements. Two facts are worth naming because they
-/// are easy to assume wrong:
-///
-///  * object keys print in PLAIN BYTE order, not length-then-bytes
-///    (`buildBinaryJSONObject`'s `cmp.Compare`), so `{"b":1,"aa":2}`
-///    prints `aa` first;
-///  * a duplicate `JSON_OBJECT` key keeps the LAST value.
-///
-/// DOCUMENTED DIVERGENCE: TiDB reports a JSON-returning column as type
-/// `JSON` (245); this tier has no BinaryJSON value, so the column is a
-/// string carrying `BinaryJSON.MarshalJSON`'s exact text. The VALUES here
-/// are byte-identical to TiDB's -- only the reported column type differs,
-/// the same trade the temporal casts make (see `tidb_expr::rewriter`).
+/// JSON scalar values follow Go's BinaryJSON semantics and shared result rendering.
+/// Object keys print in byte order and duplicate JSON_OBJECT keys keep the last value.
 #[test]
 fn json_value_functions() {
     let mut session = Session::new();
@@ -672,6 +642,101 @@ fn json_value_functions() {
                 $sql
             );
         };
+    }
+
+    // Unique SQL vectors from the retired string-only integration carriers.
+    for (sql, expected, json_result) in [
+        (
+            "select json_object('a', 1, 'b', 'x')",
+            vec!["{\"a\": 1, \"b\": \"x\"}"],
+            true,
+        ),
+        (
+            "select json_array(1, 'x', true)",
+            vec!["[1, \"x\", true]"],
+            true,
+        ),
+        ("select json_type(json_array(1))", vec!["ARRAY"], false),
+        (
+            "select json_extract('{\"a\": {\"b\": 7}}', '$.a.b')",
+            vec!["7"],
+            true,
+        ),
+        (
+            "select json_valid('{\"a\":1}'), json_valid('nope')",
+            vec!["1", "0"],
+            false,
+        ),
+        (
+            "select json_extract('{\"a\": 1, \"b\": 2}', '$.a', '$.b')",
+            vec!["[1, 2]"],
+            true,
+        ),
+        (
+            "select json_extract('{\"a\": 1}', '$.a', '$.zz')",
+            vec!["[1]"],
+            true,
+        ),
+        (
+            "select json_extract('{\"a\": 1}', '$.x', '$.y')",
+            vec!["NULL"],
+            true,
+        ),
+        (
+            "select json_extract('[10, 20, 30]', '$[1]')",
+            vec!["20"],
+            true,
+        ),
+        (
+            "select json_keys('{\"a\": 1, \"b\": 2}')",
+            vec!["[\"a\", \"b\"]"],
+            true,
+        ),
+        ("select json_unquote('\"hi\"')", vec!["hi"], false),
+        (
+            "select json_unquote(json_extract('{\"a\": \"x\\\\ty\"}', '$.a'))",
+            vec!["x\ty"],
+            false,
+        ),
+        (
+            "select json_overlaps('[1, 2, 3]', '[3, 4]')",
+            vec!["1"],
+            false,
+        ),
+        ("select json_overlaps('[1, 2]', '[5]')", vec!["0"], false),
+        ("select 2 member of ('[1, 2, 3]')", vec!["1"], false),
+        ("select json_type('{\"a\": 1}')", vec!["OBJECT"], false),
+        (
+            "select json_contains_path('{\"a\": 1, \"b\": 2}', 'one', '$.a')",
+            vec!["1"],
+            false,
+        ),
+        (
+            "select json_contains_path('{\"a\": 1}', 'all', '$.x', '$.y')",
+            vec!["0"],
+            false,
+        ),
+    ] {
+        let StmtOutput::Rows { columns, rows } = session.run_with_columns(sql).unwrap() else {
+            panic!("expected rows for {sql}");
+        };
+        if json_result {
+            assert_eq!(
+                columns[0].1.code(),
+                tidb_datatype::FieldTypeCode::Json,
+                "{sql}"
+            );
+            assert!(
+                matches!(&rows[0][0], Datum::Json(_) | Datum::Null),
+                "{sql}: {:?}",
+                rows[0][0]
+            );
+        }
+        assert_eq!(
+            row_text(Ok(StmtResult::Rows(rows))),
+            vec![expected],
+            "{sql}"
+        );
     }
 
     // JSON_EXTRACT: one path returns the element, several wrap in an
@@ -861,19 +926,6 @@ fn json_value_functions() {
             .message,
         "Invalid JSON path expression. The error is around character position 1."
     );
-
-    // REFUSED because UPSTREAM GO DOES NOT PARSE IT: `JSON_TABLE` has no
-    // grammar rule, AST node, or executor anywhere in `pkg/`, so there is
-    // no source to transcreate. Evidence and the captured Go parse error
-    // live in `json_table_is_unsupported_upstream` below. The mutation
-    // family graduated -- see `json_mutation_functions` and
-    // `json_column_type` below.
-    assert!(
-        session
-            .run(r#"SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (v INT PATH '$')) t"#)
-            .is_err(),
-        "JSON_TABLE should still be refused"
-    );
 }
 
 /// The JSON MUTATION family, captured from real TiDB through
@@ -885,11 +937,6 @@ fn json_value_functions() {
 /// against the original. `JSON_REMOVE('[1,2,3]','$[0]','$[0]')` therefore
 /// removes two DIFFERENT elements and leaves `[3]`.
 ///
-/// DOCUMENTED DIVERGENCE, unchanged from slice 1: a JSON-returning
-/// BUILTIN reports column type `VarString` where TiDB says `JSON`,
-/// because this tier's expression datum domain is textual. The VALUES are
-/// byte-identical. A JSON COLUMN is a different story -- see
-/// `json_column_type`.
 #[test]
 fn json_mutation_functions() {
     let mut session = Session::new();
@@ -902,6 +949,66 @@ fn json_mutation_functions() {
                 $sql
             );
         };
+    }
+
+    // Unique SQL vectors from the retired string-only integration carriers.
+    for (sql, expected, json_result) in [
+        (
+            "select json_array_insert('[1, 3]', '$[1]', 2)",
+            vec!["[1, 2, 3]"],
+            true,
+        ),
+        (
+            "select json_merge_preserve('[1]', '[2, 3]')",
+            vec!["[1, 2, 3]"],
+            true,
+        ),
+        (
+            "select json_merge_preserve('{\"a\": {\"x\": 1}}', '{\"a\": {\"y\": 2}}')",
+            vec!["{\"a\": {\"x\": 1, \"y\": 2}}"],
+            true,
+        ),
+        (
+            "select json_merge_preserve('[1]', '2')",
+            vec!["[1, 2]"],
+            true,
+        ),
+        (
+            "select json_replace('{\"a\": 1}', '$.a', 9)",
+            vec!["{\"a\": 9}"],
+            true,
+        ),
+        (
+            "select json_remove('{\"a\": 1, \"b\": 2}', '$.b')",
+            vec!["{\"a\": 1}"],
+            true,
+        ),
+        (
+            "select json_merge_patch('{\"a\": 1, \"b\": 2}', '{\"b\": null, \"c\": 3}')",
+            vec!["{\"a\": 1, \"c\": 3}"],
+            true,
+        ),
+    ] {
+        let StmtOutput::Rows { columns, rows } = session.run_with_columns(sql).unwrap() else {
+            panic!("expected rows for {sql}");
+        };
+        if json_result {
+            assert_eq!(
+                columns[0].1.code(),
+                tidb_datatype::FieldTypeCode::Json,
+                "{sql}"
+            );
+            assert!(
+                matches!(&rows[0][0], Datum::Json(_) | Datum::Null),
+                "{sql}: {:?}",
+                rows[0][0]
+            );
+        }
+        assert_eq!(
+            row_text(Ok(StmtResult::Rows(rows))),
+            vec![expected],
+            "{sql}"
+        );
     }
 
     // JSON_SET replaces an existing path and creates a missing one;
@@ -926,13 +1033,11 @@ fn json_mutation_functions() {
         r#"SELECT JSON_SET('{}','$.a','{"x":1}')"#,
         r#"{"a": "{\"x\":1}"}"#
     );
-    // NAMED BOUNDARY, and the reason the value rule above matters: a
-    // JSON-typed value argument keeps its STRUCTURE in TiDB
-    // (`JSON_SET('{}','$.a',CAST('{"x":1}' AS JSON))` is
-    // `{"a": {"x": 1}}`), but this tier's CAST produces canonical TEXT,
-    // which is indistinguishable from a string literal here and so
-    // nests as a JSON string. A JSON COLUMN carries a real BinaryJSON
-    // and does keep its structure -- see `json_column_type`.
+    // A JSON-typed CAST remains structured when used as a mutation value.
+    check!(
+        r#"SELECT JSON_SET('{}','$.a',CAST('{"x":1}' AS JSON))"#,
+        r#"{"a": {"x": 1}}"#
+    );
     // A boolean-flagged value is stored as the JSON boolean, not the
     // integer 1: `TRUE` reaches `json_argument` carrying `IsBooleanFlag`
     // (every `booleanFunctions` name stamps it, and so does the `TRUE`
@@ -1090,6 +1195,15 @@ fn json_mutation_functions() {
     // A MERGE argument must be a JSON string or a JSON value.
     assert_eq!(code("SELECT JSON_MERGE_PRESERVE('[1]',3)"), 3146);
     assert_eq!(code(r#"SELECT JSON_MERGE_PATCH('{"a":1}',3)"#), 3146);
+    let wildcard_error = session
+        .run(r#"select json_array_append('{"a": [1], "b": [2]}', '$[*]', 9)"#)
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(wildcard_error.code, 3149);
+    assert_eq!(
+        wildcard_error.message,
+        "In this situation, path expressions may not contain the * and ** tokens or an array range."
+    );
 
     // JSON_MERGE is deprecated: it computes the same value as
     // JSON_MERGE_PRESERVE and adds warning 1681.
@@ -1113,14 +1227,8 @@ fn json_mutation_functions() {
     assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
 }
 
-/// The JSON COLUMN TYPE, captured from real TiDB.
-///
-/// NOT a divergence, unlike the JSON-returning BUILTINS above: a JSON
-/// column stores a real `BinaryJSON` in its row and its chunk cell, so
-/// the wire reports type `JSON` (245) with the binary charset exactly as
-/// TiDB does. The write path is Go `table.CastValue`, which PARSES and
-/// CANONICALIZES the written text -- which is why `{"b":2,"a":1}` reads
-/// back key-sorted and spaced.
+/// JSON columns retain BinaryJSON, type JSON (245) and the binary charset.
+/// Go table.CastValue parses and canonicalizes written JSON text.
 #[test]
 fn json_column_type() {
     let mut session = Session::new();
@@ -1140,6 +1248,41 @@ fn json_column_type() {
         "INSERT INTO tj VALUES (8, 1.5)",
     ] {
         session.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+    }
+
+    session
+        .run("CREATE TABLE arrow_json (id INT PRIMARY KEY, j JSON)")
+        .unwrap();
+    session
+        .run(r#"INSERT INTO arrow_json VALUES (1, '{"a":5,"b":"hi","k":"str","n":42}')"#)
+        .unwrap();
+    for (sql, expected, json_result) in [
+        ("SELECT j -> '$.a' FROM arrow_json", "5", true),
+        ("SELECT j ->> '$.b' FROM arrow_json", "hi", false),
+        ("SELECT j->>'$.k' FROM arrow_json", "str", false),
+        ("SELECT j->'$.k' FROM arrow_json", "\"str\"", true),
+        (
+            "SELECT id FROM arrow_json WHERE j->>'$.n' = '42'",
+            "1",
+            false,
+        ),
+    ] {
+        let StmtOutput::Rows { columns, rows } = session.run_with_columns(sql).unwrap() else {
+            panic!("expected rows for {sql}");
+        };
+        if json_result {
+            assert_eq!(
+                columns[0].1.code(),
+                tidb_datatype::FieldTypeCode::Json,
+                "{sql}"
+            );
+            assert!(
+                matches!(&rows[0][0], Datum::Json(_)),
+                "{sql}: {:?}",
+                rows[0][0]
+            );
+        }
+        assert_eq!(row_text(Ok(StmtResult::Rows(rows))), [[expected]], "{sql}");
     }
 
     assert_eq!(
@@ -1170,8 +1313,7 @@ fn json_column_type() {
         row_text(session.run(r#"SELECT JSON_EXTRACT(j,'$.a') FROM tj WHERE id=1"#)),
         vec![vec!["1".to_owned()]]
     );
-    // A column VALUE argument keeps its structure, because it really is
-    // a JSON value rather than the canonical text a CAST produces here.
+    // A JSON column used as a mutation value keeps its structure.
     assert_eq!(
         row_text(session.run(r#"SELECT JSON_SET('{}','$.a',j) FROM tj WHERE id=1"#)),
         vec![vec![r#"{"a": {"a": 1, "b": 2}}"#.to_owned()]]

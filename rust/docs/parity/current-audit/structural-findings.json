@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "session-sql-helper-cleanup-validation.json",
-    "scope": "Replace 245 copied session SQL helpers in 223 modules with 27 shared helpers, removing 218 duplicate definitions and 3531 net Rust harness lines. All 256 affected SQL tests, assertions and registrations remain unchanged; no production or finding disposition changes.",
+    "receipt": "json-carrier-retirement-validation.json",
+    "scope": "Retire eleven stale/duplicate JSON integration carriers (466 lines and eleven registrations), migrate 31 value cases and wildcard diagnostics into existing owners, retain stronger checks for eleven duplicate assertions, remove obsolete string-only JSON narratives and one repeated JSON_TABLE assertion. Net 331 Rust lines removed; no production or finding disposition changes.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1049,6 +1049,11 @@
     {
       "receipt": "session-sql-helper-cleanup-validation.json",
       "scope": "Replace 245 copied session SQL helpers in 223 modules with 27 shared helpers, removing 218 duplicate definitions and 3531 net Rust harness lines. All 256 affected SQL tests, assertions and registrations remain unchanged; no production or finding disposition changes.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "json-carrier-retirement-validation.json",
+      "scope": "Retire eleven stale/duplicate JSON integration carriers (466 lines and eleven registrations), migrate 31 value cases and wildcard diagnostics into existing owners, retain stronger checks for eleven duplicate assertions, remove obsolete string-only JSON narratives and one repeated JSON_TABLE assertion. Net 331 Rust lines removed; no production or finding disposition changes.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

@@ -1,0 +1,334 @@
+{
+  "date": "2026-10-05",
+  "timezone": "America/Los_Angeles",
+  "base": "b0a7039c1a1eab52695bc7714557b00b88938500",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire eleven stale/duplicate JSON integration carriers (466 lines and eleven registrations), migrate 31 value cases and wildcard diagnostics into existing owners, retain stronger checks for eleven duplicate assertions, remove obsolete string-only JSON narratives and one repeated JSON_TABLE assertion. Net 331 Rust lines removed; no production or finding disposition changes.",
+  "go_sources": [
+    "pkg/expression/builtin_json.go: JSON return signatures use ETJson and EvalJSON",
+    "pkg/expression/builtin_json_test.go: TestJSONExtract, TestJSONArrayAppend, TestJSONArrayInsert, TestJSONMergePreserve",
+    "pkg/session/tidb.go: ResultSetToStringSlice uses Datum.ToString",
+    "pkg/errno/errname.go: ErrInvalidJSONPathMultipleSelection"
+  ],
+  "continuity": {
+    "removed_carriers": 11,
+    "removed_carrier_lines": 466,
+    "removed_test_registrations": 11,
+    "net_rust_lines_removed": 331,
+    "original_assertions": 43,
+    "migrated_value_vectors": 31,
+    "retained_duplicate_value_vectors": 10,
+    "migrated_wildcard_message_and_code": 1,
+    "retained_stronger_exact_storage_size": 1,
+    "removed_duplicate_json_table_assertion": 1,
+    "new_cast_structure_assertion": 1,
+    "new_json_type_checks": 17,
+    "json_search_unchanged": true,
+    "production_changes": false
+  },
+  "retired_carriers": [
+    {
+      "path": "rust/crates/tidb-session/tests/json_array_append_insert_source.rs",
+      "sha256": "f03eecc22adda01507ccdaea8cfde2d79896722d415241620f515641cd0ca881",
+      "lines": 59,
+      "migrated_values": [
+        {
+          "ordinal": 2,
+          "owner": "json_mutation_functions"
+        }
+      ],
+      "duplicates": [
+        {
+          "ordinal": 0,
+          "owner": "json_mutation_functions: JSON_ARRAY_APPEND root array"
+        },
+        {
+          "ordinal": 1,
+          "owner": "json_mutation_functions: JSON_ARRAY_APPEND nested array"
+        }
+      ],
+      "error_assertion": "Original wildcard SQL retained in json_mutation_functions with exact Go code 3149 and full message."
+    },
+    {
+      "path": "rust/crates/tidb-session/tests/json_arrow_bitwise_source.rs",
+      "sha256": "d85e309986271469fdada9c985449d41721f51c5661fd177207e1d063b6d8cdd",
+      "lines": 52,
+      "migrated_values": [
+        {
+          "ordinal": 0,
+          "owner": "json_column_type"
+        },
+        {
+          "ordinal": 1,
+          "owner": "json_column_type"
+        },
+        {
+          "ordinal": 2,
+          "owner": "math_and_conditional_builtins"
+        }
+      ],
+      "duplicates": []
+    },
+    {
+      "path": "rust/crates/tidb-session/tests/json_arrow_operators_source.rs",
+      "sha256": "f179661b6d8c6236fefab15b48169a08347bc56e78d9f558984aa3459c8c472c",
+      "lines": 55,
+      "migrated_values": [
+        {
+          "ordinal": 0,
+          "owner": "json_column_type"
+        },
+        {
+          "ordinal": 1,
+          "owner": "json_column_type"
+        },
+        {
+          "ordinal": 2,
+          "owner": "json_column_type"
+        }
+      ],
+      "duplicates": []
+    },
+    {
+      "path": "rust/crates/tidb-session/tests/json_construct_extract_source.rs",
+      "sha256": "b403d161f041847b74cc26d681f8b2960a965a0d54dfe6e021773a7fd93ce52f",
+      "lines": 54,
+      "migrated_values": [
+        {
+          "ordinal": 0,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 1,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 2,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 3,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 4,
+          "owner": "json_value_functions"
+        }
+      ],
+      "duplicates": []
+    },
+    {
+      "path": "rust/crates/tidb-session/tests/json_extract_multi_source.rs",
+      "sha256": "ace40724ad2e6146d299c799e90506e376e6e4521a4fcf614cb973ec7291de50",
+      "lines": 29,
+      "migrated_values": [
+        {
+          "ordinal": 0,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 1,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 2,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 3,
+          "owner": "json_value_functions"
+        }
+      ],
+      "duplicates": []
+    },
+    {
+      "path": "rust/crates/tidb-session/tests/json_introspection_source.rs",
+      "sha256": "4d4b02ddefbb5bce5eb91ddedc4abb81e71e3ccc4ac31cad7f19f0780d33f328",
+      "lines": 32,
+      "migrated_values": [
+        {
+          "ordinal": 0,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 3,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 4,
+          "owner": "json_value_functions"
+        }
+      ],
+      "duplicates": [
+        {
+          "ordinal": 1,
+          "owner": "json_value_functions: JSON_LENGTH object = 2"
+        },
+        {
+          "ordinal": 2,
+          "owner": "json_value_functions: JSON_LENGTH array = 3"
+        }
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-session/tests/json_merge_preserve_source.rs",
+      "sha256": "b4d224e028d7ae5f50cfbe81806b032c3cc0268ab7be367f21af73b1e752d7fb",
+      "lines": 29,
+      "migrated_values": [
+        {
+          "ordinal": 0,
+          "owner": "json_mutation_functions"
+        },
+        {
+          "ordinal": 1,
+          "owner": "json_mutation_functions"
+        },
+        {
+          "ordinal": 2,
+          "owner": "json_mutation_functions"
+        }
+      ],
+      "duplicates": []
+    },
+    {
+      "path": "rust/crates/tidb-session/tests/json_mutation_source.rs",
+      "sha256": "5cdbd8ce0b2d0293d65c19bf2e11feff950a50cbbb6299f50267a75daf294bf4",
+      "lines": 44,
+      "migrated_values": [
+        {
+          "ordinal": 1,
+          "owner": "json_mutation_functions"
+        },
+        {
+          "ordinal": 3,
+          "owner": "json_mutation_functions"
+        },
+        {
+          "ordinal": 4,
+          "owner": "json_mutation_functions"
+        }
+      ],
+      "duplicates": [
+        {
+          "ordinal": 0,
+          "owner": "json_mutation_functions: JSON_SET missing key"
+        },
+        {
+          "ordinal": 2,
+          "owner": "json_mutation_functions: JSON_INSERT missing key"
+        },
+        {
+          "ordinal": 5,
+          "owner": "json_value_functions: JSON_CONTAINS member = 1"
+        }
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-session/tests/json_overlaps_member_source.rs",
+      "sha256": "5c5810f40f82a8567d8e3b294f13496273d02733904061ebdc668c7523e84763",
+      "lines": 50,
+      "migrated_values": [
+        {
+          "ordinal": 0,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 1,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 2,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 3,
+          "owner": "json_value_functions"
+        }
+      ],
+      "duplicates": []
+    },
+    {
+      "path": "rust/crates/tidb-session/tests/json_quote_contains_path_source.rs",
+      "sha256": "e66ae43098988c97a05e5fafee58834db42e0c6518433856c8ab250ee25aa4ce",
+      "lines": 35,
+      "migrated_values": [
+        {
+          "ordinal": 0,
+          "owner": "json_value_functions"
+        },
+        {
+          "ordinal": 1,
+          "owner": "json_value_functions"
+        }
+      ],
+      "duplicates": [
+        {
+          "ordinal": 2,
+          "owner": "json_value_functions: JSON_QUOTE embedded quote"
+        }
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-session/tests/json_storage_source.rs",
+      "sha256": "a6c8623b78f489a963da9a0b8307994eb615a9db128709aefbedd3e6aa721a5c",
+      "lines": 27,
+      "migrated_values": [],
+      "duplicates": [
+        {
+          "ordinal": 0,
+          "owner": "json_storage_functions_reach_chunk_evaluation: JSON_STORAGE_FREE object = 0"
+        },
+        {
+          "ordinal": 1,
+          "owner": "json_storage_functions_reach_chunk_evaluation: JSON_STORAGE_SIZE NULL"
+        }
+      ],
+      "size_assertion": "Weak 1 < size < 64 bound replaced by existing exact Go size 29 for the same object."
+    }
+  ],
+  "ordinal_note": "Zero-based order of scalar assert_eq calls in each original file; error/size assertions listed separately. Original blobs available at base commit. Full SQL mapping retained externally in case-map.json.",
+  "validation": {
+    "baseline": {
+      "command": "cargo test --locked -p tidb-session --test all",
+      "selection": "Temporary root containing the eleven original modules and support; original root restored byte-for-byte",
+      "passed": 3,
+      "failed": 8,
+      "ignored": 0,
+      "log_sha256": "3ef7d8546bc2570ee491fa6f1cf6a1f2eb6159f628a7e2f1286df7ae6a617d09",
+      "diagnosis": "Eight original assertions compare typed Json(BinaryJSON) against obsolete string tags; replacement owner checks retain values and assert Go JSON datum/column types."
+    },
+    "owners": {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_json:: tests_core::builtins::math_and_conditional_builtins",
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "7af3e97b179c92f01129706b444951e0faf7096da3462fa7ee917e3881211bb8"
+    },
+    "wildcard_message": {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_json::json_mutation_functions",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "note": "Rerun of an already-counted owner after preserving the original diagnostic as exact Go code/message",
+      "log_sha256": "fb3af8416c9abee832f1fb1c101e0e11d4da3f1a728365c56490cad4cf9e2214"
+    },
+    "metadata": "cargo metadata --locked --no-deps --format-version 1: byte-identical to base",
+    "lint": "make lint passed",
+    "diff": "git diff --check passed"
+  },
+  "publication": "Pending actual hook and fresh immediate-prepush locked server build, normal push and remote verification. External final-handoff.json records final outcomes.",
+  "counts_unchanged": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "limits": [
+    "JSON_SEARCH carrier and known text/result-type boundary retained unchanged",
+    "No production repair or complete package acceptance",
+    "Other previous parser/inventory/session/table failures outside this batch were not rerun",
+    "No full Go suite, multi-node, performance or fresh-task restore validation"
+  ],
+  "external_artifacts": "/workspace/.cloud-setup/json-carrier-retirement"
+}

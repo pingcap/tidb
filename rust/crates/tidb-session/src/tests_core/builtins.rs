@@ -260,6 +260,10 @@ fn numeric_prefix_strings_warn_once_per_coercion() {
 #[test]
 fn math_and_conditional_builtins() {
     let mut session = Session::new();
+    assert_eq!(
+        row_text(session.run("SELECT 5 & 3, 5 | 3, 5 ^ 3, 5 << 1, 10 >> 1, ~5")),
+        [["1", "7", "6", "10", "5", "18446744073709551610"]]
+    );
     session
         .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(20), c BIGINT)")
         .unwrap();
