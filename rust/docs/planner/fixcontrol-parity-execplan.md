@@ -136,6 +136,10 @@ The historical canonical planner aggregate command is retained as evidence, but 
 
     cargo +1.97.0 test --manifest-path rust/Cargo.toml -p difftest-planner-tests --test all fix_control
 
+The current owner command (from `rust/`, after sourcing the Cloud environment) is
+`cargo test --locked -p tidb-planner --test all -- primitives::fix_control:: --test-threads=1`.
+The obsolete package command and failure above/below are historical evidence.
+
 Before a completion claim, follow `.agents/skills/tidb-verify-profile` Ready guidance for all changed owning crates and run repository lint as required by `AGENTS.md`.
 
 ## Validation and Acceptance

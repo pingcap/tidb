@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "server-session-plan-cleanup-validation.json",
-    "scope": "Remove 32 superseded server/session audit plans (1267 lines), redirect six TESTPORT references to 33 unchanged retained receipts, and collapse the repeated 62-link cleanup chronology into a preserved historical index. Keep unfinished handler-test validation, all executable tests, scripts, safety checks and production code unchanged.",
+    "receipt": "planner-harness-cleanup-validation.json",
+    "scope": "Consolidate 35 planner primitive suites (113 tests) into tidb-planner/tests/all.rs; remove the redundant difftest-planner-tests package, manifest, workspace member and lock entry. Preserve all 36 moved source files byte-for-byte and update current commands.",
     "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17"
   },
   "test_cleanup_history": [
@@ -1129,6 +1129,11 @@
     {
       "receipt": "server-session-plan-cleanup-validation.json",
       "scope": "Remove 32 superseded server/session audit plans (1267 lines), redirect six TESTPORT references to 33 unchanged retained receipts, and collapse the repeated 62-link cleanup chronology into a preserved historical index. Keep unfinished handler-test validation, all executable tests, scripts, safety checks and production code unchanged.",
+      "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17"
+    },
+    {
+      "receipt": "planner-harness-cleanup-validation.json",
+      "scope": "Consolidate 35 planner primitive suites (113 tests) into tidb-planner/tests/all.rs; remove the redundant difftest-planner-tests package, manifest, workspace member and lock entry. Preserve all 36 moved source files byte-for-byte and update current commands.",
       "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17"
     }
   ],

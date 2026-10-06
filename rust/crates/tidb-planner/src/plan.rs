@@ -25,7 +25,7 @@
 //! cannot be matched on, which is exactly why the real tree is a closed enum.
 //!
 //! NEW CODE SHOULD NOT BUILD ON THIS. It is retained because
-//! `difftests/planner-tests/tests/plan.rs` pins its metadata pre-order
+//! `crates/tidb-planner/tests/primitives/plan.rs` pins its metadata pre-order
 //! output; a follow-up batch that rewrites that difftest against
 //! [`crate::physical::PhysicalPlan::walk_preorder`] can delete this module
 //! outright. Nothing in `crates/` reads it. (`tidb-executor` has its own,

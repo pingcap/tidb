@@ -91,7 +91,6 @@ members = [
     "crates/tidb-schemaver",
     "difftests",
     "difftests/parser-tests",
-    "difftests/planner-tests",
     "difftests/result-tests",
     "difftests/transaction-tests",
 ]

@@ -39,7 +39,6 @@ but does not replace reading or translating the source.
 | `crates/tidb-exec` | seed session/catalog executor | `pkg/session/**`, `pkg/executor/**` |
 | `difftests` | differential infrastructure | Go helpers and checked corpora |
 | `difftests/parser-tests` | parser differential tests | lexer/parser/static Go oracle only |
-| `difftests/planner-tests` | plan-ring source translations | source-backed planner primitive tests |
 | `difftests/result-tests` | result-ring tests | expression, query, and table result parity |
 | `difftests/transaction-tests` | transaction differential and live-cluster proofs | `pkg/kv/**`, RealTiKV, retry, lock, and fault-injection behavior |
 

@@ -2961,7 +2961,7 @@ WIP validation commands:
     cargo test -q -p tidb-planner --test all tikv_table_read_task_runtime_source::unified_scan_task_preserves_existing_index_only_behavior
     cargo test -q -p tidb-exec --test all tikv_selection_dag_lowering_source
     cargo test -q -p tidb-exec a_staged_row_uses_the_snapshot_selections_sql_comparison_semantics
-    cargo test -q -p difftest-planner-tests --test all
+    cargo test --locked -p tidb-planner --test all -- primitives:: --test-threads=1
     cargo check -q -p tidb-planner -p tidb-exec
     cd ..
     git diff --check

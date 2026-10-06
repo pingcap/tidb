@@ -19,6 +19,12 @@ parallelism. Use one job for heavy Cloud links. Build/test commands use
 runners with explicit release binary paths retain their release builds.
 Choose an existing server-binary override where the runner provides one.
 
+Planner primitive source translations belong to the planner's existing aggregate:
+
+```bash
+cargo test --locked -p tidb-planner --test all -- primitives:: --test-threads=1
+```
+
 Module-safe integration suites use their crate's `--test all -- <module>`
 aggregate. Register new suites explicitly in `tests/all.rs`; keep helper
 modules owned by another suite out of the aggregate root. Intentional isolated

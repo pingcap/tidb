@@ -47,6 +47,7 @@ mod planner_util_index_col_projection_source;
 mod planner_util_path_compare_lengths_source;
 mod prepared_dml_source;
 mod prepared_param_marker_source;
+mod primitives;
 mod read_only_bigint_selection_source;
 mod read_only_clustered_pk_range_source;
 mod read_only_prepared_order_source;

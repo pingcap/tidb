@@ -1,97 +1,93 @@
-# Retire superseded server and session audit plans
+# Consolidate planner tests in their owning crate
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Remove duplicated historical workflows that recommend stale test targets,
-laptop tool paths and completed publication steps. Work in /workspace/tidb
-on hparser-integration from 8a1d95106e9eb4c66402cd7f7a92842fccd3633f.
-Fresh Go master is 5b7e1eb8f5f8252391b6e68330d1648a26a80c17. Its seven-file
-statistics update preserves FM sketches through JSON and storage; it is a
-separate behavioral delta, not implemented or validated by this cleanup.
-The selected external dependencies are unchanged. The comparison export was
-updated only after all seven old file images matched the preceding Go pin.
+Remove the redundant difftest-planner-tests workspace crate and test binary.
+Its 35 source-translation suites exercise tidb-planner directly and require
+only dependencies that the owner already has. Keep every assertion and Go
+case, under rust/crates/tidb-planner/tests/primitives, registered in the
+existing tests/all.rs aggregate. Base: 9076a9094665a4118d863ff2c8f1512af2bc581d;
+Go comparison: 5b7e1eb8f5f8252391b6e68330d1648a26a80c17.
 
 ## Progress
 
 
-- [x] Review server/session plans, retained receipts and current references.
-- [x] Refresh Go comparison and identify its separate statistics delta.
-- [x] Remove 32 superseded plans and redirect six TESTPORT references.
-- [x] Verify receipt preservation, publication ancestry, links and scope.
-- [ ] Complete actual hook, fresh pre-push build, remote and Cloud checks.
+- [x] Inspect dependencies, module references, fixtures and global mutations.
+- [x] Move all 35 suites and their module registry byte-identically.
+- [x] Remove the package/member/lock entry; update current guidance.
+- [x] Run grouped tests (113 passed), lint, continuity and self-review.
+- [ ] Run actual precommit gate, fresh pre-push build and verify publication.
 
 ## Milestones and Plan of Work
 
 
-Remove server-* and session-* audit plans under rust/docs/operations except
-server-handler-tests-audit-execplan.md, whose unfinished validation remains.
-Each removed plan must map to a retained receipt under rust/testport/receipts;
-session-syssession maps to session_syssession.md. The handshake/parse plan
-maps to both original receipts. Preserve receipt bytes and historical test
-results, failures, Go obligations and package-acceptance limits.
+Move tests/all.rs to primitives/mod.rs and all its sibling suites into that
+module directory; add mod primitives to the owner's existing all.rs. Remove
+rust/difftests/planner-tests/Cargo.toml, its workspace member and only its
+lockfile package entry. No new dependency or production behavior is needed.
+Update the source pointer and current commands. Preserve dated old commands
+as historical evidence with the current replacement documented.
 
-Redirect six references in rust/testport/TESTPORT_EXECPLAN.md to their retained
-receipts. The dated git-diff command in session_syssession.md remains exact
-historical evidence, not an active command recommendation. Verify every
-removed plan's last commit is an ancestor of the already published base;
-this establishes publication of the document, not passing its old runtime
-gates. Update both finding registers and current-audit README without changing
-findings. Collapse the repeated 62-link README chronology into a link to the
-versioned historical index, preserving every old receipt reference. Record inventory and validation in server-session-plan-cleanup-validation.json.
+The second milestone validates every migrated case in one serial run,
+checks byte continuity and locked Cargo metadata, then runs make lint and
+publication gates. Keep both finding registers accurate: cleanup does not
+repair any of the 56 unresolved findings or establish complete Go-package
+acceptance.
 
-## Validation and Acceptance
+## Concrete Steps and Acceptance
 
 
-Run the external continuity/inventory check under
-/workspace/.cloud-setup/server-session-plan-cleanup and git diff --check from
-/workspace/tidb. Require all 32 receipt mappings to resolve, all before-image
-hashes and publication ancestors to match, all retained receipts to stay
-byte-identical, and no current Markdown link to a deleted plan. Changes must
-be Markdown/JSON evidence only: no production, test, harness, script,
-dependency, fixture, Go or Bazel changes. No Rust/Go test sweep or make lint
-is required for this documentation-only scope.
+Source /workspace/.cloud-setup/env.sh in each build shell. From rust/:
 
-Repository policy still requires the actual precommit locked server build
-for rust/ changes. Source /workspace/.cloud-setup/env.sh, commit normally and
-run CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server from rust/ immediately
-before authorized push. Verify remote SHA and the saved Cloud checkpoint.
+    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-planner --test all -- primitives:: --test-threads=1
+    cargo metadata --locked --no-deps --format-version 1
+
+Every migrated test must pass without changing its assertions. From the
+repository root run make lint and git diff --check. Verify all 36 file hashes
+against the external migration inventory; the retained owner suites must
+also remain unchanged. Commit normally so hooks/pre-commit runs its locked
+server build, then immediately before authorized push run from rust/:
+
+    CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server
+
+Push normally to pingcap/tidb hparser-integration and verify remote SHA.
 
 ## Surprises & Discoveries
 
 
-Most plans kept themselves open solely to continue an unrelated next package
-or publish an already published September audit. One handler-test plan still
-has unfinished shared gates and is intentionally retained. Runtime cleanup,
-authentication and protobuf-sync checks inspected in this batch remain useful.
+The separate crate supplies no library, fixtures, special dependencies or
+isolated global-state harness. Its tests already use external tidb_planner
+imports, so nesting them preserves resolution. Use the existing serial
+validation convention; no fixture or process-global mutation was found in
+the migrated suites.
 
 ## Decision Log
 
 
-Retire redundant plans as a group, preserving original evidence and remaining
-Go obligations in their receipts. Keep meaningful Go and Rust correctness
-tests. Do not conflate deleted planning documents with repaired findings or
-package acceptance. Do not rerun expensive suites for unchanged executable code.
+Consolidate the whole redundant harness in one batch rather than deleting
+useful Go-derived tests. Preserve every suite byte-for-byte. Removing one
+Cargo package and test binary reduces maintained targets; no measured build
+speedup is claimed. Historical receipts retain their original commands.
 
 ## Outcomes & Retrospective
 
 
-Implementation and documentation validation complete: 32 plans /1267 lines
-removed; 33 evidence receipts and the unfinished handler-test plan preserved.
-Six references now point to retained receipts. The 62-link README cleanup
-chronology is retained through its versioned historical index. Publication
-gates remain pending here; external final-handoff.json records completion. No new behavior, package closure,
-live-cluster validation or measured performance improvement is claimed.
+Migration and validation complete: 113 cases passed, no failures/ignores;
+locked metadata, make lint and continuity passed. Actual hook and publication
+evidence will be recorded after commit in external final-handoff.json. No behavioral
+parity closure, live cluster, broad Go-suite or benchmark claim.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Restore individual files using git show 8a1d95106e:<path>, preserving concurrent
-work. Before-image hashes, receipt mappings and Go refresh evidence live under
-/workspace/.cloud-setup/server-session-plan-cleanup. The durable receipt is
-rust/docs/parity/current-audit/server-session-plan-cleanup-validation.json.
-Publication evidence belongs in external final-handoff.json after commit.
-Cloud draft saving, Publish and fresh-task restoration are separate. Revision:
-replace completed Domain facade cleanup with historical workflow retirement.
+Work in /workspace/tidb on hparser-integration. Before-images are recoverable
+from the base commit; restore only affected paths, preserving concurrent
+work. /workspace/.cloud-setup/planner-harness-cleanup/migration.json records
+all source/destination hashes. Durable results belong in
+rust/docs/parity/current-audit/planner-harness-cleanup-validation.json;
+external final-handoff.json records post-commit publication and Cloud draft
+verification. No new dependencies or interfaces. Draft saving is separate
+from Publish and fresh-task restoration.

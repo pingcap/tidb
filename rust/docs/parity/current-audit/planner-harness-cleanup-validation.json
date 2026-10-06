@@ -1,0 +1,262 @@
+{
+  "date": "2026-10-06",
+  "base": "9076a9094665a4118d863ff2c8f1512af2bc581d",
+  "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17",
+  "scope": "Consolidate 35 planner primitive suites (113 tests) into tidb-planner/tests/all.rs; remove the redundant difftest-planner-tests package, manifest, workspace member and lock entry. Preserve all 36 moved source files byte-for-byte and update current commands.",
+  "continuity": {
+    "migrated_suites": 35,
+    "migrated_tests": 113,
+    "moved_files": 36,
+    "moved_bytes_unchanged": true,
+    "existing_owner_suites_unchanged": true,
+    "removed_packages": 1,
+    "removed_integration_targets": 1,
+    "new_dependencies": 0,
+    "production_behavior_changed": false,
+    "finding_dispositions_unchanged": true
+  },
+  "migration": [
+    {
+      "old": "rust/difftests/planner-tests/tests/all.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/mod.rs",
+      "sha256": "91ba77ab7ce8c681b5f2cef9e91abee6c0fc731082ff29358980a1676dac4327",
+      "tests": 0
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/base_traits.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/base_traits.rs",
+      "sha256": "98c5530faadc94567def6f84db7deb639ddc272dc734b87db78e241de3eb68ba",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/by_item.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/by_item.rs",
+      "sha256": "faa676e11fc90cc10bd061f2cf7d5bcb949d8807268e354561513e92adeca52c",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/cardinality.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/cardinality.rs",
+      "sha256": "5df78ef8587009bcca69780ec7ca1d4fa32409ad305b662fdc09ad0b25ede9f0",
+      "tests": 10
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/column_length.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/column_length.rs",
+      "sha256": "7b4709985e74a71e8b91bacf3faf6aeec6992e0bbd587f46df36bd215dde7070",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/cost_factors.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/cost_factors.rs",
+      "sha256": "08508f20de00d60ef2fbf3fad923feb4f9bd76e92820edd22bd70f22a387437c",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/cross_estimation.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/cross_estimation.rs",
+      "sha256": "c61a0bf6156db254e8e910570c752efcd0c27d42dd2acdd596eb327190016fb4",
+      "tests": 5
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/fix_control.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/fix_control.rs",
+      "sha256": "d9eb5bac101f22161f55b6d07ac3230d0b9ed480fcf87deb2d339fd21f12ff8d",
+      "tests": 5
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/hash_equaler.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/hash_equaler.rs",
+      "sha256": "436d0b515a10a1e90cc9dc68ea1c1070335a0d9480797399baed8f72ebcb03df",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/index_columns.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/index_columns.rs",
+      "sha256": "2292543be0be0911317a2752d12971737cae5b760f3116ee7be5548daf834b39",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/index_range_policy.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/index_range_policy.rs",
+      "sha256": "59f9ee03313a524f4c43a815cdbae9ae08fb508d22ce4eec54d0c3f7cbf298cd",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/join.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/join.rs",
+      "sha256": "83c27ad68fb41c023a7ac14bfaad03d290648278cb46fe2eafc3b0348785a87c",
+      "tests": 7
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/out_of_range.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/out_of_range.rs",
+      "sha256": "327e87bb9ad00399f180b0cd64054b2d7bec12b5dc0935718e1605901f7da37b",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_apply.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_apply.rs",
+      "sha256": "2a94807f804f3d4c6118b39a834e59e1f0261fbfb3b78ae6fad7e38b9e3b69c3",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_cte_table.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_cte_table.rs",
+      "sha256": "fa9131720ff3356808caf817c2daa432ef6aa8bbd21704c2f559ffc47e68c91f",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_limit.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_limit.rs",
+      "sha256": "1b54c27d831f54cefba68e92c39d243846a1674b16b4f3981ec51e2b11830f21",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_lock.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_lock.rs",
+      "sha256": "06f5a8a0b88f6dd468fb6c28f31c233fdc7738b13c3dd18bfeb58dde09636707",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_max_one_row.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_max_one_row.rs",
+      "sha256": "2f7bda79b85f79b9abc75ebc084fc139a7d71bd50f9acef3aee47213e6eac1b2",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_projection.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_projection.rs",
+      "sha256": "501e4f28a721f2f70e1cacbff5cfddcf76ba4872753560a7f372f8594475c20f",
+      "tests": 1
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_property.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_property.rs",
+      "sha256": "bb4983148f2d5bb553efebf5608e11038a5bcc21a2cd6fb2d36a1b66a58b2752",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_selection.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_selection.rs",
+      "sha256": "b0da57c6a9377d2f2467c9f33bed67ce26771b0ede716965af3226ab180a7ec0",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_show.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_show.rs",
+      "sha256": "4d82c9fa37fd80e4f1df1c2d046a4ab06483770288fba5a3174148008d466f1f",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_sort.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_sort.rs",
+      "sha256": "ab9970f3e1259b368877ea48331ed7bd36aff383293b5174423871f66efee5fd",
+      "tests": 4
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_table_dual.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_table_dual.rs",
+      "sha256": "13027089a76174ebf1a3121bcc7a1392ee16adf9572347ebea68c7ab6919a101",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_table_reader.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_table_reader.rs",
+      "sha256": "a70676f2124f1adb2537d0a2e3137afc7a464d2c93c0fd0f0e2fa9e6be3f408f",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_topn.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_topn.rs",
+      "sha256": "d5ad64cc8ff085d166efb6292b90e6eea8e5cd33a22f9056e3536a559d30946e",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/physical_union_all.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/physical_union_all.rs",
+      "sha256": "8eda93e19d8fde17c2d002704972218dff7580f720adf3d009eb67895d228613",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/plan.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/plan.rs",
+      "sha256": "57f1477d5ab2aa3fd8939c18c0a8d302a5f00ab02551b7ae5c62496360ca6da3",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/projection_elimination.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/projection_elimination.rs",
+      "sha256": "0aee6ee7375f0669ac9c7ff3f9b6bc271e8ffa7a2d4654a2dc60b6e69aad7510",
+      "tests": 5
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/range_detacher.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/range_detacher.rs",
+      "sha256": "2c38cf150cadb5761f762cf17ed53b2c30ddebec3de7987faaba571d0e0aa5ea",
+      "tests": 4
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/row_count_column.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/row_count_column.rs",
+      "sha256": "945f51f4ce54ab4b47ceb7afa4b934d2c5fc98a1d31450cd6dd26e8e02f4dcd9",
+      "tests": 3
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/row_size.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/row_size.rs",
+      "sha256": "bdd0d427c9dcf57f3af4290583bf1f5afc82b836a98da7c834b8e99465125631",
+      "tests": 4
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/selectivity_greedy.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/selectivity_greedy.rs",
+      "sha256": "045adaf257b7c5f6b8f2212626caea5f41cfb85b75ec6ed867f534b9da3ef0ed",
+      "tests": 5
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/stats_info.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/stats_info.rs",
+      "sha256": "3958aa003e480b8e816e8f643eeea28fb44b3e428d90394c5964792242473919",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/task_type.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/task_type.rs",
+      "sha256": "f0a93739af079eb2006204d3cfece34836602a28c5a6994710075c4b24191a50",
+      "tests": 2
+    },
+    {
+      "old": "rust/difftests/planner-tests/tests/uniform.rs",
+      "new": "rust/crates/tidb-planner/tests/primitives/uniform.rs",
+      "sha256": "aeeace39c798c103a94ca9a05a907cb3d9b1a42d32f66088481a92b04a2cc4aa",
+      "tests": 3
+    }
+  ],
+  "tests": {
+    "planner": [
+      {
+        "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-planner --test all -- primitives:: --test-threads=1",
+        "passed": 113,
+        "failed": 0,
+        "ignored": 0,
+        "filtered_out": 226,
+        "log": "/workspace/.cloud-setup/planner-harness-cleanup/tests.log"
+      }
+    ]
+  },
+  "checks": {
+    "locked_cargo_metadata": true,
+    "make_lint": true,
+    "migration_and_existing_suite_continuity": true,
+    "git_diff_check": true
+  },
+  "publication": "Actual hook, fresh immediate-prepush locked build, remote SHA and Cloud checkpoint are recorded after commit in /workspace/.cloud-setup/planner-harness-cleanup/final-handoff.json",
+  "limits": [
+    "No complete Go package acceptance or finding closure",
+    "No measured speedup; one fewer Cargo package and integration binary",
+    "Existing owner suites compiled but their 226 cases were not rerun",
+    "No full Go suite, live cluster, benchmark or fresh-task restoration",
+    "Go FM-sketch JSON/storage delta remains unimplemented by this cleanup"
+  ]
+}
