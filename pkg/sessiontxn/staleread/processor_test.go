@@ -17,13 +17,17 @@ package staleread_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -544,4 +548,161 @@ func TestConsistentCalculateAsOfTsExpr(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ts3 < ts1)
 	require.Equal(t, ts1-ts3, uint64(2000<<18))
+}
+
+const injectStaleReadSafeTSFP = "github.com/pingcap/tidb/pkg/sessiontxn/staleread/injectStaleReadSafeTS"
+
+func TestStaleReadReplicaReadPolicy(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tn := astTableWithAsOf(t, "")
+	p1 := genStaleReadPoint(t, tk)
+	vars := tk.Session().GetSessionVars()
+
+	// runStaleSelect evaluates `select ... as of timestamp` on a fresh statement context and marks it read-only
+	// so that GetReplicaRead returns the adjusted replica read type.
+	runStaleSelect := func() {
+		tk.MustExec("do 1")
+		processor := createProcessor(t, tk.Session())
+		require.NoError(t, processor.OnSelectTable(p1.tn))
+		p1.checkMatchProcessor(t, processor, true)
+		vars.StmtCtx.IsReadOnly = true
+	}
+
+	// disabled by default
+	runStaleSelect()
+	require.False(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.Equal(t, kv.ReplicaReadLeader, vars.GetReplicaRead())
+
+	tk.MustExec("set @@tidb_stale_read_above_safe_ts_replica_read = 'prefer-leader'")
+	tk.MustExec("set @@tidb_stale_read_within_safe_ts_replica_read = 'closest-replicas'")
+	tk.MustQuery("select @@tidb_stale_read_above_safe_ts_replica_read, @@tidb_stale_read_within_safe_ts_replica_read").
+		Check(testkit.Rows("prefer-leader closest-replicas"))
+
+	// read ts above the min safe ts
+	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, "return(1)"))
+	runStaleSelect()
+	require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.Equal(t, byte(kv.ReplicaReadPreferLeader), vars.StmtCtx.StaleReadReplicaRead)
+	require.Equal(t, kv.ReplicaReadPreferLeader, vars.GetReplicaRead())
+
+	// read ts within the min safe ts
+	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, fmt.Sprintf("return(%d)", math.MaxInt64)))
+	runStaleSelect()
+	require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.Equal(t, kv.ReplicaReadClosest, vars.GetReplicaRead())
+
+	// an explicit session level tidb_replica_read is never overridden
+	tk.MustExec("set @@tidb_replica_read = 'follower'")
+	runStaleSelect()
+	require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.Equal(t, kv.ReplicaReadFollower, vars.GetReplicaRead())
+	tk.MustExec("set @@tidb_replica_read = 'leader'")
+
+	// a replica read hint is never overridden
+	runStaleSelect()
+	vars.StmtCtx.HasReplicaReadHint = true
+	vars.StmtCtx.ReplicaRead = byte(kv.ReplicaReadLearner)
+	require.Equal(t, kv.ReplicaReadLearner, vars.GetReplicaRead())
+
+	// the policy is ignored for non read-only statements
+	runStaleSelect()
+	vars.StmtCtx.IsReadOnly = false
+	require.Equal(t, kv.ReplicaReadLeader, vars.GetReplicaRead())
+
+	// disabling one side leaves that side untouched
+	tk.MustExec("set @@tidb_stale_read_within_safe_ts_replica_read = ''")
+	runStaleSelect()
+	require.False(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.Equal(t, kv.ReplicaReadLeader, vars.GetReplicaRead())
+	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, "return(1)"))
+	runStaleSelect()
+	require.Equal(t, kv.ReplicaReadPreferLeader, vars.GetReplicaRead())
+	require.NoError(t, failpoint.Disable(injectStaleReadSafeTSFP))
+
+	// a non-stale read is not affected
+	tk.MustExec("do 1")
+	processor := createProcessor(t, tk.Session())
+	require.NoError(t, processor.OnSelectTable(tn))
+	require.False(t, processor.IsStaleness())
+	vars.StmtCtx.IsReadOnly = true
+	require.False(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.Equal(t, kv.ReplicaReadLeader, vars.GetReplicaRead())
+
+	// invalid values are rejected
+	tk.MustGetErrCode("set @@tidb_stale_read_above_safe_ts_replica_read = 'nope'", errno.ErrWrongValueForVar)
+	tk.MustGetErrCode("set @@tidb_stale_read_within_safe_ts_replica_read = 'leaders'", errno.ErrWrongValueForVar)
+}
+
+func TestStaleReadReplicaReadPolicyWithPreparedStmt(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1)")
+	// make sure the stale read ts below is after the table is created
+	time.Sleep(1200 * time.Millisecond)
+	vars := tk.Session().GetSessionVars()
+
+	require.NoError(t, failpoint.Enable(injectStaleReadSafeTSFP, "return(1)"))
+	defer func() { require.NoError(t, failpoint.Disable(injectStaleReadSafeTSFP)) }()
+
+	tk.MustExec("prepare s from 'select * from t as of timestamp now(6) - interval 1 second'")
+	tk.MustQuery("execute s").Check(testkit.Rows("1"))
+	require.False(t, vars.StmtCtx.HasStaleReadReplicaRead)
+
+	// the decision is re-made on every execution, so changing the variable between executions takes effect
+	tk.MustExec("set @@tidb_stale_read_above_safe_ts_replica_read = 'prefer-leader'")
+	tk.MustQuery("execute s").Check(testkit.Rows("1"))
+	require.True(t, vars.StmtCtx.HasStaleReadReplicaRead)
+	require.Equal(t, byte(kv.ReplicaReadPreferLeader), vars.StmtCtx.StaleReadReplicaRead)
+
+	tk.MustExec("set @@tidb_stale_read_above_safe_ts_replica_read = 'closest-replicas'")
+	tk.MustQuery("execute s").Check(testkit.Rows("1"))
+	require.Equal(t, byte(kv.ReplicaReadClosest), vars.StmtCtx.StaleReadReplicaRead)
+
+	tk.MustExec("set @@tidb_stale_read_above_safe_ts_replica_read = ''")
+	tk.MustQuery("execute s").Check(testkit.Rows("1"))
+	require.False(t, vars.StmtCtx.HasStaleReadReplicaRead)
+
+	// a normal prepared statement is not affected
+	tk.MustExec("set @@tidb_stale_read_above_safe_ts_replica_read = 'prefer-leader'")
+	tk.MustExec("prepare s2 from 'select * from t'")
+	tk.MustQuery("execute s2").Check(testkit.Rows("1"))
+	require.False(t, vars.StmtCtx.HasStaleReadReplicaRead)
+}
+
+func TestStaleReadNowDerivedTSNotInFuture(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1)")
+	// make sure the NOW()-derived stale read timestamps below are after the table is created and populated
+	time.Sleep(1200 * time.Millisecond)
+
+	// NOW()-derived read timestamps never exceed the current PD timestamp and still read the data.
+	for _, expr := range []string{
+		"now(6)",
+		"now(6) - interval 0 second",
+		"now(6) - interval 1 second",
+		"tidb_bounded_staleness(now(6) - interval 1 second, now(6))",
+	} {
+		tk.MustQuery("select * from t as of timestamp " + expr).Check(testkit.Rows("1"))
+
+		tk.MustExec("start transaction read only as of timestamp " + expr)
+		readTSStr := tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+		tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+		tk.MustExec("commit")
+		readTS, err := strconv.ParseUint(readTSStr, 10, 64)
+		require.NoError(t, err, expr)
+		cur, err := store.CurrentVersion(kv.GlobalTxnScope)
+		require.NoError(t, err)
+		require.LessOrEqual(t, readTS, cur.Ver, expr)
+	}
+
+	// Expressions that really are in the future are still rejected.
+	tk.MustMatchErrMsg("select * from t as of timestamp now(6) + interval 1 hour", "cannot set read timestamp to a future time")
+	tk.MustMatchErrMsg("start transaction read only as of timestamp now(6) + interval 1 hour", "cannot set read timestamp to a future time")
+	tk.MustMatchErrMsg("select * from t as of timestamp '2038-01-18 03:14:07'", "cannot set read timestamp to a future time")
 }
