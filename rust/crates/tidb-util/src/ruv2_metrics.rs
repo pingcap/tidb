@@ -1573,6 +1573,42 @@ mod tests {
         );
     }
 
+    /// The remaining `format_ruv2_summary` arms Go's fixture leaves cold:
+    /// nil metrics with zero RU renders nothing, bypass renders nothing,
+    /// and non-zero counters render weighted tidb_ru plus the int and
+    /// label-map arms in Go's arm order.
+    #[test]
+    fn format_ruv2_summary_arm_coverage() {
+        let weights = RuV2Weights {
+            ru_scale: 1.0,
+            plan_cnt: 2.0,
+            ..RuV2Weights::default()
+        };
+        assert_eq!(
+            (String::new(), String::new()),
+            format_ruv2_summary(None, weights, 0.0, 0.0)
+        );
+
+        let bypassed = RuV2Metrics::new();
+        bypassed.set_bypass(true);
+        assert_eq!(
+            (String::new(), String::new()),
+            format_ruv2_summary(Some(&bypassed), weights, 3.0, 0.0)
+        );
+
+        let metrics = RuV2Metrics::new();
+        metrics.add_plan_cnt(5);
+        metrics.add_executor_metric(1, "TableReader", 3);
+        metrics.add_executor_metric(1, "Zero", 0);
+        let (total, detail) = format_ruv2_summary(Some(&metrics), weights, 1.0, 0.5);
+        assert_eq!("11.50", total);
+        assert_eq!(
+            "total_ru:11.50, tidb_ru:10.00, tikv_ru:1.00, tiflash_ru:0.50, \
+             executor_l1:{TableReader:3}, plan_cnt:5",
+            detail
+        );
+    }
+
     /// Port of Go `TestUpdateRUV2MetricsFromCommitDetails`.
     #[test]
     fn update_ruv2_metrics_from_commit_details_test() {

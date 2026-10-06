@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "session-policy-cleanup-validation.json",
-    "scope": "Retire unused nontransactional admission and declaration-only upgrade registry models; remove six old files and 469 net Rust lines. Move option conversions and two useful tests into tidb-vardef, remove three duplicate predicates and six private/duplicate tests, and migrate every live consumer. Preserve bootstrap marker 287; Go master is 318 and missing versioned migrations remain unresolved.",
+    "receipt": "slow-log-model-cleanup-validation.json",
+    "scope": "Remove the disconnected slow-log parser/matcher/threshold/formatter chain and unused adapter bookkeeping: nine Rust files, 3348 net Rust lines and 36 private tests. Preserve the live statement-summary policy and seven tests unchanged; move one canonical RU formatting test to its actual owner. Remove two obsolete audit plans and mark dated ownership receipts as historical.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1094,6 +1094,11 @@
     {
       "receipt": "session-policy-cleanup-validation.json",
       "scope": "Retire unused nontransactional admission and declaration-only upgrade registry models; remove six old files and 469 net Rust lines. Move option conversions and two useful tests into tidb-vardef, remove three duplicate predicates and six private/duplicate tests, and migrate every live consumer. Preserve bootstrap marker 287; Go master is 318 and missing versioned migrations remain unresolved.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "slow-log-model-cleanup-validation.json",
+      "scope": "Remove the disconnected slow-log parser/matcher/threshold/formatter chain and unused adapter bookkeeping: nine Rust files, 3348 net Rust lines and 36 private tests. Preserve the live statement-summary policy and seven tests unchanged; move one canonical RU formatting test to its actual owner. Remove two obsolete audit plans and mark dated ownership receipts as historical.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

@@ -1,5 +1,12 @@
 # `pkg/sessionctx/slowlogrule` — complete Go-master parity boundary receipt
 
+Current status (2026-10-06): the disconnected Rust slow-log rule/parser/
+formatter models and their private tests were retired. The inventory and
+commands below are historical evidence, not current executable owners or
+Cloud validation. Live variable validation, field accessors, invalidation,
+matching and slow-log publication remain unimplemented obligations. See
+[the cleanup receipt](../../docs/parity/current-audit/slow-log-model-cleanup-validation.json).
+
 Comparison source: Go `origin/master` at commit
 `5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
 

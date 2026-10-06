@@ -1,5 +1,12 @@
 # `pkg/sessionctx/variable/tests` Go-master parity receipt
 
+Current slow-log status (2026-10-06): the detached `slow_log_format`,
+`slow_log_parse` and `slow_log_match` Rust owners described below were
+retired; their tests did not exercise a live session writer. The upstream
+inventory remains historical evidence. See
+[the cleanup receipt](../../docs/parity/current-audit/slow-log-model-cleanup-validation.json)
+for preserved owners and remaining integration obligations.
+
 Comparison source: Go `origin/master` at commit
 `5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
 

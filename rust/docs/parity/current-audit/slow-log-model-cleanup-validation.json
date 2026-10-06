@@ -1,0 +1,152 @@
+{
+  "date": "2026-10-06",
+  "base": "47fecadae45f28d9d7491195192fbaac901f48fb",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove the disconnected slow-log parser/matcher/threshold/formatter chain and unused adapter bookkeeping: nine Rust files, 3348 net Rust lines and 36 private tests. Preserve the live statement-summary policy and seven tests unchanged; move one canonical RU formatting test to its actual owner. Remove two obsolete audit plans and mark dated ownership receipts as historical.",
+  "continuity": {
+    "base": "47fecadae45f28d9d7491195192fbaac901f48fb",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "removed_rust_files": 9,
+    "removed_completed_plans": 2,
+    "net_rust_lines_removed": 3348,
+    "private_tests_removed": 36,
+    "useful_tests_moved": 1,
+    "summary_tests_preserved": 7,
+    "summary_policy_and_tests_unchanged": true,
+    "execution_details_unchanged_except_unused_renderer": true,
+    "ru_owner_unchanged_except_moved_test": true,
+    "session_and_server_consumers_unchanged": true,
+    "dependencies_unchanged": true,
+    "retired_distinctive_symbols_absent": true
+  },
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/slow_log_float.rs",
+      "lines": 29,
+      "sha256": "20af121cb23ff284612b722ce5f131bfbf836b140cf34e5ea55df06b0e928bc6",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/slow_log_format.rs",
+      "lines": 1560,
+      "sha256": "06e2533d85ee24d805b476fbee3aba344bad9227c9172bc7cf207aafa7ab2f88",
+      "tests": [
+        "slow_log_format_matches_go_test_slow_log_format",
+        "slow_log_format_includes_tiflash_ru_in_ruv2_metrics",
+        "format_ruv2_summary_arm_coverage",
+        "single_cop_task_renders_short_forms",
+        "nil_kv_detail_and_warnings_render_as_go_does",
+        "composite_constants_match_their_go_concatenations"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/slow_log_match.rs",
+      "lines": 53,
+      "sha256": "edcab50177d033fd93954c1b5a756262d627340bbb161fd1fad45034d897bdbb",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/slow_log_parse.rs",
+      "lines": 679,
+      "sha256": "b37833ea6e85d0e07e14e292d446788ef2aebdbf599da8049f97db382fba1937",
+      "tests": [
+        "field_values_parse_by_their_kind",
+        "session_rules_parse_group_and_reject_conn_id",
+        "rule_text_tolerates_quotes_and_junk_words",
+        "global_rules_group_by_connection",
+        "crc64_matches_the_ecma_check_value"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/slow_log_rules.rs",
+      "lines": 89,
+      "sha256": "8cc8ea5f830601d1d46461f63d2f22b75b63e1310ea6d9e2f1bd17ea7535c04d",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/slow_log_threshold.rs",
+      "lines": 75,
+      "sha256": "b24df9e3eed19772903158b9dddf1bac7314712fb5103953a297156bf6ddba81",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/slow_log_match_source.rs",
+      "lines": 56,
+      "sha256": "238c80810bd444a52c48317fab8d15e3476da18a11e70b5869bfd66923203f5e",
+      "tests": [
+        "slow_log_match_preserves_and_or_precedence"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/slow_log_rules_source.rs",
+      "lines": 66,
+      "sha256": "3221e6bfd113a29cd5eb494d4a461287e5f3f0eadae7442719373f86457e5761",
+      "tests": [
+        "session_rule_metadata_preserves_source_update_marker",
+        "global_rule_metadata_keeps_connection_index"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/slow_log_threshold_source.rs",
+      "lines": 73,
+      "sha256": "428810a3ef13428f7700f9d8b75a453cfa734f31cddf198e8b6caae48f5d72d6",
+      "tests": [
+        "slow_log_special_type_helpers_preserve_source_matching",
+        "slow_log_unsigned_fields_reject_negative_values"
+      ]
+    },
+    {
+      "path": "rust/docs/operations/sessionctx-slowlogrule-audit-execplan.md",
+      "lines": 38,
+      "sha256": "3303193802c4f9b2cfea27c29e5754de58bd225bf71e257b8699be4ba77ae305",
+      "tests": []
+    },
+    {
+      "path": "rust/docs/operations/sessionctx-variable-tests-slowlog-audit-execplan.md",
+      "lines": 36,
+      "sha256": "8b764c3a319406e2807ac6f299ab23b167ff614860306e49d2db2ffbd132f49b",
+      "tests": []
+    }
+  ],
+  "tests": {
+    "retained_owners": [
+      {
+        "passed": 10,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 10,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  "commands": [
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-exec -p tidb-util --lib -- adapter::tests:: exec_details::tests:: ruv2_metrics::tests:: --test-threads=1",
+    "cd /workspace/tidb; make lint",
+    "cd /workspace/tidb; git diff --check"
+  ],
+  "retained_owners": [
+    "tidb-session/src/observation.rs consumes unchanged tidb-exec adapter SummaryStmt policy",
+    "tidb-exec exec_details aggregation, snapshots and structured logging",
+    "tidb-util ruv2_metrics with migrated formatting cases",
+    "Server threshold-based slow-query recording and canonical CPU/keyspace/statement-summary owners"
+  ],
+  "remaining_go_obligations": [
+    "Live slow-log variable parsing/validation, typed field accessors and effective-field invalidation",
+    "Rule evaluation and slow-log publication through actual SessionVars/StmtContext",
+    "Complete source formatting, rate-limit, scan-key/fair-lock accounting and phase/metric integration; deleting unused models implements none of these"
+  ],
+  "gates": {
+    "lint": "passed",
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; external final handoff records completion"
+  },
+  "limits": [
+    "No full Go suite, live TiKV, SQL replay or benchmark; no measured speedup",
+    "No broad finding disposition change or complete package acceptance",
+    "Removed public seed APIs had no in-tree runtime callers; out-of-tree consumers need maintained owners"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/slow-log-model-cleanup/final-handoff.json"
+}

@@ -33,7 +33,6 @@ use tidb_log::{Field, Value};
 use crate::runtime_stats::{
     merge_commit_details, merge_lock_keys_details, DurationWithAddr, Percentile,
 };
-use crate::slow_log_float::format_go_float64;
 
 /// Go `CopTimeStr`: the sum of cop-task time spent in TiDB distSQL.
 pub const COP_TIME_STR: &str = "Cop_time";
@@ -187,36 +186,6 @@ pub struct TaskTimeStats {
     pub max_time: Duration,
     /// Go `TaskTimeStats.TotTime`.
     pub tot_time: Duration,
-}
-
-impl TaskTimeStats {
-    /// Go `TaskTimeStats.String`.
-    #[must_use]
-    pub fn render(
-        &self,
-        num_cop_tasks: i64,
-        space_mark_str: &str,
-        avg_str: &str,
-        p90_str: &str,
-        max_str: &str,
-        addr_str: &str,
-    ) -> String {
-        if num_cop_tasks == 1 {
-            return format!(
-                "{avg_str}{space_mark_str}{} {addr_str}{space_mark_str}{}",
-                format_go_float64(self.avg_time.as_secs_f64()),
-                self.max_address,
-            );
-        }
-        format!(
-            "{avg_str}{space_mark_str}{} {p90_str}{space_mark_str}{} \
-             {max_str}{space_mark_str}{} {addr_str}{space_mark_str}{}",
-            format_go_float64(self.avg_time.as_secs_f64()),
-            format_go_float64(self.p90_time.as_secs_f64()),
-            format_go_float64(self.max_time.as_secs_f64()),
-            self.max_address,
-        )
-    }
 }
 
 /// Go `CopTasksDetails`.

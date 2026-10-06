@@ -3713,7 +3713,8 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   live accessor matching remains dependency-blocked on SessionVars,
   StmtContext, and execdetails owners. Complete inventory and Ready evidence
   are recorded in `receipts/sessionctx_variable_tests_slowlog.md` and
-  `rust/docs/operations/sessionctx-variable-tests-slowlog-audit-execplan.md`.
+  `rust/testport/receipts/sessionctx_variable_tests_slowlog.md` (historical;
+  disconnected Rust leaves retired, see its current-status note).
 
 - 2026-09-01: audited the separate nested `pkg/sessionctx/variable/tests`
   package: four artifacts and 1,904 lines covering the 47-shard BUILD target,
