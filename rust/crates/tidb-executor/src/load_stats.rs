@@ -213,7 +213,7 @@ pub fn statistics_table_from_planner_statistics(
             Column {
                 cmsketch: item.cms.clone(),
                 top_n: item.topn.clone(),
-                fm_sketch: None,
+                fm_sketch: statistics.column_fm_sketches.get(&column.id).cloned(),
                 info: Some(ColumnInfo {
                     id: column.id,
                     name: column.name.clone(),
@@ -253,7 +253,7 @@ pub fn statistics_table_from_planner_statistics(
             Index {
                 cmsketch: item.cms.clone(),
                 top_n: item.topn.clone(),
-                fm_sketch: None,
+                fm_sketch: statistics.index_fm_sketches.get(&index.id).cloned(),
                 info: Some(IndexInfo {
                     id: index.id,
                     name: index.name.clone(),
@@ -567,7 +567,7 @@ pub fn gen_json_table_from_stats(
                 &index.histogram,
                 index.cmsketch.as_ref(),
                 index.top_n.as_ref(),
-                None,
+                index.fm_sketch.as_ref(),
                 index.stats_version,
                 false,
             )?),
@@ -820,7 +820,7 @@ fn index_from_json(
     Ok(Index {
         cmsketch: cms,
         top_n: topn,
-        fm_sketch: None,
+        fm_sketch: fmsketch_from_json(json.fm_sketch.as_ref()),
         info: Some(IndexInfo {
             id: index.id,
             name: index.name.go_to_lower(),
@@ -1185,6 +1185,51 @@ mod tests {
 
     /// Go `storage.GenJSONTableFromStats`: columns are converted to BLOB
     /// bounds while index key bytes remain unchanged.
+    #[test]
+    fn stats_ndv_batch_index_sketch_survives_json_round_trip() {
+        let schema = LoadStatsTableSchema {
+            columns: Vec::new(),
+            pk_is_handle: false,
+            indexes: vec![LoadStatsIndexSchema {
+                id: 2,
+                name: "i".into(),
+                columns: vec!["a".into()],
+                mv_index: false,
+            }],
+        };
+        let sketch = JsonFmSketch {
+            mask: 3,
+            hashset: Some(vec![4, 8, 12]),
+        };
+        let json = JsonTable {
+            indices: Some(BTreeMap::from([(
+                "i".into(),
+                Some(JsonColumn {
+                    histogram: Some(JsonHistogram::default()),
+                    fm_sketch: Some(sketch.clone()),
+                    stats_ver: Some(2),
+                    ..JsonColumn::default()
+                }),
+            )])),
+            ..JsonTable::default()
+        };
+        let table = statistics_table_from_json_schema(&schema, 41, &json).unwrap();
+        let index = table.hist_coll.get_index(2).unwrap();
+        assert_eq!(
+            index.read().unwrap().fm_sketch,
+            fmsketch_from_json(Some(&sketch))
+        );
+        let dumped = gen_json_table_from_stats("test", "t", &table, None).unwrap();
+        let actual = dumped.indices.unwrap()["i"]
+            .as_ref()
+            .unwrap()
+            .fm_sketch
+            .clone()
+            .unwrap();
+        assert_eq!(actual.mask, 3);
+        assert_eq!(actual.hashset.unwrap(), vec![4, 8, 12]);
+    }
+
     #[test]
     fn canonical_table_dumps_back_to_go_json_shape() {
         let mut coll = HistColl::new(41, 9, 2, 1, 1);

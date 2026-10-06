@@ -207,7 +207,6 @@ fn merge_partitioned_global_statistics(
         if items.len() != partitions.len() || items.is_empty() {
             continue;
         }
-        let fm_sketch = merge_fm_sketches(items.iter().filter_map(|(_, sketch)| sketch.as_ref()));
         let partition_items = items
             .iter()
             .map(|(stats, fm_sketch)| tidb_stats::PartitionStatsItem {
@@ -232,7 +231,13 @@ fn merge_partitioned_global_statistics(
             &killer,
         )
         .map_err(|error| DriverError::unsupported(error.to_string()))?;
-        if let Some(histogram) = merged.histogram {
+        if let Some(mut histogram) = merged.histogram {
+            if tidb_executor::analyze::kv::is_local_unique(table, false, column.id) {
+                histogram.ndv = tidb_stats::global_stats::unique_global_ndv(
+                    items.iter().map(|(stats, _)| &stats.histogram),
+                    row_count,
+                );
+            }
             global.columns.insert(
                 column.id,
                 tidb_planner::cardinality::row_count_estimator::ColumnStats {
@@ -251,9 +256,7 @@ fn merge_partitioned_global_statistics(
                 global.column_load_status.insert(column.id, status);
             }
         }
-        if let Some(fm_sketch) = fm_sketch {
-            global.column_fm_sketches.insert(column.id, fm_sketch);
-        }
+        global.column_fm_sketches.remove(&column.id);
     }
 
     for index in table.indexes() {
@@ -270,7 +273,6 @@ fn merge_partitioned_global_statistics(
         if items.len() != partitions.len() || items.is_empty() {
             continue;
         }
-        let fm_sketch = merge_fm_sketches(items.iter().filter_map(|(_, sketch)| sketch.as_ref()));
         let partition_items = items
             .iter()
             .map(|(stats, fm_sketch)| tidb_stats::PartitionStatsItem {
@@ -301,7 +303,13 @@ fn merge_partitioned_global_statistics(
             &killer,
         )
         .map_err(|error| DriverError::unsupported(error.to_string()))?;
-        if let Some(histogram) = merged.histogram {
+        if let Some(mut histogram) = merged.histogram {
+            if tidb_executor::analyze::kv::is_local_unique(table, true, index.id) {
+                histogram.ndv = tidb_stats::global_stats::unique_global_ndv(
+                    items.iter().map(|(stats, _)| &stats.histogram),
+                    row_count,
+                );
+            }
             global.indexes.insert(
                 index.id,
                 tidb_planner::cardinality::row_count_estimator::IndexStats {
@@ -321,25 +329,10 @@ fn merge_partitioned_global_statistics(
                 global.index_load_status.insert(index.id, status);
             }
         }
-        if let Some(fm_sketch) = fm_sketch {
-            global.index_fm_sketches.insert(index.id, fm_sketch);
-        }
+        global.index_fm_sketches.remove(&index.id);
     }
     finish_analyze_publication(&mut global);
     Ok(global)
-}
-
-fn merge_fm_sketches<'a>(
-    sketches: impl IntoIterator<Item = &'a tidb_stats::FmSketch>,
-) -> Option<tidb_stats::FmSketch> {
-    let mut merged = None;
-    for sketch in sketches {
-        match &mut merged {
-            Some(destination) => tidb_stats::merge_fm_sketch(Some(destination), Some(sketch)),
-            None => merged = Some(sketch.clone()),
-        }
-    }
-    merged
 }
 
 struct AnalyzeIndexTasks {

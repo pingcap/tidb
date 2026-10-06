@@ -1401,6 +1401,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
             });
             let items = match &resolved.statement.eval_context.session_zone() {
                 SessionTimeZone::Local => merge_global_items_async(
+                    table,
                     &mut snapshot,
                     &loader,
                     Some(&chrono::Local),
@@ -1415,6 +1416,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                     killer,
                 ),
                 SessionTimeZone::Named(zone) => merge_global_items_async(
+                    table,
                     &mut snapshot,
                     &loader,
                     Some(zone),
@@ -1433,6 +1435,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                         ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
                     })?;
                     merge_global_items_async(
+                        table,
                         &mut snapshot,
                         &loader,
                         Some(&zone),
@@ -1474,6 +1477,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                 .fold(0_i64, |total, stats| total.wrapping_add(stats.modify_count));
             let items = match &resolved.statement.eval_context.session_zone() {
                 SessionTimeZone::Local => merge_global_items(
+                    table,
                     Some(&chrono::Local),
                     &partitions,
                     column_ids,
@@ -1487,6 +1491,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                     killer,
                 ),
                 SessionTimeZone::Named(zone) => merge_global_items(
+                    table,
                     Some(zone),
                     &partitions,
                     column_ids,
@@ -1504,6 +1509,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                         ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
                     })?;
                     merge_global_items(
+                        table,
                         Some(&zone),
                         &partitions,
                         column_ids,
@@ -1688,6 +1694,7 @@ fn prepare_async_global_partitions<S: crate::cluster_catalog::MetaSnapshot>(
 
 #[allow(clippy::too_many_arguments)]
 fn merge_global_items_async<S, TZ>(
+    table: &tidb_model::TableInfo,
     snapshot: &mut S,
     loader: &ClusterStatsLoader,
     timezone: Option<&TZ>,
@@ -1802,6 +1809,13 @@ where
                 let mut merged = vec![None; worker_items.len()];
                 while let Ok((index, histograms, topns)) = histogram_receiver.recv() {
                     let item = &worker_items[index];
+                    let ndv =
+                        if tidb_stats::global_stats::is_local_unique(table, item.is_index, item.id)
+                        {
+                            tidb_stats::global_stats::unique_global_ndv(&histograms, total_count)
+                        } else {
+                            global_ndvs[index]
+                        };
                     merged[index] = Some(
                         merge_partition_histogram_topn(
                             timezone,
@@ -1811,7 +1825,7 @@ where
                             &item.field_type,
                             item.is_index,
                             merge_concurrency,
-                            global_ndvs[index],
+                            ndv,
                             cmsketches[index].take(),
                             histograms,
                             topns,
@@ -1973,6 +1987,7 @@ fn join_async_global_worker_results<T>(
 }
 
 fn merge_global_items<TZ: TimeZone + Sync>(
+    table: &tidb_model::TableInfo,
     timezone: Option<&TZ>,
     partitions: &[(String, Option<ClusterTableStats>)],
     column_ids: &[i64],
@@ -2072,6 +2087,13 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                     ClusterAnalyzeError::Other(format!("unknown analyzed column ID {id}"))
                 })?
             };
+            let unique_ndv =
+                tidb_stats::global_stats::is_local_unique(table, is_index, id).then(|| {
+                    tidb_stats::global_stats::unique_global_ndv(
+                        inputs.iter().map(|item| &item.histogram),
+                        total_count,
+                    )
+                });
             let merged = merge_partition_stats_item(
                 timezone,
                 2,
@@ -2086,7 +2108,10 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                 killer,
             )
             .map_err(global_stats_merge_error)?;
-            if let Some(histogram) = merged.histogram {
+            if let Some(mut histogram) = merged.histogram {
+                if let Some(ndv) = unique_ndv {
+                    histogram.ndv = ndv;
+                }
                 result.push(ClusterStatsItem {
                     id,
                     is_index,
@@ -3060,6 +3085,60 @@ mod tests {
     }
 
     #[test]
+    fn stats_ndv_batch_local_unique_global_ndv_sums_partition_counts() {
+        let table = TableInfo {
+            columns: vec![ColumnInfo::new(
+                1,
+                "a",
+                FieldType::new(FieldTypeCode::LongLong),
+            )]
+            .into(),
+            indices: vec![IndexInfo {
+                id: 2,
+                unique: true,
+                state: SchemaState::PUBLIC,
+                columns: vec![IndexColumn {
+                    offset: 0,
+                    length: -1,
+                    ..IndexColumn::default()
+                }]
+                .into(),
+                ..IndexInfo::default()
+            }]
+            .into(),
+            ..TableInfo::default()
+        };
+        let partitions = vec![
+            (
+                "p0".to_owned(),
+                Some(global_partition_stats(Some(global_partition_item(1, 5)))),
+            ),
+            (
+                "p1".to_owned(),
+                Some(global_partition_stats(Some(global_partition_item(1, 5)))),
+            ),
+        ];
+        for mode in [GlobalStatsMergeMode::Blocking, GlobalStatsMergeMode::Async] {
+            let merged = merge_global_items(
+                &table,
+                Some(&chrono::Utc),
+                &partitions,
+                &[1],
+                &[],
+                &BTreeMap::from([(1, FieldType::new(FieldTypeCode::LongLong))]),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &global_statement(false),
+                10,
+                mode,
+                &SqlKiller::default(),
+            )
+            .unwrap();
+            assert_eq!(merged[0].histogram.ndv, 4);
+        }
+    }
+
+    #[test]
     fn dynamic_global_merge_uses_all_partitions_and_skip_policy() {
         let killer = SqlKiller::default();
         let column_types = BTreeMap::from([(1, FieldType::new(FieldTypeCode::LongLong))]);
@@ -3072,6 +3151,7 @@ mod tests {
             ("p1".to_owned(), None),
         ];
         let error = merge_global_items(
+            &TableInfo::default(),
             Some(&chrono::Utc),
             &partitions,
             &[1],
@@ -3091,6 +3171,7 @@ mod tests {
         );
 
         let merged = merge_global_items(
+            &TableInfo::default(),
             Some(&chrono::Utc),
             &partitions,
             &[1],
@@ -3108,6 +3189,7 @@ mod tests {
         assert_eq!(merged[0].histogram.ndv, 2);
 
         let merged = merge_global_items(
+            &TableInfo::default(),
             Some(&chrono::Utc),
             &partitions,
             &[1],
@@ -3134,6 +3216,7 @@ mod tests {
         empty.topn = None;
         let partitions = vec![("p0".to_owned(), Some(global_partition_stats(Some(empty))))];
         let error = merge_global_items(
+            &TableInfo::default(),
             Some(&chrono::Utc),
             &partitions,
             &[1],
@@ -3153,6 +3236,7 @@ mod tests {
         );
 
         let merged = merge_global_items(
+            &TableInfo::default(),
             Some(&chrono::Utc),
             &partitions,
             &[1],
@@ -3174,6 +3258,7 @@ mod tests {
             Some(global_partition_stats(Some(global_partition_item(2, 5)))),
         )];
         let error = merge_global_items(
+            &TableInfo::default(),
             Some(&chrono::Utc),
             &partitions,
             &[1],

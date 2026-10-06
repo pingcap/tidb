@@ -422,6 +422,7 @@ impl ClusterStatsItem {
         })?;
         Some(Column {
             cmsketch: self.cms.clone(),
+            fm_sketch: self.fm_sketch.clone(),
             top_n: self.topn.clone(),
             info: Some(metadata),
             histogram: self.histogram.clone(),
@@ -449,6 +450,7 @@ impl ClusterStatsItem {
         })?;
         Some(Index {
             cmsketch: self.cms.clone(),
+            fm_sketch: self.fm_sketch.clone(),
             top_n: self.topn.clone(),
             info: Some(metadata),
             histogram: self.histogram.clone(),

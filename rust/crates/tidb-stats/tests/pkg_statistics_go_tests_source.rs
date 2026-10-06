@@ -183,6 +183,7 @@ fn build_stats_on_row_sample() {
         null_count: 0,
         count: 1021,
         ndv: 1000,
+        unique: false,
         total_size: 1021 * 8,
     };
     let out = build_hist_and_topn(
@@ -239,6 +240,7 @@ fn build_sample_full_ndv() {
         null_count: 0,
         count: 200,
         ndv: 103,
+        unique: false,
         total_size: 94 * 8,
     };
     let out = build_hist_and_topn(
@@ -308,6 +310,7 @@ fn build_hist_and_topn_uses_analyze_default_globals() {
         null_count: 0,
         count: 35,
         ndv: 6,
+        unique: false,
         total_size: 35 * 8,
     };
 

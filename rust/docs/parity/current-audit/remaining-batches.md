@@ -139,3 +139,9 @@ result-type resolver and hardcoded BIGINT path are removed. See
 [validation](json-result-batch-validation.json): 211 passing Rust cases, fourteen
 passing TCP checks and five unchanged historical DDL failures. Both roots stay
 partial; this is existing-owner maintenance, not whole-package acceptance.
+
+
+## Current-Go statistics follow-up — 2026-10-06
+
+
+The previously unimplemented uniqueness and FM-sketch deltas now share collection, blocking/asynchronous/in-process merging, canonical conversion, JSON and storage owners. [Validation](statistics-ndv-batch-validation.json) records 220 Rust tests and 15 TCP checks passing. This maintenance retires duplicate global sketch merging; broad B01–B10 assignments and finding dispositions remain unchanged.

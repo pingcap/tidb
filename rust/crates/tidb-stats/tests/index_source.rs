@@ -131,3 +131,74 @@ fn source_memory_excludes_fm_sketch() {
         histogram_memory + usage.cmsketch_mem_usage + usage.topn_mem_usage
     );
 }
+
+/// Go statistics/index.go and globalstats/global_stats.go distinguish schema
+/// uniqueness from disjoint local partition NDVs.
+#[test]
+fn stats_ndv_batch_schema_unique_admission_and_local_partition_bounds() {
+    use tidb_model::{ColumnInfo, IndexColumn, IndexInfo, SchemaState, TableInfo};
+    use tidb_stats::global_stats::{is_local_unique, unique_global_ndv};
+    use tidb_stats::index::{is_single_col_non_prefix_unique_index, unique_by_schema};
+    let mut index = IndexInfo {
+        id: 9,
+        unique: true,
+        state: SchemaState::PUBLIC,
+        columns: vec![IndexColumn {
+            offset: 0,
+            length: -1,
+            ..IndexColumn::default()
+        }]
+        .into(),
+        ..IndexInfo::default()
+    };
+    let table = TableInfo {
+        columns: vec![ColumnInfo {
+            id: 3,
+            ..ColumnInfo::default()
+        }]
+        .into(),
+        indices: vec![index.clone()].into(),
+        ..TableInfo::default()
+    };
+    for (is_index, id) in [(false, 3), (true, 9)] {
+        assert!(unique_by_schema(&table, is_index, id));
+        assert!(is_local_unique(&table, is_index, id));
+        assert!(!unique_by_schema(&table, is_index, 99));
+        table.indices.get(0).unwrap().write().global = true;
+        assert!(unique_by_schema(&table, is_index, id));
+        assert!(!is_local_unique(&table, is_index, id));
+        table.indices.get(0).unwrap().write().global = false;
+    }
+    index.unique = false;
+    index.primary = true;
+    assert!(is_single_col_non_prefix_unique_index(&index));
+    index.primary = false;
+    assert!(!is_single_col_non_prefix_unique_index(&index));
+    index.unique = true;
+    index.invisible = true;
+    assert!(is_single_col_non_prefix_unique_index(&index));
+    index.condition_expr_string = "a > 0".into();
+    assert!(!is_single_col_non_prefix_unique_index(&index));
+    index.condition_expr_string.clear();
+    index.columns.get(0).unwrap().write().length = 3;
+    assert!(!is_single_col_non_prefix_unique_index(&index));
+    index.columns.get(0).unwrap().write().length = -1;
+    index.state = SchemaState::WRITE_ONLY;
+    assert!(!is_single_col_non_prefix_unique_index(&index));
+    index.state = SchemaState::PUBLIC;
+    index.columns = vec![IndexColumn::default(), IndexColumn::default()].into();
+    assert!(!is_single_col_non_prefix_unique_index(&index));
+    let hists = [
+        tidb_stats::Histogram {
+            ndv: 4,
+            ..Default::default()
+        },
+        tidb_stats::Histogram {
+            ndv: 7,
+            ..Default::default()
+        },
+    ];
+    assert_eq!(unique_global_ndv(&hists, 20), 11);
+    assert_eq!(unique_global_ndv(&hists, 9), 9);
+    assert_eq!(unique_global_ndv(&hists[..0], 9), 0);
+}

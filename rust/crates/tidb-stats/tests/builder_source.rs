@@ -62,6 +62,7 @@ fn collector(values: &[i64]) -> SampleCollector {
         null_count: 0,
         count: values.len() as i64,
         ndv: distinct.len() as i64,
+        unique: false,
         total_size: values.len() as i64 * 8,
     }
 }
@@ -95,6 +96,7 @@ fn build_column_empty_paths_preserve_source_metadata() {
         count: 7,
         ndv: 9,
         null_count: 2,
+        unique: false,
         total_size: 11,
     };
     let histogram = build_column(5, &empty, 3);
@@ -303,6 +305,7 @@ fn correlation_reads_the_physical_order() {
                 null_count: 0,
                 count: 10,
                 ndv: 10,
+                unique: false,
                 total_size: 80,
             },
             BuildOptions::default(),

@@ -1466,3 +1466,39 @@ fn partial_analyze_replaces_unanalyzed_table_metadata() {
         "{plan:?}"
     );
 }
+
+/// Go globalstats retains exact local-unique NDVs but no global FM sketch.
+#[test]
+fn stats_ndv_batch_unique_partition_lifecycle() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE exact_ndv (a INT, UNIQUE INDEX i(a)) PARTITION BY HASH(a) PARTITIONS 2")
+        .unwrap();
+    session
+        .run("INSERT INTO exact_ndv VALUES (0),(1),(2),(3),(4),(5),(NULL),(NULL)")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE exact_ndv ALL COLUMNS WITH 0 TOPN, 1 SAMPLERATE")
+        .unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "exact_ndv") else {
+                panic!("table missing")
+            };
+            let stats = catalog.table_statistics(table.table_id).unwrap();
+            assert_eq!(stats.row_count, 8);
+            let column = &stats.columns[&table.columns()[0].id];
+            assert_eq!((column.histogram.ndv, column.histogram.null_count), (6, 2));
+            let index = &stats.indexes[&table.indexes()[0].id];
+            assert_eq!((index.histogram.ndv, index.histogram.null_count), (6, 2));
+            assert!(stats.column_fm_sketches.is_empty());
+            assert!(stats.index_fm_sketches.is_empty());
+            for partition in &table.partition().unwrap().definitions {
+                let stats = catalog.table_statistics(partition.id).unwrap();
+                assert!(!stats.column_fm_sketches.is_empty());
+                assert!(!stats.index_fm_sketches.is_empty());
+            }
+            Ok(())
+        })
+        .unwrap();
+}

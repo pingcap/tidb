@@ -85,6 +85,8 @@ pub struct SampleCollector {
     pub count: i64,
     /// The estimated distinct-value count, over every scanned row.
     pub ndv: i64,
+    /// Go `SampleCollector.Unique`: schema-proven distinct non-NULL values.
+    pub unique: bool,
     /// Go `SampleCollector.TotalSize`: the summed encoded size of every
     /// scanned non-NULL value, minus its flag byte.
     pub total_size: i64,
@@ -449,7 +451,11 @@ pub fn try_build_hist_and_topn_tracked<E>(
     let mut outer_memory = BuilderMemoryBuffer::new(tracker.clone());
     let count = collector.count;
     let null_count = collector.null_count;
-    let ndv = collector.ndv.min(count);
+    let ndv = if collector.unique {
+        count
+    } else {
+        collector.ndv.min(count)
+    };
     let mut histogram = Histogram {
         id,
         ndv,

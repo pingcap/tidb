@@ -886,6 +886,8 @@ pub enum LoadedStatsItemStatement {
     TopNInsert(Range<usize>),
     /// Delete the named histogram's FM sketch.
     FmDelete,
+    /// Insert the supplied FM sketch after deleting the previous row.
+    FmInsert,
     /// Replace the named histogram row.
     HistogramReplace,
     /// Delete the named histogram's old bucket rows.
@@ -911,8 +913,11 @@ pub fn loaded_stats_item_statements(
             .into_iter()
             .map(LoadedStatsItemStatement::TopNInsert),
     );
+    statements.push(LoadedStatsItemStatement::FmDelete);
+    if item.fm_sketch.is_some() {
+        statements.push(LoadedStatsItemStatement::FmInsert);
+    }
     statements.extend([
-        LoadedStatsItemStatement::FmDelete,
         LoadedStatsItemStatement::HistogramReplace,
         LoadedStatsItemStatement::BucketsDelete,
     ]);
@@ -948,6 +953,9 @@ pub fn plan_loaded_stats_item_statement<S: MetaSnapshot>(
         }
         LoadedStatsItemStatement::FmDelete => {
             plan_loaded_fm_delete(snapshot, catalog, table_id, item, &mut plan)?;
+        }
+        LoadedStatsItemStatement::FmInsert => {
+            plan_loaded_fm_insert(snapshot, catalog, table_id, item, now, &mut plan)?;
         }
         LoadedStatsItemStatement::HistogramReplace => {
             plan_loaded_histogram(snapshot, catalog, table_id, item, version, now, &mut plan)?;
@@ -2799,6 +2807,54 @@ fn plan_loaded_topn_insert<S: MetaSnapshot>(
     rows.publish_watermark(catalog, plan)
 }
 
+fn plan_loaded_fm_insert<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    item: &ClusterStatsItem,
+    now: Time,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_fm_sketch")?;
+    let Some(encoded) = encode_fm_sketch(item.fm_sketch.as_ref()) else {
+        return Ok(());
+    };
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id"],
+        table_id,
+    )?;
+    store_fm_sketch(
+        snapshot, catalog, &mut rows, table, table_id, item, encoded, now, plan,
+    )?;
+    rows.publish_watermark(catalog, plan)
+}
+
+fn store_fm_sketch<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    rows: &mut StatsRows<'_>,
+    table: &TableInfo,
+    table_id: i64,
+    item: &ClusterStatsItem,
+    encoded: Vec<u8>,
+    now: Time,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let mut values = defaults_row(table, now)?;
+    set(table, &mut values, "table_id", Datum::Int(table_id));
+    set(
+        table,
+        &mut values,
+        "is_index",
+        Datum::Int(i64::from(item.is_index)),
+    );
+    set(table, &mut values, "hist_id", Datum::Int(item.id));
+    set(table, &mut values, "value", Datum::Bytes(encoded));
+    rows.store(snapshot, catalog, &values, plan)
+}
+
 fn plan_loaded_fm_delete<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
@@ -3126,17 +3182,17 @@ fn plan_fm_sketches<S: MetaSnapshot>(
             let Some(encoded) = encode_fm_sketch(item.fm_sketch.as_ref()) else {
                 continue;
             };
-            let mut values = defaults_row(table, now)?;
-            set(table, &mut values, "table_id", Datum::Int(stats.table_id));
-            set(
+            store_fm_sketch(
+                snapshot,
+                catalog,
+                &mut rows,
                 table,
-                &mut values,
-                "is_index",
-                Datum::Int(i64::from(item.is_index)),
-            );
-            set(table, &mut values, "hist_id", Datum::Int(item.id));
-            set(table, &mut values, "value", Datum::Bytes(encoded));
-            rows.store(snapshot, catalog, &values, plan)?;
+                stats.table_id,
+                item,
+                encoded,
+                now,
+                plan,
+            )?;
         }
     }
     // Go deletes the previous row for every analyzed item even when this is

@@ -1728,6 +1728,7 @@ impl ClusterSessionFactory {
                     let ((), mutations) =
                         tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
                             transaction.start_ts(),
+                            &staged,
                             |retry_ts| {
                                 let snapshot = match retry_ts {
                                     Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),
@@ -1806,6 +1807,7 @@ impl ClusterSessionFactory {
                         let ((modify_count, count), lock_mutations) =
                             tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
                                 transaction.start_ts(),
+                                &staged,
                                 |read_ts| match read_ts {
                                     Some(read_ts) => transaction.snapshot_at_for(read_ts, true),
                                     None => transaction.snapshot_for(true),
@@ -1836,6 +1838,7 @@ impl ClusterSessionFactory {
                         let ((), replace_mutations) =
                             tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
                                 transaction.start_ts(),
+                                &staged,
                                 |retry_ts| match retry_ts {
                                     Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),
                                     None => transaction.snapshot_for(true),
@@ -2941,6 +2944,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
             let ((), mutations) =
                 tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
                     transaction.start_ts(),
+                    &staged,
                     |read_ts| match read_ts {
                         Some(read_ts) => transaction.snapshot_at_for(read_ts, true),
                         None => transaction.snapshot_for(true),

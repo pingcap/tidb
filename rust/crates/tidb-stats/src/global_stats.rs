@@ -558,3 +558,35 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
         topn,
     })
 }
+
+/// Go globalstats `isLocalUnique`: a global index cannot prove that retained
+/// statistics from different partitions describe disjoint value sets.
+#[must_use]
+pub fn is_local_unique(table: &tidb_model::TableInfo, is_index: bool, id: i64) -> bool {
+    table.indices.iter_deref().any(|index| {
+        let index = index.read();
+        !index.global
+            && crate::index::is_single_col_non_prefix_unique_index(&index)
+            && if is_index {
+                index.id == id
+            } else {
+                table
+                    .columns
+                    .get(index.columns.get(0).unwrap().read().offset as usize)
+                    .is_some_and(|column| column.read().id == id)
+            }
+    })
+}
+
+/// Go `uniqueGlobalNDV`: absent/empty partition histograms contribute zero;
+/// current rows bound old partition NDVs retained after deletes.
+#[must_use]
+pub fn unique_global_ndv<'a>(
+    histograms: impl IntoIterator<Item = &'a Histogram>,
+    count: i64,
+) -> i64 {
+    histograms
+        .into_iter()
+        .fold(0_i64, |ndv, hist| ndv.wrapping_add(hist.ndv))
+        .min(count)
+}

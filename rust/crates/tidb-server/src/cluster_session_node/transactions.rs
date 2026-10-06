@@ -440,6 +440,7 @@ pub(crate) fn stage_pessimistic_statement<T>(
     transaction.bind_mutation_buffer(staged);
     let result = lock_pessimistic_statement_with(
         transaction.start_ts(),
+        staged,
         |retry_ts| {
             let snapshot = match retry_ts {
                 Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),

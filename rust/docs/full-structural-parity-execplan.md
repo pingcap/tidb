@@ -2641,3 +2641,9 @@ and [validation](parity/current-audit/json-result-batch-validation.json).
 211 Rust cases and fourteen TCP checks pass; five historical DDL diagnostics
 remain unchanged. Counts stay 86 tracked /30 repaired /56 unresolved; no whole
 Go package or performance acceptance is claimed.
+
+
+## Statistics lifecycle checkpoint — 2026-10-06
+
+
+The [statistics plan](statistics-ndv-batch-execplan.md) connects four current-Go gaps across collection, schema admission, three partition merge consumers, JSON, canonical tables and durable sketch writes. [Validation](parity/current-audit/statistics-ndv-batch-validation.json) records five baseline Rust failures and three baseline TCP failures, then 220 Rust and 15 TCP passes. Duplicate in-process global sketch merging is removed. Full package acceptance, live multi-node TiKV and performance remain unverified; the 56 broader unresolved roots keep their existing dispositions.

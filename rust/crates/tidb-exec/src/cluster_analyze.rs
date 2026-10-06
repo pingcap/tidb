@@ -522,25 +522,23 @@ fn cluster_analyze_plan(
             column_positions.push(position);
             prefix_lengths.push(index_column.length);
         }
-        let has_prefix = prefix_lengths
-            .iter()
-            .any(|length| *length != UNSPECIFIED_LENGTH);
         indexes.push(AnalyzedIndex {
             id: index.id,
-            single_column_unique: index.unique && column_positions.len() == 1 && !has_prefix,
+            single_column_unique: tidb_stats::index::is_single_col_non_prefix_unique_index(&index),
             column_positions,
             prefix_lengths,
         });
     }
 
-    Ok(
-        AnalyzePlan::new(columns, indexes, table.name.original())?.with_virtual_columns(
-            table.cols().iter_deref().filter_map(|column| {
-                let column = column.read();
-                column.is_virtual_generated().then_some(column.id)
-            }),
-        ),
-    )
+    Ok(AnalyzePlan::new(columns, indexes, table.name.original())?
+        .with_unique_columns(table.cols().iter_deref().filter_map(|column| {
+            let id = column.read().id;
+            tidb_stats::index::unique_by_schema(table, false, id).then_some(id)
+        }))
+        .with_virtual_columns(table.cols().iter_deref().filter_map(|column| {
+            let column = column.read();
+            column.is_virtual_generated().then_some(column.id)
+        })))
 }
 
 #[cfg(test)]

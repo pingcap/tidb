@@ -752,6 +752,18 @@ impl AnalyzePlan {
         })
     }
 
+    /// Retains schema-proven column uniqueness even if the covering index is
+    /// not itself part of this ANALYZE task.
+    #[must_use]
+    pub fn with_unique_columns(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
+        for id in ids {
+            if let Some(position) = self.columns.iter().position(|column| column.id == id) {
+                self.unique_covered[position] = true;
+            }
+        }
+        self
+    }
+
     /// Uses the statement timezone to encode sampled timestamp statistics.
     #[must_use]
     pub fn with_time_zone(mut self, time_zone: tidb_datatype::SessionTimeZone) -> Self {
@@ -1117,6 +1129,7 @@ impl<'a> AnalyzeRun<'a> {
                 // and a TopN describe values, and NULLs travel beside them.
                 count: scanned_rows - slot.null_count,
                 ndv: slot.ndv,
+                unique: plan.unique_covered[position],
                 total_size: slot.total_size,
             };
             for row in &sampled {
@@ -1162,6 +1175,7 @@ impl<'a> AnalyzeRun<'a> {
                 null_count: slot.null_count,
                 count: scanned_rows - slot.null_count,
                 ndv: slot.ndv,
+                unique: index.single_column_unique,
                 total_size: slot.total_size,
             };
             for row in &sampled {
@@ -1264,6 +1278,50 @@ mod tests {
             "t",
         )
         .unwrap()
+    }
+
+    #[test]
+    fn stats_ndv_batch_unique_columns_and_indexes_use_non_null_count() {
+        for unique in [false, true] {
+            let mut plan = one_int_column_plan();
+            plan.indexes.push(AnalyzedIndex {
+                id: 2,
+                column_positions: vec![0],
+                prefix_lengths: vec![-1],
+                single_column_unique: unique,
+            });
+            plan.unique_covered[0] = unique;
+            for null_count in [0, 2, 5] {
+                let slots = vec![
+                    tidb_stats::row_sample_collector::SlotStats {
+                        null_count,
+                        total_size: 40,
+                        ndv: 1,
+                        fm_sketch: None,
+                    };
+                    2
+                ];
+                let built = AnalyzeRun::build_collector_parts(
+                    &plan,
+                    AnalyzeOptions::default(),
+                    0.1,
+                    5,
+                    slots,
+                    Vec::new(),
+                )
+                .unwrap();
+                let expected = if unique {
+                    5 - null_count
+                } else {
+                    1.min(5 - null_count)
+                };
+                assert_eq!(built.columns[0].histogram.ndv, expected);
+                assert_eq!(built.indexes[0].histogram.ndv, expected);
+                assert_eq!(built.columns[0].histogram.null_count, null_count);
+                assert!(built.columns[0].topn.is_none());
+                assert!(built.indexes[0].topn.is_none());
+            }
+        }
     }
 
     #[test]

@@ -865,6 +865,85 @@ fn analyze_save_does_not_replace_a_newer_snapshot() {
     );
 }
 
+/// Go LOAD STATS preserves supplied sketches through durable writes and JSON dumps.
+#[test]
+fn stats_ndv_batch_load_stats_replaces_and_clears_fm_sketches() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let loader = ClusterStatsLoader::locate(&catalog).unwrap();
+    for is_index in [false, true] {
+        let mut item = full_histogram(1, is_index);
+        for sketch in [
+            Some(FmSketch::from_raw_parts(3, MAX_SKETCH_SIZE, [4, 8, 12])),
+            Some(FmSketch::from_raw_parts(7, MAX_SKETCH_SIZE, [16, 24])),
+            None,
+        ] {
+            item.fm_sketch = sketch.clone();
+            apply_loaded_stats_item(
+                &mut store,
+                &catalog,
+                4242,
+                10,
+                &item,
+                440_000_000_000_000_000,
+            );
+            assert_eq!(
+                loader
+                    .load_fm_sketch(&mut store, 4242, is_index, 1)
+                    .unwrap(),
+                sketch
+            );
+            let table_info = tidb_model::TableInfo {
+                id: 4242,
+                columns: vec![tidb_model::ColumnInfo::new(
+                    1,
+                    "a",
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )]
+                .into(),
+                indices: vec![tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("i"),
+                    ..Default::default()
+                }]
+                .into(),
+                ..Default::default()
+            };
+            let stored = loader
+                .load_table_with_fm(
+                    &mut store,
+                    4242,
+                    &tidb_exec::cluster_stats_load::column_types_of(&table_info),
+                )
+                .unwrap()
+                .unwrap();
+            let table = stored.to_statistics_table(&table_info);
+            let dumped =
+                tidb_executor::load_stats::gen_json_table_from_stats("test", "t", &table, None)
+                    .unwrap();
+            let map = if is_index {
+                dumped.indices.unwrap()
+            } else {
+                dumped.columns.unwrap()
+            };
+            let dumped_sketch = map[if is_index { "i" } else { "a" }]
+                .as_ref()
+                .unwrap()
+                .fm_sketch
+                .as_ref();
+            assert_eq!(dumped_sketch.is_some(), sketch.is_some());
+            if let Some(sketch) = &sketch {
+                let proto = tidb_stats::fm_sketch_to_proto(Some(sketch));
+                assert_eq!(dumped_sketch.unwrap().mask, proto.mask);
+                assert_eq!(
+                    dumped_sketch.unwrap().hashset.as_ref().unwrap(),
+                    &proto.hashset
+                );
+            }
+        }
+    }
+}
+
 /// Pinned Go `SaveAnalyzeResultToStorage` keeps FM sketches only for physical
 /// partition results. Ordinary cache loads do not fetch them; the `loadAll`
 /// path used by partition-to-global merge does, and a global write removes

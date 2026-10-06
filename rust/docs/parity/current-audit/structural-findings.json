@@ -325,10 +325,10 @@
       "id": "T01",
       "status": "partial",
       "group": "Transaction and routing ownership",
-      "finding": "**Partially repaired:** table writes share independent native mutation flags, absence checks and assertions. Pessimistic INSERT/UPDATE/ODKU now compose the explicit prewrite-check setting, per-key lock exclusion, prior-statement presumption retention and transaction abort/savepoint policy. Local tombstones and optimistic/IGNORE writes retain eager policy. Non-public/temp/global-index transitions and complete package obligations remain unresolved.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/table_write_policy.rs::insert_index`; `system_row_write.rs::index_entries/rewrite_row`; `tidb-txnkv/src/transaction/mutation.rs`; receipt `table-policy-batch-repair.md`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json); `tidb-executor/src/cluster_storage.rs::preserve_statement_presumptions,set_with_constraint_check`; `tidb-session/src/txn.rs::pessimistic_constraint_check_in_place,set_savepoint`; `tidb-server/src/cluster_session_node/mod.rs::with_bound_statement`; [deferred uniqueness validation](deferred-uniqueness-batch-validation.json)",
+      "finding": "**Partially repaired:** table writes share independent native mutation flags, absence checks and assertions. Pessimistic INSERT/UPDATE/ODKU now compose the explicit prewrite-check setting, per-key lock exclusion, prior-statement presumption retention and transaction abort/savepoint policy. Local tombstones and optimistic/IGNORE writes retain eager policy. Non-public/temp/global-index transitions and complete package obligations remain unresolved. Restricted statistics SQL now passes its authoritative MutationBuffer through all six lock-helper consumers; a prior local deletion suppresses the planned lazy absence check before lock acquisition. Reinsertion keeps the first existence assertion and fresh keys retain duplicate checks. The LOAD STATS replacement failure is repaired; other index transitions and complete package obligations remain partial.",
+      "rust_evidence": "`rust/crates/tidb-exec/src/table_write_policy.rs::insert_index`; `system_row_write.rs::index_entries/rewrite_row`; `tidb-txnkv/src/transaction/mutation.rs`; receipt `table-policy-batch-repair.md`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json); `tidb-executor/src/cluster_storage.rs::preserve_statement_presumptions,set_with_constraint_check`; `tidb-session/src/txn.rs::pessimistic_constraint_check_in_place,set_savepoint`; `tidb-server/src/cluster_session_node/mod.rs::with_bound_statement`; [deferred uniqueness validation](deferred-uniqueness-batch-validation.json); `tidb-exec/src/cluster_table_storage.rs::lock_pessimistic_statement_with`; `tidb-server/src/cluster_session_node/{mod,transactions}.rs`; [statistics/lock validation](statistics-ndv-batch-validation.json)",
       "go_owner": "Go pkg/table/tables/{tables,index}.go owns independent duplicate flags/assertions: optimistic lazy unique keys use AssertUnknown plus PresumeKeyNotExists; handle-qualified non-distinct entries omit the flag, and public deletion asserts existence. Complete transaction-view/state/temp/global and pessimistic owners remain unaccepted. Go executor/update.go::optimizeDupKeyCheckForUpdate keeps optimistic/IGNORE eager; table/index.go and tables.go preserve local tombstones and deferred absence flags.",
-      "review_basis": "Connected T01/N03 repair against freshly fetched Go master 93a01d31f6da205ae4bf376825293903a6899fdb from integration f6a53da43a2702d381bfcc5a3bb8e3dd49d6ecab. Three baseline Rust regressions and thirteen baseline TCP assertions fail; 63 distinct final Rust cases and all 23 TCP assertions pass. Parent dispositions stay partial; no complete package acceptance or fresh revalidation of the other 54 unresolved roots."
+      "review_basis": "Connected T01/N03 repair against freshly fetched Go master 93a01d31f6da205ae4bf376825293903a6899fdb from integration f6a53da43a2702d381bfcc5a3bb8e3dd49d6ecab. Three baseline Rust regressions and thirteen baseline TCP assertions fail; 63 distinct final Rust cases and all 23 TCP assertions pass. Parent dispositions stay partial; no complete package acceptance or fresh revalidation of the other 54 unresolved roots. Current-Go statistics follow-up from 16d92bb829 reproduces the restricted tombstone failure in real MySQL/unistore and a focused unit regression before repair. See statistics-ndv-batch-validation.json; no complete package or live multi-node acceptance."
     },
     {
       "id": "T02",
@@ -792,9 +792,10 @@
   ],
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
-    "receipt": "json-result-batch-validation.json",
-    "scope": "X01/K03 connected JSON result, conversion and expression-index ownership: native search values, byte-sized ESCAPE validation, shared signature widths/types, typed 3144 errors, and CREATE TABLE hidden-column admission through the existing expression-index builder. Remove duplicate type overrides and the hardcoded BIGINT hidden-column path. Broad findings remain partial.",
-    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+    "receipt": "statistics-ndv-batch-validation.json",
+    "scope": "Connected current-Go statistics maintenance: shared schema uniqueness and exact non-NULL ANALYZE NDV; local-unique partition NDV in blocking, asynchronous and in-process consumers; FM-sketch JSON, canonical table, LOAD STATS write and dump preservation. Retire duplicate in-process global sketch merging. Four related statistics gaps and T01 restricted-statement tombstone lock policy repaired; T01 stays partial and no complete package is newly accepted.",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "finding_dispositions_changed": false
   },
   "latest_test_cleanup": {
     "receipt": "parser-harness-cleanup-validation.json",
@@ -1625,6 +1626,11 @@
       "receipt": "internal-process-batch-validation.json",
       "scope": "I01/N04/O09 shared internal-session maintenance: live auto-analyze task tracking, process publication, SQL KILL cancellation/reset/identity lifetime, and internal timestamp diagnostics. No whole-package acceptance.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "json-result-batch-validation.json",
+      "scope": "X01/K03 connected JSON result, conversion and expression-index ownership: native search values, byte-sized ESCAPE validation, shared signature widths/types, typed 3144 errors, and CREATE TABLE hidden-column admission through the existing expression-index builder. Remove duplicate type overrides and the hardcoded BIGINT hidden-column path. Broad findings remain partial.",
+      "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
     }
   ],
   "execution_batches": {

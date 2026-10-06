@@ -352,9 +352,7 @@ fn kv_analyze_plan(
         }
         indexes.push(AnalyzedIndex {
             id: index.id,
-            single_column_unique: index.unique
-                && column_positions.len() == 1
-                && !index.has_prefix(),
+            single_column_unique: unique_by_schema(table, true, index.id),
             column_positions,
             prefix_lengths: index.prefix_lengths.clone(),
         });
@@ -363,7 +361,11 @@ fn kv_analyze_plan(
 
     AnalyzePlan::new(columns, indexes, &table.name).map(|plan| {
         (
-            plan.with_time_zone(context.zone().clone()).with_virtual_columns(
+            plan.with_unique_columns(physical_columns.iter().filter_map(|column| {
+                unique_by_schema(table, false, column.id).then_some(column.id)
+            }))
+            .with_time_zone(context.zone().clone())
+            .with_virtual_columns(
                 physical_columns
                     .iter()
                     .filter(|column| crate::generated_column::is_virtual(*column))
@@ -372,5 +374,56 @@ fn kv_analyze_plan(
             source_positions,
             source_indexes,
         )
+    })
+}
+
+/// Applies Go statistics `UniqueBySchema` to the in-process public catalog.
+#[must_use]
+pub fn unique_by_schema(table: &KvTable, is_index: bool, id: i64) -> bool {
+    schema_unique_item(table, is_index, id, false)
+}
+
+/// Applies Go globalstats `isLocalUnique` to the same catalog representation.
+#[must_use]
+pub fn is_local_unique(table: &KvTable, is_index: bool, id: i64) -> bool {
+    schema_unique_item(table, is_index, id, true)
+}
+
+fn schema_unique_item(table: &KvTable, is_index: bool, id: i64, local_only: bool) -> bool {
+    table.indexes().iter().any(|index| {
+        if local_only && index.global {
+            return false;
+        }
+        // This catalog exposes public indexes; project their metadata into
+        // the shared statistics predicate instead of maintaining a second rule.
+        let metadata = tidb_model::IndexInfo {
+            state: tidb_model::SchemaState::PUBLIC,
+            unique: index.unique,
+            primary: index.clustered_primary || index.name.eq_ignore_ascii_case("PRIMARY"),
+            condition_expr_string: table
+                .partial_index_condition_string(index.id)
+                .unwrap_or_default(),
+            columns: index
+                .column_offsets
+                .iter()
+                .enumerate()
+                .map(|(position, offset)| tidb_model::IndexColumn {
+                    offset: *offset as i64,
+                    length: index.prefix_length(position),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..Default::default()
+        };
+        tidb_stats::index::is_single_col_non_prefix_unique_index(&metadata)
+            && if is_index {
+                index.id == id
+            } else {
+                table
+                    .columns()
+                    .get(index.column_offsets[0])
+                    .is_some_and(|column| column.id == id)
+            }
     })
 }

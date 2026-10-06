@@ -1,0 +1,272 @@
+{
+  "date": "2026-10-06",
+  "base": "16d92bb829d7ba842d70d380c4f6f4c279b78936",
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "native_head": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Connected current-Go statistics maintenance: shared schema uniqueness and exact non-NULL ANALYZE NDV; local-unique partition NDV in blocking, asynchronous and in-process consumers; FM-sketch JSON, canonical table, LOAD STATS write and dump preservation. Retire duplicate in-process global sketch merging. Four related statistics gaps and T01 restricted-statement tombstone lock policy repaired; T01 stays partial and no complete package is newly accepted.",
+  "source": {
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "files": [
+      {
+        "file": "pkg/statistics/index.go",
+        "sha256": "1c9e607d31fac59292d7d5379bad009622f91f12597bb8dfcd8e49f39d3cdf86"
+      },
+      {
+        "file": "pkg/statistics/builder.go",
+        "sha256": "50d70be5726fdd2b697ed06d12d1983d28d851f365aa7f1416ec65c47e15b6cd"
+      },
+      {
+        "file": "pkg/statistics/sample.go",
+        "sha256": "8eefa5c1e9964164bf684489f15f4fddb649b7f8a1c66191f978836642ebb4d0"
+      },
+      {
+        "file": "pkg/executor/analyze_col_sampling.go",
+        "sha256": "ec980dfdecf50b5993d2200ace2e88c55a447d816b3183458e66a26e7305cc92"
+      },
+      {
+        "file": "pkg/statistics/handle/globalstats/global_stats.go",
+        "sha256": "0e56a3d095fcc918f5dba02d616d55d10a2cd1a5df3c151fe464ffafc5ffb077"
+      },
+      {
+        "file": "pkg/statistics/handle/globalstats/global_stats_async.go",
+        "sha256": "37890992d3e248fe439196ee3d25b27df162c66b2bb8ebe1ab40628b3a9e1cf1"
+      },
+      {
+        "file": "pkg/statistics/handle/globalstats/global_stats_test.go",
+        "sha256": "0a3b11b3dca6280c9d20a6a542e4b375e01129e1535afc37fb28f37448bed881"
+      },
+      {
+        "file": "pkg/statistics/handle/storage/json.go",
+        "sha256": "dfceb5c3dbfabe0789d1cc5ef89fe9da84f177051d6346b26fb81c62ec95043d"
+      },
+      {
+        "file": "pkg/statistics/handle/storage/save.go",
+        "sha256": "ac7b26bcb25524b6ecee81821cb8e0a7324511beef4d379fcc224c1b1d825591"
+      },
+      {
+        "file": "pkg/statistics/handle/storage/stats_read_writer.go",
+        "sha256": "051022ab495b3781c538fe7966bd7d6aaf0ca5b8bcba38292c7a798014035c35"
+      },
+      {
+        "file": "pkg/statistics/handle/storage/dump_test.go",
+        "sha256": "02ff8875fea15f1f616da8a29737eaf72bba491ab4b6a437a894828502e6666e"
+      },
+      {
+        "file": "pkg/statistics/fmsketch.go",
+        "sha256": "b2595e4ae5aa5aec913949084d1a49b17cf8c4c92b54cf0aa33345428616ce6c"
+      },
+      {
+        "file": "pkg/statistics/histogram.go",
+        "sha256": "373ee0a9835e6d89f549c0561539ee8034226f2bb5938a22a0b17b6506f9d03d"
+      },
+      {
+        "file": "pkg/table/tables/index.go",
+        "sha256": "8524c014d3edfa022bc37c1626857e84508df20b7221daef69e63a6c456162a5"
+      }
+    ]
+  },
+  "package_acceptance": false,
+  "baseline": {
+    "rust_failed": 5,
+    "tcp_failed": 3,
+    "tcp_passed": 12,
+    "failures": [
+      "unique non-NULL NDV uses estimate 1 instead of count 5",
+      "local-unique merge uses estimated NDV 2 instead of exact 4",
+      "index JSON load loses FM sketch",
+      "cluster loaded-column carrier loses FM sketch",
+      "LOAD STATS durable writer deletes supplied FM sketch"
+    ],
+    "tcp_failed_checks": [
+      "both sketches persisted",
+      "cleared column and replaced index",
+      "partition global exact NDV mode 0"
+    ]
+  },
+  "tests": {
+    "unit": [
+      {
+        "passed": 49,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 249
+      },
+      {
+        "passed": 19,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 1532
+      }
+    ],
+    "storage_and_statistics": [
+      {
+        "passed": 61,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 425
+      },
+      {
+        "passed": 48,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 169
+      }
+    ],
+    "session": [
+      {
+        "passed": 23,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 2000
+      }
+    ],
+    "restricted_lock_and_writer": [
+      {
+        "passed": 20,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 279
+      }
+    ]
+  },
+  "distinct_rust_tests_passed": 220,
+  "followup_regression": {
+    "before_rust_failed": 1,
+    "before_tcp_failed": 2,
+    "before_tcp_passed": 13,
+    "cause": "Restricted pessimistic locking applied a lazy absence check despite the authoritative MemDB tombstone; preserve the existing assertion and fresh-key checks."
+  },
+  "wire": {
+    "passed": 15,
+    "failed": 0,
+    "checks": [
+      "load column and index sketches",
+      "both sketches persisted",
+      "replace and clear sketches",
+      "cleared column and replaced index",
+      "load absent sketches",
+      "absent sketches delete old rows",
+      "analyze unique nullable values",
+      "unique column and index exact NDV",
+      "unique TopN suppressed",
+      "partition analyze mode 0",
+      "partition global exact NDV mode 0",
+      "global sketches absent mode 0",
+      "partition analyze mode 1",
+      "partition global exact NDV mode 1",
+      "global sketches absent mode 1"
+    ],
+    "binary_sha256": "5a12f3c21775d4347bdf90609985be41f9bfdd1bbcc519641734e1c58f8a17d7",
+    "store": "unistore"
+  },
+  "gates": {
+    "all_targets_check": true,
+    "make_lint": true,
+    "locked_server_build": true,
+    "actual_hook_and_immediate_prepush_build": "required; verified in external final-handoff.json after commit"
+  },
+  "validation_commands": [
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-exec --lib -- cluster_table_storage::tests:: system_row_write::tests:: --test-threads=1",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-server --all-targets",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-executor -p tidb-exec --lib --no-fail-fast -- stats_ndv_batch cluster_analyze:: cluster_load_stats:: cluster_stats_dump:: real_tikv_analyze::tests:: load_stats:: analyze:: --test-threads=1",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-stats -p tidb-exec --test all --no-fail-fast -- stats_ndv_batch builder_source:: index_source:: global_stats_source:: pkg_statistics_go_tests_source:: analyze_commit_size_source:: analyze_generated_column_source:: analyze_added_column_source:: --test-threads=1",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- tests_analyze:: --test-threads=1",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-stats -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+    "cd /workspace/tidb && make lint",
+    "cd /workspace/tidb/rust && CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server",
+    "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/stats-ndv-batch/wire.py after"
+  ],
+  "activation": "source /workspace/.cloud-setup/env.sh in every shell before these commands",
+  "recovery_notes": [
+    "Missing production TableInfo qualification and test-only CiString constructor compile errors corrected. An unapplied constructor fix was caught and retried from the correct checkout directory.",
+    "Initial external wire probe used packed repeated protobuf expectations. Corrected to Go proto2 non-packed encoding before the final baseline: the same original binary still fails both sketch checks. No production encoder change.",
+    "Changed-region formatting preserves normalized source; one overlapping formatting hunk required choosing the formatted current lines."
+  ],
+  "log_directory": "/workspace/.cloud-setup/stats-ndv-batch",
+  "logs": {
+    "before-unit.log": {
+      "sha256": "f15f69594bb855b03d36c982386f913aae82568c675e3e8f7f668cbaea85d386"
+    },
+    "before-storage.log": {
+      "sha256": "7bbc879bec325cc5653200407fe2145d818ae55d3875e15a4dcf2fed0d0fdacd"
+    },
+    "before-expanded-wire.json": {
+      "sha256": "756fcc920b583ea938609f5c44e30881115f69020195694a110b09a5e5e69ee7"
+    },
+    "after-unit.log": {
+      "sha256": "d5e6f8ba267da9166b7b70e6bc0f8b43060e5c127e9a327459c1a81849886497"
+    },
+    "after-storage.log": {
+      "sha256": "44298c79f6dba814aab49f8274d70040f99e849cec51b53e9e5b2c4a897d5733"
+    },
+    "session-tests.log": {
+      "sha256": "a0d342fc102e8c175041f32375c7fef2d404242cb473212e6c99b0105f271cde"
+    },
+    "check.log": {
+      "sha256": "4384c134766971dd42b1b1d3eb87e964b0239f0be1922e86c60ebed1fa0181c8"
+    },
+    "lint.log": {
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    },
+    "server-build.log": {
+      "sha256": "b5441c5acd7071e40a06b5085886e0660b4b0a5b4f5eaf7a396798435a74f117"
+    },
+    "after-wire.json": {
+      "sha256": "aabaf08050178145429dced0cb950513ddd53117476c87a8d8bf36e375f7e555"
+    },
+    "format-validation.json": {
+      "sha256": "925b896e14737237ccb44232859d274aee35e3209011d9806daa6dc226f679e9"
+    },
+    "before-reinsert.log": {
+      "sha256": "7f3904aaba05838db8725ce6fce9c5a635f6abb65139f851848bdce11b84de72"
+    },
+    "before-reinsert-wire.json": {
+      "sha256": "25563bd71953182ad73806b07f88d377787a9e223478b3307890f41952748643"
+    },
+    "after-reinsert.log": {
+      "sha256": "71ccbbdfbd3f178bab4b4172d7da5ae1f58287bb673e07f10ada174a928fa6e1"
+    },
+    "reinsert-check.log": {
+      "sha256": "3832f87353198594e04f7ac84d2e022ebbdea0af5cd7b6bd582f40f00e5919f5"
+    },
+    "reinsert-server-build.log": {
+      "sha256": "83783f250b0d9d4fa66cd9db422892d09f0f1a0eed868e884ba56e0eaeb0f9d2"
+    }
+  },
+  "limits": [
+    "No complete upstream package acceptance.",
+    "No full Go suite, live multi-node TiKV or workload performance validation.",
+    "T01 is freshly advanced and remains partial; the other 55 unresolved roots retain earlier evidence. All 56 keep their dispositions.",
+    "Previously recorded DDL/parser/table-differential failures were not rerun or removed.",
+    "Cloud draft persistence is separate from Publish and fresh-instance restore."
+  ],
+  "changed_production_and_test_files": [
+    "rust/crates/tidb-exec/src/cluster_analyze.rs",
+    "rust/crates/tidb-exec/src/cluster_load_stats.rs",
+    "rust/crates/tidb-exec/src/cluster_stats_load.rs",
+    "rust/crates/tidb-exec/src/cluster_stats_write.rs",
+    "rust/crates/tidb-exec/src/cluster_table_storage.rs",
+    "rust/crates/tidb-exec/src/real_tikv_analyze.rs",
+    "rust/crates/tidb-exec/tests/analyze_commit_size_source.rs",
+    "rust/crates/tidb-executor/src/analyze.rs",
+    "rust/crates/tidb-executor/src/analyze/kv.rs",
+    "rust/crates/tidb-executor/src/load_stats.rs",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+    "rust/crates/tidb-server/src/cluster_session_node/tests/transactions.rs",
+    "rust/crates/tidb-server/src/cluster_session_node/transactions.rs",
+    "rust/crates/tidb-session/src/analyze_arm.rs",
+    "rust/crates/tidb-session/src/tests_analyze.rs",
+    "rust/crates/tidb-stats/src/builder.rs",
+    "rust/crates/tidb-stats/src/global_stats.rs",
+    "rust/crates/tidb-stats/src/index.rs",
+    "rust/crates/tidb-stats/tests/builder_source.rs",
+    "rust/crates/tidb-stats/tests/index_source.rs",
+    "rust/crates/tidb-stats/tests/pkg_statistics_go_tests_source.rs"
+  ]
+}

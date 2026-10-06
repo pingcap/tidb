@@ -1419,6 +1419,7 @@ pub fn lock_pessimistic_statement<
     transaction.bind_mutation_buffer(staged);
     let result = lock_pessimistic_statement_with(
         transaction.start_ts(),
+        staged,
         |read_ts| {
             match read_ts {
                 Some(for_update_ts) => transaction.snapshot_at_for(for_update_ts, true),
@@ -1507,8 +1508,11 @@ fn record_lock_retries(retries: usize) {
     });
 }
 
+/// Rebuilds and locks one restricted statement against the transaction's
+/// existing MemDB, preserving a prior deletion's observed absence.
 pub fn lock_pessimistic_statement_with<T>(
     start_ts: u64,
+    staged: &MutationBuffer,
     mut snapshot: impl FnMut(Option<u64>) -> Result<Box<dyn ClusterSnapshot>, String>,
     mut lock: impl FnMut(
         Vec<Vec<u8>>,
@@ -1524,6 +1528,16 @@ pub fn lock_pessimistic_statement_with<T>(
             snapshot(retry_read_ts).map_err(PessimisticStatementTransactionError::Build)?;
         let (value, mutations) =
             build(snapshot, start_ts).map_err(PessimisticStatementTransactionError::Build)?;
+        // Go index.Create disables lazyCheck after GetLocal returns a
+        // tombstone. Restricted SQL plans have not staged this statement yet,
+        // so use the shared transaction buffer before selecting lock flags.
+        let presumes_absence = |mutation: &BufferMutation| {
+            mutation.presume_not_exists()
+                && !matches!(
+                    staged.get(&Key::from_bytes(mutation.key().to_vec())),
+                    Some(None)
+                )
+        };
         let mut keys = mutations
             .iter()
             .filter(|mutation| mutation.kind() == tidb_txnkv::transaction::BufferMutationOp::Lock)
@@ -1534,7 +1548,7 @@ pub fn lock_pessimistic_statement_with<T>(
                     tidb_txnkv::transaction::BufferMutationOp::Lock => return None,
                     _ => Some(mutation.value()),
                 };
-                let flags = if mutation.presume_not_exists() {
+                let flags = if presumes_absence(mutation) {
                     tikv_client::kv::apply_flags_ops(
                         Default::default(),
                         &[tikv_client::kv::FlagsOp::SetPresumeKeyNotExists],
@@ -1557,7 +1571,7 @@ pub fn lock_pessimistic_statement_with<T>(
         }
         let presume_not_exists = mutations
             .iter()
-            .filter(|mutation| mutation.presume_not_exists())
+            .filter(|mutation| presumes_absence(mutation))
             .map(|mutation| mutation.key().to_vec())
             .filter(|key| keys.binary_search(key).is_ok())
             .collect::<BTreeSet<_>>();
@@ -2016,6 +2030,57 @@ fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stats_ndv_batch_reinsert_does_not_lock_a_tombstone_as_absent() {
+        use tidb_txnkv::AssertionOp;
+        let staged = MutationBuffer::new();
+        stage_mutations(
+            &staged,
+            vec![BufferMutation::delete_existing(b"deleted".to_vec()).unwrap()],
+        )
+        .unwrap();
+        let (_, mutations) = lock_pessimistic_statement_with(
+            1,
+            &staged,
+            |_| Ok(Box::new(MapSnapshot(BTreeMap::new()))),
+            |keys, presume, _| {
+                assert_eq!(presume, BTreeSet::from([b"fresh".to_vec()]));
+                Ok(LockKeysOutcome::Locked {
+                    for_update_ts: 2,
+                    newly_locked: keys,
+                })
+            },
+            |_, _| {
+                Ok((
+                    (),
+                    [b"deleted".as_slice(), b"fresh".as_slice()]
+                        .into_iter()
+                        .map(|key| {
+                            BufferMutation::set_with_flags(
+                                key.to_vec(),
+                                b"new".to_vec(),
+                                true,
+                                AssertionOp::AssertUnknown,
+                            )
+                            .unwrap()
+                        })
+                        .collect(),
+                ))
+            },
+        )
+        .unwrap();
+        stage_mutations(&staged, mutations).unwrap();
+        assert_eq!(
+            staged.presume_not_exists_keys(),
+            BTreeSet::from([b"fresh".to_vec()])
+        );
+        let native = staged.take_native_buffer();
+        assert!(native
+            .get_flags_readonly(b"deleted")
+            .unwrap()
+            .has_assert_exist());
+    }
 
     #[test]
     fn coprocessor_snapshot_timestamp_follows_the_statement_retry() {

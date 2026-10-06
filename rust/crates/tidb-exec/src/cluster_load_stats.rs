@@ -286,7 +286,7 @@ fn loaded_columns(table: &Table) -> Vec<ClusterStatsItem> {
                 histogram: column.histogram.clone(),
                 topn: column.top_n.clone(),
                 cms: column.cmsketch.clone(),
-                fm_sketch: None,
+                fm_sketch: column.fm_sketch.clone(),
             }
         })
         .collect()
@@ -310,7 +310,7 @@ fn loaded_indexes(table: &Table) -> Vec<ClusterStatsItem> {
                 histogram: index.histogram.clone(),
                 topn: index.top_n.clone(),
                 cms: index.cmsketch.clone(),
-                fm_sketch: None,
+                fm_sketch: index.fm_sketch.clone(),
             }
         })
         .collect()
@@ -409,6 +409,24 @@ mod tests {
         );
         assert!(prepare_cluster_load_stats("analyze table t").is_none());
         assert!(prepare_cluster_load_stats("load stats").is_none());
+    }
+
+    #[test]
+    fn stats_ndv_batch_loaded_columns_retain_sketches() {
+        let mut json = json(3);
+        json.columns
+            .as_mut()
+            .unwrap()
+            .get_mut("a")
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .fm_sketch = Some(tidb_stats::JsonFmSketch {
+            mask: 3,
+            hashset: Some(vec![4, 8, 12]),
+        });
+        let loaded = lower_cluster_load_stats(&catalog(), &json).unwrap();
+        assert_eq!(loaded[0].columns[0].fm_sketch.as_ref().unwrap().ndv(), 12);
     }
 
     #[test]

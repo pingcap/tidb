@@ -176,3 +176,31 @@ pub fn copy_index(index: Option<&Index>) -> Option<Index> {
 pub fn index_is_all_evicted(index: Option<&Index>) -> bool {
     index.is_none_or(Index::is_all_evicted)
 }
+
+/// Go `IsSingleColNonPrefixUniqueIndex`: only a public, unconditional full
+/// single-column key proves distinctness of every non-NULL value.
+#[must_use]
+pub fn is_single_col_non_prefix_unique_index(index: &tidb_model::IndexInfo) -> bool {
+    index.state == tidb_model::SchemaState::PUBLIC
+        && (index.unique || index.primary)
+        && index.columns.len() == 1
+        && !index.has_prefix_index()
+        && !index.has_condition()
+}
+
+/// Go `UniqueBySchema`, including primary and invisible indexes.
+#[must_use]
+pub fn unique_by_schema(table: &tidb_model::TableInfo, is_index: bool, id: i64) -> bool {
+    table.indices.iter_deref().any(|index| {
+        let index = index.read();
+        is_single_col_non_prefix_unique_index(&index)
+            && if is_index {
+                index.id == id
+            } else {
+                table
+                    .columns
+                    .get(index.columns.get(0).unwrap().read().offset as usize)
+                    .is_some_and(|column| column.read().id == id)
+            }
+    })
+}
