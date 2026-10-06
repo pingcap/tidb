@@ -3277,6 +3277,9 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
 }
 
 #[cfg(test)]
+mod detacher_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::plan_trace::range_text;

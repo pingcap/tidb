@@ -2079,6 +2079,13 @@ mod tests {
         let lt = func("lt", vec![Expression::Column(a.clone()), int_const(9)]);
         let removed = remove_conditions(&[gt.clone(), lt.clone()], &[gt.clone()]);
         assert_eq!(removed.len(), 1);
+        let duplicates = append_conditions_if_not_exist(
+            vec![lt.clone()],
+            &[gt.clone(), gt.clone(), lt.clone()],
+        );
+        assert_eq!(duplicates.len(), 3);
+        assert!(duplicates[1].equal(&gt) && duplicates[2].equal(&gt));
+        assert!(remove_conditions(&[], &[gt.clone()]).is_empty());
         let appended = append_conditions_if_not_exist(removed, &[gt.clone(), lt]);
         assert_eq!(appended.len(), 2, "the existing lt does not duplicate");
     }

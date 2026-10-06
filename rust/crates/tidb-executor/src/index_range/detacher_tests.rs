@@ -1,0 +1,82 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Range-detachment cases exercised through the live executor index-range owner.
+
+use super::RangeColumn;
+use crate::plan_trace::range_text;
+use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone};
+
+fn parse_where(expression: &str) -> tidb_ast::Expr {
+    let statement = tidb_parser::parse(&format!("SELECT * FROM t WHERE {expression}"))
+        .expect("boundary expression parses");
+    let tidb_ast::Stmt::Query(query) = statement else {
+        panic!("expected query")
+    };
+    let tidb_ast::QueryStmt::Select(select) = &*query else {
+        panic!("expected select")
+    };
+    select.where_clause.clone().expect("expected WHERE")
+}
+
+fn rendered_index_range(columns: &[&str], expression: &str) -> String {
+    let columns = columns
+        .iter()
+        .map(|name| {
+            RangeColumn::whole((*name).to_owned(), FieldType::new(FieldTypeCode::LongLong))
+        })
+        .collect::<Vec<_>>();
+    let predicate = parse_where(expression);
+    let detached = crate::index_range::detach_cond_and_build_range_for_index(
+        &columns,
+        &predicate,
+        &tidb_expr::rewriter::ZonedNoResolver::new(SessionTimeZone::utc()),
+    )
+    .expect("predicate has an index range");
+    detached
+        .ranges
+        .iter()
+        .map(range_text)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[test]
+fn executor_index_detacher_keeps_dnf_and_prefix_boundaries() {
+    assert_eq!(rendered_index_range(&["a"], "a = 1 OR a = 2"), "[1,2]");
+    assert_eq!(
+        rendered_index_range(&["a", "b"], "a = 1 AND b > 2"),
+        "(1 2,1 +inf]"
+    );
+}
+
+#[test]
+fn executor_column_detacher_intersects_and_retains_residual() {
+    let column = RangeColumn::whole("a".to_owned(), FieldType::new(FieldTypeCode::LongLong));
+    let low = parse_where("a >= 3");
+    let high = parse_where("a <= 7");
+    let residual = parse_where("b = 9");
+    let detached = crate::index_range::detach_conds_for_column(
+        &column,
+        &[&low, &high, &residual],
+        &tidb_expr::rewriter::ZonedNoResolver::new(SessionTimeZone::utc()),
+    )
+    .expect("valid column range");
+    assert_eq!(detached.access_count, 2);
+    assert_eq!(detached.residual, vec![&residual]);
+    assert_eq!(
+        detached.ranges.iter().map(range_text).collect::<Vec<_>>(),
+        vec!["[3,7]"]
+    );
+}

@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [planner harness consolidation](planner-harness-cleanup-validation.json). Consolidate 35 planner primitive suites (113 tests) into tidb-planner/tests/all.rs; remove the redundant difftest-planner-tests package, manifest, workspace member and lock entry. Preserve all 36 moved source files byte-for-byte and update current commands.
+Latest cleanup: [superseded planner models](planner-model-cleanup-validation.json). Retire unused PlanNode metadata tree, normalized RangePredicate detacher and duplicate executor condition-list helpers: five files and eleven private tests removed, 827 net Rust lines deleted. Preserve two real index-range tests under their owner and duplicate-candidate semantics on the live Expression helper.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

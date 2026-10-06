@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-06",
+  "base": "887c4d9f4c483d581f0f2cc0893398a3686a93f9",
+  "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17",
+  "scope": "Retire unused PlanNode metadata tree, normalized RangePredicate detacher and duplicate executor condition-list helpers: five files and eleven private tests removed, 827 net Rust lines deleted. Preserve two real index-range tests under their owner and duplicate-candidate semantics on the live Expression helper.",
+  "go_owners": [
+    "pkg/planner/core/operator/baseimpl/plan.go::Plan",
+    "pkg/util/ranger/detacher.go::detachColumnCNFConditions,detachColumnDNFConditions,removeConditions,AppendConditionsIfNotExist"
+  ],
+  "live_rust_owners": [
+    "tidb-planner/src/plan_base.rs",
+    "tidb-planner/src/physical/mod.rs",
+    "tidb-planner/src/ranger/detacher.rs",
+    "tidb-executor/src/index_range.rs"
+  ],
+  "continuity": {
+    "removed_files": 5,
+    "removed_private_tests": 11,
+    "moved_live_tests": 2,
+    "net_rust_lines_removed": 827,
+    "retained_test_and_helper_bodies_unchanged": true,
+    "retained_production_function_bodies_unchanged": true,
+    "remaining_executable_references": 0,
+    "finding_dispositions_unchanged": true,
+    "index_column_original_go_cases_retained": true
+  },
+  "removed": [
+    {
+      "path": "rust/crates/tidb-planner/src/plan.rs",
+      "sha256": "4cf2005321d4a5bdf46fe1d61eb09352e6f24e3c53010e6f7a60fa4177e945ef",
+      "lines": 161,
+      "tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/range_detacher.rs",
+      "sha256": "6ed2afa2e60ba171a0f3541afd9b65aa62a6b0fefed41f9bbf6e721ea2e7e141",
+      "lines": 358,
+      "tests": 0
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/primitives/plan.rs",
+      "sha256": "57f1477d5ab2aa3fd8939c18c0a8d302a5f00ab02551b7ae5c62496360ca6da3",
+      "lines": 85,
+      "tests": 3
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/primitives/range_detacher.rs",
+      "sha256": "2c38cf150cadb5761f762cf17ed53b2c30ddebec3de7987faaba571d0e0aa5ea",
+      "lines": 91,
+      "tests": 4
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/ranger_detacher.rs",
+      "sha256": "efa0756d3018e83ef9dffae16e8a408368775b7787a0b4f14e4a44845b1bf59b",
+      "lines": 218,
+      "tests": 6
+    }
+  ],
+  "tests": {
+    "owner_batch": [
+      {
+        "package": "tidb-executor",
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "package": "tidb-planner",
+        "passed": 21,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  "test_command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-planner -p tidb-executor --lib -- ranger::detacher::tests:: plan_base::tests:: physical::tests::tree_construction_and_base_accessors index_range::detacher_tests:: --test-threads=1",
+  "checks": {
+    "make_lint": true,
+    "continuity": true,
+    "git_diff_check": true
+  },
+  "artifact_cleanup": {
+    "old_archives_removed": 3,
+    "bytes": 434931470,
+    "evidence": "/workspace/.cloud-setup/planner-model-cleanup/pruned-artifacts.json"
+  },
+  "publication": "Actual hook, fresh pre-push locked build, remote SHA and Cloud checkpoint recorded after commit in /workspace/.cloud-setup/planner-model-cleanup/final-handoff.json",
+  "limits": [
+    "No complete Go package acceptance or finding closure",
+    "No measured runtime/build speedup",
+    "No full Go suite, all-target test sweep, live cluster or benchmark",
+    "Go FM-sketch JSON/storage delta not implemented by this cleanup"
+  ]
+}

@@ -74,8 +74,7 @@
 //! [`find_best_task`] form the live ordinary SELECT optimizer. The executor
 //! driver supplies catalog/session inputs and mechanically lowers the selected
 //! physical receipt; it must not re-enumerate access, join, or aggregation
-//! alternatives. [`plan::PlanNode`] remains an explain-only metadata view and
-//! is not a second plan representation — see its module header.
+//! alternatives. EXPLAIN derives metadata from the same physical tree.
 
 pub mod access;
 pub mod access_path;
@@ -113,7 +112,6 @@ pub mod physical;
 pub mod physical_plan_cache;
 pub mod physical_property;
 pub mod physical_table_reader;
-pub mod plan;
 pub mod plan_base;
 pub mod plan_builder;
 pub mod plan_cache_lru;
@@ -121,7 +119,6 @@ pub mod plan_cache_instance;
 pub mod plan_cost_ver2;
 pub mod prepared_dml;
 pub mod pushdown;
-pub mod range_detacher;
 pub mod ranger;
 pub mod read_only_scan;
 pub mod transaction_control;

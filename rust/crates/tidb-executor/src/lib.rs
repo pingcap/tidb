@@ -118,7 +118,6 @@ pub mod parallel_sort_spill_helper;
 pub mod partition_pruning;
 pub mod partition_routing;
 mod physical_cte;
-pub(crate) mod ranger_detacher;
 pub mod select_lock;
 #[cfg(test)]
 mod tests_aggfuncs_approx_pushdown_source;

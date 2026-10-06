@@ -1,5 +1,13 @@
 # `pkg/planner/cardinality` — Go-master parity receipt
 
+Current maintenance note (2026-10-06): the unused normalized planner range
+model and executor integer-list helpers are retired. Their historical results
+below are not current test commands. Live expression detachment is owned by
+`tidb-planner/src/ranger/detacher.rs`; the two retained executor range tests
+now run under `index_range::detacher_tests::`. See
+[cleanup evidence](../../docs/parity/current-audit/planner-model-cleanup-validation.json).
+
+
 Current status (2026-09-25): **incomplete**. Work is committed on
 `hparser-integration`; newer checkpoint sections below supersede historical
 failure reports. Ordinary and union estimation share version dispatch,

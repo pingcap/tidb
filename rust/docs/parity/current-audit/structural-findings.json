@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "planner-harness-cleanup-validation.json",
-    "scope": "Consolidate 35 planner primitive suites (113 tests) into tidb-planner/tests/all.rs; remove the redundant difftest-planner-tests package, manifest, workspace member and lock entry. Preserve all 36 moved source files byte-for-byte and update current commands.",
+    "receipt": "planner-model-cleanup-validation.json",
+    "scope": "Retire unused PlanNode metadata tree, normalized RangePredicate detacher and duplicate executor condition-list helpers: five files and eleven private tests removed, 827 net Rust lines deleted. Preserve two real index-range tests under their owner and duplicate-candidate semantics on the live Expression helper.",
     "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17"
   },
   "test_cleanup_history": [
@@ -1134,6 +1134,11 @@
     {
       "receipt": "planner-harness-cleanup-validation.json",
       "scope": "Consolidate 35 planner primitive suites (113 tests) into tidb-planner/tests/all.rs; remove the redundant difftest-planner-tests package, manifest, workspace member and lock entry. Preserve all 36 moved source files byte-for-byte and update current commands.",
+      "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17"
+    },
+    {
+      "receipt": "planner-model-cleanup-validation.json",
+      "scope": "Retire unused PlanNode metadata tree, normalized RangePredicate detacher and duplicate executor condition-list helpers: five files and eleven private tests removed, 827 net Rust lines deleted. Preserve two real index-range tests under their owner and duplicate-candidate semantics on the live Expression helper.",
       "go_master": "5b7e1eb8f5f8252391b6e68330d1648a26a80c17"
     }
   ],
