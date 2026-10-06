@@ -3305,7 +3305,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Go's count, histogram text, CMSketch, TopN, and existence-map semantics;
   current/detached probes, owner checks, and Ready gates pass. Details are in
   `receipts/statistics_handle_internal.md` and
-  `docs/operations/statistics-handle-internal-audit-execplan.md`.
+  [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-internal-audit-execplan.md).
 
 - 2026-09-02: refreshed the complete Go-master
   `pkg/statistics/handle/logutil` boundary at
@@ -3316,7 +3316,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   admission, and five-/ten-minute window behavior. Current/detached probes,
   owner checks, and Ready gates pass. Details are in
   `receipts/statistics_handle_logutil.md` and
-  `docs/operations/statistics-handle-logutil-audit-execplan.md`.
+  [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-logutil-audit-execplan.md).
 
 - 2026-09-02: refreshed the complete Go-master
   `pkg/statistics/handle/util/test` support boundary at
@@ -3326,7 +3326,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   strict Go assertion, TiKV request-source extraction, and exact diagnostic
   text; current/detached probes, owner checks, and Ready gates pass. Details
   are in `receipts/statistics_handle_util_test.md` and
-  `docs/operations/statistics-handle-util-test-audit-execplan.md`.
+  [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-util-test-audit-execplan.md).
 
 - 2026-09-02: corrected the complete Go-master
   `pkg/statistics/handle/util` boundary at
@@ -3339,7 +3339,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Go package variants, 21 Rust owner tests, 258 statistics consumer tests,
   the server compile, and Ready gates pass. Details are in
   `receipts/statistics_handle_util.md` and
-  `docs/operations/statistics-handle-util-audit-execplan.md`.
+  [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-util-audit-execplan.md).
 
 - 2026-09-02: refreshed the complete Go-master
   `pkg/util/servermemorylimit` inventory at
@@ -5540,7 +5540,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   source-vs-owner behavior gap or Rust-only production path; the native
   benchmark harness adaptation is documented. Inventory and Ready gates are
   in `receipts/statistics_handle_usage_indexusage.md` and
-  `docs/operations/statistics-handle-usage-indexusage-audit-execplan.md`.
+  [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-usage-indexusage-audit-execplan.md).
 - 2026-08-29: completed the pinned Go
   `pkg/statistics/handle/usage/collector` package in the distinct
   `tidb-stats-handle-usage-collector` owner. Moved its three source tests out
@@ -5551,7 +5551,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   behavior gap or Rust-only production path; the nil `closeCh` close regression
   remains executable. Inventory and Ready gates are in
   `receipts/statistics_handle_usage_collector.md` and
-  `docs/operations/statistics-handle-usage-collector-audit-execplan.md`.
+  [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-usage-collector-audit-execplan.md).
 - 2026-08-29: completed the pinned Go
   `pkg/statistics/handle/internal` support package in
   `tidb-stats-handle-internal`. Removed Rust's opaque, caller-encoded table
@@ -6357,41 +6357,41 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       contracts, and replace its four ignored source tests with executable
       behavior. The current Go-master inventory, corrections, and Ready gates
       are in `receipts/statistics_handle_util.md` and
-      `docs/operations/statistics-handle-util-audit-execplan.md`.
+      [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-util-audit-execplan.md).
 - [x] Complete the pinned `pkg/statistics/handle/util/test` support package in
       `tidb-stats-handle-util-test`: match a typed request context, preserve
       the wrong-type panic and exact description, remove the string-only
       predicate and its two supplemental tests, and make ordinary `StatsCtx`
       carry the matching request source. The current Go-master inventory and
       Ready gates are in `receipts/statistics_handle_util_test.md` and
-      `docs/operations/statistics-handle-util-test-audit-execplan.md`.
+      [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-util-test-audit-execplan.md).
 - [x] Complete the pinned `pkg/statistics/handle/logutil` package in
       `tidb-stats-handle-logutil`: preserve all four category-tagged logger
       constructors and both source sampling policies over the shared logutil
       owner, without adding tests to the source-test-free package. The current
       Go-master inventory and Ready gates are in
       `receipts/statistics_handle_logutil.md` and
-      `docs/operations/statistics-handle-logutil-audit-execplan.md`.
+      [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-logutil-audit-execplan.md).
 - [x] Complete the pinned `pkg/statistics/handle/internal` support package in
       `tidb-stats-handle-internal`: replace the opaque snapshot workaround
       with `AssertTableEqual` over actual statistics tables, and remove its
       three non-Go tests. The current Go-master inventory and Ready gates are
       in `receipts/statistics_handle_internal.md` and
-      `docs/operations/statistics-handle-internal-audit-execplan.md`.
+      [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-internal-audit-execplan.md).
 - [x] Complete the pinned `pkg/statistics/handle/usage/collector` package in
       `tidb-stats-handle-usage-collector`: preserve both bounded channels,
       synchronous timeout escalation, worker priority/drain/close behavior,
       and all three source tests while removing the supplemental capacity
       assertion. The atomic inventory and Ready gates are in
       `receipts/statistics_handle_usage_collector.md` and
-      `docs/operations/statistics-handle-usage-collector-audit-execplan.md`.
+      [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-usage-collector-audit-execplan.md).
 - [x] Complete the pinned `pkg/statistics/handle/usage/indexusage` package in
       `tidb-stats-handle-usage-indexusage`: own the real model-driven GC,
       samples, global/session/statement collectors, four source tests, and
       parallel benchmark; remove narrowed and duplicate aggregate surfaces.
       The atomic inventory and Ready gates are in
       `receipts/statistics_handle_usage_indexusage.md` and
-      `docs/operations/statistics-handle-usage-indexusage-audit-execplan.md`.
+      [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-usage-indexusage-audit-execplan.md).
 - [x] Audit the pinned parent `pkg/statistics/handle/usage` package as one
       atomic unit and remove its disconnected key, pending-ID,
       transaction-mode, SQL-string, empty-test, and function-batch carriers.
@@ -6406,7 +6406,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       and remove the generic value, extra method, and source-absent mock tests.
       The atomic inventory and Ready gates are in
       `receipts/statistics_handle_cache_internal.md` and
-      `docs/operations/statistics-handle-cache-internal-audit-execplan.md`.
+      [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-cache-internal-audit-execplan.md).
 - [x] Re-audit the complete `pkg/statistics/handle/cache/internal/mapcache`
       package at Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two
       production/build artifacts and 151 lines, with no hidden variants or
@@ -6415,7 +6415,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       the complete cache contract, and adds only the synchronization required
       by shared Rust cache ownership. The receipt, focused owner tests, and
       Ready gates are in `receipts/statistics_handle_cache_internal_mapcache.md`
-      and `docs/operations/statistics-handle-cache-internal-mapcache-audit-execplan.md`.
+      and [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-cache-internal-mapcache-audit-execplan.md).
 - [x] Re-audit the complete `pkg/statistics/handle/cache/internal/lfu` unit at
       Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: all five source and
       BUILD artifacts (782 lines), ten race-enabled source tests, and no hidden
@@ -6425,7 +6425,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       parity until the external Ristretto dependency has a complete pinned
       owner. Inventory, gap disposition, and Ready gates are in
       `receipts/statistics_handle_cache_internal_lfu_audit.md` and
-      `docs/operations/statistics-handle-cache-internal-lfu-audit-execplan.md`.
+      [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-cache-internal-lfu-audit-execplan.md).
 - [x] Re-audit the complete `pkg/statistics/handle/cache/internal/testutil`
       support package at Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`:
       two artifacts and 109 lines, with no source tests or hidden variants.
@@ -6433,7 +6433,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       histogram payloads, full-load status, native memory accounting, and both
       append helpers. The receipt and Ready gates are in
       `receipts/statistics_handle_cache_internal_testutil.md` and
-      `docs/operations/statistics-handle-cache-internal-testutil-audit-execplan.md`.
+      [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-cache-internal-testutil-audit-execplan.md).
 - [x] Re-audit the complete `pkg/statistics/handle/cache/metrics` package at Go
       master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two artifacts and 67
       lines, with eight initialized Prometheus handles and no source tests,
@@ -6442,7 +6442,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       seed stays explicitly unclaimed until the atomic `pkg/metrics` owner
       exists. Inventory and Ready blocker gates are in
       `receipts/statistics_handle_cache_metrics_audit.md` and
-      `docs/operations/statistics-handle-cache-metrics-audit-execplan.md`.
+      [archived audit plan](https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-cache-metrics-audit-execplan.md).
 - [x] Re-audit the complete root `pkg/statistics/handle/cache` package at Go
       master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: five artifacts and
       1,051 lines, with two tests, six benchmark shapes, and no fixtures or

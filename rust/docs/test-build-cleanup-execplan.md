@@ -1,102 +1,97 @@
-# Retire obsolete result-harness bookkeeping
+# Retire completed statistics audit plans
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Remove stale historical narratives and inactive bookkeeping from result replay
-without removing any Go inputs or weakening comparisons. Work in /workspace/tidb
-on hparser-integration from 2186a9eecb6e0166adf7a6943604a8e60edb16be. Refreshed
-Go master remains b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Shared topic entries
-carry long unused reason strings; every consumer discards them. The integration
-and query gates have zero known divergences but retain old two-sided ratchets.
-The table harness has an empty exclusion list with unreachable skipping code.
+Remove obsolete instructions that repeat completed audit work and reference
+retired discard-only tests. Work in /workspace/tidb on hparser-integration from
+4ec5785552f169a2a01652ff9b669a3c5b9f7e05. Refreshed Go master remains
+b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Eleven completed statistics-handle
+leaf plans repeat inventories and validation boundaries retained in their
+package receipts. Their old pins, test counts and publication sequences must
+not be treated as current Cloud instructions.
 
 ## Progress
 
 
-- [x] Verify restored checkout, callers, zero thresholds and empty exclusion list.
-- [x] Preserve all 105 topic names and their order; remove unused narratives.
-- [x] Remove 2777 historical comment lines and replace zero ratchets with empty checks.
-- [x] Delete unreachable table exclusion bookkeeping and correct stale docs.
-- [x] Validate continuity, grouped checks and replay; table retains five baseline-identical differences.
-- [ ] Lint, review, commit through actual hook, fresh build, normal push and checkpoint.
+- [x] Read all eleven plans; verify completed checklists and retained receipts.
+- [x] Remove eleven plans (511 lines) and archive 18 historical references.
+- [x] Verify eleven unchanged receipts, eleven archive blobs and byte-identical metadata.
+- [x] Review documentation, run lint/diff checks and record evidence.
+- [ ] Commit through actual hook, fresh locked build, normal push and remote verification.
+- [ ] Save verified recovery bundle and Cloud checkpoint.
 
 ## Milestones and Plan of Work
 
 
-In rust/difftests/result-tests/src/enrolled_topics.rs retain every topic as a
-string in the same order. Migrate all consumers in integration_diff and
-join_shape. Remove the unused narratives rather than freezing obsolete counts
-in executable constants. In integration_diff remove only the historical comment
-block between the current report and final assertion, along with dated survey
-censuses. Preserve the operational survey instructions, child isolation and all
-comparison logic. Remove the join-shape measurement history while preserving
-its nonzero constants, assertions and explicit limit that an earlier 19-plan
-increase was not reviewed statement by statement. In query_diff and integration_diff replace zero thresholds
-with failures.is_empty()/total.divergences.is_empty(). They accept exactly the
-same outcomes. In table_diff remove UNSUPPORTED_TOPICS=[] and its dead branch,
-empty skip report and count; keep ERR-result skips and all active comparisons.
-Replace obsolete never-run/dead-engine prose with current corpus semantics.
+Retire the eleven statistics-handle leaf audit plans selected in
+rust/docs/parity/current-audit/statistics-plan-cleanup-validation.json. Keep
+every package receipt byte-identical. Preserve the active parent
+rust/docs/statistics-package-parity-execplan.md, including its unresolved
+syncload, storage, metrics and dependency boundaries. Preserve the newer LFU
+lifecycle repair and failing retained admission evidence. Do not change any
+finding disposition or infer package acceptance from retirement.
+
+Replace each historical reference to a removed plan with an immutable archive
+link at the base commit. Update rust/docs/operations/README.md to point to the
+retirement inventory and current parity workflow. Record exact file hashes,
+line counts and retained-receipt paths. Update both finding registers' cleanup
+pointers while leaving all findings and counts unchanged.
 
 ## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh for every build. From /workspace/tidb/rust
-check all difftest-result-tests targets, run query_diff and table_diff together,
-and run integration_diff topics_are_listed_once_each plus the existing ignored
-single-topic replay on a representative enrolled topic. Compare serialized topic
-lists before/after, exact corpus/manifest hashes and the unchanged engine files.
-Prove removed historical blocks contain comments and only the zero constant;
-verify both acceptance predicates remain equivalent for zero/nonzero failures.
-Previous table validation has five baseline-confirmed differences; preserve and
-compare those diagnostics, never lower assertions or regenerate fixtures.
-From repository root run make lint and git diff --check.
+Source /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust compare
+cargo metadata --locked --no-deps --format-version 1 with the before-image.
+All production source, tests, scripts, fixtures, manifests and lockfiles must
+remain unchanged; no behavioral rerun is necessary for this documentation-only
+batch. Verify all eleven receipt hashes and archived Git blobs. Scan tracked
+Markdown for dangling current references and verify the parent plan only changes
+its historical archive pointer. Run make lint and git diff --check from root.
+No Go/Bazel change requires bazel_prepare.
 
-No new regression test is required for equivalent predicates and deletion of
-unreachable bookkeeping. Do not run unrelated full suites. No Go/Bazel source
-or dependencies change. Commit normally with core.hooksPath=hooks and the actual
-cd rust && cargo build --locked -p tidb-server gate. Repeat that locked build
-immediately before normal push to origin hparser-integration and verify SHA.
-Never force-push or bypass hooks. Preserve concurrent changes.
+Commit normally with core.hooksPath=hooks and the actual
+cd rust && cargo build --locked -p tidb-server gate. Repeat that exact locked
+build immediately before normal push to origin hparser-integration, then verify
+remote SHA. Never bypass hooks, force-push or overwrite concurrent changes.
 
 ## Surprises & Discoveries
 
 
-The final integration threshold is zero, while its preceding history repeatedly
-describes incompatible old remaining-debt counts. Topic explanations are runtime
-string constants even though every caller discards them. Table topic exclusion
-has no entries, so its branch and report cannot affect corpus selection.
+Completed mapcache, testutil, usage and utility plans still direct readers to
+old deny-on-discard regressions that earlier cleanup retired. LFU and cache
+metrics plans explicitly retain incomplete external/shared-owner boundaries;
+these remain in their receipts and current audit, not silently accepted.
 
 ## Decision Log
 
 
-Keep every fixture, topic, active comparison, nonzero catalog/join snapshot and
-operational survey. Remove historical source narratives; recover them from the
-immutable before-image if needed. Replace zero ratchets with exact empty checks,
-not a changed tolerance. No performance timing claim or package acceptance.
+Retire only the eleven reviewed completed leaf plans. Keep active parent work,
+all original source inventories and validation limits. Archive historical links
+instead of rewriting old evidence into a current acceptance claim. No executable
+change or measured build/runtime speedup is claimed.
 
 ## Outcomes & Retrospective
 
 
-Implementation, metadata/continuity, all-test-target compilation and lint are
-complete. Query and topic tests pass; util/admin replay matches 141 statements
-with zero divergence and two explicit skips. Table retains five differences
-identical to the prior original-harness run (1937/1942 match, 127 skips).
-The batch removes 3393 net source lines. Publication/checkpoint remains pending. All 86 findings retain 30 repaired
-and 56 unresolved (27 open, 29 partial). Existing table/parser failures remain
-recorded in the preceding cleanup receipts and are not resolved by this work.
+Eleven completed leaf plans (511 lines) are retired; 18 historical references
+resolve to immutable archives. All eleven receipts remain byte-identical, and
+metadata/source/test continuity, root lint and diff/reference review pass.
+Publication and checkpoint remain pending. The current register retains 86 tracked
+findings: 30 repaired and 56 unresolved (27 open, 29 partial). Existing parser,
+source-inventory and table-corpus failures are unaffected.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Use git show 2186a9eecb6e0166adf7a6943604a8e60edb16be:<path> for individual
-before-images, preserving other work. Logs and final publication/checkpoint
-results live in /workspace/.cloud-setup/result-bookkeeping-cleanup; the committed
-receipt is rust/docs/parity/current-audit/result-bookkeeping-cleanup-validation.json.
-No engine API, dependency or fixture changes. Saved configuration, environment
-Publish and fresh-task restoration remain separate claims.
+Restore individual before-images with git show
+4ec5785552f169a2a01652ff9b669a3c5b9f7e05:<path>, preserving other work. Logs and
+final publication/checkpoint evidence live in
+/workspace/.cloud-setup/statistics-plan-cleanup. Saved configuration, environment
+Publish and fresh-task restoration are distinct claims. No dependencies or
+executable targets change.
 
-Revision: replace completed parser-tool cleanup with equivalent result gates
-and deletion of stale narrative/bookkeeping.
+Revision: replace completed result-harness cleanup with retirement of duplicate
+statistics instructions and explicit preservation of unresolved boundaries.

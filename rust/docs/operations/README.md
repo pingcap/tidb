@@ -1,9 +1,11 @@
 # Operations plans
 
-Active plans remain in this directory. Completed utility audit plans whose
-inventories and validation boundaries are recorded in package receipts have
-been retired; their before-images are linked in the
-[retirement inventory](../parity/current-audit/utility-plan-cleanup-validation.json).
+Completed audit plans whose inventories and validation boundaries remain in
+package receipts have been retired. Their before-images are linked in the
+[utility retirement inventory](../parity/current-audit/utility-plan-cleanup-validation.json)
+and [statistics retirement inventory](../parity/current-audit/statistics-plan-cleanup-validation.json).
+The active statistics parent plan and unresolved LFU/shared-metrics boundaries
+remain; retirement does not establish package completion.
 
 Use [the current parity register](../parity/current-audit/README.md) for present
 finding dispositions and [the maintained workflow](../../scripts/README.md)

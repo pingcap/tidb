@@ -1,0 +1,182 @@
+{
+  "date": "2026-10-05",
+  "timezone": "America/Los_Angeles",
+  "base": "4ec5785552f169a2a01652ff9b669a3c5b9f7e05",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire eleven completed statistics-handle leaf audit plans (511 lines), retaining every package receipt byte-identically and replacing 18 historical references with immutable archive links. Active statistics parent, LFU follow-up and all unresolved boundaries remain; no executable or finding disposition changes.",
+  "removed_plans": [
+    {
+      "plan": "rust/docs/operations/statistics-handle-cache-internal-audit-execplan.md",
+      "plan_lines": 34,
+      "plan_sha256": "7f32df602172cbab2bb96f59963f7b527f076b53a8ba8c8fb4120ae0da9bb952",
+      "receipt": "rust/testport/receipts/statistics_handle_cache_internal.md",
+      "receipt_sha256": "3b38ae096796b9d11e4d5d14f83945ad504e4e27f69b433a3eaa4cf3416ec39d",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-cache-internal-audit-execplan.md"
+    },
+    {
+      "plan": "rust/docs/operations/statistics-handle-cache-internal-lfu-audit-execplan.md",
+      "plan_lines": 60,
+      "plan_sha256": "adeb75d82f4dcd59c33cffb8c7fd89fda5c6a536bfea81f9e0a650a8352b3ce1",
+      "receipt": "rust/testport/receipts/statistics_handle_cache_internal_lfu_audit.md",
+      "receipt_sha256": "38c092ce41538a1e9e4d0f4e6770047249c1555a88f38c4b7924d8e9f4d20529",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-cache-internal-lfu-audit-execplan.md"
+    },
+    {
+      "plan": "rust/docs/operations/statistics-handle-cache-internal-mapcache-audit-execplan.md",
+      "plan_lines": 51,
+      "plan_sha256": "691a044ebf019bfdb18856baec29be50172719cc311ce9ca960d51286c6a0165",
+      "receipt": "rust/testport/receipts/statistics_handle_cache_internal_mapcache.md",
+      "receipt_sha256": "7b5b09b7818d8a451f9d29b3f2ea8a4832eb906e7bc6a3d53934a6cd2cae20fe",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-cache-internal-mapcache-audit-execplan.md"
+    },
+    {
+      "plan": "rust/docs/operations/statistics-handle-cache-internal-testutil-audit-execplan.md",
+      "plan_lines": 47,
+      "plan_sha256": "ce6ce62c61eebff5c9585bd6bd3fca790f43f916912875c8470625ec0d77a603",
+      "receipt": "rust/testport/receipts/statistics_handle_cache_internal_testutil.md",
+      "receipt_sha256": "13090b8b4ec1a5693a6c0ba20a1fa0f58045d5f6709a207c9bda22a47a675335",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-cache-internal-testutil-audit-execplan.md"
+    },
+    {
+      "plan": "rust/docs/operations/statistics-handle-cache-metrics-audit-execplan.md",
+      "plan_lines": 45,
+      "plan_sha256": "5cc39575a316c2d1c36e5262d02be2cfebac640223d0c4d167716a7b489c1bfe",
+      "receipt": "rust/testport/receipts/statistics_handle_cache_metrics_audit.md",
+      "receipt_sha256": "bc89dab0434530d491a803e0151aadb5bc4a08226e80ab2d16fce1421b914b08",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-cache-metrics-audit-execplan.md"
+    },
+    {
+      "plan": "rust/docs/operations/statistics-handle-internal-audit-execplan.md",
+      "plan_lines": 37,
+      "plan_sha256": "44dc7aac347d93be9ee5234c75a888c2097106fb3d618ccfb8d3b53da34e9b33",
+      "receipt": "rust/testport/receipts/statistics_handle_internal.md",
+      "receipt_sha256": "9e3e4593982da4287f49739a98a67cdeffc8928bbb86061254bf642dbacdbc11",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-internal-audit-execplan.md"
+    },
+    {
+      "plan": "rust/docs/operations/statistics-handle-logutil-audit-execplan.md",
+      "plan_lines": 38,
+      "plan_sha256": "d5fbdb5613ae8353dfc774a1b396303fe6c9901920e85c1a5d2041dcd16e8bb9",
+      "receipt": "rust/testport/receipts/statistics_handle_logutil.md",
+      "receipt_sha256": "1edac9cddf4216b61a0620f4f79e3c0c1d9904c9d691cbe6a47598b67c2c71d4",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-logutil-audit-execplan.md"
+    },
+    {
+      "plan": "rust/docs/operations/statistics-handle-usage-collector-audit-execplan.md",
+      "plan_lines": 48,
+      "plan_sha256": "a0ec87c36e621681cd4f2d52b8822fd4488fbece784099640cb810591f16249f",
+      "receipt": "rust/testport/receipts/statistics_handle_usage_collector.md",
+      "receipt_sha256": "5c73f2e36f90904b19b06a952862f7d0535de1764185d46e4b688308ee517b4c",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-usage-collector-audit-execplan.md"
+    },
+    {
+      "plan": "rust/docs/operations/statistics-handle-usage-indexusage-audit-execplan.md",
+      "plan_lines": 54,
+      "plan_sha256": "f62939fc0884f8907b716e5703f268319ae96b2497f666b2d5b4d7467b1389cf",
+      "receipt": "rust/testport/receipts/statistics_handle_usage_indexusage.md",
+      "receipt_sha256": "76c4b466bc2fd95069ceea03cd4c3de208e8ad36181135fd79206b3e2504ae93",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-usage-indexusage-audit-execplan.md"
+    },
+    {
+      "plan": "rust/docs/operations/statistics-handle-util-audit-execplan.md",
+      "plan_lines": 58,
+      "plan_sha256": "114720e78de85206c786f68b39352f99fbcce55c0406ce29e516f576132fd4d1",
+      "receipt": "rust/testport/receipts/statistics_handle_util.md",
+      "receipt_sha256": "6308061e24948c0e51c1d9b4f603d5fa830f5332e48dcdc05435d8e326d4d020",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-util-audit-execplan.md"
+    },
+    {
+      "plan": "rust/docs/operations/statistics-handle-util-test-audit-execplan.md",
+      "plan_lines": 39,
+      "plan_sha256": "2185375858b15b30602c1fba19fdf83f863f2c8a667415f75f507f1d9b12ae60",
+      "receipt": "rust/testport/receipts/statistics_handle_util_test.md",
+      "receipt_sha256": "aab7e1316fb666dfac95dd31b81380266ce0fbb3bf5320c76938a969295b04d8",
+      "archive": "https://github.com/pingcap/tidb/blob/4ec5785552f169a2a01652ff9b669a3c5b9f7e05/rust/docs/operations/statistics-handle-util-test-audit-execplan.md"
+    }
+  ],
+  "archived_references": [
+    {
+      "file": "rust/docs/statistics-package-parity-execplan.md",
+      "plan": "rust/docs/operations/statistics-handle-cache-internal-lfu-audit-execplan.md",
+      "references": 1
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-cache-internal-audit-execplan.md",
+      "references": 1
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-cache-internal-lfu-audit-execplan.md",
+      "references": 1
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-cache-internal-mapcache-audit-execplan.md",
+      "references": 1
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-cache-internal-testutil-audit-execplan.md",
+      "references": 1
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-cache-metrics-audit-execplan.md",
+      "references": 1
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-internal-audit-execplan.md",
+      "references": 2
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-logutil-audit-execplan.md",
+      "references": 2
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-usage-collector-audit-execplan.md",
+      "references": 2
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-usage-indexusage-audit-execplan.md",
+      "references": 2
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-util-audit-execplan.md",
+      "references": 2
+    },
+    {
+      "file": "rust/testport/TESTPORT_EXECPLAN.md",
+      "plan": "rust/docs/operations/statistics-handle-util-test-audit-execplan.md",
+      "references": 2
+    }
+  ],
+  "continuity": {
+    "retained_receipts_byte_identical": 11,
+    "archive_blobs_verified": 11,
+    "metadata_unchanged": true,
+    "production_tests_scripts_fixtures_dependencies_unchanged": true,
+    "active_parent_retained": true,
+    "parent_change_only_archive_pointer": true,
+    "finding_dispositions_unchanged": true
+  },
+  "validation": {
+    "status": "Receipt/archive/metadata/reference continuity, root lint and diff review passed",
+    "behavioral_suites": "Not rerun: executable source/tests unchanged. Earlier table/parser/inventory failures remain historical evidence, not newly passing tests.",
+    "logs_sha256": {
+      "lint.log": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+      "continuity.json": "35d8f6132de80592f39577be0530d58881cd12069c15c70a843b1e5878f0a0c3"
+    }
+  },
+  "limits": [
+    "No package acceptance or structural closure",
+    "No measured compilation/runtime speedup",
+    "LFU external admission and shared metrics boundaries remain in receipts/current audit"
+  ],
+  "publication": "Pending actual hook and fresh immediate-prepush locked build; final evidence /workspace/.cloud-setup/statistics-plan-cleanup/final-handoff.json"
+}
