@@ -91,6 +91,12 @@ formatting tests now run directly in `tidb-executor --test all`, with their
 existing `*_source` module filters. Their `tidb-exec` forwarding exports are
 retired; import the executor owner directly. Behavioral cases are preserved.
 
+Error levels and warning policy use `tidb_error::errctx`; the unused executor
+ErrorContext model and its private tests are retired. Dynamic initial values
+are tested in `tidb-vardef --lib global_sysvar_initial::`; warning-sink coverage
+is in `tidb-exec --lib warning_publication::`. RU metrics consumers import
+`tidb_util::ruv2_metrics` directly.
+
 Go test cases and their fixtures are the correctness reference. Do not add
 Rust source-shape, call-count, file-size, or historical test-count gates.
 Statistics discard-return lint tests and comment-only test/benchmark shells

@@ -15,7 +15,7 @@
 //! Source-backed tests for statement push-down flag synthesis.
 
 use tidb_datatype::{ConversionFlags, STRICT_FLAGS};
-use tidb_executor::error_context::{ErrGroup, Level, LevelMap};
+use tidb_error::errctx::{ErrGroup, Level, LevelMap};
 use tidb_executor::statement_pushdown::{
     init_from_pb_flags, push_down_flags, push_down_flags_with_type_flags_and_err_levels,
     PushDownFlagsInput, StatementKind, FLAG_DIVIDED_BY_ZERO_AS_WARNING, FLAG_IGNORE_TRUNCATE,

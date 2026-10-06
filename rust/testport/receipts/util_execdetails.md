@@ -1,5 +1,8 @@
 # `pkg/util/execdetails` parity receipt
 
+Current ownership: RU metrics consumers import tidb_util::ruv2_metrics directly; the forwarding module mentioned below is retired. Historical validation remains unchanged. See [cleanup receipt](../../docs/parity/current-audit/context-owner-cleanup-validation.json).
+
+
 Pinned source: TiDB Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 This short receipt is retained as a compatibility pointer; the complete

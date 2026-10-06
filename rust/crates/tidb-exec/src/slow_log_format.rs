@@ -61,7 +61,7 @@ use crate::exec_details::{
     IA_REMOTE_READ_SEGMENT_COUNT_STR, IA_REMOTE_READ_SEGMENT_SIZE_STR,
     IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
 };
-use crate::ruv2_metrics::{format_ruv2_summary, RuV2Metrics, RuV2Weights};
+use tidb_util::ruv2_metrics::{format_ruv2_summary, RuV2Metrics, RuV2Weights};
 use crate::slow_log_float::format_go_float64;
 use tidb_executor::used_stats::UsedStatsInfoForTable;
 use tidb_hack::GoToLower;

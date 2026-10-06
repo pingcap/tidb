@@ -326,3 +326,30 @@ impl<'a> WarningPublication<'a> {
         (self.summary().error_count(), self.warnings.len())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{StaticWarningHandler, WarningHandler};
+    use tidb_datatype::{ConversionContext, ConversionLocation, STRICT_FLAGS};
+    use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+
+    #[test]
+    fn executor_warning_handler_is_the_conversion_context_sink() {
+        let warnings = StaticWarningHandler::new(0);
+        let context = ConversionContext::new(
+            STRICT_FLAGS.with_truncate_as_warning(true),
+            ConversionLocation::UTC,
+            &warnings,
+        );
+        context.append_warning(TerrorError::registered(
+            TerrorClass::Types,
+            TerrorCode::new(1292),
+            "truncated",
+        ));
+        assert_eq!(warnings.warning_count(), 1);
+        assert_eq!(
+            warnings.warnings_snapshot()[0].message,
+            "[types:1292]truncated"
+        );
+    }
+}

@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "executor-owner-cleanup-validation.json",
-    "scope": "Remove eleven tidb-exec forwarding exports after migrating three live callers; move ten join/statement-policy suites (6397 lines, 80 unchanged cases) to tidb-executor, preserving bodies/fixtures except crate paths and registering each once. No algorithm, dependency or finding disposition changes.",
+    "receipt": "context-owner-cleanup-validation.json",
+    "scope": "Remove the disconnected executor error-policy model, RU-metrics and global-default forwarding layers, and two stale carriers (four files, 473 net Rust lines). Migrate useful assertions and live consumers to shared owners; remove the obsolete TiKV-only adaptive-limit initial-value guard to match current Go. No broad finding closure.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1069,6 +1069,11 @@
     {
       "receipt": "executor-owner-cleanup-validation.json",
       "scope": "Remove eleven tidb-exec forwarding exports after migrating three live callers; move ten join/statement-policy suites (6397 lines, 80 unchanged cases) to tidb-executor, preserving bodies/fixtures except crate paths and registering each once. No algorithm, dependency or finding disposition changes.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "context-owner-cleanup-validation.json",
+      "scope": "Remove the disconnected executor error-policy model, RU-metrics and global-default forwarding layers, and two stale carriers (four files, 473 net Rust lines). Migrate useful assertions and live consumers to shared owners; remove the obsolete TiKV-only adaptive-limit initial-value guard to match current Go. No broad finding closure.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

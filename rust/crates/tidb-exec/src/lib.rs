@@ -72,15 +72,9 @@ pub mod mview_schedule_derive;
 pub use deadlock_recording::configure_deadlock_history;
 pub mod distsql_recordset;
 mod error;
-pub use tidb_executor::error_context;
 mod error_conversion;
 pub mod exec_details;
 pub mod explain;
-/// Go `GlobalSystemVariableInitialValue`, which lives with the rest of the
-/// `vardef` policy in [`tidb_vardef`] because the SESSION tier needs it too:
-/// `SET <var> = DEFAULT` resolves through it (Go `SetExecutor.getVarValue`),
-/// and `tidb-session` sits below this crate.
-pub use tidb_vardef::global_sysvar_initial;
 pub mod hint_updatable_vars;
 pub mod keydecoder;
 pub mod label_delivery;
@@ -108,7 +102,6 @@ mod result;
 mod result_field_resolver;
 mod result_metadata;
 pub mod runtime_stats;
-pub mod ruv2_metrics;
 pub mod schema_validator;
 pub mod session_commit_protocol;
 mod slow_log_float;
@@ -131,9 +124,6 @@ pub mod warning_publication;
 pub mod wide_scan_selection;
 
 pub use error::ExecError;
-pub use error_context::{
-    resolve_err_level, ErrGroup, ErrorContext, ErrorContextFlags, ErrorDisposition, Level, LevelMap,
-};
 pub use error_conversion::{exec_error_descriptor, exec_error_kind, RenderedExecError};
 pub use result::{Outcome, ResultSet, Row};
 pub use result_field_resolver::{

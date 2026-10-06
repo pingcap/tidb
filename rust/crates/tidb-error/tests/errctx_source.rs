@@ -210,6 +210,17 @@ fn test_context() {
 // group is caught here rather than in a downstream statement.
 #[test]
 fn err_group_map_matches_source_init() {
+    // Source: pkg/errctx/context.go:189-210 (the seven ErrGroup values).
+    let levels = LevelMap::default();
+    assert_eq!(ErrGroup::COUNT, 7);
+    for group in ErrGroup::ALL {
+        assert_eq!(levels.get(group), Level::Error);
+    }
+    assert_eq!(levels.as_array(), [Level::Error; ErrGroup::COUNT]);
+    assert_eq!(ErrGroup::ALL[0], ErrGroup::Truncate);
+    assert_eq!(ErrGroup::ALL[4], ErrGroup::DividedByZero);
+    assert_eq!(ErrGroup::ALL[6], ErrGroup::NoMatchedPartition);
+
     let expect = [
         (errcode::ErrTruncatedWrongValue, ErrGroup::Truncate),
         (errcode::ErrDataTooLong, ErrGroup::Truncate),
@@ -247,6 +258,7 @@ fn err_group_map_matches_source_init() {
     // The strict shared context returns everything and swallows warnings.
     assert_eq!(STRICT_NO_WARNING_CONTEXT.level_map(), LevelMap::strict());
     assert_eq!(resolve_err_level(true, true), Level::Ignore);
+    assert_eq!(resolve_err_level(true, false), Level::Ignore);
     assert_eq!(resolve_err_level(false, true), Level::Warn);
     assert_eq!(resolve_err_level(false, false), Level::Error);
 }

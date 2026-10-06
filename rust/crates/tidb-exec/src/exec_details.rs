@@ -276,7 +276,7 @@ impl P90Summary {
 pub struct StmtExecDetails {
     /// Go `WriteSQLRespDuration`.
     pub write_sql_resp_duration: Duration,
-    ruv2_metrics: Option<std::sync::Arc<crate::ruv2_metrics::RuV2Metrics>>,
+    ruv2_metrics: Option<std::sync::Arc<tidb_util::ruv2_metrics::RuV2Metrics>>,
 }
 
 /// Rust shared-pointer representation of Go `*StmtExecDetails`.
@@ -332,7 +332,7 @@ pub fn context_with_missing_exec_details_initialized(
         Some(details) => details,
         None => {
             let inherited = derived
-                .value::<Ruv2MetricsContextKey, Arc<crate::ruv2_metrics::RuV2Metrics>>()
+                .value::<Ruv2MetricsContextKey, Arc<tidb_util::ruv2_metrics::RuV2Metrics>>()
                 .cloned();
             let mut details = StmtExecDetails::default();
             details.set_ruv2_metrics(inherited);
@@ -344,7 +344,7 @@ pub fn context_with_missing_exec_details_initialized(
     let mut stmt_details = stmt_details.lock().expect("StmtExecDetails mutex poisoned");
     if stmt_details.ruv2_metrics().is_none() {
         if let Some(inherited) = derived
-            .value::<Ruv2MetricsContextKey, Arc<crate::ruv2_metrics::RuV2Metrics>>()
+            .value::<Ruv2MetricsContextKey, Arc<tidb_util::ruv2_metrics::RuV2Metrics>>()
             .cloned()
         {
             stmt_details.set_ruv2_metrics(Some(inherited));
@@ -383,7 +383,7 @@ pub fn context_with_inherited_ruv2_details(
 #[must_use]
 pub fn context_with_ruv2_metrics(
     context: &tikv_client::trace::TraceContext,
-    metrics: Option<Arc<crate::ruv2_metrics::RuV2Metrics>>,
+    metrics: Option<Arc<tidb_util::ruv2_metrics::RuV2Metrics>>,
 ) -> tikv_client::trace::TraceContext {
     let Some(metrics) = metrics else {
         return context.clone();
@@ -402,7 +402,7 @@ pub fn context_with_ruv2_metrics(
 #[must_use]
 pub fn ruv2_metrics_from_context(
     context: &tikv_client::trace::TraceContext,
-) -> Option<Arc<crate::ruv2_metrics::RuV2Metrics>> {
+) -> Option<Arc<tidb_util::ruv2_metrics::RuV2Metrics>> {
     if let Some(stmt_details) = stmt_exec_details_from_context(context) {
         if let Some(metrics) = stmt_details
             .lock()
@@ -414,7 +414,7 @@ pub fn ruv2_metrics_from_context(
         }
     }
     context
-        .value::<Ruv2MetricsContextKey, Arc<crate::ruv2_metrics::RuV2Metrics>>()
+        .value::<Ruv2MetricsContextKey, Arc<tidb_util::ruv2_metrics::RuV2Metrics>>()
         .cloned()
 }
 
@@ -422,9 +422,9 @@ pub fn ruv2_metrics_from_context(
 #[must_use]
 pub fn sync_ruv2_metrics_from_context(
     context: &tikv_client::trace::TraceContext,
-) -> Option<Arc<crate::ruv2_metrics::RuV2Metrics>> {
+) -> Option<Arc<tidb_util::ruv2_metrics::RuV2Metrics>> {
     let metrics = ruv2_metrics_from_context(context)?;
-    crate::ruv2_metrics::sync_ruv2_metrics_from_ru_details(
+    tidb_util::ruv2_metrics::sync_ruv2_metrics_from_ru_details(
         Some(&metrics),
         tikv_client::util::ru_details_from_context(context).map(Arc::as_ref),
     );
@@ -469,22 +469,22 @@ pub fn get_exec_details_from_context(
 
 impl StmtExecDetails {
     /// Go `ensureRUV2Metrics`.
-    pub fn ensure_ruv2_metrics(&mut self) -> std::sync::Arc<crate::ruv2_metrics::RuV2Metrics> {
+    pub fn ensure_ruv2_metrics(&mut self) -> std::sync::Arc<tidb_util::ruv2_metrics::RuV2Metrics> {
         self.ruv2_metrics
-            .get_or_insert_with(|| std::sync::Arc::new(crate::ruv2_metrics::RuV2Metrics::new()))
+            .get_or_insert_with(|| std::sync::Arc::new(tidb_util::ruv2_metrics::RuV2Metrics::new()))
             .clone()
     }
 
     /// Go `getRUV2Metrics`.
     #[must_use]
-    pub fn ruv2_metrics(&self) -> Option<&std::sync::Arc<crate::ruv2_metrics::RuV2Metrics>> {
+    pub fn ruv2_metrics(&self) -> Option<&std::sync::Arc<tidb_util::ruv2_metrics::RuV2Metrics>> {
         self.ruv2_metrics.as_ref()
     }
 
     /// Go `setRUV2Metrics`.
     pub fn set_ruv2_metrics(
         &mut self,
-        metrics: Option<std::sync::Arc<crate::ruv2_metrics::RuV2Metrics>>,
+        metrics: Option<std::sync::Arc<tidb_util::ruv2_metrics::RuV2Metrics>>,
     ) {
         self.ruv2_metrics = metrics;
     }

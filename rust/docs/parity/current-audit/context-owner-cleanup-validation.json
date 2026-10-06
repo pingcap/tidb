@@ -1,0 +1,112 @@
+{
+  "date": "2026-10-05",
+  "timezone": "America/Los_Angeles",
+  "base": "69cdbf80ff06464f6227b0eba3ba1a62ea6a6123",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove the disconnected executor error-policy model, RU-metrics and global-default forwarding layers, and two stale carriers (four files, 473 net Rust lines). Migrate useful assertions and live consumers to shared owners; remove the obsolete TiKV-only adaptive-limit initial-value guard to match current Go. No broad finding closure.",
+  "continuity": {
+    "base": "69cdbf80ff06464f6227b0eba3ba1a62ea6a6123",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "removed_files": 4,
+    "removed_file_lines": 542,
+    "net_rust_lines_removed": 473,
+    "retired_private_model_types": [
+      "ErrorContext",
+      "ErrorContextFlags",
+      "ErrorDisposition"
+    ],
+    "old_global_vectors": 20,
+    "preserved_global_vectors": 19,
+    "corrected_go_adaptive_default_vectors": 1,
+    "import_only_surviving_files": [
+      "rust/crates/tidb-exec/src/exec_details.rs",
+      "rust/crates/tidb-exec/src/runtime_stats.rs",
+      "rust/crates/tidb-exec/src/slow_log_format.rs",
+      "rust/crates/tidb-exec/src/session_commit_protocol.rs",
+      "rust/crates/tidb-executor/src/stmt_context.rs",
+      "rust/crates/tidb-executor/src/statement_pushdown.rs",
+      "rust/crates/tidb-executor/tests/statement_pushdown_source.rs"
+    ],
+    "warning_sink_migrated": true,
+    "group_order_and_four_resolve_combinations_preserved": true,
+    "dependencies_changed": false
+  },
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-executor/src/error_context.rs",
+      "lines": 235,
+      "sha256": "d69de1742f15979d05c41f8dcec625aec68ea896de5f33a8d227e8256b6faeea"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/ruv2_metrics.rs",
+      "lines": 17,
+      "sha256": "c7155dd19c9c629fe6150c4f820ba2118c72f9ce21d14507fc02bbaf58cc4b85"
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/error_context_source.rs",
+      "lines": 146,
+      "sha256": "63b4aeff3d7f0d89e032178ee8282e96cf3380cf78b77fbd9093decf98c77775"
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/global_sysvar_initial_source.rs",
+      "lines": 144,
+      "sha256": "35ad3aace3ae4a223b01ea9697bcee36fdae0807727302238c31460baeec6740"
+    }
+  ],
+  "retired_model_tests": [
+    "copy_on_write_group_levels_and_strict_reset_match_context_methods",
+    "statement_flags_derive_truncate_and_division_policy_without_a_warning_sink",
+    "statement_defaults_warn_on_division_but_keep_other_groups_strict",
+    "disposition_is_typed_and_does_not_mutate_warning_state"
+  ],
+  "retained_owners": {
+    "shared_error_policy": "tidb-error/tests/errctx_source.rs (including group order and all four resolve combinations)",
+    "statement_flags": "tidb-executor/tests/statement_pushdown_source.rs; live stmt_context imports shared errctx directly",
+    "warning_sink": "tidb-exec/src/warning_publication.rs unit test",
+    "dynamic_defaults": "tidb-vardef/src/global_sysvar_initial.rs existing owner table",
+    "ru_metrics": "tidb-util/src/ruv2_metrics.rs; exec consumers use it directly"
+  },
+  "adaptive_default_regression": {
+    "go_source": "pkg/sessionctx/variable/sysvar.go::GlobalSystemVariableInitialValue, ENABLE_ADAPTIVE_LIMIT_SCAN always On",
+    "before": {
+      "passed": 1,
+      "failed": 1,
+      "failure": "non-TiKV classic store returned OFF; current Go requires ON"
+    },
+    "after": "both vardef owner tests pass",
+    "before_log_sha256": "8bad34447968ebb1bc9261fbc7f3bbe4e1b789d1da77779e0ce4e58749d67968"
+  },
+  "tests": {
+    "library-tests": [
+      {
+        "passed": 27,
+        "failed": 0
+      },
+      {
+        "passed": 2,
+        "failed": 0
+      }
+    ],
+    "integration-tests": [
+      {
+        "passed": 2,
+        "failed": 0
+      },
+      {
+        "passed": 4,
+        "failed": 0
+      }
+    ]
+  },
+  "gates": {
+    "lint": "passed",
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; final external handoff records results"
+  },
+  "limits": [
+    "Not full Go package acceptance or broad finding repair",
+    "No full Go/live-cluster/workload validation or measured speedup",
+    "Removed workspace model/aliases require external users to use the canonical shared owners"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/context-owner-cleanup/final-handoff.json"
+}

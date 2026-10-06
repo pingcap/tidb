@@ -87,7 +87,6 @@ pub mod ddl_label;
 pub mod ddl_sequence;
 pub mod deadlock_history;
 pub mod driver;
-pub mod error_context;
 pub mod executor;
 pub mod explain;
 pub mod expression_index;

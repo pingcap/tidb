@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [executor test ownership](executor-owner-cleanup-validation.json). Remove eleven tidb-exec forwarding exports after migrating three live callers; move ten join/statement-policy suites (6397 lines, 80 unchanged cases) to tidb-executor, preserving bodies/fixtures except crate paths and registering each once. No algorithm, dependency or finding disposition changes.
+Latest cleanup: [context/default/metrics ownership](context-owner-cleanup-validation.json). Remove the disconnected executor error-policy model, RU-metrics and global-default forwarding layers, and two stale carriers (four files, 473 net Rust lines). Migrate useful assertions and live consumers to shared owners; remove the obsolete TiKV-only adaptive-limit initial-value guard to match current Go. No broad finding closure.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

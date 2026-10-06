@@ -29,7 +29,7 @@ const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 const DEFAULT_DIST_SQL_SCAN_CONCURRENCY: u64 =
     tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64;
 
-use crate::error_context::{ErrGroup, Level, LevelMap};
+use tidb_error::errctx::{ErrGroup, Level, LevelMap};
 use crate::mem_quota::{OomAction, StatementMemory};
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
 use crate::DriverError;

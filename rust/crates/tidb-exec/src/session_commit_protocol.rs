@@ -16,7 +16,7 @@
 
 use tidb_txnkv::transaction::CommitProtocol;
 
-use crate::global_sysvar_initial::{
+use tidb_vardef::global_sysvar_initial::{
     global_system_variable_initial_value, GlobalSysvarEnvironment, ENABLE_1PC, ENABLE_ASYNC_COMMIT,
     ON,
 };

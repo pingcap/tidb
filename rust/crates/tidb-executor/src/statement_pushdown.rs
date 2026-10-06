@@ -26,7 +26,7 @@
 
 use tidb_datatype::{ConversionFlags, DEFAULT_STATEMENT_FLAGS};
 
-use crate::error_context::{resolve_err_level, ErrGroup, Level, LevelMap};
+use tidb_error::errctx::{resolve_err_level, ErrGroup, Level, LevelMap};
 
 /// TiKV request bit for ignored truncation errors.
 pub const FLAG_IGNORE_TRUNCATE: u64 = 1;

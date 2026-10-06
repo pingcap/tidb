@@ -36,8 +36,8 @@
 //! - client-go `*util.RUDetails` reuses [`tikv_client::RuDetails`], including
 //!   its synchronized `Merge` and deep-clone behavior.
 //! - `*execdetails.RUV2Metrics` reuses
-//!   [`crate::ruv2_metrics::RuV2Metrics`] and
-//!   [`crate::ruv2_metrics::RuV2Weights`].
+//!   [`tidb_util::ruv2_metrics::RuV2Metrics`] and
+//!   [`tidb_util::ruv2_metrics::RuV2Weights`].
 //! - `rmclient.RUVersion` (pd client, source not on disk) → plain [`i64`]
 //!   ([`RU_VERSION_V1`] `= 1`, [`RU_VERSION_V2`] `= 2`), pinned by the Go
 //!   doc comment on `RURuntimeStats` ("1 (v1) … 2 (v2) … 0 / unknown
@@ -72,7 +72,7 @@ use tidb_proto::ExecutorExecutionSummary;
 use crate::exec_details::{
     format_go_duration, format_seconds_3, CommitDetails, LockKeysDetails, ScanDetail, TimeDetail,
 };
-use crate::ruv2_metrics::RuV2Weights;
+use tidb_util::ruv2_metrics::RuV2Weights;
 use crate::tiflash_stats::{TiFlashNetworkTrafficSummary, TiflashStats};
 
 /// Go `TpBasicRuntimeStats`: the tp for `BasicRuntimeStats`.
@@ -1718,7 +1718,7 @@ pub struct RuRuntimeStats {
     /// Go's embedded `*util.RUDetails`.
     pub ru_details: Option<Arc<tikv_client::RuDetails>>,
     /// Go `RURuntimeStats.Metrics`.
-    pub metrics: Option<Arc<crate::ruv2_metrics::RuV2Metrics>>,
+    pub metrics: Option<Arc<tidb_util::ruv2_metrics::RuV2Metrics>>,
     /// Go `RURuntimeStats.Weights`.
     pub weights: RuV2Weights,
     /// Go `RURuntimeStats.RUVersion` (`rmclient.RUVersion`, narrowed to a
@@ -1762,7 +1762,7 @@ impl RuntimeStats for RuRuntimeStats {
                 Some(details) => (details.tikv_ru_v2(), details.tiflash_ru()),
                 None => (0.0, 0.0),
             };
-            let total_ru = crate::ruv2_metrics::total_ru(
+            let total_ru = tidb_util::ruv2_metrics::total_ru(
                 self.metrics.as_deref(),
                 self.weights,
                 tikv_ru,
@@ -1885,8 +1885,8 @@ mod tests {
         }
     }
 
-    fn empty_ruv2_metrics() -> Arc<crate::ruv2_metrics::RuV2Metrics> {
-        Arc::new(crate::ruv2_metrics::RuV2Metrics::new())
+    fn empty_ruv2_metrics() -> Arc<tidb_util::ruv2_metrics::RuV2Metrics> {
+        Arc::new(tidb_util::ruv2_metrics::RuV2Metrics::new())
     }
 
     fn v1_ru_details(read_ru: f64, write_ru: f64) -> Arc<tikv_client::RuDetails> {
