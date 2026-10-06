@@ -304,6 +304,10 @@ type StatementContext struct {
 	HasStaleReadReplicaRead bool
 	// StaleReadReplicaRead is the kv.ReplicaReadType decided for this stale read statement.
 	StaleReadReplicaRead byte
+	// StaleReadAsNonStale indicates that the stale read ts of this statement is above the min safe ts of the TiKV
+	// stores, so no follower could serve it as a stale read. The requests are sent as ordinary (non stale) reads at
+	// the same ts and client-go routes them by the replica read type as it does for any other read.
+	StaleReadAsNonStale bool
 	// mu struct holds variables that change during execution.
 	mu *stmtCtxMu
 	// affectedRows is lifted from mu for performance reason.

@@ -156,7 +156,7 @@ func newExecutorBuilder(ctx context.Context, sctx sessionctx.Context, is infosch
 		sctx:             sctx,
 		is:               is,
 		Ti:               ti,
-		isStaleness:      staleread.IsStmtStaleness(sctx),
+		isStaleness:      staleread.UseStaleReadRequests(sctx),
 		txnScope:         txnManager.GetTxnScope(),
 		readReplicaScope: txnManager.GetReadReplicaScope(),
 	}

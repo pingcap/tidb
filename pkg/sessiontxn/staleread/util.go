@@ -190,6 +190,14 @@ func IsStmtStaleness(sctx sessionctx.Context) bool {
 	return sctx.GetSessionVars().StmtCtx.IsStaleness
 }
 
+// UseStaleReadRequests indicates whether the requests of the current stale read statement should carry the stale
+// read flag. It is false when the read ts is above the min safe ts of the TiKV stores and
+// `tidb_stale_read_above_safe_ts_replica_read` is set, see StatementContext.StaleReadAsNonStale.
+func UseStaleReadRequests(sctx sessionctx.Context) bool {
+	sc := sctx.GetSessionVars().StmtCtx
+	return sc.IsStaleness && !sc.StaleReadAsNonStale
+}
+
 // GetExternalTimestamp returns the external timestamp in cache, or get and store it in cache
 func GetExternalTimestamp(ctx context.Context, sc *stmtctx.StatementContext) (uint64, error) {
 	// Try to get from the stmt cache to make sure this function is deterministic.

@@ -153,6 +153,10 @@ func (p *baseProcessor) setEvaluatedValues(ts uint64, is infoschema.InfoSchema, 
 // is stored in the statement context, so it is made again on every execution (including executions of prepared
 // statements) and never leaks into cached plans. `SessionVars.GetReplicaRead` only honours it when
 // `tidb_replica_read` is the default `leader` and the statement has no replica read hint.
+//
+// When `tidb_stale_read_above_safe_ts_replica_read` is set and the read ts is above the min safe ts, the statement
+// is additionally marked to be sent as a non stale read: no follower could serve it as a stale read anyway, and a
+// plain read at the same ts lets client-go apply the replica read type the way it does for every other read.
 func (p *baseProcessor) applyStaleReadReplicaReadPolicy(ts uint64) {
 	vars := p.sctx.GetSessionVars()
 	above, within := vars.StaleReadAboveSafeTSReplicaRead, vars.StaleReadWithinSafeTSReplicaRead
@@ -172,6 +176,7 @@ func (p *baseProcessor) applyStaleReadReplicaReadPolicy(ts uint64) {
 	policy := within
 	if ts > minSafeTS {
 		policy = above
+		sc.StaleReadAsNonStale = above.Enabled
 	}
 	if !policy.Enabled {
 		return
