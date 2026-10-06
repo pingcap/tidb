@@ -1092,12 +1092,13 @@ fn apply_zero_date(
 /// SQL-visible: it survives `sql_mode = ''` as an ERROR, because it is the
 /// document that cannot exist, not a value that can be clamped.
 pub(crate) fn json_write_error(error: &tidb_datatype::DatumValueError) -> Option<DriverError> {
-    let tidb_datatype::DatumValueError::Json(error) = error else {
-        return None;
-    };
     let json = match error {
-        tidb_datatype::BinaryJSONError::EmptyDocument => tidb_expr::JsonError::EmptyText,
-        _ => tidb_expr::JsonError::InvalidText,
+        tidb_datatype::DatumValueError::InvalidJsonCharset => tidb_expr::JsonError::InvalidCharset,
+        tidb_datatype::DatumValueError::Json(tidb_datatype::BinaryJSONError::EmptyDocument) => {
+            tidb_expr::JsonError::EmptyText
+        }
+        tidb_datatype::DatumValueError::Json(_) => tidb_expr::JsonError::InvalidText,
+        _ => return None,
     };
     Some(DriverError::Exec(crate::ExecError::Eval(
         tidb_expr::EvalError::Json(json),
@@ -1130,6 +1131,29 @@ pub(crate) fn datum_error_text(value: &Datum) -> String {
 mod source_tests {
     use super::*;
     use tidb_datatype::{BinaryLiteral, Collation, FieldTypeCode, FieldTypeFlags};
+
+    #[test]
+    fn json_result_batch_table_callers_keep_invalid_charset_identity() {
+        for shape in [
+            CastShape::RawTable,
+            CastShape::InsertRow,
+            CastShape::UpdateAssignment,
+            CastShape::OnDuplicateAssignment,
+            CastShape::GeneratedOnDuplicate,
+        ] {
+            let ctx = crate::StmtContext::for_dml(true, false, false);
+            let value = Datum::new_binary_literal(BinaryLiteral::from(vec![0x61]));
+            let field = FieldType::new(FieldTypeCode::Json);
+            let error = cast_value_shaped(value, &field, "j", 0, &ctx, shape, false)
+                .unwrap_err()
+                .to_mysql_error();
+            assert_eq!(error.code, 3144);
+            assert_eq!(
+                error.message,
+                "Cannot create a JSON value from a string with CHARACTER SET 'binary'."
+            );
+        }
+    }
 
     #[test]
     fn json_numeric_batch_table_callers_keep_source_warning_and_final_overflow() {

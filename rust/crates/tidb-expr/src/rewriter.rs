@@ -45,7 +45,6 @@ pub use control_type::{infer_type4_control_funcs, set_numeric_len_from_args};
 use fold_mode::FoldModeResolver;
 pub(crate) use result_type::adjust_ret_ft_for_cast_string;
 pub(crate) use result_type::builtin_return_type;
-pub use result_type::go_result_type_code;
 use result_type::{
     binary_literal_type, cast_target, decimal_literal_type, int_literal_type,
     returns_binary_string, set_binary_charset, validate_cast_type, validate_name_const_args,
@@ -3639,6 +3638,33 @@ mod builtin_type_tests {
             .expect("evaluates")
     }
 
+    #[test]
+    fn json_result_batch_signatures_keep_source_types_and_widths() {
+        for (sql, code, flen) in [
+            (
+                "json_search('[\"x\"]','one','x')",
+                FieldTypeCode::Json,
+                16_777_216,
+            ),
+            ("json_type('{}')", FieldTypeCode::VarString, 51),
+            ("json_quote('abc')", FieldTypeCode::VarString, 20),
+            ("json_unquote('\"x\"')", FieldTypeCode::VarString, 3),
+            (
+                "json_unquote(json_array(1))",
+                FieldTypeCode::LongBlob,
+                4_294_967_295,
+            ),
+            ("json_pretty('{}')", FieldTypeCode::LongBlob, 67_108_864),
+        ] {
+            let field = ret_type(sql);
+            assert_eq!((field.code(), field.flen()), (code, flen), "{sql}");
+        }
+        assert_eq!(
+            eval("json_array(json_search('[\"x\"]','one','x'))"),
+            Datum::new_json(tidb_datatype::BinaryJSON::parse("[\"$[0]\"]").unwrap())
+        );
+    }
+
     fn text_datum(value: &str) -> Datum {
         Datum::new_string(value.as_bytes().to_vec())
     }
@@ -3710,7 +3736,6 @@ mod builtin_type_tests {
             ("format_nano_time(0)", unspecified, false),
             ("tidb_decode_plan('')", unspecified, false),
             ("tidb_decode_binary_plan('')", unspecified, false),
-            ("json_search('[\"a\"]', 'one', 'a')", unspecified, false),
         ] {
             let ft = ret_type(expr);
             assert_eq!(ft.code(), FieldTypeCode::VarString, "{expr} type");

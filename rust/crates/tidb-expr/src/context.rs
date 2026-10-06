@@ -278,6 +278,8 @@ impl SequenceEvalError {
 /// and both arrive on the wire with the code TiDB sends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsonError {
+    /// Go ErrInvalidJSONCharset (3144) for binary document input.
+    InvalidCharset,
     /// `ErrInvalidJSONText` (3140). Go's argument is `encoding/json`'s own
     /// message; every malformed document TiDB's `ParseBinaryJSONFromString`
     /// rejects reports the root-value variant, which is what this carries.
@@ -351,6 +353,7 @@ impl JsonError {
     pub const fn code(&self) -> u16 {
         match self {
             JsonError::InvalidText | JsonError::EmptyText => 3140,
+            JsonError::InvalidCharset => 3144,
             // The PLAN-tier code is MySQL's nominal 3143: a constant
             // statement (`JSON_EXTRACT('[1,2,3]', '$[1 TO 2]')`) errors
             // through the classed terror at planning. The EXEC-tier wrap for
@@ -377,6 +380,9 @@ impl JsonError {
                  by other values."
                 .to_owned(),
             JsonError::EmptyText => "Invalid JSON text: The document is empty".to_owned(),
+            JsonError::InvalidCharset => {
+                "Cannot create a JSON value from a string with CHARACTER SET 'binary'.".to_owned()
+            }
             JsonError::InvalidPath(position) => format!(
                 "Invalid JSON path expression. The error is around character position {position}."
             ),

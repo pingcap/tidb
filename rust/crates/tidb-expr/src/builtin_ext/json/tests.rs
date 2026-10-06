@@ -1123,7 +1123,7 @@ fn json_search_go_vectors() {
         if expected == "null" {
             assert_eq!(actual, Datum::Null, "args={args:?}");
         } else {
-            assert_eq!(actual, s(expected), "args={args:?}");
+            assert_eq!(actual, j(expected), "args={args:?}");
         }
     }
     assert_eq!(
@@ -1205,7 +1205,7 @@ fn json_search_walk_is_not_the_extract_walk() {
                 s("$[0].a")
             ]
         ),
-        s(r#""$[0].a""#)
+        j(r#""$[0].a""#)
     );
 
     // `$**.a` reaches `$.a.a` twice -- once descending from the root and once
@@ -1222,7 +1222,7 @@ fn json_search_walk_is_not_the_extract_walk() {
                 s("$**.a")
             ]
         ),
-        s(r#"["$.a.a", "$.a.b"]"#)
+        j(r#"["$.a.a", "$.a.b"]"#)
     );
     // Two path arguments naming the same leaf, with a third path between
     // them: again a non-adjacent repeat.
@@ -1239,7 +1239,7 @@ fn json_search_walk_is_not_the_extract_walk() {
                 s("$.a")
             ]
         ),
-        s(r#"["$.a", "$.b"]"#)
+        j(r#"["$.a", "$.b"]"#)
     );
 }
 
@@ -1931,4 +1931,25 @@ fn cast_as_json_typed_renders_binary_charset_argument_as_opaque() {
     // (non-JSON) string is PARSED as a JSON document and `ab` is not
     // valid JSON text, so this errors instead of guessing Opaque.
     assert!(cast_as_json_typed(&Datum::Bytes(b"ab".to_vec()), None).is_err());
+}
+
+#[test]
+fn json_result_batch_search_returns_native_json() {
+    // Go builtinJSONSearchSig.evalJSON returns BinaryJSON, also when nested.
+    assert_eq!(
+        call("JSON_SEARCH", &[s(r#"["x","x"]"#), s("all"), s("x")]),
+        j(r#"["$[0]","$[1]"]"#)
+    );
+}
+
+#[test]
+fn json_result_batch_search_escape_is_one_byte() {
+    for escape in ["é", "??"] {
+        let error =
+            call_result("JSON_SEARCH", &[s(r#"["x"]"#), s("one"), s("x"), s(escape)]).unwrap_err();
+        assert!(
+            matches!(error, crate::EvalError::IncorrectArguments(ref message) if message == "Incorrect arguments to ESCAPE"),
+            "{error:?}"
+        );
+    }
 }

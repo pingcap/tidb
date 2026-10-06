@@ -1,0 +1,191 @@
+{
+  "date": "2026-10-06",
+  "base": "093145bc8b883b29b471e4d5dc6a94d73fc38a35",
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "scope": "X01/K03 connected JSON result, conversion and expression-index ownership: native search values, byte-sized ESCAPE validation, shared signature widths/types, typed 3144 errors, and CREATE TABLE hidden-column admission through the existing expression-index builder. Remove duplicate type overrides and the hardcoded BIGINT hidden-column path. Broad findings remain partial.",
+  "findings": {
+    "X01": "partial",
+    "K03": "partial"
+  },
+  "source": {
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "files": [
+      {
+        "path": "pkg/expression/builtin_json.go",
+        "sha256": "f8e5b1e3f5e2e3c58f559e74fecc6322c077c874a3e384e7d3062f4f5eca6edd"
+      },
+      {
+        "path": "pkg/expression/builtin.go",
+        "sha256": "b172a276b54f9d8a469bde0e243f3be1f2af0107a1093a77cd44a1de2a6f4577"
+      },
+      {
+        "path": "pkg/expression/builtin_json_test.go",
+        "sha256": "775598466662eb69c91ae4ebdc38256fade97741485821105c726fbcf4e83f5c"
+      },
+      {
+        "path": "pkg/types/datum.go",
+        "sha256": "a7e97bcf032c6abd2e5c8d59516212cb6ead164dc3ec826bfd87392bc66475fc"
+      },
+      {
+        "path": "pkg/types/json_constants.go",
+        "sha256": "50b5fb966e4dcbf71b99b843f2fbb371592a6ddd0987ca0b1d59c662c6b78497"
+      },
+      {
+        "path": "pkg/ddl/index.go",
+        "sha256": "6af0c10f8ec1fb74ce1dd55e2d899b53171e488503958cab15fc406c22ba4fba"
+      },
+      {
+        "path": "pkg/ddl/create_table.go",
+        "sha256": "a4b314744c50e24da997c504b310c13a7ed90ceac1f106bde35b14f4612ce196"
+      },
+      {
+        "path": "pkg/table/column.go",
+        "sha256": "39640cb6940ab803b1ed9eb9b6fe2b8a8f71e3b11fe62f2e09791d6ed9deaaac"
+      },
+      {
+        "path": "pkg/server/internal/column/column.go",
+        "sha256": "6479832dbd6c41418921d72a81424f3389ecb7279d61e0e0ef2a1e954e93d57c"
+      }
+    ],
+    "native_head": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+    "package_acceptance": false
+  },
+  "repairs": [
+    "JSON_SEARCH returns native BinaryJSON and nested JSON_ARRAY preserves value identity",
+    "ESCAPE length is bytes, with Go 1210 Incorrect arguments to ESCAPE",
+    "JSON_SEARCH/TYPE/QUOTE/UNQUOTE/PRETTY expose source signature type/width",
+    "Both expression-index consumers read authoritative expression types; separate go_result_type_code resolver removed",
+    "Cluster CREATE TABLE uses the existing hidden-column builder; JSON/BLOB admission and typed string writes replace the BIGINT shortcut",
+    "JSON column conversion preserves invalid binary charset as 3144 through all five table write shapes; CAST AS JSON retains its distinct opaque-literal behavior"
+  ],
+  "baseline": {
+    "rust_regressions_failed": 4,
+    "tcp_failed": 10,
+    "tcp_passed": 4,
+    "log_directory": "/workspace/.cloud-setup/json-result-batch"
+  },
+  "tests": {
+    "expression_and_write": [
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "filtered_out": 1548
+      },
+      {
+        "passed": 47,
+        "failed": 0,
+        "ignored": 0,
+        "filtered_out": 1200
+      }
+    ],
+    "session": [
+      {
+        "passed": 51,
+        "failed": 0,
+        "ignored": 0,
+        "filtered_out": 1971
+      }
+    ],
+    "catalog_ddl": [
+      {
+        "passed": 112,
+        "failed": 5,
+        "ignored": 0,
+        "filtered_out": 368
+      }
+    ]
+  },
+  "wire": {
+    "passed": 14,
+    "failed": 0,
+    "checks": [
+      "native JSON result",
+      "nested JSON value",
+      "escape bytes",
+      "escape error code",
+      "pretty metadata",
+      "unquote JSON metadata",
+      "binary JSON insert identity",
+      "short unquote index",
+      "string expression index insert",
+      "string expression index read",
+      "string expression index consistency",
+      "JSON index refusal",
+      "insert select JSON",
+      "stored JSON value"
+    ],
+    "binary_sha256": "ca7f11b63e535616ccee7a5d94424679811f11d948b9238857ddac513306505b",
+    "store": "unistore"
+  },
+  "known_failures": {
+    "historical_receipt": "rust/docs/parity/current-audit/harness-dedup-validation.json",
+    "historical_log": "/workspace/.cloud-setup/harness-dedup/tidb-exec-tests.log",
+    "historical_log_sha256": "bfbb91f54eab5b868e099e0858b8123e49120585e355a58b0842d8619f98a8b6",
+    "same_five_failures": true,
+    "comparisons": [
+      {
+        "test": "cluster_ddl_source::a_created_database_is_stored_exactly_as_the_go_server_stores_it",
+        "full_normalized_diagnostic_identical": true
+      },
+      {
+        "test": "cluster_ddl_source::a_created_database_persists_its_resolved_charset_and_collation",
+        "full_normalized_diagnostic_identical": true
+      },
+      {
+        "test": "cluster_ddl_source::a_modify_column_reorganizes_exactly_where_go_says_it_must",
+        "full_normalized_diagnostic_identical": true
+      },
+      {
+        "test": "cluster_ddl_source::check_job_submission_precedes_every_schema_transition",
+        "full_normalized_diagnostic_identical": true
+      },
+      {
+        "test": "cluster_ddl_source::completed_check_schema_stays_active_until_schema_sync",
+        "full_normalized_diagnostic_identical": true
+      }
+    ]
+  },
+  "checks": {
+    "six_crate_all_targets": true,
+    "make_lint": true,
+    "locked_server_build": true,
+    "changed_region_rustfmt": true,
+    "diff_check": true
+  },
+  "commands": [
+    "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-expr -p tidb-executor --lib --no-fail-fast -- json_result_batch --test-threads=1",
+    "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-expr -p tidb-executor --lib --no-fail-fast -- json_result_batch builtin_ext::json::tests:: rewriter::builtin_type_tests:: tests::builtin_info_json_math_source::json_search expression_index:: --test-threads=1",
+    "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- tests_expression_indexes:: tests_json:: --test-threads=1",
+    "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-exec --test all -- cluster_ddl_source:: --test-threads=1",
+    "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-datatype -p tidb-expr -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+    "make lint",
+    "CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server"
+  ],
+  "continuity": {
+    "original_search_inputs_and_go_expected_values_preserved": true,
+    "legacy_string_carrier_assertions_migrated_to_json": true,
+    "both_duplicate_type_resolvers_removed": true,
+    "native_unchanged": true,
+    "counts_unchanged": true
+  },
+  "initial_attempt": "New catalog assertion failed compilation due to a temporary borrow; bound the shared column before borrowing and reran successfully. Five broader DDL failures remain identical to historical diagnostics. First server link exhausted disk and failed with a bus error; after removing verified inactive archives and the failed temporary link output, the unchanged build passed. The first TCP metadata probe expected internal LongBlob code251; Go server/internal/column.dumpType maps that to wire Blob252. Corrected the external probe, preserved the initial result, and reran all fourteen checks on the identical binary.",
+  "publication": "Actual hook, fresh immediate-prepush build, remote SHA, recovery bundle and Cloud checkpoint follow in /workspace/.cloud-setup/json-result-batch/final-handoff.json",
+  "limits": [
+    "Five pre-existing DDL failures are not fixed; no claim that the broad DDL suite is green",
+    "X01/K03 remain partial; other54 unresolved roots retain carried evidence",
+    "No complete Go package acceptance, full Go suite, live multi-node, benchmarks or performance claim",
+    "No new native-client changes or acceptance",
+    "Earlier parser and Go-master statistics deltas remain separate obligations",
+    "Cloud Publish/fresh-task restoration is not verified"
+  ],
+  "disk_recovery": {
+    "records": [
+      "/workspace/.cloud-setup/json-result-batch/pruned-artifacts.json",
+      "/workspace/.cloud-setup/json-result-batch/pruned-old-exec.json",
+      "/workspace/.cloud-setup/json-result-batch/pruned-failed-link.json"
+    ],
+    "dependency_caches_preserved": true,
+    "working_server_preserved": true
+  }
+}

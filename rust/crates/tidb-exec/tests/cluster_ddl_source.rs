@@ -9433,3 +9433,29 @@ fn materialized_view_query_clause_refusals_follow_go() {
         assert_eq!(admission.reason, want);
     }
 }
+
+/// Go BuildHiddenColumnInfo uses the expression type and shared index admission.
+#[test]
+fn json_result_batch_cluster_hidden_columns_use_the_shared_type_owner() {
+    for (expression, code) in [
+        ("JSON_SEARCH(j,'one','x')", 3753),
+        ("JSON_PRETTY(j)", 3757),
+        ("JSON_UNQUOTE(j)", 3757),
+    ] {
+        let sql = format!("CREATE TABLE t (j JSON, INDEX i (({expression})))");
+        assert_eq!(refusal_with_code(&sql).0, code, "{expression}");
+    }
+    let DdlStatement::CreateTable { build, .. } =
+        statement("CREATE TABLE t (v VARCHAR(10), INDEX i ((JSON_UNQUOTE(v))))")
+    else {
+        panic!("CREATE TABLE expected");
+    };
+    let column = build.template().columns.get(1).unwrap();
+    let column = column.read();
+    assert!(column.hidden);
+    assert_eq!(
+        column.field_type.code(),
+        tidb_datatype::FieldTypeCode::VarString
+    );
+    assert_eq!(column.field_type.flen(), 10);
+}

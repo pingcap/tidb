@@ -130,3 +130,12 @@ The K03/X01 [JSON numeric batch](json-numeric-batch-validation.json) connects th
 B03/B05/B09 share the [internal-process repair](internal-process-batch-validation.json): one live internal-session entry supplies tracked-task visibility, local cancellation and internal timestamp diagnostics. N04, I01 and O09 remain partial; remote dispatch, other providers, lazy schema V2 and full exclusion/package obligations remain. Physical timestamp holds remain conservative.
 
 B02/B06 share the [typed user-variable repair](user-variable-batch-validation.json): one value/type owner serves planning, SET, inline expression execution, prepared statements and session migration. S03/X01 remain partial because their other package obligations are not accepted. Other54 unresolved roots retain earlier evidence.
+
+## Connected B02/B06 JSON checkpoint — 2026-10-06
+
+X01/K03 now share JSON result typing, typed charset errors and expression-index
+hidden-column admission across SQL and cluster metadata creation. The duplicate
+result-type resolver and hardcoded BIGINT path are removed. See
+[validation](json-result-batch-validation.json): 211 passing Rust cases, fourteen
+passing TCP checks and five unchanged historical DDL failures. Both roots stay
+partial; this is existing-owner maintenance, not whole-package acceptance.

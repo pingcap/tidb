@@ -1044,12 +1044,7 @@ impl Datum {
             Self::Bytes(value) => BinaryJSON::parse(std::str::from_utf8(value)?)?,
             Self::Enum(value, _) => BinaryJSON::parse(value.name().as_utf8()?)?,
             Self::Set(value, _) => BinaryJSON::parse(value.name().as_utf8()?)?,
-            Self::BinaryLiteral(_) => {
-                return Err(DatumValueError::Comparison(
-                    "Cannot create a JSON value from a string with CHARACTER SET 'binary'"
-                        .to_owned(),
-                ))
-            }
+            Self::BinaryLiteral(_) => return Err(DatumValueError::InvalidJsonCharset),
             Self::Json(value) => value.clone(),
             _ => self.to_mysql_json()?,
         };

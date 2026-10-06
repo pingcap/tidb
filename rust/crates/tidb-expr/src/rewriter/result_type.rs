@@ -69,72 +69,7 @@ pub(super) fn restore_char_result_charset(func: &mut ScalarFunction) -> Result<(
     Ok(())
 }
 
-/// Go `types.SetBinChsClnFlag`: the binary charset/collation plus the binary
-/// flag every non-string literal type carries.
-/// The builtins whose result is a BINARY string: Go's `getFunction` for each
-/// ends with `types.SetBinChsClnFlag(bf.tp)` (`unhexFunctionClass`,
-/// `base64FunctionClass.fromBase64` in `pkg/expression/builtin_string.go`;
-/// `inet6AtonFunctionClass` in `pkg/expression/builtin_miscellaneous.go`).
-///
-/// This is the single list both places that force it consult -- the result
-/// type built in [`builtin_return_type`] and the re-assertion after generic
-/// collation derivation -- so the two cannot drift apart.
-/// The result type code Go's own `getFunction` gives a builtin, for the
-/// builtins where [`builtin_return_type`] deliberately reports something
-/// else.
-///
-/// The only such family left is `json_search`: its Go result is `json`
-/// (MysqlJson) while the value-slice builtins now carry the same JSON cell
-/// type Go does, so their static type IS Go's answer. `pkg/ddl/index.go`'s
-/// `checkIndexColumn` (JSON 3753 / BLOB-TEXT 3757 refusals) reads this code
-/// rather than the cell type, so keep it exact for whatever remains.
-///
-/// `None` means Go and this crate agree, and the expression's own
-/// `static_type()` is Go's answer too.
-///
-/// Measured, `select <expr>` against TiDB through the DDL probe:
-///
-/// ```text
-/// json_extract(j,'$.a')  json BINARY    tp=245 flen=16777216
-/// json_unquote(j)        longtext       tp=251 flen=4294967295
-/// json_pretty(j)         longtext       tp=251 flen=67108864
-/// json_type(j)           var_string(51) tp=253   -- no divergence
-/// json_quote(s)          var_string(122)tp=253   -- no divergence
-/// json_valid(j)          bigint(20)     tp=8     -- no divergence
-/// cast(j as json)        json BINARY    tp=245 flen=4194304
-/// ```
-///
-/// Only the CODE is kept, because only the code is what the refusal reads;
-/// the flen would be a second fact to hold correct with no reader for it.
-#[must_use]
-pub fn go_result_type_code(name: &str) -> Option<FieldTypeCode> {
-    match name {
-        // Go's `MysqlJson` group. `cast_json` is `CAST(x AS JSON)`, which
-        // this crate lowers to a one-argument function of that name.
-        "json_extract"
-        | "json_object"
-        | "json_array"
-        | "json_keys"
-        | "json_set"
-        | "json_insert"
-        | "json_replace"
-        | "json_remove"
-        | "json_array_append"
-        | "json_array_insert"
-        | "json_merge"
-        | "json_merge_preserve"
-        | "json_merge_patch"
-        | "json_search"
-        | "cast_json" => Some(FieldTypeCode::Json),
-        // Go `jsonUnquoteFunctionClass`/`jsonPrettyFunctionClass`: an
-        // `ETString` result widened to `mysql.MaxBlobWidth`+ and therefore
-        // reported as LONGTEXT, which is a BLOB-class type to
-        // `types.IsTypeBlob`.
-        "json_unquote" | "json_pretty" => Some(FieldTypeCode::LongBlob),
-        _ => None,
-    }
-}
-
+/// Go `types.SetBinChsClnFlag`: stamp binary charset, collation and flag.
 pub(super) fn set_binary_charset(ft: &mut FieldType) {
     ft.set_charset_name("binary");
     // `set_collation_name` resolves the cached `Collation` enum that
@@ -1561,13 +1496,40 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         "json_extract" | "json_object" | "json_array" | "json_keys" | "json_set"
         | "json_insert" | "json_replace" | "json_remove" | "json_array_append"
         | "json_array_insert" | "json_merge" | "json_merge_preserve"
-        | "json_merge_patch" => {
+        | "json_merge_patch" | "json_search" => {
             let mut ft = FieldType::new(FieldTypeCode::Json);
             ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
             ft.set_flen(16_777_216);
             ft
         }
-        "json_quote" | "json_unquote" | "json_type" | "json_pretty" => text(),
+        "json_quote" | "json_unquote" | "json_type" | "json_pretty" => {
+            let mut ft = text();
+            // Go's signatures use the argument's ETString cast width.
+            // A JSON document can render up to mysql.MaxLongBlobWidth bytes.
+            let source = args.first()?.static_type()?;
+            let string_flen = if source.code() == FieldTypeCode::Json {
+                4_294_967_295
+            } else {
+                source.flen()
+            };
+            let flen = match name {
+                "json_type" => 51,
+                "json_quote" => string_flen * 6 + 2,
+                "json_pretty" => 16_777_216 * 4,
+                _ => string_flen,
+            };
+            ft.set_flen(flen);
+            if matches!(name, "json_unquote" | "json_pretty") {
+                ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            }
+            // Go baseBuiltinFunc.getRetTp widens ETString by declared width.
+            if flen >= 16_777_216 {
+                ft.set_code(FieldTypeCode::LongBlob);
+            } else if flen >= 65_536 {
+                ft.set_code(FieldTypeCode::MediumBlob);
+            }
+            ft
+        }
         "json_contains"
         | "json_contains_path"
         | "json_length"
@@ -1986,10 +1948,6 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         // beside `TO_DAYS` in the int family above but arrives here because
         // it takes the zero-date `calcDaynr` path in `time_fn::calendar`.
         "to_seconds" if args.len() == 1 => int(),
-        // `JSON_SEARCH` is typed `ETJson` by Go; it carries the same
-        // JSON-as-canonical-text divergence documented for the JSON family
-        // above, so its result cell is a string here.
-        "json_search" if args.len() >= 3 => text(),
         // String in, number out. The unlisted widths below -- `CHAR_LENGTH`,
         // `CHARACTER_LENGTH`, `LOCATE`, `POSITION` and `FIELD` -- are
         // `mysql.MaxIntWidth`, which is what `newReturnFieldTypeForBaseBuiltinFunc`

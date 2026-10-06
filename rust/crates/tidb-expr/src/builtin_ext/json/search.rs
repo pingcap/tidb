@@ -38,8 +38,7 @@ use std::collections::HashSet;
 use serde_json::Value as Json;
 
 use super::path::{array_range, is_ecmascript_identifier, parse_path, PathLeg};
-use super::text::format_json;
-use super::value::parse_json_document_argument;
+use super::value::{binary_json_datum, parse_json_document_argument};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 
@@ -47,9 +46,8 @@ use crate::{Datum, EvalError, JsonError};
 /// port of `builtinJSONSearchSig.evalJSON` and `BinaryJSON.Search`.
 ///
 /// Search walks only JSON string leaves and returns their full JSON paths.  The
-/// frozen evaluator carries JSON documents as text, so this keeps the same
-/// representable boundary as the other JSON functions and rejects no extra
-/// SQL scalar values before the shared text coercion.
+/// result is a native JSON string or array, shared with nested expressions,
+/// chunk storage and result metadata.
 pub(super) fn json_search(vals: &[Datum]) -> Result<Datum, EvalError> {
     let Some(document) = parse_json_document_argument(&vals[0])? else {
         return Ok(Datum::Null);
@@ -75,10 +73,12 @@ pub(super) fn json_search(vals: &[Datum]) -> Result<Datum, EvalError> {
             };
             if value.is_empty() {
                 '\\'
-            } else if value.chars().count() == 1 {
-                value.chars().next().expect("one character is present")
+            } else if value.len() == 1 {
+                char::from(value.as_bytes()[0])
             } else {
-                return Err(EvalError::Unsupported("JSON_SEARCH escape length"));
+                return Err(EvalError::IncorrectArguments(
+                    "Incorrect arguments to ESCAPE".to_owned(),
+                ));
             }
         }
     };
@@ -138,7 +138,7 @@ pub(super) fn json_search(vals: &[Datum]) -> Result<Datum, EvalError> {
     } else {
         Json::Array(matches.into_iter().map(Json::String).collect())
     };
-    Ok(Datum::new_string(format_json(&result)))
+    binary_json_datum(result)
 }
 
 fn select_search(

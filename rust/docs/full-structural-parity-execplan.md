@@ -2631,3 +2631,13 @@ The [snapshot plan](snapshot-read-policy-batch-execplan.md) and [receipt](parity
 The 2026-10-05 [internal-process batch](internal-process-batch-execplan.md) connects I01/N04/O09 through shared session entries, scoped system-task publication and cancellation, and leased internal timestamp diagnostics. See [receipt](parity/current-audit/internal-process-batch-validation.json). All three parents remain partial; no package acceptance or GC activation. Counts remain 86 tracked /30 repaired /56 unresolved; other53 unresolved roots are not freshly re-audited.
 
 The 2026-10-05 [typed user-variable batch](user-variable-batch-execplan.md) connects S03/X01 through one session value/type owner, plan-time inline type publication, retained SET plans and independent migration maps. The duplicate map, value-derived read/type reconstruction and duplicate integration harness are removed. See [receipt](parity/current-audit/user-variable-batch-validation.json). Both parents remain partial; counts remain 86 tracked /30 repaired /56 unresolved. Other54 unresolved roots were not freshly reproduced.
+
+## JSON result and expression-index checkpoint — 2026-10-06
+
+Existing-owner X01/K03 maintenance joins JSON value/type signatures, byte-sized
+ESCAPE errors, JSON column charset identity and CREATE TABLE hidden-column
+construction through shared owners. See [the batch plan](json-result-batch-execplan.md)
+and [validation](parity/current-audit/json-result-batch-validation.json).
+211 Rust cases and fourteen TCP checks pass; five historical DDL diagnostics
+remain unchanged. Counts stay 86 tracked /30 repaired /56 unresolved; no whole
+Go package or performance acceptance is claimed.

@@ -128,12 +128,8 @@
 //! while `json_extract(j,'$.a')+0` is ACCEPTED because the arithmetic makes
 //! the result a bigint. Captured all three ways.
 //!
-//! The type it reads is Go's, not this crate's. A JSON-returning builtin is
-//! typed `VarString` here -- there is no BinaryJSON cell to hold a JSON value
-//! in, see [`tidb_expr::rewriter::go_result_type_code`] -- so reading
-//! `static_type()` straight would answer "not JSON" for `json_extract` and
-//! accept the index TiDB refuses. [`go_result_type`] is the one place that
-//! divergence is undone.
+//! Index admission reads the expression's authoritative static type, shared
+//! with evaluation, generated columns and result metadata.
 //!
 //! ## The WIDTH half of the same gate
 //!
@@ -654,7 +650,7 @@ pub fn build_hidden_columns_with_like_default_escape(
         // unspecified, which is what turns the BLOB arm from "say how much"
         // into an outright 3757.
         crate::ddl::index_prefix::key_part_length(
-            &go_result_type(&built_expr, &field_type),
+            &field_type,
             crate::ddl::index_prefix::IndexedColumn::Expression(&expr_text),
             None,
             true,
@@ -684,33 +680,6 @@ pub fn build_hidden_columns_with_like_default_escape(
         ));
     }
     Ok(built)
-}
-
-/// The field type Go's `checkIndexColumn` would see for this hidden column.
-///
-/// It is the expression's own type EXCEPT where this workspace deliberately
-/// reports a different one. There is one such family --
-/// [`tidb_expr::rewriter::go_result_type_code`] documents it in full: a
-/// JSON-returning builtin evaluates to canonical JSON TEXT here and is typed
-/// `VarString`, because there is no BinaryJSON cell to put a JSON value in.
-///
-/// The refusal must not inherit that. `checkIndexColumn` is asking what TiDB
-/// calls the result, and reading `static_type()` straight would answer
-/// `VarString` for `json_extract` and accept the index Go answers 3753 for --
-/// captured, `create table t(j json, index i((j->'$.a')))` is 3753 and
-/// `index i((j->>'$.a')))` is 3757, `->` and `->>` being `json_extract` and
-/// `json_unquote(json_extract(...))` to the parser.
-///
-/// Only the TOP-level function decides, as Go's `expr.GetType()` does:
-/// `json_extract(j,'$.a')+0` is a bigint to both and is ACCEPTED, captured.
-fn go_result_type(expr: &tidb_expr::expression::Expression, reported: &FieldType) -> FieldType {
-    let tidb_expr::expression::Expression::ScalarFunction(function) = expr else {
-        return reported.clone();
-    };
-    match tidb_expr::rewriter::go_result_type_code(function.func_name.lowercase()) {
-        Some(code) => FieldType::new(code),
-        None => reported.clone(),
-    }
 }
 
 /// Go restores an expression index's key part with the same flag set a

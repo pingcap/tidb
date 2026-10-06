@@ -130,6 +130,8 @@ pub enum DatumValueError {
     InvalidUtf8(std::str::Utf8Error),
     /// Binary JSON construction failed.
     Json(BinaryJSONError),
+    /// Go ErrInvalidJSONCharset: a binary literal cannot be a JSON document.
+    InvalidJsonCharset,
     /// A source comparison conversion failed.
     Comparison(String),
     /// A DATE/DATETIME/TIMESTAMP source did not form a value the target
@@ -153,6 +155,8 @@ impl fmt::Display for DatumValueError {
             }
             Self::InvalidUtf8(error) => error.fmt(formatter),
             Self::Json(error) => error.fmt(formatter),
+            Self::InvalidJsonCharset => formatter
+                .write_str("Cannot create a JSON value from a string with CHARACTER SET 'binary'."),
             Self::Comparison(error) => formatter.write_str(error),
             Self::IncorrectTemporal(_) => formatter.write_str("incorrect temporal value"),
         }

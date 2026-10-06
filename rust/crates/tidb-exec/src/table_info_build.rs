@@ -950,33 +950,34 @@ fn synthesize_expression_index_columns(
                 "The primary key cannot be an expression index",
             ));
         }
-        for (position, expr) in exprs.iter().enumerate() {
-            let Some(expr) = expr else { continue };
-            // go `BuildHiddenColumnInfo`: a part whose built expression is
-            // just a column is rejected (`ErrFunctionalIndexOnField`, 3762).
-            if let Expr::Column(_) = expr {
-                return Err(DdlAdmissionError::with_code(
-                    3762,
-                    "Expression index on a column is not supported. Consider using a regular index instead",
-                ));
-            }
-            let hidden_name = format!("_V$_{}_{}", constraint.name, position);
-            // The same builder a declared generated column goes through:
-            // it resolves dependencies (go `checkDependedColExist`),
-            // rejects disallowed functions (go `checkIllegalFn4Generated`)
-            // and restores the expression in go's own `GeneratedExprString`
-            // spelling.
-            let generated =
-                tidb_executor::generated_column::build_added_generated_column_with_like_default_escape(
-                    &hidden_name,
-                    expr,
-                    false,
-                    &names,
-                    &types,
-                    &context.session_zone(),
-                    context.like_default_escape(),
-                )
-                .map_err(generated_column_admission_error)?;
+        let parts: Vec<_> = exprs
+            .iter()
+            .zip(&constraint.parts)
+            .map(|(expr, part)| match expr {
+                Some(expr) => IndexPart::Expr {
+                    expr: expr.clone(),
+                    desc: part.desc,
+                },
+                None => IndexPart::Column {
+                    name: part.name.clone(),
+                    prefix_len: None,
+                    desc: part.desc,
+                },
+            })
+            .collect();
+        let hidden =
+            tidb_executor::expression_index::build_hidden_columns_with_like_default_escape(
+                &constraint.name,
+                &parts,
+                &names,
+                &types,
+                &context.session_zone(),
+                context.like_default_escape(),
+            )
+            .map_err(default_admission_error)?;
+        for (position, hidden) in hidden {
+            let hidden_name = hidden.name;
+            let generated = hidden.generated;
             let mut dependences = GoStringSet::default();
             for dependency in generated.dependencies {
                 dependences.insert(dependency);
@@ -993,11 +994,7 @@ fn synthesize_expression_index_columns(
                 generated_expr_string: generated.expr_text,
                 generated_stored: false,
                 dependences,
-                // go infers the type from the built expression; this tier
-                // has no inference entry point yet, so the key-length math
-                // sees a bigint — the type `a + 1` infers to anyway. Only
-                // `SHOW EXTENDED COLUMNS` can observe a wider type.
-                field_type: FieldType::new(FieldTypeCode::LongLong),
+                field_type: hidden.field_type,
                 changing_field_type: None,
                 state: SchemaState::PUBLIC,
                 comment: String::new(),
