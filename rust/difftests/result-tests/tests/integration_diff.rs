@@ -54,14 +54,10 @@
 //! and `DESC` are one statement in TiDB's parser, and the split against
 //! `DESC <table>`'s column list is made by the token after the keyword.
 
-#[path = "enrolled_topics.rs"]
-mod enrolled_topics;
-#[path = "integration_plan_property.rs"]
-mod integration_plan_property;
-#[path = "mysqltest_connections.rs"]
-mod mysqltest_connections;
-#[path = "mysqltest_script.rs"]
-mod mysqltest_script;
+use difftest_result_tests::enrolled_topics;
+use difftest_result_tests::integration_plan_property;
+use difftest_result_tests::mysqltest_connections;
+use difftest_result_tests::mysqltest_script;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -3285,21 +3281,5 @@ fn replay_in_child(topic: &str) -> Result<(), String> {
             }
             None => std::thread::sleep(std::time::Duration::from_millis(20)),
         }
-    }
-}
-
-#[test]
-#[ignore = "scratch probe"]
-fn zz_scratch_probe() {
-    let mut s = Session::new();
-    for sql in [
-        "set @@time_zone='+00:00'",
-        "select timestamp '2024-01-01 14.000011'",
-        "select timestamp '2024-01-01 14:00:00.010'",
-        "select timestamp '2024-01-01 14.66'",
-        "select timestamp '2024-01-01'",
-        "select timestamp '2024-01-01 14:00:00+14:01'",
-    ] {
-        eprintln!("SQL {sql} => {:?}", s.run_with_columns(sql));
     }
 }

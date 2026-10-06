@@ -46,8 +46,7 @@
 //!   > rust/difftests/corpus/table/<topic>.golden.txt
 //! ```
 
-#[path = "result_label.rs"]
-mod result_label;
+use difftest_result_tests::result_label;
 
 use std::fs;
 use std::path::PathBuf;

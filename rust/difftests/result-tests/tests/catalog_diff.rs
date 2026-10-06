@@ -84,12 +84,9 @@
 //! makes an instrument lie. Discarded outcomes are counted by class and the
 //! totals are printed on every run.
 
-#[path = "integration_plan_property.rs"]
-mod integration_plan_property;
-#[path = "mysqltest_connections.rs"]
-mod mysqltest_connections;
-#[path = "mysqltest_script.rs"]
-mod mysqltest_script;
+use difftest_result_tests::integration_plan_property;
+use difftest_result_tests::mysqltest_connections;
+use difftest_result_tests::mysqltest_script;
 
 use std::collections::BTreeMap;
 use std::fs;

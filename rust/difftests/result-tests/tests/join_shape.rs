@@ -83,14 +83,10 @@
 //! statements that moved and state what changed, then update the number.
 //! `r/*.result` is TiDB's oracle and is never edited.
 
-#[path = "enrolled_topics.rs"]
-mod enrolled_topics;
-#[path = "integration_plan_property.rs"]
-mod integration_plan_property;
-#[path = "mysqltest_connections.rs"]
-mod mysqltest_connections;
-#[path = "mysqltest_script.rs"]
-mod mysqltest_script;
+use difftest_result_tests::enrolled_topics;
+use difftest_result_tests::integration_plan_property;
+use difftest_result_tests::mysqltest_connections;
+use difftest_result_tests::mysqltest_script;
 
 use std::collections::BTreeMap;
 use std::fs;

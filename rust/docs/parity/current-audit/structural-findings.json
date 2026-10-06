@@ -797,8 +797,9 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "utility-plan-cleanup-validation.json",
-    "scope": "Retire thirty completed utility audit plans (1177 lines), retaining package inventories and validation limits in receipts and replacing stale plan pointers with immutable archive links. No executable changes."
+    "receipt": "result-support-cleanup-validation.json",
+    "scope": "Shared result-differential support: five byte-identical helpers compiled under one library, 26 helper tests registered once instead of three times (52 duplicates removed), one ignored assertion-free scratch probe removed. Seven suite binaries and all meaningful assertions retained; no finding disposition changes.",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
     {
@@ -1024,6 +1025,11 @@
       "date": "2026-10-06",
       "receipt": "utility-plan-cleanup-validation.json",
       "scope": "Retire thirty completed utility audit plans (1177 lines), retaining package inventories and validation limits in receipts and replacing stale plan pointers with immutable archive links. No executable changes."
+    },
+    {
+      "receipt": "result-support-cleanup-validation.json",
+      "scope": "Shared result-differential support: five byte-identical helpers compiled under one library, 26 helper tests registered once instead of three times (52 duplicates removed), one ignored assertion-free scratch probe removed. Seven suite binaries and all meaningful assertions retained; no finding disposition changes.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],
   "repair_history": [

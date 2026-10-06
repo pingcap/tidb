@@ -1,0 +1,107 @@
+{
+  "date": "2026-10-06",
+  "base": "ea458df03b4d0c60edec0570e3cf9e2555dd570e",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Shared result-differential support: five byte-identical helpers compiled under one library, 26 helper tests registered once instead of three times (52 duplicates removed), one ignored assertion-free scratch probe removed. Seven suite binaries and all meaningful assertions retained; no finding disposition changes.",
+  "helpers": [
+    {
+      "file": "enrolled_topics",
+      "sha256": "e708597379ebc8c776a5809c1af841cb6c941e3ec445e527781f6922cfd0183b",
+      "tests": 0
+    },
+    {
+      "file": "integration_plan_property",
+      "sha256": "50c27d6f56c928b484e8ddf404b30af841321228e95b33f2d6f1c0d23a2dab6b",
+      "tests": 7
+    },
+    {
+      "file": "mysqltest_connections",
+      "sha256": "ec51ab8905f0016881243261c145f32233b2e6d65e1051c9ad863dcd147ef312",
+      "tests": 7
+    },
+    {
+      "file": "mysqltest_script",
+      "sha256": "e2ad57eba07f27554d7e5164f902921e113403e3e4c4c07527d895b0ffb5b4d1",
+      "tests": 12
+    },
+    {
+      "file": "result_label",
+      "sha256": "2f30dc76a881264647c134aa59238b3592cc43eb19f2ad19be32fc689836d803",
+      "tests": 0
+    }
+  ],
+  "continuity": {
+    "helper_files_byte_identical": true,
+    "helper_registrations_before": 78,
+    "helper_registrations_after": 26,
+    "duplicate_registrations_removed": 52,
+    "scratch_tests_removed": [
+      "integration_diff::zz_scratch_probe"
+    ],
+    "retained_ignored_benchmark": "many_table_join::scale_probe",
+    "integration_binaries_retained": 7,
+    "dependencies_fixtures_and_production_sources_unchanged": true
+  },
+  "validation": {
+    "helper_tests": {
+      "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p difftest-result-tests --lib",
+      "passed": 26,
+      "failed": 0,
+      "ignored": 0
+    },
+    "all_test_targets_check": "passed: CARGO_BUILD_JOBS=1 cargo check --locked -p difftest-result-tests --tests",
+    "query_corpus": {
+      "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p difftest-result-tests --test query_diff --test table_diff",
+      "passed": 1,
+      "failed": 0
+    },
+    "table_corpus": {
+      "passed": 0,
+      "failed": 1,
+      "in_domain_statements": 1942,
+      "matched": 1937,
+      "divergences": 5,
+      "skipped_statements": 127,
+      "total_statements": 2069,
+      "baseline_original_harness_exit": 101,
+      "after_exit": 101,
+      "baseline_and_after_diagnostics_identical": true,
+      "failures": [
+        "5 of 1942 in-domain statements diverged from real TiDB (127 skipped, 2069 total, 0 topics skipped by name):",
+        "--- [group_by_position] select a from t order by true desc",
+        "  go  : RS:2;1;1",
+        "  rust: RS:1;2;1",
+        "--- [recursive_cte] with recursive reach as (select 1 as n union all select e.dst from edges e join reach r on e.src = r.n) select n from reach order by n",
+        "  go  : RS:1;2;3;4;4",
+        "  rust: <error: UnknownColumnInClause { column: \"r.n\", clause: \"on clause\" }>",
+        "--- [recursive_cte] with recursive reach as (select 1 as n union select e.dst from edges e join reach r on e.src = r.n) select n from reach order by n",
+        "  go  : RS:1;2;3;4",
+        "  rust: <error: UnknownColumnInClause { column: \"r.n\", clause: \"on clause\" }>",
+        "--- [time_zone_labels] set time_zone='utc'",
+        "  go  : OK",
+        "  rust: <error: Var(SqlError(SqlError { code: 1298, message: \"Unknown or incorrect time zone: 'utc'\", state: \"HY000\" }))>",
+        "--- [time_zone_labels] select @@time_zone",
+        "  go  : RS:utc",
+        "  rust: RS:SYSTEM"
+      ],
+      "diagnosis": "Same five differences with HEAD table_diff and result_label restored temporarily; no golden/assertion changes. Original callers restored afterward. Constant-order output is nondeterministic SQL ordering; recursive CTE r.n resolution and lowercase utc are existing engine/oracle differences requiring separate owner repair."
+    },
+    "continuity": "Five byte-identical helpers; import-only callers except removed scratch probe; metadata adds only support library; findings unchanged.",
+    "format_diff_and_root_lint": "passed",
+    "logs_sha256": {
+      "helper-tests.log": "dd0d892fd04ec43c4b2b5ebe1336f1e28c7357ed241460c4efb52ffc38c31ae5",
+      "check.log": "ab287df1e22c09d9bf20efb39981e2f30a1cd009b07306d4fbef04d207c5d724",
+      "results-tests.log": "40e0d2c1c96807b9e1bb3c33b9cd4f756a1aa4b45f3f7daa41c8804c17700325",
+      "table-baseline.log": "4198d1ce92a2667718d687363d261695da08f51b6432d486765a0b0ae5ee4d7c",
+      "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+      "continuity.json": "cf44ea3e19da00ed0fd55376989455e72da92a9923125dae7acea0ef0e29eec1"
+    }
+  },
+  "limits": [
+    "No structural finding closed",
+    "No complete upstream package acceptance",
+    "No full Go suite, live multi-node or measured performance validation",
+    "Table corpus is not green: five baseline-identical differences preserved, not waived or deleted."
+  ],
+  "publication": "Pending actual hook and fresh pre-push build; final evidence /workspace/.cloud-setup/result-support-cleanup/final-handoff.json"
+}
