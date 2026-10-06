@@ -897,7 +897,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
-	eqOrInResult := compareEqOrIn(lhs, rhs)
+	eqOrInResult := compareEqOrIn(lhs, rhs, sctx.GetSessionVars().RangeMaxCount)
 
 	// predicateResult is separated out. An index may "win" because it has a better
 	// accessResult - but that access has high risk.
@@ -1028,21 +1028,30 @@ func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrIn
 	return 0
 }
 
-// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie).
+// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
+// unless its range count exceeds rangeMaxCount. Zero disables this threshold.
 // For example:
 //
 //	where a=1 and b=1 and c=1 and d=1
 //	lhs == idx(a, b, e) <-- lhsEqOrInCount == 2 (loser)
 //	rhs == idx(d, c, b) <-- rhsEqOrInCount == 3 (winner)
-func compareEqOrIn(lhs, rhs *candidatePath) (predCompare int) {
+func compareEqOrIn(lhs, rhs *candidatePath, rangeMaxCount int64) (predCompare int) {
 	if len(lhs.path.PartialIndexPaths) > 0 || len(rhs.path.PartialIndexPaths) > 0 {
 		// If either path has partial index paths, we cannot reliably compare EqOrIn conditions.
 		return 0
 	}
 	if lhs.eqOrInCount > rhs.eqOrInCount {
+		// More equality/IN predicates can produce many seeks. Do not give that path an
+		// advantage on predicate count alone; leave the other skyline dimensions intact.
+		if rangeMaxCount > 0 && int64(len(lhs.path.Ranges)) > rangeMaxCount {
+			return 0
+		}
 		return 1
 	}
 	if lhs.eqOrInCount < rhs.eqOrInCount {
+		if rangeMaxCount > 0 && int64(len(rhs.path.Ranges)) > rangeMaxCount {
+			return 0
+		}
 		return -1
 	}
 	// We didn't find a winner

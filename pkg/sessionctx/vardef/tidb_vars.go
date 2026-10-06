@@ -1064,6 +1064,9 @@ const (
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
+	// TiDBOptRangeMaxCount is the range-count threshold above which skyline pruning does not prefer an access path
+	// for having more equality/IN predicates. It does not limit range construction. 0 disables the threshold.
+	TiDBOptRangeMaxCount = "tidb_opt_range_max_count"
 
 	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
 	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
@@ -1833,22 +1836,24 @@ const (
 	MinTiDBInstancePlanCacheMemSize                   = 100 * size.MB
 	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
 	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize                int32  = 10240
-	MinDDLReorgBatchSize                int32  = 32
-	MinExpensiveQueryTimeThreshold      uint64 = 10 // 10s
-	MinExpensiveTxnTimeThreshold        uint64 = 60 // 60s
-	DefTiDBAutoBuildStatsConcurrency           = DefBuildStatsConcurrency
-	DefTiDBSysProcScanConcurrency              = DefAnalyzeDistSQLScanConcurrency
-	DefTiDBRcWriteCheckTs                      = false
-	DefTiDBForeignKeyChecks                    = true
-	DefTiDBForeignKeyCheckInSharedLock         = false
-	DefTiDBOptAdvancedJoinHint                 = true
-	DefTiDBAnalyzePartitionConcurrency         = 2
-	DefTiDBOptRangeMaxSize                     = 64 * int64(size.MB) // 64 MB
-	DefTiDBCostModelVer                        = 2
-	DefTiDBServerMemoryLimitSessMinSize        = 128 << 20
-	DefTiDBServerMemoryLimitGCTrigger          = 0.7
-	DefTiDBEnableGOGCTuner                     = true
+	MaxDDLReorgBatchSize               int32  = 10240
+	MinDDLReorgBatchSize               int32  = 32
+	MinExpensiveQueryTimeThreshold     uint64 = 10 // 10s
+	MinExpensiveTxnTimeThreshold       uint64 = 60 // 60s
+	DefTiDBAutoBuildStatsConcurrency          = DefBuildStatsConcurrency
+	DefTiDBSysProcScanConcurrency             = DefAnalyzeDistSQLScanConcurrency
+	DefTiDBRcWriteCheckTs                     = false
+	DefTiDBForeignKeyChecks                   = true
+	DefTiDBForeignKeyCheckInSharedLock        = false
+	DefTiDBOptAdvancedJoinHint                = true
+	DefTiDBAnalyzePartitionConcurrency        = 2
+	DefTiDBOptRangeMaxSize                    = 64 * int64(size.MB) // 64 MB
+	// DefTiDBOptRangeMaxCount is the default range-count threshold for equality/IN preference in skyline pruning.
+	DefTiDBOptRangeMaxCount             int64 = 1000
+	DefTiDBCostModelVer                       = 2
+	DefTiDBServerMemoryLimitSessMinSize       = 128 << 20
+	DefTiDBServerMemoryLimitGCTrigger         = 0.7
+	DefTiDBEnableGOGCTuner                    = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold                 float64 = 0.6
 	DefTiDBGOGCMaxValue                               = 500
