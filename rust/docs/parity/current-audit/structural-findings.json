@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "runner-build-cleanup-validation.json",
-    "scope": "Remove fixed 12-job overrides from 21 live runners, add missing --locked to 19 runner commands and remove the prewrite-recovery test's unnecessary release profile. Maintain all 26 runner invocation boundaries and intentional release-server profiles. Remove 56 net README lines of duplicated historical workflow prose; application code and live assertions unchanged.",
+    "receipt": "session-policy-cleanup-validation.json",
+    "scope": "Retire unused nontransactional admission and declaration-only upgrade registry models; remove six old files and 469 net Rust lines. Move option conversions and two useful tests into tidb-vardef, remove three duplicate predicates and six private/duplicate tests, and migrate every live consumer. Preserve bootstrap marker 287; Go master is 318 and missing versioned migrations remain unresolved.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1089,6 +1089,11 @@
     {
       "receipt": "runner-build-cleanup-validation.json",
       "scope": "Remove fixed 12-job overrides from 21 live runners, add missing --locked to 19 runner commands and remove the prewrite-recovery test's unnecessary release profile. Maintain all 26 runner invocation boundaries and intentional release-server profiles. Remove 56 net README lines of duplicated historical workflow prose; application code and live assertions unchanged.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "session-policy-cleanup-validation.json",
+      "scope": "Retire unused nontransactional admission and declaration-only upgrade registry models; remove six old files and 469 net Rust lines. Move option conversions and two useful tests into tidb-vardef, remove three duplicate predicates and six private/duplicate tests, and migrate every live consumer. Preserve bootstrap marker 287; Go master is 318 and missing versioned migrations remain unresolved.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

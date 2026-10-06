@@ -39,15 +39,12 @@ use super::{
     NEW_COLLATION_ENABLED_VAR, SYSTEM_TZ_VAR, TIDB_SERVER_VERSION_VAR, VAR_FALSE, VAR_TRUE,
 };
 
-/// Go `currentBootstrapVersion` as this node writes it.
+/// Compatibility bootstrap marker currently written by Rust.
 ///
-/// A real TiDB compares the stored value against its own build's constant and
-/// runs the upgrade steps between them, so this must be the same number Go's
-/// upgrade registry ends at — there is only one such number, and
-/// [`crate::upgrade_versions`] already owns it. A second copy here could only
-/// ever be a stale one, and a stale one makes a real TiDB run upgrade steps
-/// over a schema that was already created at the current version.
-pub use crate::upgrade_versions::CURRENT_BOOTSTRAP_VERSION;
+/// Keep this at 287 until the corresponding versioned SQL/schema migrations
+/// exist. Go master has advanced beyond this marker; changing the number alone
+/// would incorrectly claim that those upgrades had run.
+pub const CURRENT_BOOTSTRAP_VERSION: i64 = 287;
 
 /// One value of a seed row, named by its column so a schema that renames or
 /// reorders columns fails loudly instead of writing into the wrong one.

@@ -21,10 +21,7 @@
 
 use std::borrow::Cow;
 
-/// Canonical system-variable ON text.
-pub const ON: &str = "ON";
-/// Canonical system-variable OFF text.
-pub const OFF: &str = "OFF";
+use crate::tidb_vars::{OFF, ON};
 
 /// Returns the source canonical ON/OFF spelling for a boolean.
 #[must_use]
@@ -69,4 +66,43 @@ pub fn on_off_to_true_false(value: &str) -> Cow<'_, str> {
 #[must_use]
 pub fn tidb_opt_on(value: &str) -> bool {
     value.eq_ignore_ascii_case(ON) || value == "1"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tidb_option_on_accepts_only_on_or_one() {
+        // Source: pkg/sessionctx/variable/varsutil_test.go:33-54 and
+        // pkg/sessionctx/variable/varsutil.go:183-186.
+        for value in ["ON", "on", "On", "1"] {
+            assert!(tidb_opt_on(value), "{value}");
+        }
+        for value in ["off", "OFF", "No", "0", "1.1", "", "true", " 1", "01"] {
+            assert!(!tidb_opt_on(value), "{value}");
+        }
+    }
+
+    #[test]
+    fn boolean_and_table_text_conversions_preserve_source_spellings() {
+        // Source: pkg/sessionctx/variable/varsutil.go:42-48, 148-168 and
+        // pkg/sessionctx/variable/varsutil_test.go:704-718.
+        assert_eq!(bool_to_on_off(true), ON);
+        assert_eq!(bool_to_on_off(false), OFF);
+        assert_eq!(true_false_to_on_off("TRUE"), ON);
+        assert_eq!(true_false_to_on_off("TRue"), ON);
+        assert_eq!(true_false_to_on_off("true"), ON);
+        assert_eq!(true_false_to_on_off("FALSE"), OFF);
+        assert_eq!(true_false_to_on_off("False"), OFF);
+        assert_eq!(true_false_to_on_off("false"), OFF);
+        assert_eq!(true_false_to_on_off("other"), "other");
+        assert_eq!(on_off_to_true_false("ON"), "true");
+        assert_eq!(on_off_to_true_false("on"), "true");
+        assert_eq!(on_off_to_true_false("On"), "true");
+        assert_eq!(on_off_to_true_false("OFF"), "false");
+        assert_eq!(on_off_to_true_false("Off"), "false");
+        assert_eq!(on_off_to_true_false("off"), "false");
+        assert_eq!(on_off_to_true_false("other"), "other");
+    }
 }

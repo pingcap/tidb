@@ -207,7 +207,7 @@ impl ClusterServerSession {
             .session
             .vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+            .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
         let report = self.analyze.load_stats(&json, historical_stats_enabled)?;
         eprintln!(
             "{{\"event\":\"cluster_stats_loaded\",\"tables\":{},\"items\":{}}}",
@@ -326,7 +326,7 @@ impl ClusterServerSession {
                 .session
                 .vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_PERSIST_ANALYZE_OPTIONS)
-                .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
             statement.default_columns = if self
                 .session
                 .vars()
@@ -352,17 +352,17 @@ impl ClusterServerSession {
                 .session
                 .vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS)
-                .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
             statement.analyze_snapshot = self
                 .session
                 .vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT)
-                .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
             statement.enable_async_merge_global_stats = self
                 .session
                 .vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS)
-                .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
             statement.partition_merge_concurrency = self
                 .session
                 .vars()
@@ -403,7 +403,7 @@ impl ClusterServerSession {
                 self.session
                     .vars()
                     .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-                    .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value))
+                    .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
             };
             let jobs = PersistedAnalyzeJobs {
                 transactions: Arc::clone(&self.transactions),
@@ -483,7 +483,7 @@ impl ClusterServerSession {
             .session
             .vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value))
+            .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
         {
             for table_id in successful_table_ids {
                 self.historical_stats_worker

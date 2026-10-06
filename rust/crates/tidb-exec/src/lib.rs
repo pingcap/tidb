@@ -78,8 +78,6 @@ pub mod mdl_info_load;
 pub mod multi_statement_transaction;
 pub mod mysql_bootstrap;
 pub mod mysql_system_tables;
-pub mod nontransactional;
-pub mod option_values;
 pub mod pd_approximate_count;
 pub mod pessimistic_lock_error;
 pub mod placement_delivery;
@@ -113,7 +111,6 @@ pub(crate) mod table_write_policy;
 pub mod table_info_build;
 pub mod tiflash_stats;
 pub mod txn_summary;
-pub mod upgrade_versions;
 pub mod warning_publication;
 pub mod wide_scan_selection;
 

@@ -94,10 +94,8 @@
 //!   `vardef.EnableBatchQueryRegion` — process-global atomics in
 //!   `pkg/sessionctx/vardef` with no Rust counterpart yet, so they are
 //!   [`DomainSysVarEnv`] `store_*` methods rather than statics owned here.
-//! - `// boundary:` Go `variable.TiDBOptOn` — already ported as
-//!   `tidb_exec::option_values::tidb_opt_on`; re-stated here as
-//!   [`tidb_opt_on`] because `tidb-exec` pulls in `tidb-planner` and
-//!   `tidb-executor`, which `pkg/domain` must stay below.
+//! - Go `variable.TiDBOptOn` uses the shared
+//!   `tidb_vardef::option_values::tidb_opt_on` owner.
 //! - `// boundary:` Go `variable.ErrWrongValueForVar` —
 //!   [`DomainSysVarError::WrongValueForVar`], MySQL code 1231.
 //! - `// boundary:` Go `strconv.ParseFloat(sVal, 64)` — Rust's `f64` parser
@@ -116,13 +114,7 @@
 use tidb_error::tidb::errcode;
 use tidb_vardef::tidb_vars;
 
-/// Go `variable.TiDBOptOn` (`varsutil.go:184`).
-///
-/// boundary: Go `pkg/sessionctx/variable.TiDBOptOn`.
-#[must_use]
-pub fn tidb_opt_on(opt: &str) -> bool {
-    opt.eq_ignore_ascii_case("ON") || opt == "1"
-}
+use tidb_vardef::option_values::tidb_opt_on;
 
 /// The PD client dynamic options `domain_sysvars.go` sets.
 ///
@@ -474,20 +466,6 @@ mod tests {
         fn set_pd_region_meta_circuit_breaker_error_rate_threshold_pct(&self, pct: u32) {
             self.breaker_calls.borrow_mut().push(pct);
         }
-    }
-
-    #[test]
-    fn tidb_opt_on_matches_go() {
-        assert!(tidb_opt_on("ON"));
-        assert!(tidb_opt_on("on"));
-        assert!(tidb_opt_on("On"));
-        assert!(tidb_opt_on("1"));
-        assert!(!tidb_opt_on("OFF"));
-        assert!(!tidb_opt_on("true"));
-        // Go compares "1" byte-for-byte, so a padded or alternate spelling
-        // of one is off.
-        assert!(!tidb_opt_on(" 1"));
-        assert!(!tidb_opt_on("01"));
     }
 
     #[test]

@@ -18,6 +18,7 @@ use std::fmt;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::{Arc, LazyLock};
 use tidb_hack::GoToLower;
+use tidb_vardef::option_values::tidb_opt_on;
 
 use tidb_datatype::{Datum, UNSPECIFIED_LENGTH};
 use tidb_model::{IndexInfo, TableInfo};
@@ -114,10 +115,6 @@ impl std::error::Error for StatsUtilError {}
 
 fn error(message: impl Into<String>) -> SqlExecError {
     Box::new(StatsUtilError(message.into()))
-}
-
-fn tidb_opt_on(value: &str) -> bool {
-    value.eq_ignore_ascii_case("ON") || value == "1"
 }
 
 fn parse_analyze_skip_column_types(value: &str) -> BTreeSet<String> {

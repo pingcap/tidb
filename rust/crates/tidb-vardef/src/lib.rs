@@ -221,4 +221,5 @@ pub mod defaults;
 /// leaf, and because it is pure policy over those same constants.
 pub mod global_sysvar_initial;
 pub mod modes;
+pub mod option_values;
 pub mod tidb_vars;

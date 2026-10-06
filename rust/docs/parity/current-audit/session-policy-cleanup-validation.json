@@ -1,0 +1,129 @@
+{
+  "date": "2026-10-06",
+  "base": "c186e317dafef92f4e19f6b1a9dae3480885c308",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire unused nontransactional admission and declaration-only upgrade registry models; remove six old files and 469 net Rust lines. Move option conversions and two useful tests into tidb-vardef, remove three duplicate predicates and six private/duplicate tests, and migrate every live consumer. Preserve bootstrap marker 287; Go master is 318 and missing versioned migrations remain unresolved.",
+  "continuity": {
+    "base": "c186e317dafef92f4e19f6b1a9dae3480885c308",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "removed_files": 6,
+    "new_shared_owner_files": 1,
+    "net_rust_lines_removed": 469,
+    "private_model_tests_removed": 5,
+    "duplicate_domain_tests_removed": 1,
+    "useful_tests_moved": 2,
+    "option_function_bodies_unchanged": true,
+    "server_changes_only_namespace_migration": true,
+    "stats_password_changes_only_shared_predicate": true,
+    "bootstrap_marker_unchanged": 287,
+    "go_bootstrap_marker": 318,
+    "retired_symbols_absent": true,
+    "migrated_assertions_preserved": true
+  },
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/nontransactional.rs",
+      "lines": 142,
+      "sha256": "58b5a9b0c3adf710c822324aad7bf4ae810f94a4e8489d645ded8de539345659",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/nontransactional_source.rs",
+      "lines": 110,
+      "sha256": "d418d180edf06aea539af8750a7318b14b9ba93aaac0a2ebc978f89af9afd39f",
+      "tests": [
+        "default_session_admits_all_source_dml_families",
+        "autocommit_and_transaction_state_are_checked_before_other_policy",
+        "batch_dml_weak_read_and_snapshot_gates_match_source_order",
+        "insert_requires_select_and_unknown_dml_is_rejected"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/upgrade_versions.rs",
+      "lines": 87,
+      "sha256": "f6f025d4f113ead58c6427e656937fa90c59a70020ffb246c97e6b0fb1122390",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/upgrade_versions_source.rs",
+      "lines": 77,
+      "sha256": "6ae43caf8d25012f69a847636ecb7efc0d447306fa42757527f16a8f5959041d",
+      "tests": [
+        "upgrade_registry_preserves_order_gaps_and_function_names"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/option_values.rs",
+      "lines": 72,
+      "sha256": "ca31c91049371e32a3c47ec213692437eaeaff4eeb23243994b746a1e8ebc31e",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/option_values_source.rs",
+      "lines": 53,
+      "sha256": "59b401e807d59037be6710a74b66e1253731026f43099b1fcdbd1c143f583fdd",
+      "tests": [
+        "tidb_option_on_accepts_only_on_or_one",
+        "boolean_and_table_text_conversions_preserve_source_spellings"
+      ]
+    }
+  ],
+  "tests": {
+    "owner-tests": [
+      {
+        "passed": 13,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 9,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 39,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "bootstrap-tests": [
+      {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  "commands": [
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-vardef -p tidb-domain -p tidb-util -p tidb-stats-handle-util --lib -- option_values:: domain_sysvars:: password_validation:: util::tests:: --test-threads=1",
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-exec --test all -- mysql_bootstrap_source:: --test-threads=1",
+    "cd /workspace/tidb; make lint",
+    "cd /workspace/tidb; git diff --check"
+  ],
+  "retained_owners": {
+    "option_conversion": "tidb-vardef/src/option_values.rs; constants from tidb_vars",
+    "consumers": "server transaction/statistics switches, Domain PD options, stats session updates, password policy",
+    "bootstrap": "mysql_bootstrap/rows.rs with existing seed/readback tests",
+    "BATCH": "parser/AST support and full Go nontransactional execution obligations retained"
+  },
+  "remaining_go_obligations": [
+    "Go currentBootstrapVersion is 318; Rust still writes 287. The deleted registry ended at 263 and did not execute migrations. This cleanup implements no missing schema upgrades.",
+    "Complete nontransactional BATCH planning/execution and constraint integration; removed seed model had no live caller."
+  ],
+  "gates": {
+    "lint": "passed",
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; external final handoff records completion"
+  },
+  "limits": [
+    "No full Go suites, live TiKV, SQL replay or benchmark; no measured speedup",
+    "No broad finding disposition change or complete package acceptance",
+    "Out-of-tree users of removed public seed APIs must migrate to maintained owners"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/session-policy-cleanup/final-handoff.json"
+}

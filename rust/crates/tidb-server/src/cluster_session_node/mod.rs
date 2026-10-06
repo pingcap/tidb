@@ -1782,7 +1782,7 @@ impl ClusterSessionFactory {
             }
             let historical_stats_enabled = global_vars
                 .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-                .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
             if historical_stats_enabled {
                 for update in updates {
                     if update.is_locked
@@ -2813,7 +2813,7 @@ impl ClusterHistoricalStatsHandle {
             .global_vars
             .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
             .map_err(|error| format!("check tidb_enable_historical_stats failed: {error:?}"))?;
-        if !tidb_exec::option_values::tidb_opt_on(&enabled) {
+        if !tidb_vardef::option_values::tidb_opt_on(&enabled) {
             return Err("tidb_enable_historical_stats should be enabled".to_owned());
         }
         let result =
@@ -2893,7 +2893,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
     fn check_historical_stats_enable(&self) -> Result<bool, String> {
         self.global_vars
             .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .map(|value| tidb_exec::option_values::tidb_opt_on(&value))
+            .map(|value| tidb_vardef::option_values::tidb_opt_on(&value))
             .map_err(|error| format!("{error:?}"))
     }
 
@@ -3852,7 +3852,7 @@ impl tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext for ClusterSt
                 .session
                 .vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT)
-                .map(|value| tidb_exec::option_values::tidb_opt_on(&value))
+                .map(|value| tidb_vardef::option_values::tidb_opt_on(&value))
                 .map_err(|error| stats_session_error(format!("{error:?}")))
         })
         .unwrap_or(false)
@@ -6996,7 +6996,7 @@ impl ClusterServerSession {
         let enabled = self
             .global_vars
             .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+            .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
         if !enabled
             || !self
                 .stats

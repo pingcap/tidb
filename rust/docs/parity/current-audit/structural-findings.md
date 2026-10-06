@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [runner build overrides and workflow prose](runner-build-cleanup-validation.json). Remove fixed 12-job overrides from 21 live runners, add missing --locked to 19 runner commands and remove the prewrite-recovery test's unnecessary release profile. Maintain all 26 runner invocation boundaries and intentional release-server profiles. Remove 56 net README lines of duplicated historical workflow prose; application code and live assertions unchanged.
+Latest cleanup: [unused session models and shared option conversions](session-policy-cleanup-validation.json). Retire unused nontransactional admission and declaration-only upgrade registry models; remove six old files and 469 net Rust lines. Move option conversions and two useful tests into tidb-vardef, remove three duplicate predicates and six private/duplicate tests, and migrate every live consumer. Preserve bootstrap marker 287; Go master is 318 and missing versioned migrations remain unresolved.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

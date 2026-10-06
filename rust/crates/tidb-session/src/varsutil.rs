@@ -17,7 +17,7 @@
 //!
 //! This is a seed of the `variable` package, not its completion. Already
 //! owned elsewhere and deliberately not duplicated here: `TiDBOptOn` and the
-//! ON/OFF conversions (`tidb-exec/src/option_values.rs`),
+//! ON/OFF conversions (`tidb-vardef/src/option_values.rs`),
 //! live isolation/read-only validation (`variables.rs`/`sysvar.rs`), and
 //! `GlobalSystemVariableInitialValue`
 //! (`tidb-vardef/src/global_sysvar_initial.rs`). The hook-calling helpers

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use tidb_datatype::GoString;
+use tidb_vardef::option_values::tidb_opt_on;
 
 const VALIDATE_PASSWORD_POLICY: &str = "validate_password.policy";
 const VALIDATE_PASSWORD_CHECK_USER_NAME: &str = "validate_password.check_user_name";
@@ -81,10 +82,6 @@ fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
         return false;
     }
     haystack.windows(needle.len()).any(|w| w == needle)
-}
-
-fn tidb_opt_on(value: &str) -> bool {
-    value.eq_ignore_ascii_case("ON") || value == "1"
 }
 
 /// Go `ValidateDictionaryPassword`: rejects a password containing any

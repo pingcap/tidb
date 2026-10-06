@@ -67,10 +67,10 @@ fn options_from_values<V: AsRef<str>>(
     };
     tidb_exec::session_commit_protocol::SessionTransactionOptions {
         commit_protocol: tidb_txnkv::transaction::CommitProtocol {
-            async_commit: tidb_exec::option_values::tidb_opt_on(
+            async_commit: tidb_vardef::option_values::tidb_opt_on(
                 get(TIDB_ENABLE_ASYNC_COMMIT).as_ref(),
             ),
-            one_pc: tidb_exec::option_values::tidb_opt_on(get(TIDB_ENABLE1_PC).as_ref()),
+            one_pc: tidb_vardef::option_values::tidb_opt_on(get(TIDB_ENABLE1_PC).as_ref()),
         },
         assertion_level: match tidb_opt_assertion_level(get(TIDB_TXN_ASSERTION_LEVEL).as_ref()) {
             AssertionLevel::Off => tidb_proto::KvrpcAssertionLevel::Off,
