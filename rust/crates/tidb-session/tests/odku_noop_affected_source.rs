@@ -4,13 +4,7 @@
 
 use tidb_session::Session;
 
-fn try_sql(session: &mut Session, sql: &str) -> String {
-    match session.run(sql) {
-        Ok(tidb_session::StmtResult::Affected(n)) => format!("affected {n}"),
-        Ok(_) => "done".to_owned(),
-        Err(e) => format!("ERR {}", e.to_string()),
-    }
-}
+use crate::support::execute as try_sql;
 
 #[test]
 fn changed_counts_two_noop_counts_zero() {

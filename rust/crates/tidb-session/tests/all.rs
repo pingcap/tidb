@@ -14,6 +14,8 @@
 
 //! All topology-independent `tidb-session` integration tests in one process.
 
+mod support;
+
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
 mod add_column_default_check_validation_source;
 mod add_column_first_source;

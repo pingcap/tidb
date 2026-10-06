@@ -4,25 +4,7 @@
 
 use tidb_session::Session;
 
-fn rows(session: &mut Session, sql: &str) -> String {
-    match session.run(sql) {
-        Ok(tidb_session::StmtResult::Rows(rows)) => rows
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|d| match d {
-                        tidb_datatype::Datum::Int(v) => format!("i:{v}"),
-                        other => format!("{other:?}"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .collect::<Vec<_>>()
-            .join(";"),
-        Ok(_) => "done".to_owned(),
-        Err(e) => format!("ERR {}", &e.to_string()[..60.min(e.to_string().len())]),
-    }
-}
+use crate::support::try_integer_rows_60 as rows;
 
 #[test]
 fn cartesian_product_and_natural_key() {

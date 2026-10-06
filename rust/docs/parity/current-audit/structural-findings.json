@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "statistics-plan-cleanup-validation.json",
-    "scope": "Retire eleven completed statistics-handle leaf audit plans (511 lines), retaining every package receipt byte-identically and replacing 18 historical references with immutable archive links. Active statistics parent, LFU follow-up and all unresolved boundaries remain; no executable or finding disposition changes.",
+    "receipt": "session-sql-helper-cleanup-validation.json",
+    "scope": "Replace 245 copied session SQL helpers in 223 modules with 27 shared helpers, removing 218 duplicate definitions and 3531 net Rust harness lines. All 256 affected SQL tests, assertions and registrations remain unchanged; no production or finding disposition changes.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1044,6 +1044,11 @@
     {
       "receipt": "statistics-plan-cleanup-validation.json",
       "scope": "Retire eleven completed statistics-handle leaf audit plans (511 lines), retaining every package receipt byte-identically and replacing 18 historical references with immutable archive links. Active statistics parent, LFU follow-up and all unresolved boundaries remain; no executable or finding disposition changes.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "session-sql-helper-cleanup-validation.json",
+      "scope": "Replace 245 copied session SQL helpers in 223 modules with 27 shared helpers, removing 218 duplicate definitions and 3531 net Rust harness lines. All 256 affected SQL tests, assertions and registrations remain unchanged; no production or finding disposition changes.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

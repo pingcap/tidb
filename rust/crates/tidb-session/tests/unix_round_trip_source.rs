@@ -4,27 +4,7 @@
 
 use tidb_session::Session;
 
-fn rows(session: &mut Session, sql: &str) -> String {
-    match session.run(sql).unwrap() {
-        tidb_session::StmtResult::Rows(rows) => rows
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|d| match d {
-                        tidb_datatype::Datum::String(v) => {
-                            format!("s:{}", String::from_utf8_lossy(v.bytes()))
-                        }
-                        tidb_datatype::Datum::Int(v) => format!("i:{v}"),
-                        other => format!("{other:?}"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .collect::<Vec<_>>()
-            .join(";"),
-        other => panic!("expected rows for {sql}, got {other:?}"),
-    }
-}
+use crate::support::tagged_rows_with_sql as rows;
 
 #[test]
 fn extract_uses_datetime_and_signed_duration_units() {

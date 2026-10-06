@@ -5,12 +5,7 @@
 
 use tidb_session::Session;
 
-fn first(session: &mut Session, sql: &str) -> String {
-    match session.run(sql).unwrap() {
-        tidb_session::StmtResult::Rows(rows) => format!("{:?}", rows[0][0]),
-        other => panic!("expected rows for {sql}, got {other:?}"),
-    }
-}
+use crate::support::first_debug as first;
 
 #[test]
 fn like_escape_forms() {

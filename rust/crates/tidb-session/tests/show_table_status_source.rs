@@ -6,25 +6,7 @@
 
 use tidb_session::Session;
 
-fn strings(session: &mut Session, sql: &str) -> Vec<String> {
-    match session.run(sql).unwrap() {
-        tidb_session::StmtResult::Rows(rows) => rows
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|d| match d {
-                        tidb_datatype::Datum::Bytes(bytes) => {
-                            String::from_utf8_lossy(bytes).into_owned()
-                        }
-                        other => format!("{other:?}"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .collect(),
-        other => panic!("expected rows, got {other:?}"),
-    }
-}
+use crate::support::byte_rows as strings;
 
 #[test]
 fn table_status_reports_next_auto_increment_and_rows() {

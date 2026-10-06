@@ -4,25 +4,7 @@
 
 use tidb_session::Session;
 
-fn rows(session: &mut Session, sql: &str) -> Vec<String> {
-    match session.run(sql).unwrap() {
-        tidb_session::StmtResult::Rows(rows) => rows
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|d| match d {
-                        tidb_datatype::Datum::Bytes(bytes) => {
-                            String::from_utf8_lossy(bytes).into_owned()
-                        }
-                        other => format!("{other:?}"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .collect(),
-        other => panic!("expected rows, got {other:?}"),
-    }
-}
+use crate::support::byte_rows as rows;
 
 #[test]
 fn analyze_executes_and_reports_actuals() {

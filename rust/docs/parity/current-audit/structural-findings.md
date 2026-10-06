@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [completed statistics plans](statistics-plan-cleanup-validation.json). Retire eleven completed statistics-handle leaf audit plans (511 lines), retaining every package receipt byte-identically and replacing 18 historical references with immutable archive links. Active statistics parent, LFU follow-up and all unresolved boundaries remain; no executable or finding disposition changes.
+Latest cleanup: [shared session SQL helpers](session-sql-helper-cleanup-validation.json). Replace 245 copied session SQL helpers in 223 modules with 27 shared helpers, removing 218 duplicate definitions and 3531 net Rust harness lines. All 256 affected SQL tests, assertions and registrations remain unchanged; no production or finding disposition changes.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

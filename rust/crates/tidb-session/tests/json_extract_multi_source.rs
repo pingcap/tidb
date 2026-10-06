@@ -4,29 +4,7 @@
 
 use tidb_session::Session;
 
-fn try_sql(session: &mut Session, sql: &str) -> String {
-    match session.run(sql) {
-        Ok(tidb_session::StmtResult::Rows(rows)) => rows
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|d| match d {
-                        tidb_datatype::Datum::String(v) => {
-                            format!("s:{}", String::from_utf8_lossy(v.bytes()))
-                        }
-                        tidb_datatype::Datum::Int(v) => format!("i:{v}"),
-                        tidb_datatype::Datum::Null => "Null".to_owned(),
-                        other => format!("{other:?}"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .collect::<Vec<_>>()
-            .join(";"),
-        Ok(_) => "done".to_owned(),
-        Err(e) => format!("ERR {}", &e.to_string()[..70.min(e.to_string().len())]),
-    }
-}
+use crate::support::try_tagged_rows_70 as try_sql;
 
 #[test]
 fn multi_path_extraction() {

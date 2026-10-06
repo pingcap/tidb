@@ -28,24 +28,7 @@ fn strings(session: &mut Session, sql: &str) -> Vec<String> {
     }
 }
 
-fn rows(session: &mut Session, sql: &str) -> String {
-    match session.run(sql).unwrap() {
-        tidb_session::StmtResult::Rows(rows) => rows
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|d| match d {
-                        tidb_datatype::Datum::Int(i) => format!("{i}"),
-                        other => format!("{other:?}"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .collect::<Vec<_>>()
-            .join(";"),
-        other => panic!("expected rows, got {other:?}"),
-    }
-}
+use crate::support::integer_rows as rows;
 
 #[test]
 fn create_with_auto_id_cache_one_allocates_tightly() {

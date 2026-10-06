@@ -30,24 +30,7 @@ fn strings(session: &mut Session, sql: &str) -> String {
     }
 }
 
-fn rows(session: &mut Session, sql: &str) -> String {
-    match session.run(sql).unwrap() {
-        tidb_session::StmtResult::Rows(rows) => rows
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|d| match d {
-                        tidb_datatype::Datum::Int(i) => format!("{i}"),
-                        other => format!("{other:?}"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .collect::<Vec<_>>()
-            .join(";"),
-        other => panic!("expected rows, got {other:?}"),
-    }
-}
+use crate::support::integer_rows as rows;
 
 #[test]
 fn auto_inc_option_seeds_the_allocator() {

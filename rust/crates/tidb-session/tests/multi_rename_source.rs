@@ -4,32 +4,9 @@
 
 use tidb_session::Session;
 
-fn rows(session: &mut Session, sql: &str) -> String {
-    match session.run(sql).unwrap() {
-        tidb_session::StmtResult::Rows(rows) => rows
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|d| match d {
-                        tidb_datatype::Datum::Int(v) => format!("i:{v}"),
-                        other => format!("{other:?}"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .collect::<Vec<_>>()
-            .join(";"),
-        other => panic!("expected rows, got {other:?}"),
-    }
-}
+use crate::support::tagged_integer_rows as rows;
 
-fn try_sql(session: &mut Session, sql: &str) -> String {
-    match session.run(sql) {
-        Ok(tidb_session::StmtResult::Affected(n)) => format!("affected {n}"),
-        Ok(_) => "done".to_owned(),
-        Err(e) => format!("ERR {}", e.to_string()),
-    }
-}
+use crate::support::execute as try_sql;
 
 fn setup(session: &mut Session) {
     session.run("create table a (v int)").unwrap();

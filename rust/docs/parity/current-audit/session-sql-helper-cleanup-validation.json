@@ -1,0 +1,241 @@
+{
+  "date": "2026-10-05",
+  "timezone": "America/Los_Angeles",
+  "base": "cb1d4eb031beb75272134dc851cbac6ac35eb60e",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Replace 245 copied session SQL helpers in 223 modules with 27 shared helpers, removing 218 duplicate definitions and 3531 net Rust harness lines. All 256 affected SQL tests, assertions and registrations remain unchanged; no production or finding disposition changes.",
+  "go_ownership": [
+    "pkg/testkit/testkit.go: MustQueryWithContext, ExecToErr",
+    "pkg/testkit/result.go: Result.Check, RowsWithSep"
+  ],
+  "shared_owner": "rust/crates/tidb-session/tests/support/mod.rs",
+  "continuity": {
+    "caller_modules": 223,
+    "helper_copies_before": 245,
+    "shared_helpers_after": 27,
+    "removed_duplicate_definitions": 218,
+    "net_rust_lines_removed": 3531,
+    "original_caller_files_aggregate_sha256": "6b9443bba6a09abd13f8addc4858a1e7d1a5b75debba7486e820ec889a1a0a4f",
+    "restored_caller_files_aggregate_sha256": "6b9443bba6a09abd13f8addc4858a1e7d1a5b75debba7486e820ec889a1a0a4f",
+    "all_caller_bytes_outside_replaced_functions_unchanged": true,
+    "helper_bodies_identical_except_names_and_visibility": true,
+    "test_registrations_unchanged": true
+  },
+  "helper_groups": [
+    {
+      "name": "integer_rows_with_sql",
+      "copies": 38,
+      "original_function_sha256": "248aec1116b0f4dc8f686a9216e37868569ac377aea28553225f24fc52644132",
+      "representative": "rust/crates/tidb-session/tests/fk_child_insert_update_cascade_source.rs"
+    },
+    {
+      "name": "integer_rows",
+      "copies": 28,
+      "original_function_sha256": "9f0fb1420555bb009fd9a7903f15fa281ab1bed8a3125c78dfca8f0fa5a2e99f",
+      "representative": "rust/crates/tidb-session/tests/uservar_insert_delete_source.rs"
+    },
+    {
+      "name": "tagged_integer_rows",
+      "copies": 23,
+      "original_function_sha256": "49b9cb82e5e70927af92769a8664cae3bd49173f62b29f702ab7ae1e3deeed17",
+      "representative": "rust/crates/tidb-session/tests/insert_select_odku_variants_source.rs"
+    },
+    {
+      "name": "execute",
+      "copies": 22,
+      "original_function_sha256": "68f8866f53277b4b152196e0dfdba237a5799ea92585eb8f8f1f484fb2629a9e",
+      "representative": "rust/crates/tidb-session/tests/self_check_source.rs"
+    },
+    {
+      "name": "byte_lines",
+      "copies": 21,
+      "original_function_sha256": "02a9338b06b0309da617f19e59599fee053e032f61e832993b466cb55bcdc429",
+      "representative": "rust/crates/tidb-session/tests/show_create_on_update_source.rs"
+    },
+    {
+      "name": "tagged_nullable_integer_rows",
+      "copies": 12,
+      "original_function_sha256": "93e902ed673144cc56e728f82243acb06f8688d5e87f0b11e0e52bea7f13dab1",
+      "representative": "rust/crates/tidb-session/tests/view_partitioned_source.rs"
+    },
+    {
+      "name": "debug_rows_with_sql",
+      "copies": 11,
+      "original_function_sha256": "a5e0902f8a766ed1d24766a013493272dffe01012ce3fd9a6ebde5c50188451c",
+      "representative": "rust/crates/tidb-session/tests/string_number_coercion_source.rs"
+    },
+    {
+      "name": "debug_rows",
+      "copies": 11,
+      "original_function_sha256": "02906971273370546dc6eee4b3bc75538cf65ad3b27f7397ebae8001069e8395",
+      "representative": "rust/crates/tidb-session/tests/replace_partitioned_source.rs"
+    },
+    {
+      "name": "try_tagged_rows_60",
+      "copies": 10,
+      "original_function_sha256": "cc1c5fd82b4ba26244b406d4ddd2fe4123f3a30c1769aefb148796e68633c83d",
+      "representative": "rust/crates/tidb-session/tests/char_using_fmt_source.rs"
+    },
+    {
+      "name": "byte_rows",
+      "copies": 9,
+      "original_function_sha256": "1261fa5046abb8a297b88b236b17eaf61482aac5b23995c9513e63edbfcaee12",
+      "representative": "rust/crates/tidb-session/tests/drop_database_with_check_source.rs"
+    },
+    {
+      "name": "nullable_integer_rows_with_sql",
+      "copies": 6,
+      "original_function_sha256": "8a3d956a5b8352c50d86e0e9934d8d001e00583dc0c66c46e174d55893632c88",
+      "representative": "rust/crates/tidb-session/tests/correlated_scalar_select_list_source.rs"
+    },
+    {
+      "name": "try_tagged_rows_70",
+      "copies": 6,
+      "original_function_sha256": "216e933fe9afd86a324adf94674d9c6d95176080f376a5768786e2e042738c84",
+      "representative": "rust/crates/tidb-session/tests/json_extract_multi_source.rs"
+    },
+    {
+      "name": "quoted_string_integer_rows",
+      "copies": 5,
+      "original_function_sha256": "66e2609a4eb18224785490822287dcddbdec25f48df25605634383d7bca47835",
+      "representative": "rust/crates/tidb-session/tests/mixed_direction_order_source.rs"
+    },
+    {
+      "name": "try_tagged_integer_rows_60",
+      "copies": 4,
+      "original_function_sha256": "3a54c129eedeb82b6d933a26f2b016d2bedade91b09a8f9d6d123e82f1a38187",
+      "representative": "rust/crates/tidb-session/tests/strcmp_null_safe_source.rs"
+    },
+    {
+      "name": "tagged_rows_with_sql",
+      "copies": 4,
+      "original_function_sha256": "708cbd8c3e55fbb9bf3c7ce7e5886761fbd95d529d5fd169ee5dbf20369e2778",
+      "representative": "rust/crates/tidb-session/tests/date_add_clamp_source.rs"
+    },
+    {
+      "name": "tagged_string_rows_with_sql",
+      "copies": 4,
+      "original_function_sha256": "178c45352d31dab448a729fc3f8e36fab93756ac2deab06f8984b504836e5214",
+      "representative": "rust/crates/tidb-session/tests/concat_ws_trim_source.rs"
+    },
+    {
+      "name": "byte_rows_joined",
+      "copies": 4,
+      "original_function_sha256": "f7d48d7de531633b433443a099231e10861154d1f5389769b041af6b55c8bd60",
+      "representative": "rust/crates/tidb-session/tests/rename_index_source.rs"
+    },
+    {
+      "name": "quoted_string_integer_rows_with_sql",
+      "copies": 3,
+      "original_function_sha256": "bc7023ae6dc360b2dbcdcc30b3c8218669fdd67d83643d460fce9b0b2774cab4",
+      "representative": "rust/crates/tidb-session/tests/collation_case_sensitivity_source.rs"
+    },
+    {
+      "name": "try_tagged_string_rows_60",
+      "copies": 3,
+      "original_function_sha256": "27f1531c3be9c27902ac9cd98df80c04918df3d05d7e20e150e06bef9c30d626",
+      "representative": "rust/crates/tidb-session/tests/lower_upper_case_source.rs"
+    },
+    {
+      "name": "signed_unsigned_rows_with_sql",
+      "copies": 3,
+      "original_function_sha256": "aa5e5f50305e034ba58ce7aae38cae209da3458505005f99465b469253841112",
+      "representative": "rust/crates/tidb-session/tests/bit_write_partition_update_source.rs"
+    },
+    {
+      "name": "nullable_integer_rows",
+      "copies": 3,
+      "original_function_sha256": "9706a1bcd6702592b23ff87daad52679411eb9448d52b269108ce4d617869be1",
+      "representative": "rust/crates/tidb-session/tests/check_is_null_allowance_source.rs"
+    },
+    {
+      "name": "try_integer_rows_60",
+      "copies": 3,
+      "original_function_sha256": "53ae1ca4c6bde085660a99427ebaec29c549a23ccf010ee422ffc179ff7a132d",
+      "representative": "rust/crates/tidb-session/tests/theta_self_join_source.rs"
+    },
+    {
+      "name": "byte_rows",
+      "copies": 2,
+      "original_function_sha256": "ac158590224885195cd62e8381068ab6541c79aec4fa6f733799882a22e04833",
+      "representative": "rust/crates/tidb-session/tests/explain_plan_source.rs"
+    },
+    {
+      "name": "try_tagged_integer_rows_70",
+      "copies": 2,
+      "original_function_sha256": "19a27d7fc310f3214fb10732e440a503b3fa34d55c3af44145a51a832b137bdd",
+      "representative": "rust/crates/tidb-session/tests/json_storage_source.rs"
+    },
+    {
+      "name": "decimal_integer_rows_with_sql",
+      "copies": 2,
+      "original_function_sha256": "2abddefea41dd2aaee091136f1076fdd1b47ba2fc248ff6467728d8d9dc566f5",
+      "representative": "rust/crates/tidb-session/tests/ceil_floor_truncate_source.rs"
+    },
+    {
+      "name": "first_debug",
+      "copies": 2,
+      "original_function_sha256": "f8c884217d16465f507db3fe5896e3639d457e038d2dac5d0d7a2acf52673791",
+      "representative": "rust/crates/tidb-session/tests/trailing_space_pad_source.rs"
+    },
+    {
+      "name": "text_rows",
+      "copies": 2,
+      "original_function_sha256": "ec2de81de6b90e31b4f22e07f1a4dedb1317e5dba841dafdc5db4d2415dbb4f5",
+      "representative": "rust/crates/tidb-session/tests/show_filters_source.rs"
+    },
+    {
+      "name": "try_string_rows_70",
+      "copies": 2,
+      "original_function_sha256": "016eec984deb99b0e355ea0498a53d56ac6f94c64cdfcdf9e1d0f7fbf053d059",
+      "representative": "rust/crates/tidb-session/tests/leap_clamp_source.rs"
+    }
+  ],
+  "validation": {
+    "session_tests": {
+      "command": "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; cargo test --locked -p tidb-session --test all -- <affected-module>:: ...",
+      "filter_selection": "All 223 modules importing crate::support; complete exact argument vector in external test-command.json. No tests skipped within these filters.",
+      "passed": 246,
+      "failed": 10,
+      "ignored": 0,
+      "baseline": {
+        "failed_cases": [
+          "auto_inc_show_create_source::alter_auto_increment_rebases_and_shows",
+          "expression_default_fold_source::non_function_expression_default_folds",
+          "json_extract_multi_source::multi_path_extraction",
+          "json_introspection_source::json_introspection_and_unquote",
+          "json_merge_preserve_source::preserve_concatenates_and_deep_merges",
+          "json_mutation_source::mutation_family",
+          "right_join_source::right_join_preserves_the_right_side",
+          "sequence_functions_source::sequence_function_family",
+          "show_filters_source::show_filters",
+          "theta_self_join_source::inequality_self_join_pairs"
+        ],
+        "same_failure_messages_with_original_helpers": true,
+        "baseline_source": "Original HEAD copies of ten modules and unchanged production; temporary filtered root restored after run",
+        "baseline_log_sha256": "36913571b55838865574ed98c05b31e51a769f685202d91f5aaee285b41c7c0e"
+      },
+      "filtered_out": 91,
+      "log_sha256": "be5155b57242b92c7eafa008c0e6a5d0eb0eb5beb98480496f5919586bf0d2f5"
+    },
+    "metadata": "Byte-identical to prior committed-head metadata; no Cargo target changes",
+    "format": "rustfmt --edition 2024 --check crates/tidb-session/tests/support/mod.rs passed",
+    "lint": "make lint passed",
+    "diff": "git diff --check passed"
+  },
+  "publication": "Pending actual commit hook, fresh immediate-prepush locked build and verified normal push; final external handoff records outcomes.",
+  "counts_unchanged": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "limits": [
+    "No complete Go testkit package acceptance or parity root repair",
+    "No measured compile/runtime speedup",
+    "No full Go, live multi-node, benchmark or fresh-environment restore run",
+    "Known parser/inventory/table-corpus failures are outside this batch and remain unchanged"
+  ],
+  "external_artifacts": "/workspace/.cloud-setup/session-sql-helper-cleanup"
+}

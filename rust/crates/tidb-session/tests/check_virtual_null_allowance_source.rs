@@ -5,25 +5,7 @@
 
 use tidb_session::Session;
 
-fn rows(session: &mut Session, sql: &str) -> String {
-    match session.run(sql).unwrap() {
-        tidb_session::StmtResult::Rows(rows) => rows
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|d| match d {
-                        tidb_datatype::Datum::Int(i) => format!("{i}"),
-                        tidb_datatype::Datum::Null => "NULL".to_owned(),
-                        other => format!("{other:?}"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .collect::<Vec<_>>()
-            .join(";"),
-        other => panic!("expected rows, got {other:?}"),
-    }
-}
+use crate::support::nullable_integer_rows as rows;
 
 fn setup(session: &mut Session) {
     session

@@ -4,27 +4,7 @@
 
 use tidb_session::Session;
 
-fn rows(session: &mut Session, sql: &str) -> String {
-    match session.run(sql).unwrap() {
-        tidb_session::StmtResult::Rows(rows) => rows
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|d| match d {
-                        tidb_datatype::Datum::Int(i) => format!("{i}"),
-                        tidb_datatype::Datum::String(s) => {
-                            format!("'{}'", String::from_utf8_lossy(&s.bytes()))
-                        }
-                        other => format!("{other:?}"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .collect::<Vec<_>>()
-            .join(";"),
-        other => panic!("expected rows for {sql}, got {other:?}"),
-    }
-}
+use crate::support::quoted_string_integer_rows_with_sql as rows;
 
 #[test]
 fn default_bin_is_strict_and_ci_collation_relaxes() {
