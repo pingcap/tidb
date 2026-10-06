@@ -4789,3 +4789,51 @@ func enableNonStarterDeployModeForEmbeddingTest(t *testing.T) {
 		require.NoError(t, deploymode.Set(originalMode))
 	})
 }
+
+func TestTiDBDecodeKeyCommonHandleVarchar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	collate.SetNewCollationEnabledForTest(true)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(16) not null, b int not null, c char(3) not null, v bigint not null, primary key (a, b, c) /*T![clustered_index] CLUSTERED */)")
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	data := []types.Datum{types.NewStringDatum("hello"), types.NewIntDatum(42), types.NewStringDatum("USD")}
+	k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
+	require.NoError(t, err)
+	h, err := kv.NewCommonHandle(k)
+	require.NoError(t, err)
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, h)
+	hexKey := hex.EncodeToString(codec.EncodeBytes(nil, rowKey))
+	tk.MustQuery(fmt.Sprintf("select tidb_decode_key('%s')", hexKey)).Check(testkit.Rows(
+		fmt.Sprintf(`{"handle":{"a":"hello","b":"42","c":"USD"},"table_id":%d}`, tbl.Meta().ID)))
+}
+
+func TestTiDBDecodeKeyCommonHandleVarcharNonBin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	collate.SetNewCollationEnabledForTest(true)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(16) collate utf8mb4_general_ci not null, b int not null, primary key (a, b) /*T![clustered_index] CLUSTERED */)")
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	// The handle holds the sort key of a non-bin collation, so the original value cannot be recovered from it.
+	sortKey := collate.GetCollator("utf8mb4_general_ci").ImmutableKey("hello")
+	data := []types.Datum{types.NewBytesDatum(sortKey), types.NewIntDatum(42)}
+	k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
+	require.NoError(t, err)
+	h, err := kv.NewCommonHandle(k)
+	require.NoError(t, err)
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, h)
+	hexKey := hex.EncodeToString(codec.EncodeBytes(nil, rowKey))
+	tk.MustQuery(fmt.Sprintf("select tidb_decode_key('%s')", hexKey)).Check(testkit.Rows(
+		fmt.Sprintf(`{"handle":{"b":"42"},"table_id":%d}`, tbl.Meta().ID)))
+}
