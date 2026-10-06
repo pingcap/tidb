@@ -58,6 +58,7 @@ type AnalyzeColumnsExecV2 struct {
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
 	intest.Assert(e.samplingStatsConcurrency > 0,
 		"samplingStatsConcurrency must be resolved by AnalyzeExec.Next before workers fan out")
+	intest.Assert(e.tableInfo != nil, "tableInfo must be set by the executor builder")
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -896,15 +897,11 @@ workLoop:
 				}
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
-			if task.isColumn {
-				if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, e.colsInfo[task.slicePos].Offset) {
-					numTopN = 0
-				}
-			} else {
-				idx := e.indexes[task.slicePos-colLen]
-				if isSingleColNonPrefixUniqueIndex(idx) {
-					numTopN = 0
-				}
+			if statistics.UniqueBySchema(e.tableInfo, !task.isColumn, task.id) {
+				// Distinct values have no frequent value for TopN, and their
+				// row count is their NDV.
+				numTopN = 0
+				collector.Unique = true
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
 			if err != nil {
