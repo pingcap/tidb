@@ -13,19 +13,23 @@ selects only Go oracle restores beginning with canonical `EXPLAIN`, so
 `DESCRIBE` (which becomes `SHOW COLUMNS`) and `PLAN REPLAYER DUMP EXPLAIN`
 remain separate obligations rather than being mislabeled as plan outputs.
 
+This is an explicit maintenance command, not an automatic Cargo test. It scans
+source fixtures and verifies generated inventory, without executing SQL or
+comparing plan behavior. Run it when refreshing the fixture inventory.
+
 Run from `rust/`:
 
 ```sh
-cargo run -j 12 -p difftest --bin integration_parser_inventory -- --check
-cargo run -j 12 -p difftest --bin integration_parser_golden -- --check
-cargo run -j 12 -p difftest --bin integration_plan_inventory -- --check
+cargo run --locked -p difftest --bin integration_parser_inventory -- --check
+cargo run --locked -p difftest --bin integration_parser_golden -- --check
+cargo run --locked -p difftest --bin integration_plan_inventory -- --check
 ```
 
 After an intentional upstream fixture or Go parser-oracle refresh, regenerate
 the derived manifest only after the two prerequisite artifacts are current:
 
 ```sh
-cargo run -j 12 -p difftest --bin integration_plan_inventory -- --write
+cargo run --locked -p difftest --bin integration_plan_inventory -- --write
 ```
 
 This inventory proves neither plan output parity nor plan-digest parity. It is

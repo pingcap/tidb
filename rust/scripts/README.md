@@ -100,3 +100,8 @@ logs, source and recovery bundles. Do not run `cargo clean`, purge dependency
 caches or remove worktrees as an ordinary test step. Measure workloads with
 the real server and maintained runners; tooling cleanup alone does not prove
 a workload speedup.
+
+Parser and lexer comparisons share `difftest`: from `rust/`, run
+`cargo test --locked -p difftest --test all -- --test-threads=1`.
+Source-inventory generation/checking is an explicit maintenance operation; see
+[the inventory workflow](../difftests/INTEGRATION_PLAN_INVENTORY.md).

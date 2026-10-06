@@ -602,16 +602,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "difftest-parser-tests"
-version = "0.0.0"
-dependencies = [
- "difftest",
- "tidb-ast",
- "tidb-lexer",
- "tidb-parser",
-]
-
-[[package]]
 name = "difftest-result-tests"
 version = "0.0.0"
 dependencies = [

@@ -90,7 +90,6 @@ members = [
     "crates/tidb-ddl-testargsv1",
     "crates/tidb-schemaver",
     "difftests",
-    "difftests/parser-tests",
     "difftests/result-tests",
 ]
 # `third_party/tikv-client-rs` is a vendored, re-synced copy of

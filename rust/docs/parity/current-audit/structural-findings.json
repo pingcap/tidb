@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "transaction-harness-cleanup-validation.json",
-    "scope": "Retire the redundant difftest-transaction-tests package and target: move nine primitive suites to tidb-txnkv and five live DistSQL suites to tidb-distsql, preserving 49 tests, 27 shared fixture/generator files and seven runner safeguards. No new dependency or runtime behavior.",
+    "receipt": "parser-harness-cleanup-validation.json",
+    "scope": "Consolidate three parser/lexer suites in difftest and retire the redundant difftest-parser-tests package plus automatic source-inventory test. Preserve all five behavioral tests, corpus, oracle and generators; no runtime behavior change.",
     "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
   },
   "test_cleanup_history": [
@@ -1150,6 +1150,15 @@
       "receipt": "transaction-harness-cleanup-validation.json",
       "scope": "Retire the redundant difftest-transaction-tests package and target: move nine primitive suites to tidb-txnkv and five live DistSQL suites to tidb-distsql, preserving 49 tests, 27 shared fixture/generator files and seven runner safeguards. No new dependency or runtime behavior.",
       "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+    },
+    {
+      "date": "2026-10-06",
+      "integration_start": "2d76b05d49b36125a4a619210ceb78e75d98ee38",
+      "receipt": "parser-harness-cleanup-validation.json",
+      "scope": "Consolidate three parser/lexer suites in difftest and retire the redundant difftest-parser-tests package plus automatic source-inventory test. Preserve all five behavioral tests, corpus, oracle and generators; no runtime behavior change.",
+      "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+      "production_behavior_changed": false,
+      "finding_statuses_changed": false
     }
   ],
   "repair_history": [

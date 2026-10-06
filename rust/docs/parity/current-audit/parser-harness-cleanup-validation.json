@@ -1,0 +1,88 @@
+{
+  "date": "2026-10-06",
+  "base": "2d76b05d49b36125a4a619210ceb78e75d98ee38",
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "scope": "Consolidate three parser/lexer suites in difftest and retire the redundant difftest-parser-tests package plus automatic source-inventory test. Preserve all five behavioral tests, corpus, oracle and generators; no runtime behavior change.",
+  "continuity": {
+    "byte_identical_migrated_files": 4,
+    "behavioral_tests_preserved": 5,
+    "removed_automatic_inventory_tests": 1,
+    "normalized_full_test_diagnostics_identical": true,
+    "corpus_oracle_generators_unchanged": true,
+    "locked_metadata": true,
+    "shell_syntax": true,
+    "diff_check": true
+  },
+  "migration": [
+    {
+      "old": "rust/difftests/parser-tests/tests/all.rs",
+      "new": "rust/difftests/tests/all.rs",
+      "sha256": "6fa92989dc96c9d44bad108c179c069d6539f7907cf0deab3207d0879e871245"
+    },
+    {
+      "old": "rust/difftests/parser-tests/tests/integration_parser_diff.rs",
+      "new": "rust/difftests/tests/integration_parser_diff.rs",
+      "sha256": "3b21c421731dff0316776ef1cd33c7e412c702528ea297fd3cd2796b1e7275bc"
+    },
+    {
+      "old": "rust/difftests/parser-tests/tests/lexer_diff.rs",
+      "new": "rust/difftests/tests/lexer_diff.rs",
+      "sha256": "60b6ebc80f285078f8c1731ef3c1345389d85b46e7b682349f1f7d13b1d9ee63"
+    },
+    {
+      "old": "rust/difftests/parser-tests/tests/parser_diff.rs",
+      "new": "rust/difftests/tests/parser_diff.rs",
+      "sha256": "518f9d6c686200312793de9c0c9ffbb6ac3c71bbf235e11e10cd313d2181418e"
+    }
+  ],
+  "tests": {
+    "after_migration": [
+      {
+        "package": "difftest",
+        "passed": 3,
+        "failed": 2,
+        "ignored": 0,
+        "filtered_out": 0
+      }
+    ]
+  },
+  "baseline": {
+    "package": "difftest-parser-tests",
+    "passed": 3,
+    "failed": 2,
+    "ignored": 0,
+    "filtered_out": 0
+  },
+  "known_failures": [
+    "integration_parser_diff::integration_parser_static_go_oracle_reports_rust_outcomes",
+    "parser_diff::test_differential"
+  ],
+  "failure_evidence": {
+    "normalized_full_diagnostics_identical": true,
+    "integration_inputs": 51598,
+    "integration_rust_matched": 51477,
+    "integration_rust_parse_failure": 103,
+    "integration_rust_restore_mismatch": 8,
+    "curated_statements": 2121,
+    "curated_divergences": 5,
+    "before_log": "/workspace/.cloud-setup/parser-harness-cleanup/before-tests.log",
+    "after_log": "/workspace/.cloud-setup/parser-harness-cleanup/after-tests.log"
+  },
+  "test_command": "CARGO_BUILD_JOBS=1 cargo test --locked -p difftest --test all -- --test-threads=1",
+  "checks": {
+    "make_lint": true,
+    "locked_metadata": true,
+    "shell_syntax": true,
+    "continuity": true,
+    "diff_check": true
+  },
+  "publication": "Actual hook, fresh immediate-prepush build, remote SHA and Cloud checkpoint recorded after commit in /workspace/.cloud-setup/parser-harness-cleanup/final-handoff.json",
+  "limits": [
+    "Two existing parser failures remain visible and unchanged; this suite is not green",
+    "Explicit source-inventory --check was not rerun and is known stale",
+    "One fewer Cargo package and net integration binary; no measured speedup",
+    "No runtime repair, finding closure or complete Go package acceptance",
+    "No full Go suite, live multi-node run, benchmarks or fresh-task restoration",
+    "Go statistics NDV/TopN and FM-sketch deltas remain separate unimplemented obligations"
+  ]
+}

@@ -12,7 +12,7 @@ that unsupported TiDB syntax is passing:
 
 ```sh
 cd rust
-cargo test -j 12 -p difftest-parser-tests --test integration_parser_diff -- --nocapture
+cargo test --locked -p difftest --test all -- integration_parser_diff:: --test-threads=1 --nocapture
 ```
 
 It emits the exact totals for Go accepted/rejected inputs and the Rust replay

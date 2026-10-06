@@ -19,8 +19,8 @@ tidb-lexer = { path = "../crates/tidb-lexer" }
 tidb-parser = { path = "../crates/tidb-parser" }
 
 [[test]]
-name = "integration_plan_inventory"
-path = "tests/integration_plan_inventory.rs"
+name = "all"
+path = "tests/all.rs"
 
 # Unit tests for the tools live in the shared library.
 

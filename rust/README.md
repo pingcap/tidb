@@ -37,8 +37,7 @@ but does not replace reading or translating the source.
 | `crates/tidb-tablecodec` | table row/index formats above codecs and canonical KV handles | `pkg/tablecodec` |
 | `crates/tidb-expr` | expression construction/evaluation | `pkg/expression/**` |
 | `crates/tidb-exec` | seed session/catalog executor | `pkg/session/**`, `pkg/executor/**` |
-| `difftests` | differential infrastructure | Go helpers and checked corpora |
-| `difftests/parser-tests` | parser differential tests | lexer/parser/static Go oracle only |
+| `difftests` | differential infrastructure and parser/lexer comparisons | Go helpers, checked corpora and shared `all` test target |
 | `difftests/result-tests` | result-ring tests | expression, query, and table result parity |
 | `difftests/transaction-tests/fixtures` | shared Go-generated transaction/codec fixtures | Tests run in the owning `tidb-txnkv` and `tidb-distsql` crates |
 
