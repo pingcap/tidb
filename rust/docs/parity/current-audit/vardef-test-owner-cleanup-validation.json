@@ -1,0 +1,226 @@
+{
+  "date": "2026-10-06",
+  "base": "3af4618443fd3d41801bb1639b64c582eed6e853",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove three obsolete vardef test carriers, the 489-row copied-literal registry and tautological bounds/private hash-join checks. Consolidate real constant assertions and initialization inputs into maintained owners; exercise actual registry names and GC defaults.",
+  "inventory": {
+    "base": "3af4618443fd3d41801bb1639b64c582eed6e853",
+    "removed": [
+      {
+        "path": "rust/crates/tidb-vardef/src/tests_vardef_port.rs",
+        "lines": 1353,
+        "registrations": 5,
+        "sha256": "bac7e792b30357bf5b57882c7ba053d589c23cfbc65815ef3eb22a19b6293b65"
+      },
+      {
+        "path": "rust/crates/tidb-vardef/src/tests_sysvar_port.rs",
+        "lines": 250,
+        "registrations": 13,
+        "sha256": "03b2d2fb157b487e2239e41106420731a4b8335dd3a1ee76f7dcff81df5f5b10"
+      },
+      {
+        "path": "rust/crates/tidb-vardef/src/tests_variable_p2_port.rs",
+        "lines": 450,
+        "registrations": 21,
+        "sha256": "1d2cb9c65175f49037bf3626e797dc7720de2c7ce5add5a7e27006dbee87e20d"
+      }
+    ],
+    "old_registrations": 39,
+    "migrated_initialization_registrations": 2,
+    "net_registrations_removed": 37,
+    "direct_production_assertions_preserved": 55,
+    "production_code_unchanged": true,
+    "prior_owner_assertions_preserved": true,
+    "finding_dispositions_unchanged": true,
+    "copied_literal_rows_removed": 489
+  },
+  "net_rust_lines_removed": 1885,
+  "go_sources": [
+    "pkg/sessionctx/variable/tests/variable_test.go: TestBuiltInCase, TestSysVarNameIsLowerCase, TestLimitBetweenVariable",
+    "pkg/sessionctx/variable/sysvar_test.go: TestGlobalSystemVariableInitialValue and corresponding sysvar behavior tests",
+    "pkg/sessionctx/variable/varsutil_test.go: TestHelperFuncs",
+    "pkg/sessionctx/vardef/tidb_vars.go and runtime.go"
+  ],
+  "migration": {
+    "built_in_case_names_are_lowercase": [
+      "tidb-session::sysvar::tests::registry_lookup_is_sorted_unique_and_case_insensitive; every actual registry entry, including final entry"
+    ],
+    "sysvar_name_is_lowercase": [
+      "tidb-session::sysvar::tests::registry_lookup_is_sorted_unique_and_case_insensitive; every actual registry entry, including final entry"
+    ],
+    "limit_between_variable": [
+      "tidb-session::sysvar::tests::gogc_tuner_threshold_falls_back_to_the_default_like_go; compare both real registry defaults, no test-local tuner threshold"
+    ],
+    "helper_funcs_tidb_opt_enable_clustered": [
+      "modes::tests::clustered_index_def_mode; preserve bogus fallback"
+    ],
+    "late_added_defaults_match_go": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "pessimistic_transaction_fair_locking_nextgen_initial_value": [
+      "global_sysvar_initial::tests::global_system_variable_initial_value_table_nextgen; preserve in_test=false alongside true"
+    ],
+    "ddl_workers_bounds": [
+      "tidb_vars::tests::spot_check_names",
+      "defaults::tests::spot_check_defaults retains real default in 32..=10240; literal-equals-local-literal checks removed"
+    ],
+    "index_merge_switcher_default": [
+      "defaults::tests::spot_check_defaults",
+      "tidb_vars::tests::spot_check_names"
+    ],
+    "ddl_flashback_concurrency_bound": [
+      "tidb_vars::tests::spot_check_names checks actual MAX_CONFIGURABLE_CONCURRENCY; sysvar::tests::ddl_flashback_concurrency_validation_matches_go checks clamping"
+    ],
+    "default_partition_prune_mode_constant": [
+      "defaults::tests::spot_check_defaults",
+      "tidb_vars::tests::spot_check_names"
+    ],
+    "fast_ddl_default_on": [
+      "defaults::tests::spot_check_defaults",
+      "tidb_vars::tests::spot_check_names"
+    ],
+    "disk_quota_default_100gb": [
+      "defaults::tests::spot_check_defaults",
+      "tidb_vars::tests::spot_check_names"
+    ],
+    "server_memory_limit_defaults": [
+      "defaults::tests::spot_check_defaults",
+      "tidb_vars::tests::spot_check_names"
+    ],
+    "server_memory_limit_sess_min_size_default": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "server_memory_limit_gc_trigger_default_format": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "agg_push_down_default_off": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "derive_top_n_default_off": [
+      "defaults::tests::spot_check_defaults",
+      "tidb_vars::tests::spot_check_names"
+    ],
+    "ignore_inlist_plan_digest_default_on": [
+      "defaults::tests::spot_check_defaults",
+      "tidb_vars::tests::spot_check_names"
+    ],
+    "enable_resource_control_default_on": [
+      "defaults::tests::spot_check_defaults",
+      "tidb_vars::tests::spot_check_names"
+    ],
+    "resource_control_strict_mode_default_on": [
+      "defaults::tests::spot_check_defaults",
+      "tidb_vars::tests::spot_check_names"
+    ],
+    "row_level_checksum_default_off": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "auto_analyze_ratio_default_half": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "tiflash_replica_read_default_all_replicas": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "global_system_variable_initial_value_table": [
+      "global_sysvar_initial::tests::global_system_variable_initial_value_table"
+    ],
+    "global_system_variable_initial_value_table_nextgen": [
+      "global_sysvar_initial::tests::global_system_variable_initial_value_table_nextgen"
+    ],
+    "foreign_key_check_in_shared_lock_default_off": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "low_res_tso_update_interval_default_2000": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "schema_cache_size_default_512mb": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "circuit_breaker_pd_metadata_error_rate_threshold_ratio_default_zero": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "enable_window_function_default_true": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "hash_join_version_default_is_optimized": [
+      "defaults::tests::spot_check_defaults",
+      "tidb-session::tests_core::session_state::hash_join_versions_accept_only_legacy_or_optimized; private is_optimized_version closure removed"
+    ],
+    "enable_full_outer_join_default_false": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "auto_analyze_concurrency_default_3": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "analyze_default_num_buckets_topn_bounds": [
+      "defaults::tests::spot_check_defaults",
+      "tidb-session::tests_global_vars::analyze_default_bucket_and_topn_global_hooks_match_go checks actual defaults/clamping/publication; four test-local boundary equality checks removed"
+    ],
+    "analyze_store_batch_size_defaults_and_bounds": [
+      "tidb_vars::tests::spot_check_names",
+      "defaults::tests::spot_check_defaults"
+    ],
+    "recent_go_master_vardef_names_are_present": [
+      "tidb_vars::tests::spot_check_names; preserve 12 actual-constant/name pairs"
+    ],
+    "recent_go_master_vardef_defaults_are_present": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "opt_selectivity_factor_default_08": [
+      "defaults::tests::spot_check_defaults"
+    ],
+    "synonyms_skip_isolation_level_check_default_off": [
+      "defaults::tests::spot_check_defaults"
+    ]
+  },
+  "preserved": [
+    "55 direct production constant/default/bound assertions, with duplicates consolidated; 12 current-name pairs",
+    "Both initialization tables and the separate NextGen non-test fair-locking input",
+    "Existing defaults, names and mode owner assertions; bogus clustered-index fallback",
+    "Registry sorting and case-insensitive lookup, now checking lowercase on every actual entry",
+    "Session validation, hook, SQL and Rust process-ownership tests remain registered"
+  ],
+  "retired": [
+    "489 pairs of quoted strings claimed to represent the registry; neither half referenced production constants or registry entries",
+    "Literal-equals-test-local-literal DDL/analyze bound assertions",
+    "Test-local hash-join implementation; actual SessionVars behavior remains",
+    "Stale claims of absent registry/atomics and empty source-file section headings",
+    "Duplicate constant-only test registrations and scratch extraction counts in crate documentation"
+  ],
+  "validation": {
+    "vardef": {
+      "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-vardef --lib",
+      "cwd": "rust",
+      "status": "passed",
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 0
+    },
+    "session": {
+      "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- sysvar::tests tests_global_vars::analyze_default_bucket_and_topn_global_hooks_match_go tests_core::session_state::hash_join_versions_accept_only_legacy_or_optimized --test-threads=1",
+      "cwd": "rust",
+      "status": "passed",
+      "passed": 47,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 1975
+    },
+    "continuity": "passed; production code and existing owner assertions preserved",
+    "make_lint": "passed",
+    "publication": "pending normal hook, fresh locked server build immediately before push, remote SHA and checkpoint; final results in external final-handoff.json",
+    "format": "passed: rustfmt on five vardef files and both changed session test functions; no unrelated formatting",
+    "log_sha256": {
+      "vardef-tests.log": "4607a80db751c90b607b0e6ebca12b9cf604af5f614acc280ca54c7d7702662f",
+      "session-tests.log": "91aeb4b93fa68733c2ab36fee43c032208db969b2fc521067bb322d9f294d3c5",
+      "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  },
+  "limits": [
+    "No production behavior, manifests, dependencies or lockfiles changed.",
+    "86 tracked: 30 repaired, 56 unresolved (27 open, 29 partial); finding dispositions unchanged.",
+    "No complete Go package acceptance, live cluster execution or measured speedup.",
+    "Cloud draft save is separate from Publish; fresh restoration remains unverified."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/vardef-test-owner-cleanup"
+}

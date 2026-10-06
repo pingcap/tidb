@@ -117,3 +117,58 @@ pub fn global_system_variable_initial_value(
     }
     value
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{defaults::DEF_TIDB_TXN_MODE, tidb_vars};
+
+    // Go TestGlobalSystemVariableInitialValue and NextGen fair-locking policy.
+    #[test]
+    fn global_system_variable_initial_value_table() {
+        let env = GlobalSysvarEnvironment {
+            store_is_tikv: true,
+            in_test: true,
+            next_gen: false,
+        };
+        let cases: &[(&str, &str, &str)] = &[
+            (tidb_vars::TIDB_TXN_MODE, DEF_TIDB_TXN_MODE, "pessimistic"),
+            (ENABLE_ASYNC_COMMIT, "ON", "ON"),
+            (ENABLE_1PC, "ON", "ON"),
+            (MEM_OOM_ACTION, "SOME", OOM_ACTION_LOG),
+            (ENABLE_AUTO_ANALYZE, "ON", OFF),
+            (ROW_FORMAT_VERSION, "1", "2"),
+            (TXN_ASSERTION_LEVEL, "FAST", ASSERTION_FAST),
+            (ENABLE_MUTATION_CHECKER, "OFF", ON),
+            (ENABLE_ADAPTIVE_LIMIT_SCAN, OFF, ON),
+            (PESSIMISTIC_TRANSACTION_FAIR_LOCKING, "OFF", ON),
+        ];
+        for (name, val, init_val) in cases {
+            let got = global_system_variable_initial_value(name, val, env);
+            assert_eq!(&got, init_val, "{name}");
+        }
+    }
+
+    #[test]
+    fn global_system_variable_initial_value_table_nextgen() {
+        for in_test in [true, false] {
+            let env = GlobalSysvarEnvironment {
+                store_is_tikv: true,
+                in_test,
+                next_gen: true,
+            };
+            assert_eq!(
+                global_system_variable_initial_value(TXN_ASSERTION_LEVEL, "FAST", env),
+                ASSERTION_STRICT
+            );
+            assert_eq!(
+                global_system_variable_initial_value(
+                    PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
+                    "OFF",
+                    env
+                ),
+                OFF
+            );
+        }
+    }
+}

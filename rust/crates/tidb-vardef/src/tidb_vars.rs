@@ -1808,5 +1808,78 @@ mod tests {
         assert_eq!(TIDB_DDL_SLOW_OPR_THRESHOLD, "ddl_slow_threshold");
         assert_eq!(TIDB_GC_ENABLE, "tidb_gc_enable");
         assert_eq!(TIDB_OPT_CARTESIAN_BCJ, "tidb_opt_broadcast_cartesian_join");
+        assert_eq!("tidb_ddl_reorg_worker_cnt", TIDB_DDL_REORG_WORKER_COUNT);
+        assert_eq!("tidb_ddl_reorg_batch_size", TIDB_DDL_REORG_BATCH_SIZE);
+        assert_eq!("tidb_enable_index_merge", TIDB_ENABLE_INDEX_MERGE);
+        assert_eq!("tidb_partition_prune_mode", TIDB_PARTITION_PRUNE_MODE);
+        assert_eq!("tidb_ddl_enable_fast_reorg", TIDB_DDL_ENABLE_FAST_REORG);
+        assert_eq!("tidb_ddl_disk_quota", TIDB_DDL_DISK_QUOTA);
+        assert_eq!(
+            "tidb_server_memory_limit_sess_min_size",
+            TIDB_SERVER_MEMORY_LIMIT_SESS_MIN_SIZE
+        );
+        assert_eq!("tidb_server_memory_limit", TIDB_SERVER_MEMORY_LIMIT);
+        assert_eq!("tidb_opt_derive_topn", TIDB_OPT_DERIVE_TOP_N);
+        assert_eq!(
+            "tidb_ignore_inlist_plan_digest",
+            TIDB_IGNORE_INLIST_PLAN_DIGEST
+        );
+        assert_eq!(TIDB_ENABLE_RESOURCE_CONTROL, "tidb_enable_resource_control");
+        assert_eq!(
+            TIDB_RESOURCE_CONTROL_STRICT_MODE,
+            "tidb_resource_control_strict_mode"
+        );
+        assert_eq!(
+            TIDB_ANALYZE_STORE_BATCH_SIZE,
+            "tidb_analyze_store_batch_size"
+        );
+        assert_eq!(MAX_CONFIGURABLE_CONCURRENCY, 256);
+        let names = [
+            (
+                TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME,
+                "tidb_plan_replayer_file_retention_time",
+            ),
+            (TIDB_ENABLE_FULL_OUTER_JOIN, "tidb_enable_full_outer_join"),
+            (TIDB_ENABLE_TXN_FILE, "tidb_enable_txn_file"),
+            (
+                TIDB_TXN_FILE_MIN_MUTATION_SIZE,
+                "tidb_txn_file_min_mutation_size",
+            ),
+            (
+                TIDB_EXP_EMBED_JINA_AI_API_KEY,
+                "tidb_exp_embed_jina_ai_api_key",
+            ),
+            (
+                TIDB_EXP_EMBED_OPENAI_API_KEY,
+                "tidb_exp_embed_openai_api_key",
+            ),
+            (
+                TIDB_EXP_EMBED_OPENAI_API_BASE,
+                "tidb_exp_embed_openai_api_base",
+            ),
+            (
+                TIDB_EXP_EMBED_COHERE_API_KEY,
+                "tidb_exp_embed_cohere_api_key",
+            ),
+            (
+                TIDB_EXP_EMBED_HUGGINGFACE_API_KEY,
+                "tidb_exp_embed_huggingface_api_key",
+            ),
+            (
+                TIDB_EXP_EMBED_NVIDIA_NIM_API_KEY,
+                "tidb_exp_embed_nvidia_nim_api_key",
+            ),
+            (
+                TIDB_EXP_EMBED_GEMINI_API_KEY,
+                "tidb_exp_embed_gemini_api_key",
+            ),
+            (
+                TIDB_ENABLE_CONNECTION_EVENT_LOG,
+                "tidb_enable_connection_event_log",
+            ),
+        ];
+        for (actual, expected) in names {
+            assert_eq!(actual, expected);
+        }
     }
 }

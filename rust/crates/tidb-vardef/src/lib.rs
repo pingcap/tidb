@@ -23,20 +23,11 @@
 //! runtime MDL switch: NextGen always reports enabled even if the mutable
 //! classic-kernel backing value is false.
 //!
-//! SCOPE (documented, not yet the whole `vardef` package): the name constants
-//! (521), the `Def*` defaults (395), and the mode enums are ported; constants
-//! are script-extracted and byte-verified against the Go source. `ScopeFlag`
-//! and sysvar type metadata are consumed by `tidb-session::sysvar`; the
-//! disconnected `tidb-exec` copies have been retired. Still DEFERRED: the
-//! remainder of the mutable `var (...)` block of runtime-tunable global sysvar
-//! backing stores, apart from the two ANALYZE defaults and plan-replayer
-//! retention setting above (many need
-//! config/system-memory-derived initializers,
-//! `rate.Limiter`, or typed pointers, and are runtime state better wired when
-//! the session layer consumes them, not on the simple-query path),
-//! `sysvar.go`'s `SysVar` struct together with the `GetSysVar`/`SetSysVar`
-//! global registry (the singleton the rewrite deliberately replaces with
-//! explicit wiring), and `runtime.go`.
+//! System-variable registry metadata, validation and hooks live in
+//! `tidb-session::sysvar`; this crate owns their shared names, defaults, mode
+//! conversion and process-wide runtime values. Global initialization policy
+//! lives in [`global_sysvar_initial`]. The complete Go `vardef` and `variable`
+//! package obligations remain tracked in the structural parity audit.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 
@@ -230,10 +221,4 @@ pub mod defaults;
 /// leaf, and because it is pure policy over those same constants.
 pub mod global_sysvar_initial;
 pub mod modes;
-#[cfg(test)]
-mod tests_sysvar_port;
-#[cfg(test)]
-mod tests_vardef_port;
-#[cfg(test)]
-mod tests_variable_p2_port;
 pub mod tidb_vars;

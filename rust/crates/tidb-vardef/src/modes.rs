@@ -140,6 +140,10 @@ mod tests {
             tidb_opt_enable_clustered(""),
             ClusteredIndexDefMode::INT_ONLY
         );
+        assert_eq!(
+            tidb_opt_enable_clustered("bogus"),
+            ClusteredIndexDefMode::INT_ONLY
+        );
     }
 
     #[test]

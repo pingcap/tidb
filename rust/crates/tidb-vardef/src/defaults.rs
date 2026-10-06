@@ -901,6 +901,51 @@ mod tests {
         // time.Duration defaults, nanoseconds
         assert_eq!(DEF_TIDB_LOAD_BASED_REPLICA_READ_THRESHOLD, 1_000_000_000);
         assert_eq!(DEF_TIDB_GC_MAX_WAIT_TIME, 24 * 60 * 60);
+        assert_eq!(DEF_TIDB_QUERY_COP_STORE_LIMIT, 15);
+        assert!(DEF_TIDB_COLUMNAR_STORAGE_ENABLED);
+        assert_eq!(DEF_TIDB_MERGE_PARTITION_STATS_CONCURRENCY, 1);
+        assert_eq!(DEF_TIDB_SERVER_MEMORY_LIMIT, "80%");
+        assert!(DEF_TIDB_ENABLE_INDEX_MERGE);
+        assert_eq!("dynamic", DEF_TIDB_PARTITION_PRUNE_MODE);
+        assert!(DEF_TIDB_ENABLE_FAST_REORG);
+        assert_eq!(100 * 1024 * 1024 * 1024, DEF_TIDB_DDL_DISK_QUOTA);
+        assert_eq!(128 << 20, DEF_TIDB_SERVER_MEMORY_LIMIT_SESS_MIN_SIZE);
+        assert_eq!(0.7, DEF_TIDB_SERVER_MEMORY_LIMIT_GC_TRIGGER);
+        assert_eq!(
+            "0.7",
+            format!("{}", DEF_TIDB_SERVER_MEMORY_LIMIT_GC_TRIGGER)
+        );
+        assert!(!DEF_OPT_AGG_PUSH_DOWN);
+        assert!(!DEF_OPT_DERIVE_TOP_N);
+        assert!(DEF_TIDB_IGNORE_INLIST_PLAN_DIGEST);
+        assert!(DEF_TIDB_ENABLE_RESOURCE_CONTROL);
+        assert!(DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE);
+        assert!(!DEF_TIDB_ENABLE_ROW_LEVEL_CHECKSUM);
+        assert_eq!(DEF_TIFLASH_REPLICA_READ, "all_replicas");
+        assert!(!DEF_TIDB_FOREIGN_KEY_CHECK_IN_SHARED_LOCK);
+        assert_eq!(DEF_TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL, 2000);
+        assert_eq!(DEF_TIDB_SCHEMA_CACHE_SIZE as u64, 512 * 1024 * 1024);
+        assert_eq!(DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO, 0.0);
+        assert!(DEF_ENABLE_WINDOW_FUNCTION);
+        assert_eq!(DEF_TIDB_HASH_JOIN_VERSION, HASH_JOIN_VERSION_OPTIMIZED);
+        assert!(!DEF_TIDB_ENABLE_FULL_OUTER_JOIN);
+        assert_eq!(DEF_TIDB_AUTO_ANALYZE_CONCURRENCY, 3);
+        assert_eq!(DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS, 256);
+        assert_eq!(DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N, 100);
+        assert_eq!(DEF_TIDB_ANALYZE_STORE_BATCH_SIZE, 4);
+        assert_eq!(crate::bounds::MAX_TIDB_ANALYZE_STORE_BATCH_SIZE, 8);
+        assert_eq!(DEF_TIDB_EMBED_OPENAI_API_BASE, "https://api.openai.com/v1");
+        assert_eq!(
+            DEF_TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME,
+            604_800_000_000_000
+        );
+        assert!(!DEF_TIDB_ENABLE_CONNECTION_EVENT_LOG);
+        assert!(!DEF_TIDB_ENABLE_TXN_FILE);
+        assert_eq!(DEF_TIDB_TXN_FILE_MIN_MUTATION_SIZE, 0);
+        assert_eq!(crate::bounds::MIN_TIDB_TXN_FILE_MIN_MUTATION_SIZE, 1 << 20);
+        assert_eq!(DEF_OPT_SELECTIVITY_FACTOR, 0.8);
+        assert!(!DEF_TIDB_SKIP_ISOLATION_LEVEL_CHECK);
+        assert!((32..=10240).contains(&DEF_TIDB_DDL_REORG_BATCH_SIZE));
     }
 }
 /// Go `DefTiDBQueryCopStoreLimit` (= `15`).

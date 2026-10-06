@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "chunk-test-owner-cleanup-validation.json",
-    "scope": "Consolidate chunk allocator, pool, iterator, list and mutable-row tests into their maintained owners; remove five duplicate carriers and two redundant codec/projection cases, preserving distinct inputs and Rust ownership regressions."
+    "receipt": "vardef-test-owner-cleanup-validation.json",
+    "scope": "Remove three obsolete vardef test carriers, the 489-row copied-literal registry and tautological bounds/private hash-join checks. Consolidate real constant assertions and initialization inputs into maintained owners; exercise actual registry names and GC defaults."
   },
   "test_cleanup_history": [
     {
@@ -999,6 +999,11 @@
       "date": "2026-10-06",
       "receipt": "chunk-test-owner-cleanup-validation.json",
       "scope": "Consolidate chunk allocator, pool, iterator, list and mutable-row tests into their maintained owners; remove five duplicate carriers and two redundant codec/projection cases, preserving distinct inputs and Rust ownership regressions."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "vardef-test-owner-cleanup-validation.json",
+      "scope": "Remove three obsolete vardef test carriers, the 489-row copied-literal registry and tautological bounds/private hash-join checks. Consolidate real constant assertions and initialization inputs into maintained owners; exercise actual registry names and GC defaults."
     }
   ],
   "repair_history": [

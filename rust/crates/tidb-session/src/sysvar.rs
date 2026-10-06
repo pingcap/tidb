@@ -2284,9 +2284,12 @@ mod tests {
                 pair[0].name,
                 pair[1].name
             );
+        }
+        // Go TestBuiltInCase / TestSysVarNameIsLowerCase cover every entry.
+        for definition in SYS_VARS {
             assert_eq!(
-                pair[0].name.to_ascii_lowercase(),
-                pair[0].name,
+                definition.name.to_ascii_lowercase(),
+                definition.name,
                 "Go stores registry names lowercased"
             );
         }
@@ -3165,6 +3168,9 @@ mod tests {
     #[test]
     fn gogc_tuner_threshold_falls_back_to_the_default_like_go() {
         let sv = get_sys_var("tidb_gogc_tuner_threshold").unwrap();
+        // Go TestLimitBetweenVariable: compare production defaults.
+        let trigger = get_sys_var("tidb_server_memory_limit_gc_trigger").unwrap();
+        assert!(sv.value.parse::<f64>().unwrap() + 0.05 < trigger.value.parse::<f64>().unwrap());
         assert_eq!(sv.validate("0.3").unwrap().value, "0.3");
         assert_eq!(sv.validate("bogus").unwrap().value, "0.6");
         assert_eq!(sv.validate("-5").unwrap().value, "-5");

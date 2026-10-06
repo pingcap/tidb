@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [chunk test owners](chunk-test-owner-cleanup-validation.json). Removed five duplicate carriers and two redundant cases (21 registrations); distinct inputs moved into maintained owner tests. Codec/join-key and Rust ownership regressions retained. Finding dispositions unchanged.
+Latest cleanup: [variable test owners](vardef-test-owner-cleanup-validation.json). Removed three obsolete carriers, 489 copied literal pairs and 37 net test registrations. Production-backed assertions and initialization inputs retained; registry checks use actual entries/defaults. Finding dispositions unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
