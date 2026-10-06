@@ -885,10 +885,23 @@ func executeProcedureBlockNoReturn(ctx EvalContext, block *ast.ProcedureBlock, p
 // cursorContextKey is the special key used to store cursor context in vars map.
 const cursorContextKey = "__cursor_ctx__"
 
+// handlerContextKey is the special key used to store handler context in vars map.
+const handlerContextKey = "__handler_ctx__"
+
 // getCursorContext retrieves the cursor context from vars map.
 func getCursorContext(vars map[string]types.Datum) *cursorContext {
 	if d, ok := vars[cursorContextKey]; ok {
 		if ctx, ok := d.GetInterface().(*cursorContext); ok {
+			return ctx
+		}
+	}
+	return nil
+}
+
+// getHandlerContext retrieves the handler context from vars map.
+func getHandlerContext(vars map[string]types.Datum) *handlerContext {
+	if d, ok := vars[handlerContextKey]; ok {
+		if ctx, ok := d.GetInterface().(*handlerContext); ok {
 			return ctx
 		}
 	}
@@ -924,6 +937,11 @@ func executeProcedureBlockInternal(ctx EvalContext, block *ast.ProcedureBlock, p
 	var cursorCtxDatum types.Datum
 	cursorCtxDatum.SetInterface(cursorCtx)
 	localVars[cursorContextKey] = cursorCtxDatum
+
+	// Store handler context in local vars for access by nested control flow (IF, WHILE, etc.)
+	var handlerCtxDatum types.Datum
+	handlerCtxDatum.SetInterface(handlers)
+	localVars[handlerContextKey] = handlerCtxDatum
 
 	// Process variable declarations, cursor declarations, and handler declarations
 	for _, decl := range block.ProcedureVars {
@@ -1496,9 +1514,11 @@ func executeSignalStmt(ctx EvalContext, stmt *ast.SignalStmt, vars map[string]ty
 		messageText = "Unhandled user-defined exception condition"
 	}
 
-	// Create and return the error
-	// In MySQL, SIGNAL raises an error that can be caught by handlers
-	return executionResult{}, errors.Errorf("SIGNAL SQLSTATE '%s': %s", sqlState, messageText)
+	// Create and return the error as a mysql.SQLError so it can be caught by handlers
+	// Use error code 1644 (ER_SIGNAL_EXCEPTION) for user-defined signals
+	sqlErr := mysql.NewErr(mysql.ErrSignalException, messageText)
+	sqlErr.State = sqlState
+	return executionResult{}, sqlErr
 }
 
 // executeResignalStmt executes a RESIGNAL statement to modify and re-raise an error.
@@ -1533,8 +1553,10 @@ func executeResignalStmt(ctx EvalContext, stmt *ast.ResignalStmt, vars map[strin
 		messageText = "Unhandled user-defined exception condition"
 	}
 
-	// Create and return the error
-	return executionResult{}, errors.Errorf("RESIGNAL SQLSTATE '%s': %s", sqlState, messageText)
+	// Create and return the error as a mysql.SQLError so it can be caught by handlers
+	sqlErr := mysql.NewErr(mysql.ErrSignalException, messageText)
+	sqlErr.State = sqlState
+	return executionResult{}, sqlErr
 }
 
 // executeProcedureFetchInto fetches the next row from a cursor into variables.
@@ -1624,9 +1646,12 @@ func executeProcedureIfBlock(ctx EvalContext, block *ast.ProcedureIfBlock, vars 
 		}
 	}
 
+	// Get handler context from vars (inherited from enclosing block)
+	handlers := getHandlerContext(vars)
+
 	if condTrue {
-		// Execute IF branch
-		return executeStatementList(ctx, block.ProcedureIfStmts, vars, "")
+		// Execute IF branch with inherited handler context
+		return executeStatementListWithHandlers(ctx, block.ProcedureIfStmts, vars, "", handlers)
 	}
 
 	// Check ELSEIF/ELSE branch
@@ -1636,8 +1661,8 @@ func executeProcedureIfBlock(ctx EvalContext, block *ast.ProcedureIfBlock, vars 
 			// ELSEIF - recursively evaluate
 			return executeProcedureIfBlock(ctx, elseStmt.ProcedureIfStmt, vars)
 		case *ast.ProcedureElseBlock:
-			// ELSE - execute else statements
-			return executeStatementList(ctx, elseStmt.ProcedureIfStmts, vars, "")
+			// ELSE - execute else statements with inherited handler context
+			return executeStatementListWithHandlers(ctx, elseStmt.ProcedureIfStmts, vars, "", handlers)
 		}
 	}
 
@@ -1648,6 +1673,9 @@ func executeProcedureIfBlock(ctx EvalContext, block *ast.ProcedureIfBlock, vars 
 func executeProcedureWhileStmt(ctx EvalContext, stmt *ast.ProcedureWhileStmt, vars map[string]types.Datum) (executionResult, error) {
 	maxIterations := 10000 // Prevent infinite loops
 	iterations := 0
+
+	// Get handler context from vars (inherited from enclosing block)
+	handlers := getHandlerContext(vars)
 
 	for {
 		if iterations >= maxIterations {
@@ -1670,8 +1698,8 @@ func executeProcedureWhileStmt(ctx EvalContext, stmt *ast.ProcedureWhileStmt, va
 			break
 		}
 
-		// Execute loop body
-		result, err := executeStatementList(ctx, stmt.Body, vars, "")
+		// Execute loop body with inherited handler context
+		result, err := executeStatementListWithHandlers(ctx, stmt.Body, vars, "", handlers)
 		if err != nil {
 			return executionResult{}, err
 		}
@@ -1693,14 +1721,17 @@ func executeProcedureRepeatStmt(ctx EvalContext, stmt *ast.ProcedureRepeatStmt, 
 	maxIterations := 10000 // Prevent infinite loops
 	iterations := 0
 
+	// Get handler context from vars (inherited from enclosing block)
+	handlers := getHandlerContext(vars)
+
 	for {
 		if iterations >= maxIterations {
 			return executionResult{}, errors.New("REPEAT loop exceeded maximum iterations")
 		}
 		iterations++
 
-		// Execute loop body
-		result, err := executeStatementList(ctx, stmt.Body, vars, "")
+		// Execute loop body with inherited handler context
+		result, err := executeStatementListWithHandlers(ctx, stmt.Body, vars, "", handlers)
 		if err != nil {
 			return executionResult{}, err
 		}
@@ -1735,14 +1766,17 @@ func executeProcedureLoopStmt(ctx EvalContext, stmt *ast.ProcedureLoopStmt, vars
 	maxIterations := 10000 // Prevent infinite loops
 	iterations := 0
 
+	// Get handler context from vars (inherited from enclosing block)
+	handlers := getHandlerContext(vars)
+
 	for {
 		if iterations >= maxIterations {
 			return executionResult{}, errors.New("LOOP exceeded maximum iterations")
 		}
 		iterations++
 
-		// Execute loop body
-		result, err := executeStatementList(ctx, stmt.Body, vars, "")
+		// Execute loop body with inherited handler context
+		result, err := executeStatementListWithHandlers(ctx, stmt.Body, vars, "", handlers)
 		if err != nil {
 			return executionResult{}, err
 		}
@@ -1769,6 +1803,9 @@ func executeSimpleCaseStmt(ctx EvalContext, stmt *ast.SimpleCaseStmt, vars map[s
 		return executionResult{}, err
 	}
 
+	// Get handler context from vars (inherited from enclosing block)
+	handlers := getHandlerContext(vars)
+
 	for _, when := range stmt.WhenCases {
 		whenVal, _, err := evaluateExpression(ctx, when.Expr, vars)
 		if err != nil {
@@ -1781,13 +1818,13 @@ func executeSimpleCaseStmt(ctx EvalContext, stmt *ast.SimpleCaseStmt, vars map[s
 			return executionResult{}, err
 		}
 		if cmp == 0 {
-			return executeStatementList(ctx, when.ProcedureStmts, vars, "")
+			return executeStatementListWithHandlers(ctx, when.ProcedureStmts, vars, "", handlers)
 		}
 	}
 
 	// Execute ELSE branch if present
 	if len(stmt.ElseCases) > 0 {
-		return executeStatementList(ctx, stmt.ElseCases, vars, "")
+		return executeStatementListWithHandlers(ctx, stmt.ElseCases, vars, "", handlers)
 	}
 
 	return executionResult{}, nil
@@ -1796,6 +1833,9 @@ func executeSimpleCaseStmt(ctx EvalContext, stmt *ast.SimpleCaseStmt, vars map[s
 // executeSearchCaseStmt executes a searched CASE statement (CASE WHEN condition ...).
 func executeSearchCaseStmt(ctx EvalContext, stmt *ast.SearchCaseStmt, vars map[string]types.Datum) (executionResult, error) {
 	// Searched CASE: CASE WHEN condition THEN ...
+	// Get handler context from vars (inherited from enclosing block)
+	handlers := getHandlerContext(vars)
+
 	for _, when := range stmt.WhenCases {
 		condVal, _, err := evaluateExpression(ctx, when.Expr, vars)
 		if err != nil {
@@ -1805,14 +1845,14 @@ func executeSearchCaseStmt(ctx EvalContext, stmt *ast.SearchCaseStmt, vars map[s
 		if !condVal.IsNull() {
 			intVal, err := condVal.ToInt64(types.DefaultStmtNoWarningContext)
 			if err == nil && intVal != 0 {
-				return executeStatementList(ctx, when.ProcedureStmts, vars, "")
+				return executeStatementListWithHandlers(ctx, when.ProcedureStmts, vars, "", handlers)
 			}
 		}
 	}
 
 	// Execute ELSE branch if present
 	if len(stmt.ElseCases) > 0 {
-		return executeStatementList(ctx, stmt.ElseCases, vars, "")
+		return executeStatementListWithHandlers(ctx, stmt.ElseCases, vars, "", handlers)
 	}
 
 	return executionResult{}, nil
@@ -1847,8 +1887,9 @@ func executeProcedureLabelLoop(ctx EvalContext, stmt *ast.ProcedureLabelLoop, va
 	case *ast.ProcedureLoopStmt:
 		return executeProcedureLoopStmtWithLabel(ctx, loop, vars, label)
 	default:
-		// Generic loop execution
-		return executeStatementList(ctx, []ast.StmtNode{stmt.Block}, vars, label)
+		// Generic loop execution with inherited handler context
+		handlers := getHandlerContext(vars)
+		return executeStatementListWithHandlers(ctx, []ast.StmtNode{stmt.Block}, vars, label, handlers)
 	}
 }
 
@@ -1856,6 +1897,9 @@ func executeProcedureLabelLoop(ctx EvalContext, stmt *ast.ProcedureLabelLoop, va
 func executeProcedureWhileStmtWithLabel(ctx EvalContext, stmt *ast.ProcedureWhileStmt, vars map[string]types.Datum, label string) (executionResult, error) {
 	maxIterations := 10000
 	iterations := 0
+
+	// Get handler context from vars (inherited from enclosing block)
+	handlers := getHandlerContext(vars)
 
 	for {
 		if iterations >= maxIterations {
@@ -1876,9 +1920,9 @@ func executeProcedureWhileStmtWithLabel(ctx EvalContext, stmt *ast.ProcedureWhil
 			break
 		}
 
-		// Don't pass the label to executeStatementList - LEAVE/ITERATE should
-		// propagate up to this handler, not be consumed by executeStatementList
-		result, err := executeStatementList(ctx, stmt.Body, vars, "")
+		// Don't pass the label to executeStatementListWithHandlers - LEAVE/ITERATE should
+		// propagate up to this handler, not be consumed by executeStatementListWithHandlers
+		result, err := executeStatementListWithHandlers(ctx, stmt.Body, vars, "", handlers)
 		if err != nil {
 			return executionResult{}, err
 		}
@@ -1908,15 +1952,18 @@ func executeProcedureRepeatStmtWithLabel(ctx EvalContext, stmt *ast.ProcedureRep
 	maxIterations := 10000
 	iterations := 0
 
+	// Get handler context from vars (inherited from enclosing block)
+	handlers := getHandlerContext(vars)
+
 	for {
 		if iterations >= maxIterations {
 			return executionResult{}, errors.New("REPEAT loop exceeded maximum iterations")
 		}
 		iterations++
 
-		// Don't pass the label to executeStatementList - LEAVE/ITERATE should
-		// propagate up to this handler, not be consumed by executeStatementList
-		result, err := executeStatementList(ctx, stmt.Body, vars, "")
+		// Don't pass the label to executeStatementListWithHandlers - LEAVE/ITERATE should
+		// propagate up to this handler, not be consumed by executeStatementListWithHandlers
+		result, err := executeStatementListWithHandlers(ctx, stmt.Body, vars, "", handlers)
 		if err != nil {
 			return executionResult{}, err
 		}
@@ -1958,15 +2005,18 @@ func executeProcedureLoopStmtWithLabel(ctx EvalContext, stmt *ast.ProcedureLoopS
 	maxIterations := 10000
 	iterations := 0
 
+	// Get handler context from vars (inherited from enclosing block)
+	handlers := getHandlerContext(vars)
+
 	for {
 		if iterations >= maxIterations {
 			return executionResult{}, errors.New("LOOP exceeded maximum iterations")
 		}
 		iterations++
 
-		// Don't pass the label to executeStatementList - LEAVE/ITERATE should
-		// propagate up to this handler, not be consumed by executeStatementList
-		result, err := executeStatementList(ctx, stmt.Body, vars, "")
+		// Don't pass the label to executeStatementListWithHandlers - LEAVE/ITERATE should
+		// propagate up to this handler, not be consumed by executeStatementListWithHandlers
+		result, err := executeStatementListWithHandlers(ctx, stmt.Body, vars, "", handlers)
 		if err != nil {
 			return executionResult{}, err
 		}
@@ -2216,7 +2266,7 @@ func evaluateBinaryOp(op opcode.Op, left, right types.Datum) (types.Datum, bool,
 		result.SetFloat64(leftFloat / rightFloat)
 
 	case opcode.GT:
-		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, nil)
+		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, collate.GetBinaryCollator())
 		if err != nil {
 			return result, true, err
 		}
@@ -2227,7 +2277,7 @@ func evaluateBinaryOp(op opcode.Op, left, right types.Datum) (types.Datum, bool,
 		}
 
 	case opcode.GE:
-		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, nil)
+		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, collate.GetBinaryCollator())
 		if err != nil {
 			return result, true, err
 		}
@@ -2238,7 +2288,7 @@ func evaluateBinaryOp(op opcode.Op, left, right types.Datum) (types.Datum, bool,
 		}
 
 	case opcode.LT:
-		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, nil)
+		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, collate.GetBinaryCollator())
 		if err != nil {
 			return result, true, err
 		}
@@ -2249,7 +2299,7 @@ func evaluateBinaryOp(op opcode.Op, left, right types.Datum) (types.Datum, bool,
 		}
 
 	case opcode.LE:
-		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, nil)
+		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, collate.GetBinaryCollator())
 		if err != nil {
 			return result, true, err
 		}
@@ -2260,7 +2310,7 @@ func evaluateBinaryOp(op opcode.Op, left, right types.Datum) (types.Datum, bool,
 		}
 
 	case opcode.EQ:
-		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, nil)
+		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, collate.GetBinaryCollator())
 		if err != nil {
 			return result, true, err
 		}
@@ -2271,7 +2321,7 @@ func evaluateBinaryOp(op opcode.Op, left, right types.Datum) (types.Datum, bool,
 		}
 
 	case opcode.NE:
-		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, nil)
+		cmp, err := left.Compare(types.DefaultStmtNoWarningContext, &right, collate.GetBinaryCollator())
 		if err != nil {
 			return result, true, err
 		}
@@ -4010,8 +4060,18 @@ func evaluateNestedUDFCall(ctx EvalContext, call *ast.FuncCallExpr, vars map[str
 	// Look up the UDF definition in the cache
 	def := udf.GlobalCache.GetByName(schemaName, strings.ToLower(funcName))
 	if def == nil {
-		// Not a UDF, return error for unsupported function
-		return result, true, errors.Errorf("unsupported function in SQL UDF: %s", funcName)
+		// Not in cache, try to load from the system table
+		var err error
+		def, err = loadUDFFromTableWithEvalContext(ctx, schemaName, strings.ToLower(funcName))
+		if err != nil {
+			return result, true, err
+		}
+		if def == nil {
+			// Not a UDF, return error for unsupported function
+			return result, true, errors.Errorf("unsupported function in SQL UDF: %s", funcName)
+		}
+		// Cache it for future use
+		udf.GlobalCache.Put(def)
 	}
 
 	// Verify argument count
@@ -4025,6 +4085,87 @@ func evaluateNestedUDFCall(ctx EvalContext, call *ast.FuncCallExpr, vars map[str
 	// Execute the SQL function directly with the evaluated arguments
 	// We pass chunk.Row{} as a placeholder since executeSQLFunction uses args directly
 	return sig.executeSQLFunction(ctx, chunk.Row{}, args)
+}
+
+// loadUDFFromTableWithEvalContext loads a UDF definition from the system table using an EvalContext.
+// This is used by evaluateNestedUDFCall when the UDF is not in the cache.
+func loadUDFFromTableWithEvalContext(ctx EvalContext, schemaName, funcName string) (*udf.Definition, error) {
+	// Try to get SQL executor from optional properties
+	var sqlExec expropt.SQLExecutor
+	propProvider, ok := ctx.GetOptionalPropProvider(exprctx.OptPropSQLExecutor)
+	if ok {
+		if provider, ok := propProvider.(expropt.SQLExecutorPropProvider); ok {
+			exec, err := provider()
+			if err == nil && exec != nil {
+				sqlExec = exec
+			}
+		}
+	}
+
+	// Fallback: try direct type assertion (RestrictedSQLExecutor implements expropt.SQLExecutor)
+	if sqlExec == nil {
+		if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
+			sqlExec = exec
+		}
+	}
+
+	if sqlExec == nil {
+		return nil, nil
+	}
+
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+
+	rows, _, err := sqlExec.ExecRestrictedSQL(internalCtx, nil,
+		"SELECT id, name, schema_name, param_names, param_types, return_type, language, source_code, "+
+			"is_deterministic, is_aggregate, init_code, update_code, finalize_code, definer, version "+
+			"FROM mysql.tidb_udf WHERE schema_name = %? AND name = %?",
+		schemaName, funcName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(rows) == 0 {
+		return nil, nil // Not found
+	}
+
+	row := rows[0]
+	def := &udf.Definition{
+		ID:         row.GetInt64(0),
+		Name:       row.GetString(1),
+		SchemaName: row.GetString(2),
+	}
+
+	// Parse param_names JSON (column is JSON type, use GetJSON().String())
+	var paramNames []string
+	paramNamesJSON := row.GetJSON(3).String()
+	if err := json.Unmarshal([]byte(paramNamesJSON), &paramNames); err != nil {
+		return nil, errors.Errorf("failed to parse param_names: %v", err)
+	}
+	def.ParamNames = paramNames
+
+	// Parse param_types JSON (column is JSON type, use GetJSON().String())
+	var paramTypes []int
+	paramTypesJSON := row.GetJSON(4).String()
+	if err := json.Unmarshal([]byte(paramTypesJSON), &paramTypes); err != nil {
+		return nil, errors.Errorf("failed to parse param_types: %v", err)
+	}
+	def.ParamTypes = make([]byte, len(paramTypes))
+	for i, t := range paramTypes {
+		def.ParamTypes[i] = byte(t)
+	}
+
+	def.ReturnType = byte(row.GetInt64(5))
+	def.Language = row.GetString(6)
+	def.SourceCode = row.GetString(7)
+	def.IsDeterministic = row.GetInt64(8) != 0
+	def.IsAggregate = row.GetInt64(9) != 0
+	def.InitCode = row.GetString(10)
+	def.UpdateCode = row.GetString(11)
+	def.FinalizeCode = row.GetString(12)
+	def.Definer = row.GetString(13)
+	def.Version = row.GetUint64(14)
+
+	return def, nil
 }
 
 // LookupUDF looks up a UDF by name and schema from the mysql.tidb_udf table.
