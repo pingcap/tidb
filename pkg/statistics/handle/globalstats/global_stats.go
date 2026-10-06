@@ -444,6 +444,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			hg,
 			cms,
 			topN,
+			nil,
 			info.StatsVersion,
 			1,
 			true,
