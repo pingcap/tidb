@@ -170,33 +170,23 @@ fn read_pem(path: &str) -> Result<Vec<u8>, TlsConfigError> {
 
 /// The one shared endpoint builder every transport routes through.
 ///
-/// `address` is a plaintext-shaped `host:port` or `http://host:port` (the form
-/// PD membership and store discovery normalize to). When `security` is
-/// plaintext the endpoint stays `http://`; when TLS is enabled the scheme is
-/// upgraded to `https://` and the CA/identity are attached, so the physical
-/// channel is secured while the routing identity keeps its plaintext shape.
+/// `address` may be a host:port or an HTTP/HTTPS URL. Go configuration controls the transport scheme; the
+/// advertised URL alone cannot enable TLS. When TLS is enabled, attach the
+/// configured CA/identity and use https, preserving the advertised authority.
 pub fn secure_endpoint(
     address: &str,
     security: &ClusterSecurity,
 ) -> Result<Endpoint, TlsConfigError> {
-    let base = if address.contains("://") {
-        address.to_owned()
-    } else {
-        format!("http://{address}")
-    };
-    match security.client_tls_config()? {
-        None => Endpoint::from_shared(base).map_err(invalid_tls),
-        Some(tls) => {
-            let secured = if let Some(rest) = base.strip_prefix("http://") {
-                format!("https://{rest}")
-            } else {
-                base
-            };
-            Endpoint::from_shared(secured)
-                .map_err(invalid_tls)?
-                .tls_config(tls)
-                .map_err(invalid_tls)
-        }
+    let base = tikv_client::pd_service_discovery::pick_service_url(
+        &[address.to_owned()],
+        security.is_tls_enabled(),
+    )
+    .expect("one endpoint is supplied");
+    let tls = security.client_tls_config()?;
+    let endpoint = Endpoint::from_shared(base).map_err(invalid_tls)?;
+    match tls {
+        None => Ok(endpoint),
+        Some(tls) => endpoint.tls_config(tls).map_err(invalid_tls),
     }
 }
 
@@ -219,9 +209,14 @@ mod tests {
         let security = ClusterSecurity::plaintext();
         assert!(!security.is_tls_enabled());
         assert!(security.client_tls_config().unwrap().is_none());
-        // A plaintext endpoint keeps the http scheme.
-        let endpoint = secure_endpoint("127.0.0.1:2379", &security).unwrap();
-        assert_eq!(endpoint.uri().scheme_str(), Some("http"));
+        for address in [
+            "127.0.0.1:2379",
+            "http://127.0.0.1:2379",
+            "https://127.0.0.1:2379",
+        ] {
+            let endpoint = secure_endpoint(address, &security).unwrap();
+            assert_eq!(endpoint.uri().scheme_str(), Some("http"));
+        }
     }
 
     #[test]

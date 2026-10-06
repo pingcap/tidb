@@ -69,8 +69,7 @@ impl Cluster {
             .members
             .leader
             .as_ref()
-            .and_then(|m| m.client_urls.first())
-            .cloned()
+            .and_then(|m| self.connection.member_url(m))
             .unwrap_or_default();
         let open = self.client.is_some();
         async move {
@@ -286,14 +285,13 @@ impl Cluster {
             .members
             .leader
             .as_ref()
-            .and_then(|member| member.client_urls.first())
-            .cloned()
+            .and_then(|member| self.connection.member_url(member))
             .unwrap_or_default();
         let urls = self
             .members
             .members
             .iter()
-            .filter_map(|member| member.client_urls.first().cloned())
+            .filter_map(|member| self.connection.member_url(member))
             .collect::<Vec<_>>();
         let target = self.region_service.select_with_forwarding(
             &leader,
@@ -588,16 +586,15 @@ impl Cluster {
             .members
             .leader
             .as_ref()
-            .and_then(|member| member.client_urls.first())
-            .map(String::as_str)
+            .and_then(|member| self.connection.member_url(member))
             .unwrap_or_default();
         let urls = self
             .members
             .members
             .iter()
-            .filter_map(|member| member.client_urls.first().cloned())
+            .filter_map(|member| self.connection.member_url(member))
             .collect::<Vec<_>>();
-        self.region_service.update_members(leader, &urls);
+        self.region_service.update_members(&leader, &urls);
     }
 
     pub(crate) fn check_health(
@@ -745,6 +742,13 @@ pub struct Connection {
 }
 
 impl Connection {
+    fn member_url(&self, member: &pdpb::Member) -> Option<String> {
+        super::service_discovery::pick_service_url(
+            &member.client_urls,
+            self.security_mgr.tls_configured(),
+        )
+    }
+
     async fn routed_client(
         &self,
         regions: &super::region_service::RegionService,
@@ -901,7 +905,7 @@ impl Connection {
         let urls = members
             .members
             .iter()
-            .filter_map(|m| m.client_urls.first().cloned())
+            .flat_map(|m| m.client_urls.iter().cloned())
             .collect::<Vec<_>>();
         Ok(discovery
             .stream_routes(
@@ -925,7 +929,7 @@ impl Connection {
         timeout: Duration,
     ) -> Result<(TsoRoute, Channel)> {
         Ok(discovery
-            .discover(id, url, timeout, |url| {
+            .discover(id, url, self.options.use_tso_server_proxy, timeout, |url| {
                 let connection = self.clone();
                 async move { connection.channel(&url).await }
             })
@@ -936,9 +940,16 @@ impl Connection {
         self.channels
             .get_or_connect(endpoint, || async {
                 self.security_mgr
-                    .connect(endpoint, |channel| channel)
+                    .channel_endpoint(
+                        endpoint,
+                        Duration::from_secs(10),
+                        Duration::from_secs(3),
+                        None,
+                        None,
+                    )
                     .await
-                    .map_err(|error| tonic::Status::unavailable(error.to_string()))
+                    .map(|endpoint| super::service_discovery::lazy_channel(endpoint, &self.options))
+                    .map_err(|error| tonic::Status::invalid_argument(error.to_string()))
             })
             .await
     }
@@ -1046,7 +1057,11 @@ impl Connection {
                 "PD GetMembers response has no cluster header"
             ));
         }
-        if resp.leader.is_none() {
+        if resp
+            .leader
+            .as_ref()
+            .is_none_or(|leader| leader.client_urls.is_empty())
+        {
             return Err(internal_err!(
                 "unexpected no PD leader in get member resp: {:?}",
                 resp
@@ -1090,9 +1105,9 @@ impl Connection {
 
     /// Attempts to connect to the PD cluster leader.
     ///
-    /// Iterates over known members to find a responsive node, then connects
-    /// to the reported leader. Returns an error if no leader is present or
-    /// reachable.
+    /// Accept a validated member observation and install the reported leader's
+    /// lazy connection. Go updateMember/switchLeader does not require another
+    /// GetMembers RPC on that leader before publishing its metadata.
     async fn try_connect_leader(
         &self,
         previous: &pdpb::GetMembersResponse,
@@ -1132,20 +1147,25 @@ impl Connection {
             }
         }
 
-        // Then try to connect the PD cluster leader.
+        // The successful member RPC already validated the cluster and leader.
+        // Construct its transport without a second membership observation.
         if let Some(resp) = resp {
             let leader = resp
                 .leader
                 .as_ref()
                 .ok_or_else(|| internal_err!("no leader found in GetMembersResponse"))?;
 
-            for ep in &leader.client_urls {
-                if let Ok((client, keyspace_client, members)) =
-                    self.try_connect(ep.as_str(), cluster_id, timeout).await
-                {
-                    return Ok((client, keyspace_client, members, ep.clone()));
-                }
-            }
+            let url = self
+                .member_url(leader)
+                .filter(|url| !url.is_empty())
+                .ok_or_else(|| internal_err!("PD leader has no client URL"))?;
+            let channel = self.channel(&url).await?;
+            let client = pdpb::pd_client::PdClient::with_interceptor(
+                channel.clone(),
+                super::region_service::Forwarding::default(),
+            );
+            let keyspace_client = keyspacepb::keyspace_client::KeyspaceClient::new(channel);
+            return Ok((client, keyspace_client, resp, url));
         }
 
         Err(internal_err!("failed to connect to {:?}", members))

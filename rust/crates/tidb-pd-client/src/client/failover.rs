@@ -595,7 +595,9 @@ impl PdChannelCache {
         self.channels
             .get_or_insert_with(endpoint, || {
                 secure_endpoint(endpoint, &self.security)
-                    .map(|endpoint| endpoint.connect_lazy())
+                    .map(|endpoint| {
+                        tikv_client::pd_service_discovery::lazy_channel(endpoint, &self.options)
+                    })
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))
             })
             .map_err(|error| {
@@ -608,6 +610,10 @@ impl PdChannelCache {
                     }
                 }
             })
+    }
+
+    pub(super) fn tls_enabled(&self) -> bool {
+        self.security.is_tls_enabled()
     }
 
     pub(super) fn close(&self) {

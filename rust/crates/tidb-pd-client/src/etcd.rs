@@ -1557,14 +1557,13 @@ fn across_endpoints<T>(
     Err(last.unwrap_or(EtcdError::NoEndpoint))
 }
 
-/// etcd routing identity stays plaintext-shaped
-/// ([`crate::security::secure_endpoint`]'s doc), but `etcd_client`'s own
-/// endpoint parser rejects an explicit `http://` prefix when TLS options are
-/// set ("TLS options are only supported with HTTPS URLs"); it derives the
-/// scheme itself from whether TLS is configured. Strip the prefix this
-/// crate's own normalization adds so `etcd_client` can make that choice.
+/// Let etcd-client choose its transport from the configured TLS options, just
+/// as Go does. Strip either advertised scheme while preserving the authority.
 fn strip_scheme(endpoint: &str) -> &str {
-    endpoint.strip_prefix("http://").unwrap_or(endpoint)
+    endpoint
+        .strip_prefix("http://")
+        .or_else(|| endpoint.strip_prefix("https://"))
+        .unwrap_or(endpoint)
 }
 
 fn classify_rpc_error(endpoint: &str, error: RawEtcdError) -> EtcdError {
@@ -2286,9 +2285,16 @@ mod tests {
     }
 
     #[test]
-    fn endpoints_are_normalized_to_the_plaintext_form_pd_is_dialed_with() {
+    fn endpoints_preserve_authority_and_defer_scheme_to_security() {
         let client = EtcdClient::connect(["127.0.0.1:2379"], Duration::from_millis(50)).unwrap();
         assert_eq!(client.endpoints(), ["http://127.0.0.1:2379".to_owned()]);
+        for endpoint in [
+            "127.0.0.1:2379",
+            "http://127.0.0.1:2379",
+            "https://127.0.0.1:2379",
+        ] {
+            assert_eq!(strip_scheme(endpoint), "127.0.0.1:2379");
+        }
     }
 
     #[test]

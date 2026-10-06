@@ -51,10 +51,39 @@ pub async fn health_check(channel: Channel, timeout: Duration) -> Result<i32, St
     .map_err(|_| Status::deadline_exceeded("health check timed out"))?
 }
 
-/// Discovery-owned endpoint connections, shared by metadata, keyspace and
-/// timestamp consumers (Go serviceDiscovery.clientConns/GetOrCreateGRPCConn).
-/// Exact URL keys remain retained until close; membership changes do not
-/// retire a channel still borrowed by another service.
+/// Go tlsutil.PickMatchedURL chooses by configured scheme, never reachability.
+/// Advertised URLs are expected to be valid; an empty list has no candidate.
+pub fn pick_service_url(urls: &[String], tls: bool) -> Option<String> {
+    let scheme = if tls { "https" } else { "http" };
+    if let Some(url) = urls
+        .iter()
+        .find(|url| url::Url::parse(url).is_ok_and(|u| u.scheme() == scheme))
+    {
+        return Some(url.clone());
+    }
+    let first = urls.first()?;
+    let address = first
+        .strip_prefix("https://")
+        .or_else(|| first.strip_prefix("http://"))
+        .unwrap_or(first);
+    Some(format!("{scheme}://{address}"))
+}
+
+/// Go grpcutil creates nonblocking connections and applies caller dial options.
+/// Invoke this inside the discovery cache's factory so all consumers reuse the
+/// resulting configured channel; the caller's runtime owns its driver.
+pub fn lazy_channel(
+    endpoint: tonic::transport::Endpoint,
+    options: &super::opt::Options,
+) -> Channel {
+    options
+        .grpc_dial_options
+        .iter()
+        .fold(endpoint, |endpoint, configure| configure(endpoint))
+        .connect_lazy()
+}
+
+/// Cached connections belong to discovery and are shared by all PD consumers.
 pub struct ChannelCache {
     channels: Mutex<Option<std::collections::HashMap<String, Channel>>>,
 }
@@ -313,6 +342,7 @@ impl TsoDiscovery {
         &mut self,
         cluster_id: u64,
         leader: &str,
+        use_pd_proxy: bool,
         timeout: Duration,
         dial: F,
     ) -> Result<(TsoRoute, Channel), Status>
@@ -323,7 +353,7 @@ impl TsoDiscovery {
         // Bound dialing as well as all discovery requests with the caller's budget.
         tokio::time::timeout(
             timeout,
-            self.discover_inner(cluster_id, leader, timeout, dial),
+            self.discover_inner(cluster_id, leader, use_pd_proxy, timeout, dial),
         )
         .await
         .map_err(|_| Status::deadline_exceeded("TSO discovery timed out"))?
@@ -333,6 +363,7 @@ impl TsoDiscovery {
         &mut self,
         cluster_id: u64,
         leader: &str,
+        use_pd_proxy: bool,
         timeout: Duration,
         dial: F,
     ) -> Result<(TsoRoute, Channel), Status>
@@ -366,6 +397,9 @@ impl TsoDiscovery {
             .and_then(|mode| pdpb::ServiceMode::try_from(mode).ok())
         {
             Some(pdpb::ServiceMode::PdSvcMode) => return Ok((self.classic(leader), channel)),
+            Some(pdpb::ServiceMode::ApiSvcMode) if use_pd_proxy => {
+                return Ok((self.classic(leader), channel))
+            }
             Some(pdpb::ServiceMode::ApiSvcMode) => {}
             _ => return Err(Status::unknown("no supported service mode returned")),
         }

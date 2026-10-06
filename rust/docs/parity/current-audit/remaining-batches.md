@@ -169,3 +169,8 @@ Shared native/adapter selection, startup policy and metadata connect B01 with N0
 ## Shared TSO proxy checkpoint — 2026-10-06
 
 B01 discovery/stream ownership and B05 process policy advance P03/P06/N03 together. The [receipt](tso-proxy-batch-validation.json) records three baseline failures, shared transport removal, one native dispatcher and grouped validation. Automatic forwarding/bootstrap and full package obligations remain open; all 56 unresolved roots retain their assignments.
+
+
+## PD bootstrap and provider checkpoint — 2026-10-06
+
+P03/P06/N03 now share nonblocking configured connections, accepted member publication and forced-PD timestamp provider selection. Eight regressions failed before repair; 364 selected tests, affected all-target checks and lint pass. The separate TSO primary may be unreachable while an explicitly enabled healthy proxy serves requests. Automatic network-failure forwarding and full-package obligations remain open. See [validation](pd-bootstrap-policy-batch-validation.json).

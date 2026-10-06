@@ -169,7 +169,32 @@ impl SecurityManager {
         Factory: FnOnce(Channel) -> Client,
     {
         info!("connect to rpc server at endpoint: {:?}", addr);
-        let mut channel = if self.tls_configured() {
+        let mut channel = self
+            .channel_endpoint(
+                addr,
+                keepalive_time,
+                keepalive_timeout,
+                initial_stream_window_size,
+                initial_connection_window_size,
+            )
+            .await?;
+        if let Some(connect_timeout) = connect_timeout {
+            channel = channel.connect_timeout(connect_timeout);
+        }
+        Ok(factory(channel.connect().await?))
+    }
+
+    /// Build the same verified transport settings without initiating I/O.
+    /// PD discovery retains lazy channels; ordinary KV callers dial eagerly.
+    pub(crate) async fn channel_endpoint(
+        &self,
+        addr: &str,
+        keepalive_time: Duration,
+        keepalive_timeout: Duration,
+        initial_stream_window_size: Option<u32>,
+        initial_connection_window_size: Option<u32>,
+    ) -> Result<Endpoint> {
+        if self.tls_configured() {
             self.tls_channel(
                 addr,
                 keepalive_time,
@@ -177,7 +202,7 @@ impl SecurityManager {
                 initial_stream_window_size,
                 initial_connection_window_size,
             )
-            .await?
+            .await
         } else {
             self.default_channel(
                 addr,
@@ -186,14 +211,8 @@ impl SecurityManager {
                 initial_stream_window_size,
                 initial_connection_window_size,
             )
-            .await?
-        };
-        if let Some(connect_timeout) = connect_timeout {
-            channel = channel.connect_timeout(connect_timeout);
+            .await
         }
-        let ch = channel.connect().await?;
-
-        Ok(factory(ch))
     }
 
     async fn tls_channel(

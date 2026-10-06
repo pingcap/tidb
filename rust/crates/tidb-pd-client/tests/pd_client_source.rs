@@ -1565,14 +1565,14 @@ fn invalid_discovered_urls_fail_closed() {
     let mut state = valid_state();
     state.members = Reply::Value(pdpb::GetMembersResponse {
         header: Some(header(CLUSTER_ID)),
-        members: vec![pd_member(1, ["https://127.0.0.1:2379"])],
-        leader: Some(pd_member(1, ["https://127.0.0.1:2379"])),
+        members: vec![pd_member(1, ["ftp://127.0.0.1:2379"])],
+        leader: Some(pd_member(1, ["ftp://127.0.0.1:2379"])),
         ..pdpb::GetMembersResponse::default()
     });
     let server = Server::start(state);
     let error = PdClient::connect(&server.address, Duration::from_secs(2))
         .err()
-        .expect("TLS discovery is outside this slice");
+        .expect("unsupported discovery schemes must be rejected");
     assert_eq!(error.kind(), "invalid_endpoint");
 }
 

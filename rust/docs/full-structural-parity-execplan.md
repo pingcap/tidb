@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [TSO proxy lifecycle](tso-proxy-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [PD bootstrap/provider policy](pd-bootstrap-policy-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -41,6 +41,7 @@ in time. This revision is a plan; it closes no production finding.
 
 ## Progress
 
+- [x] (2026-10-06, PD bootstrap policy) P03/P06/N03 now share nonblocking configured connections, accepted member publication and forced-PD timestamp provider selection. Eight regressions failed before repair; 364 selected tests, affected all-target checks and lint pass. The separate TSO primary may be unreachable while an explicitly enabled healthy proxy serves requests. Automatic network-failure forwarding and full-package obligations remain open. See `parity/current-audit/pd-bootstrap-policy-batch-validation.json`.
 - [x] (2026-10-06, TSO proxy batch) Maintain P03/P06/N03 discovery, shared wire streams, single-dispatcher ownership and SQL option publication together. Three regressions failed before; 343 selected tests and affected checks pass. See `parity/current-audit/tso-proxy-batch-validation.json`; all parent/package boundaries remain explicit.
 
 

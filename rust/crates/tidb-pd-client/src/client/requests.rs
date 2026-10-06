@@ -80,7 +80,7 @@ pub(super) fn get_members(
     let cluster_id = header.cluster_id;
     Ok(PdMemberObservation {
         cluster_id,
-        projected: project_member_set(response),
+        projected: project_member_set(response, clients.tls_enabled()),
     })
 }
 

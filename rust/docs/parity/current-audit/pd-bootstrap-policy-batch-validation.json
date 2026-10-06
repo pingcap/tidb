@@ -1,0 +1,415 @@
+{
+  "date": "2026-10-06",
+  "scope": "B01/B05: P03/P06/N03 lazy discovery connections, accepted membership, endpoint options and forced PD timestamp provider",
+  "baseline": {
+    "tidb": "0164d0cddb94258bbc363d9e02ece83d739705c0",
+    "native": "35395ca53dcf219ee26b69367a5a6e2f19fd8748",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "pd": "v0.0.0-20260805103528-afa43111d149",
+    "native_published": "081145e6ab6215650336c941a9f65ef27c90b552"
+  },
+  "reproduced_before": {
+    "failures": 8,
+    "native": 4,
+    "adapter": 3,
+    "etcd": 1,
+    "behavior": [
+      "Unreachable TSO primary rejects healthy-proxy bootstrap",
+      "Valid follower membership is discarded when the leader membership probe fails",
+      "Forced PD timestamp option is ignored in both clients",
+      "Dial endpoint options are ignored in both clients",
+      "Adapter ignores configured scheme when choosing an advertised leader URL",
+      "Etcd wrapper leaves HTTPS scheme attached instead of deferring transport to configured TLS"
+    ]
+  },
+  "repairs": [
+    "Share configured lazy PD channel construction, preserving the existing TLS builder and ordinary KV eager connection behavior",
+    "Publish accepted membership without a redundant leader GetMembers exchange; require an advertised leader URL",
+    "Consume caller endpoint options in order on cached construction in both clients; verify resulting user-agent at real RPCs",
+    "Share Go configured-scheme leader URL selection and transport security; remove stale plaintext-only discovery rejection; native region selection uses the same owner, and TSO proxy probing retains all advertised URLs",
+    "All three etcd-client connection paths strip either advertised scheme and preserve the authority before applying security options",
+    "Use the static forced-PD TSO provider in API mode at bootstrap and refresh, retaining provider-based GetMinTS semantics"
+  ],
+  "removals": [
+    "Redundant native leader membership exchange and reachability precondition",
+    "Separate adapter lazy-channel constructor without options",
+    "Obsolete reachability-based alias fallback assertion, replaced with configured URL selection and stream reuse",
+    "Stale plaintext-only discovery rejection; retain invalid-scheme rejection and verify configured transport security"
+  ],
+  "source_inventory": {
+    "pd": "v0.0.0-20260805103528-afa43111d149",
+    "classification": "Existing-owner maintenance; no complete source package accepted",
+    "packages": {
+      ".": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "LICENSE",
+            "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+          },
+          {
+            "path": "Makefile",
+            "sha256": "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85"
+          },
+          {
+            "path": "client.go",
+            "sha256": "a86903d73da7230b7fc0d3b6da20ddd63ba0be17097bef5f5cc0d4653e870cf8"
+          },
+          {
+            "path": "client_test.go",
+            "sha256": "fd91d8c5dceaaaa2d3316dcb1972a11db695be00c605b6e7ebad4d5cfdb4210a"
+          },
+          {
+            "path": "gc_client.go",
+            "sha256": "f50908e58752ee9ef800ef75a6570b6edc07f34e85776952fa88284125d04647"
+          },
+          {
+            "path": "go.mod",
+            "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841"
+          },
+          {
+            "path": "go.sum",
+            "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb"
+          },
+          {
+            "path": "inner_client.go",
+            "sha256": "9e11e9d887c88c67cf95c1bdeb12eb31a9641717deee09e44538a49a23d8d39c"
+          },
+          {
+            "path": "keyspace_client.go",
+            "sha256": "860d64ad148a902b9c85c04fff4c805bdbb7cfd6b8bb2d6447f7c0ee8704129e"
+          },
+          {
+            "path": "keyspace_client_test.go",
+            "sha256": "ff84e63d377d38373972db311560524ffdf0d861b423eb0fac2ce0c0ac7ae544"
+          },
+          {
+            "path": "meta_storage_client.go",
+            "sha256": "5adfd9af711d72b27a0c74c25663eb19760399bac52553fc7614f9f11aff3c2a"
+          },
+          {
+            "path": "resource_manager_client.go",
+            "sha256": "13a8dd3ddfdc589effa83889b95a4539da283998f2dcb33bcda6fab25a062aad"
+          },
+          {
+            "path": "resource_manager_client_test.go",
+            "sha256": "a255b8f94daddb5ac20a5a619d1786ee9f42a820e2bd60de7d38f4a0a12067e8"
+          }
+        ]
+      },
+      "servicediscovery": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "servicediscovery/callbacks.go",
+            "sha256": "5f927301227919e13a6c30a0466b749e25765e85e8ca69d73fa131972b318f25"
+          },
+          {
+            "path": "servicediscovery/mock_service_discovery.go",
+            "sha256": "bb36615732f3228f1078b74c347124837651fe81b5173144d4de456abc69e3a1"
+          },
+          {
+            "path": "servicediscovery/resource_manager_service_discovery.go",
+            "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e"
+          },
+          {
+            "path": "servicediscovery/resource_manager_service_discovery_test.go",
+            "sha256": "28c9cb214e9ab7beb4d4bf9d930c1e6203ae5b6a146f0bcc2c5264a5a7c24094"
+          },
+          {
+            "path": "servicediscovery/router_service_discovery.go",
+            "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e"
+          },
+          {
+            "path": "servicediscovery/service_discovery.go",
+            "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9"
+          },
+          {
+            "path": "servicediscovery/service_discovery_test.go",
+            "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf"
+          },
+          {
+            "path": "servicediscovery/tso_service_discovery.go",
+            "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de"
+          },
+          {
+            "path": "servicediscovery/tso_service_discovery_test.go",
+            "sha256": "a2379d4732fddd244d08d0c8e38e2e0f928d937ba2fd830ac5461c9091aa94a9"
+          }
+        ]
+      },
+      "clients/tso": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "clients/tso/client.go",
+            "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1"
+          },
+          {
+            "path": "clients/tso/dispatcher.go",
+            "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820"
+          },
+          {
+            "path": "clients/tso/dispatcher_test.go",
+            "sha256": "14b85206ada0b37cff9a7615518c7bb2bab69035abef4fb43a9f687947f6b6eb"
+          },
+          {
+            "path": "clients/tso/request.go",
+            "sha256": "b3d69292c26b3da4ae46323f4af2ea4e4fbe32d1565c2628968385d7c38d523b"
+          },
+          {
+            "path": "clients/tso/request_test.go",
+            "sha256": "3ae4662de27a60b517f7ec2389abcdf43113b410e1a0b3eb210419567bb587a9"
+          },
+          {
+            "path": "clients/tso/stream.go",
+            "sha256": "3429bfeae2d3d9386a866708fcc6694c26245dc6e098bfed70356ce83951ca36"
+          },
+          {
+            "path": "clients/tso/stream_test.go",
+            "sha256": "755898f5b942a46639a0794e17ffc6ed85c4d08d7979f099b9549230a9eabe96"
+          }
+        ]
+      },
+      "pkg/utils/grpcutil": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "pkg/utils/grpcutil/grpcutil.go",
+            "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273"
+          },
+          {
+            "path": "pkg/utils/grpcutil/grpcutil_test.go",
+            "sha256": "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b"
+          }
+        ]
+      },
+      "opt": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "opt/option.go",
+            "sha256": "4799581c1573b9ec7dab1daab437146452e2ee3e1e33d26ece2d5e7727f272c1"
+          },
+          {
+            "path": "opt/option_test.go",
+            "sha256": "c17d90178b6373fa6e7d2ddc15530ce30276aa032b1fbab75204e5798f9a794e"
+          }
+        ]
+      },
+      "pkg/utils/tlsutil": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "pkg/utils/tlsutil/OWNERS",
+            "sha256": "e47f53005bbfb0c154640e16ad3a873314ccb16adae109d3462935a471830309"
+          },
+          {
+            "path": "pkg/utils/tlsutil/tlsconfig.go",
+            "sha256": "507b668defc5ae363d6491cc15cd7463958f1ebc8f965317597ab2a19bf13bc3"
+          },
+          {
+            "path": "pkg/utils/tlsutil/tlsutil.go",
+            "sha256": "a836a7c3d66afcb069aaacab01c3684cbfefbadbcbd84aaa5a8167c9d6f7ebe1"
+          },
+          {
+            "path": "pkg/utils/tlsutil/url.go",
+            "sha256": "dc3f37931e4a36074615b4f64fcc901c058cc39b89d6ad0eece8caa51a951078"
+          }
+        ]
+      },
+      "go.etcd.io/etcd/client/v3@v3.5.15": {
+        "accepted": false,
+        "files": [
+          {
+            "path": "LICENSE",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "README.md",
+            "sha256": "4d0566f608a59508c8ff59bfd32c23e4de50e1cc164de4e6035e3411dfe569be"
+          },
+          {
+            "path": "auth.go",
+            "sha256": "b5111c6f7ec6c3513c70810c9fdb5cd052245f668941352106ce3d9500388e77"
+          },
+          {
+            "path": "client.go",
+            "sha256": "bb5579839110b753d30fa6b6a9510b4dfff2e2a45b4f7987ab1aec050fb32582"
+          },
+          {
+            "path": "client_test.go",
+            "sha256": "5cde2eeba3d96df93623dd6b7d25b2a9b1ed557cb2e2718bc26fb339fc7e8590"
+          },
+          {
+            "path": "cluster.go",
+            "sha256": "03d07b193f42d16b9ad8e9c0b9a94a372a8cd849efc1bfb1575bb46c1e2e1990"
+          },
+          {
+            "path": "compact_op.go",
+            "sha256": "38fa54740a770a184ab2cc2a7f2695e7db34a1ffa625880dca9c4caa27e80d54"
+          },
+          {
+            "path": "compact_op_test.go",
+            "sha256": "496e9451d59bbabc841a4432b076e786dae0f7710a5fcf3e7ef432077cd676c4"
+          },
+          {
+            "path": "compare.go",
+            "sha256": "67cb5cccae6570b6ebf4f3241249399013627987ed9b7079e76f3d64974f1a50"
+          },
+          {
+            "path": "config.go",
+            "sha256": "10806e00ced9023b06f194df4c0f6f736865ad45587c8107fd4cdb52455d6dcb"
+          },
+          {
+            "path": "ctx.go",
+            "sha256": "180fc2cf263b9974ce404753592c87d9b28ee00a5fac2cd93cca7e1c7003356c"
+          },
+          {
+            "path": "ctx_test.go",
+            "sha256": "3109a020ba2a3a5ac5adac6bc333217e711fc076a76132dea3a277eaa497a9d1"
+          },
+          {
+            "path": "doc.go",
+            "sha256": "62d20ed15b30492f349d0dd869803e57e91549e1191a91cd7cf8baf4cc02629f"
+          },
+          {
+            "path": "go.mod",
+            "sha256": "d3965884f6eb8c589d502aa29caf090b35daf1900161581170017f55e0cc61ce"
+          },
+          {
+            "path": "go.sum",
+            "sha256": "cb3ee5adc6f8f7f752dfa40acbe18dc46d14710ca6f67558dd8518e7a9cc7d4d"
+          },
+          {
+            "path": "kv.go",
+            "sha256": "310e0af847a7403bd3cb6b420fb6d80fa97ac8ac1863df5d2840125ec362fc4f"
+          },
+          {
+            "path": "lease.go",
+            "sha256": "f0cd25384d87724e37a77c54aa74f6d41d6263c67abfd82fcc9dff9e02b1c361"
+          },
+          {
+            "path": "logger.go",
+            "sha256": "e1b6b144ce990c6d36a8104725ad5323f9b843c5996f8f12cfad9d9fce6a3ba3"
+          },
+          {
+            "path": "main_test.go",
+            "sha256": "228c6b94547e90ff924fa79275805f5ecf9ee52530f7d4c2f5724e2b26d479bc"
+          },
+          {
+            "path": "maintenance.go",
+            "sha256": "8246b19f27fa5661aeaea3b52154c71083f3a32fd06b3603d5cff8c42546fd19"
+          },
+          {
+            "path": "op.go",
+            "sha256": "b36a798c895ca3ad4a227aa391271114660aaa75d2c81bca238d6645d4c942e2"
+          },
+          {
+            "path": "op_test.go",
+            "sha256": "0189786ccdd4a8396d631dcad4db5d4b05766588dd6cbf5f9d89cae3bf5f4968"
+          },
+          {
+            "path": "options.go",
+            "sha256": "a48767bb928dc218addac26bb6e27096729c7e54d6af7136336edd46a39c9861"
+          },
+          {
+            "path": "retry.go",
+            "sha256": "3dfbcf1fc8ee12fd92eb0553c51079459d7b7da964a9156f6ebbbe3dc27fac9b"
+          },
+          {
+            "path": "retry_interceptor.go",
+            "sha256": "65a39c16796dc00361a3f931c40dd4b9245327025c8a568b945e06193e93b5ee"
+          },
+          {
+            "path": "retry_interceptor_test.go",
+            "sha256": "09f86f224fafa0395ae2a9787e612994cd4399d9fa91792d7ce60926eb16b31c"
+          },
+          {
+            "path": "sort.go",
+            "sha256": "a960de53940430e0337c3a27655dcbb3632d67fe1cb874e3d15b0b13f60e10a9"
+          },
+          {
+            "path": "txn.go",
+            "sha256": "1d4bb63137e2acce8fc031aabee22866872790ddd21b1fdac7111b72949a9680"
+          },
+          {
+            "path": "txn_test.go",
+            "sha256": "3b55cecee0569e41a2e86b61cce5a6dfd90b031a233ea5ba153460eaf05eefac"
+          },
+          {
+            "path": "utils.go",
+            "sha256": "c46477acdf00a4e78e6fbde9816cef4327824acd1378dd51355a20919b0c8525"
+          },
+          {
+            "path": "watch.go",
+            "sha256": "65627ccdc7deda0ad0e8c2ef1aaea2ecd07c8416b34f9edefad6137284bf596b"
+          },
+          {
+            "path": "watch_test.go",
+            "sha256": "580a281515eee592f39bb0a9a892e3c0e86c15e940bec0e2813fb7946e946c10"
+          }
+        ]
+      }
+    }
+  },
+  "validation": {
+    "passed": {
+      "native-final": 278,
+      "adapter-final": 86
+    },
+    "distinct_total": 364,
+    "ignored": {
+      "adapter-final": 1
+    },
+    "native_all_targets": true,
+    "integration_all_targets": true,
+    "lint": true,
+    "commands": [
+      "cd /workspace/client-rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked -p tikv-client --all-targets",
+      "cd /workspace/client-rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib -- pd:: region_cache::test:: common::security::tests:: --test-threads=1",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-pd-client -p tidb-txnkv -p tidb-exec -p tidb-server --all-targets",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-pd-client --lib --test all --no-fail-fast -- tso_source:: pd_client_source:: client::worker_lifecycle_tests:: security::tests:: tls_handshake_source:: etcd::tests:: --test-threads=1",
+      "cd /workspace/tidb && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 make lint",
+      "cd /workspace/tidb/rust && source /workspace/.cloud-setup/env.sh && CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server"
+    ]
+  },
+  "register": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "limits": [
+    "P03/P06/N03 remain partial; other 53 unresolved roots retain carried evidence",
+    "PD metadata still requires its Go-defined leader GetClusterInfo/keyspace calls; only the separate TSO primary reachability prerequisite is removed",
+    "Automatic network-failure TSO forwarding, other dispatcher/router/security/platform and full package obligations remain open",
+    "The opt-in real-PD etcd watch case remains ignored; no full Go suites, live multi-node TiKV, TLS-topology or performance acceptance; historical unrelated failures not rerun or declared green"
+  ],
+  "diagnostics": [
+    "Initial native test compilation used the wrong explicit-close method; corrected before behavioral baselines. A later grouped run passed 277 cases and rejected one stale reachability-alias assertion; replaced it against Go PickMatchedURL, preserved stream-reuse coverage, and reran the group"
+  ],
+  "publication": "Actual TiDB hook, fresh prepush locked builds, remote verification and Cloud checkpoint are recorded after commit in /workspace/.cloud-setup/pd-bootstrap-policy-batch/final-handoff.json",
+  "logs": {
+    "adapter-before-etcd-review.log": "f3a7d748dbc7bcbffc975f3694350a1215150fa8e40221702a4a7f9d7c898c64",
+    "adapter-before.log": "100eae2e7ec5a0bcd641bc81b6e5e267145e85a90d03353a11d611faca3d08a2",
+    "adapter-check.log": "5f2ee18f7c1cb178ac451a121615f946e7d2d116cc0db7082dc3be660f9cce9a",
+    "adapter-final.log": "7843d8240ef6b0e3a40bd63ac4b85159cee94ff9a402f5a2dae80684231ad7cd",
+    "adapter-url-before.log": "b731bded61a9819e4257dfb2553a6d52534fccfd03eff20b36475bd95771d3b1",
+    "etcd-url-before.log": "171d33098e4fd709f0441f65ab9bf45fe6301280d98603b1997dcb72aeaab64d",
+    "final-fetch.log": "795351e2a1c6eebfbc180faf010b3a7c0295ee1722d8f86ce007f02a4da472ee",
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "native-before.log": "0e9ce660e97626817e539ae2f547fe2cd2c5879bd8cfac37ca068c43cb686d75",
+    "native-check.log": "86f194e874cd4f16e3d7ca26a37569c090455e80c47b451aa0fc180a76637ed6",
+    "native-commit.log": "9fb15fac4f08f8121a7dc7ea99679bb7698ca2f66e8e963f2d92242668f39e5b",
+    "native-fetch.log": "1614b6e0226b4e5f8f08940617f5129aa71f7896c67ab0a426e3769858e8a690",
+    "native-final.log": "1405f372eef21a3d52e6ec23cedb3457947c38ce950da69fe285c1268ef527a1",
+    "native-prepush-build.log": "9d5a09061f8c4f92bd4f00724fc66715ae81ae9d70c94a3cc7e188fa7fcc26f0",
+    "native-push.log": "5fff629c331854cf72c45cc24f44297a574bc6f0da118fedcb36756101f452a1",
+    "native-stale-contract.log": "f34a69bda3502abdd2edbeb209ada6e5ea8b7480c0bf968a9325bfeed935a74e",
+    "native-test-api-diagnostic.log": "cf5416edd96210a9cc92d11c07ad1f1f111f7e03d682adbdf1c814926b2e9854",
+    "native-verify.log": "ad79ac68f4f0c726d6d220aeb51b50596cdfd352fcc601e41b1273e3805528d4",
+    "sync.log": "26482147cc5ab3f29eff262a1817f874a1a7f0979f414e0a3724324ef35c78c8"
+  }
+}

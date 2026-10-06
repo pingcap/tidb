@@ -39,6 +39,7 @@ struct State {
     peers: std::collections::HashSet<std::net::SocketAddr>,
     members: Option<pdpb::GetMembersResponse>,
     health_status: i32,
+    user_agents: Vec<String>,
     forwarding: Vec<Option<String>>,
     cluster_info: Option<pdpb::GetClusterInfoResponse>,
     discovery_delay: Duration,
@@ -98,6 +99,15 @@ impl Pd for MockPd {
             let mut state = self.state.lock().unwrap();
             state.peers.extend(request.remote_addr());
             state.discovery_requests += 1;
+            state.user_agents.push(
+                request
+                    .metadata()
+                    .get("user-agent")
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+            );
             (state.discovery_delay, state.cluster_info.clone())
         };
         tokio::time::sleep(delay).await;
@@ -300,6 +310,7 @@ impl Server {
             peers: Default::default(),
             members: None,
             health_status: 1,
+            user_agents: Vec::new(),
             forwarding: Vec::new(),
             cluster_info: None,
             discovery_delay: Duration::ZERO,
@@ -1049,4 +1060,85 @@ fn tso_proxy_batch_healthy_follower_and_disabled_mode() {
         request.join().unwrap(),
         Err(tidb_pd_client::PdClientError::Closed)
     );
+}
+
+#[test]
+fn bootstrap_policy_batch_forced_pd_provider_survives_api_refresh() {
+    let pd = Server::start_auto_batching();
+    let tso = Server::start_auto_batching();
+    pd.state.lock().unwrap().cluster_info = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+        tso_urls: vec![tso.address.clone()],
+        ..Default::default()
+    });
+    let mut options = tikv_client::pd_options::Options::new();
+    options.use_tso_server_proxy = true;
+    let client = PdClient::connect_seeds_with_options(
+        [pd.address.clone()],
+        Arc::new(tidb_pd_client::ClusterSecurity::default()),
+        options,
+    )
+    .unwrap();
+    client.get_timestamp().unwrap();
+    client.refresh_members().unwrap();
+    client.get_timestamp().unwrap();
+    assert_eq!(
+        pd.state.lock().unwrap().requests.len(),
+        2,
+        "forced provider must stay on PD"
+    );
+    assert!(tso.state.lock().unwrap().micro_requests.is_empty());
+    client.shutdown().unwrap();
+}
+
+#[test]
+fn bootstrap_policy_batch_dial_options_apply_once_in_order() {
+    let pd = Server::start_auto_batching();
+    let applied = Arc::new(Mutex::new(Vec::new()));
+    let mut options = tikv_client::pd_options::Options::new();
+    for index in [1, 2] {
+        let applied = applied.clone();
+        options.grpc_dial_options.push(Arc::new(move |endpoint| {
+            applied.lock().unwrap().push(index);
+            endpoint.user_agent(format!("policy-{index}")).unwrap()
+        }));
+    }
+    let client = PdClient::connect_seeds_with_options(
+        [pd.address.clone()],
+        Arc::new(tidb_pd_client::ClusterSecurity::default()),
+        options,
+    )
+    .unwrap();
+    client.get_timestamp().unwrap();
+    client.refresh_members().unwrap();
+    client.get_timestamp().unwrap();
+    assert_eq!(*applied.lock().unwrap(), vec![1, 2]);
+    assert!(pd
+        .state
+        .lock()
+        .unwrap()
+        .user_agents
+        .iter()
+        .all(|agent| agent.starts_with("policy-2")));
+    assert_eq!(pd.state.lock().unwrap().peers.len(), 1);
+    client.shutdown().unwrap();
+}
+
+#[test]
+fn bootstrap_policy_batch_member_url_follows_configured_scheme() {
+    let pd = Server::start_auto_batching();
+    let member = pdpb::Member {
+        member_id: 1,
+        client_urls: vec!["https://127.0.0.1:0".to_owned(), pd.address.clone()],
+        ..Default::default()
+    };
+    pd.state.lock().unwrap().members = Some(pdpb::GetMembersResponse {
+        header: Some(header()),
+        leader: Some(member.clone()),
+        members: vec![member],
+        ..Default::default()
+    });
+    let client = PdClient::connect(&pd.address, Duration::from_millis(150)).unwrap();
+    assert!(client.get_timestamp().unwrap() > 0);
+    client.shutdown().unwrap();
 }

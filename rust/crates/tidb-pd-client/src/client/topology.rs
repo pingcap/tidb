@@ -34,6 +34,7 @@ use crate::{
 
 pub(super) fn project_member_set(
     response: pdpb::GetMembersResponse,
+    tls: bool,
 ) -> Result<PdMemberSet, PdClientError> {
     let cluster_id = response
         .header
@@ -43,21 +44,20 @@ pub(super) fn project_member_set(
     let leader = response
         .leader
         .ok_or_else(|| invalid_topology("missing_pd_leader", "GetMembers omitted the PD leader"))?;
-    let leader_url = leader
-        .client_urls
-        .first()
+    let leader_url = tikv_client::pd_service_discovery::pick_service_url(&leader.client_urls, tls)
         .ok_or_else(|| {
             invalid_topology(
                 "missing_pd_leader_url",
                 format!("PD leader {} has no client URL", leader.member_id),
             )
         })
-        .and_then(|url| normalize_plaintext_endpoint(url))?;
+        .and_then(|url| normalize_endpoint(&url))?;
     let member_urls = normalize_endpoints(
-        response
-            .members
-            .into_iter()
-            .flat_map(|member| member.client_urls),
+        response.members.into_iter().flat_map(|member| {
+            let selected =
+                tikv_client::pd_service_discovery::pick_service_url(&member.client_urls, tls);
+            member.client_urls.into_iter().chain(selected)
+        }),
         true,
     )?;
     if member_urls.is_empty() {
@@ -363,7 +363,7 @@ fn project_store_record(store: metapb::Store) -> Result<Option<PdStore>, PdClien
             format!("store {} has an empty client address", store.id),
         ));
     }
-    let address_uri = normalize_plaintext_endpoint(&store.address).map_err(|error| {
+    let address_uri = normalize_endpoint(&store.address).map_err(|error| {
         invalid_topology(
             "invalid_store_address",
             format!("store {}: {error}", store.id),
@@ -389,26 +389,23 @@ fn project_store_record(store: metapb::Store) -> Result<Option<PdStore>, PdClien
     }))
 }
 
-pub(super) fn normalize_plaintext_endpoint(endpoint: &str) -> Result<String, PdClientError> {
+pub(super) fn normalize_endpoint(endpoint: &str) -> Result<String, PdClientError> {
     if endpoint.is_empty() {
         return Err(PdClientError::InvalidEndpoint {
             endpoint: endpoint.to_owned(),
             message: "endpoint is empty".to_owned(),
         });
     }
-    if endpoint.starts_with("https://") {
+    if endpoint.contains("://")
+        && !endpoint.starts_with("http://")
+        && !endpoint.starts_with("https://")
+    {
         return Err(PdClientError::InvalidEndpoint {
             endpoint: endpoint.to_owned(),
-            message: "TLS endpoints are outside this bounded client".to_owned(),
+            message: "only http and https endpoints are supported".to_owned(),
         });
     }
-    if endpoint.contains("://") && !endpoint.starts_with("http://") {
-        return Err(PdClientError::InvalidEndpoint {
-            endpoint: endpoint.to_owned(),
-            message: "only plaintext http endpoints are supported".to_owned(),
-        });
-    }
-    let normalized = if endpoint.starts_with("http://") {
+    let normalized = if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
         endpoint.to_owned()
     } else {
         format!("http://{endpoint}")
@@ -431,7 +428,7 @@ where
     let mut normalized = Vec::new();
     let mut seen = HashSet::new();
     for endpoint in endpoints {
-        let endpoint = normalize_plaintext_endpoint(endpoint.as_ref())?;
+        let endpoint = normalize_endpoint(endpoint.as_ref())?;
         if seen.insert(endpoint.clone()) {
             normalized.push(endpoint);
         }

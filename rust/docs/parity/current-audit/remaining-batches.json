@@ -1,7 +1,7 @@
 {
-  "date": "2026-10-05",
-  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
-  "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
+  "date": "2026-10-06",
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "integration_start": "0164d0cddb94258bbc363d9e02ece83d739705c0",
   "counts": {
     "tracked": 86,
     "unresolved": 56,
@@ -10,7 +10,7 @@
     "partial": 29
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "P03/P06/N03 advanced together; other53 unresolved roots retain carried evidence. See current receipt for automatic forwarding/bootstrap and full-package limits.",
+  "evidence_limit": "P03/P06/N03 advanced together; other 53 unresolved roots retain carried evidence. Automatic TSO forwarding and full-package limits remain; separate microservice-primary bootstrap and static option consumers are repaired.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -528,19 +528,13 @@
   },
   "latest_source_maintenance": {
     "date": "2026-10-06",
-    "integration_start": "3a903f597731635739fdbefe34170bca4eee662e",
-    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "receipt": "pd-bootstrap-policy-batch-validation.json",
     "findings": [
       "P03",
-      "T02",
+      "P06",
       "N03"
     ],
-    "statuses": {
-      "P03": "partial",
-      "T02": "partial",
-      "N03": "partial"
-    },
-    "receipt": "pd-forwarding-batch-validation.json",
-    "scope": "P03/T02/N03 shared PD unary forwarding, startup options, metadata and consolidated adapter failover"
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "scope": "B01/B05: P03/P06/N03 lazy discovery connections, accepted membership, endpoint options and forced PD timestamp provider"
   }
 }

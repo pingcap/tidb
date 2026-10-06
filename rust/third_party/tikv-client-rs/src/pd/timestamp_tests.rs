@@ -27,6 +27,7 @@ enum Reply {
 #[derive(Clone)]
 struct PdServer {
     endpoint: String,
+    user_agents: Arc<std::sync::Mutex<Vec<String>>>,
     wire_routes: Arc<std::sync::Mutex<Vec<(String, Option<String>, bool)>>>,
     leader_urls: Arc<std::sync::RwLock<Vec<String>>>,
     region_members: Arc<std::sync::RwLock<Option<Vec<pdpb::Member>>>>,
@@ -85,6 +86,15 @@ where
     }
 
     fn call(&mut self, request: http::Request<B>) -> Self::Future {
+        self.user_agents.lock().unwrap().push(
+            request
+                .headers()
+                .get("user-agent")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned(),
+        );
         self.wire_routes.lock().unwrap().push((
             request.uri().path().to_owned(),
             request
@@ -454,6 +464,7 @@ impl Server {
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let service = PdServer {
             endpoint: endpoint.clone(),
+            user_agents: Arc::default(),
             leader_urls: Arc::new(std::sync::RwLock::new(vec![endpoint.clone()])),
             region_members: Arc::default(),
             region_metadata: Arc::default(),
@@ -899,11 +910,23 @@ async fn source_connectionctx_failed_metadata_refresh_preserves_live_stream() {
 }
 
 #[tokio::test]
-async fn source_connectionctx_tracks_the_dialed_url_not_the_first_advertised_url() {
+async fn source_connectionctx_retains_selected_url_without_alias_failover() {
     let server = Server::start(Reply::Timestamp).await;
     *server.service.leader_urls.write().unwrap() = vec![
         "http://127.0.0.1:0".to_owned(),
         server.service.endpoint.clone(),
+    ];
+    // Go updateServiceClient/PickMatchedURL chooses the first matching scheme,
+    // without probing aliases for reachability. A later working URL must not
+    // silently replace that logical leader identity.
+    let connection = Connection::new(Arc::new(SecurityManager::default()));
+    assert!(connection
+        .connect_cluster(&[server.service.endpoint.clone()], Duration::from_secs(1))
+        .await
+        .is_err());
+    *server.service.leader_urls.write().unwrap() = vec![
+        server.service.endpoint.clone(),
+        "http://127.0.0.1:0".to_owned(),
     ];
     let mut cluster = server.cluster(Duration::from_secs(1)).await;
     let first = cluster.get_timestamp().await.unwrap();
@@ -2646,4 +2669,140 @@ async fn wait_for_proxy_drop(server: &Server) {
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn bootstrap_policy_batch_offline_primary_keeps_healthy_proxy() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let secondary = Server::start(Reply::Timestamp).await;
+    let unused = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let primary = format!("http://{}", unused.local_addr().unwrap());
+    drop(unused);
+    api_mode(&pd, &secondary);
+    *secondary.service.group.write().unwrap() = tsopb::KeyspaceGroup {
+        id: 7,
+        members: vec![
+            tsopb::KeyspaceGroupMember {
+                address: primary.clone(),
+                is_primary: true,
+            },
+            tsopb::KeyspaceGroupMember {
+                address: secondary.service.endpoint.clone(),
+                is_primary: false,
+            },
+        ],
+        ..Default::default()
+    };
+    let options = crate::pd::opt::Options::new();
+    options.set_enable_tso_follower_proxy(true);
+    let mut connection = Connection::new(Arc::new(SecurityManager::default()));
+    connection.options = Arc::new(options);
+    let mut cluster = connection
+        .connect_cluster(&[pd.service.endpoint.clone()], Duration::from_millis(500))
+        .await
+        .expect("TSO primary reachability must not gate group publication");
+    assert_eq!(cluster.get_timestamp().await.unwrap().physical, 200);
+    assert!(secondary
+        .service
+        .wire_routes
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(path, host, _)| path == "/tsopb.TSO/Tso" && host.as_ref() == Some(&primary)));
+    cluster.start_close().await;
+}
+
+#[tokio::test]
+async fn bootstrap_policy_batch_membership_does_not_require_leader_probe() {
+    let leader = Server::start(Reply::Timestamp).await;
+    let follower = Server::start(Reply::Timestamp).await;
+    *follower.service.leader_urls.write().unwrap() = vec![leader.service.endpoint.clone()];
+    leader.service.member_failures.store(100, Ordering::SeqCst);
+    let connection = Connection::new(Arc::new(SecurityManager::default()));
+    let mut cluster = connection
+        .connect_cluster(
+            &[follower.service.endpoint.clone()],
+            Duration::from_millis(500),
+        )
+        .await
+        .expect("accepted follower membership must initialize the serving connection");
+    cluster.get_timestamp().await.unwrap();
+    connection
+        .reconnect(&mut cluster, Duration::from_millis(500))
+        .await
+        .unwrap();
+    assert_eq!(leader.service.member_requests.load(Ordering::SeqCst), 0);
+    cluster.start_close().await;
+}
+
+#[tokio::test]
+async fn bootstrap_policy_batch_forced_pd_provider_survives_api_refresh() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let tso = Server::start(Reply::Timestamp).await;
+    api_mode(&pd, &tso);
+    let mut options = crate::pd::opt::Options::new();
+    options.use_tso_server_proxy = true;
+    let mut connection = Connection::new(Arc::new(SecurityManager::default()));
+    connection.options = Arc::new(options);
+    let mut cluster = connection
+        .connect_cluster(&[pd.service.endpoint.clone()], Duration::from_secs(1))
+        .await
+        .unwrap();
+    cluster.get_timestamp().await.unwrap();
+    connection
+        .reconnect(&mut cluster, Duration::from_secs(1))
+        .await
+        .unwrap();
+    cluster
+        .get_min_timestamp(Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert_eq!(
+        pd.service.received.load(Ordering::SeqCst),
+        2,
+        "forced provider must serve ordinary and minimum timestamps through PD"
+    );
+    assert_eq!(pd.service.min_requests.load(Ordering::SeqCst), 0);
+    assert_eq!(tso.service.discovery_requests.load(Ordering::SeqCst), 0);
+    assert!(tso.service.tso_headers.lock().unwrap().is_empty());
+    cluster.start_close().await;
+}
+
+#[tokio::test]
+async fn bootstrap_policy_batch_dial_options_apply_once_in_order() {
+    let pd = Server::start(Reply::Timestamp).await;
+    *pd.service.leader_urls.write().unwrap() = vec![
+        "https://127.0.0.1:0".to_owned(),
+        pd.service.endpoint.clone(),
+    ];
+    let applied = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut options = crate::pd::opt::Options::new();
+    for index in [1, 2] {
+        let applied = applied.clone();
+        options.grpc_dial_options.push(Arc::new(move |endpoint| {
+            applied.lock().unwrap().push(index);
+            endpoint.user_agent(format!("policy-{index}")).unwrap()
+        }));
+    }
+    let mut connection = Connection::new(Arc::new(SecurityManager::default()));
+    connection.options = Arc::new(options);
+    let mut cluster = connection
+        .connect_cluster(&[pd.service.endpoint.clone()], Duration::from_secs(1))
+        .await
+        .unwrap();
+    cluster.get_timestamp().await.unwrap();
+    connection
+        .reconnect(&mut cluster, Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert_eq!(*applied.lock().unwrap(), vec![1, 2]);
+    assert!(pd
+        .service
+        .user_agents
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|agent| agent.starts_with("policy-2")));
+    assert_eq!(pd.service.connections.load(Ordering::SeqCst), 1);
+    cluster.start_close().await;
 }
