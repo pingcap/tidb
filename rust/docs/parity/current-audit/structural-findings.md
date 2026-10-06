@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [shared parser tools](parser-tools-cleanup-validation.json). Parser tool ownership cleanup: shared three tool modules behind unchanged CLI names; six duplicate oracle test registrations and three binary test harnesses removed. Retired ignored ad hoc coverage reporter, duplicate-decoder example and unused Ruby merge helper. Existing parser and inventory failures preserved and reproduced on original code.
+Latest cleanup: [result bookkeeping](result-bookkeeping-cleanup-validation.json). Retire stale result-harness bookkeeping: preserve all 105 topic names/order while removing unused narratives; replace two zero ratchets with equivalent empty checks; remove an empty exclusion list and duplicate divergence print; retire 2777 historical comment lines. All active comparisons and nonzero join/catalog snapshots retained; 3393 net source lines removed.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

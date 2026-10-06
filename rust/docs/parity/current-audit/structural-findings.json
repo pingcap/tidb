@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "parser-tools-cleanup-validation.json",
-    "scope": "Parser tool ownership cleanup: shared three tool modules behind unchanged CLI names; six duplicate oracle test registrations and three binary test harnesses removed. Retired ignored ad hoc coverage reporter, duplicate-decoder example and unused Ruby merge helper. Existing parser and inventory failures preserved and reproduced on original code.",
+    "receipt": "result-bookkeeping-cleanup-validation.json",
+    "scope": "Retire stale result-harness bookkeeping: preserve all 105 topic names/order while removing unused narratives; replace two zero ratchets with equivalent empty checks; remove an empty exclusion list and duplicate divergence print; retire 2777 historical comment lines. All active comparisons and nonzero join/catalog snapshots retained; 3393 net source lines removed.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1034,6 +1034,11 @@
     {
       "receipt": "parser-tools-cleanup-validation.json",
       "scope": "Parser tool ownership cleanup: shared three tool modules behind unchanged CLI names; six duplicate oracle test registrations and three binary test harnesses removed. Retired ignored ad hoc coverage reporter, duplicate-decoder example and unused Ruby merge helper. Existing parser and inventory failures preserved and reproduced on original code.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "result-bookkeeping-cleanup-validation.json",
+      "scope": "Retire stale result-harness bookkeeping: preserve all 105 topic names/order while removing unused narratives; replace two zero ratchets with equivalent empty checks; remove an empty exclusion list and duplicate divergence print; retire 2777 historical comment lines. All active comparisons and nonzero join/catalog snapshots retained; 3393 net source lines removed.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

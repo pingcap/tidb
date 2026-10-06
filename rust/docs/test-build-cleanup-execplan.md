@@ -1,114 +1,102 @@
-# Consolidate parser tool ownership
+# Retire obsolete result-harness bookkeeping
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Reduce repeated tool compilation and retire superseded diagnostic paths while
-preserving Go fixture replay. Work in /workspace/tidb on hparser-integration,
-based on 8c4238c01d2c32c5d5aa6a781c052e46822d4258. Refreshed Go master remains
-b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. The difftest package's parser oracle
-was included as source in its library, its own binary and the plan inventory
-binary. Three oracle tests were registered three times. The maintained replay
-in difftest-parser-tests already diagnoses parse/restore failures against the
-checked Go oracle, including multiline and non-UTF-8 restores.
+Remove stale historical narratives and inactive bookkeeping from result replay
+without removing any Go inputs or weakening comparisons. Work in /workspace/tidb
+on hparser-integration from 2186a9eecb6e0166adf7a6943604a8e60edb16be. Refreshed
+Go master remains b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Shared topic entries
+carry long unused reason strings; every consumer discards them. The integration
+and query gates have zero known divergences but retain old two-sided ratchets.
+The table harness has an empty exclusion list with unreachable skipping code.
 
 ## Progress
 
 
-- [x] Inspect tool ownership, original Go fixture pipeline and current callers.
-- [x] Share tool modules in the library and retain three thin CLI entrypoints.
-- [x] Retire the optional coverage reporter, duplicate decoder example and unused merge helper.
-- [x] Correct stale lexer regeneration instructions to the current test target.
-- [x] Run grouped tests: 21 pass, two parser replay tests fail identically on original code.
-- [x] Validate CLI checks, metadata, references, lint and diff; original inventory reproduces stale-fixture failure.
-- [ ] Record evidence and commit through the actual locked-build hook.
-- [ ] Fresh locked server build, normal push, remote verification and Cloud checkpoint.
+- [x] Verify restored checkout, callers, zero thresholds and empty exclusion list.
+- [x] Preserve all 105 topic names and their order; remove unused narratives.
+- [x] Remove 2777 historical comment lines and replace zero ratchets with empty checks.
+- [x] Delete unreachable table exclusion bookkeeping and correct stale docs.
+- [x] Validate continuity, grouped checks and replay; table retains five baseline-identical differences.
+- [ ] Lint, review, commit through actual hook, fresh build, normal push and checkpoint.
 
 ## Milestones and Plan of Work
 
 
-Move integration_parser_golden into src/parser_oracle.rs, source fixture
-inventory into src/parser_inventory.rs and plan inventory into
-src/plan_inventory.rs under rust/difftests. Keep all private implementation
-functions and assertions. Expose run_cli for each thin existing binary to call.
-Plan inventory imports the library's parser_oracle rather than including its
-source again. Set test=false on the three CLI targets because their unit tests
-now have one library owner; test CLI behavior through real command execution.
-The existing subprocess plan-inventory integration test remains.
-
-Remove the ignored parser coverage_report and examples/dump_unhandled.rs;
-their arbitrary env-file diagnostic workflow is retired, not migrated to a new
-arbitrary-input interface. The checked integration replay reports missing inputs
-and asserts complete outcome counts. Preserve curated parser restore tests and
-the embedded-CR decoder regression. Remove the unreferenced Ruby
-resolve-ratchet-conflict.rb tool; reviewed conflicts use ordinary Git resolution.
-Keep all actual ratchet assertions and regeneration implementations. Correct
-regen-golden.sh's obsolete package-only test command to the lexer owner.
+In rust/difftests/result-tests/src/enrolled_topics.rs retain every topic as a
+string in the same order. Migrate all consumers in integration_diff and
+join_shape. Remove the unused narratives rather than freezing obsolete counts
+in executable constants. In integration_diff remove only the historical comment
+block between the current report and final assertion, along with dated survey
+censuses. Preserve the operational survey instructions, child isolation and all
+comparison logic. Remove the join-shape measurement history while preserving
+its nonzero constants, assertions and explicit limit that an earlier 19-plan
+increase was not reviewed statement by statement. In query_diff and integration_diff replace zero thresholds
+with failures.is_empty()/total.divergences.is_empty(). They accept exactly the
+same outcomes. In table_diff remove UNSUPPORTED_TOPICS=[] and its dead branch,
+empty skip report and count; keep ERR-result skips and all active comparisons.
+Replace obsolete never-run/dead-engine prose with current corpus semantics.
 
 ## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust run one batch:
+Source /workspace/.cloud-setup/env.sh for every build. From /workspace/tidb/rust
+check all difftest-result-tests targets, run query_diff and table_diff together,
+and run integration_diff topics_are_listed_once_each plus the existing ignored
+single-topic replay on a representative enrolled topic. Compare serialized topic
+lists before/after, exact corpus/manifest hashes and the unchanged engine files.
+Prove removed historical blocks contain comments and only the zero constant;
+verify both acceptance predicates remain equivalent for zero/nonzero failures.
+Previous table validation has five baseline-confirmed differences; preserve and
+compare those diagnostics, never lower assertions or regenerate fixtures.
+From repository root run make lint and git diff --check.
 
-    CARGO_BUILD_JOBS=1 cargo test --locked -p difftest --lib --test integration_plan_inventory -p difftest-parser-tests --test all
-
-Require every selected test to execute; retain baseline failures as failures.
-Run all three existing CLI
---check commands and verify they preserve checked artifacts; no Go regeneration
-or fixture rewriting is authorized by cleanup. Compare metadata: only the three
-bin test flags and removed dump_unhandled example may change. Compare original
-tool bodies after normalizing their import and main/run_cli wrapper changes.
-Verify original Go replay assertions and fixture bytes remain intact.
-From repository root run make lint and git diff --check. No Go/Bazel files or
-dependencies change. No whole upstream package acceptance or timing claim.
-
-Commit normally with core.hooksPath=hooks; the actual hook must pass
-cd rust && cargo build --locked -p tidb-server. Repeat the locked build
-immediately before normal push to origin hparser-integration and verify remote
-SHA. Never bypass hooks or force-push. Preserve concurrent changes.
+No new regression test is required for equivalent predicates and deletion of
+unreachable bookkeeping. Do not run unrelated full suites. No Go/Bazel source
+or dependencies change. Commit normally with core.hooksPath=hooks and the actual
+cd rust && cargo build --locked -p tidb-server gate. Repeat that locked build
+immediately before normal push to origin hparser-integration and verify SHA.
+Never force-push or bypass hooks. Preserve concurrent changes.
 
 ## Surprises & Discoveries
 
 
-The parser oracle's three unit tests were compiled into three test owners.
-The old reporter only asserted that some input matched and depended on arbitrary
-PARSER_COV files; the maintained replay asserts source outcome counts and prints
-specific parse/restore errors. Its removal does not remove accepted Go fixtures.
+The final integration threshold is zero, while its preceding history repeatedly
+describes incompatible old remaining-debt counts. Topic explanations are runtime
+string constants even though every caller discards them. Table topic exclusion
+has no entries, so its branch and report cannot affect corpus selection.
 
 ## Decision Log
 
 
-On 2026-10-06 centralize the three tools, keeping their existing CLI names and
-arguments. Preserve useful adapter tests even where Go has no identical test:
-they protect input decoding and correct Go comparison. Retire only the reviewed
-optional reporting/merge paths, not their replacement's assertions.
+Keep every fixture, topic, active comparison, nonzero catalog/join snapshot and
+operational survey. Remove historical source narratives; recover them from the
+immutable before-image if needed. Replace zero ratchets with exact empty checks,
+not a changed tolerance. No performance timing claim or package acceptance.
 
 ## Outcomes & Retrospective
 
 
-Implementation, continuity, lint and CLI validation completed. Seventeen library
-tests, one CLI integration and three parser/lexer tests pass. Two parser tests
-fail exactly as before: five curated mismatches and twelve integration mismatches
-(four rejected Go-accepted inputs, eight restore differences). Both original and
-shared source inventory commands report stale checked inventory. Oracle and plan
-checks pass. Do not claim parser parity or silently regenerate fixtures. Six duplicate
-oracle registrations, three binary unit-test harnesses, one ignored reporter
-and one example target are retired. All 86 findings retain 30 repaired and 56
-unresolved (27 open, 29 partial). Prior table-corpus differences remain recorded
-in result-support-cleanup-validation.json and are outside this parser cleanup.
+Implementation, metadata/continuity, all-test-target compilation and lint are
+complete. Query and topic tests pass; util/admin replay matches 141 statements
+with zero divergence and two explicit skips. Table retains five differences
+identical to the prior original-harness run (1937/1942 match, 127 skips).
+The batch removes 3393 net source lines. Publication/checkpoint remains pending. All 86 findings retain 30 repaired
+and 56 unresolved (27 open, 29 partial). Existing table/parser failures remain
+recorded in the preceding cleanup receipts and are not resolved by this work.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Restore individual before-images with git show
-8c4238c01d2c32c5d5aa6a781c052e46822d4258:<path>, preserving other changes.
-Logs and final publication/checkpoint evidence live in
-/workspace/.cloud-setup/parser-tools-cleanup. Record durable evidence in
-rust/docs/parity/current-audit/parser-tools-cleanup-validation.json. No engine
-behavior, dependency, lockfile or oracle fixture changes. Draft save, environment
-Publish and fresh-task restoration are separate steps.
+Use git show 2186a9eecb6e0166adf7a6943604a8e60edb16be:<path> for individual
+before-images, preserving other work. Logs and final publication/checkpoint
+results live in /workspace/.cloud-setup/result-bookkeeping-cleanup; the committed
+receipt is rust/docs/parity/current-audit/result-bookkeeping-cleanup-validation.json.
+No engine API, dependency or fixture changes. Saved configuration, environment
+Publish and fresh-task restoration remain separate claims.
 
-Revision 2026-10-06: replace completed shared-result-support work with parser
-tool consolidation and retirement of the superseded ad hoc workflow.
+Revision: replace completed parser-tool cleanup with equivalent result gates
+and deletion of stale narrative/bookkeeping.

@@ -1,0 +1,77 @@
+{
+  "date": "2026-10-05",
+  "timezone": "America/Los_Angeles",
+  "base": "2186a9eecb6e0166adf7a6943604a8e60edb16be",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire stale result-harness bookkeeping: preserve all 105 topic names/order while removing unused narratives; replace two zero ratchets with equivalent empty checks; remove an empty exclusion list and duplicate divergence print; retire 2777 historical comment lines. All active comparisons and nonzero join/catalog snapshots retained; 3393 net source lines removed.",
+  "continuity": {
+    "ordered_topics_preserved": 105,
+    "removed_unused_topic_narratives": 105,
+    "test_registrations_preserved": true,
+    "zero_acceptance_predicates_equivalent": true,
+    "removed_topic_exclusion_list_was_empty": true,
+    "nonzero_join_constants_and_assertions_unchanged": true,
+    "historical_blocks_comment_only_except_zero_constant_and_replaced_assertions": true,
+    "metadata_unchanged": true,
+    "fixtures_dependencies_and_engine_sources_unchanged": true,
+    "removed_comment_lines": 2777
+  },
+  "archive": "https://github.com/pingcap/tidb/tree/2186a9eecb6e0166adf7a6943604a8e60edb16be/rust/difftests/result-tests",
+  "validation": {
+    "all_test_targets_check": "passed: CARGO_BUILD_JOBS=1 cargo check --locked -p difftest-result-tests --tests",
+    "query_corpus": "passed: one test",
+    "topics_are_listed_once_each": "passed: one test, 105 unique entries",
+    "single_topic_replay": {
+      "command": "INTEGRATION_TOPIC=util/admin INTEGRATION_SHOW_DIVERGENCES=1 CARGO_BUILD_JOBS=1 cargo test --locked -p difftest-result-tests --test integration_diff replay_one_topic_from_env -- --ignored --nocapture",
+      "matched": 141,
+      "diverged": 0,
+      "skipped_out_of_domain": 2,
+      "total": 143,
+      "note": "Explicitly invoked diagnostic replay; log outcomes checked independently of its print-only libtest completion."
+    },
+    "table_corpus": {
+      "failed_tests": 1,
+      "differences": 5,
+      "diagnostics_identical_to_previous_original_harness_run": true,
+      "baseline_receipt": "result-support-cleanup-validation.json",
+      "matched": 1937,
+      "in_domain": 1942,
+      "skipped": 127,
+      "total": 2069,
+      "details": [
+        "--- [group_by_position] select a from t order by true desc",
+        "  go  : RS:2;1;1",
+        "  rust: RS:1;2;1",
+        "--- [recursive_cte] with recursive reach as (select 1 as n union all select e.dst from edges e join reach r on e.src = r.n) select n from reach order by n",
+        "  go  : RS:1;2;3;4;4",
+        "  rust: <error: UnknownColumnInClause { column: \"r.n\", clause: \"on clause\" }>",
+        "--- [recursive_cte] with recursive reach as (select 1 as n union select e.dst from edges e join reach r on e.src = r.n) select n from reach order by n",
+        "  go  : RS:1;2;3;4",
+        "  rust: <error: UnknownColumnInClause { column: \"r.n\", clause: \"on clause\" }>",
+        "--- [time_zone_labels] set time_zone='utc'",
+        "  go  : OK",
+        "  rust: <error: Var(SqlError(SqlError { code: 1298, message: \"Unknown or incorrect time zone: 'utc'\", state: \"HY000\" }))>",
+        "--- [time_zone_labels] select @@time_zone",
+        "  go  : RS:utc",
+        "  rust: RS:SYSTEM"
+      ]
+    },
+    "lint_format_diff_metadata_continuity": "passed",
+    "logs_sha256": {
+      "check.log": "aa9e69c3e4c905b656d9dc58fac6e45d51d6dbc66bf2f8e6e4272e1163e4ef09",
+      "corpus-tests.log": "ea98a4fdede87124bf948b229ed6f8b60cb38afc5cff00a6d9ee35f2d343f9f6",
+      "topics-test.log": "140c483ec8a8ec6b8736676ffbc40abe56d9851e22e2a57fb4eaac130bfb3738",
+      "replay.log": "d09ec985433aa6f290b7522a301a2cbf66399f83bb5a17e3f41a46e59d71af28",
+      "continuity.json": "225fd590d15fc54b408df8c250f357f06b9221f06812cc3f2b52c57470dcb2fe",
+      "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    }
+  },
+  "limits": [
+    "No new structural finding closure or package acceptance",
+    "Full 105-topic integration/join gates not rerun; topic order and nonzero assertions verified unchanged",
+    "Existing table/parser/source-inventory failures remain documented in prior receipts",
+    "No measured runtime/build speedup, live multi-node or full Go validation",
+    "Retained join snapshot limitation: historical 19-plan increase lacked statement-by-statement review"
+  ],
+  "publication": "Pending actual hook and fresh immediate-prepush locked build; external final evidence /workspace/.cloud-setup/result-bookkeeping-cleanup/final-handoff.json"
+}

@@ -12,32 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The result ring for real table access, re-pointed at the LIVE engine.
-//!
-//! `corpus/table/` is a directory of per-topic file pairs (`<topic>.txt` +
-//! `<topic>.golden.txt`), Go-captured and verified, that the dead `tidb-exec`
-//! `Database` engine's driver used to run (deleted in `e8369b73e2` along
-//! with that engine). The corpus itself was kept -- it is real, verified Go
-//! output -- on the understanding that re-pointing a driver at the live
-//! engine is worth more than deleting the fixtures. This is that driver: it
-//! runs each topic's script through [`tidb_session::Session`], the same
-//! parse -> plan -> execute path the TCP convergence node and every other
-//! in-process caller use, and compares against the recorded Go output.
-//!
-//! Each topic is its own independent script against a fresh `Session` (every
-//! topic so far creates only its own uniquely-named table(s), never
-//! referencing another topic's, which is what makes topics safely
-//! splittable). Outcomes in the live engine's domain (`OK` for side effects,
-//! `RS:...` for queries) are asserted; statements the Go side reports as
-//! `ERR` are skipped, and a handful of topics that exercise capabilities the
-//! live engine does not model at all are skipped BY NAME below.
-//!
-//! EXPECT DIVERGENCES: this corpus has not run against anything since the
-//! dead engine was removed, and the live engine is a DIFFERENT engine (a
-//! different operator tree, wired through a session rather than a
-//! `Database`) from the one it was recorded against. A divergence here is a
-//! finding to report, not a fixture to edit -- this test does not touch
-//! `corpus/table/**`, and does not delete a case to make itself pass.
+//! Replay every `corpus/table/` topic through a fresh live Session and
+//! compare with recorded Go output. Each topic retains its own session state.
+//! `ERR` goldens are counted as skipped; every `OK` and `RS:` result is asserted.
+//! A divergence is evidence to investigate, not a reason to remove a fixture.
 //!
 //! Regenerate one topic's golden after changing it:
 //! ```sh
@@ -60,15 +38,6 @@ fn corpus_dir() -> PathBuf {
     difftest_root().join("corpus").join("table")
 }
 
-/// Topics that exercise a capability the live engine does not model at all
-/// (rather than merely producing a wrong answer), captured by name so a
-/// green run means every OTHER topic genuinely matched the Go engine.
-///
-/// Each reason names the missing capability the topic's script depends on
-/// from its very first statement (usually a `CREATE TABLE ... FOREIGN KEY`
-/// or the clause itself), not a narrower per-statement gap.
-const UNSUPPORTED_TOPICS: &[(&str, &str)] = &[];
-
 /// Runs one statement against a live [`Session`], returning its outcome
 /// label.
 fn run_stmt(session: &mut Session, sql: &str) -> Result<String, DriverError> {
@@ -89,14 +58,8 @@ fn table_execution_matches_go_engine() {
     let mut matched = 0;
     let mut skipped = 0;
     let mut total = 0;
-    let mut skipped_topics = Vec::new();
 
     for topic in corpus_topics(&dir) {
-        if let Some((_, reason)) = UNSUPPORTED_TOPICS.iter().find(|(name, _)| *name == topic) {
-            skipped_topics.push(format!("{topic} ({reason})"));
-            continue;
-        }
-
         let stmts = parse_corpus(&fs::read_to_string(dir.join(format!("{topic}.txt"))).unwrap());
         let golden: Vec<String> = fs::read_to_string(dir.join(format!("{topic}.golden.txt")))
             .unwrap()
@@ -131,20 +94,13 @@ fn table_execution_matches_go_engine() {
         }
     }
 
-    eprintln!(
-        "table_execution_matches_go_engine: {} topics skipped by name: {}",
-        skipped_topics.len(),
-        skipped_topics.join(", ")
-    );
-
     assert!(
         failures.is_empty(),
-        "{} of {} in-domain statements diverged from real TiDB ({} skipped, {} total, {} topics skipped by name):{}",
+        "{} of {} in-domain statements diverged from real TiDB ({} skipped, {} total):{}",
         failures.len(),
         matched + failures.len(),
         skipped,
         total,
-        skipped_topics.len(),
         failures.join("")
     );
 }

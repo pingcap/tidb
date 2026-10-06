@@ -27,10 +27,6 @@
 //! the Go side reports as `ERR` (needing a table, or out of scope) are
 //! counted but not required.
 //!
-//! EXPECT DIVERGENCES: see `table_diff.rs`'s own note -- this corpus has not
-//! run against anything since the dead engine was removed, and the live
-//! engine is a different engine from the one it was recorded against.
-//!
 //! Regenerate the golden after changing the corpus (drops TiDB's stderr logs):
 //! ```sh
 //! grep -v '^##' rust/difftests/corpus/query_statements.txt \
@@ -161,35 +157,12 @@ fn check_query_results() {
         }
     }
 
-    // Every divergence below is a real gap against Go, printed in full so it
-    // can be worked off. It is a ratchet, not a waiver: the count may only go
-    // DOWN. A permanently red suite would destroy the signal every other gate
-    // depends on, and deleting the cases would destroy the evidence -- so the
-    // debt is carried as a number that fails the moment it grows.
-    const KNOWN_DIVERGENCES: usize = 0;
-
-    // One comparison, both directions: `>` is a regression, `<` means the
-    // constant is stale. Written as a match on Ordering rather than two
-    // inequalities so it still reads correctly at zero, where `len() >= 0`
-    // would be vacuously true for a usize.
-    match failures.len().cmp(&KNOWN_DIVERGENCES) {
-        std::cmp::Ordering::Greater => panic!(
-            "{} of {} in-domain queries diverged from the Go engine, up from {} \
-             ({} skipped) -- a new divergence appeared:{}",
-            failures.len(),
-            matched + failures.len(),
-            KNOWN_DIVERGENCES,
-            skipped,
-            failures.join("")
-        ),
-        std::cmp::Ordering::Less => panic!(
-            "only {} of {} queries diverge now, down from {}. Lower \
-             KNOWN_DIVERGENCES to {} so the ratchet holds.",
-            failures.len(),
-            matched + failures.len(),
-            KNOWN_DIVERGENCES,
-            failures.len()
-        ),
-        std::cmp::Ordering::Equal => {}
-    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} in-domain queries diverged from the Go engine ({} skipped):{}",
+        failures.len(),
+        matched + failures.len(),
+        skipped,
+        failures.join("")
+    );
 }
