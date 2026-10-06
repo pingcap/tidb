@@ -1019,7 +1019,7 @@ func PropConstForOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Exp
 	solver.outerSchema = outerSchema
 	solver.innerSchema = innerSchema
 	solver.nullSensitive = nullSensitive
-	solver.ctx = ctx
+	solver.ctx = exprctx.WithConstantPropagateCheck(ctx)
 	solver.vaildExprFunc = vaildExprFunc
 	return solver.solve(keepJoinKey, joinConds, filterConds)
 }

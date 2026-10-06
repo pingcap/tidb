@@ -406,3 +406,22 @@ select id from t_gci where c = 'a' and c <= 'A' order by id;
 id
 1
 2
+select object_id from t_bin where node_type = 'A' and coercibility(node_type) = 2 order by object_id;
+object_id
+1
+2
+3
+select a.object_id, b.object_id from t_bin a left join t_bin b on a.node_type = 'A' and coercibility(a.node_type) = 2 and b.object_id = a.object_id order by a.object_id;
+object_id	object_id
+1	1
+2	2
+3	3
+4	NULL
+5	NULL
+6	NULL
+drop table if exists t_utf8bin;
+create table t_utf8bin (id int primary key, c varchar(10) collate utf8mb4_bin);
+insert into t_utf8bin values (1,'A'),(2,'B');
+select id from t_utf8bin where c = 'A' and coercibility(c) = 2;
+id
+1

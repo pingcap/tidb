@@ -168,3 +168,10 @@ select object_id from t_bin where node_type = 'A' and cast(node_type as binary) 
 select object_id from t_bin where node_type = 'A' and hex(node_type) = '41' order by object_id;
 select id from t_gci where c = 'a' and c > 'A';
 select id from t_gci where c = 'a' and c <= 'A' order by id;
+# COERCIBILITY() is not substituted: the propagated constant is coercible (4) while the column is implicit (2)
+select object_id from t_bin where node_type = 'A' and coercibility(node_type) = 2 order by object_id;
+select a.object_id, b.object_id from t_bin a left join t_bin b on a.node_type = 'A' and coercibility(a.node_type) = 2 and b.object_id = a.object_id order by a.object_id;
+drop table if exists t_utf8bin;
+create table t_utf8bin (id int primary key, c varchar(10) collate utf8mb4_bin);
+insert into t_utf8bin values (1,'A'),(2,'B');
+select id from t_utf8bin where c = 'A' and coercibility(c) = 2;
