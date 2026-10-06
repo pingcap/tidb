@@ -1,0 +1,145 @@
+{
+  "date": "2026-10-06",
+  "base": "8c4238c01d2c32c5d5aa6a781c052e46822d4258",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Parser tool ownership cleanup: shared three tool modules behind unchanged CLI names; six duplicate oracle test registrations and three binary test harnesses removed. Retired ignored ad hoc coverage reporter, duplicate-decoder example and unused Ruby merge helper. Existing parser and inventory failures preserved and reproduced on original code.",
+  "before_images": [
+    {
+      "old": "difftests/src/bin/integration_parser_golden.rs",
+      "new": "difftests/src/parser_oracle.rs",
+      "sha256": "32aaf81f3802aadc501c6f2e049d3d75547fc82c6f58fb2a038d205e633841e9",
+      "tests": 3
+    },
+    {
+      "old": "difftests/src/bin/integration_parser_inventory.rs",
+      "new": "difftests/src/parser_inventory.rs",
+      "sha256": "7684e646129d3a5de1268e3da454d1bd08d6cd9973d6ece146588aa6703b32d6",
+      "tests": 9
+    },
+    {
+      "old": "difftests/src/bin/integration_plan_inventory.rs",
+      "new": "difftests/src/plan_inventory.rs",
+      "sha256": "ce1b33397b503a06dbb3979158132c1bd33af6484109eae51838274fa1dd2fca",
+      "tests": 1
+    },
+    {
+      "removed": "difftests/examples/dump_unhandled.rs",
+      "lines": 50,
+      "sha256": "421354b8e09bee47c2056e55363c2faa8647a16b86903489ad24ac4efdb9b07b"
+    },
+    {
+      "removed": "difftests/resolve-ratchet-conflict.rb",
+      "lines": 149,
+      "sha256": "7f57018b7b3a14abf0e63981c1dbe9d047ad6b3fe836efb0585f1db7df9539a5"
+    }
+  ],
+  "removed": {
+    "duplicate_oracle_test_registrations": 6,
+    "binary_unit_test_harnesses": 3,
+    "ignored_coverage_report_tests": 1,
+    "example_targets": 1,
+    "unused_merge_scripts": 1
+  },
+  "retained": {
+    "tool_unit_tests": 13,
+    "other_library_tests": 4,
+    "cli_names_and_modes_unchanged": true,
+    "original_assertions_fixtures_dependencies_and_engine_sources_preserved": true,
+    "curated_embedded_CR_regression_retained": true
+  },
+  "validation": {
+    "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p difftest --lib --test integration_plan_inventory -p difftest-parser-tests --test all",
+    "library_passed": 17,
+    "cli_integration_passed": 1,
+    "parser_lexer_suite": {
+      "passed": 3,
+      "failed": 2,
+      "ignored": 0,
+      "before_ignored": 1,
+      "curated_differences": 5,
+      "curated_statements": 2121,
+      "integration_inputs": 51598,
+      "integration_new_parse_failures": 4,
+      "integration_restore_mismatches": 8,
+      "baseline_diagnostics_identical": true
+    },
+    "source_inventory_check": "Fails identically with original standalone binary: checked fixture inventory stale; no regeneration performed.",
+    "oracle_check": "passed: 51598 inputs, 51498 accepted, 99 rejected, one restore failure",
+    "plan_inventory_check": "passed: 4723 entries (4674 EXPLAIN and 49 EXPLAIN ANALYZE)",
+    "lint_format_and_diff": "passed",
+    "metadata": "Only removed dump_unhandled example and disabled unit-test harness flags for three thin CLI binaries",
+    "continuity": {
+      "tool_bodies_unchanged_except_imports_and_cli_export": true,
+      "all_13_tool_tests_preserved": true,
+      "metadata_changes": {
+        "removed_example": "dump_unhandled",
+        "test_false_bins": [
+          "integration_parser_golden",
+          "integration_parser_inventory",
+          "integration_plan_inventory"
+        ]
+      },
+      "baseline_and_after_parser_diagnostics_identical": true,
+      "parser_diagnostics": {
+        "curated": "5 of 2121 statements diverged from the Go parser:\n--- #597: select a from t8 order by default(b) * a\n  go  : SELECT `a` FROM `t8` ORDER BY DEFAULT(`b`)*`a`\n  rust: <parse error at 38: >\n--- #1458: ALTER TABLE t CONVERT TO CHARACTER SET utf8mb4\n  go  : ALTER TABLE `t` CONVERT TO CHARACTER SET UTF8MB4\n  rust: ALTER TABLE `t` CONVERT TO CHARACTER SET utf8mb4\n--- #1621: select 1 binary\n  go  : SELECT 1 AS `binary`\n  rust: <parse error at 15: >\n--- #1622: select 1 char\n  go  : SELECT 1 AS `char`\n  rust: <parse error at 13: >\n--- #1624: select 1 match\n  go  : SELECT 1 AS `match`\n  rust: <parse error at 14: >\n",
+        "integration": [
+          "Rust restore mismatch at tests/integrationtest/t/ddl/serial.test:40",
+          "SQL: alter table t convert to charset utf8 collate utf8_bin;",
+          "Go: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 85, 84, 70, 56, 32, 67, 79, 76, 76, 65, 84, 69, 32, 85, 84, 70, 56, 95, 66, 73, 78]]",
+          "Rust: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 117, 116, 102, 56, 32, 67, 79, 76, 76, 65, 84, 69, 32, 85, 84, 70, 56, 95, 66, 73, 78]]",
+          "Rust restore mismatch at tests/integrationtest/t/ddl/serial.test:41",
+          "SQL: alter table t convert to charset utf8 collate utf8_unicode_ci;",
+          "Go: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 85, 84, 70, 56, 32, 67, 79, 76, 76, 65, 84, 69, 32, 85, 84, 70, 56, 95, 85, 78, 73, 67, 79, 68, 69, 95, 67, 73]]",
+          "Rust: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 117, 116, 102, 56, 32, 67, 79, 76, 76, 65, 84, 69, 32, 85, 84, 70, 56, 95, 85, 78, 73, 67, 79, 68, 69, 95, 67, 73]]",
+          "Rust restore mismatch at tests/integrationtest/t/ddl/serial.test:42",
+          "SQL: alter table t convert to charset utf8 collate utf8_general_ci;",
+          "Go: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 85, 84, 70, 56, 32, 67, 79, 76, 76, 65, 84, 69, 32, 85, 84, 70, 56, 95, 71, 69, 78, 69, 82, 65, 76, 95, 67, 73]]",
+          "Rust: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 117, 116, 102, 56, 32, 67, 79, 76, 76, 65, 84, 69, 32, 85, 84, 70, 56, 95, 71, 69, 78, 69, 82, 65, 76, 95, 67, 73]]",
+          "Rust restore mismatch at tests/integrationtest/t/ddl/serial.test:54",
+          "SQL: alter table t convert to charset utf8 collate utf8_general_ci;",
+          "Go: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 85, 84, 70, 56, 32, 67, 79, 76, 76, 65, 84, 69, 32, 85, 84, 70, 56, 95, 71, 69, 78, 69, 82, 65, 76, 95, 67, 73]]",
+          "Rust: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 117, 116, 102, 56, 32, 67, 79, 76, 76, 65, 84, 69, 32, 85, 84, 70, 56, 95, 71, 69, 78, 69, 82, 65, 76, 95, 67, 73]]",
+          "Rust restore mismatch at tests/integrationtest/t/ddl/serial.test:84",
+          "SQL: alter table t convert to charset utf8mb4 collate utf8mb4_roman_ci;",
+          "Go: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 85, 84, 70, 56, 77, 66, 52, 32, 67, 79, 76, 76, 65, 84, 69, 32, 85, 84, 70, 56, 77, 66, 52, 95, 82, 79, 77, 65, 78, 95, 67, 73]]",
+          "Rust: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 117, 116, 102, 56, 109, 98, 52, 32, 67, 79, 76, 76, 65, 84, 69, 32, 85, 84, 70, 56, 77, 66, 52, 95, 82, 79, 77, 65, 78, 95, 67, 73]]",
+          "Rust parse failed for Go-accepted input tests/integrationtest/t/executor/write.test:30: ParseError { message: \"\", offset: 32, near_offset: 31, errno: None }",
+          "Rust parse failed for Go-accepted input tests/integrationtest/t/executor/write.test:103: ParseError { message: \"\", offset: 79, near_offset: 78, errno: None }",
+          "Rust parse failed for Go-accepted input tests/integrationtest/t/executor/write.test:1308: ParseError { message: \"\", offset: 28, near_offset: 27, errno: None }",
+          "Rust parse failed for Go-accepted input tests/integrationtest/t/planner/core/expression_rewriter.test:74: ParseError { message: \"\", offset: 38, near_offset: 37, errno: None }",
+          "Rust restore mismatch at tests/integrationtest/t/session/common.test:145",
+          "SQL: alter table posts convert to character set utf8mb4;",
+          "Go: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 112, 111, 115, 116, 115, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 85, 84, 70, 56, 77, 66, 52]]",
+          "Rust: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 112, 111, 115, 116, 115, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 117, 116, 102, 56, 109, 98, 52]]",
+          "Rust restore mismatch at tests/integrationtest/t/session/common.test:149",
+          "SQL: alter table t convert to character set utf8mb4;",
+          "Go: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 85, 84, 70, 56, 77, 66, 52]]",
+          "Rust: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 117, 116, 102, 56, 109, 98, 52]]",
+          "Rust restore mismatch at tests/integrationtest/t/session/common.test:153",
+          "SQL: alter table t convert to character set utf8mb4;",
+          "Go: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 85, 84, 70, 56, 77, 66, 52]]",
+          "Rust: [[65, 76, 84, 69, 82, 32, 84, 65, 66, 76, 69, 32, 96, 116, 96, 32, 67, 79, 78, 86, 69, 82, 84, 32, 84, 79, 32, 67, 72, 65, 82, 65, 67, 84, 69, 82, 32, 83, 69, 84, 32, 117, 116, 102, 56, 109, 98, 52]]",
+          "integration parser diff: total=51598 go_accepted=51498 go_rejected=99 go_restore_failure=1 rust_matched=51477 rust_multi_statement_matched=10 rust_parse_failure=103 rust_restore_mismatch=8 rust_accepted_go_rejected=0 rust_accepted_go_restore_failure=0",
+          "  left: Counts { go_accepted: 51498, go_rejected: 99, go_restore_failure: 1, rust_matched: 51477, rust_multi_statement_matched: 10, rust_parse_failure: 103, rust_restore_mismatch: 8, rust_accepted_go_rejected: 0, rust_accepted_go_restore_failure: 0 }",
+          " right: Counts { go_accepted: 51498, go_rejected: 99, go_restore_failure: 1, rust_matched: 51489, rust_multi_statement_matched: 10, rust_parse_failure: 99, rust_restore_mismatch: 0, rust_accepted_go_rejected: 0, rust_accepted_go_restore_failure: 0 }"
+        ]
+      }
+    },
+    "logs_sha256": {
+      "tests.log": "a4807ac3d0e65b75b123ec7e98a77bcd6d9354ed7d76a3ecc03b4fc6cbefcf19",
+      "baseline.log": "ad170934bee53808f021c4ab132966ec77493de7e5028fb6bf45a5734a3b2ba8",
+      "inventory-baseline.log": "1077b714d8be01bf40b8b473e83e1c9b642cd333cd0a73550401e65f61ad6e3c",
+      "inventory-check.log": "a3501bae42912efd5ce9dc2522d62b16866106eece0247ffd797c7f27cc8dee8",
+      "oracle-check.log": "679fca3a6fc861aa167af8fefd73ac212c9fdf8b7482c244e1fc49255baf5c6b",
+      "plan-check.log": "e1bf9f30f6ba86d9e69eb9c3196a30e3f6ada24956d62c38dd08a06fe48d4109",
+      "lint.log": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+      "continuity.json": "37c2d85904a5533204b78da0b5a6a758830512289f73c04cbdab8691ef18aeee"
+    }
+  },
+  "limits": [
+    "No full package acceptance or structural finding closure",
+    "Parser replay and source inventory checks are not green; original-code reproductions confirm pre-existing failures",
+    "No golden regeneration, full Go suites, live multi-node or measured performance validation"
+  ],
+  "publication": "Pending actual hook and fresh immediate-prepush locked build; final evidence /workspace/.cloud-setup/parser-tools-cleanup/final-handoff.json"
+}

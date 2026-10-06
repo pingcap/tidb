@@ -39,9 +39,14 @@ pub fn difftest_root() -> PathBuf {
 }
 
 /// Checked static Go parser oracle shared by the differential replay.
-#[path = "bin/integration_parser_golden.rs"]
 #[allow(dead_code, missing_docs)]
 pub mod parser_oracle;
+
+/// Source-backed mysqltest fixture inventory.
+pub mod parser_inventory;
+
+/// Source-backed EXPLAIN obligation inventory.
+pub mod plan_inventory;
 
 const EXECUTABLE_CORPUS_NAMESPACES: &[&str] = &["expr", "parser", "table"];
 

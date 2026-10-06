@@ -2,7 +2,7 @@
 # Regenerate the golden token dumps from the production Go scanner.
 #
 # Run from anywhere in the repo after changing a corpus file or the Go scanner.
-# The Rust differential tests (cd rust && cargo test -p difftest) compare
+# The Rust differential tests (cd rust && cargo test --locked -p difftest-parser-tests --test all lexer_diff::) compare
 # tidb-lexer's output against these goldens.
 set -euo pipefail
 
@@ -17,4 +17,4 @@ regen() { # <statements-file> <golden-file>
 regen statements.txt      golden.txt
 regen real_statements.txt real_golden.txt
 
-echo "done. now run: (cd rust && cargo test -p difftest)"
+echo "done. now run: (cd rust && cargo test --locked -p difftest-parser-tests --test all lexer_diff::)"

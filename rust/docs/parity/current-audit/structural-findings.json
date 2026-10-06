@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "result-support-cleanup-validation.json",
-    "scope": "Shared result-differential support: five byte-identical helpers compiled under one library, 26 helper tests registered once instead of three times (52 duplicates removed), one ignored assertion-free scratch probe removed. Seven suite binaries and all meaningful assertions retained; no finding disposition changes.",
+    "receipt": "parser-tools-cleanup-validation.json",
+    "scope": "Parser tool ownership cleanup: shared three tool modules behind unchanged CLI names; six duplicate oracle test registrations and three binary test harnesses removed. Retired ignored ad hoc coverage reporter, duplicate-decoder example and unused Ruby merge helper. Existing parser and inventory failures preserved and reproduced on original code.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1029,6 +1029,11 @@
     {
       "receipt": "result-support-cleanup-validation.json",
       "scope": "Shared result-differential support: five byte-identical helpers compiled under one library, 26 helper tests registered once instead of three times (52 duplicates removed), one ignored assertion-free scratch probe removed. Seven suite binaries and all meaningful assertions retained; no finding disposition changes.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "parser-tools-cleanup-validation.json",
+      "scope": "Parser tool ownership cleanup: shared three tool modules behind unchanged CLI names; six duplicate oracle test registrations and three binary test harnesses removed. Retired ignored ad hoc coverage reporter, duplicate-decoder example and unused Ruby merge helper. Existing parser and inventory failures preserved and reproduced on original code.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

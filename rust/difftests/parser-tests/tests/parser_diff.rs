@@ -27,10 +27,9 @@
 //! `<topic>.golden.txt` the same way — never append to an existing topic's
 //! file unless the addition genuinely belongs to that topic.
 
-use std::fs;
 use std::path::PathBuf;
 
-use difftest::{difftest_root, load_corpus_dir, parse_corpus, validate_executable_corpora};
+use difftest::{difftest_root, load_corpus_dir, validate_executable_corpora};
 
 fn corpus_dir() -> PathBuf {
     difftest_root().join("corpus").join("parser")
@@ -73,7 +72,7 @@ fn parse_restore_golden(text: &str) -> Vec<String> {
 /// a restored string's own CONTENT (not the file's line ending) whenever
 /// it happens to sit immediately before the file's `\n` separator. Found
 /// via a real corpus statement (`select ' \r\n  .col';`) that looked like
-/// a genuine restore mismatch in `coverage_report`'s output — both sides
+/// a genuine restore mismatch in diagnostic output — both sides
 /// LOOKED identical when printed (a raw `\r` in a terminal just moves the
 /// cursor, so a missing one is invisible) — until a direct, file-free
 /// comparison proved the actual restore output was byte-identical, tracing
@@ -133,49 +132,4 @@ fn test_differential() {
         statements.len(),
         failures.join("")
     );
-}
-
-/// Informational coverage measurement over an arbitrary statement corpus. Run
-/// with env vars pointing at a statements file and its restore golden:
-/// `PARSER_COV_STMTS=... PARSER_COV_GOLDEN=... cargo test -p difftest-parser-tests \
-///   --test parser_diff coverage -- --ignored --nocapture`
-#[test]
-#[ignore = "informational; requires PARSER_COV_STMTS / PARSER_COV_GOLDEN"]
-fn coverage_report() {
-    let stmts_path = std::env::var("PARSER_COV_STMTS").expect("PARSER_COV_STMTS");
-    let golden_path = std::env::var("PARSER_COV_GOLDEN").expect("PARSER_COV_GOLDEN");
-    let statements = parse_corpus(&fs::read_to_string(stmts_path).unwrap());
-    let golden = parse_restore_golden(&fs::read_to_string(golden_path).unwrap());
-
-    let (mut parse_err, mut restore_mismatch, mut matched, mut go_err) = (0, 0, 0, 0);
-    let mut mismatches = Vec::new();
-    for (idx, sql) in statements.iter().enumerate() {
-        let want = &golden[idx];
-        if want == "!ERR" {
-            go_err += 1;
-            continue;
-        }
-        match tidb_parser::parse(sql) {
-            Ok(stmt) => {
-                if &stmt.restore() == want {
-                    matched += 1;
-                } else {
-                    restore_mismatch += 1;
-                    if mismatches.len() < 25 {
-                        mismatches.push(format!(
-                            "  MISMATCH: {sql}\n    go  : {want}\n    rust: {}",
-                            stmt.restore()
-                        ));
-                    }
-                }
-            }
-            Err(_) => parse_err += 1,
-        }
-    }
-    let total = statements.len();
-    println!(
-        "\ncoverage over {total} statements:\n  matched:          {matched}\n  restore mismatch: {restore_mismatch}\n  unhandled:        {parse_err}\n  go-rejected:      {go_err}\n\nrestore mismatches (parsed but differ):\n{}",
-        mismatches.join("\n")
-    );
-    assert!(matched > 0, "expected some statements to parse");
 }

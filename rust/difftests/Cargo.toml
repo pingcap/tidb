@@ -21,3 +21,20 @@ tidb-parser = { path = "../crates/tidb-parser" }
 [[test]]
 name = "integration_plan_inventory"
 path = "tests/integration_plan_inventory.rs"
+
+# Unit tests for the tools live in the shared library.
+
+[[bin]]
+name = "integration_parser_golden"
+path = "src/bin/integration_parser_golden.rs"
+test = false
+
+[[bin]]
+name = "integration_parser_inventory"
+path = "src/bin/integration_parser_inventory.rs"
+test = false
+
+[[bin]]
+name = "integration_plan_inventory"
+path = "src/bin/integration_plan_inventory.rs"
+test = false
