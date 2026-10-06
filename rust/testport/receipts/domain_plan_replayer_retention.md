@@ -6,6 +6,14 @@ Original Go contracts remain obligations; this receipt does not establish
 current integration or package acceptance.
 
 
+Current status (2026-10-06): the mock-only `domain_sysvars.rs` facade and
+its 12 private tests are retired. The two completed narrative audits
+`domain-sysvar-cache-parity-audit.md` and `plan-replayer-domain-parity-audit.md`
+were removed; their historical inventory and validation provenance remain
+here and in Git. Original TopN/CDC algorithms and Go case tables are retained.
+Live sysvar owners are unchanged. TopN-to-session integration remains open.
+See [the facade cleanup receipt](../../docs/parity/current-audit/domain-facade-cleanup-validation.json).
+
 Comparison source: Go `origin/master` at commit
 `1c1a334d2be1dce64888b6e1f054462c566b0734` (2026-09-02).
 

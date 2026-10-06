@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "planning-leaf-cleanup-validation.json",
-    "scope": "Retire disconnected join-condition classifier and automatic index-split planner: four Rust files, 1247 net Rust lines and ten private tests removed. Preserve live logical/session joins, parser/AST AUTO options, durable IndexArg and catalog-write propagation with their existing Go-contract tests. Correct historical AUTO planner coverage claims.",
+    "receipt": "domain-facade-cleanup-validation.json",
+    "scope": "Remove the unused Domain sysvar facade, its twelve mock-only tests, two superseded audit documents and obsolete crate-level planning narrative: 745 net Rust lines removed. Preserve live session/server sysvar consumers and original Go TopN/CDC algorithms and case tables unchanged.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1119,6 +1119,11 @@
     {
       "receipt": "planning-leaf-cleanup-validation.json",
       "scope": "Retire disconnected join-condition classifier and automatic index-split planner: four Rust files, 1247 net Rust lines and ten private tests removed. Preserve live logical/session joins, parser/AST AUTO options, durable IndexArg and catalog-write propagation with their existing Go-contract tests. Correct historical AUTO planner coverage claims.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "domain-facade-cleanup-validation.json",
+      "scope": "Remove the unused Domain sysvar facade, its twelve mock-only tests, two superseded audit documents and obsolete crate-level planning narrative: 745 net Rust lines removed. Preserve live session/server sysvar consumers and original Go TopN/CDC algorithms and case tables unchanged.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

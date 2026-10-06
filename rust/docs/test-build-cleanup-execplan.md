@@ -1,92 +1,94 @@
-# Retire disconnected join and index-split planning leaves
+# Remove the unused Domain sysvar facade and stale audit guidance
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Remove two unused planning implementations and their private tests together.
-Work in /workspace/tidb on hparser-integration from
-e48cdc301e7d609adbb4c5727b77c28c2607d952. Fresh Go master remains
-b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. The standalone JoinSchema classifier
-has no caller in live planning: Go binds joins in PlanBuilder.buildJoin and
-maintains FullSchema in logical operators. The AUTO split helper likewise
-has no live caller; Go's autoPreSplitIndexRegion integrates stats loading,
-shared deadlines, boundary caching and region operations. Retiring isolated
-prototypes reduces maintained code without changing those runtime owners.
+Reduce maintained mock-only code and obsolete documentation without changing
+live configuration behavior. Work in /workspace/tidb on hparser-integration
+from a1d48bd7fc290918b99b5381f48832cc78e73864. Fresh Go master is
+b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Go initDomainSysVars installs
+callbacks on the real Domain/store owners. Rust's domain_sysvars.rs instead
+requires DomainSysVarEnv, implemented only by MockEnv in its private tests.
+Live session/server configuration uses separate maintained owners.
 
 ## Progress
 
 
-- [x] Trace both implementations, test-only callers and Go owner boundaries.
-- [x] Remove the two modules, two private carriers and four registrations.
-- [x] Correct the historical automatic index-split receipt.
-- [x] Validate retained join SQL and durable DDL marker, source continuity and lint.
-- [ ] Complete actual hook, fresh pre-push build, remote and Cloud checkpoint checks.
+- [x] Trace facade callers and compare Go's real initialization callbacks.
+- [x] Distinguish original Go TopN/CDC case tables from the mock-only facade.
+- [x] Remove facade, private tests, stale crate narrative and two audit docs.
+- [x] Run grouped live sysvar SQL tests, continuity and lint.
+- [ ] Complete actual hook, fresh pre-push build, remote and Cloud checks.
 
 ## Milestones and Plan of Work
 
 
-Remove rust/crates/tidb-planner/src/join_condition.rs and
-rust/difftests/planner-tests/tests/join_condition.rs. Remove
-rust/crates/tidb-exec/src/auto_pre_split.rs and its tests/auto_pre_split_source.rs.
-Unregister them from their lib.rs and tests/all.rs files. Preserve the actual
-logical join rewrite, session SQL paths, parser/AST options, durable IndexArg
-and cluster_ddl marker propagation byte-for-byte. Mark the old claims in
-rust/testport/receipts/ddl_auto_presplit_audit.md as historical; retain Go's
-full original package obligations. Update both structural registers and the
-current-audit index without closing findings.
+Delete rust/crates/tidb-domain/src/domain_sysvars.rs and unregister it in
+lib.rs. Replace lib.rs's obsolete planning narrative with a concise current
+ownership description. Delete completed, unreferenced
+rust/docs/domain-sysvar-cache-parity-audit.md and
+rust/docs/plan-replayer-domain-parity-audit.md. Their historical package
+inventory/validation receipt remains in
+rust/testport/receipts/domain_plan_replayer_retention.md with current status.
+
+Keep topn_slow_query.rs and cdcutil.rs with their original Go case tables;
+being unintegrated does not make those semantic tests useless. Preserve
+session/show_admin.rs and every real sysvar, statistics and native consumer.
+Record the remaining TopN live-owner integration gap without pretending it
+was fixed. Update both structural registers and the current-audit index,
+leaving all finding dispositions unchanged.
 
 ## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh in every build shell; work in
-/workspace/tidb/rust, with CARGO_BUILD_JOBS=1:
+Source /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust, run with
+CARGO_BUILD_JOBS=1:
 
-    cargo test --locked -p tidb-session --lib -- tests_coalesced_joins:: tests_join_predicate_placement:: --test-threads=1
-    cargo test --locked -p tidb-exec --test all -- cluster_ddl_source::create_index_auto_pre_split_marker_reaches_catalog_write --exact --test-threads=1
+    cargo test --locked -p tidb-session --lib -- tests_global_vars::low_resolution_tso_update_interval_clamps_and_warns tests_global_vars::schema_cache_size_global_hook_publishes_bytes tests_global_vars::circuit_breaker_pd_metadata_ratio_global_hook_publishes_float tests_global_vars::resource_control_global_hooks_publish_process_switches tests_global_vars::global_config_explicit_sql_notifies_the_domain_owner tests_global_vars::global_config_notifies_default_and_scratch_writes_but_not_cache_reloads --exact --test-threads=1
 
-Existing SQL rows, null semantics, USING visibility and join predicates must
-pass. The retained catalog-write test must preserve AUTO/manual precedence.
-Source continuity must show only deleted modules and registrations changed
-among Rust code; no dependency changes or surviving retired imports. Run
-make lint and git diff --check at root. Commit normally through the actual
-locked server-build hook; run cargo build --locked -p tidb-server immediately
-before authorized push and verify remote SHA. No Go/Bazel changes or new
-behavioral fixes, so no oracle regeneration or new regression required.
+Expect six existing SQL tests to preserve clamping/warnings, typed process
+publication and global-config notification ownership. Verify every retained
+Rust source/test and dependency file is unchanged. No retired imports/types
+may survive. Run make lint and git diff --check from root. Normal commit must
+run the actual locked tidb-server hook; repeat that build immediately before
+push and verify the remote SHA. No Go/Bazel or dependency changes are needed.
 
 ## Surprises & Discoveries
 
 
-The join model's sole consumer is under difftests/planner-tests, not the
-planner crate's own test tree. AUTO parser/catalog markers are active, but
-the statistics-to-keys helper is not called by any production source.
+The old crate header says TopN lives in tidb-exec, although its module and
+Go heap/FIFO tests live in tidb-domain. The live ADMIN SHOW SLOW recorder uses
+a separate session collection. Keep the genuine Go algorithms/tests and
+record that integration gap. The sysvar facade's 12 tests only instantiate
+its mock environment; no real Domain/store implements the trait.
 
 ## Decision Log
 
 
-Remove test-only models and their private assertions after tracing all users.
-Preserve useful tests on actual owners and all original Go obligations.
-Do not equate prototype removal with implemented AUTO region splitting or
-complete join/package parity. Keep historical receipts explicitly dated.
+Remove the mock-only facade after exhaustive caller tracing. Preserve useful
+original Go cases, including unintegrated TopN and CDC algorithms. Remove
+completed duplicated audits rather than editing their old VERIFIED claims.
+Keep dated source/test inventory receipts with a current-status correction.
+This is cleanup, not a bug fix or complete Go package acceptance.
 
 ## Outcomes & Retrospective
 
 
-Implementation and validation complete: 43 retained-owner tests passed.
-Lint and source continuity passed. Removed 1247 net Rust lines and ten
-private tests. Publication gates remain pending in this committed receipt;
-external final-handoff.json records their completion. No measured build-speed claim, full
-Go suite, live region split or cluster acceptance is implied by this cleanup.
+Implementation and validation complete: six live sysvar SQL tests passed,
+along with lint and continuity checks. Removed 745 net Rust lines, twelve
+private tests and two completed audits. Publication gates remain pending
+here; external final-handoff.json records their later completion. No measured speedup, full Go suite,
+live cluster or completed Domain lifecycle parity is claimed.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Restore individual before-images with git show e48cdc301e:<path>, preserving
-concurrent work. External logs/inventory live at
-/workspace/.cloud-setup/planning-leaf-cleanup. Durable evidence belongs in
-rust/docs/parity/current-audit/planning-leaf-cleanup-validation.json.
-Publication gates are recorded externally after the commit to avoid another
-source mutation solely for a receipt. Cloud draft save is separate from
-Publish and fresh-task restoration. Revision: replace completed metadata
-cleanup with disconnected join/AUTO planning retirement.
+Restore individual before-images with git show a1d48bd7fc:<path>, preserving
+concurrent changes. External inventory/logs: /workspace/.cloud-setup/domain-facade-cleanup.
+Durable receipt: rust/docs/parity/current-audit/domain-facade-cleanup-validation.json.
+Publication gates are recorded in external final-handoff.json after commit
+so evidence does not cause another source mutation/build cycle. Cloud draft
+save, Publish and fresh-task restore remain separate. Revision: replace the
+completed planning-leaf cleanup with Domain facade/documentation retirement.

@@ -1,0 +1,91 @@
+{
+  "date": "2026-10-06",
+  "base": "a1d48bd7fc290918b99b5381f48832cc78e73864",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove the unused Domain sysvar facade, its twelve mock-only tests, two superseded audit documents and obsolete crate-level planning narrative: 745 net Rust lines removed. Preserve live session/server sysvar consumers and original Go TopN/CDC algorithms and case tables unchanged.",
+  "continuity": {
+    "base": "a1d48bd7fc290918b99b5381f48832cc78e73864",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "removed_rust_files": 1,
+    "removed_audit_documents": 2,
+    "net_rust_lines_removed": 745,
+    "private_tests_removed": 12,
+    "retained_consumers_and_tests_unchanged": true,
+    "original_topn_cdc_go_cases_unchanged": true,
+    "dependencies_unchanged": true,
+    "retired_symbols_absent_from_code": true,
+    "finding_dispositions_unchanged": true
+  },
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-domain/src/domain_sysvars.rs",
+      "lines": 625,
+      "sha256": "4fd3fdd52d20564bab748cef3ffe916fb56427bcae9f936c748539851518831a",
+      "tests": [
+        "batch_max_wait_time_converts_millis_to_nanos_and_mirrors_after_pd",
+        "batch_max_wait_time_rejects_a_non_number_before_touching_pd",
+        "a_pd_failure_leaves_the_vardef_mirror_untouched",
+        "a_missing_pd_client_still_mirrors_and_reports_success",
+        "rpc_mode_maps_to_concurrency_and_writes_no_mirror",
+        "rpc_mode_is_the_only_case_that_validates",
+        "an_unknown_name_is_silently_accepted",
+        "stats_cache_capacity_tolerates_a_nil_handle",
+        "resource_control_dispatches_both_ways",
+        "oracle_delegations_pass_through",
+        "circuit_breaker_ratio_reaches_the_settings_field",
+        "update_pd_client_short_circuits_without_a_client"
+      ]
+    },
+    {
+      "path": "rust/docs/domain-sysvar-cache-parity-audit.md",
+      "lines": 93,
+      "sha256": "e0f2fe5dcc4dd9e229de2fd8084c90de74cf82ff9cecaa4cc608383c69835a95",
+      "tests": []
+    },
+    {
+      "path": "rust/docs/plan-replayer-domain-parity-audit.md",
+      "lines": 71,
+      "sha256": "31bb2349e67c19544a0eeb6dcbb8a1427e2f7e598f31b41598c9d1c3103658a0",
+      "tests": []
+    }
+  ],
+  "tests": {
+    "session-tests": [
+      {
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  },
+  "commands": [
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- tests_global_vars::low_resolution_tso_update_interval_clamps_and_warns tests_global_vars::schema_cache_size_global_hook_publishes_bytes tests_global_vars::circuit_breaker_pd_metadata_ratio_global_hook_publishes_float tests_global_vars::resource_control_global_hooks_publish_process_switches tests_global_vars::global_config_explicit_sql_notifies_the_domain_owner tests_global_vars::global_config_notifies_default_and_scratch_writes_but_not_cache_reloads --exact --test-threads=1",
+    "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb; make lint",
+    "cd /workspace/tidb; git diff --check"
+  ],
+  "go_owners": [
+    "pkg/domain/domain_sysvars.go::initDomainSysVars binds actual Domain/store callbacks",
+    "pkg/domain/topn_slow_query.go and topn_slow_query_test.go retain original heap/expiry/FIFO obligations"
+  ],
+  "retained_owners": [
+    "Session GlobalSysvars/sysvar catalogue, native PD/oracle and actual server providers",
+    "tidb-domain sysvar_cache and original topn_slow_query/cdcutil algorithms and tests",
+    "Live ADMIN SHOW SLOW session recorder; no behavior changes claimed"
+  ],
+  "remaining_go_obligations": [
+    "Complete Domain initialization and shared lifecycle/configuration ownership",
+    "Live ADMIN SHOW SLOW still uses session collection rather than retained Go TopN owner; query ordering/scope/expiry integration remains open"
+  ],
+  "gates": {
+    "lint": "passed",
+    "continuity_and_diff": "passed",
+    "hook_and_publication": "pending; external final handoff records completion"
+  },
+  "limits": [
+    "No full Go suite, live cluster, TCP replay or benchmark; no measured speedup",
+    "No broad finding disposition change or package acceptance",
+    "Original TopN/CDC tests were preserved byte-for-byte, not rerun in this batch",
+    "Out-of-tree users of the removed facade must use maintained live owners"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/domain-facade-cleanup/final-handoff.json"
+}

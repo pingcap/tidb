@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [disconnected join and index-split planning leaves](planning-leaf-cleanup-validation.json). Retire disconnected join-condition classifier and automatic index-split planner: four Rust files, 1247 net Rust lines and ten private tests removed. Preserve live logical/session joins, parser/AST AUTO options, durable IndexArg and catalog-write propagation with their existing Go-contract tests. Correct historical AUTO planner coverage claims.
+Latest cleanup: [unused Domain sysvar facade and stale audit guidance](domain-facade-cleanup-validation.json). Remove the unused Domain sysvar facade, its twelve mock-only tests, two superseded audit documents and obsolete crate-level planning narrative: 745 net Rust lines removed. Preserve live session/server sysvar consumers and original Go TopN/CDC algorithms and case tables unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
