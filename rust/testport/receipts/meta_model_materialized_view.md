@@ -4,7 +4,8 @@ Comparison source: Go `origin/master` at commit
 `94a9cbedabbb3190fd892a196dd446df48b7ec6e` (2026-09-03). Batch scope: the
 package drift from the prior area pin `1c1a334d2b` to `origin/master`
 (`git diff --stat` 7 files, +332/−51); the prior full-package audits remain
-`b116`/`meta_model_job_args.md` and `tests_pkg_meta_model_part2.rs`.
+`b116`/`meta_model_job_args.md` and [b008](b008.md), whose current owner
+mappings replace the retired `tests_pkg_meta_model_part2.rs` carrier.
 
 ## Complete Go inventory
 

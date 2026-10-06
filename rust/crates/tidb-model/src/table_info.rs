@@ -1870,4 +1870,139 @@ mod tests {
         }));
         assert!(t.is_locked());
     }
+
+    // Go TestModelBasic: accessor and clone behavior on a populated table.
+    #[test]
+    fn table_model_basic() {
+        use crate::db::DBInfo;
+        use crate::go_any::ColumnDefaultValue;
+        use crate::index::IndexColumn;
+        use crate::table::{FKInfo, SequenceInfo};
+        use tidb_ast::IndexType;
+
+        let mut column = ColumnInfo {
+            id: 1,
+            name: CiString::new("c"),
+            offset: 0,
+            default_value: ColumnDefaultValue::Int(0).into(),
+            field_type: FieldType::new(FieldTypeCode::Unspecified),
+            hidden: true,
+            ..Default::default()
+        };
+        column.add_flag(u64::from(FieldTypeFlags::PRI_KEY));
+
+        let index = IndexInfo {
+            name: CiString::new("key"),
+            table: CiString::new("t"),
+            columns: vec![IndexColumn {
+                name: CiString::new("c"),
+                offset: 0,
+                length: 10,
+                ..Default::default()
+            }]
+            .into(),
+            unique: true,
+            primary: true,
+            ..Default::default()
+        };
+
+        let fk = FKInfo {
+            ref_cols: vec![CiString::new("a")].into(),
+            cols: vec![CiString::new("a")].into(),
+            ..Default::default()
+        };
+
+        let seq = SequenceInfo {
+            increment: 1,
+            min_value: 1,
+            max_value: 100,
+            ..Default::default()
+        };
+
+        let table = TableInfo {
+            id: 1,
+            name: CiString::new("t"),
+            charset: "utf8".to_owned(),
+            collate: "utf8_bin".to_owned(),
+            columns: vec![column].into(),
+            indices: vec![index].into(),
+            foreign_keys: vec![fk].into(),
+            pk_is_handle: true,
+            ..Default::default()
+        };
+
+        let table2 = TableInfo {
+            id: 2,
+            name: CiString::new("s"),
+            sequence: Some(GoShared::new(seq)),
+            ..Default::default()
+        };
+
+        let db_info = DBInfo {
+            id: 1,
+            name: CiString::new("test"),
+            charset: "utf8".to_owned(),
+            collate: "utf8_bin".to_owned(),
+            deprecated_tables: GoSharedPointerSlice::from_handles(vec![Some(GoShared::new(
+                table.clone_like_go(),
+            ))]),
+            ..Default::default()
+        };
+
+        let n = db_info.clone_like_go();
+        assert_eq!(
+            serde_json::to_string(&db_info).unwrap(),
+            serde_json::to_string(&n).unwrap()
+        );
+
+        let pk_name = table.get_pk_name();
+        assert_eq!(pk_name, CiString::new("c"));
+        let new_column = table.get_pk_col_info();
+        let new_column = new_column.expect("PKIsHandle tables expose their PK column");
+        assert!(new_column.read().hidden);
+        assert!(new_column.ptr_eq(&table.columns.get(0).unwrap()));
+        let in_idx = table.column_is_in_index(Some(&table.columns.get(0).unwrap().read()));
+        assert!(in_idx);
+        assert_eq!(IndexType::BTREE.sql(), "BTREE");
+        assert_eq!(IndexType::HASH.sql(), "HASH");
+        assert_eq!(IndexType(100_000).sql(), "");
+        let has = table.indices.get(0).unwrap().read().has_prefix_index();
+        assert!(has);
+        assert_eq!(
+            table.get_update_time(),
+            crate::go_runtime::GoTime::from_tso(table.update_ts)
+        );
+        assert!(table2.is_sequence());
+        assert!(!table2.is_base_table());
+
+        // Corner cases.
+        table
+            .columns
+            .get(0)
+            .unwrap()
+            .write()
+            .del_flag(u64::from(FieldTypeFlags::PRI_KEY));
+        let pk_name = table.get_pk_name();
+        assert_eq!(pk_name, CiString::new(""));
+        assert!(table.get_pk_col_info().is_none());
+        let an_col = ColumnInfo {
+            name: CiString::new("d"),
+            ..Default::default()
+        };
+        let ex_idx = table.column_is_in_index(Some(&an_col));
+        assert!(!ex_idx);
+        let an_index = IndexInfo {
+            columns: Vec::<IndexColumn>::new().into(),
+            ..Default::default()
+        };
+        assert!(!an_index.has_prefix_index());
+
+        let extra_pk = ColumnInfo::new_extra_handle_col_info();
+        assert_eq!(
+            extra_pk.get_flag(),
+            u64::from(FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY)
+        );
+        assert_eq!(extra_pk.get_charset(), "binary");
+        assert_eq!(extra_pk.get_collate(), "binary");
+    }
 }

@@ -1199,7 +1199,7 @@ mod tests {
         assert!(check_column_infos_once(&GoSharedPointerSlice::default()).is_ok());
     }
 
-    // Go TestDefaultValue (the non-JSON assertions): plain and BIT columns,
+    // Go TestDefaultValue: plain and BIT columns plus JSON round trips,
     // including the invalid-UTF-8 bit string.
     #[test]
     fn default_value() {
@@ -1234,6 +1234,41 @@ mod tests {
         let mut null_bit = col("nullBit", FieldTypeCode::Bit);
         null_bit.set_origin_default_value(GoAny::nil()).unwrap();
         assert!(null_bit.get_origin_default_value().is_nil());
+
+        // Go TestDefaultValue: legacy raw BIT defaults lose invalid UTF-8 in
+        // JSON; values assigned through the setter preserve their byte shadow.
+        let old_plain = ColumnInfo {
+            default_value: ColumnDefaultValue::str("random_plain_string").into(),
+            origin_default_value: ColumnDefaultValue::str("random_plain_string").into(),
+            ..col("oldPlainCol", FieldTypeCode::Long)
+        };
+        let old_bit = ColumnInfo {
+            default_value: ColumnDefaultValue::string_bytes(vec![25, 185]).into(),
+            origin_default_value: ColumnDefaultValue::string_bytes(vec![25, 185]).into(),
+            ..col("oldBitCol", FieldTypeCode::Bit)
+        };
+        for (column, consistent) in [
+            (old_plain, true),
+            (old_bit, false),
+            (plain, true),
+            (bit, true),
+            (null_bit, true),
+        ] {
+            let bytes = serde_json::to_string(&column).unwrap();
+            let decoded: ColumnInfo = serde_json::from_str(&bytes).unwrap();
+            assert_eq!(
+                column.get_default_value() == decoded.get_default_value(),
+                consistent,
+                "default for {}",
+                column.name.original()
+            );
+            assert_eq!(
+                column.get_origin_default_value() == decoded.get_origin_default_value(),
+                consistent,
+                "origin default for {}",
+                column.name.original()
+            );
+        }
     }
 
     #[test]

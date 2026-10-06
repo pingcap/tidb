@@ -1582,4 +1582,166 @@ mod tests {
             assert_eq!(reparsed.global_index_version, version);
         }
     }
+
+    // Go TestIsIndexPrefixCovered, including FK partial-index and identity cases.
+    #[test]
+    fn index_is_index_prefix_covered() {
+        use crate::column::ColumnInfo;
+        fn new_column_for_test(id: i64, offset: i64) -> ColumnInfo {
+            ColumnInfo {
+                id,
+                name: CiString::new(format!("c_{id}")),
+                offset,
+                ..Default::default()
+            }
+        }
+
+        fn new_index_for_test(id: i64, cols: &[ColumnInfo]) -> IndexInfo {
+            let idx_cols: Vec<IndexColumn> = cols
+                .iter()
+                .map(|c| IndexColumn {
+                    name: c.name.clone(),
+                    offset: c.offset,
+                    ..Default::default()
+                })
+                .collect();
+            IndexInfo {
+                id,
+                name: CiString::new(format!("i_{id}")),
+                columns: idx_cols.into(),
+                ..Default::default()
+            }
+        }
+
+        let c0 = new_column_for_test(0, 0);
+        let c1 = new_column_for_test(1, 1);
+        let c2 = new_column_for_test(2, 2);
+        let c3 = new_column_for_test(3, 3);
+        let c4 = new_column_for_test(4, 4);
+
+        let i0 = new_index_for_test(0, &[c0.clone(), c1.clone(), c2.clone()]);
+        let i1 = new_index_for_test(1, &[c4.clone(), c2.clone()]);
+
+        let tbl = TableInfo {
+            id: 1,
+            name: CiString::new("t"),
+            columns: vec![c0, c1, c2, c3, c4].into(),
+            indices: vec![i0, i1].into(),
+            ..Default::default()
+        };
+        let index = |id: i64| {
+            tbl.indices
+                .iter_deref()
+                .find(|i| i.read().id == id)
+                .unwrap()
+        };
+
+        fn names(values: &[&str]) -> Vec<CiString> {
+            values.iter().map(|v| CiString::new(*v)).collect()
+        }
+
+        let i0h = index(0);
+        assert!(is_index_prefix_covered(&tbl, &i0h.read(), &names(&["c_0"])));
+        assert!(is_index_prefix_covered(
+            &tbl,
+            &i0h.read(),
+            &names(&["c_0", "c_1", "c_2"])
+        ));
+        assert!(!is_index_prefix_covered(
+            &tbl,
+            &i0h.read(),
+            &names(&["c_1"])
+        ));
+        assert!(!is_index_prefix_covered(
+            &tbl,
+            &i0h.read(),
+            &names(&["c_2"])
+        ));
+        assert!(!is_index_prefix_covered(
+            &tbl,
+            &i0h.read(),
+            &names(&["c_1", "c_2"])
+        ));
+        assert!(!is_index_prefix_covered(
+            &tbl,
+            &i0h.read(),
+            &names(&["c_0", "c_2"])
+        ));
+
+        let i1h = index(1);
+        assert!(is_index_prefix_covered(&tbl, &i1h.read(), &names(&["c_4"])));
+        assert!(is_index_prefix_covered(
+            &tbl,
+            &i1h.read(),
+            &names(&["c_4", "c_2"])
+        ));
+        assert!(!is_index_prefix_covered(
+            &tbl,
+            &i0h.read(),
+            &names(&["c_2"])
+        ));
+
+        let mut safe_partial =
+            new_index_for_test(2, &[new_column_for_test(0, 0), new_column_for_test(1, 1)]);
+        safe_partial.condition_expr_string = "`c_1` is not null".to_owned();
+        assert!(is_index_prefix_covered_for_foreign_key(
+            &tbl,
+            &safe_partial,
+            &names(&["c_0", "c_1"])
+        ));
+
+        let mut safe_partial_on_first_fk_col =
+            new_index_for_test(3, &[new_column_for_test(0, 0), new_column_for_test(1, 1)]);
+        safe_partial_on_first_fk_col.condition_expr_string = "`c_0` is not null".to_owned();
+        assert!(is_index_prefix_covered_for_foreign_key(
+            &tbl,
+            &safe_partial_on_first_fk_col,
+            &names(&["c_0", "c_1"])
+        ));
+
+        let mut unsafe_partial_on_non_fk_col =
+            new_index_for_test(4, &[new_column_for_test(0, 0), new_column_for_test(1, 1)]);
+        unsafe_partial_on_non_fk_col.condition_expr_string = "`c_2` is not null".to_owned();
+        assert!(!is_index_prefix_covered_for_foreign_key(
+            &tbl,
+            &unsafe_partial_on_non_fk_col,
+            &names(&["c_0", "c_1"])
+        ));
+
+        let mut unsafe_partial_is_null = new_index_for_test(5, &[new_column_for_test(0, 0)]);
+        unsafe_partial_is_null.condition_expr_string = "`c_0` is null".to_owned();
+        assert!(!is_index_prefix_covered_for_foreign_key(
+            &tbl,
+            &unsafe_partial_is_null,
+            &names(&["c_0"])
+        ));
+
+        let mut unsafe_partial_binary_condition =
+            new_index_for_test(6, &[new_column_for_test(0, 0)]);
+        unsafe_partial_binary_condition.condition_expr_string = "`c_0` > 0".to_owned();
+        assert!(!is_index_prefix_covered_for_foreign_key(
+            &tbl,
+            &unsafe_partial_binary_condition,
+            &names(&["c_0"])
+        ));
+
+        let mut bad_condition = new_index_for_test(7, &[new_column_for_test(0, 0)]);
+        bad_condition.condition_expr_string = "`c_0` is".to_owned();
+        assert!(!is_index_prefix_covered_for_foreign_key(
+            &tbl,
+            &bad_condition,
+            &names(&["c_0"])
+        ));
+
+        // require.Same: FindIndexByColumnsForForeignKey returns the very index
+        // handle for the safe partial index.
+        let indices: GoSharedPointerSlice<IndexInfo> = GoSharedPointerSlice::from_handles(vec![
+            Some(GoShared::new(unsafe_partial_on_non_fk_col)),
+            Some(GoShared::new(safe_partial)),
+        ]);
+        let safe_handle = indices.get(1).unwrap();
+        let found = find_index_by_columns_for_foreign_key(&tbl, &indices, &names(&["c_0", "c_1"]))
+            .expect("the safe partial index must be found");
+        assert!(found.ptr_eq(&safe_handle));
+    }
 }

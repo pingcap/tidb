@@ -1391,6 +1391,7 @@ mod tests {
     #[test]
     fn clear_reorg_and_storage_class() {
         let mut pi = PartitionInfo {
+            ddl_type: PartitionType::HASH,
             new_table_id: 7,
             ddl_expr: "x".into(),
             ..Default::default()

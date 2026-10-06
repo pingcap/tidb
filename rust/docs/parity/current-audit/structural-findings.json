@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "model-test-owner-cleanup-validation.json",
-    "scope": "Consolidate tidb-model integration targets and boundary assertions; retire eight redundant registrations and one inactive NextGen placeholder. Preserve production behavior and distinct Go compatibility checks."
+    "receipt": "model-carrier-cleanup-validation.json",
+    "scope": "Retire the 606-line mixed model carrier; consolidate eight cases into existing owners and two retained registrations, remove type-name/native-size probes and replace synthetic labels with direct behavioral assertions."
   },
   "test_cleanup_history": [
     {
@@ -1014,6 +1014,11 @@
       "date": "2026-10-06",
       "receipt": "model-test-owner-cleanup-validation.json",
       "scope": "Consolidate tidb-model integration targets and boundary assertions; retire eight redundant registrations and one inactive NextGen placeholder. Preserve production behavior and distinct Go compatibility checks."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "model-carrier-cleanup-validation.json",
+      "scope": "Retire the 606-line mixed model carrier; consolidate eight cases into existing owners and two retained registrations, remove type-name/native-size probes and replace synthetic labels with direct behavioral assertions."
     }
   ],
   "repair_history": [

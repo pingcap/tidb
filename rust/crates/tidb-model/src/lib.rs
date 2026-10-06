@@ -51,10 +51,6 @@ pub mod table_info;
 pub mod table_mode;
 
 #[cfg(test)]
-#[path = "tests_pkg_meta_model_part2.rs"]
-mod tests_pkg_meta_model_part2;
-
-#[cfg(test)]
 #[path = "tests_pkg_meta_model_materialized_view.rs"]
 mod tests_pkg_meta_model_materialized_view;
 

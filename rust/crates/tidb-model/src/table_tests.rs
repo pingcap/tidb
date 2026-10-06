@@ -222,6 +222,24 @@ fn statistics_keys_ignore_only_the_source_excluded_bit() {
 
 #[test]
 fn ttl_interval_and_affinity_boundaries() {
+    const HOUR_NANOS: i64 = 3_600_000_000_000;
+    assert_eq!(
+        TTLInfo {
+            job_interval: "200h".to_owned(),
+            ..Default::default()
+        }
+        .get_job_interval()
+        .unwrap(),
+        HOUR_NANOS * 200
+    );
+    assert_eq!(
+        tidb_parser::parse_config_duration(DEFAULT_TTL_JOB_INTERVAL).unwrap(),
+        HOUR_NANOS * 24
+    );
+    assert_eq!(
+        tidb_parser::parse_config_duration(OLD_DEFAULT_TTL_JOB_INTERVAL).unwrap(),
+        HOUR_NANOS
+    );
     assert_eq!(
         TTLInfo::default().get_job_interval().unwrap(),
         3_600_000_000_000
@@ -346,6 +364,25 @@ fn session_info_string() {
 
 #[test]
 fn data_structs_clone() {
+    let ttl_info = TTLInfo {
+        column_name: CiString::new("test"),
+        interval_expr_str: "test_expr".to_owned(),
+        interval_time_unit: 5,
+        enable: true,
+        ..Default::default()
+    };
+
+    let mut cloned_ttl_info = ttl_info.clone();
+    cloned_ttl_info.column_name = CiString::new("test_2");
+    cloned_ttl_info.interval_expr_str = "test_expr_2".to_owned();
+    cloned_ttl_info.interval_time_unit = 9;
+    cloned_ttl_info.enable = false;
+
+    assert_eq!(ttl_info.column_name.original(), "test");
+    assert_eq!(ttl_info.interval_expr_str, "test_expr");
+    assert_eq!(ttl_info.interval_time_unit, 5);
+    assert!(ttl_info.enable);
+
     let ttl = TTLInfo {
         column_name: CiString::new("t"),
         enable: true,

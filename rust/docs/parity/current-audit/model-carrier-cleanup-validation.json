@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-06",
+  "base": "7328420b5007703491f11edf2f88ef186cc2d4ee",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire the 606-line mixed model carrier; consolidate eight cases into existing owners and two retained registrations, remove type-name/native-size probes and replace synthetic labels with direct behavioral assertions.",
+  "go_package": "pkg/meta/model",
+  "go_sources": [
+    "column_test.go::TestDefaultValue",
+    "index_test.go::TestIsIndexPrefixCovered",
+    "table_test.go::TestMoveColumnInfo,TestModelBasic,TestTTLInfoClone,TestTTLJobInterval,TestClearReorgIntermediateInfo,TestTTLDefaultJobInterval"
+  ],
+  "owner_mapping": {
+    "TestDefaultValue": "column::tests::default_value retains five legacy/current plain/BIT JSON cases, nil origin, exact setter error and invalid bytes; extra_column_constructors retains physical-ID flag/type checks. Owner fixture names/IDs replace synthetic carrier labels/ID 1.",
+    "TestIsIndexPrefixCovered": "index::tests::index_is_index_prefix_covered retains the complete body and localizes its two fixture helpers; all partial-FK cases and returned pointer identity remain.",
+    "TestMoveColumnInfo": "table_info::tests::move_column_ports_the_exact_upstream_sequence_and_signed_panics already executes all eight moves with equivalent five-column/five-index fixtures and offset checks, plus signed/panic cases.",
+    "TestModelBasic": "table_info::tests::table_model_basic retains all assertions and fixture values; only the unobserved local pk_col clone/toggle is removed.",
+    "TestTTLInfoClone": "table::tests::data_structs_clone now retains all four original mutation/isolation assertions.",
+    "TestTTLJobInterval": "table::tests::ttl_interval_and_affinity_boundaries retains empty-to-one-hour and adds the original 200h case.",
+    "TestClearReorgIntermediateInfo": "partition::tests::clear_reorg_and_storage_class now starts with HASH. Existing nonzero ID/expression fixtures replace 1111/Test DDL Expr; reset assertions and nil allocation remain.",
+    "TestTTLDefaultJobInterval": "table::tests::ttl_interval_and_affinity_boundaries now parses both original 24h/1h constants."
+  },
+  "continuity": {
+    "metadata_byte_identical": true,
+    "production_prefixes_unchanged": [
+      "rust/crates/tidb-model/src/column.rs",
+      "rust/crates/tidb-model/src/index.rs",
+      "rust/crates/tidb-model/src/partition.rs",
+      "rust/crates/tidb-model/src/table_info.rs"
+    ],
+    "lib_change_only_removed_test_registration": true,
+    "moved_index_test_body_unchanged_ignoring_indentation": true,
+    "moved_model_basic_body_unchanged_except_unused_clone_toggle_and_imports": true,
+    "net_removed_registrations": 6,
+    "removed_carrier_lines": 606,
+    "rust_lines_added": 390,
+    "rust_lines_removed": 679,
+    "net_rust_lines_removed": 289,
+    "metadata_sha256": "8fead5b121cad6cfda2c41557e26a170b241517fe5fa5b57160116e661781d88"
+  },
+  "removed_probes": [
+    "GoAny Rust type_name contains GoAny",
+    "native size_of_val(get_flag()) == 8; actual high-bit flag mutation and JSON roundtrip remain"
+  ],
+  "preserved_anchor_observations": [
+    "shared dependence map backing",
+    "nil versus allocated empty dependence sets",
+    "null versus empty index/table JSON",
+    "deep index-column clone after source mutation",
+    "index equality by ID",
+    "empty partition DDL columns",
+    "empty and one-region placement rendering"
+  ],
+  "validation": {
+    "lib_command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-model --lib -- column::tests index::tests table_info::tests table::tests partition::tests --test-threads=1",
+    "lib_passed": 88,
+    "lib_filtered": 156,
+    "integration_command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-model --test all -- --test-threads=1",
+    "integration_passed": 28,
+    "failed": 0,
+    "ignored": 0,
+    "lint": "make lint passed",
+    "formatting": "rustfmt --check on changed Rust files passed",
+    "diff": "git diff --check passed",
+    "metadata": "cargo metadata --locked --no-deps --format-version 1 byte-identical",
+    "publication": "Final actual-hook, fresh-prepush and remote verification recorded in external final-handoff.json after completion."
+  },
+  "limits": [
+    "No production behavior or finding disposition changes; 86 tracked, 30 repaired, 56 unresolved (27 open,29 partial).",
+    "No complete Go package acceptance, NextGen, live multi-node, performance or fresh-task restoration validation.",
+    "No measured speedup claimed."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/model-carrier-cleanup",
+  "evidence_sha256": {
+    "lib-tests.log": "8254b69a93a12e3ef51d0b3f301c9f101253c6e5fc3306aab7654a3769fc91a5",
+    "integration-tests.log": "83070c357feac5fab8d9eb5234271eb1e5d59c9bcb9e9f05b390e2f49f4830df",
+    "lint.log": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+    "continuity.json": "515a1665148a224e35f27e55fe91d5ccd16922d49e5dc6312e460d4fa9b0c8f9"
+  }
+}

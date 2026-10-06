@@ -207,32 +207,11 @@ fn pkg_meta_model_column_representation_boundaries() {
     source.dependences.insert("a".to_owned());
     let clone = source.clone();
     source.dependences.insert("b".to_owned());
-    let clone_mode = if clone.dependences.contains("b") {
-        "shared-map-backing"
-    } else {
-        "owned-deep-map"
-    };
-    let empty_mode = if !ColumnInfo::default().dependences.is_allocated()
-        && tidb_model::column::GoStringSet::allocated(std::iter::empty::<String>()).is_allocated()
-    {
-        "nil-and-allocated-empty"
-    } else {
-        "unexpected-nonempty-set"
-    };
-    let flag_width = if std::mem::size_of_val(&ColumnInfo::default().get_flag()) == 8 {
-        "u64"
-    } else {
-        "non-u64"
-    };
-    let default_domain = if std::any::type_name::<tidb_model::GoAny>().contains("GoAny") {
-        "open-go-interface-domain"
-    } else {
-        "unexpected-default-domain"
-    };
-    assert_eq!(clone_mode, "shared-map-backing");
-    assert_eq!(empty_mode, "nil-and-allocated-empty");
-    assert_eq!(flag_width, "u64");
-    assert_eq!(default_domain, "open-go-interface-domain");
+    assert!(clone.dependences.contains("b"));
+    assert!(!ColumnInfo::default().dependences.is_allocated());
+    assert!(
+        tidb_model::column::GoStringSet::allocated(std::iter::empty::<String>()).is_allocated()
+    );
 }
 
 #[test]
@@ -309,22 +288,16 @@ fn pkg_meta_model_raw_json_boundary() {
 fn pkg_meta_model_vector_allocation_boundaries() {
     let index_from_null: IndexInfo = serde_json::from_str(r#"{"idx_cols":null}"#).unwrap();
     let index_from_empty: IndexInfo = serde_json::from_str(r#"{"idx_cols":[]}"#).unwrap();
-    let index_mode = if serde_json::to_value(index_from_null).unwrap()
-        == serde_json::to_value(index_from_empty).unwrap()
-    {
-        "null-and-empty-conflated"
-    } else {
-        "allocation-distinguished"
-    };
+    assert_ne!(
+        serde_json::to_value(index_from_null).unwrap(),
+        serde_json::to_value(index_from_empty).unwrap()
+    );
     let table_from_null: TableInfo = serde_json::from_str(r#"{"cols":null}"#).unwrap();
     let table_from_empty: TableInfo = serde_json::from_str(r#"{"cols":[]}"#).unwrap();
-    let table_mode = if serde_json::to_value(table_from_null).unwrap()
-        == serde_json::to_value(table_from_empty).unwrap()
-    {
-        "null-and-empty-conflated"
-    } else {
-        "allocation-distinguished"
-    };
+    assert_ne!(
+        serde_json::to_value(table_from_null).unwrap(),
+        serde_json::to_value(table_from_empty).unwrap()
+    );
     let clone_source = IndexInfo {
         columns: vec![tidb_model::IndexColumn {
             name: tidb_ast::CiString::new("before"),
@@ -341,49 +314,27 @@ fn pkg_meta_model_vector_allocation_boundaries() {
         .write()
         .name = tidb_ast::CiString::new("after");
     let clone_column = clone.columns.get(0).expect("cloned index column");
-    let clone_mode = if clone_column.read().name.original() == "before" {
-        "owned-deep-elements"
-    } else {
-        "shared-pointer-elements"
-    };
-    let equality_mode = if (IndexInfo {
+    assert_eq!(clone_column.read().name.original(), "before");
+    assert!(IndexInfo {
         id: 1,
         ..Default::default()
-    })
+    }
     .equals_id(&IndexInfo {
         id: 1,
         ..Default::default()
-    }) {
-        "typed-IndexInfo-only"
-    } else {
-        "unexpected-id-inequality"
-    };
-    let partition_state = if PartitionInfo::default().ddl_columns.is_empty() {
-        "one-empty-ddl-columns-state"
-    } else {
-        "unexpected-nonempty-ddl-columns"
-    };
-    assert_eq!(index_mode, "allocation-distinguished");
-    assert_eq!(table_mode, "allocation-distinguished");
-    assert_eq!(clone_mode, "owned-deep-elements");
-    assert_eq!(equality_mode, "typed-IndexInfo-only");
-    assert_eq!(partition_state, "one-empty-ddl-columns-state");
+    }));
+    assert!(PartitionInfo::default().ddl_columns.is_empty());
 }
 
 #[test]
 fn pkg_meta_model_placement_callback_surface() {
     let empty = PlacementSettings::default().to_string();
-    let empty_mode = if empty.is_empty() {
-        "empty-render"
-    } else {
-        "unexpected-nonempty-render"
-    };
     let one = PlacementSettings {
         primary_region: "r1".to_owned(),
         ..Default::default()
     }
     .to_string();
-    assert_eq!(empty_mode, "empty-render");
+    assert!(empty.is_empty());
     assert_eq!(one, "PRIMARY_REGION=\"r1\"");
 }
 
