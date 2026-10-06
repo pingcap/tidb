@@ -1109,7 +1109,14 @@ ingest-kv-bytes = 3
 			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.ingest-kv-bytes")
 		}
 	})
-	conf := new(Config)
+	require.Equal(t, 15, NewConfig().GracefulCloseConnectionsTimeout)
+	conf := NewConfig()
+	conf.GracefulCloseConnectionsTimeout = 0
+	require.NoError(t, conf.Valid())
+	conf.GracefulCloseConnectionsTimeout = -1
+	require.ErrorContains(t, conf.Valid(), "graceful-close-connections-timeout")
+
+	conf = new(Config)
 	conf.TempStoragePath = tempStorageDirName
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
@@ -1173,6 +1180,7 @@ repair-mode = true
 max-index-length = 3080
 index-limit = 70
 table-column-count-limit = 4000
+graceful-close-connections-timeout = 120
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 enable-enum-length-limit = false
@@ -1261,6 +1269,7 @@ max_connections = 200
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)
 	require.Equal(t, uint32(4000), conf.TableColumnCountLimit)
+	require.Equal(t, 120, conf.GracefulCloseConnectionsTimeout)
 	require.True(t, conf.SkipRegisterToDashboard)
 	require.Equal(t, 3, len(conf.Labels))
 	require.Equal(t, "bar", conf.Labels["foo"])
