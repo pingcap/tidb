@@ -276,7 +276,7 @@ await_tenths() {
 
 cd "${RUST_ROOT}"
 if [[ -z "${DDL_RUST_SERVER:-}" ]]; then
-  CARGO_BUILD_JOBS=12 cargo build -j12 -p tidb-server --bin tidb-server
+  cargo build --locked -p tidb-server --bin tidb-server
   RUST_SERVER="${RUST_ROOT}/target/debug/tidb-server"
 else
   RUST_SERVER=${DDL_RUST_SERVER}

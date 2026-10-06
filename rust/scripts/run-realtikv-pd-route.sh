@@ -165,7 +165,7 @@ fi
 # peer, store, and TiKV address metadata over the checked PD gRPC projection.
 export PD_ROUTE_PD_ADDR="${PD_ADDR}"
 cd "${RUST_ROOT}"
-CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
+cargo test --locked -p difftest-transaction-tests \
   --test all \
   realtikv_pd_route::pd_only_input_discovers_route_and_reaches_tikv \
   -- --ignored --exact --nocapture | tee "${RUST_LOG}"

@@ -1,92 +1,99 @@
-# Remove disconnected compiler and result models
+# Remove runner build overrides and obsolete workflow prose
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose and Context
 
 
-Retire the unused tidb-exec error/result vocabulary and synthetic compiler
-model. The live query engine is tidb-executor, orchestrated by tidb-session.
-Result differential tests already use difftests/result-tests/src/result_label.rs;
-the exec copy has no consumer. Work in /workspace/tidb on hparser-integration
-from 24f0e73699c7c0152604ebef5116324990b08804. Go master remains
-b36c940a4332c866d8b0e2afde88f5e7c2fd7fed after refresh.
+Live runner scripts currently override caller CARGO_BUILD_JOBS with twelve
+jobs, including explicit -j12 arguments. This defeats Cloud's one-job heavy
+link policy. One transaction test runner also forces a separate release cache
+without consuming a release binary path. Remove these overrides as one batch,
+preserve intentional server benchmark profiles, and keep dependency resolution
+locked. Work in /workspace/tidb on hparser-integration from
+604048e99c73fc0b4db90216c0ccfd97d9e4b85b. Refreshed Go master remains
+b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. No Rust/Go application behavior changes.
 
 ## Progress
 
 
-- [x] Trace qualified, multiline and wildcard imports across tracked Rust sources.
-- [x] Remove three unused modules and exports; migrate two useful formatter tests.
-- [x] Run shared formatter/helper tests, lint and continuity/diff checks.
-- [ ] Pass real hook and fresh pre-push locked builds, then verify remote SHA.
-- [ ] Verify recovery bundle and save/read back Cloud checkpoint.
+- [x] Inventory all runner Cargo boundaries and reproduce ignored caller job limits.
+- [x] Remove forced jobs and one unnecessary release-test profile; lock runner commands.
+- [x] Replace historical retirement prose in scripts/README.md with current operations.
+- [x] Verify command boundaries before/after, shell syntax, retained cleanup guards and lint.
+- [ ] Pass actual hook and fresh pre-push locked build, verify remote and Cloud checkpoint.
 
 ## Milestones and Plan of Work
 
 
-Delete tidb-exec/src/error.rs, result.rs and compiler.rs. Remove their module
-registrations and root exports. The compiler's PriorityPlanNode and ResultSetNode
-are private surrogate trees used only by its nineteen unit tests; no live
-session or planner constructs them. Deleting this disconnected seed does not
-implement Go's automatic expensive-query priority or complete DB-label policy.
-Keep those source obligations open and do not change finding dispositions.
+Remove CARGO_BUILD_JOBS=12 and -j12 from run-*.sh Cargo calls. Let Cargo use
+the caller's environment or its standard default. Add --locked to build/test
+calls that lack it. Only run-realtikv-pessimistic-prewrite-recovery.sh loses
+--release: it invokes tests directly and has no release binary consumer.
+Keep --release and binary paths in scan-pushdown, sysbench-ladder and
+lost-update-check. Preserve all package/target/filter, ignored-test, offline,
+phase marker, cleanup, endpoint and protocol assertions.
 
-Move result.rs's eight byte-encoding vectors and ordered/unordered row checks
-into the actual shared result_label owner, adapting ResultSet::label to
-rows_label. Do not alter either retained rendering function. Fix lib.rs's stale
-claim that tidb-session does not depend on tidb-exec and remove the deleted enum
-name from an explain comment. Preserve live executor, session, server and native
-client sources. No dependency or generated-code changes are needed.
+Shorten scripts/README.md by removing dated retirement narratives already
+indexed in current-audit/README.md. Keep invocation directories, Cloud activation,
+job/profile policy, aggregate registrations, isolated global-state suites,
+shared SQL checks, generator commands, native sync and cache-safety instructions.
 
 ## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh; from /workspace/tidb/rust run:
+Run external check.py before and after from
+/workspace/.cloud-setup/runner-build-cleanup. It executes each actual Cargo
+command boundary through a recorder function with caller job limits 1 and 3.
+Before removal it must observe forced 12-job execution. After removal every
+boundary must retain the requested limit, omit explicit job flags and use
+--locked. This validates invocation construction, not a live TiKV run.
 
-    CARGO_BUILD_JOBS=1 cargo test --locked -p difftest-result-tests --lib -- --test-threads=1
+Run bash -n on changed scripts, then from repository root:
 
-All existing helper tests and both migrated formatter tests must pass. Confirm
-moved byte vectors are unchanged; only the ResultSet wrapper is replaced with
-rows_label calls. Verify no remaining import or qualified reference to retired
-exports, and retained formatter production text is byte-identical. Run root
-make lint and git diff --check. Removal of unused models changes no behavior;
-no invented fail-before regression is required. The actual pre-commit hook
-must pass cd rust && cargo build --locked -p tidb-server. Rerun that build
-immediately before normal authorized push and verify the remote SHA.
+    bash rust/scripts/test-prepared-write-paths.sh
+    bash rust/scripts/test-optimistic-2pc-paths.sh
+    make lint
+    git diff --check
+
+Compare all script text after undoing only approved command substitutions to
+its before-image; all SQL/lifecycle/cleanup logic must remain byte-identical.
+No new permanent source-shape test or harness is added. All validation tooling
+for this bounded maintenance stays outside the repository. Required Rust-path
+publication gates remain: actual hook cd rust && cargo build --locked -p
+tidb-server and a fresh identical build immediately before normal push.
 
 ## Surprises & Discoveries
 
 
-The error enum claimed to serve every execution domain but had no callers.
-The result container still owned two Go-oracle byte tests after actual
-comparison suites moved to the shared formatter. The compiler model's comments
-claimed live Rust planner/session seams did not exist, although those seams
-now execute in other crates. Its tests never exercised those paths.
+The documented Cloud job limit was overridden by both a shell assignment and
+a Cargo CLI flag, so removing only one would leave the problem. The prewrite
+recovery test selected release although it only consumes Cargo's test result.
+Other release runners name release server binaries and retain that profile.
 
 ## Decision Log
 
 
-Remove disconnected representations together; retain useful byte/order
-coverage in the actual formatter. Do not delete schema-validator, recordset
-lifecycle or transaction owners: caller tracing confirms they remain live.
-Preserve complete Go package obligations rather than counting seed removal
-as parity repair. Native client-rust remains unchanged.
+Keep live assertions and safety guards. Remove obsolete overrides and duplicated
+historical instructions, not source-backed tests. Respect caller job limits;
+do not introduce another wrapper or runtime dependency. Lock dependency reads
+without changing manifests. No broad finding repair or package acceptance.
 
 ## Outcomes & Retrospective
 
 
-Implementation and validation complete: 28 shared helper tests, including
-both migrated formatter cases, pass. Lint and continuity/diff checks pass.
-Three files, nineteen model tests and 749 net Rust lines removed.
-Publication gates remain pending here; external final-handoff.json records
-their subsequent results.
+Implementation and validation complete: 52 command-boundary checks pass
+(previously all failed at least one policy expectation), all 26 scripts pass
+shell syntax, both existing cleanup guards pass, and lint/diff/continuity pass.
+Removed 56 net README lines. Publication gates pending; external final
+handoff records their later results. No live SQL or TiKV validation claimed.
 
 ## Recovery, Artifacts and Dependencies
 
 
-Use git show 24f0e73699:<path> for individual before-images without overwriting
-concurrent changes. External logs: /workspace/.cloud-setup/compiler-result-cleanup.
-Durable receipt: rust/docs/parity/current-audit/compiler-result-cleanup-validation.json.
-No dependencies change. Cloud draft save, Publish and fresh-task restore are
-separate. Revision: replace completed statement/error boundary cleanup with
-unused compiler/result retirement and migration to shared formatter tests.
+Before-images: git show 604048e99c:<path>. Restore individual files only;
+preserve concurrent work. Logs: /workspace/.cloud-setup/runner-build-cleanup.
+Durable receipt: rust/docs/parity/current-audit/runner-build-cleanup-validation.json.
+Native client remains unchanged. Cloud save, Publish and fresh-task restoration
+remain separate. Revision: replace completed compiler/result removal with
+runner build-policy cleanup and concise operating instructions.

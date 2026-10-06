@@ -159,7 +159,7 @@ fi
 export TRANSPORT_RETRY_PD_SEED="${PD_SEED}"
 export TRANSPORT_RETRY_PHASE_DIR="${PHASE_DIR}"
 cd "${RUST_ROOT}"
-CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
+cargo test --locked -p difftest-transaction-tests \
   --test all \
   realtikv_transport_retry::one_lazy_response_recovers_after_its_cached_tikv_leader_stops \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 &

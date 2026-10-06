@@ -173,7 +173,7 @@ cleanup() {
 
 RUST_SERVER=${LOST_UPDATE_RUST_SERVER:-}
 if [[ -z "${RUST_SERVER}" ]]; then
-  ( cd "${RUST_ROOT}" && CARGO_BUILD_JOBS=12 cargo build -j12 --release \
+  ( cd "${RUST_ROOT}" && cargo build --locked --release \
       -p tidb-server --bin tidb-server ) || exit 1
   RUST_SERVER="${RUST_ROOT}/target/release/tidb-server"
 fi

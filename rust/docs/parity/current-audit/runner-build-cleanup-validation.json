@@ -1,0 +1,90 @@
+{
+  "date": "2026-10-06",
+  "base": "604048e99c73fc0b4db90216c0ccfd97d9e4b85b",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Remove fixed 12-job overrides from 21 live runners, add missing --locked to 19 runner commands and remove the prewrite-recovery test's unnecessary release profile. Maintain all 26 runner invocation boundaries and intentional release-server profiles. Remove 56 net README lines of duplicated historical workflow prose; application code and live assertions unchanged.",
+  "continuity": {
+    "base": "604048e99c73fc0b4db90216c0ccfd97d9e4b85b",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "changed_runners": 26,
+    "forced_job_runners_removed": 21,
+    "newly_locked_runners": 19,
+    "release_test_overrides_removed": 1,
+    "readme_net_lines_removed": 56,
+    "all_script_text_matches_approved_substitutions": true,
+    "application_and_dependency_files_unchanged": true
+  },
+  "changed_scripts": [
+    "rust/scripts/run-held-transaction-budget.sh",
+    "rust/scripts/run-lost-update-check.sh",
+    "rust/scripts/run-realtikv-access-path.sh",
+    "rust/scripts/run-realtikv-adaptive-forwarding.sh",
+    "rust/scripts/run-realtikv-analyze.sh",
+    "rust/scripts/run-realtikv-async-commit-1pc.sh",
+    "rust/scripts/run-realtikv-catalog-load.sh",
+    "rust/scripts/run-realtikv-convergence.sh",
+    "rust/scripts/run-realtikv-ddl-notify.sh",
+    "rust/scripts/run-realtikv-ddl.sh",
+    "rust/scripts/run-realtikv-lock-recovery.sh",
+    "rust/scripts/run-realtikv-multi-statement-txn.sh",
+    "rust/scripts/run-realtikv-optimistic-2pc.sh",
+    "rust/scripts/run-realtikv-pd-batch-topology.sh",
+    "rust/scripts/run-realtikv-pd-route.sh",
+    "rust/scripts/run-realtikv-pessimistic-lock.sh",
+    "rust/scripts/run-realtikv-pessimistic-prewrite-recovery.sh",
+    "rust/scripts/run-realtikv-prepared-write.sh",
+    "rust/scripts/run-realtikv-region-retry.sh",
+    "rust/scripts/run-realtikv-repeatable-read.sh",
+    "rust/scripts/run-realtikv-replica-read.sh",
+    "rust/scripts/run-realtikv-scan-pushdown.sh",
+    "rust/scripts/run-realtikv-session-driver.sh",
+    "rust/scripts/run-realtikv-transaction-rpc.sh",
+    "rust/scripts/run-realtikv-transport-retry.sh",
+    "rust/scripts/run-sysbench-ladder.sh"
+  ],
+  "validation": {
+    "command_boundaries": {
+      "before": {
+        "checks": 52,
+        "failed": 52
+      },
+      "after": {
+        "checks": 52,
+        "passed": 52,
+        "failed": 0
+      },
+      "meaning": "Execute actual Cargo invocation arguments through a recorder at caller job limits 1 and 3; not live SQL or TiKV validation"
+    },
+    "shell_syntax": {
+      "scripts": 26,
+      "passed": 26
+    },
+    "existing_cleanup_guards": {
+      "scripts": [
+        "test-prepared-write-paths.sh",
+        "test-optimistic-2pc-paths.sh"
+      ],
+      "passed": 2
+    },
+    "lint": "passed",
+    "diff_and_continuity": "passed"
+  },
+  "commands": [
+    "python /workspace/.cloud-setup/runner-build-cleanup/check.py before",
+    "python /workspace/.cloud-setup/runner-build-cleanup/check.py after",
+    "bash -n <each changed script>",
+    "bash rust/scripts/test-prepared-write-paths.sh",
+    "bash rust/scripts/test-optimistic-2pc-paths.sh",
+    "make lint",
+    "git diff --check"
+  ],
+  "gates": {
+    "hook_and_publication": "pending; external final handoff records completion"
+  },
+  "limits": [
+    "Live PD/TiKV runners, SQL suites and benchmarks not executed",
+    "No application behavior change, broad finding closure, full Go package acceptance or measured speedup",
+    "Only the prewrite-recovery test drops release; three release-server runners preserve their binary paths"
+  ],
+  "publication": "Pending; /workspace/.cloud-setup/runner-build-cleanup/final-handoff.json"
+}

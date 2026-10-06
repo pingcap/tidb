@@ -169,7 +169,7 @@ cd "${RUST_ROOT}"
 
 # Run sequentially so fixtures cannot interleave their PD timestamps.
 PESSIMISTIC_PREWRITE_RECOVERY_PD_ADDR="${PD_ADDR}" \
-  CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-txnkv \
+  cargo test --offline --locked -p tidb-txnkv \
     --test all \
     pessimistic_prewrite_recovery_realtikv_source:: \
     -- --ignored --nocapture --test-threads 1 >"${RUST_LOG}" 2>&1 &

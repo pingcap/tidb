@@ -219,8 +219,8 @@ if [[ -z "$(tag_owned_pids)" ]]; then
 fi
 
 cd "${RUST_ROOT}"
-TXN_RPC_PD_ADDR="${PD_ADDR}" CARGO_BUILD_JOBS=12 \
-  cargo test --offline --locked -j12 -p tidb-txnkv \
+TXN_RPC_PD_ADDR="${PD_ADDR}" \
+  cargo test --offline --locked -p tidb-txnkv \
     --test all \
     tikv_transaction_rpc_realtikv_source::typed_transaction_commands_reach_real_tikv_and_leave_no_lock \
     -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {

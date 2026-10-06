@@ -124,7 +124,7 @@ fi
 
 export ADAPTIVE_FORWARDING_PD_ADDR="${PD_ADDR}"
 cd "${RUST_ROOT}"
-CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
+cargo test --locked -p difftest-transaction-tests \
   --test all \
   realtikv_replica_read::adaptive_forwarding_reuses_proxy_then_recovers_direct \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {

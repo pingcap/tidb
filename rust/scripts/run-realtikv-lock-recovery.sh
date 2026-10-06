@@ -229,7 +229,7 @@ if [[ ! "${LOCK_RECOVERY_LOCK_TABLE_ID}" =~ ^[0-9]+$ ]] || [[ ! "${LOCK_RECOVERY
 fi
 
 cd "${RUST_ROOT}"
-CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
+cargo test --locked -p difftest-transaction-tests \
   --test all \
   realtikv_lock_recovery::committed_primary_resolves_secondary_then_publishes_one_cop_response \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {

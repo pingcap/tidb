@@ -226,7 +226,7 @@ fi
 
 cd "${RUST_ROOT}"
 OPTIMISTIC_2PC_PD_ADDR="${PD_ADDR}" OPTIMISTIC_2PC_PHASE_DIR="${PHASE_DIR}" \
-  CARGO_BUILD_JOBS=12 cargo test --offline --locked -j12 -p tidb-txnkv \
+  cargo test --offline --locked -p tidb-txnkv \
     --test all \
     optimistic_2pc_realtikv_source::normal_optimistic_2pc_commits_two_regions_and_cleans_conflict \
     -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 &

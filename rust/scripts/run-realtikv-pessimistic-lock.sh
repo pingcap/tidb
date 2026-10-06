@@ -157,7 +157,7 @@ fi
 
 cd "${RUST_ROOT}"
 PESSIMISTIC_LOCK_PD_ADDR="${PD_ADDR}" \
-  CARGO_BUILD_JOBS=12 cargo test --offline --locked -j12 -p tidb-txnkv \
+  cargo test --offline --locked -p tidb-txnkv \
     --test all \
     pessimistic_lock_realtikv_source:: \
     -- --ignored --nocapture --test-threads 1 >"${RUST_LOG}" 2>&1 &

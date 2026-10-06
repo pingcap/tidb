@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [unused compiler/result models](compiler-result-cleanup-validation.json). Remove unused tidb-exec error/result vocabulary and the synthetic compiler model: three files, 749 net Rust lines and nineteen private model tests. Preserve both formatter tests with all byte/order vectors in the actual shared differential formatter. Correct stale crate ownership comments; no broad finding closure.
+Latest cleanup: [runner build overrides and workflow prose](runner-build-cleanup-validation.json). Remove fixed 12-job overrides from 21 live runners, add missing --locked to 19 runner commands and remove the prewrite-recovery test's unnecessary release profile. Maintain all 26 runner invocation boundaries and intentional release-server profiles. Remove 56 net README lines of duplicated historical workflow prose; application code and live assertions unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

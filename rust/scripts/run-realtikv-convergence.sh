@@ -164,7 +164,7 @@ SQL
 echo "building the Rust node"
 # Build from the workspace root so rustup honors rust/rust-toolchain.toml;
 # with --manifest-path alone the caller's CWD picks the toolchain instead.
-(cd "${RUST_ROOT}" && cargo build -p tidb-server --bin tidb-server) \
+(cd "${RUST_ROOT}" && cargo build --locked -p tidb-server --bin tidb-server) \
   || { echo "the Rust node did not build" >&2; exit 1; }
 
 echo "starting the Rust node in cluster-session mode"

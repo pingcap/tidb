@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "compiler-result-cleanup-validation.json",
-    "scope": "Remove unused tidb-exec error/result vocabulary and the synthetic compiler model: three files, 749 net Rust lines and nineteen private model tests. Preserve both formatter tests with all byte/order vectors in the actual shared differential formatter. Correct stale crate ownership comments; no broad finding closure.",
+    "receipt": "runner-build-cleanup-validation.json",
+    "scope": "Remove fixed 12-job overrides from 21 live runners, add missing --locked to 19 runner commands and remove the prewrite-recovery test's unnecessary release profile. Maintain all 26 runner invocation boundaries and intentional release-server profiles. Remove 56 net README lines of duplicated historical workflow prose; application code and live assertions unchanged.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "test_cleanup_history": [
@@ -1084,6 +1084,11 @@
     {
       "receipt": "compiler-result-cleanup-validation.json",
       "scope": "Remove unused tidb-exec error/result vocabulary and the synthetic compiler model: three files, 749 net Rust lines and nineteen private model tests. Preserve both formatter tests with all byte/order vectors in the actual shared differential formatter. Correct stale crate ownership comments; no broad finding closure.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "runner-build-cleanup-validation.json",
+      "scope": "Remove fixed 12-job overrides from 21 live runners, add missing --locked to 19 runner commands and remove the prewrite-recovery test's unnecessary release profile. Maintain all 26 runner invocation boundaries and intentional release-server profiles. Remove 56 net README lines of duplicated historical workflow prose; application code and live assertions unchanged.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

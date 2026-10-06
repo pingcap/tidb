@@ -204,7 +204,7 @@ fi
 
 cd "${RUST_ROOT}"
 PREPARED_WRITE_PD_ADDR="${PD_ADDR}" \
-  CARGO_BUILD_JOBS=12 cargo test --offline --locked -j12 -p tidb-exec \
+  cargo test --offline --locked -p tidb-exec \
     --test all \
     prepared_write_persists_realtikv_source::prepared_insert_and_update_persist_through_one_shared_authority \
     -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 &
