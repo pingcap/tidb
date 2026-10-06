@@ -1,11 +1,16 @@
 [package]
 name = "tidb-model"
+autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "TiDB meta/model: schema/table metadata types (Rust rewrite, in progress)."
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
 
 [dependencies]
 tidb-ast = { path = "../tidb-ast" }

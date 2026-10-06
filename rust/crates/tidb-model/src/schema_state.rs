@@ -115,6 +115,7 @@ mod tests {
         assert_eq!(SchemaState::REPLICA_ONLY.to_string(), "replica only");
         assert_eq!(SchemaState::GLOBAL_TXN_ONLY.to_string(), "global txn only");
         assert_eq!(SchemaState(200).to_string(), "none");
+        assert_eq!(SchemaState(255).to_string(), "none");
         assert_eq!(SchemaState::default(), SchemaState::NONE);
     }
 

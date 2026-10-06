@@ -132,6 +132,7 @@ mod tests {
         assert_eq!(TableMode::IMPORT.to_string(), "Import");
         assert_eq!(TableMode::RESTORE.to_string(), "Restore");
         assert_eq!(TableMode(99).to_string(), "");
+        assert_eq!(TableMode(255).to_string(), "");
         // The zero value is Normal, like Go's byte zero value.
         assert_eq!(TableMode::default(), TableMode::NORMAL);
     }

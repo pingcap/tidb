@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "semantic-workflow-cleanup-validation.json",
-    "scope": "Retire seven unconsumed semantic command manifests and seven superseded package audit plans from the removed semantic-package-gate workflow. Preserve all executable tests, package receipts, Go inventories and structural dispositions."
+    "receipt": "model-test-owner-cleanup-validation.json",
+    "scope": "Consolidate tidb-model integration targets and boundary assertions; retire eight redundant registrations and one inactive NextGen placeholder. Preserve production behavior and distinct Go compatibility checks."
   },
   "test_cleanup_history": [
     {
@@ -1009,6 +1009,11 @@
       "date": "2026-10-06",
       "receipt": "semantic-workflow-cleanup-validation.json",
       "scope": "Retire seven unconsumed semantic command manifests and seven superseded package audit plans from the removed semantic-package-gate workflow. Preserve all executable tests, package receipts, Go inventories and structural dispositions."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "model-test-owner-cleanup-validation.json",
+      "scope": "Consolidate tidb-model integration targets and boundary assertions; retire eight redundant registrations and one inactive NextGen placeholder. Preserve production behavior and distinct Go compatibility checks."
     }
   ],
   "repair_history": [

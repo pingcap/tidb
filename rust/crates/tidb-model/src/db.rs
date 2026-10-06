@@ -197,8 +197,21 @@ mod tests {
         assert!(shallow.deprecated_tables.get(0).unwrap().ptr_eq(&table));
         shallow.deprecated_tables.get(0).unwrap().write().name = CiString::new("changed");
         assert_eq!(table.read().name.original(), "changed");
+        assert_eq!(
+            deep.deprecated_tables
+                .get(0)
+                .unwrap()
+                .read()
+                .name
+                .original(),
+            "t1"
+        );
+        let encoded = serde_json::to_value(&a).unwrap();
+        assert_eq!(encoded["id"], a.id);
+        assert_eq!(encoded["Deprecated"], serde_json::json!({}));
 
         let nil_tables = DBInfo::default();
+        assert!(nil_tables.table_name2id.is_none());
         assert!(!nil_tables.deprecated_tables.is_allocated());
         assert!(nil_tables.clone_like_go().deprecated_tables.is_allocated());
         assert!(nil_tables.copy_like_go().deprecated_tables.is_allocated());

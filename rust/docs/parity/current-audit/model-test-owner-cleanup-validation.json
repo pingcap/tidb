@@ -1,0 +1,157 @@
+{
+  "date": "2026-10-06",
+  "base": "493a04b1c6c1c1eb9c178f48d8fa88842e7af8c0",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Consolidate tidb-model integration targets and boundary assertions; retire eight redundant registrations and one inactive NextGen placeholder. Preserve production behavior and distinct Go compatibility checks.",
+  "integration_binaries": {
+    "before": 3,
+    "after": 1
+  },
+  "removed_registrations": 9,
+  "production_changed": false,
+  "finding_dispositions_changed": false,
+  "continuity": {
+    "metadata_identical_except_model_integration_targets": true,
+    "integration_targets_before": [
+      "pkg_meta_model_package_anchors",
+      "pkg_meta_model_semantics",
+      "resource_group_semantics"
+    ],
+    "integration_targets_after": [
+      "all"
+    ],
+    "production_prefixes_unchanged": [
+      "rust/crates/tidb-model/src/bdr.rs",
+      "rust/crates/tidb-model/src/db.rs",
+      "rust/crates/tidb-model/src/schema_state.rs",
+      "rust/crates/tidb-model/src/table_info.rs",
+      "rust/crates/tidb-model/src/table_mode.rs"
+    ],
+    "resource_group_suite_sha256": "0787b0f51598e79fa24deced2f60da9268f6d3b7491d31dc8707e5642dde84e0",
+    "registration_inventory": [
+      {
+        "path": "rust/crates/tidb-model/src/bdr.rs",
+        "tests_before": 3,
+        "tests_after": 3
+      },
+      {
+        "path": "rust/crates/tidb-model/src/db.rs",
+        "tests_before": 3,
+        "tests_after": 3
+      },
+      {
+        "path": "rust/crates/tidb-model/src/schema_state.rs",
+        "tests_before": 3,
+        "tests_after": 3
+      },
+      {
+        "path": "rust/crates/tidb-model/src/table_info.rs",
+        "tests_before": 14,
+        "tests_after": 14
+      },
+      {
+        "path": "rust/crates/tidb-model/src/table_mode.rs",
+        "tests_before": 3,
+        "tests_after": 3
+      },
+      {
+        "path": "rust/crates/tidb-model/src/tests_pkg_meta_model_part2.rs",
+        "tests_before": 9,
+        "tests_after": 8
+      },
+      {
+        "path": "rust/crates/tidb-model/tests/pkg_meta_model_package_anchors.rs",
+        "tests_before": 25,
+        "tests_after": 22
+      },
+      {
+        "path": "rust/crates/tidb-model/tests/pkg_meta_model_semantics.rs",
+        "tests_before": 5,
+        "tests_after": 0
+      }
+    ],
+    "net_removed_registrations": 9
+  },
+  "owner_mapping": [
+    {
+      "removed": "pkg_meta_model_bdr_boundary",
+      "retained": "bdr::tests::{action_bdr_map,ts_convert}",
+      "vectors": "SAFE_DDL string and CreateTable class moved; timestamp zero/max already covered.",
+      "go": "pkg/meta/model/bdr.go and bdr_test.go"
+    },
+    {
+      "removed": "pkg_meta_model_db_boundary; pkg_meta_model_owned_clone_boundaries",
+      "retained": "db::tests::clone_copy_and_order_preserve_source_ownership",
+      "vectors": "DB JSON id/Deprecated, clone mutation isolation and nil map added to existing clone/copy/order fixture. Original synthetic id 7 uses owner id 1; before/after names use t1/changed.",
+      "go": "pkg/meta/model/db.go"
+    },
+    {
+      "removed": "pkg_meta_model_flags_boundary",
+      "retained": "pkg_meta_model_flag_width_integration_dependency",
+      "vectors": "All three flag constants moved; high-bit roundtrip remains.",
+      "go": "pkg/meta/model/flags.go"
+    },
+    {
+      "removed": "pkg_meta_model_table_mode_boundary",
+      "retained": "table_mode::tests::{can_transition_to,display_and_default}",
+      "vectors": "Complete nine-transition matrix retained; unknown 255 added.",
+      "go": "pkg/meta/model/table_mode.go and table_mode_test.go"
+    },
+    {
+      "removed": "pkg_meta_model_job_enums_boundary",
+      "retained": "job_enums::tests::{job_state_exact,job_state_predicates}",
+      "vectors": "Exact rollback_done string, finished predicate and Running rejection already covered.",
+      "go": "pkg/meta/model/job.go"
+    },
+    {
+      "removed": "pkg_meta_model_schema_state_boundary",
+      "retained": "schema_state::tests::{state_strings_exact,json_is_a_number}",
+      "vectors": "Public string/JSON 5 already covered; unknown 255 added.",
+      "go": "pkg/meta/model/job.go"
+    },
+    {
+      "removed": "pkg_meta_model_table_info_boundary",
+      "retained": "table_info::tests::table_identity_hash_and_equality_use_only_id",
+      "vectors": "ID 9/different names already covered; version 5 assertion added.",
+      "go": "pkg/meta/model/table.go"
+    },
+    {
+      "removed": "tests_pkg_meta_model_part2::index_global_index_v1_supported_for_next_gen",
+      "retained": "No NextGen replacement claimed. Classic process defaults and index setter/getter remain.",
+      "vectors": "No nextgen feature exists; removed test never asserted. NextGen platform obligation stays outstanding in b008.md.",
+      "go": "pkg/meta/model/index_test.go::TestGlobalIndexV1SupportedForNextGen"
+    }
+  ],
+  "preserved": "Resource-group suite is byte-identical. Runtime nil/empty, interface nil, JobW pointer identity, process defaults/TTL Unicode errors and reorg shared map/independent atomic values retain direct assertions. Integration process state is isolated from library setters. All other part2 tests remain unchanged.",
+  "validation": {
+    "library_command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-model --lib -- bdr::tests db::tests table_mode::tests schema_state::tests job_enums::tests table_info::tests::table_identity_hash_and_equality_use_only_id index::tests::global_index_v1_flag --test-threads=1",
+    "library": {
+      "passed": 29,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 221
+    },
+    "integration_command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-model --test all -- --test-threads=1",
+    "integration": {
+      "passed": 28,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 0
+    },
+    "lint": "make lint passed",
+    "metadata": "cargo metadata --locked --no-deps --format-version 1: only integration target declarations differ",
+    "publication": "Actual hook and fresh prepush gates recorded after completion in external final-handoff.json."
+  },
+  "limits": [
+    "No complete Go package acceptance; 56 structural findings remain unresolved.",
+    "No NextGen runtime, full Go suite, live multi-node, performance or fresh-task restoration verification.",
+    "Three-to-one target reduction is structural evidence, not a measured wall-clock speedup."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/model-test-owner-cleanup",
+  "evidence_sha256": {
+    "lib-tests.log": "ba7fe610e922ce7b39815ad7c831b639b81999fdf07e466d003a8690325cc4aa",
+    "integration-tests.log": "4984c0f12bff114da66838514b5eb44f02b0bd57e85f073cde252d2dbe9d8fc4",
+    "lint.log": "69ab95ca99ea41bd60ad47ae1fdbfc6e887ffafde7b05dec71c167e4ff23ed05",
+    "continuity.json": "df5f8f9e950e1938f8fc0172ba7ea69b0e06d2000fa800b25e3a140b07473351"
+  }
+}

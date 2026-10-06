@@ -24,7 +24,7 @@ use crate::db::DBInfo;
 use crate::go_any::{ColumnDefaultValue, GoAny};
 use crate::go_runtime::{GoShared, GoSharedPointerSlice};
 use crate::index::{
-    find_index_by_columns_for_foreign_key, get_global_index_v1_supported, is_index_prefix_covered,
+    find_index_by_columns_for_foreign_key, is_index_prefix_covered,
     is_index_prefix_covered_for_foreign_key, IndexColumn, IndexInfo,
 };
 use crate::partition::PartitionInfo;
@@ -334,17 +334,6 @@ fn index_is_index_prefix_covered() {
     let found = find_index_by_columns_for_foreign_key(&tbl, &indices, &names(&["c_0", "c_1"]))
         .expect("the safe partial index must be found");
     assert!(found.ptr_eq(&safe_handle));
-}
-
-// Go TestGlobalIndexV1SupportedForNextGen (`index_test.go:101`). The Go test
-// asserts only when built with the `nextgen` build tag; this workspace gate
-// compiles the Classic kernel (no nextgen feature), so the guarded assertion
-// is inert exactly like Go's Classic build.
-#[test]
-fn index_global_index_v1_supported_for_next_gen() {
-    if cfg!(feature = "nextgen") {
-        assert!(get_global_index_v1_supported());
-    }
 }
 
 /// Go `checkOffsets` (`table_test.go:36`).

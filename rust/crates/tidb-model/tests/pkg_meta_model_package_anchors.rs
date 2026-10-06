@@ -18,7 +18,7 @@ use tidb_model::{
     BackfillMeta, BackfillState, ColumnInfo, DDLReorgMeta, EngineAttribute, GoAny, GoShared,
     GoSharedPointerSlice, GoSharedSlice, IndexInfo, Job, JobState, MaskingPolicyInfo,
     MultiSchemaInfo, PartitionDefinition, PartitionInfo, PlacementSettings, RenameTableArgs,
-    SchemaDiff, SchemaState, StorageClassTransitRule, TableInfo,
+    SchemaDiff, StorageClassTransitRule, TableInfo,
 };
 
 #[test]
@@ -125,22 +125,6 @@ fn pkg_meta_model_action_boundary() {
 }
 
 #[test]
-fn pkg_meta_model_job_enums_boundary() {
-    let state = JobState::ROLLBACK_DONE;
-    assert_eq!(state.to_string(), "rollback done");
-    assert!(state.is_finished());
-    assert_eq!(tidb_model::str_to_job_state("Running"), JobState::NONE);
-}
-
-#[test]
-fn pkg_meta_model_schema_state_boundary() {
-    let state = SchemaState::PUBLIC;
-    assert_eq!(state.to_string(), "public");
-    assert_eq!(serde_json::to_string(&state).unwrap(), "5");
-    assert_eq!(SchemaState(255).to_string(), "none");
-}
-
-#[test]
 fn pkg_meta_model_schema_diff_boundary() {
     let diff = SchemaDiff::default();
     let encoded = serde_json::to_value(&diff).expect("SchemaDiff must encode");
@@ -179,21 +163,6 @@ fn pkg_meta_model_table_boundary() {
     let encoded = serde_json::to_value(&options).expect("StatsOptions must encode");
     assert_eq!(encoded["column_list"], serde_json::Value::Null);
     assert_eq!(tidb_model::DEFAULT_TTL_JOB_INTERVAL, "24h");
-}
-
-#[test]
-fn pkg_meta_model_table_info_boundary() {
-    let first = TableInfo {
-        id: 9,
-        ..Default::default()
-    };
-    let second = TableInfo {
-        id: 9,
-        name: tidb_ast::CiString::new("different"),
-        ..Default::default()
-    };
-    assert!(first.equals_id(&second));
-    assert_eq!(tidb_model::TABLE_INFO_VERSION5, 5);
 }
 
 #[test]
@@ -268,6 +237,9 @@ fn pkg_meta_model_column_representation_boundaries() {
 
 #[test]
 fn pkg_meta_model_flag_width_integration_dependency() {
+    assert_eq!(tidb_model::flags::FLAG_IGNORE_TRUNCATE, 1);
+    assert_eq!(tidb_model::flags::FLAG_TRUNCATE_AS_WARNING, 1 << 1);
+    assert_eq!(tidb_model::flags::FLAG_IN_RESTRICTED_SQL, 1 << 11);
     const HIGH: u64 = 1_u64 << 63;
     const LOW: u64 = tidb_datatype::FieldTypeFlags::UNSIGNED as u64;
     let mut column = ColumnInfo::default();
@@ -439,54 +411,28 @@ fn pkg_meta_model_schema_diff_affected_options_boundary() {
 #[test]
 fn pkg_meta_model_job_runtime_representation() {
     let multi = MultiSchemaInfo::default();
-    let runtime_lists = if !multi.add_columns.is_allocated()
-        && !multi.add_indexes.is_allocated()
-        && multi.add_columns.is_empty()
-        && multi.add_indexes.is_empty()
-    {
-        "nil-runtime-slice-state"
-    } else {
-        "unexpected-nonempty-runtime-list"
-    };
-    let argument_domain = if GoAny::nil().is_nil() {
-        "go-interface-nil-state"
-    } else {
-        "unexpected-argument-domain"
-    };
+    assert!(!multi.add_columns.is_allocated());
+    assert!(!multi.add_indexes.is_allocated());
+    assert!(multi.add_columns.is_empty());
+    assert!(multi.add_indexes.is_empty());
+    assert!(GoAny::nil().is_nil());
     let job = GoShared::new(Job::default());
     let wrapper = tidb_model::JobW::new(Some(job.clone()), GoSharedSlice::from_vec(Vec::new()));
-    let byte_mode = if wrapper.job.as_ref().unwrap().ptr_eq(&job)
-        && wrapper.bytes.is_allocated()
-        && wrapper.bytes.is_empty()
-    {
-        "shared-job-and-allocated-empty-bytes"
-    } else {
-        "unexpected-wrapper-ownership"
-    };
-    assert_eq!(runtime_lists, "nil-runtime-slice-state");
-    assert_eq!(argument_domain, "go-interface-nil-state");
-    assert_eq!(byte_mode, "shared-job-and-allocated-empty-bytes");
+    assert!(wrapper.job.as_ref().unwrap().ptr_eq(&job));
+    assert!(wrapper.bytes.is_allocated());
+    assert!(wrapper.bytes.is_empty());
 }
 
 #[test]
 fn pkg_meta_model_process_hooks() {
-    let index_default = if tidb_model::index::get_global_index_v1_supported() {
-        "false-to-true-runtime-toggle"
-    } else {
-        "classic-false-default"
-    };
-    let job_default = if tidb_model::get_job_ver_in_use() == tidb_model::JobVersion::V1 {
-        "classic-v1"
-    } else {
-        "nonclassic"
-    };
-    let ttl = tidb_model::table::TTLInfo::default()
-        .get_job_interval()
-        .map(|nanoseconds| nanoseconds.to_string())
-        .unwrap_or_else(|_| "parse-error".to_owned());
-    assert_eq!(index_default, "classic-false-default");
-    assert_eq!(job_default, "classic-v1");
-    assert_eq!(ttl, "3600000000000");
+    assert!(!tidb_model::index::get_global_index_v1_supported());
+    assert_eq!(tidb_model::get_job_ver_in_use(), tidb_model::JobVersion::V1);
+    assert_eq!(
+        tidb_model::table::TTLInfo::default()
+            .get_job_interval()
+            .unwrap(),
+        3_600_000_000_000
+    );
 
     for (source, expected) in [
         ("٢h", "strconv.ParseFloat: parsing \"٢\": invalid syntax"),
@@ -511,19 +457,12 @@ fn pkg_meta_model_reorg_identity() {
     source.set_max_write_speed(10);
     let clone = source.clone();
     warning_counts.write().insert("w".into(), 2);
-    let warning_mode = if warning_counts.ptr_eq(clone.warnings_count.as_ref().unwrap())
-        && clone.warnings_count.as_ref().unwrap().read()[&tidb_datatype::GoString::from("w")] == 2
-    {
-        "shared-map-backing"
-    } else {
-        "unexpected-owned-map"
-    };
+    assert!(warning_counts.ptr_eq(clone.warnings_count.as_ref().unwrap()));
+    assert_eq!(
+        clone.warnings_count.as_ref().unwrap().read()[&tidb_datatype::GoString::from("w")],
+        2
+    );
     source.set_max_write_speed(20);
-    let object_mode = if source.get_max_write_speed() == 20 && clone.get_max_write_speed() == 10 {
-        "independent-outer-atomics"
-    } else {
-        "unexpected-shared-atomic"
-    };
-    assert_eq!(warning_mode, "shared-map-backing");
-    assert_eq!(object_mode, "independent-outer-atomics");
+    assert_eq!(source.get_max_write_speed(), 20);
+    assert_eq!(clone.get_max_write_speed(), 10);
 }

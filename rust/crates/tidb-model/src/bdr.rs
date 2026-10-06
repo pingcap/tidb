@@ -225,6 +225,11 @@ mod tests {
     fn action_bdr_map() {
         let actions_by_role = BDR_ACTION_MAP.read();
         let role_by_action = ACTION_BDR_MAP.read();
+        assert_eq!(DDLBDRType::SAFE_DDL.to_string(), "safe DDL");
+        assert_eq!(
+            role_by_action.get(&ActionType::ACTION_CREATE_TABLE),
+            Some(&DDLBDRType::SAFE_DDL)
+        );
         assert_eq!(ACTION_MAP.len(), role_by_action.len());
         let mut total = 0;
         for (bdr_type, actions) in actions_by_role.iter() {

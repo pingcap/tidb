@@ -1039,6 +1039,7 @@ mod tests {
 
     #[test]
     fn table_identity_hash_and_equality_use_only_id() {
+        assert_eq!(crate::TABLE_INFO_VERSION5, 5);
         let left = TableInfo {
             id: 9,
             name: CiString::new("left"),
