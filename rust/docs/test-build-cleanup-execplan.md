@@ -1,88 +1,92 @@
-# Retire historical scratch baseline logs
+# Retire macro-generated and panic-only test placeholders
 
-This living ExecPlan follows root PLANS.md. Earlier cleanup receipts remain
-indexed in parity/current-audit/README.md.
+This living ExecPlan follows root PLANS.md. Earlier receipts remain indexed in
+parity/current-audit/README.md.
 
 ## Purpose / Big Picture
 
 
-Remove obsolete test-run output from normal searches and make historical
-receipts point to immutable evidence. Old failure lists are not current gates.
-The batch removes 15 scratch files, 7964 lines and 591246 bytes; it does not
-change or speed up test execution.
+Remove 26 documentary registrations from four compiled test owners. Empty bodies
+and unconditional panic placeholders cannot validate their Go contracts; their
+contract notes belong in the audit receipt. Useful behavioral tests remain.
+This reduces test compilation/registration inputs; no measured speedup is claimed.
 
 ## Context and Orientation
 
 
-Base 98371ab85edd89f7ff5c03000b6fb8083b38ce9c on hparser-integration in
-/workspace/tidb. Fresh Go master remains b36c940a4332c866d8b0e2afde88f5e7c2fd7fed.
-The retired rust/testport/scratch directory contains historical counts, failure
-lists and one 7273-line raw nextest log. No build or runtime consumer references
-these files. Ten receipts now point to exact Git before-images.
+Base f511259253227d7007745d45f63d30decb83d0e0 in /workspace/tidb on
+hparser-integration. Refreshed Go master b36c940a4332c866d8b0e2afde88f5e7c2fd7fed
+is exported at /workspace/.cloud-setup/go-master. No deeper Rust AGENTS.md applies.
 
-The b099 scope inventory remains in baseline-log-cleanup-validation.json because
-it has no standalone receipt. b087's scratch divergences predate repairs recorded
-in receipts/b087.md. b106's integration-only enumeration and b118's differing
-baseline runs remain historical limitations. No old failure is declared fixed
-and no complete Go package is accepted by deletion.
+Remove gap_evaluator and its eleven invocations from tidb-expr's
+src/tests/aggregation_arithmetic_cast_source.rs; twelve panic-only cases from
+tidb-unistore/src/tests_mockstore_part1_go_parity.rs; two empty cases from
+ tidb-util/src/memory/tracker.rs; and server_id_constant from
+ tidb-session/src/tests_domain_domain_utils_source.rs. Preserve all other code.
+These cases are ignored registrations, never useful passing validation. Preserve
+exact original names and contract comments in placeholder-macro-cleanup-validation.json.
+Original Go packages and behaviors remain obligations; old absence claims are
+historical and are not accepted as newly reproduced findings.
 
 ## Progress
 
 
-- [x] Trace references and preserve original inventories and limitations.
-- [x] Remove 15 files and migrate ten receipts to immutable archive links.
-- [x] Validate documentation scope, before-image hashes, links and diff hygiene.
-- [ ] Complete hook, fresh pre-push build, remote verification and cloud save.
+- [x] Trace Go anchors, module registrations and placeholder bodies.
+- [x] Remove 26 placeholders and update stale module/receipt descriptions.
+- [x] Verify retained code, check affected test targets and run lint.
+- [ ] Complete actual hook, fresh pre-push build, remote verification and cloud save.
 
 ## Milestones and Plan of Work
 
 
-Identify all tracked scratch files and references. Preserve hashes and otherwise
-orphaned Go obligations, then remove the full set and repair receipt references.
-Verify only historical documentation and audit metadata change. Tests, source,
-scripts, manifests and lockfiles must remain byte-identical.
+Retire macro-generated empty tests and panic-only bodies as one batch. Preserve
+before-image hashes and every original contract. Update the historical b025,
+b061, b066 and b117 receipts to distinguish old skipped counts from current
+registrations. Keep both finding registers' dispositions unchanged. Verify all
+retained executable bodies and production code before committing.
 
 ## Validation and Acceptance
 
 
-From /workspace/tidb, run python3
-/workspace/.cloud-setup/baseline-log-cleanup/verify.py, git diff --check and make lint.
-The verifier must validate archive links against pinned Git blobs, match all
-before-image hashes and reject executable input or finding changes. Runtime
-suites and all-target compilation are unnecessary for historical docs/logs.
-Source /workspace/.cloud-setup/env.sh and use CARGO_BUILD_JOBS=1. Normal git commit
-must execute hooks/pre-commit with cd rust && cargo build --locked -p tidb-server.
-Repeat that locked build immediately before the authorized normal push. Verify
-remote SHA; never force-push or bypass hooks. Postcommit results are recorded in
-/workspace/.cloud-setup/baseline-log-cleanup/final-handoff.json.
+Source /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust run:
+
+    CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-expr -p tidb-util -p tidb-unistore -p tidb-session --tests
+
+From repository root run make lint, git diff --check and the external
+/workspace/.cloud-setup/placeholder-macro-cleanup/verify.py. Verify removed bodies
+are only empty or unconditional panic stubs; all retained executable inputs
+must match their before-images. Runtime suites are not rerun for this deletion.
+Normal commit must execute hooks/pre-commit and its locked tidb-server build.
+Immediately before pushing rerun cd rust && cargo build --locked -p tidb-server
+with CARGO_BUILD_JOBS=1, then normal push and remote SHA verification. Never
+bypass hooks or force-push. Final publication evidence is external final-handoff.json.
 
 ## Surprises & Discoveries
 
 
-The largest log contains obsolete compiler warnings as well as old failures.
-b087's receipt records subsequent repairs to both scratch divergences. The
-scratch files therefore cannot serve as current failure or acceptance records.
+The aggregate macro escaped earlier empty-function cleanup and still cited the
+retired tidb-exec aggregate runtime. Twelve mock-store cases do no work before
+panicking. The skipped memory/Domain cases contain comments alone. Other ignored
+tests exercise behavior or isolated helpers and remain untouched.
 
 ## Decision Log
 
 
-On 2026-10-06, retire historical logs as one batch while preserving exact recovery
-and original obligations. Keep useful Go-contract and Rust-correctness tests;
-different names alone do not establish that a test is obsolete. No speedup claim.
+On 2026-10-06, remove documentary registrations while preserving their exact
+Go obligations outside the test runner. Do not remove real regressions based on
+language-specific names, and do not claim skipped placeholders passed.
 
 ## Recovery / Interfaces and Dependencies
 
 
-Recover a file with git show
-98371ab85edd89f7ff5c03000b6fb8083b38ce9c:rust/testport/scratch/<name>
-into a temporary file. All archive links pin that revision. No dependency,
-supported interface, Go source, executable test or script changes.
+Use git show f511259253227d7007745d45f63d30decb83d0e0:<path> for before-images.
+External inventories/logs live in /workspace/.cloud-setup/placeholder-macro-cleanup.
+No production interface, dependency, manifest, lockfile or native-client change.
 
 ## Outcomes & Retrospective
 
 
-Scratch artifacts are removed and historical evidence remains recoverable.
-Archive/hash/scope verification, diff checking and root lint passed. Publication remains pending. The 56 unresolved findings are unchanged.
-
-This revision replaces the completed orphan-source cleanup plan; its evidence
-remains in parity/current-audit/orphan-storage-cleanup-validation.json.
+Twenty-six placeholder registrations are removed. Affected test-target compilation,
+root lint, retained-body verification and diff checking passed; publication remains.
+The 56 unresolved findings remain unchanged. This revision replaces the completed
+scratch-log cleanup plan; baseline-log-cleanup-validation.json retains its evidence.

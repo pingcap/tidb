@@ -23,9 +23,8 @@
 //! `domain.go:3012-3016`), whose `code()` is documented as what
 //! `dbterror.ClassDomain.NewStd*` assigns.
 //!
-//! `TestServerIDConstant` pins `lostConnectionToPDTimeout < serverIDTTL` —
-//! two unexported `domain.go` constants — and is an ignored gap:
-//! `domain.go` is not transcreated.
+//! The empty TestServerIDConstant placeholder is retired; its original
+//! inequality remains an obligation in placeholder-macro-cleanup-validation.json.
 
 #![cfg(test)]
 
@@ -41,18 +40,4 @@ use tidb_domain::schema_checker::SchemaCheckError;
 fn error_code() {
     assert_eq!(SchemaCheckError::InfoSchemaExpired.code(), 8027);
     assert_eq!(SchemaCheckError::InfoSchemaChanged.code(), 8028);
-}
-
-/// Go `pkg/domain/domain_utils_test.go:30::TestServerIDConstant`:
-/// `require.Less(t, lostConnectionToPDTimeout, serverIDTTL)`.
-// go-parity-gap: both constants live in pkg/domain/domain.go (unported);
-// there is no Rust symbol to pin the inequality against yet.
-#[test]
-#[ignore = "go-parity-gap: domain.go's lostConnectionToPDTimeout/serverIDTTL \
-           constants are not transcreated"]
-fn server_id_constant() {
-    // Go pins `lostConnectionToPDTimeout < serverIDTTL`
-    // (domain.go:2612-2621: serverIDTTL = 12h, lostConnectionToPDTimeout =
-    // 6h — "Must be SHORTER than serverIDTTL"), so a PD-connection loss is
-    // noticed before the server-ID TTL lapses.
 }

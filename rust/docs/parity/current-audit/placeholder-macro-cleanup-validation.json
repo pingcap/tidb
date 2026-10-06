@@ -1,0 +1,121 @@
+{
+  "date": "2026-10-06",
+  "base": "f511259253227d7007745d45f63d30decb83d0e0",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire 26 documentary test registrations: 11 macro-generated empty aggregate cases, 12 panic-only mockstore cases, two empty memory cases and one empty Domain constant case. Retained executable bodies and production code unchanged.",
+  "removed_tests": 26,
+  "records": [
+    {
+      "path": "rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs",
+      "removed_tests": [
+        "test_avg",
+        "test_avg_final_mode",
+        "test_sum",
+        "test_bit_and",
+        "test_bit_or",
+        "test_bit_xor",
+        "test_count",
+        "test_concat",
+        "test_first_row",
+        "test_max_min",
+        "test_max_min_count"
+      ],
+      "before_sha256": "342cf878f9d9a8f94fa675842ca930a16bda53f42e5e6baa96c540db9e6a6fc2",
+      "removed_lines": 65,
+      "go_sources": [
+        "pkg/expression/aggregation/aggregation_test.go"
+      ],
+      "before_image": "f511259253227d7007745d45f63d30decb83d0e0:rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs",
+      "removed_start": 17779,
+      "removed_end": 20259,
+      "original_contract_notes": "// ---------------------------------------------------------------------\n// Go aggregation/agg_to_pb_test.go::{TestAggFunc2Pb, TestAggFuncSumIntToPb,\n// TestAggFuncMaxMinCountToPb}\n// ---------------------------------------------------------------------\n\n// ---------------------------------------------------------------------\n// Go aggregation/aggregation_test.go \u2014 the mock-coprocessor EVALUATOR half\n// ---------------------------------------------------------------------\n\nmacro_rules! gap_evaluator {\n    ($(#[$meta:meta])* $name:ident, $doc:expr) => {\n        #[test]\n        $(#[$meta])*\n        #[ignore = concat!(\"go-parity-gap: the aggregate RUNTIME half (GetAggFunc/CreateContext/Update/GetResult) is not ported in tidb-expr; the workspace evaluates aggregates in tidb-exec::aggregate::runtime outside this batch's gate scope\")]\n        fn $name() {\n            // $doc\n        }\n    };\n}\n\ngap_evaluator!(\n    test_avg,\n    \"AVG over 1..=100 trips is 67.000000... (30 digits); NULL rows are ignored; DISTINCT AVG is 50.500000... with partial count 100 and partial sum 5050.\"\n);\ngap_evaluator!(\n    test_avg_final_mode,\n    \"FinalMode AVG consumes (count, sum) pairs: trip 67.000000...\"\n);\ngap_evaluator!(\n    test_sum,\n    \"SUM over 1..=100 is 338350; NULL ignored; DISTINCT SUM is 5050; partial result exposes the accumulator.\"\n);\ngap_evaluator!(\n    test_bit_and,\n    \"BIT_AND starts at MaxUint64, ANDs non-null values, ignores NULLs, resets via ResetContext and also folds DECIMAL operands.\"\n);\ngap_evaluator!(\n    test_bit_or,\n    \"BIT_OR starts at 0, ORs values ignoring NULLs, and folds DECIMAL operands after reset.\"\n);\ngap_evaluator!(\n    test_bit_xor,\n    \"BIT_XOR starts at 0, XORs values ignoring NULLs, and folds DECIMAL operands after reset.\"\n);\ngap_evaluator!(\n    test_count,\n    \"COUNT starts at 0, counts non-null rows only (5050 vs null-row untouched), distinct COUNT is 100.\"\n);\ngap_evaluator!(\n    test_concat,\n    \"GROUP_CONCAT joins \\\"1\\\",\\\"x\\\",\\\"2\\\" with separator column value \\\"x\\\" skipping NULLs; distinct mode deduplicates.\"\n);\ngap_evaluator!(\n    test_first_row,\n    \"FIRST_ROW returns the FIRST row's value (uint view 1) and later rows leave it unchanged.\"\n);\ngap_evaluator!(\n    test_max_min,\n    \"MAX/MIN track extremes independently, ignore NULLs, and expose partial results.\"\n);\ngap_evaluator!(\n    test_max_min_count,\n    \"max_count/min_count return (extreme_value, extreme_count) pairs over complete and final-mode descriptors.\"\n);\n\n",
+      "after_sha256": "cfe14049a7eff653039a6636579edfdfd0e1bd205edc7834c35c5720ab20051e"
+    },
+    {
+      "path": "rust/crates/tidb-unistore/src/tests_mockstore_part1_go_parity.rs",
+      "removed_tests": [
+        "get_all_members_uses_injected_pd_addrs",
+        "load_global_config_answers_stored_values_and_blank_misses",
+        "store_global_config_round_trips_new_object",
+        "watch_global_config_streams_ten_bursts_of_every_item",
+        "raw_handler_round_trips_raw_kv_ops_in_order",
+        "cluster_split_regions_cover_every_record_and_index_key",
+        "config_mock_tikv_driver_pins_txn_local_latches_and_bad_urls",
+        "resolved_large_txn_secondary_locks_do_not_block_readers",
+        "mpp_executor_counts_one_scanned_row_for_the_point_range",
+        "benchmark_executors_runs_the_whole_grid_without_error",
+        "exch_sender_next_returns_when_context_cancels_before_connect",
+        "mock_gc_states_manager_barriers_hold_and_release_safe_points"
+      ],
+      "before_sha256": "e3137dc5fec3bea991183c8502f878d66ec59c3358b4cef8a847d27d6db5e2eb",
+      "removed_lines": 174,
+      "go_sources": [
+        "pkg/store/mockstore/unistore/pd_test.go",
+        "pkg/store/mockstore/unistore/raw_handler_test.go",
+        "pkg/store/mockstore/cluster_test.go",
+        "pkg/store/mockstore/tikv_test.go",
+        "pkg/store/mockstore/mockcopr/executor_test.go",
+        "pkg/store/mockstore/unistore/cophandler/cop_handler_test.go",
+        "pkg/store/mockstore/unistore/tikv/mock_pd_test.go"
+      ],
+      "before_image": "f511259253227d7007745d45f63d30decb83d0e0:rust/crates/tidb-unistore/src/tests_mockstore_part1_go_parity.rs",
+      "removed_start": 21992,
+      "removed_end": 32193,
+      "original_contract_notes": "// ---------------------------------------------------------------------------\n// go-parity-gap pins: the subject has NO Rust transcreation anywhere in the\n// workspace. Each body carries the master vectors verbatim so that landing\n// the transcreation can flip #[ignore] into a runnable check.\n// ---------------------------------------------------------------------------\n\n/// Go `TestGetAllMembersUsesInjectedPDAddrs` (`pd_test.go:121`): a client\n/// built over normalized injected addrs answers GetMembersResponse with one\n/// member per addr \u2014 each member's ClientUrls holds exactly that URL \u2014 and\n/// the leader is members[0].\n#[test]\n#[ignore = \"go-parity-gap: unistore pdClient.GetAllMembers has no Rust transcreation yet\"]\nfn get_all_members_uses_injected_pd_addrs() {\n    // addrs [\"127.0.0.1:2379\", \"unix://localhost:m0\"]:\n    // members.len()==2; members[0].client_urls==[\"http://127.0.0.1:2379\"];\n    // members[1].client_urls==[\"unix://localhost:m0\"]; leader==members[0].\n    panic!(\"blocked on transcreating pkg/store/mockstore/unistore/pd.go GetAllMembers\");\n}\n\n/// Go `TestLoad` (`pd_test.go:41`): storing `LoadOkGlobalConfig=ok` makes\n/// LoadGlobalConfig answer `/global/config/LoadOkGlobalConfig`=\"ok\" while a\n/// never-stored name answers its normalized key with an EMPTY value.\n#[test]\n#[ignore = \"go-parity-gap: unistore pdClient.LoadGlobalConfig/StoreGlobalConfig have no Rust transcreation yet\"]\nfn load_global_config_answers_stored_values_and_blank_misses() {\n    // Store([{\"LoadOkGlobalConfig\",\"ok\"}])\n    // Load([\"LoadOkGlobalConfig\",\"LoadErrGlobalConfig\"]) =>\n    //   (\"/global/config/LoadOkGlobalConfig\", \"ok\")\n    //   (\"/global/config/LoadErrGlobalConfig\", \"\")\n    panic!(\"blocked on transcreating pkg/store/mockstore/unistore/pd.go Load/StoreGlobalConfig\");\n}\n\n/// Go `TestStore` (`pd_test.go:61`): loading before storing answers \"\", the\n/// store writes through, the reload answers \"ok\".\n#[test]\n#[ignore = \"go-parity-gap: unistore pdClient.LoadGlobalConfig/StoreGlobalConfig have no Rust transcreation yet\"]\nfn store_global_config_round_trips_new_object() {\n    // Load([\"NewObject\"]) => \"\"; Store([{\"NewObject\",\"ok\"}]); Load => \"ok\".\n    panic!(\"blocked on transcreating pkg/store/mockstore/unistore/pd.go Load/StoreGlobalConfig\");\n}\n\n/// Go `TestWatch` (`pd_test.go:78`): WatchGlobalConfig streams 10 bursts of\n/// every stored item before closing; each delivered event's name and value\n/// are non-empty.\n#[test]\n#[ignore = \"go-parity-gap: unistore pdClient.WatchGlobalConfig has no Rust transcreation yet\"]\nfn watch_global_config_streams_ten_bursts_of_every_item() {\n    // Store(\"/global/config\", {\"NewObject\":\"ok\"}); Watch(revision 0);\n    // drain exactly 10 events, each res[0].Name != \"\" && Value != \"\".\n    panic!(\"blocked on transcreating pkg/store/mockstore/unistore/pd.go WatchGlobalConfig\");\n}\n\n/// Go `TestRawHandler` (`raw_handler_test.go:27`): put/get/delete one key,\n/// batch put/get/delete three pairs preserving order, scan `[keys[0],\n/// keys[9])` limit 2 answering the first two stored pairs, delete-range\n/// wiping them, and an empty scan afterwards.\n#[test]\n#[ignore = \"go-parity-gap: pkg/store/mockstore/unistore/raw_handler.go has no Rust transcreation (kv_handler.rs seeds server.go only)\"]\nfn raw_handler_round_trips_raw_kv_ops_in_order() {\n    // keys[i]=\"key{i}\", vals[i]=\"val{i}\", i in 0..10:\n    //   put(k0,v0); get(k0)==v0; del(k0)\n    //   batchPut[(k1,v1),(k3,v3),(k5,v5)]; batchGet[k1,k3,k5]==same pairs\n    //   batchDel[k1,k3,k5]\n    //   batchPut[(k6,v6),(k7,v7),(k8,v8)]\n    //   scan(k0..k9, limit 2).kvs == [(k6,v6),(k7,v7)]\n    //   deleteRange(k0..k9); scan(k0..k9).kvs == []\n    panic!(\"blocked on transcreating pkg/store/mockstore/unistore/raw_handler.go\");\n}\n\n/// Go `TestClusterSplit` (`cluster_test.go`): 1000 committed rows plus index\n/// entries split into 10 regions apiece leave 12 regions total; scanning\n/// each region slice inside the record/index prefix yields exactly 100-row\n/// pages whose union covers all 1000 keys of each kind.\n#[test]\n#[ignore = \"go-parity-gap: rides client-go testutils NewMockTiKV/MockCluster.SplitKeys across SQL-free mvcc scans; no hostable seam exists in this workspace (third_party MockCluster is not reachable from any crate without manifest edits outside this batch's scope)\"]\nfn cluster_split_regions_cover_every_record_and_index_key() {\n    // tblID=1 idxID=2 colID=3: 1000 rows value=strconv.Itoa(handle) in new\n    // format; index entry key=EncodeIndexSeekKey(tblID,idxID,EncodeKey(str,\n    // handle)) value \"0\"; commit at ts2.\n    // SplitKeys(recordPrefix, PrefixNext(recordPrefix), 10):\n    // GetAllRegions() == 12 regions; per-prefix-region scan length == 100\n    // when non-empty; unions contain exactly the 1000 record / index keys.\n    panic!(\"blocked on hosting TestClusterSplit over a client-go seam\");\n}\n\n/// Go `TestConfig` (`tikv_test.go`): `MockTiKVDriver.Open(\"mocktikv://\")`\n/// follows `txn_local_latches.enabled` from the global config (latches on\u2192\n/// `IsLatchEnabled()` true, off\u2192false), while `driver.Open(\":\")` and\n/// `driver.Open(\"faketikv://\")` fail.\n#[test]\n#[ignore = \"go-parity-gap: MockTiKVDriver.Open / IsLatchEnabled have no Rust transcreation (node_config treats mocktikv as unsupported store)\"]\nfn config_mock_tikv_driver_pins_txn_local_latches_and_bad_urls() {\n    // UpdateGlobal{TxnLocalLatches{enabled:true, capacity:10240}} ->\n    // Open(\"mocktikv://\").IsLatchEnabled() == true; enabled:false -> false;\n    // Open(\":\") errors; Open(\"faketikv://\") errors.\n    panic!(\"blocked on transcreating pkg/store/mockstore/tikv.go driver surface\");\n}\n\n/// Go `TestResolvedLargeTxnLocks` (`mockcopr/executor_test.go:44`): a reader\n/// meeting the secondary lock of a large txn (primary TTL 100s, secondary\n/// TTL 200ms, min_commit_ts=start+1) resolves instead of blocking \u2014 plain\n/// scan, BatchGet (`id in (1)`), and PointGet under begin/rollback all\n/// answer the earlier committed row; afterwards MVCCStore.Scan still\n/// reports the large primary's lock alive (ErrLocked).\n#[test]\n#[ignore = \"go-parity-gap: rides session BootstrapSession + distsql over mock TiKV + failpoint DisablePaging; none of those seams exist in this workspace\"]\nfn resolved_large_txn_secondary_locks_do_not_block_readers() {\n    // create table t(id int pk, val int); insert (1,1); tso=t.\n    // Prewrite(primary,\"value\",ttl 100000,minCommitTs=t+1);\n    // Prewrite(rowKey,\"value\",ttl 200,primary=\"primary\").\n    // select *, BatchGet, PointGet all yield \"1 1\"; Scan(rowKey,t)[0].Err\n    // remains ErrLocked against the large txn's primary.\n    panic!(\"blocked on the mockcopr + session integration seam\");\n}\n\n/// Go `TestMppExecutor` (`cop_handler_test.go:385`): driving\n/// TableScan + Selection(EQInt(offset 1, 1)) + Limit(1) over the point range\n/// through `buildAndRunMPPExecutor(dagCtx, dagReq, pagingSize=0)` with\n/// CollectRangeCounts answers counts[0] == 1 \u2014 the PER-RANGE SCANNED-row\n/// count, not the filtered output \u2014 and no error.\n#[test]\n#[ignore = \"go-parity-gap: mppExecBuilder/buildAndRunMPPExecutor (cophandler/mpp.go, mpp_exec.go) has no Rust transcreation\"]\nfn mpp_executor_counts_one_scanned_row_for_the_point_range() {\n    // Same three seeded rows and request-start-ts DAG shape as\n    // TestClosureExecutor, plus setCollectRangeCounts(true);\n    // buildAndRunMPPExecutor => rowCount[0]==counts[0]==1 && err==nil.\n    panic!(\"blocked on transcreating cophandler/mpp.go\");\n}\n\n/// Go `BenchmarkExecutors` (`cop_handler_test.go:551`): over the triangular\n/// grid rows,limit \u2208 {1,10,\u2026,100000}\u00b2 with limit<=rows, prepare NE-filtered\n/// DAGs (Selection NEInt(offset 0, 1), Limit(limit), CollectRangeCounts,\n/// request ts 3000000, full-range [handle 0, handle rows)) on fresh stores\n/// and drive buildAndRunMPPExecutor without error.\n#[test]\n#[ignore = \"go-parity-gap: timed bench harness over the untranscreated MPP executor; its correctness content reduces to shapes already pinned above\"]\nfn benchmark_executors_runs_the_whole_grid_without_error() {\n    // for rows in {1,10,100,1000,10000,100000} { for limit <= rows {\n    //   prepare(rows, limit); run(dagReq, dagCtx) must not error } }\n    panic!(\"blocked on transcreating cophandler/mpp.go\");\n}\n\n/// Go `TestExchSenderExecNextReturnsWhenCtxCanceledBeforeTunnelConnected`\n/// (`cop_handler_test.go:641`): `exchSenderExec.next()` must RETURN rather\n/// than block on `connectedCh` when the request context is canceled before\n/// any tunnel connects \u2014 pinned in Go with a goroutine racing a 1-second\n/// deadline.\n#[test]\n#[ignore = \"go-parity-gap: exchSenderExec/ExchangerTunnel (cophandler/mpp_exec.go) has no Rust transcreation\"]\nfn exch_sender_next_returns_when_context_cancels_before_connect() {\n    // tunnel{dataCh cap 1, connectedCh open, errCh cap 1}; spawn next();\n    // cancel(); the spawned next() completes within 1s.\n    panic!(\"blocked on transcreating cophandler/mpp_exec.go\");\n}\n\n/// Go `TestMockGCStatesManager` (`tikv/mock_pd_test.go:26`), looped over\n/// keyspace ids {NullKeyspaceID, 0, 1}: a fresh GC state carries safe points\n/// 0 and one bootstrap GC barrier which ExcludeGCBarriers hides; advancing\n/// txn/GC safe points moves 0\u219210 and 0\u21929 while refusing decreases and gc-ts\n/// beyond txn-ts; SetGCBarrier validates arguments (non-empty id, ts>0,\n/// nonzero TTL) and holds tsp below barrier ts; DeleteGCBarrier frees it.\n#[test]\n#[ignore = \"go-parity-gap: newGCStatesManager (tikv/gc_worker.go) has no Rust transcreation; gc_state.rs transcreates client-go's CLIENT half, not this owner side\"]\nfn mock_gc_states_manager_barriers_hold_and_release_safe_points() {\n    // Per keyspace id: GetGCState(false) \u2192 gc/txn safe point 0, one\n    // barrier, empty list; GetGCState(default excl) \u2192 HasGCBarriers false,\n    // GetGCBarriers errors; AdvanceTxnSafePoint(10)/AdvanceGCSafePoint(9)\n    // move old\u2192new; declines at 9 / 8 / gc 11; SetGCBarrier(\"\",20,never),\n    // (\"b1\",0,never), (\"b1\",20,0), (\"b1\",9,never) all error;\n    // SetGCBarrier(\"b2\",25,never) ok; tsp advance to target 30 blocks at\n    // 25 naming b2; DeleteGCBarrier(\"b2\") returns b2@25; advance\u219230 ok.\n    panic!(\"blocked on transcreating tikv/gc_worker.go GCStatesManager\");\n}\n\n",
+      "after_sha256": "133d8bb9f6ea5c9028b9473eded0b4862889d3549879bcb40be64e93201618e9"
+    },
+    {
+      "path": "rust/crates/tidb-util/src/memory/tracker.rs",
+      "removed_tests": [
+        "release_gc_aware_flag_on",
+        "global_mem_arbitrator"
+      ],
+      "before_sha256": "3206c8e6711381d2ccb3ddb542fbd48ac685bc2564173777a4436df57e596435",
+      "removed_lines": 26,
+      "go_sources": [
+        "pkg/util/memory/tracker_test.go"
+      ],
+      "before_image": "f511259253227d7007745d45f63d30decb83d0e0:rust/crates/tidb-util/src/memory/tracker.rs",
+      "removed_start": 56411,
+      "removed_end": 57875,
+      "original_contract_notes": "    // Go `TestRelease`: GC-aware flag-on path.\n    #[test]\n    #[ignore] // go-parity-gap: relies on Go runtime.SetFinalizer machinery; Rust has no finalizers\n    fn release_gc_aware_flag_on() {\n        // Go: pkg/util/memory/tracker_test.go TestRelease (EnableGCAwareMemoryTrack=true).\n        // The Go test attaches a global tracker with GC-aware tracking on,\n        // consumes/releases, then loops runtime.GC() until the parent's async\n        // finalizer reports BytesReleased. The Rust Tracker has no finalizer\n        // hook, so this contract cannot be pinned here yet.\n    }\n\n    // Go `TestGlobalMemArbitrator`.\n    #[test]\n    #[ignore] // go-parity-gap: needs the globalArbitrator singleton (global_arbitrator.go) which is not ported\n    fn global_mem_arbitrator() {\n        // Go: pkg/util/memory/tracker_test.go TestGlobalMemArbitrator.\n        // The Go test drives SetupGlobalMemArbitratorForTest /\n        // SetGlobalMemArbitratorWorkMode / SetGlobalMemArbitratorSoftLimit /\n        // RemovePoolFromGlobalMemArbitrator and the globalArbitrator.metrics\n        // pool counters (big/small/intoBig/internal/internalSession). None of\n        // that server-side wiring exists in this crate yet; only the in-process\n        // MemArbitrator + Tracker::init_mem_arbitrator pieces are ported. The\n        // mem-state-recorder block of this test is separately covered by\n        // `memory::mem_state_recorder::tests::recorder_round_trip`.\n    }\n\n",
+      "after_sha256": "ad8bc1246babdf35f20ac16d32f96142598fc407c209a7facb6c169dd10d1c5c"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_domain_domain_utils_source.rs",
+      "removed_tests": [
+        "server_id_constant"
+      ],
+      "before_sha256": "5762d81c835716b5ce21d0aa88d5520183ff8e2551d8224b0a57fd0ca5471f1e",
+      "removed_lines": 13,
+      "go_sources": [
+        "pkg/domain/domain_utils_test.go"
+      ],
+      "before_image": "f511259253227d7007745d45f63d30decb83d0e0:rust/crates/tidb-session/src/tests_domain_domain_utils_source.rs",
+      "removed_start": 1863,
+      "removed_end": 2545,
+      "original_contract_notes": "/// Go `pkg/domain/domain_utils_test.go:30::TestServerIDConstant`:\n/// `require.Less(t, lostConnectionToPDTimeout, serverIDTTL)`.\n// go-parity-gap: both constants live in pkg/domain/domain.go (unported);\n// there is no Rust symbol to pin the inequality against yet.\n#[test]\n#[ignore = \"go-parity-gap: domain.go's lostConnectionToPDTimeout/serverIDTTL \\\n           constants are not transcreated\"]\nfn server_id_constant() {\n    // Go pins `lostConnectionToPDTimeout < serverIDTTL`\n    // (domain.go:2612-2621: serverIDTTL = 12h, lostConnectionToPDTimeout =\n    // 6h \u2014 \"Must be SHORTER than serverIDTTL\"), so a PD-connection loss is\n    // noticed before the server-ID TTL lapses.\n}\n",
+      "after_sha256": "6b4b8c441131953f128abb9d4b2393491c860f721c33df5213114bd34fb71a40"
+    }
+  ],
+  "original_obligations": "Original Go tests and recorded contracts remain obligations; placeholder removal is not execution, repair or complete package acceptance. Historical absence claims in removed comments are not freshly established defects.",
+  "validation": {
+    "status": "affected test-target check, root lint, diff and retained-body verification passed",
+    "runtime_tests": "Not rerun for removal of empty/panic-only ignored placeholders. Retained executable bodies must be byte-identical.",
+    "command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-expr -p tidb-util -p tidb-unistore -p tidb-session --tests",
+    "verification": {
+      "removed_registrations": 26,
+      "empty_macro_registrations": 11,
+      "empty_direct_registrations": 3,
+      "panic_only_registrations": 12,
+      "retained_executable_bodies_unchanged": true,
+      "production_unchanged": true,
+      "go_anchor_files_exist": true,
+      "finding_dispositions_unchanged": true,
+      "receipt_go_tables_unchanged": true
+    },
+    "publication": "Actual hook and fresh pre-push build results recorded after commit in external final-handoff.json."
+  },
+  "finding_dispositions_changed": false,
+  "measured_speedup": false
+}

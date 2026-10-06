@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "baseline-log-cleanup-validation.json",
-    "scope": "Remove 15 obsolete scratch baseline artifacts (7964 lines). Preserve receipt inventories and exact historical Git evidence. No executable tests, checks, source, scripts or manifests change."
+    "receipt": "placeholder-macro-cleanup-validation.json",
+    "scope": "Retire 26 documentary test registrations: 11 macro-generated empty aggregate cases, 12 panic-only mockstore cases, two empty memory cases and one empty Domain constant case. Retained executable bodies and production code unchanged."
   },
   "test_cleanup_history": [
     {
@@ -969,6 +969,11 @@
       "date": "2026-10-06",
       "receipt": "baseline-log-cleanup-validation.json",
       "scope": "Remove 15 obsolete scratch baseline artifacts (7964 lines). Preserve receipt inventories and exact historical Git evidence. No executable tests, checks, source, scripts or manifests change."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "placeholder-macro-cleanup-validation.json",
+      "scope": "Retire 26 documentary test registrations: 11 macro-generated empty aggregate cases, 12 panic-only mockstore cases, two empty memory cases and one empty Domain constant case. Retained executable bodies and production code unchanged."
     }
   ],
   "repair_history": [
