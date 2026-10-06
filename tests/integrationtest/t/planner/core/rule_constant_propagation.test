@@ -136,9 +136,9 @@ WHERE EXISTS (
 );
 
 # TestConstantPropagationAcrossCollationLabels, issue #71776
-# A string constant whose collation label differs from the column's is still propagated when the
-# comparison is evaluated under the column's collation (binary column, or a column that wins
-# coercibility over the literal).
+# A string constant whose collation label differs from a binary column's is still propagated, since
+# the comparison is bytewise. Non-binary columns are not: under utf8_general_ci, c = 'a' also matches
+# 'A', so substituting 'a' into CAST(c AS BINARY) or similar would change the result.
 drop table if exists t_bin, t_ci, t_gci;
 create table t_bin (object_id bigint not null primary key, node_type varbinary(64) not null, creation_method varbinary(64) not null, key idx (node_type, creation_method, object_id));
 insert into t_bin values (1,'A','x'),(2,'A','x'),(3,'A','y'),(4,'B','x'),(5,'B','y'),(6,'A ','x');
@@ -160,7 +160,11 @@ select object_id from t_ci where node_type = 'E' and node_type > 'D';
 explain format='brief' select object_id from t_ci where node_type = 'a' collate utf8mb4_bin and node_type > 'A';
 select object_id from t_ci where node_type = 'a' collate utf8mb4_bin and node_type > 'A';
 select id from t_gci where c = 'a' collate utf8mb4_bin and c <= 'A';
-# a 4-byte character can't be cast to utf8 losslessly, so it is not propagated
 select object_id from t_ci where node_type = '😀' and node_type > 'A';
+# the equality matches 'A' case-insensitively, so byte-level predicates must still see the stored value
+select object_id from t_ci where node_type = 'a' and cast(node_type as binary) = 'A' order by object_id;
+select object_id from t_ci where node_type = 'a' and hex(node_type) = '41' order by object_id;
+select object_id from t_bin where node_type = 'A' and cast(node_type as binary) = 'A' order by object_id;
+select object_id from t_bin where node_type = 'A' and hex(node_type) = '41' order by object_id;
 select id from t_gci where c = 'a' and c > 'A';
 select id from t_gci where c = 'a' and c <= 'A' order by id;

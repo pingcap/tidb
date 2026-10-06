@@ -352,9 +352,10 @@ object_id	node_type	creation_method
 explain format='brief' select * from t_ci where node_type = 'A' and creation_method = 'x' and ((node_type > 'A') or (node_type = 'A' and creation_method > 'x') or (node_type = 'A' and creation_method = 'x' and object_id > 1)) order by node_type, creation_method, object_id limit 100;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:100
-└─IndexReader	1.25	root		index:Limit
-  └─Limit	1.25	cop[tikv]		offset:0, count:100
-    └─IndexRangeScan	1.25	cop[tikv]	table:t_ci, index:idx(node_type, creation_method, object_id)	range:("\x00A" "\x00X" 1,"\x00A" "\x00X" +inf], keep order:true, stats:pseudo
+└─IndexReader	1.00	root		index:Limit
+  └─Limit	1.00	cop[tikv]		offset:0, count:100
+    └─Selection	1.00	cop[tikv]		or(and(eq(planner__core__rule_constant_propagation.t_ci.node_type, "A"), gt(planner__core__rule_constant_propagation.t_ci.creation_method, "x")), and(eq(planner__core__rule_constant_propagation.t_ci.node_type, "A"), and(eq(planner__core__rule_constant_propagation.t_ci.creation_method, "x"), gt(planner__core__rule_constant_propagation.t_ci.object_id, 1))))
+      └─IndexRangeScan	1.25	cop[tikv]	table:t_ci, index:idx(node_type, creation_method, object_id)	range:["\x00A" "\x00X","\x00A" "\x00X"], keep order:true, stats:pseudo
 select * from t_ci where node_type = 'A' and creation_method = 'x' and ((node_type > 'A') or (node_type = 'A' and creation_method > 'x') or (node_type = 'A' and creation_method = 'x' and object_id > 1)) order by node_type, creation_method, object_id limit 100;
 object_id	node_type	creation_method
 2	a	X
@@ -381,6 +382,24 @@ id
 2
 select object_id from t_ci where node_type = '😀' and node_type > 'A';
 object_id
+select object_id from t_ci where node_type = 'a' and cast(node_type as binary) = 'A' order by object_id;
+object_id
+1
+3
+select object_id from t_ci where node_type = 'a' and hex(node_type) = '41' order by object_id;
+object_id
+1
+3
+select object_id from t_bin where node_type = 'A' and cast(node_type as binary) = 'A' order by object_id;
+object_id
+1
+2
+3
+select object_id from t_bin where node_type = 'A' and hex(node_type) = '41' order by object_id;
+object_id
+1
+2
+3
 select id from t_gci where c = 'a' and c > 'A';
 id
 select id from t_gci where c = 'a' and c <= 'A' order by id;

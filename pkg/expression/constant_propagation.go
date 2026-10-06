@@ -17,7 +17,6 @@ package expression
 import (
 	"slices"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -148,39 +147,22 @@ func ValidCompareConstantPredicateHelper(ctx EvalContext, eq *ScalarFunction, co
 	return col, con
 }
 
-// comparedUnderColumnCollation reports whether a string comparison between col and con is evaluated
-// under col's own collation even though con carries a different collation label, e.g. a varbinary
-// column compared with a utf8mb4_bin literal, or a utf8_general_ci column compared with a
-// utf8mb4_bin literal. In that case substituting con (cast to col's type) for col elsewhere
-// evaluates exactly as the original comparison does for every row where col = con.
+// comparedUnderColumnCollation reports whether col is a binary-charset column whose comparison with
+// con is evaluated bytewise even though con carries a different collation label, e.g. a varbinary
+// column compared with a utf8mb4_bin literal. Under the binary collation col = con means col holds
+// exactly con's bytes, so substituting con (cast to col's type) for col is safe in every predicate,
+// including ones that look at the raw bytes such as CAST(col AS BINARY) or HEX(col).
+// Non-binary collations are deliberately excluded: under utf8_general_ci, col = 'a' also matches
+// 'A', so substituting 'a' into such predicates would change their result.
 func comparedUnderColumnCollation(ctx EvalContext, col *Column, con *Constant) bool {
 	colTp, conTp := col.GetStaticType(), con.GetType(ctx)
-	if colTp.EvalType() != types.ETString || conTp.EvalType() != types.ETString {
+	if colTp.EvalType() != types.ETString || conTp.EvalType() != types.ETString ||
+		colTp.GetCharset() != charset.CharsetBin {
 		return false
 	}
-	// An explicit COLLATE on the constant, or anything else that makes the comparison use a
-	// collation other than the column's, rules the substitution out.
+	// An explicit COLLATE on the constant decides the comparison and rules the substitution out.
 	ec := inferCollation(ctx, col, con)
-	if ec == nil || ec.Collation != colTp.GetCollate() {
-		return false
-	}
-	switch {
-	case colTp.GetCharset() == charset.CharsetBin, colTp.GetCharset() == conTp.GetCharset():
-		return true
-	case colTp.GetCharset() == charset.CharsetUTF8 && conTp.GetCharset() == charset.CharsetUTF8MB4:
-		// The cast to utf8 is lossless only when the value has no 4-byte characters. A parameter's
-		// value can change between executions, so only accept literals.
-		if con.ParamMarker != nil || con.DeferredExpr != nil || con.Value.Kind() != types.KindString {
-			return false
-		}
-		for _, r := range con.Value.GetString() {
-			if r == utf8.RuneError || r > 0xFFFF {
-				return false
-			}
-		}
-		return true
-	}
-	return false
+	return ec != nil && ec.Collation == charset.CollationBin
 }
 
 // validEqualCond checks if the cond is an expression like [column eq constant].
@@ -578,11 +560,6 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 				s.ctx.GetEvalCtx().TruncateWarnings(oriWarningCnt)
 				if newCon, ok := newExpr.(*Constant); ok {
 					castedCon = newCon
-					if conType.EvalType() == types.ETString && colType.GetCollate() != conType.GetCollate() {
-						// The constant was accepted because the comparison uses col's collation; it now
-						// stands in for col, so it must also win collation derivation the way col does.
-						castedCon.SetCoercibility(col.Coercibility())
-					}
 				}
 			}
 			retMapper[s.getColID(col)] = castedCon
