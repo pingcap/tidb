@@ -14,13 +14,11 @@
 
 //! Ports of `pkg/util/chunk/chunk_util_test.go`.
 
-use std::collections::HashMap;
-
 use tidb_datatype::{CoreTime, Datum, FieldType, FieldTypeCode, Time, TimeType};
 
 use crate::chunk::Chunk;
 use crate::chunk_util::{
-    copy_selected_join_rows_direct, copy_selected_join_rows_with_same_outer_rows, ColumnSwapHelper,
+    copy_selected_join_rows_direct, copy_selected_join_rows_with_same_outer_rows,
 };
 
 const NUM_ROWS: usize = 1024;
@@ -190,42 +188,4 @@ fn copy_selected_virtual_num() {
     assert_eq!(dst_chk.num_rows(), 2);
     assert_eq!(dst_chk.get_row(0).get_int64(0), 3);
     assert_eq!(dst_chk.get_row(1).get_int64(0), 3);
-}
-
-/// Go `TestMergeInputIdxToOutputIdxes` (chunk_util_test.go): swapping through
-/// a projection whose input column fans out to several output slots leaves
-/// every output slot sharing one identity, carrying the input value. The
-/// merged-mapping cache itself is internal to this port and is pinned by the
-/// identity contract tests.
-#[test]
-fn merge_input_idx_to_output_idxes() {
-    let mut input_idx_to_output_idxes = HashMap::new();
-    input_idx_to_output_idxes.insert(0usize, vec![0usize, 1]);
-    input_idx_to_output_idxes.insert(1usize, vec![2, 3]);
-    let column_eval = ColumnSwapHelper::from_mapping(input_idx_to_output_idxes);
-
-    let longlong = FieldType::new(FieldTypeCode::LongLong);
-    let input_fields = vec![longlong.clone(), longlong.clone()];
-    let mut input = Chunk::new_empty(&input_fields);
-    input.append_int64(0, 99);
-    // Input chunk's 0th and 1st columns refer to the same owner.
-    input.make_ref(0, 1);
-
-    let output_fields = vec![
-        longlong.clone(),
-        longlong.clone(),
-        longlong.clone(),
-        longlong,
-    ];
-    let mut output = Chunk::new_empty(&output_fields);
-
-    column_eval
-        .swap_columns(&mut input, &mut output)
-        .expect("no selections anywhere");
-
-    // All four output columns are column-referred, pointing at the first one.
-    assert_eq!(output.column(0), output.column(1));
-    assert_eq!(output.column(1), output.column(2));
-    assert_eq!(output.column(2), output.column(3));
-    assert_eq!(output.get_row(0).get_int64(0), 99);
 }

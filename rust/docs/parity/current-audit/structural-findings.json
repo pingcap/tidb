@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "static-test-roots-cleanup-validation.json",
-    "scope": "Replace test-list-only build scripts across 26 consumers with explicit tests/all.rs registrations. Preserve 852 modules, all isolated targets and helper ownership; remove production test-directory watchers and five obsolete standalone markers. Retire duplicate transport-retry binary and two private primed loaders; repair four stale live harnesses against shared Send ownership and monotonic health instants."
+    "receipt": "chunk-test-owner-cleanup-validation.json",
+    "scope": "Consolidate chunk allocator, pool, iterator, list and mutable-row tests into their maintained owners; remove five duplicate carriers and two redundant codec/projection cases, preserving distinct inputs and Rust ownership regressions."
   },
   "test_cleanup_history": [
     {
@@ -994,6 +994,11 @@
       "date": "2026-10-06",
       "receipt": "static-test-roots-cleanup-validation.json",
       "scope": "Replace test-list-only build scripts across 26 consumers with explicit tests/all.rs registrations. Preserve 852 modules, all isolated targets and helper ownership; remove production test-directory watchers and five obsolete standalone markers. Retire duplicate transport-retry binary and two private primed loaders; repair four stale live harnesses against shared Send ownership and monotonic health instants."
+    },
+    {
+      "date": "2026-10-06",
+      "receipt": "chunk-test-owner-cleanup-validation.json",
+      "scope": "Consolidate chunk allocator, pool, iterator, list and mutable-row tests into their maintained owners; remove five duplicate carriers and two redundant codec/projection cases, preserving distinct inputs and Rust ownership regressions."
     }
   ],
   "repair_history": [

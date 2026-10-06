@@ -1,0 +1,148 @@
+{
+  "date": "2026-10-06",
+  "base": "49bdae21fee12e020e8d4b995ea7a5ea6b1ae2b7",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Consolidate chunk allocator, pool, iterator, list and mutable-row tests into their maintained owners; remove five duplicate carriers and two redundant codec/projection cases, preserving distinct inputs and Rust ownership regressions.",
+  "removed": [
+    {
+      "path": "rust/crates/tidb-chunk/src/tests_alloc.rs",
+      "before_sha256": "3ac6d012b36cebacf145c52b6e389319a98c1329be01014dee8b3da8a9f187ef",
+      "test_registrations": 8,
+      "ignored": 1,
+      "functions": [
+        "allocator_alloc_layout_and_reuse_after_reset",
+        "column_allocator_variants_agree",
+        "avoid_column_reuse_keeps_allocator_consistent",
+        "column_allocator_limit_check_reuse_flag",
+        "reuse_hook_allocator",
+        "sync_allocator",
+        "public_constructor_smoke",
+        "no_duplicate_column_reuse"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-chunk/src/tests_pool.rs",
+      "before_sha256": "868188f898f38393c484c6d435ad0f250219855f81490cbd5583a0bb5d43d12a",
+      "test_registrations": 3,
+      "ignored": 0,
+      "functions": [
+        "new_pool",
+        "pool_get_chunk",
+        "pool_put_chunk"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-chunk/src/tests_iterator.rs",
+      "before_sha256": "9d6c35c01ff4e33bd1c28d272e797565d24a7b6fb4bcf85307d008faedb16648",
+      "test_registrations": 3,
+      "ignored": 0,
+      "functions": [
+        "iterator_on_sel",
+        "multi_iterator",
+        "iterator_flavors"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-chunk/src/tests_list.rs",
+      "before_sha256": "4a388ed50d2a66da3f233f35bab2ef7e341ca5b9326744f25ecd515bbb31d6ff",
+      "test_registrations": 2,
+      "ignored": 0,
+      "functions": [
+        "list_basics",
+        "list_memory_usage"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-chunk/src/tests_mutrow.rs",
+      "before_sha256": "6398c20e7d903665a16de44dcbff06f37fe945c1f7f8ff8599f05128634e7af0",
+      "test_registrations": 3,
+      "ignored": 0,
+      "functions": [
+        "mut_row",
+        "issue_29947_set_null_datum_on_every_type",
+        "mut_row_shallow_copy_partial_row"
+      ]
+    }
+  ],
+  "removed_test_registrations": 21,
+  "removed_active_tests": 20,
+  "removed_ignored_tests": 1,
+  "net_rust_lines_removed": 988,
+  "remaining_body_checks": [
+    {
+      "owner": "rust/crates/tidb-chunk/src/alloc.rs",
+      "production_prefix_unchanged": true,
+      "prior_assertions_preserved": 72
+    },
+    {
+      "owner": "rust/crates/tidb-chunk/src/pool.rs",
+      "production_prefix_unchanged": true,
+      "prior_assertions_preserved": 45
+    },
+    {
+      "owner": "rust/crates/tidb-chunk/src/iterator.rs",
+      "production_prefix_unchanged": true,
+      "prior_assertions_preserved": 36
+    },
+    {
+      "owner": "rust/crates/tidb-chunk/src/list.rs",
+      "production_prefix_unchanged": true,
+      "prior_assertions_preserved": 15
+    },
+    {
+      "owner": "rust/crates/tidb-chunk/src/mutrow.rs",
+      "production_prefix_unchanged": true,
+      "prior_assertions_preserved": 55
+    },
+    {
+      "owner": "rust/crates/tidb-chunk/src/tests_codec.rs",
+      "remaining_body_byte_identical_except_unused_imports": true
+    },
+    {
+      "owner": "rust/crates/tidb-chunk/src/tests_chunk_util.rs",
+      "remaining_body_byte_identical_except_unused_imports": true
+    }
+  ],
+  "go_owner": "pkg/util/chunk at pinned Go master; alloc_test.go, pool_test.go, iterator_test.go, list_test.go, mutrow_test.go, codec_test.go, chunk_util_test.go",
+  "owner_mapping": {
+    "tests_alloc.rs": "alloc.rs::tests: layout/reset, column allocator equality, avoidance, bounds, reuse hooks, sync allocation and pointer uniqueness. Preserve DefaultColumnAllocator equality across eight fields and concurrent column count assertion.",
+    "tests_pool.rs": "pool.rs::tests: all variable/fixed buckets, reset, capacity and alias width. Preserve integer 7 roundtrip.",
+    "tests_iterator.rs": "iterator.rs::tests: selections, multi-iterator order and all iterator types. Preserve clear/refill list-first mirror case.",
+    "tests_list.rs": "list.rs::tests: freelist, append/add/walk, delayed tracker accounting. Preserve post-reset counts and zero-time/i64::MAX-duration alongside existing nonzero-time/zero-duration input.",
+    "tests_mutrow.rs": "mutrow.rs::tests: full 22-type zero/null sweep, value copying and storage aliasing. Preserve foobar/NULL, dropped source, zero datetime fsp6 and zero timestamp fsp6 overwrite.",
+    "tests_codec.rs::estimate_type_width_matches_go": "codec.rs::tests::go_test_estimate_type_width; same fixed/31/999/2000/unspecified boundaries. Retained codec_encode_decode_round_trip and join-key shared/response storage body unchanged.",
+    "tests_chunk_util.rs::merge_input_idx_to_output_idxes": "chunk_util.rs::tests::go_test_merge_input_idx_to_output_idxes checks cached mapping and actual owner identity plus value99. Other four carrier cases unchanged."
+  },
+  "obsolete_claims_removed": [
+    "Ignored no_duplicate_column_reuse has no assertions and alleges private pool checks are unavailable; maintained owner directly verifies unique pooled pointers. Historical transport-expression-empty-test-obligations.json remains original evidence, superseded for this carrier by this receipt.",
+    "Old avoid_column_reuse case never sets avoidance; owner exercises actual flag and decoder propagation.",
+    "Two old allocator cases mutate global configuration without the maintained CONFIG_TEST_LOCK.",
+    "Duplicated sync test performs 100000 allocations; maintained 32x64 threaded test retains assertions and synchronization coverage. No claim to execute Go original 1000-goroutine workload."
+  ],
+  "validation": {
+    "grouped_tests": {
+      "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-chunk --lib -- alloc::tests pool::tests iterator::tests list::tests mutrow::tests codec::tests tests_codec tests_chunk_util chunk_util::tests --test-threads=1",
+      "cwd": "rust",
+      "status": "passed",
+      "passed": 71,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 179
+    },
+    "source_continuity": "passed: owner production prefixes and 223 prior assertions preserved; two retained carrier bodies unchanged except unused imports",
+    "format": "passed: rustfmt --edition 2021 --config skip_children=true on eight changed Rust files",
+    "make_lint": "passed",
+    "publication": "pending normal precommit hook build, fresh immediate-prepush build, remote SHA and cloud checkpoint",
+    "log_sha256": {
+      "chunk-tests.log": "125aa488cd3cf7425f5128fa468c97ee372cf0657d254b51a52b36c0e11dcea3",
+      "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    }
+  },
+  "limitations": [
+    "No production behavior, dependency, manifest or lockfile changes.",
+    "86 findings: 30 repaired, 56 unresolved (27 open, 29 partial); dispositions unchanged.",
+    "No full upstream Go package acceptance, live cluster execution, benchmark or measured speedup.",
+    "Saved cloud configuration does not prove environment Publish or fresh-task restoration."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/chunk-test-owner-cleanup"
+}

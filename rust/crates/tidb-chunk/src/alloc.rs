@@ -669,6 +669,10 @@ mod tests {
     fn allocator_recycles_source_shapes_at_reset() {
         let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
         restore_defaults();
+        let mut default = DefaultColumnAllocator;
+        for field in &fields() {
+            assert_eq!(Column::new_column(field, 5), default.new_column(field, 5));
+        }
         let allocator = new_allocator();
         {
             let chunk = allocator.alloc(&fields(), 5, 100);
@@ -1012,7 +1016,9 @@ mod tests {
                 let fields = Arc::clone(&fields);
                 std::thread::spawn(move || {
                     for _ in 0..64 {
-                        drop(allocator.alloc(&fields, 5, 100));
+                        let chunk = allocator.alloc(&fields, 5, 100);
+                        assert_eq!(chunk.num_cols(), fields.len());
+                        drop(chunk);
                         allocator.reset();
                     }
                 })

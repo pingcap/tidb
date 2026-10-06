@@ -1,104 +1,101 @@
-# Remove test-list generation from production builds
+# Consolidate chunk tests into their maintained owners
 
 This living ExecPlan follows root PLANS.md. Keep progress, discoveries, decisions
-and outcomes current. Previous plan-replayer cleanup completed at 9c253898c5;
-its external final-handoff.json records publication and checkpoint validation.
+and outcomes current. Previous static-test-root cleanup completed and was pushed
+at 49bdae21fee12e020e8d4b995ea7a5ea6b1ae2b7; its external final-handoff.json
+records publication and checkpoint validation.
 
 ## Purpose and Context
 
 
-Stop test-only edits from invalidating ordinary library/server builds through a
-shared test-directory watcher. Use /workspace/tidb, hparser-integration, base
-9c253898c5cc631624301c73668a4fd9c9c4cda7. Go master freshly fetched remains
-b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. This is Rust build maintenance, not a
-behavioral parity claim. All Go package obligations and 56 findings remain.
+Maintain one set of chunk owner tests for Go allocation, iteration and row
+mutation semantics. Remove stale duplicate wrappers after migrating distinct
+inputs. Work in /workspace/tidb on hparser-integration, base 49bdae21fee12e020e8d4b995ea7a5ea6b1ae2b7.
+Freshly fetched Go master remains b36c940a4332c866d8b0e2afde88f5e7c2fd7fed;
+compare pkg/util/chunk. This cleanup leaves the 56 unresolved findings unchanged.
+A carrier is a separate Rust test file registered by src/lib.rs; the maintained
+owners here are the cfg(test) modules beside each implementation.
 
 ## Progress
 
 
-- [x] Execute the original generator for every manifest; inventory 26 consumers.
-- [x] Replace all generated includes with 852 explicit module registrations.
-- [x] Remove 26 build declarations, shared script and five obsolete markers.
-- [x] Preserve helper ownership, isolated suites and production generators.
-- [x] Reproduce 13 stale live-harness errors with original generated registration.
-- [x] Remove two private loaders and duplicate transport binary; retain all assertions.
-- [x] Update current workflow documentation and verify Cargo metadata equivalence.
-- [x] Check all 26 aggregate targets and run 53 representative tests.
-- [x] Final formatting, bash syntax, metadata/source equivalence, lint and diff checks.
-- [ ] Normal commit hook, immediate-prepush build, remote SHA and cloud checkpoint.
+- [x] Compare seven carrier surfaces with original Go and maintained Rust owners.
+- [x] Migrate distinct allocator/list/mutable-row inputs into existing cases.
+- [x] Remove five carriers, five module declarations and two duplicate cases.
+- [x] Verify production prefixes, 223 prior owner assertions and retained carrier bodies.
+- [x] Complete grouped chunk tests (71 passed), root lint, format and final self-review.
+- [ ] Commit through actual hook, fresh prepush build, push and verify remote SHA.
+- [ ] Refresh verified bundle and cloud startup checkpoint.
 
 ## Milestones and Plan of Work
 
 
-Read the complete package list in static-test-roots-cleanup-validation.json.
-For each manifest, remove only build = ../../scripts/aggregate-tests.rs; keep
-all targets and dependencies except the duplicate transport-retry standalone target. In tests/all.rs register exactly the modules
-emitted by the original generator in the same order. Keep direct_unary_table_index_reader_source
-owned by table_index_reader_runtime_source rather than registering it twice.
-Keep five standalone session/transaction suites as explicit Cargo targets.
-Delete the shared generator only after every consumer, including three difftest
-crates, is migrated. Remove obsolete markers and update workspace architecture,
-scripts/README and the outdated Cargo profile comment. Existing test registrations and Rust
-correctness assertions stay intact apart from that duplicate registration. No generated production artifact is edited.
+First compare tests_alloc/pool/iterator/list/mutrow.rs with their same-name
+implementation modules under rust/crates/tidb-chunk/src. Preserve allocator
+constructor equality, concurrent column counts, integer pool roundtrip, clear
+and refill iteration, list reuse counts, maximum duration and zero timestamps.
+Delete carriers only after these inputs reach the maintained tests. Remove only
+the duplicate width case from tests_codec.rs and projection mapping case from
+tests_chunk_util.rs; retain their other regression bodies. No production edits.
+
+Then run one grouped library test invocation and lint. Review source continuity
+against the base and record results in chunk-test-owner-cleanup-validation.json.
+Publish only after the normal hook and fresh build required by root AGENTS.md.
 
 ## Validation and Acceptance
 
 
-Activate /workspace/.cloud-setup/env.sh. From /workspace/tidb/rust with
-CARGO_BUILD_JOBS=1, run the exact 26-package cargo check --locked --test all
-command in the receipt. Then run:
+Source /workspace/.cloud-setup/env.sh; from /workspace/tidb/rust run:
 
-    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-lexer -p tidb-error -p tidb-config --test all -- --test-threads=1
+    CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-chunk --lib -- alloc::tests pool::tests iterator::tests list::tests mutrow::tests codec::tests tests_codec tests_chunk_util chunk_util::tests --test-threads=1
 
-Compare the original generator output with static roots; verify 854 retained
-test source bodies unchanged and all 101 assertions in four maintained live
-harnesses preserved. Non-build targets change only by retiring the duplicate
-transport-retry target; its script selects the same case from all.rs. No remaining
-Rust/Cargo consumer may refer to aggregate-tests.rs or all_tests.rs. Run root
-make lint and git diff --check. Do not run unrelated suites or claim all 852
-modules executed. Commit normally through hooks/pre-commit, which must pass
-cd rust && cargo build --locked -p tidb-server. Repeat immediately before the
-normal authorized push to origin hparser-integration, then verify remote SHA.
+The selected owner and retained carrier tests must pass. Confirm no owner
+assertion is lost, production prefixes are unchanged and five removed modules
+have no registrations. From repository root run make lint and git diff --check.
+Use rustfmt --edition 2021 --config skip_children=true --check on changed files.
+Commit normally: executable hooks/pre-commit selected by core.hooksPath=hooks
+must pass cd rust && cargo build --locked -p tidb-server. Repeat that command
+immediately before authorized push to origin hparser-integration and verify SHA.
 
 ## Surprises & Discoveries
 
 
-Initial crate-only discovery found 23 users, but exhaustive manifest search found
-three differential-test crates too. The old script watched every test source
-and the tests directory even in ordinary builds. Removing it requires a one-time
-workspace rebuild. One helper and five process-isolated suites are excluded.
-Existing real code-generation scripts and their platform obligations remain.
-The transaction harness also registered transport retry both in all.rs and as a
-standalone Cargo target. Remove the duplicate and update its runner exact filter.
+The ignored duplicate-ownership case has no assertions and stale comments about
+inaccessible pool internals, while the current owner directly checks pointers.
+Two old allocator cases change global settings without the maintained test lock.
+The duplicate codec roundtrip has distinct JSON-string and join-key response
+storage coverage, so it stays. Original Go tests and historical receipts stay.
 
 ## Decision Log
 
 
-On 2026-10-06 replace dynamic discovery with explicit conventional Rust modules,
-keeping test count and process layout. Adding a suite now requires registering
-it in all.rs; document this tradeoff rather than adding another source scanner.
-Reclaim 31 identified inactive obsolete test executables (2286287128 bytes) for
-the metadata transition; preserve library caches and current server executable.
-No cargo clean, broad cache purge, force push or hook bypass.
+On 2026-10-06 consolidate assertions into existing owners rather than dropping
+Rust ownership regressions. Preserve meaningful vectors before deletion. Retain
+the existing 32-by-64 threaded allocator case and add column-count assertions;
+remove the redundant 100000-allocation loop. This is not validation of Go's
+original 1000-goroutine stress scale, nor a measured runtime improvement.
 
 ## Outcomes & Retrospective
 
 
-Implementation and registration equivalence passed. All 26 aggregate targets
-compile; 53 representative tests pass with zero failed/ignored/filtered. Four
-live harnesses initially failed on stale APIs; the original generator reproduced
-the same 13 errors. Removing two private primed loaders in favor of warming the
-production cache, using thread-safe recorders and the actual monotonic clock type
-restores compilation. Their multi-node execution remains unverified. This removes a production build dependency on tests without deleting
-coverage. No measured timing improvement or complete Go package acceptance.
+Five files and two duplicate cases removed: 21 registrations (20 active, one
+ignored), 988 net Rust lines. Distinct inputs survive under the maintained owners.
+Grouped execution passed: 71 passed, zero failed/ignored, 179 filtered; root lint
+and source continuity passed. Publication and cloud checkpoint remain pending;
+external final-handoff.json will record their final results. This is test maintenance, not a
+claim that a complete Go package or any unresolved structural finding is repaired.
 
 ## Recovery, Interfaces and Dependencies
 
 
-Recover any before-image with git show 9c253898c5cc631624301c73668a4fd9c9c4cda7:<path>.
-No production bodies, dependencies or Cargo.lock changed. Four live test harnesses
-use existing production APIs directly; their original assertions remain. Retired cache outputs
-are regeneratable. Evidence and exact command: rust/docs/parity/current-audit/static-test-roots-cleanup-validation.json.
-External original outputs, source hashes, logs, pruned paths and final handoff
-live in /workspace/.cloud-setup/static-test-roots. Saved setup configuration does
-not prove environment Publish or fresh-task restoration.
+Recover original files with git show 49bdae21fee12e020e8d4b995ea7a5ea6b1ae2b7:<path>.
+Do not overwrite concurrent work. Manifests, dependencies, lockfiles and native
+client remain unchanged. Durable evidence is rust/docs/parity/current-audit/
+chunk-test-owner-cleanup-validation.json; external verification script, hashes,
+logs and publication results live at /workspace/.cloud-setup/chunk-test-owner-cleanup.
+Preserve all finding dispositions in both registers. Refresh the recovery bundle
+only after verifying its replacement. Saved configuration is separate from
+Publish and fresh-task restoration, which remain unverified.
+
+Revision 2026-10-06: replace the completed static-root plan with the chunk owner
+cleanup, preserving the previous receipt and publication pointer.

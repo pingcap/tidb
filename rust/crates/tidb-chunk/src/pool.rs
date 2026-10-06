@@ -220,6 +220,8 @@ mod tests {
         let pool = Pool::new(8);
         let mut chunk = pool.get_chunk(&fields);
         chunk.append_string(0, "keep capacity");
+        chunk.append_int64(5, 7);
+        assert_eq!(chunk.get_row(0).get_int64(5), 7);
         let data_capacity = chunk.column(0).data_capacity();
         pool.put_chunk(&fields, &mut chunk);
         assert_eq!(chunk.num_cols(), 0);

@@ -324,6 +324,8 @@ mod tests {
             l.append_row(src_chunk.get_row(0));
         }
         assert_eq!(l.freelist_len(), 0);
+        assert_eq!(l.num_chunks(), 3);
+        assert_eq!(l.len(), 5);
 
         // Add a whole chunk, then append: the appended row must start a NEW
         // chunk, because the added one is already accounted (`consumedIdx`).
@@ -366,29 +368,41 @@ mod tests {
             FieldType::new(FieldTypeCode::Duration),
         ];
         let json_obj = BinaryJSON::parse("1").expect("valid JSON");
-        let time_obj = time_from_days(2000 * 365);
-        let duration_obj = MySqlDuration::from_nanoseconds(0, 0).expect("zero");
+        for (time_obj, duration_nanos) in [
+            (time_from_days(2000 * 365), 0),
+            (
+                tidb_datatype::Time::new(
+                    tidb_datatype::CoreTime::default(),
+                    tidb_datatype::TimeType::DateTime,
+                    0,
+                )
+                .expect("zero datetime"),
+                i64::MAX,
+            ),
+        ] {
+            let duration_obj =
+                MySqlDuration::from_nanoseconds(duration_nanos, 0).expect("representable duration");
+            let max_chunk_size = 2;
+            let mut src_chk = Chunk::new_with_capacity(&field_types, max_chunk_size);
+            src_chk.append_float32(0, 12.4);
+            src_chk.append_string(1, "123");
+            src_chk.append_json(2, &json_obj);
+            src_chk.append_time(3, time_obj);
+            src_chk.append_duration(4, duration_obj);
 
-        let max_chunk_size = 2;
-        let mut src_chk = Chunk::new_with_capacity(&field_types, max_chunk_size);
-        src_chk.append_float32(0, 12.4);
-        src_chk.append_string(1, "123");
-        src_chk.append_json(2, &json_obj);
-        src_chk.append_time(3, time_obj);
-        src_chk.append_duration(4, duration_obj);
+            let mut list = List::new(&field_types, max_chunk_size, max_chunk_size * 2);
+            assert_eq!(list.mem_tracker().bytes_consumed(), 0);
 
-        let mut list = List::new(&field_types, max_chunk_size, max_chunk_size * 2);
-        assert_eq!(list.mem_tracker().bytes_consumed(), 0);
+            list.append_row(src_chk.get_row(0));
+            assert_eq!(list.mem_tracker().bytes_consumed(), 0);
 
-        list.append_row(src_chk.get_row(0));
-        assert_eq!(list.mem_tracker().bytes_consumed(), 0);
+            let mem_usage = list.get_chunk(0).memory_usage();
+            list.reset();
+            assert_eq!(list.mem_tracker().bytes_consumed(), mem_usage);
 
-        let mem_usage = list.get_chunk(0).memory_usage();
-        list.reset();
-        assert_eq!(list.mem_tracker().bytes_consumed(), mem_usage);
-
-        let src_usage = src_chk.memory_usage();
-        list.add(src_chk);
-        assert_eq!(list.mem_tracker().bytes_consumed(), mem_usage + src_usage);
+            let src_usage = src_chk.memory_usage();
+            list.add(src_chk);
+            assert_eq!(list.mem_tracker().bytes_consumed(), mem_usage + src_usage);
+        }
     }
 }

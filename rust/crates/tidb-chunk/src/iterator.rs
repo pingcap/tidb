@@ -771,11 +771,12 @@ mod tests {
         ]);
         check_equal(&mut it, &expected);
 
-        // The mirror case: the list comes FIRST and holds the low rows.
-        let mut li2 = List::new(&fields, 32, 1024);
-        li2.add(chk.clone());
+        // The mirror case: clear and refill the list with the low rows.
+        drop(it);
+        li.clear();
+        li.add(chk.clone());
         let mut it = MultiIterator::new(vec![
-            Box::new(Iterator4List::new(&li2)),
+            Box::new(Iterator4List::new(&li)),
             Box::new(Iterator4Chunk::new(&chk2)),
         ]);
         check_equal(&mut it, &expected);

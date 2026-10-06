@@ -1045,12 +1045,20 @@ mod tests {
         assert!(!row.is_null(1));
         assert_eq!(row.get_int64(1), 33);
 
-        // SetRow copies nullity too.
+        // SetRow copies values and nullity in either column.
+        let source = MutRow::from_datums(&[string("foobar"), Datum::Null]);
+        mut_row.set_row(source.to_row());
+        let row = mut_row.to_row();
+        assert_eq!(row.get_string(0).as_bytes(), b"foobar");
+        assert!(!row.is_null(0));
+        assert!(row.is_null(1));
+
         let n_source = MutRow::from_datums(&[Datum::Null, Datum::Int(111)]);
         let n_row = n_source.to_row();
         assert!(n_row.is_null(0));
         assert!(!n_row.is_null(1));
         mut_row.set_row(n_row);
+        drop(n_source);
         let row = mut_row.to_row();
         assert!(row.is_null(0));
         assert!(!row.is_null(1));
@@ -1067,10 +1075,15 @@ mod tests {
             Datum::Json(value) => value.clone(),
             other => panic!("expected a JSON datum, got {other:?}"),
         };
-        let mut mut_row = MutRow::from_datums(&[j, Datum::Time(time)]);
-        let row = mut_row.to_row();
-        assert_eq!(row.get_json(0), json_value);
-        assert_eq!(row.get_time(1), time);
+        for time in [
+            time,
+            Time::new(CoreTime::default(), TimeType::DateTime, 6).expect("zero datetime"),
+        ] {
+            let mut mut_row = MutRow::from_datums(&[j.clone(), Datum::Time(time)]);
+            let row = mut_row.to_row();
+            assert_eq!(row.get_json(0), json_value);
+            assert_eq!(row.get_time(1), time);
+        }
 
         // SetValue and SetDatum on a duration column produce exactly the same
         // raw cell as `Chunk.AppendDuration`.
@@ -1148,6 +1161,14 @@ mod tests {
         );
         assert_eq!(copied.get_int64(1), row.get_int64(1));
         assert_eq!(copied.get_time(2), row.get_time(2));
+
+        row_chunk.reset();
+        let zero = Time::new(CoreTime::default(), TimeType::Timestamp, 6)
+            .expect("zero timestamp with fractional precision");
+        row_chunk.append_string(0, "dfg");
+        row_chunk.append_int64(1, 567);
+        row_chunk.append_time(2, zero);
+        assert_eq!(mut_row.to_row().get_time(2), zero);
     }
 
     /// Go `TestIssue29947` (`mutrow_test.go:91`): writing a NULL over an

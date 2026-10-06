@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [typed user-variable ownership](user-variable-batch-validation.json). S03/X01 remain partial; 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial).
 
-Latest cleanup: [static test roots](static-test-roots-cleanup-validation.json). Removed 26 test-list build targets; all 852 modules and five isolated suites retained. Removed one duplicate transport-retry binary and two private loaders; repaired four stale live harnesses without removing their assertions. Finding dispositions unchanged.
+Latest cleanup: [chunk test owners](chunk-test-owner-cleanup-validation.json). Removed five duplicate carriers and two redundant cases (21 registrations); distinct inputs moved into maintained owner tests. Codec/join-key and Rust ownership regressions retained. Finding dispositions unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

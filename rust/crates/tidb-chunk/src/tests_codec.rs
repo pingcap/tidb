@@ -17,7 +17,7 @@
 use tidb_datatype::{BinaryJSON, BinaryJSONValue, FieldType, FieldTypeCode, MyDecimal};
 
 use crate::chunk::Chunk;
-use crate::codec::{estimate_type_width, Codec};
+use crate::codec::Codec;
 
 fn codec_field_types() -> Vec<FieldType> {
     vec![
@@ -147,31 +147,4 @@ fn codec_encode_decode_round_trip() {
 fn create_string_json(text: &str) -> BinaryJSON {
     BinaryJSON::from_typed_value(&BinaryJSONValue::String(text.to_owned()))
         .expect("string json value")
-}
-
-/// Go `TestEstimateTypeWidth` (codec_test.go).
-#[test]
-fn estimate_type_width_matches_go() {
-    // Fixed-width type.
-    let col_type = FieldType::new(FieldTypeCode::LongLong);
-    assert_eq!(estimate_type_width(&col_type), 8);
-
-    // colLen <= 32.
-    let mut col_type = FieldType::new(FieldTypeCode::String);
-    col_type.set_flen(31);
-    assert_eq!(estimate_type_width(&col_type), 31);
-
-    // colLen < 1000.
-    let mut col_type = FieldType::new(FieldTypeCode::String);
-    col_type.set_flen(999);
-    assert_eq!(estimate_type_width(&col_type), 515);
-
-    // colLen >= 1000.
-    let mut col_type = FieldType::new(FieldTypeCode::String);
-    col_type.set_flen(2000);
-    assert_eq!(estimate_type_width(&col_type), 516);
-
-    // Value after guessing: no length information.
-    let col_type = FieldType::new(FieldTypeCode::String);
-    assert_eq!(estimate_type_width(&col_type), 32);
 }
