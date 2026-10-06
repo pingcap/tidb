@@ -134,3 +134,33 @@ WHERE EXISTS (
     SELECT 1 FROM t3
     WHERE t3.k = t2.k AND t3.b = t2.b AND t2.k = 1
 );
+
+# TestConstantPropagationAcrossCollationLabels, issue #71776
+# A string constant whose collation label differs from the column's is still propagated when the
+# comparison is evaluated under the column's collation (binary column, or a column that wins
+# coercibility over the literal).
+drop table if exists t_bin, t_ci, t_gci;
+create table t_bin (object_id bigint not null primary key, node_type varbinary(64) not null, creation_method varbinary(64) not null, key idx (node_type, creation_method, object_id));
+insert into t_bin values (1,'A','x'),(2,'A','x'),(3,'A','y'),(4,'B','x'),(5,'B','y'),(6,'A ','x');
+create table t_ci (object_id bigint not null primary key, node_type varchar(64) collate utf8_general_ci not null, creation_method varchar(64) collate utf8_general_ci not null, key idx (node_type, creation_method, object_id));
+insert into t_ci values (1,'A','x'),(2,'a','X'),(3,'A','y'),(4,'B','x'),(5,'é','x');
+create table t_gci (id int primary key, c varchar(10) collate utf8mb4_general_ci, key(c));
+insert into t_gci values (1,'A'),(2,'a'),(3,'B');
+explain format='brief' select * from t_bin where node_type = 'A' and creation_method = 'x' and ((node_type > 'A') or (node_type = 'A' and creation_method > 'x') or (node_type = 'A' and creation_method = 'x' and object_id > 1)) order by node_type, creation_method, object_id limit 100;
+select * from t_bin where node_type = 'A' and creation_method = 'x' and ((node_type > 'A') or (node_type = 'A' and creation_method > 'x') or (node_type = 'A' and creation_method = 'x' and object_id > 1)) order by node_type, creation_method, object_id limit 100;
+explain format='brief' select * from t_ci where node_type = 'A' and creation_method = 'x' and ((node_type > 'A') or (node_type = 'A' and creation_method > 'x') or (node_type = 'A' and creation_method = 'x' and object_id > 1)) order by node_type, creation_method, object_id limit 100;
+select * from t_ci where node_type = 'A' and creation_method = 'x' and ((node_type > 'A') or (node_type = 'A' and creation_method > 'x') or (node_type = 'A' and creation_method = 'x' and object_id > 1)) order by node_type, creation_method, object_id limit 100;
+# binary comparison keeps trailing spaces significant
+select object_id from t_bin where node_type = 'A ' and node_type > 'A';
+select object_id from t_bin where node_type = 'a' and node_type > 'A';
+# case-insensitive column
+select object_id from t_ci where node_type = 'a' and node_type > 'A';
+select object_id from t_ci where node_type = 'E' and node_type > 'D';
+# an explicit COLLATE on the constant decides the comparison, so it is not propagated
+explain format='brief' select object_id from t_ci where node_type = 'a' collate utf8mb4_bin and node_type > 'A';
+select object_id from t_ci where node_type = 'a' collate utf8mb4_bin and node_type > 'A';
+select id from t_gci where c = 'a' collate utf8mb4_bin and c <= 'A';
+# a 4-byte character can't be cast to utf8 losslessly, so it is not propagated
+select object_id from t_ci where node_type = '😀' and node_type > 'A';
+select id from t_gci where c = 'a' and c > 'A';
+select id from t_gci where c = 'a' and c <= 'A' order by id;
