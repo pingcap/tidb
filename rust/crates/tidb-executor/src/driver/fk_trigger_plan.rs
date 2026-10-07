@@ -215,28 +215,18 @@ fn compile_trigger(
         (child, child_table, &child_offsets)
     };
     let mut access = format!("table:{name}");
-    // Go's integer primary-key handle needs no index; otherwise a covering
-    // leading prefix is enough, including a safe partial index predicate.
-    if !(columns.len() == 1 && table.pk_handle_offset() == Some(columns[0])) {
-        let index = table.indexes().iter().find(|index| {
-            index.column_offsets.starts_with(columns)
-                && columns.iter().enumerate().all(|(position, offset)| {
-                    let length = index.prefix_length(position);
-                    length == tidb_datatype::UNSPECIFIED_LENGTH
-                        || length >= table.columns[*offset].field_type.flen()
-                })
-                && table.partial_index_safe_for_columns(index, columns)
+    let Some(lookup_index) = table.foreign_key_lookup_index(columns) else {
+        return Err(if matches!(kind, FkTriggerKind::Cascade { .. }) {
+            DriverError::unsupported(format!(
+                "Missing index for '{}' foreign key columns in the table '{}'",
+                fk.name, child_table
+            ))
+        } else {
+            failure()
         });
-        let Some(index) = index else {
-            return Err(if matches!(kind, FkTriggerKind::Cascade { .. }) {
-                DriverError::unsupported(format!(
-                    "Missing index for '{}' foreign key columns in the table '{}'",
-                    fk.name, child_table
-                ))
-            } else {
-                failure()
-            });
-        };
+    };
+    if let Some(id) = lookup_index {
+        let index = table.indexes().iter().find(|index| index.id == id).unwrap();
         access.push_str(&format!(", index:{}", index.name));
     }
     let (operator, info) = match kind {
@@ -274,6 +264,7 @@ fn compile_trigger(
         parent_table: fk.ref_table.clone(),
         child_offsets,
         parent_offsets,
+        lookup_index,
         constraint,
     }))
 }

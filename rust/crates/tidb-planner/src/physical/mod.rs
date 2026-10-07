@@ -2718,6 +2718,8 @@ pub struct FkTriggerNode {
     pub child_offsets: Vec<usize>,
     /// Referenced columns resolved in the statement schema.
     pub parent_offsets: Vec<usize>,
+    /// Selected index ID; None denotes the integer clustered record handle.
+    pub lookup_index: Option<i64>,
     /// The constraint clause used by Go's 1451/1452 diagnostic.
     pub constraint: String,
 }

@@ -90,7 +90,7 @@
 use tidb_datatype::Datum;
 
 use crate::driver::{Catalog, DriverError, TableEntry};
-use crate::kv_table::{FkAction, KvForeignKey};
+use crate::kv_table::{FkAction, KvForeignKey, RowDecodeContext, TableHandle};
 use tidb_hack::GoToLower;
 use tidb_planner::physical::{FkTriggerKind, FkTriggerNode};
 
@@ -123,18 +123,44 @@ fn key_at(row: &[Datum], offsets: &[usize]) -> Option<Vec<Datum>> {
     Some(key)
 }
 
-/// Reads every row of a table, or `None` when the name does not resolve to a
-/// byte-backed table (a view, a matrix table, a dropped parent).
-fn scan(
+/// Go FKCheckExec.updateRowNeedToCheck compares through the source collator.
+/// Comparison errors mean the value must be checked, not that it is unchanged.
+fn same_key(left: &[Datum], right: &[Datum], ctx: &crate::StmtContext) -> bool {
+    let zone = ctx.session_zone();
+    let context = tidb_datatype::ConversionContext::new(
+        tidb_expr::Columns::type_flags(ctx),
+        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+        &tidb_datatype::IGNORE_CONVERSION_WARNINGS,
+    );
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            let (ordering, error) = left.compare_with_context(
+                right,
+                left.collation().unwrap_or(tidb_datatype::Collation::Binary),
+                &context,
+                &zone,
+            );
+            error.is_none() && ordering == std::cmp::Ordering::Equal
+        })
+}
+
+fn lookup_handles(
     catalog: &mut Catalog,
     database: &str,
     table: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<Vec<Vec<Datum>>> {
-    match catalog.get_mut_for_foreign_key(database, table)? {
-        TableEntry::Kv(kv) => std::sync::Arc::make_mut(kv).scan_rows(zone).ok(),
-        _ => None,
-    }
+    index: Option<i64>,
+    key: &[Datum],
+    limit: usize,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<TableHandle>, DriverError> {
+    let Some(TableEntry::Kv(kv)) = catalog.get_mut_for_foreign_key(database, table) else {
+        return Err(DriverError::unsupported(
+            "foreign key table changed after planning",
+        ));
+    };
+    std::sync::Arc::make_mut(kv)
+        .foreign_key_handles(index, key, &ctx.session_zone(), limit)
+        .map_err(|error| crate::driver::kv_read_error("foreign key lookup failed", error))
 }
 
 /// The foreign keys a table declares, with the child's column names.
@@ -254,9 +280,9 @@ pub(crate) fn require_updated_child_rows(
     table: &str,
     old: &[Vec<Datum>],
     new: &[Vec<Datum>],
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    check_child_row_changes(catalog, triggers, database, table, Some(old), new, zone)
+    check_child_row_changes(catalog, triggers, database, table, Some(old), new, ctx)
 }
 
 fn check_child_row_changes(
@@ -266,7 +292,7 @@ fn check_child_row_changes(
     table: &str,
     old: Option<&[Vec<Datum>]>,
     rows: &[Vec<Datum>],
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     for node in triggers
         .iter()
@@ -278,7 +304,9 @@ fn check_child_row_changes(
             let Some(key) = key_at(row, child) else {
                 continue;
             };
-            if old.is_some_and(|old| key_at(&old[index], child).as_ref() == Some(&key)) {
+            if old.is_some_and(|old| {
+                key_at(&old[index], child).is_some_and(|before| same_key(&before, &key, ctx))
+            }) {
                 continue;
             }
             if !wanted.contains(&key) {
@@ -288,17 +316,20 @@ fn check_child_row_changes(
         if wanted.is_empty() {
             continue;
         }
-        let Some(parent_rows) = scan(catalog, &node.parent_database, &node.parent_table, zone)
-        else {
-            continue;
-        };
-        for parent in &parent_rows {
-            if let Some(key) = key_at(parent, &node.parent_offsets) {
-                wanted.retain(|seen| *seen != key);
+        for key in wanted {
+            if lookup_handles(
+                catalog,
+                &node.parent_database,
+                &node.parent_table,
+                node.lookup_index,
+                &key,
+                1,
+                ctx,
+            )?
+            .is_empty()
+            {
+                return Err(planned_violation(node));
             }
-        }
-        if !wanted.is_empty() {
-            return Err(planned_violation(node));
         }
     }
     Ok(())
@@ -322,7 +353,7 @@ pub(crate) fn require_existing_rows(
     database: &str,
     table: &str,
     foreign_key: &KvForeignKey,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let (_, columns) = declared(catalog, database, table);
     let Some(child) = child_offsets(&columns, foreign_key) else {
@@ -331,26 +362,40 @@ pub(crate) fn require_existing_rows(
     let Some((offsets, _)) = parent_offsets(catalog, foreign_key) else {
         return Ok(());
     };
-    let Some(parent_rows) = scan(
-        catalog,
-        &foreign_key.ref_schema,
-        &foreign_key.ref_table,
-        zone,
-    ) else {
+    let Some(TableEntry::Kv(parent)) =
+        catalog.get_in(&foreign_key.ref_schema, &foreign_key.ref_table)
+    else {
         return Ok(());
     };
-    let Some(rows) = scan(catalog, database, table, zone) else {
+    let index = parent.foreign_key_lookup_index(&offsets).ok_or_else(|| {
+        DriverError::ForeignKeyNoReferencedRow {
+            table: format!("`{database}`.`{table}`"),
+            constraint: constraint_text(foreign_key),
+        }
+    })?;
+    let Some(TableEntry::Kv(child_table)) = catalog.get_mut_for_foreign_key(database, table) else {
         return Ok(());
     };
-    for row in &rows {
-        // MATCH SIMPLE, and Go's `%n is not null` conjunction: a row with any
-        // NULL in the referencing columns is not checked.
-        let Some(key) = key_at(row, &child) else {
+    let mut rows = std::sync::Arc::make_mut(child_table)
+        .row_cursor_with_context(&RowDecodeContext::for_write(ctx))
+        .map_err(|error| crate::driver::kv_read_error("foreign key validation failed", error))?;
+    while let Some((_, row)) = rows
+        .next_row()
+        .map_err(|error| crate::driver::kv_read_error("foreign key validation failed", error))?
+    {
+        let Some(key) = key_at(&row, &child) else {
             continue;
         };
-        if !parent_rows
-            .iter()
-            .any(|parent| key_at(parent, &offsets).is_some_and(|found| found == key))
+        if lookup_handles(
+            catalog,
+            &foreign_key.ref_schema,
+            &foreign_key.ref_table,
+            index,
+            &key,
+            1,
+            ctx,
+        )?
+        .is_empty()
         {
             return Err(DriverError::ForeignKeyNoReferencedRow {
                 table: format!("`{database}`.`{table}`"),
@@ -369,9 +414,9 @@ pub(crate) fn require_child_rows(
     database: &str,
     table: &str,
     rows: &[Vec<Datum>],
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    check_child_row_changes(catalog, triggers, database, table, None, rows, zone)
+    check_child_row_changes(catalog, triggers, database, table, None, rows, ctx)
 }
 
 /// What a parent-side statement does to one parent row.
@@ -489,7 +534,11 @@ fn cascade_at_depth(
                     };
                     // Assigning a referenced column its own value, or
                     // touching an unreferenced one, withdraws nothing.
-                    if Some(&before) == after.as_ref() {
+                    if check_only
+                        && after
+                            .as_ref()
+                            .is_some_and(|after| same_key(&before, after, ctx))
+                    {
                         continue;
                     }
                     withdrawn.push((before, after));
@@ -500,24 +549,50 @@ fn cascade_at_depth(
             continue;
         }
         let child = &node.child_offsets;
-        let Some(child_rows) = scan(catalog, &child_db, &child_table, &ctx.session_zone()) else {
-            continue;
-        };
+        let mut child_rows = Vec::new();
+        let mut child_handles = Vec::new();
         let mut affected: Vec<(usize, Option<Vec<Datum>>)> = Vec::new();
-        for (index, row) in child_rows.iter().enumerate() {
-            accountant.account_row(row).map_err(DriverError::from)?;
-            let Some(key) = key_at(row, &child) else {
-                continue;
-            };
-            if let Some((_, replacement)) = withdrawn.iter().find(|(from, _)| *from == key) {
-                affected.push((index, replacement.clone()));
+        let mut seen = std::collections::HashSet::new();
+        for (key, replacement) in withdrawn {
+            let handles = lookup_handles(
+                catalog,
+                child_db,
+                child_table,
+                node.lookup_index,
+                &key,
+                if check_only { 1 } else { usize::MAX },
+                ctx,
+            )?;
+            if check_only && !handles.is_empty() {
+                return Err(planned_violation(node));
+            }
+            for handle in handles {
+                if !seen.insert(handle.clone()) {
+                    continue;
+                }
+                let Some(TableEntry::Kv(kv)) =
+                    catalog.get_mut_for_foreign_key(child_db, child_table)
+                else {
+                    return Err(DriverError::unsupported(
+                        "foreign key table changed during cascade",
+                    ));
+                };
+                let row = std::sync::Arc::make_mut(kv)
+                    .get_row_by_handle_with_context(&handle, &RowDecodeContext::for_write(ctx))
+                    .map_err(|error| {
+                        crate::driver::kv_read_error("foreign key cascade read failed", error)
+                    })?
+                    .ok_or_else(|| {
+                        DriverError::unsupported("foreign key index has no matching record")
+                    })?;
+                accountant.account_row(&row).map_err(DriverError::from)?;
+                affected.push((child_rows.len(), replacement.clone()));
+                child_handles.push(handle);
+                child_rows.push(row);
             }
         }
         if affected.is_empty() {
             continue;
-        }
-        if action.is_restricting() {
-            return Err(planned_violation(node));
         }
         match action {
             FkAction::NoOption | FkAction::Restrict | FkAction::NoAction | FkAction::SetDefault => {
@@ -534,7 +609,22 @@ fn cascade_at_depth(
                     doomed.iter().map(|row| ParentChange::Delete(row)).collect();
                 let nested_triggers =
                     cascade_triggers(catalog, child_db, child_table, true, child, ctx)?;
-                delete_rows(catalog, child_db, child_table, &doomed, ctx)?;
+                let Some(TableEntry::Kv(kv)) =
+                    catalog.get_mut_for_foreign_key(child_db, child_table)
+                else {
+                    return Err(DriverError::unsupported(
+                        "foreign key table changed during cascade",
+                    ));
+                };
+                let kv = std::sync::Arc::make_mut(kv);
+                for (index, _) in &affected {
+                    kv.delete_row_with_old_context(
+                        &child_handles[*index],
+                        &child_rows[*index],
+                        ctx,
+                    )
+                    .map_err(crate::driver::kv_write_error)?;
+                }
                 cascade_at_depth(
                     catalog,
                     &nested_triggers,
@@ -601,7 +691,18 @@ fn cascade_at_depth(
                     .collect();
                 let nested_triggers =
                     cascade_triggers(catalog, child_db, child_table, false, child, ctx)?;
-                rewrite_rows(catalog, child_db, child_table, &rewritten, ctx)?;
+                let Some(TableEntry::Kv(kv)) =
+                    catalog.get_mut_for_foreign_key(child_db, child_table)
+                else {
+                    return Err(DriverError::unsupported(
+                        "foreign key table changed during cascade",
+                    ));
+                };
+                let kv = std::sync::Arc::make_mut(kv);
+                for ((index, _), (old, new)) in affected.iter().zip(&rewritten) {
+                    kv.update_row_with_old_context(&child_handles[*index], Some(old), new, ctx)
+                        .map_err(crate::driver::kv_write_error)?;
+                }
                 let old: Vec<_> = rewritten.iter().map(|(old, _)| old.clone()).collect();
                 let new: Vec<_> = rewritten.iter().map(|(_, new)| new.clone()).collect();
                 require_updated_child_rows(
@@ -611,7 +712,7 @@ fn cascade_at_depth(
                     child_table,
                     &old,
                     &new,
-                    &ctx.session_zone(),
+                    ctx,
                 )?;
                 cascade_at_depth(
                     catalog,
@@ -670,59 +771,6 @@ fn cascade_triggers(
         &spec,
         &tidb_planner::plan_base::PlanIdAllocator::new(),
     )
-}
-
-/// Deletes the rows equal to `rows`, matched by value because a cascade names
-/// its victims by content rather than by handle.
-fn delete_rows(
-    catalog: &mut Catalog,
-    database: &str,
-    table: &str,
-    rows: &[Vec<Datum>],
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let Some(TableEntry::Kv(kv)) = catalog.get_mut_for_foreign_key(database, table) else {
-        return Ok(());
-    };
-    let kv = std::sync::Arc::make_mut(kv);
-    let stored = kv
-        .scan_rows_with_handles(&ctx.session_zone())
-        .map_err(|e| crate::driver::kv_read_error("row decode failed", e))?;
-    let mut remaining: Vec<&Vec<Datum>> = rows.iter().collect();
-    for (handle, row) in stored {
-        if let Some(position) = remaining.iter().position(|wanted| ***wanted == row[..]) {
-            remaining.swap_remove(position);
-            kv.delete_row_with_old_context(&handle, &row, ctx)
-                .map_err(crate::driver::kv_write_error)?;
-        }
-    }
-    Ok(())
-}
-
-/// Applies `(old, new)` rewrites, matched by the old row's value.
-fn rewrite_rows(
-    catalog: &mut Catalog,
-    database: &str,
-    table: &str,
-    rewrites: &[(Vec<Datum>, Vec<Datum>)],
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let Some(TableEntry::Kv(kv)) = catalog.get_mut_for_foreign_key(database, table) else {
-        return Ok(());
-    };
-    let kv = std::sync::Arc::make_mut(kv);
-    let stored = kv
-        .scan_rows_with_handles(&ctx.session_zone())
-        .map_err(|e| crate::driver::kv_read_error("row decode failed", e))?;
-    let mut remaining: Vec<&(Vec<Datum>, Vec<Datum>)> = rewrites.iter().collect();
-    for (handle, row) in stored {
-        if let Some(position) = remaining.iter().position(|(old, _)| old[..] == row[..]) {
-            let (_, new) = remaining.swap_remove(position);
-            kv.update_row_with_context(&handle, new, ctx)
-                .map_err(crate::driver::kv_write_error)?;
-        }
-    }
-    Ok(())
 }
 
 /// Whether a table takes part in any foreign key, as the declaring child or

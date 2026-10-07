@@ -1356,7 +1356,7 @@ fn run_insert_with_physical(
                 &database,
                 &table_name,
                 &[row.to_vec()],
-                &ctx.session_zone(),
+                ctx,
             ) {
                 if matches!(error, DriverError::ForeignKeyNoReferencedRow { .. }) {
                     let warning = error.to_mysql_error();
@@ -1435,7 +1435,7 @@ fn run_insert_with_physical(
             &database,
             &table_name,
             &written,
-            &ctx.session_zone(),
+            ctx,
         )?;
     }
     updates.finish(catalog, ctx)?;

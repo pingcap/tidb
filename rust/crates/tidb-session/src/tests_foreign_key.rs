@@ -2560,3 +2560,182 @@ fn alter_foreign_key_implicit_index_backfills_existing_rows() {
         vec![vec!["7"]]
     );
 }
+
+// Go FKCheckExec.buildCheckKeyFromFKValue uses table/index encoding, including
+// collation keys. FKCascadeExec builds SQL predicates with the same collation.
+#[test]
+fn fk_access_batch_child_checks_use_collated_keys() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE fp (k VARCHAR(20), n INT, KEY(k,n)) COLLATE=utf8mb4_general_ci")
+        .unwrap();
+    session.run("CREATE TABLE fc (id INT PRIMARY KEY, k VARCHAR(20), FOREIGN KEY(k) REFERENCES fp(k)) COLLATE=utf8mb4_general_ci").unwrap();
+    session
+        .run("INSERT INTO fp VALUES ('AbC',1),('abc',2)")
+        .unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "INSERT INTO fc VALUES (1,'aBc'),(2,'ABC '),(3,NULL)"
+        ),
+        None
+    );
+    assert_eq!(code(&mut session, "UPDATE fc SET k='abc' WHERE id=1"), None);
+    assert_eq!(
+        code(&mut session, "INSERT INTO fc VALUES (4,'missing')"),
+        Some(1452)
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT COUNT(*) FROM fc"),
+        vec![vec!["3"]]
+    );
+}
+
+#[test]
+fn fk_access_batch_restrict_uses_collation_and_statement_writes() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE fp (k VARCHAR(20), UNIQUE KEY(k)) COLLATE=utf8mb4_general_ci")
+        .unwrap();
+    session.run("CREATE TABLE fc (k VARCHAR(20), FOREIGN KEY(k) REFERENCES fp(k)) COLLATE=utf8mb4_general_ci").unwrap();
+    session.run("INSERT INTO fp VALUES ('AbC')").unwrap();
+    session.run("SET foreign_key_checks=0").unwrap();
+    session.run("INSERT INTO fc VALUES ('abc')").unwrap();
+    session.run("SET foreign_key_checks=1").unwrap();
+    assert_eq!(code(&mut session, "DELETE FROM fp"), Some(1451));
+    // Go's updateRowNeedToCheck does not withdraw a collated-equal old key.
+    assert_eq!(code(&mut session, "UPDATE fp SET k='ABC'"), None);
+    session.run("BEGIN").unwrap();
+    session.run("DELETE FROM fc").unwrap();
+    assert_eq!(code(&mut session, "DELETE FROM fp"), None);
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(rows(&mut session, "SELECT k FROM fc"), vec![vec!["abc"]]);
+}
+
+#[test]
+fn fk_access_batch_cascades_retain_matching_handles() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE fp (k VARCHAR(20), UNIQUE KEY(k)) COLLATE=utf8mb4_general_ci")
+        .unwrap();
+    session.run("CREATE TABLE fc (k VARCHAR(20), n INT, KEY(k,n), FOREIGN KEY(k) REFERENCES fp(k) ON UPDATE CASCADE ON DELETE CASCADE) COLLATE=utf8mb4_general_ci").unwrap();
+    session
+        .run("INSERT INTO fp VALUES ('AbC'),('stay')")
+        .unwrap();
+    session.run("SET foreign_key_checks=0").unwrap();
+    session
+        .run("INSERT INTO fc VALUES ('abc',1),('ABC',1),('stay',9)")
+        .unwrap();
+    session.run("SET foreign_key_checks=1").unwrap();
+    session.run("UPDATE fp SET k='next' WHERE k='AbC'").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT k,n FROM fc ORDER BY k,n"),
+        vec![vec!["next", "1"], vec!["next", "1"], vec!["stay", "9"]]
+    );
+    session.run("DELETE FROM fp WHERE k='next'").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT k,n FROM fc"),
+        vec![vec!["stay", "9"]]
+    );
+}
+
+#[test]
+fn fk_access_batch_alter_validation_uses_parent_key_owner() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE fp (k VARCHAR(20), n INT, KEY(k,n)) COLLATE=utf8mb4_general_ci")
+        .unwrap();
+    session
+        .run("CREATE TABLE fc (k VARCHAR(20)) COLLATE=utf8mb4_general_ci")
+        .unwrap();
+    session.run("INSERT INTO fp VALUES ('AbC',1)").unwrap();
+    session.run("INSERT INTO fc VALUES ('abc'),(NULL)").unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE fc ADD CONSTRAINT fk FOREIGN KEY(k) REFERENCES fp(k)"
+        ),
+        None
+    );
+    assert_eq!(
+        code(&mut session, "INSERT INTO fc VALUES ('absent')"),
+        Some(1452)
+    );
+}
+
+#[test]
+fn fk_access_batch_common_primary_prefix_and_exact_lookup() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE fp (k VARCHAR(20), n INT, PRIMARY KEY(k,n) CLUSTERED) COLLATE=utf8mb4_general_ci").unwrap();
+    session.run("CREATE TABLE fc (k VARCHAR(20), n INT, FOREIGN KEY(k) REFERENCES fp(k), FOREIGN KEY(k,n) REFERENCES fp(k,n)) COLLATE=utf8mb4_general_ci").unwrap();
+    session.run("INSERT INTO fp VALUES ('AbC',1)").unwrap();
+    assert_eq!(code(&mut session, "INSERT INTO fc VALUES ('abc',1)"), None);
+    assert_eq!(
+        code(&mut session, "INSERT INTO fc VALUES ('abc',2)"),
+        Some(1452)
+    );
+    assert_eq!(code(&mut session, "DELETE FROM fp"), Some(1451));
+}
+
+// Backend read errors must reach SQL even for IGNORE. They are not evidence
+// that no dependent row exists (Go FKCheckExec.checkKey/checkPrefixKey).
+#[test]
+fn fk_access_batch_read_errors_are_not_success_or_ignored_violations() {
+    use tidb_executor::storage::{StorageError, StorageIterator, TableStorage};
+    use tidb_txnkv::Key;
+    #[derive(Debug, Clone)]
+    struct FailedReads;
+    fn failure() -> StorageError {
+        StorageError::Sql(tidb_executor::MysqlError::new(
+            9005,
+            "FK read failed",
+        ))
+    }
+    impl TableStorage for FailedReads {
+        fn get(&mut self, _: &Key) -> Result<Vec<u8>, StorageError> {
+            Err(failure())
+        }
+        fn iter(
+            &mut self,
+            _: Option<&Key>,
+            _: Option<&Key>,
+        ) -> Result<Box<dyn StorageIterator>, StorageError> {
+            Err(failure())
+        }
+        fn set(&mut self, _: Key, _: Vec<u8>) -> Result<(), StorageError> {
+            Ok(())
+        }
+        fn delete(&mut self, _: Key) -> Result<(), StorageError> {
+            Ok(())
+        }
+        fn key_count(&self) -> usize {
+            0
+        }
+        fn clear(&mut self) {}
+        fn clone_box(&self) -> Box<dyn TableStorage> {
+            Box::new(self.clone())
+        }
+    }
+    let mut session = pair("");
+    session
+        .with_staged_catalog(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "p")
+            else {
+                panic!("missing parent");
+            };
+            std::sync::Arc::make_mut(table).replace_storage(Box::new(FailedReads));
+            Ok(())
+        })
+        .unwrap();
+    for sql in [
+        "INSERT INTO c VALUES(20,1)",
+        "INSERT IGNORE INTO c VALUES(20,1)",
+        "UPDATE c SET pid=2 WHERE id=10",
+    ] {
+        assert_eq!(code(&mut session, sql), Some(9005), "{sql}");
+    }
+    assert_eq!(
+        rows(&mut session, "SELECT id,pid FROM c"),
+        vec![vec!["10", "1"]]
+    );
+}

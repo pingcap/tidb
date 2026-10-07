@@ -1711,6 +1711,117 @@ impl KvTable {
         self.read_partitions = Some(narrowed);
     }
 
+    /// Go FindIndexByColumnsForForeignKey, also used by ALTER validation.
+    /// The outer Option distinguishes a missing access path from an integer
+    /// clustered record key, which needs no secondary index.
+    pub(crate) fn foreign_key_lookup_index(&self, columns: &[usize]) -> Option<Option<i64>> {
+        if columns.len() == 1 && self.pk_handle_offset == Some(columns[0]) {
+            return Some(None);
+        }
+        self.indexes
+            .iter()
+            .find(|index| {
+                index.column_offsets.starts_with(columns)
+                    && columns.iter().enumerate().all(|(position, offset)| {
+                        let length = index.prefix_length(position);
+                        length == tidb_datatype::UNSPECIFIED_LENGTH
+                            || length >= self.columns[*offset].field_type.flen()
+                    })
+                    && self.partial_index_safe_for_columns(index, columns)
+            })
+            .map(|index| Some(index.id))
+    }
+
+    /// Go FKCheckExec's exact/prefix access, shared with cascade selection.
+    /// Existence checks request one handle and never decode unrelated rows.
+    /// The storage owner merges the transaction's current writes/tombstones.
+    pub(crate) fn foreign_key_handles(
+        &mut self,
+        index_id: Option<i64>,
+        values: &[Datum],
+        zone: &SessionTimeZone,
+        limit: usize,
+    ) -> Result<Vec<TableHandle>, KvTableError> {
+        if self.partition.is_some() {
+            return Err(KvTableError::Decode(
+                "foreign keys do not support partitioned tables".into(),
+            ));
+        }
+        let Some(index_id) = index_id else {
+            let handle = match values {
+                [Datum::Int(value)] => TableHandle::Int(*value),
+                [Datum::UInt(value)] => TableHandle::Int(*value as i64),
+                _ => {
+                    return Err(KvTableError::Encode(
+                        "foreign key integer handle is invalid".into(),
+                    ))
+                }
+            };
+            return Ok(self
+                .stored_record(&handle)?
+                .map(|_| handle)
+                .into_iter()
+                .collect());
+        };
+        let index = self
+            .indexes
+            .iter()
+            .find(|index| index.id == index_id)
+            .ok_or_else(|| KvTableError::Decode("foreign key index is missing".into()))?;
+        if index.clustered_primary {
+            let encoded = tidb_codec::Encoder::new(self.use_new_collation)
+                .encode_key_in_timezone(zone, values)
+                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+            let handle = tidb_txnkv::CommonHandle::new(encoded)
+                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+            let handle = TableHandle::Common(handle.encoded().to_vec());
+            if values.len() == index.column_offsets.len() {
+                return Ok(self
+                    .stored_record(&handle)?
+                    .map(|_| handle)
+                    .into_iter()
+                    .collect());
+            }
+            let low = Key::from_bytes(encode_row_key_with_handle(
+                self.table_id,
+                &handle.record_handle(),
+            ));
+            let high = low.prefix_next();
+            let mut iter = self.store.iter(Some(&low), Some(&high))?;
+            let mut handles = Vec::new();
+            while iter.valid() && handles.len() < limit {
+                handles.push(TableHandle::Common(
+                    tidb_codec::table_key::cut_row_key_prefix(iter.key().as_bytes()).to_vec(),
+                ));
+                if handles.len() < limit {
+                    iter.next()?;
+                }
+            }
+            return Ok(handles);
+        }
+        if index.unique && values.len() == index.column_offsets.len() && !index.has_prefix() {
+            return Ok(self
+                .lookup_unique(index_id, values, zone)?
+                .into_iter()
+                .collect());
+        }
+        let range = IndexRange {
+            low: values.to_vec(),
+            high: values.to_vec(),
+            low_exclusive: false,
+            high_exclusive: false,
+        };
+        let mut cursor = self.index_range_cursor(index_id, &range, zone)?;
+        let mut handles = Vec::new();
+        while handles.len() < limit {
+            let Some(handle) = cursor.next_handle()? else {
+                break;
+            };
+            handles.push(handle);
+        }
+        Ok(handles)
+    }
+
     /// The stored record for `handle` -- its key AND its bytes -- found by
     /// probing the partitions, or `None` when none holds it.
     ///

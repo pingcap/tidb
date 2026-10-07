@@ -121,7 +121,7 @@ impl<'a> UpdateRecords<'a> {
                 database,
                 name,
                 std::slice::from_ref(new),
-                &ctx.session_zone(),
+                ctx,
             )
             .and_then(|()| {
                 crate::foreign_key::check_parent_changes(
@@ -235,7 +235,7 @@ impl<'a> UpdateRecords<'a> {
                 name,
                 &old,
                 &new,
-                &ctx.session_zone(),
+                ctx,
             )?;
             let changes: Vec<_> = checked
                 .iter()

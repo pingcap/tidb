@@ -1,0 +1,178 @@
+{
+  "baseline": "730f8b2f052d29742ac288e314df541411131be2",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_client_unchanged": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "scope": "E02/K03/D11 shared FK access, contextual decoding, retained cascade identities and existing-row admission. No complete package acceptance.",
+  "sources": [
+    {
+      "path": "pkg/executor/foreign_key.go",
+      "sha256": "c8c39bf0a8eb711b47f784ffde1f85ac6124f58a4e2f5460541f8d54c02b91f8",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/foreign_key.go",
+      "sha256": "29414c494148f5fe9dcc17741317ac8541284b4a0c0b0818e36c132ed014f549",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/meta/model/index.go",
+      "sha256": "c33b00fc990db9fc00a3cb763b47a9b4db9ca4ed164e463c58562196a0c4df2c",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/table/tables/index.go",
+      "sha256": "8524c014d3edfa022bc37c1626857e84508df20b7221daef69e63a6c456162a5",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/table/tables/tables.go",
+      "sha256": "d0b6204e9cade9e9cf5af83b64e682d8e49b4c90ed61b37e460acdb19b1fd46e",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/ddl/foreign_key.go",
+      "sha256": "89a40b8fb3d403c1f50de80db8af17b4a45dd439dabedd649c8c6b1e3be98afd",
+      "matches_fetched_blob": true
+    }
+  ],
+  "changes": [
+    "Retain the selected FK index ID on the physical node. Planner and ALTER validation share foreign_key_lookup_index; checks execute exact record/unique or index/common-primary prefix lookups through existing codecs/storage.",
+    "Replace raw Datum matching with encoded key access and Go collated-equal check suppression. Cascades preserve their separate on-update behavior. MATCH SIMPLE, partial-index safety, missing-parent planning and statement rollback remain.",
+    "Propagate typed storage errors through ordinary/IGNORE consumers. Child/cascade/ALTER callers pass the submitting StmtContext; decoded existing rows use RowDecodeContext::for_write.",
+    "Retain cascade handles and preimages through ordinary table update/delete, removing value-based handle rediscovery. Only matching rows are decoded/accounted.",
+    "Remove foreign_key::scan, delete_rows, rewrite_rows and the now-unreferenced KvTable::scan_rows/scan_rows_with_handles zone-only wrappers. Retain behavioral tests; no Go-derived obligation retired."
+  ],
+  "before": {
+    "rust": {
+      "path": "/workspace/.cloud-setup/fk-access-batch/before.log",
+      "sha256": "53a50a7323cad4b95ddf51e0dc37f4fedb8d7992160cbee9ccba2e1a52338bee",
+      "passed": 0,
+      "failed": 5,
+      "command": "cargo test --locked -p tidb-session --lib -- fk_access_batch --test-threads=1"
+    },
+    "wire": {
+      "path": "/workspace/.cloud-setup/fk-access-batch/before-wire.json",
+      "sha256": "e4c97dbb8fae1031dd2276d82e989f2633ff0be3f7323bfbbd73029df800322d",
+      "passed": 0,
+      "total": 6,
+      "diagnostic": "Five supported DML scenarios reproduce collation failures/unsafe acceptance; ALTER FK separately refuses at the unchanged cluster adapter."
+    }
+  },
+  "validation": {
+    "rust": {
+      "path": "/workspace/.cloud-setup/fk-access-batch/grouped-ready.log",
+      "sha256": "fcd6b703f0eda77c50f400e46fe53d57939704ca3a93ed8c49778d5451606246",
+      "command": "cargo test --locked -p tidb-executor -p tidb-session --lib -- tests_foreign_key:: tests_statement_rollback:: tests_multi_table_dml:: kv_table::tests:: kv_table::table_scan::remote_cursor_tests:: --test-threads=1",
+      "passed": 203,
+      "failed": 0,
+      "ignored": 0,
+      "by_crate": {
+        "tidb-executor": 54,
+        "tidb-session": 149
+      }
+    },
+    "all_targets": {
+      "path": "/workspace/.cloud-setup/fk-access-batch/check.log",
+      "sha256": "0573989d7dbb17759789484966a38230503204e93c843fe95426ffc8ad7a8780",
+      "command": "cargo check --locked --all-targets -p tidb-planner -p tidb-executor -p tidb-session -p tidb-server",
+      "exit_code": 0
+    },
+    "lint": {
+      "path": "/workspace/.cloud-setup/fk-access-batch/lint.log",
+      "sha256": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4",
+      "command": "make lint",
+      "exit_code": 0
+    },
+    "locked_build": {
+      "path": "/workspace/.cloud-setup/fk-access-batch/build.log",
+      "sha256": "31a7e9214149be45d87b9e6b86de2679d65a794bc63828efb3bc9a073a209b6e",
+      "command": "cargo build --locked -p tidb-server",
+      "exit_code": 0
+    },
+    "wire": {
+      "path": "/workspace/.cloud-setup/fk-access-batch/after-wire.json",
+      "sha256": "1a34e7c00c52303d987c0926c98f99a484353405b6fe820041f48d97fb96cec9",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/fk-access-batch/wire.py after",
+      "passed": 5,
+      "total": 6,
+      "unchanged_unsupported": 1,
+      "server_exit": 0,
+      "cases": [
+        {
+          "name": "child_False",
+          "steps": 6,
+          "passed": true
+        },
+        {
+          "name": "child_True",
+          "steps": 6,
+          "passed": true
+        },
+        {
+          "name": "restrict",
+          "steps": 13,
+          "passed": true
+        },
+        {
+          "name": "cascade_CASCADE",
+          "steps": 8,
+          "passed": true
+        },
+        {
+          "name": "cascade_SET NULL",
+          "steps": 8,
+          "passed": true
+        },
+        {
+          "name": "alter",
+          "steps": 6,
+          "passed": false,
+          "error": "(1105, \"this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, placement policy changes, index changes, and single-action ALTER INDEX changes only; run this statement on a TiDB server\")",
+          "sql": "ALTER TABLE c ADD CONSTRAINT fk FOREIGN KEY(k) REFERENCES p(k)",
+          "unchanged_unsupported": true
+        }
+      ]
+    }
+  },
+  "intermediate": [
+    {
+      "path": "/workspace/.cloud-setup/fk-access-batch/after.log",
+      "sha256": "fe39851f31bef9c27eaf2c480888a8a28f204b00b6d2f2e1f2806cb3fcd90316",
+      "passed": 148,
+      "failed": 0,
+      "scope": "First FK/rollback/multi-table session pass before wrapper removal and typed backend-error regression."
+    },
+    {
+      "path": "/workspace/.cloud-setup/fk-access-batch/grouped.log",
+      "sha256": "b830cfe6acfb24328cdded9f7c85adda08dbe62c6e145cab40fa39056710f6d9",
+      "scope": "Fixture compilation failed: wrong delete ownership and MysqlError constructor signature; corrected before final run."
+    }
+  ],
+  "disposition": {
+    "counts": {
+      "tracked": 86,
+      "repaired": 30,
+      "unresolved": 56,
+      "open": 27,
+      "partial": 29
+    },
+    "findings": [
+      "E02",
+      "K03",
+      "D11"
+    ],
+    "status": "partial",
+    "other_unresolved": 53,
+    "other_evidence": "carried; not freshly reproduced"
+  },
+  "not_verified": [
+    "Complete Go package/source/test/support acceptance",
+    "Full Go suites",
+    "Live multi-node TiKV shared FK locking/conflicts",
+    "FK batch prefetch and runtime statistics",
+    "Physical cascade substatement compilation and complete streaming lifecycle",
+    "Cluster ALTER ADD FOREIGN KEY remains unsupported",
+    "Crash recovery or measured performance"
+  ],
+  "publication": "Actual hooks/pre-commit locked build and fresh locked build immediately before each authorized push remain mandatory. Final commit/remote SHA and reusable checkpoint are recorded outside Git in final-handoff.json."
+}

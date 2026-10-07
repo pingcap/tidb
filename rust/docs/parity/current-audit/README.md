@@ -1,17 +1,17 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [obsolete access-path adapters](access-adapter-cleanup-validation.json). Remove 13 disconnected helpers/types and gate three fixture-only adapters out of production builds. Existing tests use the shared estimator and capped lookup API; Go-derived adaptive blocking tests and all behavioral assertions remain. Finding dispositions stay unchanged.
+Latest cleanup: [shared FK access](fk-access-batch-validation.json). Remove the FK full-table scan/error suppression, value-based delete/update rediscovery and two zone-only scan wrappers after migrating every caller. Existing behavioral assertions remain; five source-linked failures and the storage-error regression protect the shared owner.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [partitioned shared table readers](partition-reader-batch-validation.json). Ordinary lookup, index join and index merge now carry physical partition identity through the shared request owner, ordered row/chunk completion, projections and fallback. Three baseline policy failures precede 221 passing Rust cases and nine passing real MySQL controls. N03/O13 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 54 roots retain carried evidence.
+Latest connected repair: [shared foreign-key access](fk-access-batch-validation.json). Child checks, parent restrictions, cascades and existing-row ALTER validation now use the selected canonical record/index keys. Cascades retain handles/preimages; typed read errors and submitting decode context survive all callers. Five baseline Rust failures precede 203 passing grouped cases and five supported real MySQL/unistore scenarios. Cluster ALTER-FK remains explicitly unsupported. E02/K03/D11 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 53 roots retain carried evidence.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../cluster-column-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../fk-access-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](cluster-column-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](fk-access-batch-validation.json): exact source/log identities and verification limits.
 
 Current Go comparison: `7a3dacb52efe58d28db360ae8639d8838c376544`. Its direct GROUP BY eligibility rule is now maintained by the index-probe batch. The Go SQL fixture already passed on the baseline; the regression reproduced incorrect candidate admission. Module pins remain unchanged. The earlier unique-by-schema NDV/TopN and local-unique partition NDV delta, plus the previous `5b7e1eb8f5f8252391b6e68330d1648a26a80c17` FM-sketch JSON/storage delta, are now covered by the statistics batch above. This updates the earlier cleanup checkpoint's explicitly unimplemented follow-ups; complete packages remain unaccepted. External pins are unchanged, including client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`; derive pins from master's go.mod. Native client master is `8b752f9638ad157931725b66ffdc57e0465432a9`; maintained sync includes the TSO failure/recovery batch.
 
@@ -27,9 +27,11 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 
 **Publication authorized by the user on 2026-10-05.** Preserve destinations `pingcap/tidb hparser-integration` and `ngaut/client-rust master`. The prior diagnostic was `remote: Permission to pingcap/tidb.git denied to ngaut.` (HTTP 403): GitHub App installation `90274244` excluded TiDB despite account admin/push permission. The user corrected its selected-repository grant. Normal managed Cloud pushes subsequently succeeded for TiDB `11dbe67777` and native `bb8206e7d080`, with remote SHAs verified. This blocker is cleared; every future push still requires its fresh locked build and remote verification. Never extract credentials or force-push.
 
-Latest implementation: [partition lock identity and reorganization safety](partition-lock-batch-validation.json). The removed local REORGANIZE shortcut is a safety repair; durable partition reorganization remains unresolved.
+Latest implementation: [shared FK access and retained cascades](fk-access-batch-validation.json). Prior partition reorganization safety remains in place until its durable owner exists.
 
 ## Historical evidence
+
+- [shared FK access](fk-access-batch-validation.json)
 
 - [runtime settings batch](runtime-settings-batch-validation.json)
 - [cluster configuration batch](cluster-config-batch-validation.json)

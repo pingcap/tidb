@@ -198,3 +198,8 @@ P03/P06/N03 now share construction-failure feedback, automatic healthy-backup ro
 Latest connected repair: [partitioned shared table readers](partition-reader-batch-validation.json). Ordinary lookup, index join and index merge now carry physical partition identity through the shared request owner, ordered row/chunk completion, projections and fallback. Three baseline policy failures precede 221 passing Rust cases and nine passing real MySQL controls. N03/O13 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 54 roots retain carried evidence.
 
 Current connected B02/B05/B04 maintenance: [partition locking and reorganization safety](partition-lock-batch-validation.json). Shared locking readers now retain physical partition IDs for SELECT/UPDATE/DELETE. The local metadata-only REORGANIZE path is removed after a live data-disappearance reproduction; preserve its durable-owner admission gate until the full job/data-movement lifecycle is available. E03/N03/D11 remain partial.
+
+
+## Shared FK access checkpoint — 2026-10-07
+
+Latest connected repair: [shared foreign-key access](fk-access-batch-validation.json). Child checks, parent restrictions, cascades and existing-row ALTER validation now use the selected canonical record/index keys. Cascades retain handles/preimages; typed read errors and submitting decode context survive all callers. Five baseline Rust failures precede 203 passing grouped cases and five supported real MySQL/unistore scenarios. Cluster ALTER-FK remains explicitly unsupported. E02/K03/D11 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 53 roots retain carried evidence.

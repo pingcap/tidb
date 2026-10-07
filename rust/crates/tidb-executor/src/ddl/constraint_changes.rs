@@ -144,7 +144,7 @@ impl PreparedConstraintChange {
                         database,
                         name,
                         &foreign_key,
-                        &ctx.session_zone(),
+                        ctx,
                     )?;
                 }
                 if let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) {

@@ -97,7 +97,7 @@ impl KvTable {
 
     /// A forward cursor over the table's record-key range, in key order.
     ///
-    /// This is the streaming form of [`KvTable::scan_rows_with_handles`]: the
+    /// This is the streaming form of [`KvTable::scan_rows_with_handles_with_context`]: the
     /// storage iterator stays open and one row is *decoded* per pull, so the
     /// decoded rows alive at once are the caller's chunk rather than the whole
     /// relation. (How far the laziness reaches below the storage seam is a
@@ -2249,12 +2249,7 @@ impl KvTable {
             .collect())
     }
 
-    /// Zone-only scan retained for foreign-key callers using legacy decode flags.
-    pub fn scan_rows(&mut self, zone: &SessionTimeZone) -> Result<Vec<Vec<Datum>>, KvTableError> {
-        self.scan_rows_with_context(&RowDecodeContext::legacy_default(zone))
-    }
-
-    /// Like [`KvTable::scan_rows`], but each row carries the record handle its
+    /// Like [`KvTable::scan_rows_with_context`], but each row carries the record handle its
     /// key encodes, which `UPDATE`/`DELETE` need to address the row again.
     ///
     /// Uses the backend's table reader, merging staged writes, or the local
@@ -2288,15 +2283,7 @@ impl KvTable {
         Ok(rows)
     }
 
-    /// Zone-only handle scan retained for foreign-key callers using legacy decode flags.
-    pub fn scan_rows_with_handles(
-        &mut self,
-        zone: &SessionTimeZone,
-    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        self.scan_rows_with_handles_with_context(&RowDecodeContext::legacy_default(zone))
-    }
-
-    /// [`KvTable::scan_rows_with_handles`] narrowed to `handle_ranges`: the
+    /// [`KvTable::scan_rows_with_handles_with_context`] narrowed to `handle_ranges`: the
     /// same intervals the read side offers a `TableRangeScan` through
     /// [`crate::table_access::TableAccess::accept_handle_ranges`]. `None`
     /// reads the whole table.
