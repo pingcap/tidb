@@ -57,7 +57,7 @@ Integration dependencies: B01, B04.
 
 ## B04: Durable DDL and placement recovery
 
-Current [metadata admission batch](alter-admission-batch-validation.json) prepares options, charset, rename and TTL/compatibility policy with existing column/index jobs. The next connected D11 boundary is cluster lowering plus shared original-schema admission before persisted execution; wire probes confirm these options are currently refused there. Partition/cache admission and durable recovery remain.
+Current [cluster column batch](cluster-column-batch-validation.json) retains every supported column sibling and shares original-schema admission, conflict ownership, stable-ID application and notifier/index consumers. Metadata-only type safety is enforced. Previous [metadata admission](alter-admission-batch-validation.json) owns local options/charset/TTL preparation. The next boundary remains complete durable multi-schema/column worker integration, alongside partition/cache admission and cluster option lowering; these are not discharged by the transaction planner.
 
 Current index lifecycle maintenance connects B02 K03 with B04 D02/D11: submitting evaluation policy, typed errors, physical-range deletion and implicit column-index cleanup. See [validation](index-lifecycle-batch-validation.json). Durable workers/recovery and parent dispositions remain unchanged.
 

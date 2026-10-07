@@ -3247,33 +3247,28 @@ fn a_table_constraint_primary_key_is_the_same_clustered_handle_as_an_inline_one(
 }
 
 #[test]
-fn a_created_database_is_stored_exactly_as_the_go_server_stores_it() {
-    let mut store = MetaStore::default();
-    store.put(key::next_global_id_kv_key(), b"111".to_vec());
-    store.put(key::schema_version_kv_key(), b"60".to_vec());
-    let write = plan(&mut store, "CREATE DATABASE u6", 1);
-    assert_eq!(write.created_id, Some(112));
-    assert_carries(
-        GO_DATABASE,
-        stored_value(&write, &key::database_kv_key(112)),
-        &[],
-    );
-}
-
-#[test]
-fn a_created_database_persists_its_resolved_charset_and_collation() {
-    let mut store = MetaStore::default();
-    store.put(key::next_global_id_kv_key(), b"111".to_vec());
-    store.put(key::schema_version_kv_key(), b"60".to_vec());
-    let write = plan(
-        &mut store,
-        "CREATE DATABASE u8 CHARACTER SET utf8 COLLATE utf8_general_ci",
-        1,
-    );
-    let database = value::parse_db_info(stored_value(&write, &key::database_kv_key(112)))
-        .expect("the stored database metadata decodes");
-    assert_eq!(database.charset, "utf8");
-    assert_eq!(database.collate, "utf8_general_ci");
+fn created_database_metadata_follows_go() {
+    for (sql, charset, collate) in [
+        ("CREATE DATABASE u6", "utf8mb4", "utf8mb4_bin"),
+        (
+            "CREATE DATABASE u6 CHARACTER SET utf8 COLLATE utf8_general_ci",
+            "utf8",
+            "utf8_general_ci",
+        ),
+    ] {
+        let mut store = bootstrapped();
+        store.pairs.remove(&key::database_kv_key(112));
+        store.put(key::next_global_id_kv_key(), b"111".to_vec());
+        let write = plan(&mut store, sql, 1);
+        assert_eq!(write.created_id, Some(112));
+        let encoded = stored_value(&write, &key::database_kv_key(112));
+        let database = value::parse_db_info(encoded).expect("stored metadata decodes");
+        assert_eq!(database.charset, charset);
+        assert_eq!(database.collate, collate);
+        if charset == "utf8mb4" {
+            assert_carries(GO_DATABASE, encoded, &[]);
+        }
+    }
 
     for (sql, expected_charset, expected_collate) in [
         ("CREATE DATABASE c CHARACTER SET utf8", "utf8", "utf8_bin"),
@@ -5902,7 +5897,7 @@ fn a_multi_action_alter_folds_over_one_evolving_table() {
 }
 
 /// A bundle mixing column and index changes folds over the same
-/// evolving table: the index resolves against the bundle-added column, the
+/// evolving table: the index resolves against an original column, the
 /// backfill walks existing rows against the evolved columns, and multiple
 /// index actions retain their SQL order in one catalog transaction.
 #[test]
@@ -5918,7 +5913,7 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
 
     let write = plan(
         &mut store,
-        "ALTER TABLE u6.t ADD COLUMN c BIGINT DEFAULT 5, ADD INDEX idx_c (c)",
+        "ALTER TABLE u6.t ADD COLUMN c BIGINT DEFAULT 5, ADD INDEX idx_c (v)",
         200,
     );
     let events = notifier_events(&mut store, &write);
@@ -5951,8 +5946,8 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
             .unwrap()
             .read()
             .offset,
-        2,
-        "the index column resolves against the bundle-added column's offset"
+        1,
+        "the admitted original column retains its offset"
     );
     let stored: serde_json::Value =
         serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
@@ -5994,12 +5989,9 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
     assert_eq!(write.backfill[1].index.read().name.original(), "i2");
 }
 
-/// Go `types.CheckModifyTypeCompatible` + `needReorgToChange`
-/// (`pkg/types/field_type.go:1476,1535`). Upstream coverage of this decision
-/// is testkit-bound — `pkg/ddl/tests/serial/serial_test.go:1261` drives it
-/// through `alter table`, and its comment records the exact contract these
-/// cases pin: `b int` -> `bigint` succeeds while `a bigint` -> `int` fails
-/// with "length 11 is less than origin 20".
+/// Go's type-compatibility decision distinguishes metadata changes from row
+/// reorganization. This catalog planner only owns the former; refusing the
+/// latter protects stored rows until the durable MODIFY worker is implemented.
 #[test]
 fn a_modify_column_reorganizes_exactly_where_go_says_it_must() {
     fn refuse(store: &mut MetaStore, sql: &str, start_ts: u64) -> String {
@@ -9528,4 +9520,174 @@ fn grouped_drop_columns_remove_every_owned_index_range() {
             .iter_deref()
             .any(|idx| idx.read().id == work.index.read().id));
     }
+}
+
+/// Go admits all specs before its shared MultiSchemaChange worker applies them.
+#[test]
+fn cluster_column_batch_retains_every_sibling_and_notification() {
+    for sql in [
+        "ALTER TABLE u6.t RENAME COLUMN a TO renamed, ADD COLUMN c INT DEFAULT 7, DROP COLUMN b",
+        "ALTER TABLE u6.t ADD COLUMN c INT DEFAULT 7, CHANGE COLUMN a renamed BIGINT, DROP COLUMN b",
+        "ALTER TABLE u6.t MODIFY COLUMN a BIGINT, ADD COLUMN c INT DEFAULT 7, RENAME COLUMN b TO renamed",
+    ] {
+        let mut store = bootstrapped();
+        let create = plan(
+            &mut store,
+            "CREATE TABLE u6.t(id BIGINT PRIMARY KEY, a INT, b INT, KEY ia(a))",
+            100,
+        );
+        let id = create.created_id.unwrap();
+        apply(&mut store, &create);
+        let write = plan(&mut store, sql, 200);
+        assert_eq!(
+            write.diff.action_type,
+            ActionType::ACTION_MULTI_SCHEMA_CHANGE,
+            "{sql}"
+        );
+        let stored = stored_table(&write, id);
+        let names: Vec<_> = stored["cols"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"]["O"].as_str().unwrap())
+            .collect();
+        assert!(
+            names.contains(&"c") && names.contains(&"renamed"),
+            "{sql}: {names:?}"
+        );
+        let events = notifier_events(&mut store, &write);
+        assert!(
+            events
+                .iter()
+                .any(|event| event.1.action_type() == ActionType::ACTION_ADD_COLUMN),
+            "{sql}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.1.action_type() == ActionType::ACTION_MODIFY_COLUMN),
+            "{sql}"
+        );
+        assert_eq!(
+            stored["cols"][1]["id"], 2,
+            "column identity survives siblings"
+        );
+    }
+}
+
+#[test]
+fn cluster_column_batch_admits_original_names_before_execution() {
+    for (sql, code) in [
+        (
+            "ALTER TABLE u6.t RENAME COLUMN a TO renamed, RENAME COLUMN renamed TO last_name",
+            1054,
+        ),
+        ("ALTER TABLE u6.t ADD COLUMN c INT, ADD INDEX ic(c)", 1072),
+        (
+            "ALTER TABLE u6.t RENAME COLUMN a TO renamed, ADD INDEX ia(a)",
+            8200,
+        ),
+        (
+            "ALTER TABLE u6.t MODIFY COLUMN a BIGINT, DROP COLUMN a",
+            8200,
+        ),
+        (
+            "ALTER TABLE u6.t ADD COLUMN c INT AFTER a, DROP COLUMN a",
+            8200,
+        ),
+    ] {
+        let mut store = bootstrapped();
+        let create = plan(
+            &mut store,
+            "CREATE TABLE u6.t(id BIGINT PRIMARY KEY,a INT,b INT)",
+            100,
+        );
+        apply(&mut store, &create);
+        let before = store.pairs.clone();
+        let error = plan_ddl(&mut store, &statement(sql), 200).expect_err(sql);
+        assert_eq!(error.to_sql_error().code, code, "{sql}: {error}");
+        assert_eq!(store.pairs, before, "admission must not mutate storage");
+    }
+}
+
+#[test]
+fn cluster_column_batch_rejects_reorg_before_publishing_siblings() {
+    for sql in [
+        "ALTER TABLE u6.t MODIFY a INT, ADD COLUMN c INT",
+        "ALTER TABLE u6.t CHANGE a renamed INT, ADD COLUMN c INT",
+        "ALTER TABLE u6.t MODIFY s VARCHAR(2), DROP COLUMN a",
+    ] {
+        let mut store = bootstrapped();
+        let create = plan(
+            &mut store,
+            "CREATE TABLE u6.t(id BIGINT PRIMARY KEY,a BIGINT,s VARCHAR(10))",
+            100,
+        );
+        apply(&mut store, &create);
+        let error = plan_ddl(&mut store, &statement(sql), 200).expect_err(sql);
+        assert_eq!(error.to_sql_error().code, 8200, "{sql}: {error}");
+    }
+}
+
+#[test]
+fn cluster_column_batch_conditional_noops_keep_notes_and_jobs() {
+    let mut store = bootstrapped();
+    let create = plan(
+        &mut store,
+        "CREATE TABLE u6.t(id BIGINT PRIMARY KEY,a INT,b INT)",
+        100,
+    );
+    let id = create.created_id.unwrap();
+    apply(&mut store, &create);
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN IF NOT EXISTS a INT, DROP COLUMN a, RENAME COLUMN b TO c",
+        200,
+    );
+    let stored = stored_table(&write, id);
+    assert_eq!(stored["cols"].as_array().unwrap().len(), 2);
+    assert_eq!(stored["cols"][1]["name"]["O"], "c");
+    assert!(write.warnings.iter().any(|warning| warning.1 == 1060));
+    let noop = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t RENAME COLUMN a TO a, DROP COLUMN IF EXISTS missing"),
+        300,
+    )
+    .unwrap();
+    let DdlPlan::AlreadySatisfied { warnings, .. } = noop else {
+        panic!("no jobs to publish")
+    };
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].1, 1091);
+}
+
+#[test]
+fn cluster_column_batch_positions_keep_index_identity() {
+    let mut store = bootstrapped();
+    let create = plan(
+        &mut store,
+        "CREATE TABLE u6.t(id BIGINT PRIMARY KEY,a INT,b INT,KEY ia(a))",
+        100,
+    );
+    let id = create.created_id.unwrap();
+    apply(&mut store, &create);
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN c INT FIRST, CHANGE a renamed BIGINT AFTER b",
+        200,
+    );
+    let stored = stored_table(&write, id);
+    let names: Vec<_> = stored["cols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"]["O"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["c", "id", "b", "renamed"]);
+    assert_eq!(
+        stored["index_info"][0]["idx_cols"][0]["name"]["O"],
+        "renamed"
+    );
+    assert_eq!(stored["index_info"][0]["idx_cols"][0]["offset"], 3);
+    assert_eq!(stored["cols"][3]["id"], 2);
 }

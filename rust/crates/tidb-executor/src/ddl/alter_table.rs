@@ -273,14 +273,34 @@ fn reject_multi_schema_same_column_or_index(
         }
     }
 
+    let names = |values: Vec<String>| {
+        tidb_model::GoSharedSlice::from_vec(
+            values.into_iter().map(tidb_ast::CiString::new).collect(),
+        )
+    };
+    check_multi_schema_names(&tidb_model::MultiSchemaInfo {
+        add_columns: names(add_columns),
+        drop_columns: names(drop_columns),
+        position_columns: names(position_columns),
+        modify_columns: names(modify_columns),
+        relative_columns: names(relative_columns),
+        add_indexes: names(add_indexes),
+        drop_indexes: names(drop_indexes),
+        alter_indexes: names(alter_indexes),
+        ..Default::default()
+    })
+}
+
+/// Go checkOperateSameColAndIdx, shared by local and cluster admission.
+pub fn check_multi_schema_names(info: &tidb_model::MultiSchemaInfo) -> Result<(), DriverError> {
     fn check_names(
-        names: &[String],
+        names: &[tidb_ast::CiString],
         add_to_seen: bool,
         seen: &mut HashSet<String>,
         kind: &str,
     ) -> Result<(), DriverError> {
         for name in names {
-            let canonical = name.go_to_lower();
+            let canonical = name.lowercase().to_owned();
             if seen.contains(&canonical) {
                 return Err(DriverError::DdlCoded {
                     errno: 8200,
@@ -297,16 +317,31 @@ fn reject_multi_schema_same_column_or_index(
     }
 
     let mut columns = HashSet::new();
-    check_names(&add_columns, true, &mut columns, "column")?;
-    check_names(&drop_columns, true, &mut columns, "column")?;
-    check_names(&position_columns, false, &mut columns, "column")?;
-    check_names(&modify_columns, true, &mut columns, "column")?;
-    check_names(&relative_columns, false, &mut columns, "column")?;
+    check_names(&info.add_columns.snapshot(), true, &mut columns, "column")?;
+    check_names(&info.drop_columns.snapshot(), true, &mut columns, "column")?;
+    check_names(
+        &info.position_columns.snapshot(),
+        false,
+        &mut columns,
+        "column",
+    )?;
+    check_names(
+        &info.modify_columns.snapshot(),
+        true,
+        &mut columns,
+        "column",
+    )?;
+    check_names(
+        &info.relative_columns.snapshot(),
+        false,
+        &mut columns,
+        "column",
+    )?;
 
     let mut indexes = HashSet::new();
-    check_names(&add_indexes, true, &mut indexes, "index")?;
-    check_names(&drop_indexes, true, &mut indexes, "index")?;
-    check_names(&alter_indexes, true, &mut indexes, "index")?;
+    check_names(&info.add_indexes.snapshot(), true, &mut indexes, "index")?;
+    check_names(&info.drop_indexes.snapshot(), true, &mut indexes, "index")?;
+    check_names(&info.alter_indexes.snapshot(), true, &mut indexes, "index")?;
     Ok(())
 }
 

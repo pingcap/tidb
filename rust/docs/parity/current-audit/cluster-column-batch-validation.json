@@ -1,0 +1,306 @@
+{
+  "date": "2026-10-07",
+  "baseline": "6a629d068acee57689dc19529a69474260f2f292",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_unchanged": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "scope": "B04 D11 cluster column composition, original-schema admission, shared application and index/notification consumers; existing-owner maintenance, no package acceptance",
+  "sources": [
+    {
+      "path": "pkg/ddl/executor.go",
+      "sha256": "da64dbe0b8c84efa64b61326c899cdc45a50272c823f7ebf7cea4eb888b02d3d",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/ddl/multi_schema_change.go",
+      "sha256": "64b0b1b27ec3076ea70285d0203a6cd1ab73e51ee7eb90aa4d1c4b32b03d07f0",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/ddl/modify_column.go",
+      "sha256": "ff51097ea541757ea8ad43faca49554f7b720df6788583ee904bed055256c7fc",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/ddl/column.go",
+      "sha256": "6d22e32650b5dd4d4238f14fd2694fdba68d19094e152cad96111f0848e8e684",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/types/field_type.go",
+      "sha256": "13b017f7a87b5bd1addae80574b5d10038a46988163af0796f79f595762e80d9",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/meta/model/job.go",
+      "sha256": "90777f283ee9253ad94941e44358b561b55da7a830572eec3da0ab9c60070918",
+      "matches_fetched_blob": true
+    }
+  ],
+  "changes": [
+    "CHANGE and RENAME no longer return prematurely from bundle lowering; MODIFY shares standalone lowering validation and every supported sibling is retained.",
+    "Single and bundled MODIFY/RENAME prepare original columns and apply one stable-ID replacement owner; evolving offsets and index names retain column identity.",
+    "Column and index admission resolves original schema names before execution. Local and cluster callers share check_multi_schema_names using Go MultiSchemaInfo categories and conflict order.",
+    "Conditional no-op columns/indexes preserve notes and create no jobs; same-name rename creates no job after CHECK dependency validation. Notifications omit skipped jobs and retain merged-index order.",
+    "The unsafe same-family type reinterpretation bypass is removed. Metadata-only widening remains supported; operations requiring the unimplemented row-reorganization worker return8200 before publication.",
+    "Premature branches, duplicate index-renaming loops, unnecessary MODIFY/RENAME table clones and late duplicate-index/CHECK job checks are retired. A stale added-column-index success fixture now targets an original column; its invalid SQL has a1072 regression. Misleading reorganization parity comments are corrected. Two stale database-bootstrap fixtures become one maintained table-driven case without losing Go serialization/charset obligations; repeated historical rollups in the audit index are removed."
+  ],
+  "baseline_results": {
+    "rust": {
+      "passed": 3,
+      "failed": 6,
+      "status": "FAILED",
+      "log": "/workspace/.cloud-setup/cluster-column-batch/before.log",
+      "sha256": "888525baacb52d9bd2f36b5f9a996bb9dda767f83936c7ea6b3767d149e66252"
+    },
+    "wire": {
+      "passed": 0,
+      "total": 8,
+      "cases": [
+        {
+          "case": "rename_siblings",
+          "sql": "ALTER TABLE t RENAME COLUMN a TO renamed, ADD COLUMN c INT DEFAULT 7, DROP COLUMN b",
+          "expected_error": null,
+          "warnings": [],
+          "error_code": 1054,
+          "error": "(1054, \"Unknown column 'c' in 'field list'\")",
+          "passed": false
+        },
+        {
+          "case": "change_position",
+          "sql": "ALTER TABLE t ADD COLUMN c INT DEFAULT 7 FIRST, CHANGE a renamed BIGINT AFTER b",
+          "expected_error": null,
+          "warnings": [],
+          "error_code": 1054,
+          "error": "(1054, \"Unknown column 'c' in 'field list'\")",
+          "passed": false
+        },
+        {
+          "case": "modify_siblings",
+          "sql": "ALTER TABLE t MODIFY COLUMN a BIGINT, ADD COLUMN c INT DEFAULT 7, RENAME COLUMN b TO renamed",
+          "expected_error": null,
+          "error_code": 1105,
+          "error": "(1105, \"this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, placement policy changes, index changes, and single-action ALTER INDEX changes only; run this statement on a TiDB server\")",
+          "passed": false
+        },
+        {
+          "case": "original_index",
+          "sql": "ALTER TABLE t ADD COLUMN c INT, ADD INDEX ic(c)",
+          "expected_error": 1072,
+          "warnings": [],
+          "passed": false,
+          "error": "unexpected success"
+        },
+        {
+          "case": "dependent_rename",
+          "sql": "ALTER TABLE t RENAME COLUMN a TO renamed, RENAME COLUMN renamed TO last_name",
+          "expected_error": 1054,
+          "warnings": [],
+          "passed": false,
+          "error": "unexpected success"
+        },
+        {
+          "case": "conflicting_jobs",
+          "sql": "ALTER TABLE t MODIFY COLUMN a BIGINT, DROP COLUMN a",
+          "expected_error": 8200,
+          "error_code": 1105,
+          "error": "(1105, \"this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, placement policy changes, index changes, and single-action ALTER INDEX changes only; run this statement on a TiDB server\")",
+          "passed": false
+        },
+        {
+          "case": "narrow_reorg",
+          "sql": "ALTER TABLE t MODIFY COLUMN big INT, ADD COLUMN c INT",
+          "expected_error": 8200,
+          "error_code": 1105,
+          "error": "(1105, \"this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, placement policy changes, index changes, and single-action ALTER INDEX changes only; run this statement on a TiDB server\")",
+          "passed": false
+        },
+        {
+          "case": "conditional_noop",
+          "sql": "ALTER TABLE t ADD COLUMN IF NOT EXISTS a INT, DROP COLUMN a, RENAME COLUMN b TO renamed",
+          "expected_error": null,
+          "warnings": [],
+          "rows": [
+            [
+              1,
+              20
+            ]
+          ],
+          "passed": false
+        }
+      ],
+      "log": "/workspace/.cloud-setup/cluster-column-batch/wire-before.json",
+      "sha256": "6fc3da7b1a0333dd338c709730f7bca7e98faeab749c0d3cd2fd09b97cbce6a6"
+    },
+    "initial_grouped_after": {
+      "passed": 9,
+      "failed": 0,
+      "status": "ok",
+      "log": "/workspace/.cloud-setup/cluster-column-batch/after.log",
+      "sha256": "e3a4e6cae0c32f2c9c5e93164e1cea636602144e3c94690ae064e436e1d2d988"
+    },
+    "broader_review": {
+      "passed": 121,
+      "failed": 3,
+      "status": "FAILED",
+      "log": "/workspace/.cloud-setup/cluster-column-batch/integration-review.log",
+      "sha256": "0e758801164e3a736adca24f55c67b2db5d527728b1f37b3368145e4353e2c09"
+    },
+    "notes": "The first wire probe checked rows but missed a dropped-column/notes defect; the recorded baseline includes complete columns/indexes/notes and fails all8. Final consolidation initially missed .. in an AddIndex pattern; corrected compiler error is retained in integration-compile-error.log and is not a behavior regression. The broader review passed121/failed3: a duplicated Unsupported prefix introduced by extraction was corrected; two old CREATE DATABASE fixtures omitted required notifier metadata. They are consolidated into one case using the maintained bootstrap owner with every Go serialization/charset assertion retained."
+  },
+  "validation": {
+    "profile": "Ready",
+    "executor_unit": {
+      "passed": 56,
+      "failed": 0,
+      "status": "ok",
+      "log": "/workspace/.cloud-setup/cluster-column-batch/unit.log",
+      "sha256": "15b93b6be6e6dae2af077c1fa180396b42c335a2ffe5b355037565f1bb563b0b"
+    },
+    "cluster_integration": {
+      "passed": 123,
+      "failed": 0,
+      "status": "ok",
+      "log": "/workspace/.cloud-setup/cluster-column-batch/integration.log",
+      "sha256": "b2d27ae050d3c4cfb09bf8daf49fafb6c81f1f93731ca39e1bd88bbe56a794ea"
+    },
+    "all_targets": {
+      "passed": true,
+      "log": "/workspace/.cloud-setup/cluster-column-batch/check.log",
+      "sha256": "a3eb93d5bd6bb1881201c989afa90bcf6c38505777efd0d4ce900da167261449"
+    },
+    "lint": {
+      "passed": true,
+      "log": "/workspace/.cloud-setup/cluster-column-batch/lint-final.log",
+      "sha256": "26b41959de9f59b05c98f66149c1e54eaa14e64377a80da604e07b5d4e0dd8d0"
+    },
+    "locked_server_build": {
+      "passed": true,
+      "log": "/workspace/.cloud-setup/cluster-column-batch/build.log",
+      "sha256": "7d9d00eadcc92b1c9160c4e4c0b45f406f167025e5493a82a1242cb85543a1b6"
+    },
+    "wire": {
+      "passed": 8,
+      "total": 8,
+      "cases": [
+        {
+          "case": "rename_siblings",
+          "sql": "ALTER TABLE t RENAME COLUMN a TO renamed, ADD COLUMN c INT DEFAULT 7, DROP COLUMN b",
+          "expected_error": null,
+          "warnings": [],
+          "rows": [
+            [
+              1,
+              10,
+              7
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "case": "change_position",
+          "sql": "ALTER TABLE t ADD COLUMN c INT DEFAULT 7 FIRST, CHANGE a renamed BIGINT AFTER b",
+          "expected_error": null,
+          "warnings": [],
+          "rows": [
+            [
+              7,
+              1,
+              20,
+              10
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "case": "modify_siblings",
+          "sql": "ALTER TABLE t MODIFY COLUMN a BIGINT, ADD COLUMN c INT DEFAULT 7, RENAME COLUMN b TO renamed",
+          "expected_error": null,
+          "warnings": [],
+          "rows": [
+            [
+              1,
+              10,
+              20,
+              7
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "case": "original_index",
+          "sql": "ALTER TABLE t ADD COLUMN c INT, ADD INDEX ic(c)",
+          "expected_error": 1072,
+          "error_code": 1072,
+          "error": "(1072, \"Key column 'c' doesn't exist in table (index ic)\")",
+          "passed": true
+        },
+        {
+          "case": "dependent_rename",
+          "sql": "ALTER TABLE t RENAME COLUMN a TO renamed, RENAME COLUMN renamed TO last_name",
+          "expected_error": 1054,
+          "error_code": 1054,
+          "error": "(1054, \"Unknown column 'renamed' in 't'\")",
+          "passed": true
+        },
+        {
+          "case": "conflicting_jobs",
+          "sql": "ALTER TABLE t MODIFY COLUMN a BIGINT, DROP COLUMN a",
+          "expected_error": 8200,
+          "error_code": 8200,
+          "error": "(8200, \"Unsupported modify column: operate same column 'a'\")",
+          "passed": true
+        },
+        {
+          "case": "narrow_reorg",
+          "sql": "ALTER TABLE t MODIFY COLUMN big INT, ADD COLUMN c INT",
+          "expected_error": 8200,
+          "error_code": 8200,
+          "error": "(8200, 'Unsupported modify column: length 11 is less than origin 20')",
+          "passed": true
+        },
+        {
+          "case": "conditional_noop",
+          "sql": "ALTER TABLE t ADD COLUMN IF NOT EXISTS a INT, DROP COLUMN a, RENAME COLUMN b TO renamed",
+          "expected_error": null,
+          "warnings": [
+            [
+              "Note",
+              1060,
+              "Duplicate column name 'a'"
+            ]
+          ],
+          "rows": [
+            [
+              1,
+              20
+            ]
+          ],
+          "passed": true
+        }
+      ],
+      "log": "/workspace/.cloud-setup/cluster-column-batch/wire-after.json",
+      "sha256": "cca493ff931c3b15458020ceaf932f81701460c9730451edb7820871f45bf216"
+    },
+    "commands": [
+      "cargo test --locked -p tidb-exec --test all -- cluster_ddl_source:: --test-threads=1",
+      "cargo test --locked -p tidb-executor --lib -- multi_schema_change --test-threads=1",
+      "cargo check --locked --all-targets -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server",
+      "cargo build --locked -p tidb-server",
+      "make lint"
+    ],
+    "limits": [
+      "No full Go suite, live multi-node TiKV, crash recovery or performance verification.",
+      "Metadata-only refusal is a safety boundary, not parity with Go reorganization execution.",
+      "Ordinary durable DDL/multi-schema worker, partition/cache admission and complete column constraint policy remain open.",
+      "Other55 root findings retain prior evidence; D11 remains partial and no complete Go package is accepted."
+    ]
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "publication": "Authorized normal commit/push requires actual hook, fresh locked pre-push build and remote SHA verification. Final publication evidence lives outside checkout in cluster-column-batch/final-handoff.json."
+}

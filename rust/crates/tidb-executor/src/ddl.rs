@@ -336,17 +336,17 @@ pub mod table_partition_list;
 pub mod table_partition_range;
 
 pub use alter_table::{
-    check_column_default_value, normalize_column_default, prepare_column_default,
-    run_alter_table_in, settle_column_default, validate_column_default, PreparedColumnDefault,
-    SettledColumnDefault,
+    PreparedColumnDefault, SettledColumnDefault, check_column_default_value,
+    check_multi_schema_names, normalize_column_default, prepare_column_default, run_alter_table_in,
+    settle_column_default, validate_column_default,
 };
 pub use placement_policy::{
     run_alter_placement_policy, run_create_placement_policy, run_drop_placement_policy,
 };
 pub use table_partition::{
-    append_partition_defs, build_partition_metadata, escape_partition_name,
-    linear_partitioning_warning, partition_placement_text, partition_spec_from_metadata,
-    StoredPartitionDefinition, StoredPartitionMetadata,
+    StoredPartitionDefinition, StoredPartitionMetadata, append_partition_defs,
+    build_partition_metadata, escape_partition_name, linear_partitioning_warning,
+    partition_placement_text, partition_spec_from_metadata,
 };
 
 use column_types::{database_charset_of, field_type_of, table_charset_of, NOT_NULL_FLAG};

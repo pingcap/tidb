@@ -167,8 +167,7 @@ impl CreateTableBuild {
 
 /// One column sub-action of a multi-action `ALTER TABLE`.
 #[derive(Clone, Debug)]
-pub enum AlterColumnAction {
-    /// `ADD COLUMN`, at its written position.
+pub enum AlterColumnAction {    /// `ADD COLUMN`, at its written position.
     Add {
         /// Whether an existing column of the same name is a no-op.
         if_not_exists: bool,
@@ -179,6 +178,24 @@ pub enum AlterColumnAction {
         /// The context the plan-time build resolves defaults under.
         context: DdlStatementContext,
     },
+    /// Metadata-only MODIFY/CHANGE, admitted by the standalone lowering.
+    Modify {
+        /// The replacement column declaration.
+        column: Box<tidb_ast::ColumnDef>,
+        /// Its requested position.
+        position: tidb_ast::ColumnPosition,
+        /// The context used to prepare defaults.
+        context: DdlStatementContext,
+        /// CHANGE locates the original column by this name.
+        rename_from: Option<String>,
+    },
+    /// RENAME COLUMN shares the modify-column job owner.
+    Rename {
+        /// Original column name.
+        from: String,
+        /// Replacement name.
+        to: String,
+    },
     /// `DROP COLUMN`.
     Drop {
         /// Whether a missing column is a no-op.
@@ -186,9 +203,7 @@ pub enum AlterColumnAction {
         /// The column name as written.
         column: String,
     },
-    /// `ADD INDEX`/`ADD KEY`, resolved against the bundle's EVOLVED columns
-    /// — an index on a column the same bundle adds is legal, exactly as
-    /// Go's one multi-schema job makes it.
+    /// `ADD INDEX`/`ADD KEY`, admitted against the original table metadata.
     AddIndex {
         /// Whether an existing index of the same name is a no-op.
         if_not_exists: bool,
@@ -228,8 +243,7 @@ impl std::fmt::Debug for DdlStatementContext {
 
 /// One catalog change this node knows how to perform.
 #[derive(Clone, Debug)]
-pub enum DdlStatement {
-    /// `CREATE DATABASE [IF NOT EXISTS] name`.
+pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
     CreateDatabase {
         /// The database name as written.
         name: String,
@@ -491,12 +505,9 @@ pub enum DdlStatement {
         /// The replacement name.
         to: String,
     },
-    /// A multi-action `ALTER TABLE` whose every action is a column
-    /// add/drop this node owns. Go publishes ONE ActionMultiSchemaChange job
-    /// whose sub-jobs commit atomically; here every sub-action folds over one
-    /// evolving `TableInfo` inside the one catalog transaction, so a later
-    /// action sees what the earlier one changed and the table lands whole or
-    /// not at all.
+    /// A supported multi-action ALTER. Admission uses the original table;
+    /// prepared sub-actions then fold over evolving metadata in one catalog
+    /// transaction. Go's online multi-schema worker remains a separate gap.
     MultiSchemaChange {
         /// The resolved database name.
         schema: String,
@@ -1302,7 +1313,7 @@ fn lower_alter_table_catalog(
 ) -> Result<Option<DdlStatement>, DdlAdmissionError> {
     let [action] = alter.actions.as_slice() else {
         // Go's one ActionMultiSchemaChange job: expressible here exactly when
-        // every action is a column add/drop the catalog transaction owns.
+        // every action has an admitted job the catalog transaction owns.
         let mut actions = Vec::with_capacity(alter.actions.len());
         // `ALGORITHM=` records a request the executor would refuse; the 1846
         // warning is raised only once an operation is known to run (see the
@@ -1322,50 +1333,18 @@ fn lower_alter_table_catalog(
                         context: DdlStatementContext(context.clone()),
                     });
                 }
-                tidb_ast::AlterTableAction::ChangeColumn {
-                    if_exists,
-                    old_name,
-                    column,
-                    position,
-                } => {
-                    if *if_exists {
-                        return Ok(None);
+                tidb_ast::AlterTableAction::ChangeColumn { .. }
+                | tidb_ast::AlterTableAction::ModifyColumn { .. }
+                | tidb_ast::AlterTableAction::RenameColumn(_) => {
+                    let mut single = alter.clone();
+                    single.actions = vec![action.clone()];
+                    match lower_alter_table_catalog(&single, default_schema, context)? {
+                        Some(DdlStatement::ModifyColumn { column, position, context, rename_from, .. }) =>
+                            actions.push(AlterColumnAction::Modify { column, position, context, rename_from }),
+                        Some(DdlStatement::RenameColumn { from, to, .. }) =>
+                            actions.push(AlterColumnAction::Rename { from, to }),
+                        _ => return Ok(None),
                     }
-                    if column.options.iter().any(|option| {
-                        !matches!(
-                            option,
-                            tidb_ast::ColumnOption::Null | tidb_ast::ColumnOption::Default(_)
-                        )
-                    }) {
-                        return Err(DdlAdmissionError::unsupported(
-                            "CHANGE COLUMN with options changes more than the name, type and default; \
-                     this node serves the rename-with-default subset only",
-                        ));
-                    }
-                    let [old] = old_name.as_slice() else {
-                        return Err(DdlAdmissionError::with_code(
-                            GENERIC_ERROR_CODE,
-                            "CHANGE COLUMN takes an unqualified source column name here",
-                        ));
-                    };
-                    let (schema, table) = split_name(&alter.name, default_schema, "table")?;
-                    return Ok(Some(DdlStatement::ModifyColumn {
-                        schema,
-                        table,
-                        column: Box::new(column.clone()),
-                        position: position.clone(),
-                        context: DdlStatementContext(context.clone()),
-                        rename_from: Some(old.clone()),
-                    }));
-                }
-                tidb_ast::AlterTableAction::RenameColumn(rename) => {
-                    let (schema, table) = split_name(&alter.name, default_schema, "table")?;
-                    return Ok(Some(DdlStatement::RenameColumn {
-                        schema,
-                        table,
-                        from: rename.from.clone(),
-                        to: rename.to.clone(),
-                    }));
                 }
                 tidb_ast::AlterTableAction::DropColumn { if_exists, name } => {
                     actions.push(AlterColumnAction::Drop {
@@ -2188,7 +2167,436 @@ fn lower_alter_add_index(
     )
 }
 
-/// Splits a written name path into `(schema, object)`, defaulting the schema.
+/// Prepare one column job against its original table, shared by single and
+/// bundled ALTER. The prepared column is never published during admission.
+fn prepare_rename_column(
+    stored: &TableInfo,
+    table: &str,
+    from: &str,
+    to: &str,
+) -> Result<Option<tidb_model::ColumnInfo>, DdlPlanError> {
+    let wanted = from.go_to_lower();
+    let Some(position) = stored
+        .columns
+        .iter_deref()
+        .position(|candidate| candidate.read().name.lowercase() == wanted)
+    else {
+        return Err(DdlPlanError::UnknownColumn {
+            column: from.to_owned(),
+            table: table.to_owned(),
+        });
+    };
+    // Go asks `IsColumnRenameableWithCheckConstraint` before the
+    // same-name early return and before the duplicate-name check.
+    if let Some(constraint) = stored.constraints.iter_deref().find(|constraint| {
+        tidb_executor::ddl::check_constraint::uses_column(&constraint.read(), from)
+    }) {
+        let constraint = constraint.read();
+        let error = tidb_executor::ddl::check_constraint::column_dependency_error(
+            constraint.name.original(),
+            from,
+        );
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            error.code,
+            error.message,
+        )));
+    }
+    if wanted == to.go_to_lower() {
+        return Ok(None);
+    }
+    let new_name = to.go_to_lower();
+    if new_name != wanted
+        && stored
+            .columns
+            .iter_deref()
+            .any(|candidate| candidate.read().name.lowercase() == new_name)
+    {
+        return Err(DdlPlanError::DuplicateColumnName(to.to_owned()));
+    }
+    let mut column = stored
+        .columns
+        .get(position)
+        .expect("original column is present")
+        .read()
+        .clone_like_go();
+    column.name = CiString::new(to.to_owned());
+    Ok(Some(column))
+}
+
+fn prepare_modify_column(
+    stored: &TableInfo,
+    table: &str,
+    column: &tidb_ast::ColumnDef,
+    requested_position: &tidb_ast::ColumnPosition,
+    context: &DdlStatementContext,
+    rename_from: Option<&str>,
+) -> Result<tidb_model::ColumnInfo, DdlPlanError> {
+    // A CHANGE locates by the OLD name; a MODIFY by the (unchanged)
+    // declared name.
+    let wanted = rename_from.unwrap_or(column.name.as_str()).go_to_lower();
+    let Some(position) = stored
+        .columns
+        .iter_deref()
+        .position(|candidate| candidate.read().name.lowercase() == wanted)
+    else {
+        // Go 1054 ErrBadField through the modify path.
+        return Err(DdlPlanError::UnknownColumn {
+            column: rename_from.unwrap_or(column.name.as_str()).to_owned(),
+            table: table.to_owned(),
+        });
+    };
+    let new_name = column.name.go_to_lower();
+    if new_name != wanted
+        && stored
+            .columns
+            .iter_deref()
+            .any(|candidate| candidate.read().name.lowercase() == new_name)
+    {
+        return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
+    }
+    let old = stored
+        .columns
+        .iter_deref()
+        .nth(position)
+        .expect("the position was just found")
+        .read()
+        .clone_like_go();
+    let built = crate::table_info_build::build_added_column(
+        column,
+        &stored.charset,
+        &stored.collate,
+        &context.0,
+        None,
+    )
+    .map_err(DdlPlanError::Admission)?;
+    // Go `dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)`
+    // renders exactly "Unsupported modify column: <reason>", and the
+    // reason strings below are Go's own.
+    let refuse = |what: &str| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            8200,
+            format!("Unsupported modify column: {what}"),
+        ))
+    };
+    // Metadata-only execution must never reinterpret a change for
+    // which Go requires row reorganization.
+    if let Some(reason) = modify_type_reorg_reason(&old.field_type, &built.field_type) {
+        return Err(refuse(&reason));
+    }
+    let old_not_null = old.field_type.has_flag(FieldTypeFlags::NOT_NULL);
+    let new_not_null = built.field_type.has_flag(FieldTypeFlags::NOT_NULL);
+    if old_not_null != new_not_null {
+        return Err(refuse(
+            "changing nullability needs a data reorganization this node does not run",
+        ));
+    }
+    let mut stored_column = old;
+    // The identity, ordering, and state are the stored column's
+    // own; the declared type widens, and a MODIFY/CHANGE-carried
+    // DEFAULT restages the column default (go
+    // `updateColumnDefaultValue`, metadata-only alongside the
+    // widen).
+    let mut field_type = built.field_type.clone();
+    field_type.set_flags(stored_column.field_type.flags());
+    stored_column.field_type = field_type;
+    if let Some(default_expr) = column.options.iter().find_map(|option| match option {
+        tidb_ast::ColumnOption::Default(expr) => Some(expr),
+        _ => None,
+    }) {
+        crate::table_info_build::set_column_default(
+            column.name.as_str(),
+            &mut stored_column,
+            Some(default_expr),
+            &context.0,
+        )
+        .map_err(DdlPlanError::Admission)?;
+    }
+    if new_name != wanted {
+        // Go `renameColumnTo`: the column and every index column
+        // naming it take the new name together.
+        stored_column.name = CiString::new(column.name.clone());
+    }
+    // Go `modify_column.go:700`: `MODIFY COLUMN b AFTER b` names
+    // the column as its own anchor, which Go answers as
+    // ErrColumnNotExists on THAT column rather than as a no-op.
+    if let tidb_ast::ColumnPosition::After(anchor) = requested_position {
+        if anchor.go_to_lower() == wanted {
+            return Err(DdlPlanError::UnknownColumn {
+                column: rename_from.unwrap_or(column.name.as_str()).to_owned(),
+                table: table.to_owned(),
+            });
+        }
+    }
+    // Unlike ADD COLUMN, the column is already AT its offset, so the
+    // destination is located against that rather than against an
+    // appended tail (Go `modify_column.go:704`).
+    locate_offset_to_move(position, requested_position, stored)?;
+    Ok(stored_column)
+}
+
+/// Apply an already admitted column by stable ID, preserving offsets shifted
+/// by preceding jobs and updating index references with the column rename.
+fn apply_prepared_column(
+    info: &mut TableInfo,
+    mut column: tidb_model::ColumnInfo,
+    position: &tidb_ast::ColumnPosition,
+    add: bool,
+) -> Result<(), DdlPlanError> {
+    let offset = if add {
+        info.max_column_id += 1;
+        column.id = info.max_column_id;
+        column.offset = info.columns.len() as i64;
+        let offset = info.columns.len();
+        info.columns.push_handle_go(Some(GoShared::new(column)));
+        offset
+    } else {
+        let offset = info
+            .columns
+            .iter_deref()
+            .position(|c| c.read().id == column.id)
+            .expect("admitted column identity survives disjoint sub-jobs");
+        let handle = info.columns.get(offset).expect("column is present");
+        let old_name = handle.read().name.clone();
+        column.offset = offset as i64;
+        for index in info.indices.iter_deref() {
+            for indexed in index.read().columns.iter_deref() {
+                if indexed.read().name.lowercase() == old_name.lowercase() {
+                    indexed.write().name = column.name.clone();
+                }
+            }
+        }
+        *handle.write() = column;
+        offset
+    };
+    let destination = locate_offset_to_move(offset, position, info)?;
+    move_column_info(info, offset, destination);
+    Ok(())
+}
+
+/// Typed column jobs and conditional no-ops prepared against one original
+/// table. Index execution keeps its existing backfill owner after admission.
+struct PreparedClusterColumns {
+    columns: BTreeMap<usize, (tidb_model::ColumnInfo, tidb_ast::ColumnPosition, bool)>,
+    skipped: BTreeMap<usize, String>,
+}
+
+fn prepare_cluster_columns(
+    stored: &TableInfo,
+    schema: &str,
+    table: &str,
+    actions: &[AlterColumnAction],
+    warnings: &mut Vec<(DdlWarningLevel, u16, String)>,
+) -> Result<PreparedClusterColumns, DdlPlanError> {
+    let mut prepared = PreparedClusterColumns {
+        columns: BTreeMap::new(),
+        skipped: BTreeMap::new(),
+    };
+    let mut add_columns = Vec::new();
+    let mut drop_columns = Vec::new();
+    let mut modify_columns = Vec::new();
+    let mut position_columns = Vec::new();
+    let mut relative_columns = Vec::new();
+    let mut add_indexes = Vec::new();
+    let mut drop_indexes = Vec::new();
+    for (offset, action) in actions.iter().enumerate() {
+        let mut skipped = None;
+        let mut column_job = None;
+        match action {
+            AlterColumnAction::Add {
+                if_not_exists,
+                column,
+                position,
+                context,
+            } => {
+                let mut candidate = stored.clone_like_go();
+                match apply_add_column(
+                    &mut candidate,
+                    schema,
+                    table,
+                    column,
+                    position,
+                    *if_not_exists,
+                    &context.0,
+                )? {
+                    AlterColumnOutcome::Applied => {
+                        let built =
+                            tidb_model::column::find_column_info(&candidate.columns, &column.name)
+                                .expect("prepared added column")
+                                .read()
+                                .clone_like_go();
+                        add_columns.push(built.name.clone());
+                        relative_columns.extend(
+                            built
+                                .dependences
+                                .snapshot()
+                                .into_iter()
+                                .map(|name| CiString::new(name.to_string())),
+                        );
+                        column_job = Some((built, position.clone(), true));
+                    }
+                    AlterColumnOutcome::AlreadySatisfied(detail) => {
+                        warnings.push((
+                            DdlWarningLevel::Note,
+                            1060,
+                            format!("Duplicate column name '{}'", column.name),
+                        ));
+                        skipped = Some(detail);
+                    }
+                }
+            }
+            AlterColumnAction::Modify {
+                column,
+                position,
+                context,
+                rename_from,
+            } => {
+                let built = prepare_modify_column(
+                    stored,
+                    table,
+                    column,
+                    position,
+                    context,
+                    rename_from.as_deref(),
+                )?;
+                let old_name =
+                    CiString::new(rename_from.as_deref().unwrap_or(&column.name).to_owned());
+                if built.name.lowercase() == old_name.lowercase() {
+                    modify_columns.push(built.name.clone());
+                } else {
+                    add_columns.push(built.name.clone());
+                    drop_columns.push(old_name);
+                }
+                column_job = Some((built, position.clone(), false));
+            }
+            AlterColumnAction::Rename { from, to } => {
+                if let Some(built) = prepare_rename_column(stored, table, from, to)? {
+                    add_columns.push(built.name.clone());
+                    drop_columns.push(CiString::new(from.clone()));
+                    column_job = Some((built, tidb_ast::ColumnPosition::Default, false));
+                } else {
+                    skipped = Some(format!("column `{from}` already has the requested name"));
+                }
+            }
+            AlterColumnAction::Drop { if_exists, column } => {
+                let mut candidate = stored.clone_like_go();
+                match apply_drop_column(&mut candidate, schema, table, column, *if_exists)? {
+                    AlterColumnOutcome::Applied => drop_columns.push(CiString::new(column.clone())),
+                    AlterColumnOutcome::AlreadySatisfied(detail) => {
+                        warnings.push((
+                            DdlWarningLevel::Note,
+                            1091,
+                            format!("Can't DROP '{column}'; check that column/key exists"),
+                        ));
+                        skipped = Some(detail);
+                    }
+                }
+            }
+            AlterColumnAction::AddIndex {
+                if_not_exists,
+                index,
+                ..
+            } => {
+                if find_index(stored, index.name.original()).is_some() {
+                    if !if_not_exists {
+                        return Err(DdlPlanError::DuplicateKeyName(
+                            index.name.original().to_owned(),
+                        ));
+                    }
+                    warnings.push((
+                        DdlWarningLevel::Note,
+                        1061,
+                        format!("Duplicate key name '{}'", index.name.original()),
+                    ));
+                    skipped = Some(format!(
+                        "index `{}` already exists on `{schema}`.`{table}`",
+                        index.name.original()
+                    ));
+                } else {
+                    for indexed in index.columns.iter_deref() {
+                        let indexed = indexed.read();
+                        if tidb_model::column::find_column_info(
+                            &stored.columns,
+                            indexed.name.original(),
+                        )
+                        .is_none()
+                        {
+                            return Err(DdlPlanError::UnknownIndexColumn {
+                                column: indexed.name.original().to_owned(),
+                                index: index.name.original().to_owned(),
+                            });
+                        }
+                        relative_columns.push(indexed.name.clone());
+                    }
+                    add_indexes.push(index.name.clone());
+                }
+            }
+            AlterColumnAction::DropIndex { if_exists, name } => {
+                if find_index(stored, name).is_none() {
+                    if !if_exists {
+                        return Err(DdlPlanError::UnknownIndex(name.clone()));
+                    }
+                    warnings.push((
+                        DdlWarningLevel::Note,
+                        1091,
+                        format!("Can't DROP '{name}'; check that column/key exists"),
+                    ));
+                    skipped = Some(format!(
+                        "index `{name}` does not exist on `{schema}`.`{table}`"
+                    ));
+                } else {
+                    drop_indexes.push(CiString::new(name.clone()));
+                }
+            }
+            AlterColumnAction::AddCheck {
+                definition,
+                context,
+            } => {
+                if actions.len() > 1 {
+                    let mut candidate = stored.clone_like_go();
+                    crate::table_info_build::append_check_constraints(
+                        &mut candidate,
+                        &[tidb_executor::ddl::check_constraint::CheckConstraintInput {
+                            definition: (**definition).clone(),
+                            in_column: None,
+                        }],
+                        tidb_executor::ddl::check_constraint::CheckConstraintBuildMode::Alter,
+                        &context.0,
+                    )
+                    .map_err(DdlPlanError::Admission)?;
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(8200,
+                        "Unsupported multi schema change for add check constraint",
+                    )));
+                }
+            }
+        }
+        if let Some(job) = column_job {
+            if let tidb_ast::ColumnPosition::After(name) = &job.1 {
+                position_columns.push(CiString::new(name.clone()));
+            }
+            prepared.columns.insert(offset, job);
+        }
+        if let Some(detail) = skipped {
+            prepared.skipped.insert(offset, detail);
+        }
+    }
+    let names = tidb_model::MultiSchemaInfo {
+        add_columns: GoSharedSlice::from_vec(add_columns),
+        drop_columns: GoSharedSlice::from_vec(drop_columns),
+        modify_columns: GoSharedSlice::from_vec(modify_columns),
+        position_columns: GoSharedSlice::from_vec(position_columns),
+        relative_columns: GoSharedSlice::from_vec(relative_columns),
+        add_indexes: GoSharedSlice::from_vec(add_indexes),
+        drop_indexes: GoSharedSlice::from_vec(drop_indexes),
+        ..Default::default()
+    };
+    tidb_executor::ddl::check_multi_schema_names(&names).map_err(|error| match error {
+        tidb_executor::DriverError::DdlCoded { errno, message } => {
+            DdlPlanError::Admission(DdlAdmissionError::with_code(errno, message))
+        }
+        other => DdlPlanError::Encode(other.to_string()),
+    })?;
+    Ok(prepared)
+}
 
 /// One sub-action's answer inside an evolving ALTER.
 enum AlterColumnOutcome {
@@ -8932,58 +9340,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             to,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let wanted = from.go_to_lower();
-            let Some(position) = stored
-                .columns
-                .iter_deref()
-                .position(|candidate| candidate.read().name.lowercase() == wanted)
-            else {
-                return Err(DdlPlanError::UnknownColumn {
-                    column: from.clone(),
-                    table: table.clone(),
-                });
+            let Some(column) = prepare_rename_column(stored, table, from, to)? else {
+                return Ok(already(format!("column `{from}` already has the requested name")));
             };
-            // Go asks `IsColumnRenameableWithCheckConstraint` before the
-            // same-name early return and before the duplicate-name check.
-            if let Some(constraint) = stored.constraints.iter_deref().find(|constraint| {
-                tidb_executor::ddl::check_constraint::uses_column(&constraint.read(), from)
-            }) {
-                let constraint = constraint.read();
-                let error = tidb_executor::ddl::check_constraint::column_dependency_error(
-                    constraint.name.original(),
-                    from,
-                );
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    error.code,
-                    error.message,
-                )));
-            }
-            let new_name = to.go_to_lower();
-            if new_name != wanted
-                && stored
-                    .columns
-                    .iter_deref()
-                    .any(|candidate| candidate.read().name.lowercase() == new_name)
-            {
-                return Err(DdlPlanError::DuplicateColumnName(to.clone()));
-            }
             let mut info = stored.clone_like_go();
-            {
-                let handle = info
-                    .columns
-                    .get(position)
-                    .expect("the position was just found");
-                handle.write().name = CiString::new(to.clone());
-            }
-            for index in info.indices.iter_deref() {
-                let index = index.read();
-                for col in index.columns.iter_deref() {
-                    let mut col = col.write();
-                    if col.name.lowercase() == wanted {
-                        col.name = CiString::new(to.clone());
-                    }
-                }
-            }
+            apply_prepared_column(&mut info, column, &tidb_ast::ColumnPosition::Default, false)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -9018,151 +9379,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             rename_from,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            // A CHANGE locates by the OLD name; a MODIFY by the (unchanged)
-            // declared name.
-            let wanted = rename_from
-                .as_deref()
-                .unwrap_or(column.name.as_str())
-                .go_to_lower();
-            let Some(position) = stored
-                .columns
-                .iter_deref()
-                .position(|candidate| candidate.read().name.lowercase() == wanted)
-            else {
-                // Go 1054 ErrBadField through the modify path.
-                return Err(DdlPlanError::UnknownColumn {
-                    column: rename_from
-                        .as_deref()
-                        .unwrap_or(column.name.as_str())
-                        .to_owned(),
-                    table: table.clone(),
-                });
-            };
-            let new_name = column.name.go_to_lower();
-            if new_name != wanted
-                && stored
-                    .columns
-                    .iter_deref()
-                    .any(|candidate| candidate.read().name.lowercase() == new_name)
-            {
-                return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
-            }
-            let old = stored
-                .columns
-                .iter_deref()
-                .nth(position)
-                .expect("the position was just found")
-                .read()
-                .clone_like_go();
-            let built = crate::table_info_build::build_added_column(
-                column,
-                &stored.charset,
-                &stored.collate,
-                &context.0,
-                None,
-            )
-            .map_err(DdlPlanError::Admission)?;
-            // Go `dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)`
-            // renders exactly "Unsupported modify column: <reason>", and the
-            // reason strings below are Go's own.
-            let refuse =
-                |what: &str| DdlPlanError::Encode(format!("Unsupported modify column: {what}"));
-            // Go `types.CheckModifyTypeCompatible`: the change is either
-            // free (metadata only) or needs a data reorganization. Go runs
-            // the reorganization; this node applies SAME-FAMILY type
-            // changes as pure metadata instead — the stored bytes decode
-            // under the new type and the row reads carry the new semantics
-            // (go's reorg truncation for over-length data is the
-            // documented divergence). CROSS-family changes and the
-            // element/decimal recomputations still refuse: the stored
-            // bytes would not decode under the new type at all.
-            let both_string =
-                old.field_type.code().is_string() && built.field_type.code().is_string();
-            let both_integer = old
-                .field_type
-                .code()
-                .is_integer_type()
-                && built.field_type.code().is_integer_type();
-            let same_code_simple = old.field_type.code() == built.field_type.code()
-                && !matches!(
-                    old.field_type.code(),
-                    FieldTypeCode::Enum | FieldTypeCode::Set | FieldTypeCode::NewDecimal
-                );
-            if !both_string && !both_integer && !same_code_simple {
-                if let Some(reason) = modify_type_reorg_reason(&old.field_type, &built.field_type) {
-                    return Err(refuse(&reason));
-                }
-            }
-            let old_not_null = old.field_type.has_flag(FieldTypeFlags::NOT_NULL);
-            let new_not_null = built.field_type.has_flag(FieldTypeFlags::NOT_NULL);
-            if old_not_null != new_not_null {
-                return Err(refuse(
-                    "changing nullability needs a data reorganization this node does not run",
-                ));
-            }
+            let prepared = prepare_modify_column(stored, table, column, requested_position, context, rename_from.as_deref())?;
             let mut info = stored.clone_like_go();
-            {
-                let handle = info
-                    .columns
-                    .get(position)
-                    .expect("the position was just found");
-                let mut stored_column = handle.write();
-                // The identity, ordering, and state are the stored column's
-                // own; the declared type widens, and a MODIFY/CHANGE-carried
-                // DEFAULT restages the column default (go
-                // `updateColumnDefaultValue`, metadata-only alongside the
-                // widen).
-                let mut field_type = built.field_type.clone();
-                field_type.set_flags(stored_column.field_type.flags());
-                stored_column.field_type = field_type;
-                if let Some(default_expr) = column.options.iter().find_map(|option| match option {
-                    tidb_ast::ColumnOption::Default(expr) => Some(expr),
-                    _ => None,
-                }) {
-                    crate::table_info_build::set_column_default(
-                        column.name.as_str(),
-                        &mut stored_column,
-                        Some(default_expr),
-                        &context.0,
-                    )
-                    .map_err(DdlPlanError::Admission)?;
-                }
-                if new_name != wanted {
-                    // Go `renameColumnTo`: the column and every index column
-                    // naming it take the new name together.
-                    stored_column.name = CiString::new(column.name.clone());
-                }
-            }
-            if new_name != wanted {
-                for index in info.indices.iter_deref() {
-                    let index = index.read();
-                    for col in index.columns.iter_deref() {
-                        let mut col = col.write();
-                        if col.name.lowercase() == wanted {
-                            col.name = CiString::new(column.name.clone());
-                        }
-                    }
-                }
-            }
-            // Go `modify_column.go:700`: `MODIFY COLUMN b AFTER b` names
-            // the column as its own anchor, which Go answers as
-            // ErrColumnNotExists on THAT column rather than as a no-op.
-            if let tidb_ast::ColumnPosition::After(anchor) = requested_position {
-                if anchor.go_to_lower() == wanted {
-                    return Err(DdlPlanError::UnknownColumn {
-                        column: rename_from
-                            .as_deref()
-                            .unwrap_or(column.name.as_str())
-                            .to_owned(),
-                        table: table.clone(),
-                    });
-                }
-            }
-            // Unlike ADD COLUMN, the column is already AT its offset, so the
-            // destination is located against that rather than against an
-            // appended tail (Go `modify_column.go:704`).
-            let destination = locate_offset_to_move(position, requested_position, &info)?;
-            move_column_info(&mut info, position, destination);
+            apply_prepared_column(&mut info, prepared, requested_position, false)?;
+            let new_name = column.name.go_to_lower();
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -9194,6 +9414,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             actions,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let mut prepared = prepare_cluster_columns(stored, schema, table, actions, &mut warnings)?;
             let mut info = stored.clone_like_go();
             let mut applied = 0usize;
             let mut satisfied = Vec::new();
@@ -9202,11 +9423,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // merged sub-job at the end, preserving every other sub-job's
             // relative order. Execute the equivalent order here so later
             // metadata, backfill snapshots, and notifier sequence IDs agree.
-            let add_index_count = actions
-                .iter()
-                .filter(|action| matches!(action, AlterColumnAction::AddIndex { .. }))
+            let add_index_count = actions.iter().enumerate()
+                .filter(|(offset, action)| !prepared.skipped.contains_key(offset) && matches!(action, AlterColumnAction::AddIndex { .. }))
                 .count();
-            let mut action_order: Vec<_> = (0..actions.len()).collect();
+            let mut action_order: Vec<_> = (0..actions.len()).filter(|offset| !prepared.skipped.contains_key(offset)).collect();
             if add_index_count > 1 {
                 action_order.sort_by_key(|offset| {
                     usize::from(matches!(
@@ -9215,41 +9435,28 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     ))
                 });
             }
+            let active_action_count = action_order.len();
+            satisfied.extend(prepared.skipped.values().cloned());
             let mut merged_added_indexes = Vec::new();
             for (sequence, action_offset) in action_order.into_iter().enumerate() {
                 let action = &actions[action_offset];
                 let outcome = match action {
-                    AlterColumnAction::Add {
-                        if_not_exists,
-                        column,
-                        position,
-                        context,
-                    } => {
-                        let outcome = apply_add_column(
-                            &mut info,
-                            schema,
-                            table,
-                            column,
-                            position,
-                            *if_not_exists,
-                            &context.0,
-                        )?;
-                        if matches!(outcome, AlterColumnOutcome::Applied)
-                            && !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower())
-                        {
-                            let added = tidb_model::column::find_column_info(
-                                &info.columns,
-                                column.name.as_str(),
-                            )
-                            .expect("the bundle-added column is present")
-                            .read()
-                            .clone_like_go();
-                            schema_change_events.push((
-                                sequence as i64,
-                                SchemaChangeEvent::add_columns(info.clone_like_go(), vec![added]),
-                            ));
+                    AlterColumnAction::Add { .. } | AlterColumnAction::Modify { .. } | AlterColumnAction::Rename { .. } => {
+                        let (column, position, add) = prepared.columns.remove(&action_offset)
+                            .expect("every active column job was prepared");
+                        let name = column.name.clone();
+                        apply_prepared_column(&mut info, column, &position, add)?;
+                        if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                            let changed = tidb_model::column::find_column_info(&info.columns, name.original())
+                                .expect("applied column is present").read().clone_like_go();
+                            let event = if add {
+                                SchemaChangeEvent::add_columns(info.clone_like_go(), vec![changed])
+                            } else {
+                                SchemaChangeEvent::modify_columns(info.clone_like_go(), vec![changed], false)
+                            };
+                            schema_change_events.push((sequence as i64, event));
                         }
-                        outcome
+                        AlterColumnOutcome::Applied
                     }
                     AlterColumnAction::Drop { if_exists, column } => {
                         let before = info.clone_like_go();
@@ -9264,29 +9471,15 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         outcome
                     }
                     AlterColumnAction::AddIndex {
-                        if_not_exists,
                         index,
                         auto_pre_split: action_auto_pre_split,
                         context,
+                        ..
                     } => {
                         auto_pre_split |= *action_auto_pre_split;
-                        if let Some(existing) = find_index(&info, index.name.original()) {
-                            let existing = existing.read();
-                            if *if_not_exists {
-                                satisfied.push(format!(
-                                    "index `{}` already exists on `{schema}`.`{table}`",
-                                    existing.name.original()
-                                ));
-                                continue;
-                            }
-                            return Err(DdlPlanError::DuplicateKeyName(
-                                index.name.original().to_owned(),
-                            ));
-                        }
                         let mut added = index.clone_like_go();
-                        // Offsets resolve against the EVOLVED columns, so an
-                        // index on a column this same bundle added is legal —
-                        // Go's one multi-schema job.
+                        // Original names were admitted before execution;
+                        // offsets now account for preceding disjoint jobs.
                         for column in added.columns.iter_deref() {
                             let mut column = column.write();
                             let Some(stored_column) = info.columns.iter_deref().find(|candidate| {
@@ -9383,12 +9576,6 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                             &context.0,
                         )
                         .map_err(DdlPlanError::Admission)?;
-                        if actions.len() > 1 {
-                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                                8200,
-                                "Unsupported multi schema change for add check constraint",
-                            )));
-                        }
                         info = candidate;
                         let added = info
                             .constraints
@@ -9430,7 +9617,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             if !merged_added_indexes.is_empty()
                 && !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower())
             {
-                let sequence = actions.len() - add_index_count;
+                let sequence = active_action_count - add_index_count;
                 schema_change_events.push((
                     sequence as i64,
                     SchemaChangeEvent::add_indexes(
@@ -9441,7 +9628,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 ));
             }
             if applied == 0 {
-                return Ok(already(satisfied.join("; ")));
+                return Ok(already_with_warnings(satisfied.join("; "), warnings));
             }
             if let Some((constraint_name, context)) = enforced_check {
                 check_constraint_validation = Some(CheckConstraintValidation {
