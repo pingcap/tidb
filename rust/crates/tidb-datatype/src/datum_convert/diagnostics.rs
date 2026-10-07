@@ -62,6 +62,51 @@ mod tests {
     }
 
     #[test]
+    fn string_owner_batch_decoding_retains_prefix_and_parser_error() {
+        let field = FieldType::new(FieldTypeCode::Varchar)
+            .with_flen(1)
+            .with_charset_name("ascii")
+            .with_collation_name("ascii_bin");
+        for flags in [
+            crate::STRICT_FLAGS,
+            crate::STRICT_FLAGS.with_truncate_as_warning(true),
+            crate::STRICT_FLAGS.with_ignore_truncate_err(true),
+        ] {
+            let warnings = Warnings::default();
+            let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
+            let converted = Datum::new_bytes([b'a', b'b', 0xff, b'c'])
+                .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
+                .unwrap();
+            assert_eq!(converted.value.as_raw_bytes(), Some(b"ab".as_slice()));
+            assert_eq!(
+                converted.error.unwrap().to_string(),
+                "[parser:1300]Invalid ascii character string: 'FF63'"
+            );
+            assert!(warnings.0.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn string_owner_batch_replacement_retains_value_before_width_policy() {
+        let field = FieldType::new(FieldTypeCode::Varchar)
+            .with_flen(1)
+            .with_charset_name("ascii")
+            .with_collation_name("ascii_bin");
+        let warnings = Warnings::default();
+        let context =
+            ConversionContext::new(crate::STRICT_FLAGS, ConversionLocation::UTC, &warnings);
+        let converted = Datum::new_string("ab中")
+            .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
+            .unwrap();
+        assert_eq!(converted.value.as_raw_bytes(), Some(b"ab?".as_slice()));
+        assert_eq!(
+            converted.error.unwrap().to_string(),
+            "[parser:1300]Invalid ascii character string: 'E4B8AD'"
+        );
+        assert!(warnings.0.borrow().is_empty());
+    }
+
+    #[test]
     fn json_numeric_batch_context_preserves_source_errors_and_policy() {
         // Go types.ConvertJSONTo{Int,Float,Decimal}: HandleTruncate belongs
         // to the source stage, before target production.

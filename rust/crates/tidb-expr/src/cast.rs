@@ -11,17 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `CAST(expr AS type)` / `CONVERT(expr, type)` evaluation
-//! ([`eval_cast`], dispatched from `crate::eval_in`'s `Expr::Cast` arm) and
-//! `CONVERT(expr USING charset)` (a plain stringification passthrough,
-//! handled directly in `crate::eval_in`'s own `Expr::ConvertUsing` arm —
-//! this crate has no charset domain at all).
-//!
-//! JSON and DATE/DATETIME targets retain their native datum domains. Every
-//! rule here (string-to-number prefix parsing width, rounding tie-breaking per
-//! source type, `UNSIGNED`'s negative-float-clamps-to-zero rule, `DECIMAL`'s
-//! precision clamp, `BINARY`'s NUL-padding) was confirmed via `goeval`, not
-//! assumed — see each function's own doc for the specific probe.
+//! SQL CAST and typed protobuf cast signatures. String production shares the
+//! datatype owner; AST binary arguments retain their explicit decoding boundary.
+//! JSON and DATE/DATETIME targets retain their native datum domains. Source
+//! signatures select numeric parsing, rounding and binary padding policy.
 
 use crate::coerce::coerce_str;
 use crate::time_fn::calendar::parse_date_ymd;
@@ -71,8 +64,10 @@ pub(crate) fn eval_string_cast_with_type(
         .value
         .as_raw_bytes()
         .ok_or(EvalError::Unsupported("produced string datum"))?;
-    // Go pads only TypeString with binary collation, after successful production.
-    if target.code() == FieldTypeCode::String
+    // JSON/vector signatures return after production; the other signatures
+    // pad TypeString with binary collation and enforce the padding packet limit.
+    if !matches!(value, Datum::Json(_) | Datum::VectorFloat32(_))
+        && target.code() == FieldTypeCode::String
         && target.is_binary_string()
         && target.flen() > bytes.len() as i64
     {
@@ -397,36 +392,28 @@ fn eval_cast_value(
             }
         }
         CastType::Char { len, charset } => {
-            // Go `CHAR(n) CHARSET binary`: the ret charset is binary, so
-            // `ProduceStrWithSpecifiedTp` takes its `chs == CharsetBin`
-            // branch and truncates in BYTES, and `padZeroForBinaryType`
-            // never pads a `TypeVarString` target. The default (session)
-            // charset keeps character-oriented truncation.
-            if charset.as_deref() == Some("BINARY") {
-                let mut bytes = datum_binary_bytes(&v)?;
-                if let Some(n) = len {
-                    report_data_too_long(ctx, bytes.len(), *n as usize);
-                    bytes.truncate(*n as usize);
-                }
-                return Ok(Datum::new_bytes(bytes));
-            }
-            // `castAsStringFunctionClass` routes a BINARY-charset argument
-            // through Go's `HandleBinaryLiteral(..., explicitCast=true)`.
-            // Its `from_binary` signature decodes the raw bytes with
-            // `OpDecode`, publishes ErrCannotConvertString (3854) as a
-            // warning, and keeps the successfully decoded prefix in
-            // non-strict mode.  The generic stringifier used to reject an
-            // invalid UTF-8 byte before this boundary, which made
-            // `CAST(0x91 AS CHAR)` an execution error instead of the empty
-            // string plus one warning.
+            let (connection_charset, connection_collation) = ctx.connection_charset_info();
             let target_charset = charset
                 .as_deref()
-                .unwrap_or_else(|| ctx.connection_charset_info().0);
-            let text = if source.is_some_and(FieldType::is_binary_string)
-                && !target_charset.eq_ignore_ascii_case("binary")
-            {
+                .unwrap_or(connection_charset)
+                .to_ascii_lowercase();
+            let target_collation = match charset {
+                Some(_) => tidb_datatype::get_default_collation(&target_charset)
+                    .map_err(|_| EvalError::Unsupported("CAST charset"))?,
+                None => connection_collation.to_owned(),
+            };
+            let target = FieldType::new(FieldTypeCode::VarString)
+                .with_flen(
+                    len.map(i64::from)
+                        .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                )
+                .with_charset_name(&target_charset)
+                .with_collation_name(&target_collation);
+            // Go inserts from_binary at the AST argument boundary. Protobuf
+            // signatures carry that wrapper explicitly, so decoding stays here.
+            if source.is_some_and(FieldType::is_binary_string) && target_charset != "binary" {
                 let bytes = datum_binary_bytes(&v)?;
-                let (decoded, error) = find_encoding(target_charset)
+                let (decoded, error) = find_encoding(&target_charset)
                     .transform(&bytes, TransformOp::DECODE)
                     .into_parts();
                 if error.is_some() {
@@ -439,55 +426,20 @@ fn eval_cast_value(
                         &format!("Cannot convert string '{hex}' from binary to {target_charset}"),
                     );
                 }
-                String::from_utf8_lossy(&decoded).into_owned()
+                eval_string_cast_with_type(Datum::new_bytes(decoded), None, &target, ctx)
             } else {
-                string_source_text(&v, source)?
-            };
-            Ok(Datum::new_string(match len {
-                Some(n) => {
-                    report_data_too_long(ctx, text.chars().count(), *n as usize);
-                    text.chars().take(*n as usize).collect()
-                }
-                None => text,
-            }))
+                eval_string_cast_with_type(v, source, &target, ctx)
+            }
         }
         CastType::Binary { len } => {
-            // Go's binary cast is byte-oriented and preserves arbitrary
-            // octets.  Do not route an already-byte-valued operand through
-            // UTF-8 decoding: `CAST('你好world' AS BINARY(5))` deliberately
-            // keeps the first five bytes, even though that suffix is not a
-            // complete UTF-8 sequence (see `TestCastFunctions`).
-            // The YEAR-zero rendering is the SAME signature's, because a
-            // BINARY target only changes `b.tp`'s charset: Go still picks
-            // `builtinCastIntAsStringSig` from the ARGUMENT's ETInt eval type
-            // and only then pads. Captured: `hex(cast(y as binary))` over a
-            // zero YEAR is `30303030`, i.e. `"0000"`.
-            let bytes = match year_zero_string(&v, source) {
-                Some(text) => text.into_bytes(),
-                None => datum_binary_bytes(&v)?,
-            };
-            Ok(Datum::new_bytes(match len {
-                Some(n) => {
-                    // A binary target measures in BYTES, not characters:
-                    // Go's `chs == CharsetBin` arm sets
-                    // `characterLen = len(s)`.
-                    report_data_too_long(ctx, bytes.len(), *n as usize);
-                    // Go `padZeroForBinaryType` (`builtin_cast.go:2249`)
-                    // refuses to BUILD a pad wider than `max_allowed_packet`,
-                    // answering NULL with the 1301 warning instead. The test
-                    // is on the declared width, before any allocation, and
-                    // that ordering is the whole point: `cast("a" as
-                    // binary(4294967295))` (`expression/issues`) otherwise
-                    // materializes four gigabytes of zeros -- 109 SECONDS of
-                    // the topic's 125, for a statement TiDB rejects outright.
-                    if bytes.len() < *n as usize && *n as u64 > ctx.max_allowed_packet() {
-                        ctx.handle_allowed_packet_overflowed("cast_as_binary")?;
-                        return Ok(Datum::Null);
-                    }
-                    binary_pad_truncate(&bytes, *n as usize)
-                }
-                None => bytes,
-            }))
+            let target = FieldType::new(FieldTypeCode::String)
+                .with_flen(
+                    len.map(i64::from)
+                        .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                )
+                .with_charset_name("binary")
+                .with_collation_name("binary");
+            eval_string_cast_with_type(v, source, &target, ctx)
         }
         CastType::Decimal { .. } | CastType::Double => eval_cast(cast_type, v, source, ctx),
         CastType::Date => cast_to_time(&v, source, ctx, tidb_datatype::TimeType::Date, 0),
@@ -719,29 +671,6 @@ pub(crate) fn cast_arg_as_duration(
     cast_to_duration(value, source, ctx, fsp)
 }
 
-/// Go `types.ProduceStrWithSpecifiedTp` (`pkg/types/datum.go:1289-1304`),
-/// warning half: a value the target width cannot hold raises
-/// `ErrDataTooLong` (1406) "Data Too Long, field len %d, data len %d".
-///
-/// `data_len` is what Go's `characterLen` counts, which is the SOURCE's own
-/// length in the target's unit -- runes for a character target, bytes for a
-/// binary one -- NOT the truncated result's. Captured:
-/// `CAST('中文abc' AS CHAR(2))` warns `field len 2, data len 5` while
-/// `CAST('中文abc' AS BINARY(4))` warns `field len 4, data len 9`.
-///
-/// Go's one exception, the whitespace-only overflow that downgrades to a
-/// 1265 `Data truncated`, needs `tp.GetType() == TypeVarchar`; a CAST target
-/// is `TypeVarString`, so it cannot apply here. Captured:
-/// `CAST('ab   ' AS CHAR(2))` warns 1406, not 1265.
-fn report_data_too_long(ctx: &dyn crate::Columns, data_len: usize, field_len: usize) {
-    if data_len > field_len {
-        ctx.append_warning(
-            1406,
-            &format!("Data Too Long, field len {field_len}, data len {data_len}"),
-        );
-    }
-}
-
 fn datum_sql_string(value: &Datum) -> Result<String, EvalError> {
     value
         .sql_string()
@@ -776,17 +705,6 @@ fn year_zero_string(value: &Datum, source: Option<&tidb_datatype::FieldType>) ->
         return None;
     }
     matches!(value, Datum::Int(0) | Datum::UInt(0)).then(|| "0000".to_owned())
-}
-
-/// [`year_zero_string`] over the ordinary string rendering.
-fn string_source_text(
-    value: &Datum,
-    source: Option<&tidb_datatype::FieldType>,
-) -> Result<String, EvalError> {
-    match year_zero_string(value, source) {
-        Some(text) => Ok(text),
-        None => datum_sql_string(value),
-    }
 }
 
 /// Returns the byte payload used by Go's `builtinCast*AsStringSig` binary
@@ -1253,19 +1171,6 @@ pub(crate) fn str_int_prefix(s: &str) -> i64 {
     } else {
         digits.parse::<u64>().map_or(-1, |value| value as i64)
     }
-}
-
-/// `CHAR(N)`'s own truncation is handled inline in [`eval_cast`] (keeps
-/// the first `N` characters, never pads); this is `BINARY(N)`'s own
-/// FIXED-WIDTH behavior — truncates the same way if longer, but PADS
-/// with `\0` bytes if shorter, confirmed via `goeval`:
-/// `CAST('hi' AS BINARY(5))` is `"hi\0\0\0"`, 5 bytes exactly. MySQL
-/// `BINARY` counts BYTES, not characters; the byte-preserving `Datum::Bytes`
-/// result keeps the same behavior for non-UTF-8 truncation boundaries too.
-fn binary_pad_truncate(s: &[u8], n: usize) -> Vec<u8> {
-    let mut bytes: Vec<u8> = s.iter().copied().take(n).collect();
-    bytes.resize(n, 0);
-    bytes
 }
 
 fn decimal_prefix(s: &str) -> Decimal {
@@ -2191,6 +2096,115 @@ mod tests {
         fn append_warning(&self, code: u16, message: &str) {
             self.0.borrow_mut().push((code, message.to_owned()));
         }
+    }
+
+    #[test]
+    fn string_owner_batch_json_binary_cast_does_not_pad() {
+        let value = Datum::Json(tidb_datatype::BinaryJSON::parse("{}").unwrap());
+        assert_eq!(
+            eval_cast(&CastType::Binary { len: Some(8) }, value, None, &NoColumns)
+                .unwrap()
+                .as_raw_bytes(),
+            Some(b"{}".as_slice())
+        );
+    }
+
+    #[test]
+    fn string_owner_batch_vector_binary_cast_does_not_pad() {
+        let value =
+            Datum::new_vector_float32(tidb_datatype::VectorFloat32::parse("[1,2]").unwrap());
+        assert_eq!(
+            eval_cast(&CastType::Binary { len: Some(8) }, value, None, &NoColumns)
+                .unwrap()
+                .as_raw_bytes(),
+            Some(b"[1,2]".as_slice())
+        );
+    }
+
+    #[test]
+    fn string_owner_batch_typed_json_and_vector_skip_padding_and_packet_gate() {
+        struct SmallPacket;
+        impl crate::Columns for SmallPacket {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn max_allowed_packet(&self) -> u64 {
+                4
+            }
+        }
+        let target = FieldType::new(FieldTypeCode::String)
+            .with_flen(8)
+            .with_charset_name("binary")
+            .with_collation_name("binary");
+        for (value, expected) in [
+            (
+                Datum::Json(tidb_datatype::BinaryJSON::parse("{}").unwrap()),
+                b"{}".as_slice(),
+            ),
+            (
+                Datum::new_vector_float32(tidb_datatype::VectorFloat32::parse("[1,2]").unwrap()),
+                b"[1,2]".as_slice(),
+            ),
+        ] {
+            assert_eq!(
+                eval_string_cast_with_type(value, None, &target, &SmallPacket)
+                    .unwrap()
+                    .as_raw_bytes(),
+                Some(expected)
+            );
+        }
+    }
+
+    fn string_cast_policy(cast: CastType) {
+        struct Policy(crate::context::ErrorLevel, RefCell<Vec<u16>>);
+        impl crate::Columns for Policy {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn truncate_level(&self) -> crate::context::ErrorLevel {
+                self.0
+            }
+            fn append_warning(&self, code: u16, _: &str) {
+                self.1.borrow_mut().push(code);
+            }
+        }
+        for level in [
+            crate::context::ErrorLevel::Error,
+            crate::context::ErrorLevel::Warn,
+            crate::context::ErrorLevel::Ignore,
+        ] {
+            let ctx = Policy(level, RefCell::new(Vec::new()));
+            let result = eval_cast(&cast, Datum::new_string("abc"), None, &ctx);
+            if level == crate::context::ErrorLevel::Error {
+                assert!(
+                    matches!(result, Err(EvalError::Conversion(ref e)) if e.to_sql_error().code == 1406),
+                    "{result:?}"
+                );
+            } else {
+                assert_eq!(result.unwrap().as_raw_bytes(), Some(b"ab".as_slice()));
+            }
+            assert_eq!(
+                *ctx.1.borrow(),
+                if level == crate::context::ErrorLevel::Warn {
+                    vec![1406]
+                } else {
+                    vec![]
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn string_owner_batch_char_cast_obeys_statement_truncation_policy() {
+        string_cast_policy(CastType::Char {
+            len: Some(2),
+            charset: None,
+        });
+    }
+
+    #[test]
+    fn string_owner_batch_binary_cast_obeys_statement_truncation_policy() {
+        string_cast_policy(CastType::Binary { len: Some(2) });
     }
 
     #[test]

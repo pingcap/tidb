@@ -20,6 +20,9 @@
 
 use chrono::Utc;
 
+use crate::encoding_base::TransformResult;
+use crate::EncodingResult;
+
 pub(crate) mod diagnostics;
 use crate::parser_types_errors::{
     ERR_DATA_TOO_LONG, ERR_OVERFLOW, ERR_TRUNCATED, ERR_TRUNCATED_WRONG_VALUE,
@@ -202,8 +205,21 @@ impl Datum {
             | FieldTypeCode::TinyBlob
             | FieldTypeCode::MediumBlob
             | FieldTypeCode::LongBlob => {
-                let bytes = self.string_conversion_bytes(target, flags)?;
-                let produced = produce_string_reported(bytes, target, true, diagnostics)?;
+                let (bytes, error) = self.string_conversion_bytes(target, flags)?.into_parts();
+                let produced = if let Some(error) = error {
+                    if !diagnostics.enabled() {
+                        return Err(DatumValueError::Comparison(error.to_string()));
+                    }
+                    // Go returns the transformed bytes and parser error together,
+                    // without applying width production or HandleTruncate.
+                    diagnostics.error(|| error.to_terror());
+                    Converted {
+                        value: bytes,
+                        event: None,
+                    }
+                } else {
+                    produce_string_reported(bytes, target, true, diagnostics)?
+                };
                 Ok(Converted {
                     value: if target.charset() == Charset::Binary {
                         Self::new_bytes(produced.value)
@@ -233,53 +249,68 @@ impl Datum {
         }
     }
 
+    /// Go's string charset stage, before width production and table error policy.
+    /// The transformed bytes remain available even when encoding fails.
+    pub fn string_conversion_encoding(
+        &self,
+        target: &FieldType,
+        flags: ConversionFlags,
+    ) -> Option<EncodingResult> {
+        if !matches!(
+            target.code(),
+            FieldTypeCode::String
+                | FieldTypeCode::Varchar
+                | FieldTypeCode::VarString
+                | FieldTypeCode::Blob
+                | FieldTypeCode::TinyBlob
+                | FieldTypeCode::MediumBlob
+                | FieldTypeCode::LongBlob
+        ) {
+            return None;
+        }
+        match self {
+            Self::String(_) | Self::Bytes(_) => {
+                let from_binary = self.collation() == Some(Collation::Binary);
+                let to_binary = target.charset() == Charset::Binary;
+                Some(if from_binary && to_binary {
+                    TransformResult::new(self.as_raw_bytes().unwrap().to_vec(), None)
+                } else if from_binary {
+                    self.binary_string_decoded(flags, target.charset().name())
+                } else if to_binary {
+                    TransformResult::new(self.binary_string_encoded().unwrap(), None)
+                } else {
+                    self.string_with_check(flags, target.charset().name())
+                        .unwrap()
+                })
+            }
+            Self::BinaryLiteral(_) => {
+                Some(self.binary_string_decoded(flags, target.charset().name()))
+            }
+            _ => None,
+        }
+    }
+
     fn string_conversion_bytes(
         &self,
         target: &FieldType,
         flags: ConversionFlags,
-    ) -> Result<Vec<u8>, DatumValueError> {
-        if matches!(self, Self::String(_) | Self::Bytes(_)) {
-            let from_binary = self.collation() == Some(Collation::Binary);
-            let to_binary = target.charset() == Charset::Binary;
-            if from_binary && to_binary {
-                return Ok(self.as_raw_bytes().unwrap().to_vec());
-            }
-            let transformed = if from_binary {
-                self.binary_string_decoded(flags, target.charset().name())
-            } else if to_binary {
-                return Ok(self.binary_string_encoded().unwrap());
-            } else {
-                self.string_with_check(flags, target.charset().name())
-                    .unwrap()
-            };
-            let (bytes, error) = transformed.into_parts();
-            if let Some(error) = error {
-                return Err(DatumValueError::Comparison(error.to_string()));
-            }
-            return Ok(bytes);
+    ) -> Result<EncodingResult, DatumValueError> {
+        if let Some(transformed) = self.string_conversion_encoding(target, flags) {
+            return Ok(transformed);
         }
-        // Go `convertToString`'s `KindBinaryLiteral` arm, which is the same
-        // accessor the `fromBinary` arm above uses.
-        if matches!(self, Self::BinaryLiteral(_)) {
-            let (bytes, error) = self
-                .binary_string_decoded(flags, target.charset().name())
-                .into_parts();
-            if let Some(error) = error {
-                return Err(DatumValueError::Comparison(error.to_string()));
-            }
-            return Ok(bytes);
-        }
-        if let Self::Bit(value) = self {
+        let bytes = if let Self::Bit(value) = self {
             let integer = value.to_int();
-            return Ok(if integer.is_truncated() {
+            if integer.is_truncated() {
                 value.as_bytes().to_vec()
             } else {
                 integer.value().to_string().into_bytes()
-            });
-        }
-        self.to_bytes().map_err(|error| {
-            DatumValueError::Comparison(format!("string conversion failed: {error}"))
-        })
+            }
+        } else {
+            self.to_bytes().map_err(|error| {
+                DatumValueError::Comparison(format!("string conversion failed: {error}"))
+            })?
+        };
+        Ok(TransformResult::new(bytes, None))
     }
 
     fn convert_to_signed(

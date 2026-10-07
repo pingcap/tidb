@@ -1,0 +1,722 @@
+{
+  "date": "2026-10-07",
+  "scope": "Connected K03/X01 existing-owner string conversion maintenance across datatype, SQL/PB expressions and table writes; not complete Go package acceptance.",
+  "integration_start": "466116e6a96c795eaa4c61600626f65024e1544a",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_head": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "native_changed": false,
+  "findings": [
+    "K03",
+    "X01"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "statuses_changed": false,
+  "repairs": [
+    "Contextful datum conversion preserves transformed prefix/replacements and parser1300, without width production or truncation-policy downgrading on charset failure. Legacy value/event error behavior remains.",
+    "Datatype and table preflight share charset dispatch; existing table1366 completion and skip-width behavior are retained. Binary destinations avoid an unnecessary error-only preflight copy.",
+    "AST CHAR/BINARY casts use the existing typed production owner and statement policy; strict INSERT/UPDATE CAST truncation now fails rather than silently warning.",
+    "SQL and typed string casts preserve Go JSON/vector signatures: no fixed-binary padding or its packet-limit gate. Other source signatures keep padding.",
+    "AST binary decoding remains at its explicit argument boundary; protobuf callers retain their serialized wrappers."
+  ],
+  "removals": [
+    "report_data_too_long",
+    "string_source_text",
+    "binary_pad_truncate",
+    "duplicated table charset decision tree",
+    "stale cast module documentation"
+  ],
+  "retained_test_correction": "The selected table suite exposed the old lenient DST expectation1292. Go table.castColumnValue handles lenient conversion as raw8179; INSERT.handleErr retitles a returned strict8179 as1292. Corrected only the lenient code/message and test name, retained strict assertions. No production DST changes. Both paths pass live SQL.",
+  "rust_tests": {
+    "baseline_failed": 7,
+    "distinct_final_passed": 90,
+    "datatype": 47,
+    "expression": 32,
+    "table_write": 11,
+    "names_sha256": "f3561ee0fb5862975616c8da774fc0bf9961faebeffff692bcbfc3a639497bfa"
+  },
+  "live_sql": {
+    "command": "source /workspace/.cloud-setup/env.sh; PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/string-owner-batch/wire.py <phase>",
+    "cwd": "/workspace/tidb",
+    "before": {
+      "phase": "before",
+      "binary_sha256": "4f57f2a9e45da155153f210a166b121c9d11ebde683df441c46054df637f4eb7",
+      "checks": [
+        {
+          "name": "JSON BINARY skips padding",
+          "sql": "SELECT HEX(CAST(CAST('{}' AS JSON) AS BINARY(8)))",
+          "rows": [
+            [
+              "7B7D000000000000"
+            ]
+          ],
+          "error": null,
+          "pass": false
+        },
+        {
+          "name": "vector BINARY skips padding",
+          "sql": "SELECT HEX(CAST(CAST('[1,2]' AS VECTOR(2)) AS BINARY(8)))",
+          "rows": [
+            [
+              "5B312C325D000000"
+            ]
+          ],
+          "error": null,
+          "pass": false
+        },
+        {
+          "name": "strict CHAR insert fails",
+          "sql": "INSERT INTO t VALUES(CAST('abc' AS CHAR(2)))",
+          "rows": [],
+          "error": null,
+          "pass": false
+        },
+        {
+          "name": "strict BINARY insert fails",
+          "sql": "INSERT INTO t VALUES(CAST('abc' AS BINARY(2)))",
+          "rows": [],
+          "error": null,
+          "pass": false
+        },
+        {
+          "name": "strict inserts preserve table",
+          "sql": "SELECT COUNT(*) FROM t",
+          "rows": [
+            [
+              2
+            ]
+          ],
+          "error": null,
+          "pass": false
+        },
+        {
+          "name": "strict CHAR update fails",
+          "sql": "UPDATE t SET v=CAST('abc' AS CHAR(2))",
+          "rows": [],
+          "error": null,
+          "pass": false
+        },
+        {
+          "name": "failed update retains value",
+          "sql": "SELECT v FROM t",
+          "rows": [
+            [
+              "ab"
+            ]
+          ],
+          "error": null,
+          "pass": false
+        },
+        {
+          "name": "IGNORE warns",
+          "sql": "SHOW WARNINGS",
+          "rows": [
+            [
+              "Warning",
+              1406,
+              "Data Too Long, field len 2, data len 3"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "IGNORE keeps truncated value",
+          "sql": "SELECT v FROM t",
+          "rows": [
+            [
+              "ab"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "nonstrict warns",
+          "sql": "SHOW WARNINGS",
+          "rows": [
+            [
+              "Warning",
+              1406,
+              "Data Too Long, field len 2, data len 3"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "nonstrict keeps truncated value",
+          "sql": "SELECT v FROM t",
+          "rows": [
+            [
+              "ab"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "ordinary BINARY still pads",
+          "sql": "SELECT HEX(CAST('ab' AS BINARY(4)))",
+          "rows": [
+            [
+              "61620000"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "table charset retains replacement before width",
+          "sql": "SELECT HEX(v) FROM a",
+          "rows": [
+            [
+              "61623F"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        }
+      ],
+      "exit": 0
+    },
+    "after": {
+      "phase": "after",
+      "binary_sha256": "cd501e945d657786d4697cb66b8bf14b8931b317eefca722f95f05bff0bce3b6",
+      "checks": [
+        {
+          "name": "JSON BINARY skips padding",
+          "sql": "SELECT HEX(CAST(CAST('{}' AS JSON) AS BINARY(8)))",
+          "rows": [
+            [
+              "7B7D"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "vector BINARY skips padding",
+          "sql": "SELECT HEX(CAST(CAST('[1,2]' AS VECTOR(2)) AS BINARY(8)))",
+          "rows": [
+            [
+              "5B312C325D"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "strict CHAR insert fails",
+          "sql": "INSERT INTO t VALUES(CAST('abc' AS CHAR(2)))",
+          "rows": null,
+          "error": [
+            1406,
+            "Data Too Long, field len 2, data len 3"
+          ],
+          "pass": true
+        },
+        {
+          "name": "strict BINARY insert fails",
+          "sql": "INSERT INTO t VALUES(CAST('abc' AS BINARY(2)))",
+          "rows": null,
+          "error": [
+            1406,
+            "Data Too Long, field len 2, data len 3"
+          ],
+          "pass": true
+        },
+        {
+          "name": "strict inserts preserve table",
+          "sql": "SELECT COUNT(*) FROM t",
+          "rows": [
+            [
+              0
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "strict CHAR update fails",
+          "sql": "UPDATE t SET v=CAST('abc' AS CHAR(2))",
+          "rows": null,
+          "error": [
+            1406,
+            "Data Too Long, field len 2, data len 3"
+          ],
+          "pass": true
+        },
+        {
+          "name": "failed update retains value",
+          "sql": "SELECT v FROM t",
+          "rows": [
+            [
+              "original"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "IGNORE warns",
+          "sql": "SHOW WARNINGS",
+          "rows": [
+            [
+              "Warning",
+              1406,
+              "Data Too Long, field len 2, data len 3"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "IGNORE keeps truncated value",
+          "sql": "SELECT v FROM t",
+          "rows": [
+            [
+              "ab"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "nonstrict warns",
+          "sql": "SHOW WARNINGS",
+          "rows": [
+            [
+              "Warning",
+              1406,
+              "Data Too Long, field len 2, data len 3"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "nonstrict keeps truncated value",
+          "sql": "SELECT v FROM t",
+          "rows": [
+            [
+              "ab"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "ordinary BINARY still pads",
+          "sql": "SELECT HEX(CAST('ab' AS BINARY(4)))",
+          "rows": [
+            [
+              "61620000"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "table charset retains replacement before width",
+          "sql": "SELECT HEX(v) FROM a",
+          "rows": [
+            [
+              "61623F"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "lenient DST preserves table warning",
+          "sql": "SHOW WARNINGS",
+          "rows": [
+            [
+              "Warning",
+              8179,
+              "Timestamp is not valid, since it is in Daylight Saving Time transition '2018-03-11 02:00:16' for time zone 'America/Los_Angeles'"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "lenient DST retains adjusted value",
+          "sql": "SELECT CAST(ts AS CHAR) FROM dst",
+          "rows": [
+            [
+              "2018-03-11 03:00:00"
+            ]
+          ],
+          "error": null,
+          "pass": true
+        },
+        {
+          "name": "strict DST retains INSERT completion",
+          "sql": "INSERT INTO dst VALUES('2018-03-11 02:00:16')",
+          "rows": null,
+          "error": [
+            1292,
+            "Incorrect timestamp value: '2018-03-11 02:00:16' for column 'ts' at row 1"
+          ],
+          "pass": true
+        },
+        {
+          "name": "strict DST leaves one row",
+          "sql": "SELECT COUNT(*) FROM dst",
+          "rows": [
+            [
+              1
+            ]
+          ],
+          "error": null,
+          "pass": true
+        }
+      ],
+      "exit": 0
+    },
+    "baseline_failed": 7,
+    "baseline_controls_passed": 6,
+    "final_passed": 17,
+    "new_final_controls": "Four DST checks validate the corrected retained-test contract."
+  },
+  "go_oracle": {
+    "command": "GOFLAGS=-mod=readonly go run /workspace/.cloud-setup/string-owner-batch/oracle.go",
+    "cwd": "/workspace/.cloud-setup/go-master",
+    "cases": [
+      {
+        "binary": false,
+        "error": "[parser:1300]Invalid ascii character string: 'E4B8AD'",
+        "hex": "61623F",
+        "mode": "strict",
+        "op": "datum",
+        "warnings": null
+      },
+      {
+        "binary": true,
+        "error": "[parser:1300]Invalid ascii character string: 'FF63'",
+        "hex": "6162",
+        "mode": "strict",
+        "op": "datum",
+        "warnings": null
+      },
+      {
+        "error": "[types:1406]Data Too Long, field len 2, data len 3",
+        "input": "abc",
+        "mode": "strict",
+        "op": "produce",
+        "type": 253,
+        "value": "ab",
+        "warnings": null
+      },
+      {
+        "error": "[types:1406]Data Too Long, field len 2, data len 3",
+        "input": "ab ",
+        "mode": "strict",
+        "op": "produce",
+        "type": 253,
+        "value": "ab",
+        "warnings": null
+      },
+      {
+        "error": "[types:1406]Data Too Long, field len 2, data len 3",
+        "input": "abc",
+        "mode": "strict",
+        "op": "produce",
+        "type": 254,
+        "value": "ab",
+        "warnings": null
+      },
+      {
+        "error": "<nil>",
+        "input": "ab ",
+        "mode": "strict",
+        "op": "produce",
+        "type": 254,
+        "value": "ab",
+        "warnings": null
+      },
+      {
+        "binary": false,
+        "error": "[parser:1300]Invalid ascii character string: 'E4B8AD'",
+        "hex": "61623F",
+        "mode": "warn",
+        "op": "datum",
+        "warnings": null
+      },
+      {
+        "binary": true,
+        "error": "[parser:1300]Invalid ascii character string: 'FF63'",
+        "hex": "6162",
+        "mode": "warn",
+        "op": "datum",
+        "warnings": null
+      },
+      {
+        "error": "<nil>",
+        "input": "abc",
+        "mode": "warn",
+        "op": "produce",
+        "type": 253,
+        "value": "ab",
+        "warnings": [
+          "[types:1406]Data Too Long, field len 2, data len 3"
+        ]
+      },
+      {
+        "error": "<nil>",
+        "input": "ab ",
+        "mode": "warn",
+        "op": "produce",
+        "type": 253,
+        "value": "ab",
+        "warnings": [
+          "[types:1406]Data Too Long, field len 2, data len 3"
+        ]
+      },
+      {
+        "error": "<nil>",
+        "input": "abc",
+        "mode": "warn",
+        "op": "produce",
+        "type": 254,
+        "value": "ab",
+        "warnings": [
+          "[types:1406]Data Too Long, field len 2, data len 3"
+        ]
+      },
+      {
+        "error": "<nil>",
+        "input": "ab ",
+        "mode": "warn",
+        "op": "produce",
+        "type": 254,
+        "value": "ab",
+        "warnings": null
+      },
+      {
+        "binary": false,
+        "error": "[parser:1300]Invalid ascii character string: 'E4B8AD'",
+        "hex": "61623F",
+        "mode": "ignore",
+        "op": "datum",
+        "warnings": null
+      },
+      {
+        "binary": true,
+        "error": "[parser:1300]Invalid ascii character string: 'FF63'",
+        "hex": "6162",
+        "mode": "ignore",
+        "op": "datum",
+        "warnings": null
+      },
+      {
+        "error": "<nil>",
+        "input": "abc",
+        "mode": "ignore",
+        "op": "produce",
+        "type": 253,
+        "value": "ab",
+        "warnings": null
+      },
+      {
+        "error": "<nil>",
+        "input": "ab ",
+        "mode": "ignore",
+        "op": "produce",
+        "type": 253,
+        "value": "ab",
+        "warnings": null
+      },
+      {
+        "error": "<nil>",
+        "input": "abc",
+        "mode": "ignore",
+        "op": "produce",
+        "type": 254,
+        "value": "ab",
+        "warnings": null
+      },
+      {
+        "error": "<nil>",
+        "input": "ab ",
+        "mode": "ignore",
+        "op": "produce",
+        "type": 254,
+        "value": "ab",
+        "warnings": null
+      }
+    ],
+    "source_sha256": "d6ee0e8bd5ffe3a8a487d1d7a88d664c2664bfe6cca1900cf02af6163a2ad1fe",
+    "output_sha256": "76e5f07d1977fdac1cbeb9cdcab3e28fc29b8d92f18e912716e4074a91f25f07"
+  },
+  "validation": [
+    {
+      "command": "cargo test --locked --no-fail-fast -p tidb-datatype -p tidb-expr --lib -- string_owner_batch_ --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "result": "seven new regressions failed on base production",
+      "log": "/workspace/.cloud-setup/string-owner-batch/before.log",
+      "sha256": "784479cccd6d53fc639a892530288df4fe9fbb4807df55bdd65d36ba5f8a50a1"
+    },
+    {
+      "command": "cargo test --locked --no-fail-fast -p tidb-datatype -p tidb-expr --lib -- string_owner_batch_ --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "result": "seven regressions passed",
+      "log": "/workspace/.cloud-setup/string-owner-batch/after-targeted.log",
+      "sha256": "2ccbf2f4cbf906164f996c2a9b6a10f7dc9da1bef91c13e9676d511baf25673e"
+    },
+    {
+      "command": "cargo test --locked --no-fail-fast -p tidb-datatype -p tidb-expr -p tidb-executor --lib -- datum_convert:: multibyte_encoding:: cast:: driver::write_cast:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "result": "89 passed; one stale lenient DST expectation failed",
+      "log": "/workspace/.cloud-setup/string-owner-batch/grouped.log",
+      "sha256": "a090a78c7dd8ed5958ced18d8231fb0c5f133a18414b4a93819dceb7a4fef3eb"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib -- driver::write_cast:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "result": "11 passed after correcting stale expectation; 90 distinct final passes including prior datatype/expression passes",
+      "log": "/workspace/.cloud-setup/string-owner-batch/grouped-write-final.log",
+      "sha256": "82cbb02a9377f504f84fe1e87b0c385667cd5bb7c0656d9dd1e36475c079dc5e"
+    },
+    {
+      "command": "cargo check --locked --all-targets -p tidb-datatype -p tidb-expr -p tidb-executor -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "result": "passed",
+      "log": "/workspace/.cloud-setup/string-owner-batch/check.log",
+      "sha256": "9bd078f9fa87f08e256021b3f9e5f36044b433b15ad6eea06625c55f1cf2cceb"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "result": "passed; repository root",
+      "log": "/workspace/.cloud-setup/string-owner-batch/lint.log",
+      "sha256": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "result": "passed",
+      "log": "/workspace/.cloud-setup/string-owner-batch/build.log",
+      "sha256": "443d79a7a019dc0bd3c5549c61aa65a5a288f1f684c643b40dfd0121d89c636a"
+    },
+    {
+      "command": "rustfmt --edition 2021 --check <five changed Rust files>",
+      "cwd": "/workspace/tidb",
+      "result": "passed; repository root",
+      "log": "/workspace/.cloud-setup/string-owner-batch/format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "environment": "Activate /workspace/.cloud-setup/env.sh in each shell; CARGO_BUILD_JOBS=1 for Cargo. Wire probe needs RUST_MIN_STACK from activation and the documented PYTHONPATH.",
+  "sources": {
+    "go": {
+      "master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+      "files": [
+        {
+          "path": "pkg/types/datum.go",
+          "sha256": "a7e97bcf032c6abd2e5c8d59516212cb6ead164dc3ec826bfd87392bc66475fc"
+        },
+        {
+          "path": "pkg/types/context.go",
+          "sha256": "4f95c649cecf84cfdb3378b156fb4577762b53d8f2c4ade1600ef66ff237606a"
+        },
+        {
+          "path": "pkg/parser/charset/encoding_base.go",
+          "sha256": "f1728ab789ad7c52925e7c3314b4e4ff4ecdf4eb7eb7d2922daee53532372000"
+        },
+        {
+          "path": "pkg/table/column.go",
+          "sha256": "39640cb6940ab803b1ed9eb9b6fe2b8a8f71e3b11fe62f2e09791d6ed9deaaac"
+        },
+        {
+          "path": "pkg/expression/builtin_cast.go",
+          "sha256": "12741863129c46a008a9064f94e11bf8be0a20f0b4efd83ef0a9e6b40b731ab5"
+        },
+        {
+          "path": "pkg/expression/builtin_cast_test.go",
+          "sha256": "caa0b678d597d60452e2dda8c6a84f55cd21d6f2920f17661e85ae3d055ad6d7"
+        },
+        {
+          "path": "pkg/executor/insert_common.go",
+          "sha256": "4cadcb2be9b681c2b53ff584cbb26b0ee2645d5b98745b83ac68a2252de8f388"
+        }
+      ]
+    },
+    "rust": [
+      {
+        "path": "rust/crates/tidb-datatype/src/datum_convert.rs",
+        "before_sha256": "2a7d254155dc1bcb1b8cf0b0b50b9bceebb6d04115a51911065d334ecfe1ce83",
+        "after_sha256": "98bf0634a1faf94cad831c4e1ced93bb6c320388d17d9bfd785b991f6c721166"
+      },
+      {
+        "path": "rust/crates/tidb-datatype/src/datum_convert/diagnostics.rs",
+        "before_sha256": "f37a0d359e3533399b3d2bcfbd3313d94a8ab84c90b18b70255aec26a814c10a",
+        "after_sha256": "e2efa4ad4a8c8066385857e1af3efe5b8a3b24cc3eca5b559c8b5eca267469f7"
+      },
+      {
+        "path": "rust/crates/tidb-datatype/src/multibyte_encoding.rs",
+        "before_sha256": "83a3b752ff831d29a22af272b24282c893187aa5d055369b9540676368f8ab31",
+        "after_sha256": "0bde338e01a9ab0244d7f9fdfb18f1cb11bf2b1703a885f7f087db57bd6267ee"
+      },
+      {
+        "path": "rust/crates/tidb-executor/src/driver/write_cast.rs",
+        "before_sha256": "0cf982bd8d4254bf339a77a4c6d01c6bf7450c173c1ca99220665fa96f78db87",
+        "after_sha256": "141c49c144b5b01c9665b26b493a75d6680525766ff9d7a0e90a959f87b8ccf7"
+      },
+      {
+        "path": "rust/crates/tidb-expr/src/cast.rs",
+        "before_sha256": "0ae2a43d58bfc22f7dbc5109c09406728871486126c221215ecf1b2b545bbb2e",
+        "after_sha256": "da168ebdbb64b90af8e54d021fe90c5c523695f19e85ad9728a404423fcd52fa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "/workspace/.cloud-setup/string-owner-batch/passed-tests.json",
+      "sha256": "f3561ee0fb5862975616c8da774fc0bf9961faebeffff692bcbfc3a639497bfa"
+    },
+    {
+      "path": "/workspace/.cloud-setup/string-owner-batch/wire.py",
+      "sha256": "06fb07909943fe586c9316b155517822a211ffdf8def6eac827df986e563b670"
+    },
+    {
+      "path": "/workspace/.cloud-setup/string-owner-batch/retired-completed-expression-tests.json",
+      "sha256": "f177ae96800959af7db99aeece72168aa3a35013f99d864234d77a9b523a6517"
+    },
+    {
+      "path": "/workspace/.cloud-setup/string-owner-batch/retired-completed-executor-test.json",
+      "sha256": "c99c30dfcad718db0709465403529fa4c2f66ea52a6f777edd26629c43b1644b"
+    },
+    {
+      "path": "/workspace/.cloud-setup/string-owner-batch/retired-mutation-staging.json",
+      "sha256": "12877ed13ca030a899b0b1cc54376e3e559def0da47621730b73245c34734a3d"
+    }
+  ],
+  "notes": [
+    "An initial implementation compile used a nonexistent Exact event; corrected to the existing None event before the successful test runs.",
+    "Lint passed on final production code; the later change only corrected the retained Rust DST test. Rust formatting and all-target checks include that correction.",
+    "Completed inactive test executables were retired with hashes/link counts/process checks to reserve link space; libraries, dependencies, sources and logs remain. No cache purge.",
+    "Table charset behavior already passed before this batch; dispatch consolidation is not counted as a new table semantic repair."
+  ],
+  "remaining": [
+    "Broader typed SQL/PB scalar/vector construction and conversion error matrices",
+    "Generated/read/ANALYZE adapters and complete source-package obligations",
+    "N01 raw-byte ingress remains separate",
+    "Other54 unresolved roots retain carried evidence; this batch is not a fresh full audit"
+  ],
+  "not_verified": [
+    "Full Go package suites",
+    "Live multi-node TiKV",
+    "Workload performance",
+    "Fresh Cloud restoration"
+  ],
+  "publication": "Actual commit hook, fresh locked pre-push build, remote SHA and draft readback are recorded outside the checkout in /workspace/.cloud-setup/string-owner-batch/final-handoff.json.",
+  "self_review": "Reviewed all five Rust file diffs, preserved AST-only decoding and legacy API behavior, confirmed source-specific padding, table skip-width policy, strict rollback and stale-test evidence. Both registers remain consistent."
+}

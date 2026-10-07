@@ -753,40 +753,14 @@ fn invalid_string_conversion(
     field_type: &FieldType,
     flags: tidb_datatype::ConversionFlags,
 ) -> Option<(Vec<u8>, Vec<u8>)> {
-    use tidb_datatype::{Collation, FieldTypeCode};
-
-    if !matches!(
-        field_type.code(),
-        FieldTypeCode::String
-            | FieldTypeCode::Varchar
-            | FieldTypeCode::VarString
-            | FieldTypeCode::Blob
-            | FieldTypeCode::TinyBlob
-            | FieldTypeCode::MediumBlob
-            | FieldTypeCode::LongBlob
-    ) {
+    // Binary destinations cannot fail charset conversion. Avoid copying their
+    // bytes in this error-only preflight; normal conversion produces them once.
+    if field_type.charset() == tidb_datatype::Charset::Binary {
         return None;
     }
-
-    let transformed = match value {
-        Datum::String(_) | Datum::Bytes(_) => {
-            let from_binary = value.collation() == Some(Collation::Binary);
-            let to_binary = field_type.charset() == tidb_datatype::Charset::Binary;
-            if from_binary && to_binary {
-                return None;
-            }
-            if from_binary {
-                value.binary_string_decoded(flags, field_type.charset().name())
-            } else if to_binary {
-                return None;
-            } else {
-                value.string_with_check(flags, field_type.charset().name())?
-            }
-        }
-        Datum::BinaryLiteral(_) => value.binary_string_decoded(flags, field_type.charset().name()),
-        _ => return None,
-    };
-    let (bytes, error) = transformed.into_parts();
+    let (bytes, error) = value
+        .string_conversion_encoding(field_type, flags)?
+        .into_parts();
     error.map(|error| (bytes, error.invalid_bytes().to_vec()))
 }
 
@@ -1451,7 +1425,7 @@ mod source_tests {
     }
 
     #[test]
-    fn timestamp_dst_gap_keeps_adjusted_value_and_insert_1292_diagnostic() {
+    fn timestamp_dst_gap_keeps_table_warning_and_strict_insert_diagnostic() {
         let field_type = FieldType::new(FieldTypeCode::Timestamp);
         let zone = tidb_datatype::SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
         let input = Datum::new_string("2018-03-11 02:00:16");
@@ -1462,10 +1436,11 @@ mod source_tests {
         assert_eq!(datum_error_text(&stored), "2018-03-11 03:00:00");
         let warnings = lenient.take_warnings();
         assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].1, 1292);
-        assert!(warnings[0]
-            .2
-            .contains("Incorrect timestamp value: '2018-03-11 02:00:16' for column 'ts' at row 1"));
+        // Lenient table conversion handles the error before INSERT's handleErr.
+        // Strict conversion returns it, so INSERT retitles it below.
+        assert_eq!(warnings[0].1, 8179);
+        assert_eq!(warnings[0].2,
+            "Timestamp is not valid, since it is in Daylight Saving Time transition '2018-03-11 02:00:16' for time zone 'America/Los_Angeles'");
 
         let strict = crate::StmtContext::for_dml(false, true, false).with_time_zone(zone);
         let error = cast_value_for_column(input, &field_type, "ts", 0, &strict, false)
