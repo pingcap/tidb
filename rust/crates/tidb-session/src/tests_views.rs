@@ -1376,3 +1376,96 @@ fn drop_missing_names_are_deferred_and_duplicates_observe_completion() {
         ]
     );
 }
+
+// Go builds a view query in the submitting session, then ddl.Executor checks
+// and publishes its target through the latest persistent infoschema.
+#[test]
+fn view_owner_batch_create_preserves_local_target_rows() {
+    let mut s = Session::new();
+    s.run("create temporary table shadow(a int)").unwrap();
+    s.run("insert into shadow values(7)").unwrap();
+    s.run("create view shadow as select 9 as a").unwrap();
+    assert_eq!(row_text(s.run("select a from shadow")), vec![vec!["7"]]);
+    s.run("drop temporary table shadow").unwrap();
+    assert_eq!(row_text(s.run("select a from shadow")), vec![vec!["9"]]);
+}
+
+#[test]
+fn view_owner_batch_replace_preserves_local_target_rows() {
+    let mut s = Session::new();
+    s.run("create view shadow as select 1 as a").unwrap();
+    s.run("create temporary table shadow(a int)").unwrap();
+    s.run("insert into shadow values(7)").unwrap();
+    s.run("create or replace view shadow as select 9 as a")
+        .unwrap();
+    assert_eq!(row_text(s.run("select a from shadow")), vec![vec!["7"]]);
+    s.run("drop temporary table shadow").unwrap();
+    assert_eq!(row_text(s.run("select a from shadow")), vec![vec!["9"]]);
+}
+
+#[test]
+fn view_owner_batch_replace_refuses_persistent_base_table() {
+    let mut s = Session::new();
+    s.run("create table target(a int)").unwrap();
+    s.run("insert into target values(7)").unwrap();
+    let err = s
+        .run("create or replace view target as select 9 as a")
+        .unwrap_err();
+    assert_eq!(err.to_mysql_error().code, 1347);
+    assert_eq!(row_text(s.run("select a from target")), vec![vec!["7"]]);
+}
+
+#[test]
+fn view_owner_batch_hidden_base_table_still_refuses_replacement() {
+    let mut s = Session::new();
+    s.run("create table target(a int)").unwrap();
+    s.run("insert into target values(8)").unwrap();
+    s.run("create temporary table target(a int)").unwrap();
+    s.run("insert into target values(7)").unwrap();
+    let err = s
+        .run("create or replace view target as select 9 as a")
+        .unwrap_err();
+    assert_eq!(err.to_mysql_error().code, 1347);
+    assert_eq!(row_text(s.run("select a from target")), vec![vec!["7"]]);
+    s.run("drop temporary table target").unwrap();
+    assert_eq!(row_text(s.run("select a from target")), vec![vec!["8"]]);
+}
+
+#[test]
+fn view_owner_batch_qualified_target_keeps_query_database() {
+    let mut s = Session::new();
+    s.run("create database other_db").unwrap();
+    s.run("create table source(a int)").unwrap();
+    s.run("insert into source values(7)").unwrap();
+    s.run("create table other_db.source(a int)").unwrap();
+    s.run("insert into other_db.source values(9)").unwrap();
+    s.run("create view other_db.v as select a from source")
+        .unwrap();
+    assert_eq!(row_text(s.run("select a from other_db.v")), vec![vec!["7"]]);
+    s.run("use other_db").unwrap();
+    assert_eq!(row_text(s.run("select a from v")), vec![vec!["7"]]);
+}
+
+#[test]
+fn view_owner_batch_query_error_precedes_target_collision() {
+    let mut s = Session::new();
+    s.run("create view target as select 1 as a").unwrap();
+    let err = s
+        .run("create view target as select a from absent")
+        .unwrap_err();
+    assert_eq!(err.to_mysql_error().code, 1146);
+    assert_eq!(row_text(s.run("select a from target")), vec![vec!["1"]]);
+}
+
+#[test]
+fn view_owner_batch_local_query_source_remains_forbidden() {
+    let mut s = Session::new();
+    s.run("create table source(a int)").unwrap();
+    s.run("create temporary table source(a int)").unwrap();
+    s.run("create temporary table target(a int)").unwrap();
+    let err = s
+        .run("create view target as select a from source")
+        .unwrap_err();
+    assert_eq!(err.to_mysql_error().code, 1352);
+    s.run("select a from target").unwrap();
+}

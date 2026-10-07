@@ -772,3 +772,37 @@ fn ddl_visit_batch_denial_keeps_transaction_and_grouped_schema() {
     );
     assert!(!show_create(&mut boot, "u").contains("pending"));
 }
+
+#[test]
+fn view_owner_batch_checks_body_select_before_create_privilege() {
+    let (_, mut boot, mut bob) = scoped();
+    assert_eq!(
+        denied(&mut bob, "CREATE VIEW v AS SELECT a FROM t"),
+        table_denied("SELECT", "t")
+    );
+    boot.run("GRANT SELECT ON test.t TO 'bob'@'%'").unwrap();
+    assert_eq!(
+        denied(&mut bob, "CREATE VIEW v AS SELECT a FROM t"),
+        table_denied("CREATE VIEW", "v")
+    );
+    boot.run("GRANT CREATE VIEW ON test.* TO 'bob'@'%'")
+        .unwrap();
+    bob.run("CREATE VIEW v AS SELECT a FROM t").unwrap();
+}
+
+#[test]
+fn view_owner_batch_replace_requires_drop_privilege() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("GRANT CREATE VIEW ON test.* TO 'bob'@'%'")
+        .unwrap();
+    bob.run("CREATE VIEW v AS SELECT 1 AS a").unwrap();
+    assert_eq!(
+        denied(&mut bob, "CREATE OR REPLACE VIEW v AS SELECT 2 AS a"),
+        table_denied("DROP", "v")
+    );
+    assert_eq!(row_text(boot.run("SELECT a FROM v")), vec![vec!["1"]]);
+    boot.run("GRANT DROP ON test.v TO 'bob'@'%'").unwrap();
+    bob.run("CREATE OR REPLACE VIEW v AS SELECT 2 AS a")
+        .unwrap();
+    assert_eq!(row_text(boot.run("SELECT a FROM v")), vec![vec!["2"]]);
+}

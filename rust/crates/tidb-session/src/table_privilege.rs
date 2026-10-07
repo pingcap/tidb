@@ -319,7 +319,20 @@ pub(crate) fn required_table_privileges(
             // could touch a table.
             _ => {}
         },
-        Stmt::Ddl(ddl) => requests.extend(ddl_table_privileges(ddl, current_db)),
+        Stmt::Ddl(ddl) => {
+            if let DdlStmt::CreateView(_) = ddl.as_ref() {
+                // Go builds the query before appending CREATE VIEW and DROP
+                // visits. Reuse scoped read collection, including subqueries.
+                for (schema, table) in read_tables(stmt, current_db) {
+                    requests.push(TablePrivilegeRequest::new(
+                        &schema,
+                        &table,
+                        GlobalPriv::Select,
+                    ));
+                }
+            }
+            requests.extend(ddl_table_privileges(ddl, current_db));
+        }
         Stmt::Admin(_) | Stmt::Session(_) => {}
     }
     // Preserve original table visits for observation, but retain Go's
@@ -521,7 +534,13 @@ fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRe
         DdlStmt::CreateIndex(create) => one(&create.table, GlobalPriv::Index),
         DdlStmt::DropIndex(drop) => one(&drop.table, GlobalPriv::Index),
         // Around line 5487.
-        DdlStmt::CreateView(create) => one(&create.name, GlobalPriv::CreateView),
+        DdlStmt::CreateView(create) => {
+            let mut visits = one(&create.name, GlobalPriv::CreateView);
+            if create.or_replace {
+                visits.extend(one(&create.name, GlobalPriv::Drop));
+            }
+            visits
+        }
         // `resolveCreateSequenceStmt` (`planbuilder.go` around line 5398)
         // records the same table-scoped CREATE privilege as CREATE TABLE and
         // carries the sequence name in the 1142 auth error.

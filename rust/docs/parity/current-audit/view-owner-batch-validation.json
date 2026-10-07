@@ -1,0 +1,98 @@
+{
+  "date": "2026-10-07",
+  "baseline": {
+    "head": "894292170dde25acfbe988255c0f4e0717fd4fde",
+    "command": "cargo test --locked -p tidb-session --lib -- view_owner_batch --test-threads=1",
+    "passed": 0,
+    "failed": 9,
+    "live": {
+      "passed": 7,
+      "failed": 9,
+      "server_exit": 0
+    }
+  },
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_unchanged": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "findings": [
+    "A01",
+    "D01"
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "scope": "Shared view query, privilege and target admission with persistent publication; existing-owner maintenance, not complete Go package acceptance",
+  "go_sources": [
+    "pkg/planner/core/planbuilder.go::CreateViewStmt",
+    "pkg/executor/ddl.go::executeCreateView",
+    "pkg/ddl/executor.go::CreateView/createTableWithInfoJob",
+    "pkg/parser/parser.y (ordinary ALTER VIEW absent)"
+  ],
+  "production": [
+    "tidb-executor/src/view.rs::resolve_view_definition/check_view_target/run_create_view_in",
+    "tidb-executor/src/driver/catalog.rs::persistent_table_in/register_persistent_view_in",
+    "tidb-session/src/table_privilege.rs",
+    "tidb-exec/src/cluster_ddl.rs::plan_ddl_with_collation"
+  ],
+  "validation": {
+    "grouped_tests": {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_views tests_grants tests_temporary_tables --test-threads=1",
+      "passed": 214,
+      "failed": 0,
+      "ignored": 0,
+      "final_log": "after-publication.log"
+    },
+    "lint": "PASS: make lint",
+    "integration": {
+      "command": "cargo test --locked -p tidb-session -p tidb-exec --test all -- nested_view_and_alter_view_source a_create_view_publishes_a_view_table_info --test-threads=1",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0,
+      "targets": {
+        "tidb-exec": 1,
+        "tidb-session": 2
+      }
+    },
+    "all_targets": "PASS: cargo check --locked --all-targets -p tidb-executor -p tidb-session -p tidb-server -p tidb-exec",
+    "locked_build": "PASS: cargo build --locked -p tidb-server",
+    "live_mysql": {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/view-owner-batch/wire.py",
+      "passed": 16,
+      "failed": 0,
+      "server_exit": 0,
+      "scope": "Real MySQL against rebuilt tidb-server with unistore; same sixteen assertions as baseline",
+      "binary_sha256": "0379b4f2e8eb7687515c0941a9436511890b8e6ba310a5843e4f595c7e067ffa"
+    },
+    "publication": "Actual hook and fresh locked build required; external final-handoff.json records final results."
+  },
+  "removed": "Unreachable run_alter_view_in, its export and DdlStmt::AlterView dispatch. Retain existing Go syntax refusal and behavioral tests. Generated AST/visitor artifacts are unchanged because no maintained Rust generator was found.",
+  "self_review": "Replaced draft hidden-view map mutation with existing detach/register/attach lifecycle so catalog mutation version and metadata invalidation share normal registration. The final 214-case run follows this correction.",
+  "limitations": [
+    "A01 and D01 parent statuses unchanged; other54 unresolved findings retain carried evidence",
+    "No complete Go package acceptance, full Go suites, multi-node TiKV, crash recovery or performance verification",
+    "Full planner-owned visit ordering, explicit-definer SUPER policy and CTE view canonicalization remain open",
+    "Durable DDL job/recovery ownership and local-table survival after DROP DATABASE remain open",
+    "S03 session-migration finding is unaffected by this batch"
+  ],
+  "external_artifacts": "/workspace/.cloud-setup/view-owner-batch",
+  "recovered_issues": [
+    "Initial Cargo command used repository root and failed before compilation; corrected to rust/.",
+    "One self-review edit command used a wrong relative path and its following tests exercised the earlier source. after-publication.log is the authoritative final-source run."
+  ],
+  "logs": {
+    "before.log": "041287ebd817f91b346cd9bae5f2da06313d63b601aa17fb9f898ff490f327cb",
+    "after.log": "e655b74e42831a005b281ebf5ac5fb210485e2c34a44575ac0afe74c7f740985",
+    "after-publication.log": "75db8a89bba56ef2618c28551e041ade66bde40fe63d48f1991334e5cea39f59",
+    "integration.log": "423d61d15c2b954c6df7ba22a70bdf608e7b59b20b68be77a0564b904ef65fed",
+    "check.log": "856363d6f964ed744024f7f27a70872cbc8c7e3834f1eecd96c8c809b01833b4",
+    "lint.log": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4",
+    "build.log": "ef86f237b8137f4aa2b4a302f6230f4f46b9c3f6a45ef0119edc79314b94b596",
+    "wire-before.json": "e97e1f9efad784cd489f4851ba2acfa711a6c00ba1c088606fe19fc08c5d2e81",
+    "wire.json": "d41af496c313e220f0bc2c773075aeb3da0bfd350bbdb2393ced214e443ff043",
+    "wire.py": "0692f9d9a57fb0f8425918ee9261c675fe28e9aa4a07cd4dd4b2a62113f4cbb4",
+    "register-check.json": "3f4c1c5914291c4f790243b7fc26245d3f6814dd7eb3277894d3a9ea6c42ec36"
+  }
+}

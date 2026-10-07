@@ -8189,13 +8189,26 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let Some(database) = find_database(&catalog, schema) else {
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
             };
-            let existing = find_table(database, name).map(|table| table.id);
-            if existing.is_some() && !or_replace {
-                return Err(DdlPlanError::TableExists {
+            let existing = find_table(database, name);
+            tidb_executor::view::check_view_target(
+                schema,
+                name,
+                *or_replace,
+                existing.map(|table| table.view.is_some()),
+            )
+            .map_err(|error| match error {
+                tidb_executor::DriverError::Schema(
+                    tidb_executor::SchemaErrorKind::TableExists(_),
+                ) => DdlPlanError::TableExists {
                     schema: schema.clone(),
                     table: name.clone(),
-                });
-            }
+                },
+                error => {
+                    let error = error.to_mysql_error();
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+                }
+            })?;
+            let existing = existing.map(|table| table.id);
             let db_id = database.info.id;
             // Go SetSchemaDiffForCreateView carries both identities for a
             // replacement, so schema consumers retire the previous view.

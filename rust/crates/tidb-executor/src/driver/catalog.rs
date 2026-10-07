@@ -3011,9 +3011,46 @@ impl Catalog {
         }
     }
 
-    /// Registers a view in `database`, replacing whatever the name held --
-    /// which is what `CREATE OR REPLACE VIEW` means. Reports 1049 when the
-    /// schema does not exist.
+    /// Resolves a durable DDL target without the session's local name overlay.
+    pub(crate) fn persistent_table_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
+        let entry = self.table_in(database, name)?;
+        if matches!(entry, TableEntry::Kv(table) if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
+        {
+            let database = database.go_to_lower();
+            let name = name.go_to_lower();
+            self.shadowed_by_local_temporary
+                .iter()
+                .rev()
+                .find(|(db, table, _)| db == &database && table == &name)
+                .map(|(_, _, entry)| entry.as_ref())
+        } else {
+            Some(entry)
+        }
+    }
+
+    /// Publishes an admitted view behind a local shadow, retaining its rows.
+    pub(crate) fn register_persistent_view_in(
+        &mut self,
+        database: &str,
+        name: &str,
+        view: ViewDef,
+    ) -> Result<(), DriverError> {
+        if matches!(self.table_in(database, name), Some(TableEntry::Kv(table))
+            if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
+        {
+            // Reuse normal publication so transaction and metadata versions
+            // advance together; restore every local table even on failure.
+            let local = self.take_local_temporary_tables();
+            let result = self.register_view_in(database, name, view);
+            self.attach_local_temporary_tables(local);
+            result
+        } else {
+            self.register_view_in(database, name, view)
+        }
+    }
+
+    /// Registers an already-admitted view. The caller owns object-kind checks.
+    /// Reports 1049 when the schema does not exist.
     pub fn register_view_in(
         &mut self,
         database: &str,

@@ -42,51 +42,7 @@ use tidb_ast::{
 };
 use tidb_datatype::FieldType;
 
-/// Creates (or replaces) a view.
-///
-/// The body is resolved now, as Go does: a `CREATE VIEW` over a missing table
-/// or column fails at creation rather than at the first read.
-/// go `AlterView`: the view-definition modification. The view MUST exist
-/// (go answers `infoschema.ErrTableNotExists`, 1146, for a missing view);
-/// the replacement mirrors `CREATE OR REPLACE VIEW`.
-pub fn run_alter_view_in(
-    alter: &tidb_ast::AlterViewStmt,
-    catalog: &mut Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let name = alter.name.last().cloned().unwrap_or_default();
-    // go `AlterView`: the view MUST exist (1146 for a missing view).
-    if catalog
-        .table_in(current_db, &name)
-        .is_none_or(|entry| !entry.is_view())
-    {
-        return Err(DriverError::Schema(
-            crate::SchemaErrorKind::UnknownTable(format!("{current_db}.{}", alter.name.join("."))),
-        ));
-    }
-    // The definition rebuild mirrors `CREATE OR REPLACE VIEW`: the ALTER
-    // spelling carries only the name, the optional columns and the query.
-    let create = tidb_ast::CreateViewStmt {
-        or_replace: true,
-        algorithm: Default::default(),
-        definer: tidb_ast::UserSpec {
-            current_user: true,
-            user: String::new(),
-            host: String::new(),
-        },
-        security: Default::default(),
-        name: alter.name.clone(),
-        columns: alter.columns.clone(),
-        query: alter.query.clone(),
-        query_parenthesized: false,
-        check_option: Default::default(),
-    };
-    let (database, name, view) = resolve_view_definition(&create, catalog, current_db, ctx)?;
-    catalog.register_view_in(&database, &name, view)?;
-    Ok(())
-}
-
+/// Resolves and publishes a view while retaining session-local name shadows.
 pub fn run_create_view_in(
     create: &CreateViewStmt,
     catalog: &mut Catalog,
@@ -94,7 +50,7 @@ pub fn run_create_view_in(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let (database, name, view) = resolve_view_definition(create, catalog, current_db, ctx)?;
-    catalog.register_view_in(&database, &name, view)?;
+    catalog.register_persistent_view_in(&database, &name, view)?;
     Ok(())
 }
 
@@ -144,14 +100,6 @@ pub fn resolve_view_definition(
 ) -> Result<(String, String, ViewDef), DriverError> {
     let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
-    // `CREATE VIEW` over an existing name is Go's ErrTableExists whether the
-    // name belongs to a table or to another view; `OR REPLACE` overwrites.
-    if catalog.contains_in(&database, &name) && !create.or_replace {
-        return Err(DriverError::Schema(SchemaErrorKind::TableExists(format!(
-            "{database}.{name}"
-        ))));
-    }
-
     // Go `buildDataSource` (`pkg/planner/core/logical_plan_builder.go:4963`):
     // a view whose body names a LOCAL temporary table is refused with 1352.
     // The view definition is shared -- any session may read it -- while the
@@ -188,7 +136,7 @@ pub fn resolve_view_definition(
     } else {
         catalog
     };
-    let select_sql = canonical_view_query(&create.query, resolving, &database)?;
+    let select_sql = canonical_view_query(&create.query, resolving, current_db)?;
     // Planning the canonical body both validates it and settles the output
     // column types the view reports to DESCRIBE and SHOW CREATE VIEW; Go's
     // `PlanBuilder` builds the body's plan and reads its schema, and never
@@ -201,7 +149,7 @@ pub fn resolve_view_definition(
         ctx.clone()
     };
     let body_columns =
-        crate::driver::plan_select_meta_in(&select_sql, resolving, &database, &definition_ctx)?;
+        crate::driver::plan_select_meta_in(&select_sql, resolving, current_db, &definition_ctx)?;
     let columns = match create.columns.len() {
         0 => body_columns,
         n if n == body_columns.len() => create
@@ -213,6 +161,17 @@ pub fn resolve_view_definition(
         // Go `ErrViewWrongList` (1353).
         _ => return Err(DriverError::ViewWrongList),
     };
+
+    // Go plans the body first, then CreateTableWithInfo checks the durable
+    // target. A local table is neither a duplicate nor a replaceable view.
+    check_view_target(
+        &database,
+        &name,
+        create.or_replace,
+        catalog
+            .persistent_table_in(&database, &name)
+            .map(crate::TableEntry::is_view),
+    )?;
 
     let (definer_user, definer_host) = if create.definer.current_user {
         ctx.authenticated_identity().map_or_else(
@@ -239,6 +198,27 @@ pub fn resolve_view_definition(
         check_option: create.check_option.sql().to_owned(),
     };
     Ok((database, name, view))
+}
+
+/// Go CreateTableWithInfo's shared view-name admission, including its worker
+/// recheck against the publication snapshot. `existing` describes the durable
+/// object only; true means a view and false means another object kind.
+pub fn check_view_target(
+    database: &str,
+    name: &str,
+    or_replace: bool,
+    existing: Option<bool>,
+) -> Result<(), DriverError> {
+    match existing {
+        Some(_) if !or_replace => Err(DriverError::Schema(SchemaErrorKind::TableExists(format!(
+            "{database}.{name}"
+        )))),
+        Some(false) => Err(DriverError::Schema(SchemaErrorKind::WrongObject {
+            name: format!("{database}.{name}"),
+            expected: "VIEW",
+        })),
+        _ => Ok(()),
+    }
 }
 
 /// Drops views, refusing to touch a base table of the same name.

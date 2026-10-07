@@ -2707,3 +2707,9 @@ outcomes. Live TiKV/release execution and finding acceptance remain unverified.
 
 
 The [living batch plan](persistent-ddl-batch-execplan.md) and [receipt](parity/current-audit/persistent-ddl-batch-validation.json) connect D01/E02/D11. The grouped baseline reports11 failures across hidden persistent targets, FK children and local-parent creation; one LIKE expectation was incorrect and is retained as a Go refusal control. Share the existing catalog/storage lifecycle with an explicit local-name scope, migrate admitted durable operations together and retain local-only behavior. Broader durable DDL, distributed FK and package obligations remain unresolved; counts remain56. Final gates are recorded in the receipt and external handoff.
+
+
+## View admission and persistent publication (2026-10-07)
+
+
+The [living batch plan](view-owner-batch-execplan.md) and [receipt](parity/current-audit/view-owner-batch-validation.json) connect A01/D01. Repair body SELECT and replacement DROP visits through shared privilege collection; bind unqualified body names to the submitting database. Resolve durable targets separately from local query visibility, reject non-view replacement at both resolution and publication, and publish through normal catalog versioning while retaining local rows. Remove the dead ordinary ALTER VIEW executor/dispatch; Go grammar and the existing refusal test prohibit enabling it. Generated AST artifacts remain until their maintained generator is available. Nine baseline Rust regressions fail, followed by 217 passing grouped Rust checks. Final server/gate outcomes remain in the receipt. Broad owner counts stay 56 unresolved; S03 migration is not affected.

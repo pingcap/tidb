@@ -299,7 +299,7 @@ pub use tidb_expr::{
 };
 pub use topn::TopNExec;
 pub use view::{
-    resolve_view_definition, run_alter_view_in, run_create_view_in, run_drop_view_in,
+    resolve_view_definition, run_create_view_in, run_drop_view_in,
     view_column_list,
 };
 

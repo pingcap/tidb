@@ -6174,6 +6174,15 @@ fn a_create_view_publishes_a_view_table_info() {
     let create_t = plan(&mut store, "CREATE TABLE t (a BIGINT PRIMARY KEY)", 101);
     apply(&mut store, &create_t);
 
+    // Recheck the actual publication snapshot: a table can appear after
+    // session-side view resolution, and must never be deleted as a view.
+    let error = plan_ddl(&mut store, &view_statement("u6", "t", true), 102)
+        .expect_err("OR REPLACE cannot replace a base table");
+    let DdlPlanError::Admission(error) = error else {
+        panic!("expected WrongObject admission: {error:?}");
+    };
+    assert_eq!(error.code, 1347);
+
     let write = match plan_ddl(&mut store, &view_statement("u6", "v", false), 102)
         .expect("a fresh view plans")
     {
