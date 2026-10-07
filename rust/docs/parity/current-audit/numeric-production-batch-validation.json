@@ -1,0 +1,130 @@
+{
+  "date": "2026-10-07",
+  "scope": "K03/X01 existing-owner numeric-production maintenance; complete Go packages remain unaccepted",
+  "integration_start": "c64fc5eb6f92f289fa00b5cbf8fb5a701b8cac70",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_head": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "native_changed": false,
+  "findings": [
+    "K03",
+    "X01"
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "statuses_changed": false,
+  "other_unresolved_roots_freshly_reviewed": false,
+  "repairs": [
+    "Table DECIMAL sources use MyDecimal diagnostics directly; malformed input retains1292, source overflow1690 survives target fitting, and source errors coexist with later rounding warnings.",
+    "ENUM/SET table DECIMAL conversion follows Go ToNumber float64 before FromFloat64; other ToDecimal callers retain their unsigned source semantics.",
+    "FLOAT/DOUBLE/DECIMAL invalid vector conversions retain NULL with plain SQL1105; legacy value/event callers keep their error-return contract.",
+    "One shared decimal-production owner supplies table and expression rounding, saturation and warning order while preserving unsigned negative-zero completion.",
+    "SQL and protobuf binary-literal REAL/DECIMAL casts use direct numeric evaluation and skip destination fitting."
+  ],
+  "removals": [
+    "Duplicate table DECIMAL precision/scale fitting and saturation implementation",
+    "Coarse source-event reconstruction for string/real DECIMAL conversion"
+  ],
+  "tests_removed": 0,
+  "rust_tests": {
+    "baseline_failed": 4,
+    "final_distinct_passed": 101,
+    "datatype": 50,
+    "expression": 51,
+    "datatype_revalidation_after_legacy_guard": 50,
+    "new_methods": 5,
+    "names_sha256": "342292576b602fc531bea3d89ed187ff075e17174c971ccc1a8306bdd8b1ec63"
+  },
+  "go_comparison": {
+    "cases": 120,
+    "baseline_mismatches": 60,
+    "final_mismatches": 0,
+    "compared": [
+      "value",
+      "source error identity/message",
+      "ordered warnings"
+    ],
+    "modes": [
+      "strict",
+      "warn",
+      "ignore"
+    ],
+    "widths": [
+      4,
+      20
+    ],
+    "scale": 2,
+    "signed_and_unsigned": true
+  },
+  "wire": {
+    "baseline_confirmed_failures": 5,
+    "baseline_hypothesis_corrections": "The three initial unsigned-DECIMAL assertions were disproved by Go and excluded; corrected controls require1264 and no inserted row.",
+    "final_checks": 22,
+    "final_failed": 0,
+    "store": "unistore",
+    "owned_server_joined": true,
+    "intermediate_expectation_correction": "Initial live run passed21/22. Go table/column.go retitles bare1265 to1292, and executor/insert_common.go completes both rounding and returned diagnostics as1366. Corrected the SQL expectation only; final22/22 passed with unchanged production source."
+  },
+  "validation": {
+    "rust_command": "cargo test --locked --no-fail-fast -p tidb-datatype -p tidb-expr --lib -- datum_convert:: cast::tests:: distsql_builtin:: --test-threads=1",
+    "datatype_revalidation": "cargo test --locked -p tidb-datatype --lib -- datum_convert:: --test-threads=1",
+    "all_targets": "cargo check --locked --all-targets -p tidb-datatype -p tidb-expr -p tidb-server",
+    "lint": "make lint",
+    "server": "cargo build --locked -p tidb-server",
+    "cargo_cwd": "/workspace/tidb/rust",
+    "activation": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1",
+    "format": "rustfmt --edition 2021 --config skip_children=true --check on five edited Rust files; git diff --check",
+    "bazel_prepare": "not applicable; no Go/Bazel/manifest/dependency edits"
+  },
+  "not_verified": [
+    "Full upstream Go packages and original package artifact acceptance",
+    "Live multi-node TiKV",
+    "TLS policy and workload performance",
+    "Cloud Publish and fresh-task restoration"
+  ],
+  "publication": "Actual hook, fresh pre-push build, remote SHA and Cloud draft readback are recorded after commit in external final-handoff.json.",
+  "external_evidence": "/workspace/.cloud-setup/numeric-production-batch",
+  "source_identities": [
+    {
+      "path": "pkg/types/datum.go",
+      "sha256": "a7e97bcf032c6abd2e5c8d59516212cb6ead164dc3ec826bfd87392bc66475fc"
+    },
+    {
+      "path": "pkg/types/mydecimal.go",
+      "sha256": "7cac77d01f7fd8447962b794d2c397cb280a44b0da345edc63193260bdc1f1d7"
+    },
+    {
+      "path": "pkg/expression/builtin_cast.go",
+      "sha256": "12741863129c46a008a9064f94e11bf8be0a20f0b4efd83ef0a9e6b40b731ab5"
+    },
+    {
+      "path": "pkg/expression/expression.go",
+      "sha256": "39c6e2d4c021148b35667fa7a779af6e47ab0264cb9c776039b59d7ac7175801"
+    },
+    {
+      "path": "pkg/table/column.go",
+      "sha256": "39640cb6940ab803b1ed9eb9b6fe2b8a8f71e3b11fe62f2e09791d6ed9deaaac"
+    },
+    {
+      "path": "pkg/executor/insert_common.go",
+      "sha256": "4cadcb2be9b681c2b53ff584cbb26b0ee2645d5b98745b83ac68a2252de8f388"
+    }
+  ],
+  "log_sha256": {
+    "before-rust.log": "15a645d703a8d5506eb3c4abb21ed087dc5d51f983a1b3db4b450590cd4bde16",
+    "after-rust.log": "901ea5fc146bdf4c8452f2a7e6d73fa6f673ba486e1ecff38de3aec4ae4756d8",
+    "final-datatype.log": "3649f5647582f54894e7f1f5405804758a929ba5a5b923d3955209dd941e22e9",
+    "before-comparison.json": "5efeb64a5f2f412aad85499790fdcbcb9d335c6b171caeffb78e7faf58254c53",
+    "final-comparison.json": "5ac1f676e4a075daea48464057ad605e94f9c8a16a316e9fbc61e9c569336142",
+    "before-wire.json": "9f14c1c85736bede07fb36be519bcc224e83bac5b8355eed934f1f3ed1f281ba",
+    "final-wire.json": "86a9b0ff837ccc5a3397371a0bc5b5a911275fda0afa68ec0a2935e9b27b6e57",
+    "all-targets.log": "ff9741b2ae9875c40c2479d881e900dcd37be33ff27f2134f915bbd4931026c4",
+    "lint.log": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+    "server-build.log": "3f3f921c8a999e1907f7f0e297ed015f4955f7aa08847c46df48c008b02d9624",
+    "lint-final.log": "a7eb796070b8114d1f73c2f3afaedbc4641c1058aa4b25a97d4468a4e2a0ac87"
+  }
+}

@@ -558,6 +558,12 @@ impl PbBuiltin {
                 if args.len() != 1 {
                     return Err(EvalError::Unsupported("protobuf cast arity"));
                 }
+                if source == EvalType::String
+                    && matches!(target, EvalType::Real | EvalType::Decimal)
+                    && super::is_numeric_binary_literal(&args[0])
+                {
+                    return eval_numeric_row(&args[0], ctx, row, target);
+                }
                 let value = eval_numeric_row(&args[0], ctx, row, source)?;
                 if value.is_null() {
                     return Ok(Datum::Null);

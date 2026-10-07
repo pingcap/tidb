@@ -45,6 +45,95 @@ mod tests {
     }
 
     #[test]
+    fn numeric_production_batch_decimal_source_errors_survive_fitting() {
+        for (input, code, message) in [
+            (
+                Datum::new_string("invalid"),
+                1292,
+                "Truncated incorrect DECIMAL value: 'invalid'",
+            ),
+            (
+                Datum::new_string("1e100"),
+                1690,
+                "%s value is out of range in '%s'",
+            ),
+            (Datum::Real(1e100), 1690, "%s value is out of range in '%s'"),
+        ] {
+            let warnings = Warnings::default();
+            let context =
+                ConversionContext::new(crate::STRICT_FLAGS, ConversionLocation::UTC, &warnings);
+            let result = input
+                .convert_to_in_context(
+                    &FieldType::new(FieldTypeCode::NewDecimal)
+                        .with_flen(4)
+                        .with_decimal(2),
+                    &context,
+                    &SessionTimeZone::utc(),
+                )
+                .unwrap();
+            let error = result.error.unwrap().to_sql_error();
+            assert_eq!((error.code, error.message.as_str()), (code, message));
+            assert!(warnings.0.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn numeric_production_batch_decimal_hybrids_use_float_source() {
+        let warnings = Warnings::default();
+        let context =
+            ConversionContext::new(crate::STRICT_FLAGS, ConversionLocation::UTC, &warnings);
+        for input in [
+            Datum::new_enum(
+                crate::MysqlEnum::new("a", 9_007_199_254_740_993),
+                crate::Collation::Binary,
+            ),
+            Datum::new_set(
+                crate::MysqlSet::new("a", 9_007_199_254_740_993),
+                crate::Collation::Binary,
+            ),
+        ] {
+            let result = input
+                .convert_to_in_context(
+                    &FieldType::new(FieldTypeCode::NewDecimal)
+                        .with_flen(20)
+                        .with_decimal(2),
+                    &context,
+                    &SessionTimeZone::utc(),
+                )
+                .unwrap();
+            assert!(result.error.is_none());
+            assert_eq!(result.value.sql_string().unwrap(), "9007199254740992.00");
+        }
+    }
+
+    #[test]
+    fn numeric_production_batch_invalid_numeric_sources_keep_null() {
+        let warnings = Warnings::default();
+        let context =
+            ConversionContext::new(crate::STRICT_FLAGS, ConversionLocation::UTC, &warnings);
+        for (code, name) in [
+            (FieldTypeCode::NewDecimal, "decimal"),
+            (FieldTypeCode::Double, "double"),
+            (FieldTypeCode::Float, "float"),
+        ] {
+            let input = Datum::new_vector_float32(crate::VectorFloat32::parse("[1]").unwrap());
+            let result = input
+                .convert_to_in_context(&FieldType::new(code), &context, &SessionTimeZone::utc())
+                .unwrap();
+            assert!(input
+                .convert_to(&FieldType::new(code), crate::STRICT_FLAGS)
+                .is_err());
+            assert_eq!(result.value, Datum::Null);
+            let error = result.error.unwrap().to_sql_error();
+            assert_eq!(error.code, 1105);
+            assert_eq!(
+                error.message,
+                format!("cannot convert datum from vector to type {name}")
+            );
+        }
+    }
+
+    #[test]
     fn ordinal_owner_batch_year_source_policy_precedes_adjustment() {
         for mode in 0..3 {
             let flags = crate::STRICT_FLAGS

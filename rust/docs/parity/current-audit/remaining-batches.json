@@ -1,6 +1,6 @@
 {
-  "date": "2026-10-06",
-  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "date": "2026-10-07",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
   "integration_start": "0164d0cddb94258bbc363d9e02ece83d739705c0",
   "counts": {
     "tracked": 86,
@@ -10,7 +10,7 @@
     "partial": 29
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "P03/P06/N03 advanced together; other 53 unresolved roots retain carried evidence. Automatic TSO forwarding and full-package limits remain; separate microservice-primary bootstrap and static option consumers are repaired.",
+  "evidence_limit": "K03/X01 numeric-production owners were rechecked and maintained together; the other54 unresolved roots retain carried evidence. No complete package acceptance.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -109,6 +109,18 @@
         },
         "receipt": "user-variable-batch-validation.json",
         "scope": "S03/X01 existing-owner maintenance: one live value/type store, plan-time inline types, SET plan-before-execute ordering, typed reads, independent migration maps and shared prepared/DML consumers. No complete package acceptance."
+      },
+      "latest_numeric_production_maintenance": {
+        "date": "2026-10-07",
+        "receipt": "numeric-production-batch-validation.json",
+        "findings": [
+          "K03",
+          "X01"
+        ],
+        "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+        "scope": "Shared numeric sources/decimal production and SQL/protobuf literal admission; existing-owner maintenance, no complete package acceptance.",
+        "integration_start": "c64fc5eb6f92f289fa00b5cbf8fb5a701b8cac70",
+        "complete_package_acceptance": false
       }
     },
     {
@@ -344,6 +356,18 @@
         },
         "receipt": "user-variable-batch-validation.json",
         "scope": "S03/X01 existing-owner maintenance: one live value/type store, plan-time inline types, SET plan-before-execute ordering, typed reads, independent migration maps and shared prepared/DML consumers. No complete package acceptance."
+      },
+      "latest_numeric_production_maintenance": {
+        "date": "2026-10-07",
+        "receipt": "numeric-production-batch-validation.json",
+        "findings": [
+          "K03",
+          "X01"
+        ],
+        "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+        "scope": "Shared numeric sources/decimal production and SQL/protobuf literal admission; existing-owner maintenance, no complete package acceptance.",
+        "integration_start": "c64fc5eb6f92f289fa00b5cbf8fb5a701b8cac70",
+        "complete_package_acceptance": false
       }
     },
     {
@@ -516,15 +540,14 @@
     }
   ],
   "latest_evidence": {
-    "date": "2026-10-06",
-    "receipt": "tso-proxy-batch-validation.json",
+    "date": "2026-10-07",
+    "receipt": "numeric-production-batch-validation.json",
     "findings": [
-      "P03",
-      "P06",
-      "N03"
+      "K03",
+      "X01"
     ],
-    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
-    "scope": "B01/B05: P03/P06/N03 healthy TSO follower proxy, shared wire ownership, single dispatcher and live SQL policy"
+    "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+    "scope": "Shared numeric sources/decimal production and SQL/protobuf literal admission; existing-owner maintenance, no complete package acceptance."
   },
   "latest_source_maintenance": {
     "date": "2026-10-06",

@@ -199,6 +199,16 @@ impl Datum {
                 }
             }
             FieldTypeCode::Float | FieldTypeCode::Double => {
+                if matches!(
+                    self,
+                    Self::VectorFloat32(_) | Self::MinNotNull | Self::MaxValue
+                ) {
+                    if !diagnostics.enabled() {
+                        return Err(DatumValueError::Unsupported(self.kind(), "float"));
+                    }
+                    diagnostics.invalid_conversion(self.kind(), target.code());
+                    return Ok(exact(Self::Null));
+                }
                 let converted = self.to_float_reported(flags, diagnostics)?;
                 let produced = produce_float_reported(converted.value, target, diagnostics);
                 let event = numeric_conversion_event(converted.event, produced.event, flags);
@@ -591,69 +601,91 @@ impl Datum {
         flags: ConversionFlags,
         diagnostics: &mut Diagnostics<'_, '_>,
     ) -> Result<Converted<Self>, DatumValueError> {
-        let converted = match self {
-            Self::BinaryLiteral(value) | Self::Bit(value) => {
-                let (integer, failed) = diagnostics.binary_integer(value, flags);
-                Converted {
-                    value: Decimal::from_uint(integer),
-                    event: failed.then_some(ScalarConversionEvent::Truncated),
-                }
-            }
-            Self::Json(value) => {
-                let converted = crate::convert::json_to_decimal_reported(value, diagnostics);
-                if converted.event.is_some()
-                    && !flags.ignore_truncate_err()
-                    && !flags.truncate_as_warning()
-                {
-                    return Ok(Converted {
-                        value: Self::Null,
-                        event: converted.event,
-                    });
-                }
-                converted
-            }
-            _ => self.to_decimal()?,
+        use crate::MyDecimal;
+        let parsed = match self {
+            Self::Real(value) => Some(MyDecimal::from_float64(*value)),
+            Self::Float32(value) => Some(MyDecimal::from_float64(f64::from(*value as f32))),
+            Self::String(value) => Some(MyDecimal::from_string(value.bytes())),
+            Self::Bytes(value) => Some(MyDecimal::from_string(value)),
+            // Datum.ConvertTo uses ToNumber (float64), unlike ToDecimal's
+            // direct unsigned conversion used by other callers.
+            Self::Enum(value, _) => Some(MyDecimal::from_float64(value.value() as f64)),
+            Self::Set(value, _) => Some(MyDecimal::from_float64(value.value() as f64)),
+            _ => None,
         };
-        match (self, converted.event.as_ref()) {
-            (Self::BinaryLiteral(_) | Self::Bit(_) | Self::Json(_), _) => {}
-            (Self::String(_) | Self::Bytes(_), Some(ScalarConversionEvent::Truncated)) => {
-                // Datum.ConvertTo uses MyDecimal.FromString directly, not
-                // ConvertDatumToDecimal's context-dependent truncation policy.
-                diagnostics.error(|| ERR_TRUNCATED.clone());
+        let converted = if let Some((value, error)) = parsed {
+            let value = Decimal::from_my_decimal(&value);
+            let event = error.map(|error| {
+                diagnostics.error(|| {
+                    crate::convert::decimal_conversion_error(
+                        error,
+                        self.as_raw_bytes().unwrap_or_default(),
+                    )
+                });
+                if matches!(error, crate::DecimalError::Overflow) {
+                    overflow_event(value.to_string(), target.code())
+                } else {
+                    ScalarConversionEvent::Truncated
+                }
+            });
+            Converted { value, event }
+        } else {
+            match self {
+                Self::BinaryLiteral(value) | Self::Bit(value) => {
+                    let (integer, failed) = diagnostics.binary_integer(value, flags);
+                    Converted {
+                        value: Decimal::from_uint(integer),
+                        event: failed.then_some(ScalarConversionEvent::Truncated),
+                    }
+                }
+                Self::Json(value) => {
+                    let converted = crate::convert::json_to_decimal_reported(value, diagnostics);
+                    if converted.event.is_some()
+                        && !flags.ignore_truncate_err()
+                        && !flags.truncate_as_warning()
+                    {
+                        return Ok(Converted {
+                            value: Self::Null,
+                            event: converted.event,
+                        });
+                    }
+                    converted
+                }
+                Self::Int(_)
+                | Self::UInt(_)
+                | Self::Decimal(_)
+                | Self::Time(_)
+                | Self::Duration(_) => self.to_decimal()?,
+                _ => {
+                    if !diagnostics.enabled() {
+                        return Err(DatumValueError::Unsupported(self.kind(), "decimal"));
+                    }
+                    diagnostics.invalid_conversion(self.kind(), target.code());
+                    return Ok(exact(Self::Null));
+                }
             }
-            (_, event) => diagnostics.unhandled(event),
+        };
+        if !diagnostics.enabled()
+            && target.flen() != UNSPECIFIED_LENGTH
+            && target.decimal() != UNSPECIFIED_LENGTH
+            && target.flen() < target.decimal()
+        {
+            return Err(DatumValueError::Comparison(
+                "For float(M,D), double(M,D) or decimal(M,D), M must be >= D".to_owned(),
+            ));
         }
         let original = converted.value;
-        let mut value = original.clone();
-        let mut event = converted.event;
-        if target.flen() != UNSPECIFIED_LENGTH && target.decimal() != UNSPECIFIED_LENGTH {
-            if target.flen() < target.decimal() {
-                return Err(DatumValueError::Comparison(
-                    "For float(M,D), double(M,D) or decimal(M,D), M must be >= D".to_owned(),
-                ));
-            }
-            let rounded = value.round_to_scale(target.decimal() as i32);
-            let fitted = rounded
-                .fit_precision_scale(target.flen().max(0) as u32, target.decimal().max(0) as u32);
-            let overflowed = fitted.is_none();
-            value = fitted.unwrap_or_else(|| {
-                Decimal::from_signed_literal(&format!(
-                    "{}{}",
-                    if rounded.is_negative() { "-" } else { "" },
-                    max_decimal_text(target.flen() as usize, target.decimal() as usize)
-                ))
-            });
-            if overflowed {
-                diagnostics.error(|| decimal_target_overflow(target));
-                event = event.or_else(|| Some(overflow_event(value.to_string(), target.code())));
-            } else if value != original {
-                diagnostics.warn(|| {
-                    ERR_TRUNCATED_WRONG_VALUE
-                        .generate(format!("Truncated incorrect DECIMAL value: '{original}'",))
-                });
-                event = event.or(Some(ScalarConversionEvent::RoundedToScale));
-            }
-        }
+        let produced = produce_decimal_reported(original.clone(), target, diagnostics);
+        let (mut value, mut event) = match produced {
+            Some(produced) => (produced.value, converted.event.or(produced.event)),
+            None => (
+                original.clone(),
+                converted.event.or(Some(ScalarConversionEvent::Truncated)),
+            ),
+        };
+        // Go FromUint(0) keeps the negative sign in the production result.
+        // Table conversion subsequently replaces it with zeroMyDecimal and
+        // reports overflow; expression production keeps its separate policy.
         if target.is_unsigned() && value.is_negative() {
             diagnostics.error(|| decimal_target_overflow(target));
             value = Decimal::from_int(0);
@@ -1240,49 +1272,64 @@ impl Datum {
 /// Go `ProduceDecWithSpecifiedTp`, distinct from `Datum.ConvertTo(DECIMAL)`.
 /// Scale loss is a direct warning; overflow is returned for statement policy.
 pub fn produce_decimal_with_type_in_context(
-    mut value: Decimal,
+    value: Decimal,
     target: &FieldType,
     context: &crate::ConversionContext<'_>,
 ) -> DatumConversion {
-    let mut error = None;
+    let mut diagnostics = Diagnostics::new(Some(context));
+    let produced = produce_decimal_reported(value, target, &mut diagnostics);
+    DatumConversion {
+        value: produced.map_or(Datum::Null, |produced| Datum::Decimal(produced.value)),
+        error: diagnostics.error,
+    }
+}
+
+/// Common value production; callers retain their source errors and completion.
+/// Go returns nil for invalid M,D, allowing table conversion to keep its source.
+fn produce_decimal_reported(
+    mut value: Decimal,
+    target: &FieldType,
+    diagnostics: &mut Diagnostics<'_, '_>,
+) -> Option<Converted<Decimal>> {
+    let mut event = None;
     if target.flen() != UNSPECIFIED_LENGTH && target.decimal() != UNSPECIFIED_LENGTH {
         if target.flen() < target.decimal() {
-            return DatumConversion {
-                value: Datum::Null,
-                error: Some(crate::ERR_M_BIGGER_THAN_D.generate(
+            diagnostics.error(|| {
+                crate::ERR_M_BIGGER_THAN_D.generate(
                     "For float(M,D), double(M,D) or decimal(M,D), M must be >= D".to_owned(),
-                )),
-            };
+                )
+            });
+            return None;
         }
         let original = value;
         let rounded = original.round_to_scale(target.decimal() as i32);
         value = match rounded.fit_precision_scale(target.flen() as u32, target.decimal() as u32) {
             Some(value) => {
                 if value != original {
-                    context.append_warning(
+                    diagnostics.warn(|| {
                         ERR_TRUNCATED_WRONG_VALUE
-                            .generate(format!("Truncated incorrect DECIMAL value: '{original}'",)),
-                    );
+                            .generate(format!("Truncated incorrect DECIMAL value: '{original}'"))
+                    });
+                    event = Some(ScalarConversionEvent::RoundedToScale);
                 }
                 value
             }
             None => {
-                error = Some(decimal_target_overflow(target));
-                Decimal::max_or_min(
+                diagnostics.error(|| decimal_target_overflow(target));
+                let value = Decimal::max_or_min(
                     rounded.is_negative(),
                     target.flen() as u32,
                     target.decimal() as u32,
-                )
+                );
+                event = Some(overflow_event(value.to_string(), target.code()));
+                value
             }
         };
     }
     if target.is_unsigned() && value.is_negative() {
         value = value.unsigned_production_zero();
     }
-    DatumConversion {
-        value: Datum::Decimal(value),
-        error,
-    }
+    Some(Converted { value, event })
 }
 
 /// Source `ProduceFloatWithSpecifiedTp`.

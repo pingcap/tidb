@@ -759,6 +759,43 @@ mod tests {
         assert_eq!(expr.static_type(), Some(&pb_type_to_field_type(&tp)));
     }
     #[test]
+    fn numeric_production_batch_binary_pb_cast_skips_text_and_fitting() {
+        for (sig, tp) in [
+            (tipb::ScalarFuncSig::CastStringAsDecimal, 246),
+            (tipb::ScalarFuncSig::CastStringAsReal, 5),
+        ] {
+            let pb = call(
+                sig,
+                vec![text("placeholder")],
+                tipb::FieldType {
+                    tp: Some(tp),
+                    flen: Some(1),
+                    decimal: Some(0),
+                    ..Default::default()
+                },
+            );
+            let Expression::ScalarFunction(mut function) = pb_to_expr(&pb, &[]).unwrap() else {
+                panic!("scalar")
+            };
+            function.args[0] = Expression::Constant(Constant::new(
+                Datum::BinaryLiteral(tidb_datatype::BinaryLiteral::from(vec![0xff, 0xff])),
+                FieldType::new(FieldTypeCode::VarString)
+                    .with_charset_name("binary")
+                    .with_collation_name("binary"),
+            ));
+            let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+            assert_eq!(
+                function
+                    .eval(&crate::NoColumns, row.to_row())
+                    .unwrap()
+                    .sql_string()
+                    .unwrap(),
+                "65535"
+            );
+        }
+    }
+
+    #[test]
     fn protobuf_mod_signedness_comes_from_the_selected_signature() {
         let integer = |value| {
             let mut bytes = Vec::new();

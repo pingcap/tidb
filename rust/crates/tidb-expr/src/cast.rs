@@ -339,6 +339,31 @@ pub(crate) fn eval_cast(
             i64::from(*scale)
         });
     }
+    // Go's binary-literal real/decimal signatures return the argument's
+    // numeric evaluation directly, without destination width production.
+    if matches!(v, Datum::BinaryLiteral(_))
+        && matches!(target.eval_type(), EvalType::Real | EvalType::Decimal)
+    {
+        let warnings = crate::constant::ConversionWarnings(ctx);
+        let zone = ctx.time_zone();
+        let context = tidb_datatype::ConversionContext::new(
+            ctx.type_flags(),
+            tidb_datatype::ConversionLocation::from_time_zone(&zone),
+            &warnings,
+        );
+        let Datum::BinaryLiteral(value) = v else {
+            unreachable!()
+        };
+        let (integer, error) = value.to_int_with_context(&context);
+        if let Some(error) = error {
+            return Err(EvalError::Conversion(error));
+        }
+        return Ok(if target.eval_type() == EvalType::Real {
+            Datum::Real(integer as f64)
+        } else {
+            Datum::Decimal(Decimal::from_uint(integer))
+        });
+    }
     // AST callers may already have applied UNION's negative-to-zero rule.
     // Go selects numeric signatures for hybrid types and binary literals.
     let inferred = tidb_datatype::infer_param_type_from_datum(&v);
@@ -2096,6 +2121,16 @@ mod tests {
         fn append_warning(&self, code: u16, message: &str) {
             self.0.borrow_mut().push((code, message.to_owned()));
         }
+    }
+
+    #[test]
+    fn numeric_production_batch_binary_decimal_skips_target_fitting() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        let value = Datum::BinaryLiteral(tidb_datatype::BinaryLiteral::from(vec![0xff, 0xff]));
+        let result =
+            eval_cast(&CastType::Decimal { flen: 1, scale: 0 }, value, None, &ctx).unwrap();
+        assert_eq!(result.sql_string().unwrap(), "65535");
+        assert!(ctx.0.borrow().is_empty());
     }
 
     #[test]
