@@ -95,11 +95,19 @@ rustls.workspace = true
 rustls-pemfile.workspace = true
 tidb-parser = { path = "../tidb-parser" }
 
+# Manual cluster diagnostic; ordinary package builds only link tidb-server.
+[[bin]]
+name = "cluster-session-smoke"
+path = "src/bin/cluster-session-smoke.rs"
+required-features = ["diagnostics"]
+
 [[test]]
 name = "all"
 path = "tests/all.rs"
 
 [features]
+# Opt in only for the maintained RealTiKV diagnostic runners.
+diagnostics = []
 # Production TiKV ships jemalloc, and this node statement path is
 # allocation-heavy: the default build therefore runs on tikv-jemallocator
 # (the global_allocator in src/bin/tidb-server.rs). The opt-out exists

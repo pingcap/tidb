@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [mock self-check retirement](mock-selfcheck-cleanup-validation.json). Four self-checking tests and two private connection/client doubles are removed from the protocol and transaction aggregates. Maintained packet I/O, physical-channel identity and production mapping tests remain. No parity finding closes.
+Latest cleanup: [opt-in cluster diagnostic](smoke-target-cleanup-validation.json). The maintained cluster-session smoke binary now requires the explicit `diagnostics` build feature. Both live runners enable it. Ordinary server builds select one binary; diagnostic source, dependencies and behavioral tests are unchanged.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 

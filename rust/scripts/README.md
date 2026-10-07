@@ -19,6 +19,18 @@ parallelism. Use one job for heavy Cloud links. Build/test commands use
 runners with explicit release binary paths retain their release builds.
 Choose an existing server-binary override where the runner provides one.
 
+`cargo build --locked -p tidb-server` builds only the server executable. The
+cluster-session diagnostic is opt-in; its live runners enable `diagnostics`
+explicitly. For manual use from `rust/`:
+
+```bash
+cargo build --locked -p tidb-server --features diagnostics --bin cluster-session-smoke
+target/debug/cluster-session-smoke --pd <address> --schema <database> --sql '<statement>'
+```
+
+The feature only selects the diagnostic target; it adds no dependencies or
+runtime behavior. Release runners retain `target/release/cluster-session-smoke`.
+
 Planner primitive source translations belong to the planner's existing aggregate:
 
 ```bash

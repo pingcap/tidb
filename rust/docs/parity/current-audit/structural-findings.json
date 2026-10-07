@@ -804,8 +804,8 @@
     "scope": "Ordered DROP completion, FK preflight, shared object guards, per-target schema publication, view replacement identity and CHECK OPTION admission; existing-owner maintenance."
   },
   "latest_test_cleanup": {
-    "receipt": "mock-selfcheck-cleanup-validation.json",
-    "scope": "Retire four self-checking tests and two unused private connection/client doubles; retain all production transport and packet assertions.",
+    "receipt": "smoke-target-cleanup-validation.json",
+    "scope": "Remove the manual cluster diagnostic from default server builds with an explicit diagnostics feature; migrate both live runners without changing diagnostic source or dependencies.",
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
   },
   "test_cleanup_history": [
@@ -1225,6 +1225,11 @@
     {
       "receipt": "mock-selfcheck-cleanup-validation.json",
       "scope": "Retire four self-checking tests and two unused private connection/client doubles; retain all production transport and packet assertions.",
+      "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
+    },
+    {
+      "receipt": "smoke-target-cleanup-validation.json",
+      "scope": "Remove the manual cluster diagnostic from default server builds with an explicit diagnostics feature; migrate both live runners without changing diagnostic source or dependencies.",
       "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
     }
   ],

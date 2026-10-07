@@ -2686,3 +2686,18 @@ production assertions; five remaining client-contract cases are unchanged.
 The [receipt](parity/current-audit/mock-selfcheck-cleanup-validation.json) records
 file identities, retained coverage and grouped validation. No runtime or
 Go-package acceptance change is implied; all 56 findings remain unresolved.
+
+
+## Opt-in diagnostic target (2026-10-07)
+
+
+Require the explicit `diagnostics` feature for cluster-session-smoke in the
+server Cargo manifest. Migrate both maintained RealTiKV runners to enable it;
+keep their binary paths and diagnostic source unchanged. Ordinary locked server
+builds should emit only tidb-server, while explicit diagnostic builds retain
+argument-error behavior. An initial example-target approach was discarded
+because examples enable dev-dependencies; the empty feature keeps the existing
+production dependency set. Validate Cargo metadata/artifact reports, argument
+errors, shell syntax, source identity, lint and mandatory hook/pre-push builds.
+The [receipt](parity/current-audit/smoke-target-cleanup-validation.json) records
+outcomes. Live TiKV/release execution and finding acceptance remain unverified.

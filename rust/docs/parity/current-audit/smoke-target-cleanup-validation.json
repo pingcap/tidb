@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-07",
+  "baseline": "b5cedc542034d02016c5a28aece78ff6d0a8da29",
+  "scope": "Remove an optional diagnostic from ordinary production builds without deleting its live validation capability.",
+  "migrated_callers": [
+    "rust/scripts/run-realtikv-session-driver.sh",
+    "rust/scripts/run-realtikv-scan-pushdown.sh"
+  ],
+  "go_basis": "Go cmd/tidb-server builds the production server; this Rust-only manual diagnostic is test support, not another production server target.",
+  "expected_default_bins": [
+    "tidb-server"
+  ],
+  "tests_deleted": 0,
+  "findings_unresolved": 56,
+  "validation": {
+    "target_metadata": "PASS: default-eligible binaries reduced from two to one; diagnostic requires explicit empty feature; dependency declarations, lockfile, source and finding dispositions unchanged",
+    "default_build": {
+      "command": "cd rust && cargo build --locked -p tidb-server --message-format=json",
+      "result": "PASS",
+      "bin_artifacts": [
+        "tidb-server"
+      ]
+    },
+    "shell_syntax": "PASS: bash -n on both migrated runners",
+    "lint": "PASS: make lint, exit 0",
+    "publication": "Actual commit hook and fresh locked pre-push build required; final-handoff.json records results.",
+    "explicit_diagnostic": {
+      "command": "cd rust && cargo build --locked -p tidb-server --features diagnostics --bin cluster-session-smoke --message-format=json",
+      "result": "PASS after link-space recovery",
+      "bin_artifacts": [
+        "cluster-session-smoke"
+      ],
+      "argument_error_checks": 4,
+      "missing_feature_rejected": true,
+      "executable_bytes": 383374992
+    }
+  },
+  "limitations": [
+    "No live TiKV execution or release link; diagnostic source and output paths are unchanged, and both runner build commands enable diagnostics.",
+    "No whole-package acceptance or finding closure.",
+    "Artifact selection reduction is measurable; no full build-time or workload speedup claim."
+  ],
+  "external_logs": "/workspace/.cloud-setup/smoke-target-cleanup",
+  "source_preservation": {
+    "path": "rust/crates/tidb-server/src/bin/cluster-session-smoke.rs",
+    "sha256": "9b51c8b24e7f4e48baf9ca219bcec462028559121b556d5e54fc6f8a59beec7f",
+    "lines": 364,
+    "byte_identical": true
+  },
+  "explicit_diagnostic": "cargo build --locked -p tidb-server --features diagnostics --bin cluster-session-smoke",
+  "decision": "Use an empty required feature instead of an example target, avoiding activation of test-only dependencies for this manual tool.",
+  "logs": {
+    "default-artifacts.jsonl": "6a7e052bb8175fc37f249bcff969ca43cb90f70db7c3b39944c7bd70d391a5ac",
+    "default-build.log": "36b3126260ac801611c13664e0287368660602e51089b0ba2b7482dad152a7b2",
+    "diagnostic-artifacts-recheck.jsonl": "6c8bfa26296d01d1f366e9db5b9404b119490c94298e4bfd367eed4623ac7b23",
+    "diagnostic-build-recheck.log": "ef2903cc7ef74fcd998552d9adf4134e8d4dc68addfb145ca76d257eb6088c88",
+    "cli-checks.json": "02df18dadf2195a81c5fd9d7433e486870b0498319127f95ba37dd9d8140deac",
+    "missing-feature.json": "9585b6364ea73eac2aa3c341650ac189af70f893f0b56a66a628e69eb10c079b",
+    "lint.log": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+    "reference-check.log": "923fc5595d0a19cd0dba63bbce79dbbc2718f74ac5fd2219ccb8232477693911"
+  },
+  "recovered_issues": [
+    "Initial optional diagnostic link exhausted disk; retired the completed default server executable and retried successfully. No dependency cache purge.",
+    "First CLI harness expected stderr to contain only the argument error; existing jemalloc warnings precede it. Corrected the external harness to assert exit status, empty stdout and the exact final error line; four checks then passed."
+  ]
+}

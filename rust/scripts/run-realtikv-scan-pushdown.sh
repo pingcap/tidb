@@ -247,7 +247,7 @@ echo "the fixture holds ${TABLE_ROWS} rows"
 
 echo "building and starting the Rust node"
 (cd "${RUST_ROOT}" && cargo build --offline --locked --release -p tidb-server \
-  --bin tidb-server --bin cluster-session-smoke)
+  --bin tidb-server --features diagnostics --bin cluster-session-smoke)
 "${RUST_ROOT}/target/release/tidb-server" \
   --path "127.0.0.1:${PD_PORT}" \
   --port "${RUST_SQL_PORT}" \

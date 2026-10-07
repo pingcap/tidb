@@ -102,7 +102,7 @@ SQL
 echo "building the Rust session-driver smoke"
 # Build from the workspace root so rustup honors rust/rust-toolchain.toml;
 # with --manifest-path alone the caller's CWD picks the toolchain instead.
-(cd "${RUST_ROOT}" && cargo build --locked -p tidb-server --bin cluster-session-smoke)
+(cd "${RUST_ROOT}" && cargo build --locked -p tidb-server --features diagnostics --bin cluster-session-smoke)
 
 OUTPUT="${WORK_DIR}/smoke.out"
 "${RUST_ROOT}/target/debug/cluster-session-smoke" \
