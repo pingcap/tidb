@@ -126,6 +126,8 @@ struct SourceTable {
     columns: Vec<(String, FieldType)>,
     /// Default/generation metadata aligned with `columns`.
     default_meta: Vec<super::dml::ColumnDefaultMeta>,
+    /// Generated offsets in the complete writable row, including hidden columns.
+    generated_columns: Vec<usize>,
     /// Where this table's columns start in the joined row.
     offset: usize,
 }
@@ -147,7 +149,13 @@ impl SourceTable {
 
 /// A joined row: one row identity per participating table (`None` where an
 /// outer join NULL-padded that side), then the concatenated column values.
-type SourceRow = (Vec<Option<TableHandle>>, Vec<Datum>);
+struct SourceRow {
+    ids: Vec<Option<TableHandle>>,
+    /// Visible SQL scope used to evaluate assignments.
+    values: Vec<Datum>,
+    /// Complete writable preimages retained from the physical child.
+    stored: Vec<Vec<Datum>>,
+}
 
 /// Metadata for the joined values a multi-table write reads.
 struct MultiLayout {
@@ -273,6 +281,18 @@ fn build_multi_layout(
                 )
             }
         };
+        let generated_columns = match &origin {
+            SourceOrigin::Base { database, name } => match catalog.get_in(database, name) {
+                Some(TableEntry::Kv(kv)) => kv
+                    .columns()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(offset, column)| column.generated.is_some().then_some(offset))
+                    .collect(),
+                _ => Vec::new(),
+            },
+            SourceOrigin::Derived => Vec::new(),
+        };
         Ok(MultiLayout {
             tables: vec![SourceTable {
                 visible,
@@ -280,6 +300,7 @@ fn build_multi_layout(
                 origin,
                 columns,
                 default_meta,
+                generated_columns,
                 offset: 0,
             }],
             constant_context: ctx.clone(),
@@ -525,7 +546,8 @@ pub(crate) fn run_multi_update(
     let mut matched_rows = 0u64;
     let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
-    for (row_index, (ids, values)) in rows.iter().enumerate() {
+    for (row_index, row) in rows.iter().enumerate() {
+        let (ids, values) = (&row.ids, &row.values);
         let chunk = row_chunk(values, &field_types)?;
         let mut prepared = Vec::with_capacity(source.tables.len());
         // Compose every target from the same input row before merging aliases.
@@ -538,7 +560,7 @@ pub(crate) fn run_multi_update(
                 prepared.push(None);
                 continue;
             }
-            let mut old = values[table.offset..table.end()].to_vec();
+            let mut old = row.stored[slot].clone();
             let mut new = old.clone();
             for assignment in assignments.iter().filter(|a| a.slot == slot) {
                 let value = assignment
@@ -590,11 +612,9 @@ pub(crate) fn run_multi_update(
             let merge_key = ((database.clone(), name.clone()), id.clone());
             if multiple[slot] {
                 let previous = &merged[&merge_key];
-                for (column, meta) in table.default_meta.iter().enumerate() {
-                    if meta.generated {
-                        old[column] = previous[column].clone();
-                        new[column] = previous[column].clone();
-                    }
+                for &column in &table.generated_columns {
+                    old[column] = previous[column].clone();
+                    new[column] = previous[column].clone();
                 }
             }
             if !once.contains_key(&(slot, id.clone())) {
@@ -617,10 +637,8 @@ pub(crate) fn run_multi_update(
                 let previous = merged
                     .get_mut(&merge_key)
                     .expect("non-generated merge ran first");
-                for (column, meta) in table.default_meta.iter().enumerate() {
-                    if meta.generated {
-                        previous[column] = new[column].clone();
-                    }
+                for &column in &table.generated_columns {
+                    previous[column] = new[column].clone();
                 }
             }
             changed_rows += u64::from(outcome.changed());
@@ -795,7 +813,8 @@ pub(crate) fn run_multi_delete(
     // once, and two aliases of one table are still one table here (unlike
     // UPDATE, whose key is the target position).
     let mut doomed: BTreeMap<(String, String, TableHandle), (usize, usize)> = BTreeMap::new();
-    for (row_index, (ids, _)) in rows.iter().enumerate() {
+    for (row_index, row) in rows.iter().enumerate() {
+        let ids = &row.ids;
         for &slot in &target_slots {
             let Some(id) = &ids[slot] else { continue };
             let table = &source.tables[slot];
@@ -812,8 +831,7 @@ pub(crate) fn run_multi_delete(
     let mut records = super::dml::delete_record::DeleteRecords::new(fk_triggers);
     let mut deleted = 0;
     for ((database, name, id), location) in doomed {
-        let table = &source.tables[location.1];
-        let old = &rows[location.0].1[table.offset..table.end()];
+        let old = &rows[location.0].stored[location.1];
         deleted +=
             u64::from(records.write(catalog, &database, &name, &id, old, delete.ignore, ctx)?);
     }
@@ -1005,6 +1023,7 @@ fn planned_source_rows(
         width: usize,
         kv: Option<&'a crate::kv_table::KvTable>,
         stored: usize,
+        visible: usize,
     }
     let mut slots = Vec::with_capacity(source.tables.len());
     for table in &source.tables {
@@ -1019,10 +1038,12 @@ fn planned_source_rows(
         let extra = kv.is_some_and(|kv| {
             kv.pk_handle_offset().is_none() && kv.common_handle_offsets().is_empty()
         });
+        let stored = kv.map_or(table.columns.len(), |kv| kv.columns().len());
         slots.push(Slot {
-            width: table.columns.len() + usize::from(extra),
+            width: stored + usize::from(extra),
             kv,
-            stored: table.columns.len(),
+            stored,
+            visible: table.columns.len(),
         });
     }
     let expected: usize = slots.iter().map(|slot| slot.width).sum();
@@ -1043,6 +1064,7 @@ fn planned_source_rows(
             }
             let mut ids = Vec::with_capacity(slots.len());
             let mut values = Vec::with_capacity(source.width());
+            let mut stored = Vec::with_capacity(slots.len());
             let mut start = 0;
             for slot in &slots {
                 let part = &row[start..start + slot.width];
@@ -1084,11 +1106,19 @@ fn planned_source_rows(
                     }
                 };
                 ids.push(id);
-                values.extend_from_slice(&part[..slot.stored]);
+                values.extend_from_slice(&part[..slot.visible]);
+                accountant
+                    .account_row(&part[..slot.stored])
+                    .map_err(DriverError::from)?;
+                stored.push(part[..slot.stored].to_vec());
             }
             // Charge as rows arrive, before retaining them or pulling another chunk.
             accountant.account_row(&values).map_err(DriverError::from)?;
-            out.push((ids, values));
+            out.push(SourceRow {
+                ids,
+                values,
+                stored,
+            });
             Ok(())
         },
     )?;

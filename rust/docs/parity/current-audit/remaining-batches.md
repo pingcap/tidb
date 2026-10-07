@@ -37,6 +37,8 @@ The connected replica-routing batch removes ClientPd's inherited leader-only fal
 
 ## B02: Shared SQL session, planner and table execution
 
+Current maintenance: [DML writable-row batch](dml-identity-batch-validation.json) repairs joined hidden-column handoff and explicit candidate handles through duplicate/FK consumers. E02/E03/K03 remain partial for their retained broader boundaries; validate connected callers together.
+
 Source owners: pkg/session and sessiontxn providers; pkg/planner/core, pkg/executor, pkg/table/tables, pkg/meta/autoid.
 
 Completion: One resolved privilege/FK/handle handoff and transaction-aware table policy, with prepared/migrated sessions and historical reads. Matrix read interpreters are retired; complete chunk writes and indexed FK/cascade owners remain. Existing-owner maintenance does not accept this batch.

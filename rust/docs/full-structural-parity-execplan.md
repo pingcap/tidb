@@ -2676,3 +2676,9 @@ The [duplicate-test cleanup](duplicate-test-cleanup-execplan.md) removes repeate
 ## TSO failure/recovery continuation — 2026-10-07
 
 The connected B01/B05 P03/P06/N03 maintenance batch uses one native feedback and routing owner across both clients. Native 8b752f9638ad157931725b66ffdc57e0465432a9 is synchronized through all maintained patches and protobuf regeneration. Three original failures precede 370 selected passes; an intermediate response-phase classification error was caught and corrected. Both registers remain 30 repaired/56 unresolved; see parity/current-audit/tso-failure-batch-validation.json and tso-failure-batch-execplan.md for exact gates, source boundary and remaining timing/readiness obligations. Actual hook, fresh locked prepush builds and remote verification remain publication gates.
+
+
+## DML writable-row checkpoint — 2026-10-07
+
+
+The [batch plan](dml-identity-batch-execplan.md) and [receipt](parity/current-audit/dml-identity-batch-validation.json) connect B02 E02/E03/K03 through complete retained writable rows and explicit candidate handles. Joined hidden-column UPDATE/DELETE, generation, REPLACE/IGNORE/ODKU and FK callbacks share the repaired layout. Three original session regressions, a further index-join regression and an independent original-server REPLACE failure precede 286 Rust passes and 20 TCP passes. Partial-row fallback rereads are removed; speculative partition expectations are excluded because Go uses the same bare-handle maps. No complete package acceptance; counts remain 30 repaired/56 unresolved.

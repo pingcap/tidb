@@ -1,0 +1,337 @@
+{
+  "date": "2026-10-07",
+  "scope": "B02 E02/E03/K03: complete joined writable rows, hidden generation, explicit handle candidate and duplicate consumers",
+  "baseline": {
+    "tidb": "92031a2954864d54a47df846adeea7151b66c93e",
+    "native": "8b752f9638ad157931725b66ffdc57e0465432a9",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+  },
+  "reproduced_before": {
+    "confirmed_session_regressions": 4,
+    "logs": [
+      "before-behavior.log",
+      "probe.json",
+      "index-join-before-behavior.log",
+      "wire-index-join-command-before.log"
+    ],
+    "additional_original_server_failure": "REPLACE explicit heap handle returns 1062; replace-before.json reproduces without expression indexes.",
+    "excluded": {
+      "baseline_test_failures": 5,
+      "confirmed_go_divergence_regressions": 3,
+      "excluded_probes": [
+        "joined_update_distinguishes_partitions",
+        "joined_delete_distinguishes_partitions"
+      ],
+      "reason": "Go planner/util/handle_cols.go IntHandleCols.BuildHandleByDatums returns bare IntHandle; update.go and delete.go maps are also keyed by that handle. The two partition expectations are not justified as parity regressions and are removed. Probe logs retained."
+    },
+    "intermediate": "First after-run: 187 passes, one REPLACE failure. Later TCP validation found an index-join hidden-column projection failure; an added session regression fails before its reader repair. A separate unactivated-environment TCP attempt passed16 assertions then stack-overflowed; rerun with the saved RUST_MIN_STACK reached the semantic index-join failure. Compile-only typo corrected before final validation. Partition deduplication expectations removed because Go also uses bare IntHandle keys."
+  },
+  "repairs": [
+    "Joined UPDATE/DELETE retain full writable preimages separately from SQL-visible assignment scope. Hidden generated offsets participate in alias merging and index/FK consumers.",
+    "INSERT casts using SQL target metadata, keeps the pseudo handle outside generated evaluation and appends it after the complete writable row. INSERT SELECT uses the same owner.",
+    "Conflict discovery checks explicitly supplied heap record keys before unique indexes. REPLACE, IGNORE and ODKU share that candidate identity; row equality and FK buffers exclude the pseudo handle. ODKU VALUES and old-row expressions use SQL-visible layouts.",
+    "Shared update/delete record owners remove partial-row fallback rereads after their callers retain complete preimages.",
+    "Index-join output/filter schemas, probe key types, forked filter chunks and projected physical rows preserve hidden columns from the retained inner plan."
+  ],
+  "source_owners": [
+    "pkg/planner/core/logical_plan_builder.go: writable columns and DML table position metadata",
+    "pkg/executor/update.go: updateRows, mergeGenerated",
+    "pkg/executor/delete.go: composeTblRowMap",
+    "pkg/executor/insert_common.go: fillRow, adjustImplicitRowID, batchCheckAndInsert",
+    "pkg/executor/replace.go: replaceRow",
+    "pkg/executor/insert.go: duplicate row update",
+    "pkg/executor/builder.go: buildIndexLookUpJoin consumes the complete retained inner schema"
+  ],
+  "validation": [
+    {
+      "command": "cd rust && cargo test --locked -p tidb-session --lib -- tests_multi_table_dml:: tests_expression_indexes:: tests_foreign_key:: tests_statement_rollback:: tests_generated tests_auto_increment:: --test-threads=1",
+      "passed": 222,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/dml-identity-batch/session-expanded.log",
+      "sha256": "835f744b60c7f78334d7eccb802501de0edba418a81c23b308d99607f6cd5764"
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-session --test all -- generated_column_write_source partition_row_movement_source partition_qualified_update_source expression_index_write_source bit_write_partition_update_source --test-threads=1",
+      "passed": 18,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/dml-identity-batch/integration.log",
+      "sha256": "a536a270a7f473380a51fdf72a3131a4bb7d097f19219f6b1741ba498e462fe5"
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-executor --lib -- access_path:: --test-threads=1",
+      "passed": 46,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/dml-identity-batch/lookup.log",
+      "sha256": "a4f32985191eb79eaff9ecd511737d2c38a1da554544334796a45b2454e7611c"
+    },
+    {
+      "command": "cd rust && cargo check --locked --all-targets -p tidb-executor -p tidb-session -p tidb-exec -p tidb-server",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/dml-identity-batch/check.log",
+      "sha256": "538a0efa3fc894d9af0544471123e9a479885183a17574e1a6bd745b656942cb"
+    },
+    {
+      "command": "make lint",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/dml-identity-batch/lint-final.log",
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    },
+    {
+      "command": "cd rust && cargo build --locked -p tidb-server",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/dml-identity-batch/server-build.log",
+      "sha256": "7236feda6652c3c46ba3bfd933b0e4e656fd8ae3c080a859bf90ceec287642f3"
+    }
+  ],
+  "distinct_selected_tests": 286,
+  "wire": {
+    "passed": 20,
+    "checks": [
+      {
+        "sql": "INSERT INTO t(_tidb_rowid,a,v) VALUES(7,1,10)",
+        "expected": 1,
+        "actual": 1,
+        "passed": true
+      },
+      {
+        "sql": "SELECT _tidb_rowid,a,v FROM t",
+        "expected": [
+          [
+            7,
+            1,
+            10
+          ]
+        ],
+        "actual": [
+          [
+            7,
+            1,
+            10
+          ]
+        ],
+        "passed": true
+      },
+      {
+        "sql": "ADMIN CHECK TABLE t",
+        "expected": 0,
+        "actual": 0,
+        "passed": true
+      },
+      {
+        "sql": "INSERT INTO t(_tidb_rowid,a,v) SELECT 8,2,20",
+        "expected": 1,
+        "actual": 1,
+        "passed": true
+      },
+      {
+        "sql": "REPLACE INTO t(_tidb_rowid,a,v) VALUES(7,3,30)",
+        "expected": 2,
+        "actual": 2,
+        "passed": true
+      },
+      {
+        "sql": "REPLACE INTO t(_tidb_rowid,a,v) VALUES(7,3,30)",
+        "expected": 1,
+        "actual": 1,
+        "passed": true
+      },
+      {
+        "sql": "INSERT IGNORE INTO t(_tidb_rowid,a,v) VALUES(7,99,99)",
+        "expected": 0,
+        "actual": 0,
+        "passed": true
+      },
+      {
+        "sql": "INSERT INTO t(_tidb_rowid,a,v) VALUES(7,3,40) ON DUPLICATE KEY UPDATE v=VALUES(v)+VALUES(_tidb_rowid)-_tidb_rowid",
+        "expected": 2,
+        "actual": 2,
+        "passed": true
+      },
+      {
+        "sql": "SELECT _tidb_rowid,a,v FROM t ORDER BY _tidb_rowid",
+        "expected": [
+          [
+            7,
+            3,
+            40
+          ],
+          [
+            8,
+            2,
+            20
+          ]
+        ],
+        "actual": [
+          [
+            7,
+            3,
+            40
+          ],
+          [
+            8,
+            2,
+            20
+          ]
+        ],
+        "passed": true
+      },
+      {
+        "sql": "ADMIN CHECK TABLE t",
+        "expected": 0,
+        "actual": 0,
+        "passed": true
+      },
+      {
+        "sql": "UPDATE t JOIN b ON t.a=b.a SET t.v=t.v+1",
+        "expected": 2,
+        "actual": 2,
+        "passed": true
+      },
+      {
+        "sql": "SELECT _tidb_rowid,a,v FROM t ORDER BY _tidb_rowid",
+        "expected": [
+          [
+            7,
+            3,
+            41
+          ],
+          [
+            8,
+            2,
+            21
+          ]
+        ],
+        "actual": [
+          [
+            7,
+            3,
+            41
+          ],
+          [
+            8,
+            2,
+            21
+          ]
+        ],
+        "passed": true
+      },
+      {
+        "sql": "ADMIN CHECK TABLE t",
+        "expected": 0,
+        "actual": 0,
+        "passed": true
+      },
+      {
+        "sql": "DELETE t FROM t JOIN b ON t.a=b.a WHERE b.a=2",
+        "expected": 1,
+        "actual": 1,
+        "passed": true
+      },
+      {
+        "sql": "SELECT _tidb_rowid,a,v FROM t",
+        "expected": [
+          [
+            7,
+            3,
+            41
+          ]
+        ],
+        "actual": [
+          [
+            7,
+            3,
+            41
+          ]
+        ],
+        "passed": true
+      },
+      {
+        "sql": "ADMIN CHECK TABLE t",
+        "expected": 0,
+        "actual": 0,
+        "passed": true
+      },
+      {
+        "sql": "DELETE parent FROM parent JOIN child ON parent.id=child.pid WHERE child.id=1",
+        "expected": 1,
+        "actual": 1,
+        "passed": true
+      },
+      {
+        "sql": "SELECT * FROM child",
+        "expected": [
+          [
+            2,
+            2
+          ]
+        ],
+        "actual": [
+          [
+            2,
+            2
+          ]
+        ],
+        "passed": true
+      },
+      {
+        "sql": "ADMIN CHECK TABLE parent",
+        "expected": 0,
+        "actual": 0,
+        "passed": true
+      },
+      {
+        "sql": "ADMIN CHECK TABLE child",
+        "expected": 0,
+        "actual": 0,
+        "passed": true
+      }
+    ],
+    "log": "/workspace/.cloud-setup/dml-identity-batch/wire-after.json",
+    "sha256": "4bbe4f2a52f3f5d639f7f94c8354b50343513626b6d101058d2369e96febfffb"
+  },
+  "finding_statuses": "E02/E03/K03 remain partial; 86 tracked,30 repaired,56 unresolved (27 open,29 partial). Other53 unresolved roots retain prior evidence.",
+  "limits": [
+    "Complete retained/pruned handle metadata and chunk write streaming remain unresolved. Forced duplicate handles across partitions keep Go bare-handle deduplication semantics.",
+    "Pseudo-handle UPDATE/movement remains unsupported, including ODKU assignments; reads are preserved.",
+    "Full indexed FK lookup/locking and physical cascade substatement ownership remain open.",
+    "Broader generated/conversion diagnostics, complete upstream package tests/platform/generated fixtures remain unaccepted.",
+    "No full Go suite, live multi-node TiKV, whole-package or performance acceptance. Native code and dependencies unchanged."
+  ],
+  "publication": "Actual precommit hook and a fresh locked server build immediately before the authorized normal push are required; external final-handoff.json records publication and Cloud readback.",
+  "source_inputs": {
+    "go": {
+      "head": "3ca96b1d5df8da123e7a650512654eedab12c861",
+      "files": {
+        "pkg/planner/core/logical_plan_builder.go": "01e352e46d091aeb174ce7c71143d23aa92f4b9d0c41d691aaba1cb8baaef131",
+        "pkg/planner/util/handle_cols.go": "b1a8bd17022727d9a57c51644b2a55ee5a251d48b436212a065bb80db6400d51",
+        "pkg/executor/update.go": "e4b3b1ca4669032a647d6fc0c1def39c583e097d671ea4ea95be59499512bb10",
+        "pkg/executor/delete.go": "e25ea1aa01293b942e5e87c7dbadf30b32c14999f3930661f2fa9836d02e6283",
+        "pkg/executor/insert_common.go": "4cadcb2be9b681c2b53ff584cbb26b0ee2645d5b98745b83ac68a2252de8f388",
+        "pkg/executor/replace.go": "5c2b8e37007efa038c03b4d0e495de12808624e96643985b8d57f509253ac03a",
+        "pkg/executor/insert.go": "7106bc74c9877af04d6ac150c367803a7aa7477875e0d2238bc60b3aa59da583",
+        "pkg/executor/builder.go": "7d47dc5eec64aa98de44014cf275061b102d6da57a4df2a565694637c53790e7"
+      }
+    },
+    "rust": {
+      "rust/crates/tidb-executor/src/access_path.rs": "f57f02d280c20d36b4cb8a677b0dbeb2f08f0a11ac431e13e83532906679a4af",
+      "rust/crates/tidb-executor/src/driver/dml.rs": "4c211977fc3d529cccd2ab8ded27ce8766e7847bd088d7c532465c6314598381",
+      "rust/crates/tidb-executor/src/driver/dml/delete_record.rs": "ccd6662a9566132c9eab04c1c090b26fbf96583ee0dc62e38d1090455869d4bc",
+      "rust/crates/tidb-executor/src/driver/dml/update_record.rs": "099084813122629323886f0e662fcb56899b7db69e65362071bc073d235dcb07",
+      "rust/crates/tidb-executor/src/driver/multi_dml.rs": "aba81112432c0564e2a3861db5ae042cc5e1279eaa3f8c1bb60c6d410a7469dc",
+      "rust/crates/tidb-executor/src/driver/physical_builder.rs": "0c2e36ece82d317a9010235c55031b0324a348b86b08f1bcb4b604e27d184355",
+      "rust/crates/tidb-executor/src/kv_table.rs": "bcacf505572e4988c8a51bc497953c28b93956773fa4d9b789122d3720605432",
+      "rust/crates/tidb-session/src/tests_expression_indexes.rs": "c1c3a9cefa833084a782a58507117374885f2ba0040a784b642f9c3edef8806d",
+      "rust/crates/tidb-session/src/tests_multi_table_dml.rs": "fdf0effc25b0b1464f8e2468dc6c620e2bc341369ef00e456f6d8fbd2abc315a"
+    }
+  },
+  "baseline_log_hashes": {
+    "before-behavior.log": "cb54a3e2f4b3b38919c3ec67222b1b2be5e9c0f83720b560b8a6e71e65c64ae3",
+    "replace-before.json": "e74ee553e3efbdaaa31d6eb888f5d864985691b3d94826a9aa20f371595040e0",
+    "index-join-before-behavior.log": "cde3ce2ae1c89f9e631ba2c6d4b9468fdb6283d6051c8d60bf36edf1eabd1050",
+    "wire-index-join-before.json": "349b62f021a4c95e1a83389e194bac8baf4e818386ea58e7bf422a1656f9c3c2",
+    "wire-missing-env.json": "349b62f021a4c95e1a83389e194bac8baf4e818386ea58e7bf422a1656f9c3c2"
+  }
+}

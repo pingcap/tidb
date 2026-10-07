@@ -1306,3 +1306,40 @@ fn grouped_add_columns_validates_its_index_against_the_original_table() {
         "the grouped constraint must be stored in table metadata"
     );
 }
+
+#[test]
+fn dml_identity_batch_explicit_handle_survives_generated_tail() {
+    let mut s = Session::new();
+    s.run("SET tidb_opt_write_row_id=1").unwrap();
+    s.run("CREATE TABLE t(a INT, v INT, INDEX ix ((v+1)))")
+        .unwrap();
+    s.run("INSERT INTO t(_tidb_rowid,a,v) VALUES(7,1,10)")
+        .unwrap();
+    assert_eq!(
+        rows(&mut s, "SELECT _tidb_rowid,a,v FROM t"),
+        vec![vec!["7", "1", "10"]]
+    );
+    admin_check(&mut s, "t", "explicit handle beside generated index column");
+    s.run("INSERT INTO t(_tidb_rowid,a,v) SELECT 8,2,20")
+        .unwrap();
+    s.run("REPLACE INTO t(_tidb_rowid,a,v) VALUES(7,3,30)")
+        .unwrap();
+    assert_eq!(
+        rows(&mut s, "SELECT _tidb_rowid,a,v FROM t ORDER BY _tidb_rowid"),
+        vec![vec!["7", "3", "30"], vec!["8", "2", "20"]]
+    );
+    s.run("REPLACE INTO t(_tidb_rowid,a,v) VALUES(7,3,30)")
+        .unwrap();
+    s.run("INSERT IGNORE INTO t(_tidb_rowid,a,v) VALUES(7,99,99)")
+        .unwrap();
+    assert_eq!(
+        rows(&mut s, "SELECT a,v FROM t WHERE _tidb_rowid=7"),
+        vec![vec!["3", "30"]]
+    );
+    s.run("INSERT INTO t(_tidb_rowid,a,v) VALUES(7,3,40) ON DUPLICATE KEY UPDATE v=VALUES(v)+VALUES(_tidb_rowid)-_tidb_rowid").unwrap();
+    assert_eq!(
+        rows(&mut s, "SELECT a,v FROM t WHERE _tidb_rowid=7"),
+        vec![vec!["3", "40"]]
+    );
+    admin_check(&mut s, "t", "explicit handle conflict consumers");
+}

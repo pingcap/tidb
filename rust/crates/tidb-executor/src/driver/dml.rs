@@ -616,6 +616,7 @@ fn run_insert_with_physical(
             &insert.on_duplicate,
             &target_layout.column_list,
             &target_layout.column_meta,
+            target_layout.extra_handle_offset,
             &target_layout.table_name,
             ctx,
             eval_chunk.get_row(0),
@@ -893,6 +894,7 @@ fn run_insert_with_physical(
             &insert.on_duplicate,
             &column_list,
             &column_meta,
+            extra_handle_offset,
             &table_name,
             ctx,
             eval_chunk.get_row(0),
@@ -906,6 +908,7 @@ fn run_insert_with_physical(
                 .map(|assignment| assignment.offset),
         )?,
         assignments: on_duplicate_assignments,
+        extra_handle: extra_handle_offset.is_some(),
         selected_partitions: insert_partition_ids.clone(),
         source_output_names,
     };
@@ -995,13 +998,12 @@ fn run_insert_with_physical(
                 // (`fillRow`) so every per-column step has an entry; the cast
                 // it performs is `setDatumAutoIDAndCast` against that
                 // column's `TypeLonglong`.
-                let (field_type, name) = match kv.columns.get(offset) {
-                    Some(column) => (&column.field_type, column.name.as_str()),
-                    None => (
-                        &column_meta[offset].field_type,
-                        column_meta[offset].name.as_str(),
-                    ),
-                };
+                // SQL input metadata includes the extra handle after visible
+                // columns; its offset may overlap the table's hidden tail.
+                let (field_type, name) = (
+                    &column_meta[offset].field_type,
+                    column_meta[offset].name.as_str(),
+                );
                 *value = cast_value_for_column(
                     std::mem::replace(value, Datum::Null),
                     field_type,
@@ -1033,6 +1035,9 @@ fn run_insert_with_physical(
             // The generated columns are computed from the finished row, so
             // the conflict lookup and the foreign-key check below see the
             // same values the write will store.
+            // Go appends the extra handle after all writable columns. Keep it
+            // outside generation, then append it after the complete hidden tail.
+            let extra_handle = extra_handle_offset.map(|_| row.pop().expect("extra handle slot"));
             materialize_generated_for_write(
                 &kv.columns,
                 &mut row,
@@ -1042,9 +1047,13 @@ fn run_insert_with_physical(
                     null_level: bad_null_level,
                 },
             )?;
+            if let Some(handle) = extra_handle {
+                row.push(handle);
+            }
         }
         new_rows.push(row);
     }
+    let extra_handle_offset = extra_handle_offset.map(|_| kv.columns().len());
     // Go `InsertValues.insertRows`/`insertRowsFromSelect`, the consume that
     // sits immediately before `base.exec(ctx, rows)`:
     // `types.EstimatedMemUsage(rows[0], len(rows))` over the staged rows.
@@ -1227,7 +1236,18 @@ fn run_insert_with_physical(
     let mut updates = UpdateRecords::new(fk_triggers);
     let mut removals = DeleteRecords::new(fk_triggers);
     let mut inserted_rows = Vec::new();
-    for (position, row) in new_rows.iter().enumerate() {
+    for (position, candidate) in new_rows.iter().enumerate() {
+        // Generated columns belong to the writable row; the extra handle is
+        // candidate identity and must not affect row equality or FK callbacks.
+        let (row, written_row_id): (&[Datum], Option<i64>) = match extra_handle_offset {
+            Some(offset) => (
+                &candidate[..offset],
+                candidate
+                    .get(offset)
+                    .and_then(|value| written_row_id(value, ctx)),
+            ),
+            None => (candidate.as_slice(), None),
+        };
         // Go's partition-qualified INSERT target is a table wrapper, so the
         // completed candidate is routed through the selected partition set
         // before duplicate-key resolution.  This prevents a row for p0 from
@@ -1246,7 +1266,11 @@ fn run_insert_with_physical(
         let conflicts = if lazy_dup_check || !resolves_conflicts {
             Vec::new()
         } else {
-            match target(catalog, &database, &table_name).row_conflicts(row, ctx) {
+            match target(catalog, &database, &table_name).row_conflicts_with_row_id(
+                row,
+                written_row_id,
+                ctx,
+            ) {
                 Ok(conflicts) => conflicts,
                 Err(error) => {
                     handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
@@ -1289,11 +1313,22 @@ fn run_insert_with_physical(
                     continue;
                 }
             } else if !insert.on_duplicate.is_empty() {
+                let sql_candidate;
+                let candidate_values = if let Some(offset) = extra_handle_offset {
+                    sql_candidate = candidate[..column_list.len() - 1]
+                        .iter()
+                        .chain(std::iter::once(&candidate[offset]))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    sql_candidate.as_slice()
+                } else {
+                    row
+                };
                 inserted += apply_on_duplicate(
                     catalog,
                     &database,
                     &conflicts[0].handle,
-                    row,
+                    candidate_values,
                     &prepared_on_duplicate,
                     &column_list,
                     position,
@@ -1320,7 +1355,7 @@ fn run_insert_with_physical(
                 fk_triggers,
                 &database,
                 &table_name,
-                std::slice::from_ref(row),
+                &[row.to_vec()],
                 &ctx.session_zone(),
             ) {
                 if matches!(error, DriverError::ForeignKeyNoReferencedRow { .. }) {
@@ -1340,17 +1375,6 @@ fn run_insert_with_physical(
         if let Some(allocated) = first_allocated {
             ctx.publish_last_insert_id(allocated);
         }
-        // Go `fillRow` appends the extra handle at `len(tCols)` and
-        // `adjustImplicitRowID` takes it off the row as the record HANDLE --
-        // it is not a stored column, so the row that reaches the table is the
-        // stored one again.
-        let (row, written_row_id): (&[Datum], Option<i64>) = match extra_handle_offset {
-            Some(offset) => (
-                &row[..offset.min(row.len())],
-                row.get(offset).and_then(|value| written_row_id(value, ctx)),
-            ),
-            None => (row.as_slice(), None),
-        };
         // Go `AllocHandleIDs` asks the SESSION's row-id shard generator for
         // the shard covering the next `n` ids, and only when the table
         // declares shard bits -- asking otherwise would advance a generator
@@ -1400,7 +1424,10 @@ fn run_insert_with_physical(
     if !inserted_rows.is_empty() {
         let written: Vec<_> = inserted_rows
             .into_iter()
-            .map(|index| new_rows[index].clone())
+            .map(|index| {
+                let row = &new_rows[index];
+                row[..extra_handle_offset.unwrap_or(row.len())].to_vec()
+            })
             .collect();
         crate::foreign_key::require_child_rows(
             catalog,
@@ -1543,6 +1570,7 @@ pub(crate) struct PreparedOnDuplicateAssignment {
 }
 
 struct PreparedOnDuplicate {
+    extra_handle: bool,
     assignments: Vec<PreparedOnDuplicateAssignment>,
     on_update_now: PreparedOnUpdateNow,
     selected_partitions: Option<Vec<i64>>,
@@ -1560,6 +1588,7 @@ fn prepare_on_duplicate_assignments(
     assignments: &[tidb_ast::Assignment],
     column_list: &[(String, FieldType)],
     column_meta: &[ColumnDefaultMeta],
+    extra_handle_offset: Option<usize>,
     table_name: &str,
     ctx: &crate::StmtContext,
     row: tidb_chunk::row::Row<'_>,
@@ -1581,6 +1610,11 @@ fn prepare_on_duplicate_assignments(
                 clause: "field list".to_owned(),
             }
         })?;
+        if extra_handle_offset == Some(offset) {
+            return Err(DriverError::unsupported(
+                "UPDATE of _tidb_rowid moves the row, which is not supported yet",
+            ));
+        }
         let target_identity = DefaultColumnIdentity {
             table: 0,
             column: offset,
@@ -1683,6 +1717,17 @@ fn apply_on_duplicate(
         div_precision_increment: ctx.div_precision_increment(),
         clause_message: "field list",
     };
+    let extra_handle = prepared.extra_handle;
+    let sql_row = |row: &[Datum]| {
+        let visible = column_list.len() - usize::from(extra_handle);
+        let mut values = row[..visible].to_vec();
+        if extra_handle {
+            values.push(Datum::Int(
+                extra_handle_value(handle).expect("heap row has an integer handle"),
+            ));
+        }
+        values
+    };
     let mut updated = existing.clone();
     for assignment in &prepared.assignments {
         let expr = match &assignment.value {
@@ -1701,7 +1746,7 @@ fn apply_on_duplicate(
                 rewrite_with_prepared_defaults(&bound, &resolver, defaults)?
             }
         };
-        let chunk = row_chunk(&updated, &field_types)?;
+        let chunk = row_chunk(&sql_row(&updated), &field_types)?;
         let value = expr
             .eval(ctx, chunk.get_row(0))
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
@@ -1713,7 +1758,7 @@ fn apply_on_duplicate(
             ctx,
         )?;
     }
-    let updated_chunk = row_chunk(&updated, &field_types)?;
+    let updated_chunk = row_chunk(&sql_row(&updated), &field_types)?;
     prepared
         .on_update_now
         .apply(&existing, &mut updated, ctx, updated_chunk.get_row(0))?;

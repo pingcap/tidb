@@ -2284,7 +2284,7 @@ fn physical_table_schema(plan: &PhysicalPlan, table: &crate::KvTable) -> Schema 
     }
     let planned_columns = scan_columns(plan);
     let columns = table
-        .visible_columns()
+        .logical_columns()
         .iter()
         .enumerate()
         .map(|(index, stored)| {
@@ -2323,13 +2323,13 @@ fn index_inner_output_offsets(
         .iter()
         .map(|column| {
             table
-                .visible_columns()
+                .logical_columns()
                 .iter()
                 .position(|stored| stored.id == column.id)
                 .or_else(|| {
                     column.orig_name.rsplit('.').next().and_then(|name| {
                         table
-                            .visible_columns()
+                            .logical_columns()
                             .iter()
                             .position(|stored| stored.name.eq_ignore_ascii_case(name))
                     })

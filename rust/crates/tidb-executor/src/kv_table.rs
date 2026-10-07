@@ -3000,17 +3000,36 @@ impl KvTable {
         row: &[Datum],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<Vec<RowConflict>, KvTableError> {
+        self.row_conflicts_with_row_id(row, None, ctx)
+    }
+
+    /// Go's candidate handle key also includes an explicitly supplied heap ID.
+    pub(crate) fn row_conflicts_with_row_id(
+        &mut self,
+        row: &[Datum],
+        row_id: Option<i64>,
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<Vec<RowConflict>, KvTableError> {
         let zone = ctx.time_zone();
         let physical_id = self.record_physical_id(row, ctx)?;
         let mut found: Vec<RowConflict> = Vec::new();
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
-        if clustered {
-            let handle = self.handle_of_row(row, &zone, 0)?;
-            if self.row_exists(&handle)? {
+        let candidate_handle = if clustered {
+            Some(self.handle_of_row(row, &zone, 0)?)
+        } else {
+            row_id.map(TableHandle::Int)
+        };
+        if let Some(handle) = candidate_handle {
+            if read_stored_record_one(self.store.as_mut(), physical_id, &handle)?.is_some() {
+                let value = if clustered {
+                    clustered_key_text(self, row)
+                } else {
+                    row_id.expect("explicit heap handle").to_string()
+                };
                 found.push(RowConflict {
                     handle,
                     error: KvTableError::DuplicateEntry {
-                        value: clustered_key_text(self, row),
+                        value,
                         key: self.qualified_key("PRIMARY"),
                     },
                 });

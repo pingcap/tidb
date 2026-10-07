@@ -1655,3 +1655,83 @@ fn dml_owner_multi_table_fk_plans_follow_resolved_targets() {
         "{disabled:?}"
     );
 }
+
+// Go UPDATE/DELETE retain every writable column, including hidden generated values.
+#[test]
+fn dml_identity_batch_joined_update_keeps_hidden_columns() {
+    let mut s = Session::new();
+    s.run("CREATE TABLE t(a INT, v INT, INDEX ix ((v+1)))")
+        .unwrap();
+    s.run("CREATE TABLE b(a INT PRIMARY KEY)").unwrap();
+    s.run("INSERT INTO t VALUES(1,10),(2,20)").unwrap();
+    s.run("INSERT INTO b VALUES(1),(2)").unwrap();
+    assert_eq!(
+        affected(&mut s, "UPDATE t JOIN b ON t.a=b.a SET t.v=t.v+1"),
+        2
+    );
+    assert_eq!(
+        column(&mut s, "SELECT a,v FROM t ORDER BY a"),
+        ["1|11", "2|21"]
+    );
+    s.run("ADMIN CHECK TABLE t").unwrap();
+}
+
+#[test]
+fn dml_identity_batch_joined_delete_keeps_hidden_columns() {
+    let mut s = Session::new();
+    s.run("CREATE TABLE t(a INT PRIMARY KEY, v INT, INDEX ix ((v+1)))")
+        .unwrap();
+    s.run("CREATE TABLE c(a INT, FOREIGN KEY(a) REFERENCES t(a) ON DELETE CASCADE)")
+        .unwrap();
+    s.run("INSERT INTO t VALUES(1,10),(2,20)").unwrap();
+    s.run("INSERT INTO c VALUES(1),(2)").unwrap();
+    assert_eq!(
+        affected(&mut s, "DELETE t FROM t JOIN c ON t.a=c.a WHERE t.a=1"),
+        1
+    );
+    assert_eq!(column(&mut s, "SELECT a FROM c"), ["2"]);
+    s.run("ADMIN CHECK TABLE t").unwrap();
+}
+
+#[test]
+fn dml_identity_batch_self_join_merges_hidden_generated_values() {
+    let mut s = Session::new();
+    s.run("CREATE TABLE t(id INT PRIMARY KEY, a INT, b INT, INDEX ix ((a+b)))")
+        .unwrap();
+    s.run("INSERT INTO t VALUES(1,10,20)").unwrap();
+    assert_eq!(
+        affected(
+            &mut s,
+            "UPDATE t x JOIN t y ON x.id=y.id SET x.a=x.a+1,y.b=y.b+2"
+        ),
+        2
+    );
+    assert_eq!(column(&mut s, "SELECT * FROM t"), ["1|11|22"]);
+    s.run("ADMIN CHECK TABLE t").unwrap();
+    assert_eq!(
+        affected(
+            &mut s,
+            "UPDATE t x JOIN t y ON x.id=y.id SET x.a=x.a,y.b=y.b"
+        ),
+        0
+    );
+    assert!(s.run("SELECT `_V$_ix_0` FROM t").is_err());
+}
+
+#[test]
+fn dml_identity_batch_index_join_retains_hidden_columns() {
+    let mut s = Session::new();
+    s.run("CREATE TABLE parent(id INT PRIMARY KEY,v INT,INDEX ix ((v+1)))")
+        .unwrap();
+    s.run("CREATE TABLE child(id INT PRIMARY KEY,pid INT,FOREIGN KEY(pid) REFERENCES parent(id) ON DELETE CASCADE)")
+        .unwrap();
+    s.run("INSERT INTO parent VALUES(1,10),(2,20)").unwrap();
+    s.run("INSERT INTO child VALUES(1,1),(2,2)").unwrap();
+    assert_eq!(
+        affected(&mut s, "DELETE /*+ INL_JOIN(parent) */ parent FROM parent JOIN child ON parent.id=child.pid WHERE child.id=1"),
+        1
+    );
+    assert_eq!(column(&mut s, "SELECT id,pid FROM child"), ["2|2"]);
+    s.run("ADMIN CHECK TABLE parent").unwrap();
+    s.run("ADMIN CHECK TABLE child").unwrap();
+}

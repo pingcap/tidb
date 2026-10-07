@@ -68,12 +68,8 @@ impl<'a> DeleteRecords<'a> {
             Some(TableEntry::Kv(kv)) => {
                 let handle = id;
                 let kv = std::sync::Arc::make_mut(kv);
-                if old.len() == kv.columns().len() {
-                    kv.delete_row_with_old_context(handle, old, ctx)
-                } else {
-                    kv.delete_row_with_context(handle, ctx)
-                }
-                .map_err(|error| kv_read_error("row delete failed", error))?;
+                kv.delete_row_with_old_context(handle, old, ctx)
+                    .map_err(|error| kv_read_error("row delete failed", error))?;
             }
             _ => {
                 return Err(DriverError::unsupported(

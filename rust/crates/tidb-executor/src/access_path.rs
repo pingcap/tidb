@@ -5380,7 +5380,7 @@ impl IndexJoinLookupExec {
         // that physical table shape here even when `meta` already describes
         // the compact row emitted to the join above.
         let filter_types = table
-            .visible_columns()
+            .logical_columns()
             .iter()
             .map(|column| column.field_type.clone())
             .collect::<Vec<_>>();
@@ -5568,7 +5568,7 @@ impl IndexJoinLookupExec {
             filter_context: self.filter_context.clone(),
             filter_types: self
                 .table
-                .visible_columns()
+                .logical_columns()
                 .iter()
                 .map(|column| column.field_type.clone())
                 .collect(),
@@ -5891,7 +5891,7 @@ impl IndexJoinLookupExec {
     }
 
     fn compute_probe_key_types(&self) -> Option<Vec<FieldType>> {
-        let columns = self.table.visible_columns();
+        let columns = self.table.logical_columns();
         match &self.object {
             LookupObject::Index(index_id) => {
                 let index = self
@@ -6473,7 +6473,8 @@ impl IndexJoinLookupExec {
                 "index-join decoded row does not match its projection",
             ));
         }
-        let mut physical = vec![Datum::Null; self.table.visible_column_count()];
+        // Inner plan schemas retain hidden generated columns too.
+        let mut physical = vec![Datum::Null; self.table.columns().len()];
         for (offset, value) in offsets.iter().copied().zip(decoded) {
             let target = physical.get_mut(offset).ok_or_else(|| {
                 ExecError::unsupported("index-join decode column is outside the table")

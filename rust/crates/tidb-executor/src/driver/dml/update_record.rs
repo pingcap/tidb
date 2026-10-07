@@ -181,15 +181,9 @@ impl<'a> UpdateRecords<'a> {
                         Err(error) => return ignored_write_error(kv_write_error(error), true, ctx),
                     }
                 }
-                // Joined projections can omit hidden expression-index columns.
-                // Only a complete preimage can replace the table's old-row read.
-                kv.update_row_with_old_context(
-                    handle,
-                    (old.len() == kv.columns().len()).then_some(old),
-                    new,
-                    ctx,
-                )
-                .map_err(kv_write_error)
+                // Every write caller retains the complete writable preimage.
+                kv.update_row_with_old_context(handle, Some(old), new, ctx)
+                    .map_err(kv_write_error)
             }
             _ => {
                 return Err(DriverError::unsupported(
