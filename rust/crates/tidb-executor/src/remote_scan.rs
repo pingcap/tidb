@@ -2540,6 +2540,171 @@ mod tests {
         }
     }
 
+    #[test]
+    fn reader_task_ordinary_lookup_uses_table_width() {
+        let mut fixture = fixture();
+        fixture.table.add_index(
+            KvIndex {
+                id: 1,
+                name: "ia".into(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![0],
+                prefix_lengths: vec![-1],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        for row in [[1, 10], [2, 20], [3, 30]] {
+            fixture
+                .table
+                .insert_row(&row.map(Datum::Int), &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        let scanner = Arc::clone(&fixture.scanner);
+        let catalog = catalog_of(fixture.table);
+        let rows = run_select_on(
+            "SELECT b FROM t USE INDEX(ia) WHERE a < 3 ORDER BY a",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        assert_eq!(rows, vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]);
+        let estimates = scanner.requested_read_estimates.lock().unwrap();
+        let index = estimates
+            .iter()
+            .find(|(index, _, _)| *index)
+            .expect("index request");
+        let average = index.2.expect("double-read table width");
+        assert!(average > 0.0);
+        assert_eq!(
+            index.1, average,
+            "Go buildNoRangeIndexLookUpReader uses table average"
+        );
+        assert!(
+            estimates.iter().any(|(index, bytes, avg)| !index
+                && *avg == Some(average)
+                && *bytes == 2.0 * average)
+        );
+    }
+
+    #[test]
+    fn reader_task_index_merge_uses_shared_table_requests() {
+        for clustered in [false, true] {
+            let mut fixture = fixture_with(clustered.then_some(0));
+            for (id, name, offset) in [(1, "ia", 0), (2, "ib", 1)] {
+                fixture.table.add_index(
+                    KvIndex {
+                        id,
+                        name: name.into(),
+                        comment: String::new(),
+                        unique: false,
+                        column_offsets: vec![offset],
+                        prefix_lengths: vec![-1],
+                        visible: true,
+                        global: false,
+                        global_index_version: 0,
+                        clustered_primary: false,
+                    },
+                    false,
+                );
+            }
+            for row in [[1, 30], [2, 20], [3, 10]] {
+                fixture
+                    .table
+                    .insert_row(&row.map(Datum::Int), &tidb_expr::NoColumns)
+                    .unwrap();
+            }
+            commit(&fixture.buffer, &fixture.snapshot);
+            let scanner = Arc::clone(&fixture.scanner);
+            scanner.reverse_unordered.store(true, Ordering::SeqCst);
+            let catalog = catalog_of(fixture.table);
+            let ctx = crate::StmtContext::for_query();
+            let rows = run_select_on("SELECT /*+ USE_INDEX_MERGE(t, ia, ib) */ a,b FROM t WHERE a < 3 OR b < 20 ORDER BY a",
+                &catalog, &ctx).unwrap();
+            assert_eq!(
+                rows,
+                vec![
+                    vec![Datum::Int(1), Datum::Int(30)],
+                    vec![Datum::Int(2), Datum::Int(20)],
+                    vec![Datum::Int(3), Datum::Int(10)]
+                ]
+            );
+            let estimates = scanner.requested_read_estimates.lock().unwrap();
+            assert!(
+                estimates.iter().filter(|(index, _, _)| *index).count() >= 2,
+                "both partial paths: {estimates:?}"
+            );
+            let table = estimates
+                .iter()
+                .filter(|(index, _, _)| !index)
+                .collect::<Vec<_>>();
+            assert!(
+                !table.is_empty(),
+                "index merge must build table requests: {estimates:?}"
+            );
+            assert!(
+                table
+                    .iter()
+                    .all(|(_, bytes, avg)| avg.is_some_and(|avg| avg > 0.0 && *bytes >= avg)),
+                "per-task handle estimates: {table:?}"
+            );
+            assert!(
+                scanner
+                    .requested_flags
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|flags| *flags == ctx.push_down_flags())
+            );
+        }
+    }
+
+    #[test]
+    fn reader_task_sorted_handles_restore_remote_completion_order() {
+        let mut fixture = clustered_fixture();
+        for row in [[1, 10], [2, 20], [3, 30]] {
+            fixture
+                .table
+                .insert_row(&row.map(Datum::Int), &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture
+            .scanner
+            .reverse_unordered
+            .store(true, Ordering::SeqCst);
+        let handles = vec![
+            TableHandle::Int(1),
+            TableHandle::Int(2),
+            TableHandle::Int(3),
+        ];
+        let (rows, _) = fixture
+            .table
+            .pushdown_rows_by_handles_filtered(
+                &handles,
+                &[1],
+                &[],
+                &SessionTimeZone::utc(),
+                &PushdownStatementContext::from_stmt(&crate::StmtContext::for_query()),
+                2,
+            )
+            .unwrap()
+            .expect("remote table rows");
+        assert_eq!(
+            rows,
+            vec![
+                (TableHandle::Int(1), vec![Datum::Int(10)]),
+                (TableHandle::Int(2), vec![Datum::Int(20)]),
+                (TableHandle::Int(3), vec![Datum::Int(30)])
+            ]
+        );
+    }
+
     /// `DAGRequest.flags` reaches the region from the STATEMENT, through the
     /// production request builder, and is not the literal `0` it used to be.
     ///

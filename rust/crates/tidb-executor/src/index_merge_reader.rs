@@ -112,8 +112,9 @@
 //!   Go sorts each task's handles into KEY order before the coprocessor
 //!   request (`buildTableReaderFromHandles`, `canReorderHandles = true`) and
 //!   then puts the rows back into `indexOrder`;
-//!   [`crate::access_path::HandleSourceExec`] reads handles in the order given
-//!   and so is already in index order. Same rows, same order, one less sort.
+//!   [`crate::access_path::HandleSourceExec`] uses the shared table request
+//!   handoff to restore handle order before the retained table operators run.
+//!   Unsupported remote shapes retain their native BatchGet fallback.
 //! * Partitioning is modelled as an opaque `partition_index` on a batch, not
 //!   as Go's `kv.PartitionHandle` wrapper. The dedup/count key is
 //!   `(partition_index, handle)`, which is what wrapping achieves. Global
@@ -1256,6 +1257,7 @@ pub struct IndexMergeReaderExec {
     table_task_builder: Option<TableTaskBuilder>,
     /// Go len(tblPlans) == 1: no table-side operator can remove rows.
     table_plan_is_scan: bool,
+    table_statement: Option<crate::remote_scan::PushdownStatementContext>,
     /// Go `sessionVars.IndexLookupSize`: the handle count per table task.
     batch_size: usize,
     /// Go `workerStarted`.
@@ -1293,12 +1295,22 @@ impl IndexMergeReaderExec {
             table_source_schema: None,
             table_task_builder: None,
             table_plan_is_scan: true,
+            table_statement: None,
             batch_size: 20_000,
             started: false,
             tasks: VecDeque::new(),
             union_process: None,
             current: None,
         }
+    }
+
+    /// The final table request retains statement settings and average row width.
+    pub(crate) fn with_table_statement(
+        mut self,
+        statement: crate::remote_scan::PushdownStatementContext,
+    ) -> Self {
+        self.table_statement = Some(statement);
+        self
     }
 
     /// Go `pushedLimit`.
@@ -1735,7 +1747,8 @@ impl IndexMergeReaderExec {
                 self.decode_context.clone(),
             ),
         }
-        .with_partition_ids(Some(partition_ids));
+        .with_partition_ids(Some(partition_ids))
+        .with_table_statement(self.table_statement.clone());
         match &self.table_task_builder {
             Some(build) => build(Box::new(source)),
             None => Ok(Box::new(source)),

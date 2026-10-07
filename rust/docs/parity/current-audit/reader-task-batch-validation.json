@@ -1,0 +1,185 @@
+{
+  "baseline": "1eaa91e142b20c7a4bfe2fe848e269b8a0df1ac9",
+  "comparison_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_unchanged": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "scope": "Connected N03/O13 ordinary/probe/merge table-request policy, typed context and handle ordering. Existing owners; both findings stay partial; no whole Go package acceptance.",
+  "source_inputs": [
+    {
+      "path": "pkg/executor/builder.go",
+      "sha256": "7d47dc5eec64aa98de44014cf275061b102d6da57a4df2a565694637c53790e7"
+    },
+    {
+      "path": "pkg/executor/distsql.go",
+      "sha256": "eb7759a9a04bb67259380a36ee54fb065c6de21075ba287dd29dc213ab0235c7"
+    },
+    {
+      "path": "pkg/executor/index_merge_reader.go",
+      "sha256": "095630e208568307d04d052e735b385b07e6c8650ba05d89031c831a083e8dde"
+    },
+    {
+      "path": "pkg/executor/table_reader.go",
+      "sha256": "e9ef4388a5651f8e4780f34bdff3fad6427f99a2a1fb0f60dab9220b29d1009b"
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/physical_indexlookup_reader.go",
+      "sha256": "c65e1cb478ab3332006a7c225685edca3eaa54b1136ccd01eab072e58eedb3e9"
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/physical_indexmerge_reader.go",
+      "sha256": "4a23c43c5413a967c0c556fe4e3bf371488439d5d38622408ffa3efc1c603281"
+    }
+  ],
+  "confirmed_before": [
+    {
+      "test": "reader_task_ordinary_lookup_uses_table_width",
+      "actual": 54004.16666666667,
+      "expected": 24.375,
+      "note": "same regression also requires a table request with actual handle-count scaling"
+    },
+    {
+      "test": "reader_task_index_merge_uses_shared_table_requests",
+      "actual": "two partial index requests; no final table request",
+      "expected": "final table requests carrying statement flags and per-handle estimates"
+    },
+    {
+      "test": "reader_task_sorted_handles_restore_remote_completion_order",
+      "actual": "3,2,1",
+      "expected": "1,2,3"
+    },
+    {
+      "test": "handle_lookup_drains_columnar_batches_and_restores_index_order",
+      "actual": "8,7",
+      "expected": "7,8 for ascending caller; descending control retained"
+    }
+  ],
+  "baseline_controls": {
+    "selected_passed": 43,
+    "point_and_fallback_passed": 64,
+    "wire_passed": 8,
+    "note": "The initial wrong-directory helper attempt changed no source. Its canceled wrapper left a Cargo child; both baseline invocations completed against the same test-only source and appended duplicate summaries. Count distinct regressions once; no concurrent compiler remains. No runtime SQL wrong-result regression claimed from baseline wire controls."
+  },
+  "changes": [
+    "Unify ordinary and rebuilt probe width/estimate policy while retaining ordinary scan runtime identity.",
+    "Remove small-index-batch BatchGet bypass, private DirectRows state and cached prepared-decoder branch; unsupported remote shapes retain shared fallback.",
+    "Supply index-merge final tasks with retained statement, scan identity and table width; reuse the existing table handle request and output mapping.",
+    "Pass retained RowDecodeContext through ordinary/worker/probe/merge table-request callers instead of replacing it with legacy defaults.",
+    "Restore actual remote row and chunk identities; sorted input no longer implies sorted completion.",
+    "Retire unused staging alias and orphan prepared-batch helper; migrate its projection/duplicates/missing-row test to the live fallback; consolidate duplicate constructors."
+  ],
+  "validation": {
+    "rust_distinct_passed": 214,
+    "rust_failed": 0,
+    "rust_ignored": 0,
+    "wire_passed": 8,
+    "commands": [
+      {
+        "command": [
+          "cargo",
+          "check",
+          "--locked",
+          "--all-targets",
+          "-p",
+          "tidb-executor",
+          "-p",
+          "tidb-session",
+          "-p",
+          "tidb-server"
+        ],
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "check.log"
+      },
+      {
+        "command": [
+          "make",
+          "lint"
+        ],
+        "cwd": "/workspace/tidb",
+        "exit_code": 0,
+        "log": "lint.log"
+      },
+      {
+        "command": [
+          "cargo",
+          "build",
+          "--locked",
+          "-p",
+          "tidb-server"
+        ],
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "server-build.log"
+      },
+      {
+        "command": [
+          "python3",
+          "/workspace/.cloud-setup/reader-task-batch/wire.py",
+          "wire"
+        ],
+        "cwd": "/workspace/tidb",
+        "exit_code": 0,
+        "log": "wire-run.log"
+      }
+    ],
+    "tests_command": "cargo test --locked -p tidb-executor --lib -- reader_task_ remote_scan::tests:: access_path::tests:: kv_table::table_scan::remote_cursor_tests:: index_merge point_get --test-threads=1",
+    "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1; Cargo cwd /workspace/tidb/rust",
+    "self_review": "Caller search, changed-region rustfmt, git diff --check, Go blob identity and JSON/Markdown disposition consistency"
+  },
+  "logs": [
+    {
+      "path": "/workspace/.cloud-setup/reader-task-batch/before.log",
+      "sha256": "94b8a875051e0ea367bdf457fbaa3f4f65ddefa04093f99d9927c578a6e75e99"
+    },
+    {
+      "path": "/workspace/.cloud-setup/reader-task-batch/point-before.log",
+      "sha256": "6bbd66d840bd5f3c6180528b0ce36f4b8db9e725523dc2281f6c3c78259c19bb"
+    },
+    {
+      "path": "/workspace/.cloud-setup/reader-task-batch/tests.log",
+      "sha256": "39cb9af66412c156e5564a99a649c2e5f0f9e3b71e010e1920a33060eab82a2d"
+    },
+    {
+      "path": "/workspace/.cloud-setup/reader-task-batch/shared-reader-tests.log",
+      "sha256": "ef39f40adb2abd758818f8a459694bc2f1de67b5acebc5c6bf8772bc5fc5c05c"
+    },
+    {
+      "path": "/workspace/.cloud-setup/reader-task-batch/tests-final.log",
+      "sha256": "d18a71cc302596319392698840241ebf1da822dc771b373136a80298c955c2c6"
+    },
+    {
+      "path": "/workspace/.cloud-setup/reader-task-batch/lint.log",
+      "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef"
+    },
+    {
+      "path": "/workspace/.cloud-setup/reader-task-batch/check.log",
+      "sha256": "94b8bcf9393c46ce6d8ad35c9208940ecb6ce2658e13b9fcb25f954a74b1c0a5"
+    },
+    {
+      "path": "/workspace/.cloud-setup/reader-task-batch/server-build.log",
+      "sha256": "e152b1691eacaf9bad8760cfe0e24f0f630e8b0daf800a429acfbdf065b4f664"
+    },
+    {
+      "path": "/workspace/.cloud-setup/reader-task-batch/wire-before.json",
+      "sha256": "f7734f6953171aaa10b0d776def7a516743b9d13b16a6091b8154b40f5cd498b"
+    },
+    {
+      "path": "/workspace/.cloud-setup/reader-task-batch/wire.json",
+      "sha256": "f7734f6953171aaa10b0d776def7a516743b9d13b16a6091b8154b40f5cd498b"
+    }
+  ],
+  "limits": [
+    "Clean unpartitioned integer/hidden-handle remote table tasks covered. Partition/common-handle and dirty shapes retain their existing native fallbacks; full remote shape coverage remains open.",
+    "Index-merge retained table operators still execute locally; full DAG pushdown and worker concurrency not accepted.",
+    "Partition/group estimates, stale/local scopes, task-build-error counters and live AZ placement remain open.",
+    "No full Go suites, live multi-node TiKV or performance benchmark claim.",
+    "Other54 unresolved roots retain carried evidence; complete packages remain unaccepted."
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "publication": "Pending actual commit hook, fresh locked prepush build and remote SHA verification in external final-handoff.json"
+}

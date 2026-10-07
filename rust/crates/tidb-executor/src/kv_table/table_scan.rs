@@ -260,51 +260,6 @@ impl KvTable {
         Ok(rows)
     }
 
-    /// Batch-gets an unpartitioned integer-handle lookup with a decoder that
-    /// was compiled for the source's stable projection. Go's table worker
-    /// reuses its table-reader metadata for every task; keeping the prepared
-    /// decoder outside this method avoids rebuilding column maps for each
-    /// ten-handle `select_random_points` window.
-    pub(crate) fn get_rows_by_handles_prepared_with_context(
-        &mut self,
-        handles: &[TableHandle],
-        decoder: &PreparedPointGetRowDecoder,
-        context: &PreparedPointGetDecodeContext,
-    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
-        if handles.is_empty() {
-            return Ok(Vec::new());
-        }
-        if self.partition.is_some()
-            || handles
-                .iter()
-                .any(|handle| !matches!(handle, TableHandle::Int(_)))
-        {
-            return Err(KvTableError::Decode(
-                "prepared integer handle lookup requires an unpartitioned table".to_owned(),
-            ));
-        }
-        let physical_id = self.table_id;
-        let keys = handles
-            .iter()
-            .map(|handle| {
-                Key::from_bytes(encode_row_key_with_handle(
-                    physical_id,
-                    &handle.record_handle(),
-                ))
-            })
-            .collect::<Vec<_>>();
-        let entries = self.store.batch_get(&keys).map_err(KvTableError::from)?;
-        handles
-            .iter()
-            .zip(keys)
-            .map(|(handle, key)| {
-                entries
-                    .get(&key)
-                    .map(|entry| decoder.decode(handle, entry, context))
-                    .transpose()
-            })
-            .collect()
-    }
     fn row_cursor_with_decoder(
         &mut self,
         decoder: RowDecoder,
@@ -1060,7 +1015,7 @@ impl KvTable {
             handles,
             scan_keep,
             predicates,
-            zone,
+            &RowDecodeContext::legacy_default(zone),
             statement,
             required_rows,
         )?
@@ -1085,7 +1040,7 @@ impl KvTable {
         handles: &[TableHandle],
         scan_keep: &[usize],
         predicates: &[ScanPredicate],
-        zone: &SessionTimeZone,
+        context: &RowDecodeContext,
         statement: &PushdownStatementContext,
         required_rows: usize,
     ) -> Result<Option<StagedHandlesLookup>, KvTableError> {
@@ -1138,7 +1093,6 @@ impl KvTable {
         let (key_ranges, range_hints) =
             Self::table_reader_handle_key_ranges(self.table_id, handles)?;
         let statement = statement.for_lookup_batch(handles.len());
-        let context = RowDecodeContext::legacy_default(zone);
         let materialization = if keep
             .iter()
             .any(|offset| crate::generated_column::is_virtual(&self.columns[*offset]))
@@ -1146,7 +1100,7 @@ impl KvTable {
             Some(RemoteRowMaterialization::new(
                 self,
                 &keep,
-                &context,
+                context,
                 self.pk_handle_offset.is_none(),
             )?)
         } else {
@@ -1168,7 +1122,7 @@ impl KvTable {
             false,
             false,
             true,
-            &context,
+            context,
             &statement,
             crate::remote_scan::PushdownReadEngine::TiKv,
             0,
@@ -1184,30 +1138,6 @@ impl KvTable {
             materialization,
             required_rows: required_rows.max(1),
         }))
-    }
-
-    /// Compatibility entry point for callers that describe the operation as
-    /// staging. The implementation is the Rust counterpart of Go's
-    /// `buildTableReaderFromHandles`: sort a request copy, preserve duplicate
-    /// handles, merge only consecutive integer handles, and attach one row
-    /// count hint per resulting range.
-    pub fn stage_rows_by_handles_filtered(
-        &mut self,
-        handles: &[TableHandle],
-        scan_keep: &[usize],
-        predicates: &[ScanPredicate],
-        zone: &SessionTimeZone,
-        statement: &PushdownStatementContext,
-        required_rows: usize,
-    ) -> Result<Option<StagedHandlesLookup>, KvTableError> {
-        self.build_table_reader_from_handles(
-            handles,
-            scan_keep,
-            predicates,
-            zone,
-            statement,
-            required_rows,
-        )
     }
 
     /// Converts integer handles using the direct KV range builder shared with
@@ -1307,13 +1237,11 @@ impl KvTable {
             }
         }
         let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
-        // The coprocessor returns rows in record-key order, while the lookup
-        // executor must restore the index window's handle order. Unordered
-        // lookup windows are sorted before the request is opened, so their
-        // caller order already is record-key order. Avoid building a map and
-        // sorting that common path; keep the map for keep-order windows, where
-        // the index order is intentionally different from record-key order.
-        if !handles.windows(2).all(|window| window[0] <= window[1]) {
+        // Region completion may be unordered even for sorted requested
+        // handles. Skip restoration only when both sequences prove sorted.
+        if !handles.windows(2).all(|window| window[0] <= window[1])
+            || !rows.windows(2).all(|window| window[0].0 <= window[1].0)
+        {
             // Keep the source order in a map once instead of scanning
             // `handles` for every returned row (the old position lookup was
             // O(n²) for a large window).
@@ -1377,13 +1305,7 @@ impl KvTable {
         let wire_rows = staged.cursor.rows_returned();
         let predicates_applied = staged.cursor.predicates_applied();
         let mut batches = Vec::new();
-        // Go only decodes the handle again when keep-order restoration is
-        // required. Unordered lookup batches are already requested in handle
-        // order, so retaining row positions can avoid one datum conversion
-        // and one TableHandle allocation per returned row.
-        let reorder = !handles.windows(2).all(|window| window[0] <= window[1]);
-        let mut rows = reorder.then(|| Vec::with_capacity(handles.len()));
-        let mut row_positions = Vec::with_capacity(handles.len());
+        let mut rows = Vec::with_capacity(handles.len());
         loop {
             let Some(batch) = staged
                 .cursor
@@ -1401,41 +1323,38 @@ impl KvTable {
             }
             let batch_index = batches.len();
             for row_index in 0..batch.num_rows() {
-                if let Some(rows) = rows.as_mut() {
-                    let row = batch.get_row(row_index);
-                    let handle = match row.get_datum(
-                        staged.handle_position,
-                        &staged.cursor.field_types[staged.handle_position],
-                    ) {
-                        Datum::Int(handle) => handle,
-                        Datum::UInt(handle) => handle as i64,
-                        _ => {
-                            return Err(KvTableError::Decode(
-                                "a coprocessor row carried no integer handle".to_owned(),
-                            ));
-                        }
-                    };
-                    rows.push((TableHandle::Int(handle), batch_index, row_index));
-                } else {
-                    row_positions.push((batch_index, row_index));
-                }
+                let row = batch.get_row(row_index);
+                let handle = match row.get_datum(
+                    staged.handle_position,
+                    &staged.cursor.field_types[staged.handle_position],
+                ) {
+                    Datum::Int(handle) => handle,
+                    Datum::UInt(handle) => handle as i64,
+                    _ => {
+                        return Err(KvTableError::Decode(
+                            "a coprocessor row carried no integer handle".to_owned(),
+                        ));
+                    }
+                };
+                rows.push((TableHandle::Int(handle), batch_index, row_index));
             }
             batches.push(batch);
         }
         let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
-        if let Some(mut ordered) = rows {
+        if !handles.windows(2).all(|window| window[0] <= window[1])
+            || !rows.windows(2).all(|window| window[0].0 <= window[1].0)
+        {
             let positions = handles
                 .iter()
                 .enumerate()
                 .map(|(position, handle)| (handle, position))
                 .collect::<HashMap<_, _>>();
-            ordered
-                .sort_by_key(|(handle, _, _)| positions.get(handle).copied().unwrap_or(usize::MAX));
-            row_positions = ordered
-                .into_iter()
-                .map(|(_, batch_index, row_index)| (batch_index, row_index))
-                .collect();
+            rows.sort_by_key(|(handle, _, _)| positions.get(handle).copied().unwrap_or(usize::MAX));
         }
+        let row_positions = rows
+            .into_iter()
+            .map(|(_, batch, row)| (batch, row))
+            .collect();
         Ok(Some(FinishedLookupChunk {
             batches,
             row_positions,
@@ -2972,7 +2891,7 @@ type KeyedRow = (Vec<u8>, Vec<Datum>);
 /// One staged write of the same range: `None` is a staged delete.
 type StagedRow = (Vec<u8>, Option<Vec<Datum>>);
 
-/// One OPEN remote handle lookup: [`KvTable::stage_rows_by_handles_filtered`]
+/// One OPEN remote handle lookup: [`KvTable::build_table_reader_from_handles`]
 /// built the request and the region is already streaming; draining it is
 /// [`KvTable::finish_rows_by_handles`]. `Send` so a bounded-concurrency
 /// lookup pipeline can drain it off the executor thread.
@@ -7378,7 +7297,7 @@ mod remote_cursor_tests {
                     &handles,
                     &[0],
                     &[],
-                    &tidb_datatype::SessionTimeZone::utc(),
+                    &RowDecodeContext::for_test_query_utc(),
                     &PushdownStatementContext::default(),
                     1024,
                 )
@@ -7411,7 +7330,7 @@ mod remote_cursor_tests {
     }
 
     #[test]
-    fn prepared_handle_batch_get_preserves_projection_duplicates_and_missing_rows() {
+    fn handle_batch_get_preserves_projection_duplicates_and_missing_rows() {
         let mut table = KvTable::with_storage(
             91,
             vec![bigint_column(1, "id"), bigint_column(2, "v")],
@@ -7430,25 +7349,16 @@ mod remote_cursor_tests {
                 &crate::StmtContext::for_query(),
             )
             .unwrap();
-        let decoder = PreparedPointGetRowDecoder::new_with_handles(
-            &table.columns,
-            table.pk_handle_offset,
-            &[],
-            &[1, 0],
-        )
-        .unwrap();
-        let context =
-            PreparedPointGetDecodeContext::for_query(false, tidb_datatype::SessionTimeZone::utc());
         let rows = table
-            .get_rows_by_handles_prepared_with_context(
+            .get_rows_by_handles_projected_with_context(
                 &[
                     TableHandle::Int(2),
                     TableHandle::Int(1),
                     TableHandle::Int(2),
                     TableHandle::Int(99),
                 ],
-                &decoder,
-                &context,
+                Some(&[1, 0]),
+                &RowDecodeContext::for_test_query_utc(),
             )
             .unwrap();
         assert_eq!(
@@ -7464,66 +7374,78 @@ mod remote_cursor_tests {
 
     #[test]
     fn handle_lookup_drains_columnar_batches_and_restores_index_order() {
-        let source_types = vec![
-            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-        ];
-        let mut first_batch = Chunk::new_with_capacity(&source_types, 1);
-        first_batch.append_int64(0, 70);
-        first_batch.append_int64(1, 7);
-        let mut second_batch = Chunk::new_with_capacity(&source_types, 1);
-        second_batch.append_int64(0, 80);
-        second_batch.append_int64(1, 8);
-        let cursor = RemoteRowCursor {
-            stream: Box::new(ChunkStream {
-                chunks: std::collections::VecDeque::from([first_batch, second_batch]),
-                returned: 0,
-            }),
-            staged: Vec::new().into_iter(),
-            pending_staged: None,
-            pending_remote: None,
-            pending_chunk: None,
-            pending_chunk_row: 0,
-            field_types: source_types,
-            width: 1,
-            handle_index: Some(1),
-            common_identity: None,
-            table_id: 0,
-            merge_staged: false,
-            unordered_shadowed: None,
-            unsigned_handle_order: false,
-            descending: false,
-            noted_rows: 0,
-            predicates_applied: true,
-        };
-        let staged = StagedHandlesLookup {
-            cursor,
-            handle_position: 1,
-            appended_handle: true,
-            materialization: None,
-            required_rows: 1024,
-        };
-        let handles = vec![TableHandle::Int(8), TableHandle::Int(7)];
-        let Some(FinishedLookup::Chunk(finished)) =
-            KvTable::finish_lookup_by_handles(&handles, staged, true).unwrap()
-        else {
-            panic!("columnar handle lookup unexpectedly refused");
-        };
-        assert!(finished.predicates_applied);
-        assert_eq!(finished.wire_rows, 2);
-        let rows = finished
-            .row_positions
-            .iter()
-            .map(|(batch, row)| {
-                (
-                    finished.batches[*batch].get_row(*row).get_int64(1),
-                    finished.batches[*batch].get_row(*row).get_int64(0),
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(rows, vec![(8, 80), (7, 70)]);
-        assert_eq!(finished.batches.len(), 2);
-        assert_eq!(finished.row_positions, vec![(1, 0), (0, 0)]);
+        for handles in [
+            vec![TableHandle::Int(8), TableHandle::Int(7)],
+            vec![TableHandle::Int(7), TableHandle::Int(8)],
+        ] {
+            let source_types = vec![
+                FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ];
+            let mut first_batch = Chunk::new_with_capacity(&source_types, 1);
+            first_batch.append_int64(0, 70);
+            first_batch.append_int64(1, 7);
+            let mut second_batch = Chunk::new_with_capacity(&source_types, 1);
+            second_batch.append_int64(0, 80);
+            second_batch.append_int64(1, 8);
+            let cursor = RemoteRowCursor {
+                stream: Box::new(ChunkStream {
+                    chunks: std::collections::VecDeque::from([second_batch, first_batch]),
+                    returned: 0,
+                }),
+                staged: Vec::new().into_iter(),
+                pending_staged: None,
+                pending_remote: None,
+                pending_chunk: None,
+                pending_chunk_row: 0,
+                field_types: source_types,
+                width: 1,
+                handle_index: Some(1),
+                common_identity: None,
+                table_id: 0,
+                merge_staged: false,
+                unordered_shadowed: None,
+                unsigned_handle_order: false,
+                descending: false,
+                noted_rows: 0,
+                predicates_applied: true,
+            };
+            let staged = StagedHandlesLookup {
+                cursor,
+                handle_position: 1,
+                appended_handle: true,
+                materialization: None,
+                required_rows: 1024,
+            };
+            let Some(FinishedLookup::Chunk(finished)) =
+                KvTable::finish_lookup_by_handles(&handles, staged, true).unwrap()
+            else {
+                panic!("columnar handle lookup unexpectedly refused");
+            };
+            assert!(finished.predicates_applied);
+            assert_eq!(finished.wire_rows, 2);
+            let rows = finished
+                .row_positions
+                .iter()
+                .map(|(batch, row)| {
+                    (
+                        finished.batches[*batch].get_row(*row).get_int64(1),
+                        finished.batches[*batch].get_row(*row).get_int64(0),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                rows,
+                handles
+                    .iter()
+                    .map(|handle| {
+                        let id = handle.int_value().unwrap();
+                        (id, id * 10)
+                    })
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(finished.batches.len(), 2);
+        }
     }
 
     #[test]

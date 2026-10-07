@@ -832,6 +832,9 @@ pub struct HandleSourceExec {
     /// Encoded values fetched once by the first Next, then decoded only to
     /// fill the requested chunk, like Go's BatchPointGetExec.values.
     preloaded: Option<crate::kv_table::PointReadValues>,
+    /// Set only for a table task; PointGet/BatchPointGet retain native gets.
+    table_statement: Option<PushdownStatementContext>,
+    remote_rows: Option<std::collections::VecDeque<(TableHandle, Vec<Datum>)>>,
     decoder: Option<crate::kv_table::PointRowDecoder>,
     initialized: bool,
     /// Go's `PointGetExecutor` performs one direct record-key `Get`; the
@@ -863,6 +866,8 @@ impl HandleSourceExec {
             handles,
             cursor: 0,
             preloaded: None,
+            table_statement: None,
+            remote_rows: None,
             decoder: None,
             initialized: false,
             produced: crate::executor::RowCount::default(),
@@ -901,26 +906,16 @@ impl HandleSourceExec {
         output_offsets: Vec<usize>,
         decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
-        Self {
+        Self::new_mapped_with_context(
             meta,
             table,
             handles,
-            cursor: 0,
-            produced: crate::executor::RowCount::default(),
+            output_offsets
+                .into_iter()
+                .map(HandleOutputColumn::Stored)
+                .collect(),
             decode_context,
-            output_columns: Some(
-                output_offsets
-                    .into_iter()
-                    .map(HandleOutputColumn::Stored)
-                    .collect(),
-            ),
-            extra_handle_slot: None,
-            preloaded: None,
-            decoder: None,
-            initialized: false,
-            single_point_get: false,
-            partition_ids: None,
-        }
+        )
     }
 
     /// Builds the final table reader for a retained physical plan whose
@@ -934,19 +929,8 @@ impl HandleSourceExec {
         decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
         Self {
-            meta,
-            table,
-            handles,
-            cursor: 0,
-            produced: crate::executor::RowCount::default(),
-            decode_context,
             output_columns: Some(output_columns),
-            extra_handle_slot: None,
-            preloaded: None,
-            decoder: None,
-            initialized: false,
-            single_point_get: false,
-            partition_ids: None,
+            ..Self::new_with_context(meta, table, handles, decode_context)
         }
     }
 
@@ -961,24 +945,23 @@ impl HandleSourceExec {
         decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
         Self {
-            meta,
-            table,
-            handles: vec![handle],
-            cursor: 0,
-            produced: crate::executor::RowCount::default(),
-            decode_context,
-            output_columns: Some(output_columns),
-            extra_handle_slot: None,
-            preloaded: None,
-            decoder: None,
-            initialized: false,
             single_point_get: true,
-            partition_ids: None,
+            ..Self::new_mapped_with_context(meta, table, vec![handle], output_columns, decode_context)
         }
     }
 
     pub(crate) fn with_partition_ids(mut self, ids: Option<Vec<i64>>) -> Self {
         self.partition_ids = ids;
+        self
+    }
+
+    /// Opt a table task into Go's coprocessor reader. Refused shapes keep
+    /// their native fallback; ordinary point plans never set this policy.
+    pub(crate) fn with_table_statement(
+        mut self,
+        statement: Option<PushdownStatementContext>,
+    ) -> Self {
+        self.table_statement = statement;
         self
     }
 
@@ -989,6 +972,57 @@ impl HandleSourceExec {
     }
 
     fn initialize(&mut self) -> Result<(), ExecError> {
+        if let Some(statement) = &self.table_statement {
+            // The shared remote owner currently admits clean, unpartitioned
+            // integer handles. Validate route alignment before either path.
+            if self
+                .partition_ids
+                .as_ref()
+                .is_some_and(|ids| ids.len() != self.handles.len())
+            {
+                return Err(ExecError::unsupported(
+                    "table task partition routes lost alignment",
+                ));
+            }
+            if self
+                .partition_ids
+                .as_ref()
+                .is_none_or(|ids| ids.iter().all(|id| *id == self.table.table_id))
+            {
+                let keep = self.output_columns.as_ref().map_or_else(
+                    || (0..self.table.visible_column_count()).collect::<Vec<_>>(),
+                    |columns| {
+                        columns
+                            .iter()
+                            .filter_map(|column| match column {
+                                HandleOutputColumn::Stored(offset) => Some(*offset),
+                                _ => None,
+                            })
+                            .collect()
+                    },
+                );
+                if let Some(staged) = self
+                    .table
+                    .build_table_reader_from_handles(
+                        &self.handles,
+                        &keep,
+                        &[],
+                        &self.decode_context,
+                        statement,
+                        self.meta.max_chunk_size(),
+                    )
+                    .map_err(ExecError::from)?
+                {
+                    if let Some((rows, _, _)) =
+                        KvTable::finish_rows_by_handles(&self.handles, staged)
+                            .map_err(ExecError::from)?
+                    {
+                        self.remote_rows = Some(rows.into());
+                        return Ok(());
+                    }
+                }
+            }
+        }
         // Go's `BatchPointGetExec.initialize` reads every handle with ONE
         // `BatchGet` on the first `Next`. Prefetch all physical keys
         // together so the storage layer can schedule regions concurrently.
@@ -1023,11 +1057,89 @@ impl HandleSourceExec {
     }
 }
 
+impl HandleSourceExec {
+    fn append_handle_row(
+        &self,
+        req: &mut Chunk,
+        index: usize,
+        handle: &TableHandle,
+        row: &[Datum],
+        remote: bool,
+    ) -> Result<(), ExecError> {
+        let visible = visible_of(&self.table, row);
+        if let Some(columns) = &self.output_columns {
+            let mut remote_offset = 0;
+            for (output, source) in columns.iter().copied().enumerate() {
+                match source {
+                    HandleOutputColumn::Stored(source) => {
+                        // The physical schema may request a hidden
+                        // generated column for an UPDATE/index key.
+                        // Stored offsets address the full decoded row,
+                        // not the wildcard's visible-column prefix.
+                        let offset = if remote {
+                            let position = remote_offset;
+                            remote_offset += 1;
+                            Some(position)
+                        } else {
+                            Some(source)
+                        };
+                        let value = offset.and_then(|offset| row.get(offset)).ok_or_else(|| {
+                            ExecError::unsupported("point-get output column is outside the row")
+                        })?;
+                        req.append_datum(output, value);
+                    }
+                    HandleOutputColumn::ExtraHandle => match handle {
+                        TableHandle::Int(value) => {
+                            req.append_datum(output, &Datum::Int(*value));
+                        }
+                        _ => {
+                            return Err(ExecError::unsupported(
+                                "an extra row handle is not an integer handle",
+                            ));
+                        }
+                    },
+                    HandleOutputColumn::PhysicalTableId => {
+                        let physical_id = self
+                            .partition_ids
+                            .as_ref()
+                            .and_then(|ids| ids.get(index))
+                            .copied()
+                            .or_else(|| match self.table.record_physical_ids().as_slice() {
+                                [id] => Some(*id),
+                                _ => None,
+                            })
+                            .ok_or_else(|| {
+                                ExecError::internal(
+                                    "physical-table ID output lost its record partition",
+                                )
+                            })?;
+                        req.append_int64(output, physical_id);
+                    }
+                }
+            }
+        } else {
+            let owned;
+            let visible: &[tidb_datatype::Datum] = match self.extra_handle_slot {
+                Some(slot) => {
+                    owned = crate::kv_table::insert_extra_handle(visible.to_vec(), slot, handle);
+                    &owned
+                }
+                None => visible,
+            };
+            for (column, value) in visible.iter().enumerate() {
+                req.append_datum(column, value);
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Executor for HandleSourceExec {
     fn open(&mut self) -> Result<(), ExecError> {
         self.cursor = 0;
         self.produced.set(0);
         self.preloaded = None;
+        self.remote_rows = None;
         self.decoder = None;
         self.initialized = false;
         Ok(())
@@ -1039,6 +1151,15 @@ impl Executor for HandleSourceExec {
             self.initialize()?;
         }
         while !req.is_full() {
+            if let Some(rows) = self.remote_rows.as_mut() {
+                let Some((handle, row)) = rows.pop_front() else {
+                    return Ok(());
+                };
+                self.append_handle_row(req, self.cursor, &handle, &row, true)?;
+                self.cursor += 1;
+                self.produced.set(self.produced.get() + 1);
+                continue;
+            }
             if self.cursor >= self.handles.len() {
                 return Ok(());
             };
@@ -1064,68 +1185,13 @@ impl Executor for HandleSourceExec {
                         &self.decode_context,
                     )
                     .map_err(ExecError::from)?;
-                let visible = visible_of(&self.table, &row);
-                if let Some(columns) = &self.output_columns {
-                    for (output, source) in columns.iter().copied().enumerate() {
-                        match source {
-                            HandleOutputColumn::Stored(source) => {
-                                // The physical schema may request a hidden
-                                // generated column for an UPDATE/index key.
-                                // Stored offsets address the full decoded row,
-                                // not the wildcard's visible-column prefix.
-                                let value = row.get(source).ok_or_else(|| {
-                                    ExecError::unsupported(
-                                        "point-get output column is outside the row",
-                                    )
-                                })?;
-                                req.append_datum(output, value);
-                            }
-                            HandleOutputColumn::ExtraHandle => match handle {
-                                Some(TableHandle::Int(value)) => {
-                                    req.append_datum(output, &Datum::Int(*value));
-                                }
-                                _ => {
-                                    return Err(ExecError::unsupported(
-                                        "an extra row handle is not an integer handle",
-                                    ));
-                                }
-                            },
-                            HandleOutputColumn::PhysicalTableId => {
-                                let physical_id = self
-                                    .partition_ids
-                                    .as_ref()
-                                    .and_then(|ids| ids.get(index))
-                                    .copied()
-                                    .or_else(|| match self.table.record_physical_ids().as_slice() {
-                                        [id] => Some(*id),
-                                        _ => None,
-                                    })
-                                    .ok_or_else(|| {
-                                        ExecError::internal(
-                                            "physical-table ID output lost its record partition",
-                                        )
-                                    })?;
-                                req.append_int64(output, physical_id);
-                            }
-                        }
-                    }
-                } else {
-                    let owned;
-                    let visible: &[tidb_datatype::Datum] = match self.extra_handle_slot {
-                        Some(slot) => {
-                            owned = crate::kv_table::insert_extra_handle(
-                                visible.to_vec(),
-                                slot,
-                                handle.expect("cursor indexes handles"),
-                            );
-                            &owned
-                        }
-                        None => visible,
-                    };
-                    for (column, value) in visible.iter().enumerate() {
-                        req.append_datum(column, value);
-                    }
-                }
+                self.append_handle_row(
+                    req,
+                    index,
+                    handle.expect("cursor indexes handles"),
+                    &row,
+                    false,
+                )?;
                 self.produced.set(self.produced.get() + 1);
             }
             if !self.single_point_get {
@@ -1137,6 +1203,7 @@ impl Executor for HandleSourceExec {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.preloaded = None;
+        self.remote_rows = None;
         self.decoder = None;
         self.initialized = true;
         self.cursor = self.handles.len();
@@ -1535,10 +1602,6 @@ enum LookupFetch {
     /// region streamed (for the executor thread's storage probe -- a worker
     /// thread has no probe of its own).
     Remote(Vec<(TableHandle, Vec<Datum>)>, bool, u64),
-    // A clean BatchGet already has one decoded slot per requested handle.
-    // Keep the slots so a concurrent delete remains distinguishable without
-    // rebuilding handle/row pairs.
-    DirectRows(Vec<Option<Vec<Datum>>>, Vec<Option<TableHandle>>),
     /// The Go-shaped chunk handoff for clean remote table lookups. The
     /// executor consumes this directly into its output chunk when no local
     /// residual needs row materialization.
@@ -1708,11 +1771,6 @@ pub struct IndexRangeSourceExec {
     /// chunks when a batch is larger than the requested chunk size.
     lookup_rows: Vec<Option<Vec<Datum>>>,
     lookup_row_at: usize,
-    /// Decoder metadata reused by clean integer-handle BatchGet windows.
-    /// This is the stable projection counterpart of Go's table-reader
-    /// metadata, which is compiled once per lookup reader rather than once
-    /// per ten-handle task.
-    prepared_lookup_decoder: Option<Arc<crate::kv_table::PreparedPointGetRowDecoder>>,
     /// A clean remote table-lookup batch retained in columnar form. This is
     /// the Rust equivalent of Go's table worker retaining `chunk.Row` values
     /// until `IndexLookUpExecutor` emits them.
@@ -1989,7 +2047,6 @@ impl IndexRangeSourceExec {
             self.meta.schema().columns.len()
         );
         self.keep = offsets;
-        self.prepared_lookup_decoder = None;
     }
 
     /// Builds an index source carrying the statement context required by a
@@ -2057,7 +2114,6 @@ impl IndexRangeSourceExec {
             index_paging: false,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
-            prepared_lookup_decoder: None,
             lookup_chunk: None,
             lookup_chunk_row: 0,
             lookup_filter_complete: false,
@@ -3002,18 +3058,6 @@ impl IndexRangeSourceExec {
                 }
             };
             match payload {
-                LookupFetch::DirectRows(rows, handles) => {
-                    return Ok(Some(LookupBatchResult {
-                        physical_ids: Vec::new(),
-                        rows,
-                        handles,
-                        filter_complete: true,
-                        filter_applied_locally: false,
-                        chunk: None,
-                        adaptive_reserved_handles: reserved_handles,
-                        handle_count,
-                    }));
-                }
                 LookupFetch::Remote(rows, predicates_applied, wire_rows) => {
                     if wire_rows > 0 {
                         crate::storage::note_storage_op(|ops| ops.cop_rows += wire_rows);
@@ -3180,94 +3224,13 @@ impl IndexRangeSourceExec {
                 self.retain_remote_index_stats();
                 self.remote_index = None;
             }
-            // A clean, unpartitioned table with no residual predicate can
-            // answer the lookup directly from the record keys.  The index
-            // stream has already applied the complete range, so opening a
-            // second coprocessor table request only adds the transport and
-            // response handoff.  BatchGet preserves the requested handle
-            // order and returns `None` for a concurrently deleted row, which
-            // is exactly the table-side semantics required here.  Keep all
-            // shapes that may need staged writes, partition routing, or a
-            // table filter on the existing staged-row path.
-            let direct_batch_get = self.filter.is_none()
-                && self.pushed.is_empty()
-                && self.top_n.is_none()
-                && !self.table.has_dirty_content(&self.statement.staged_writes)
-                && self.table.partition().is_none()
-                && handles
-                    .iter()
-                    .all(|handle| matches!(handle, TableHandle::Int(_)));
-            if direct_batch_get {
-                let rows = if self.table.pk_handle_offset().is_some()
-                    && self.table.common_handle_offsets().is_empty()
-                    && self.keep.iter().all(|offset| {
-                        self.table.columns[*offset].generated.is_none()
-                            && self.table.columns[*offset].origin_default.is_none()
-                    }) {
-                    let decoder = match self.prepared_lookup_decoder.as_ref() {
-                        Some(decoder) => Arc::clone(decoder),
-                        None => {
-                            let decoder =
-                                crate::kv_table::PreparedPointGetRowDecoder::new_with_handles(
-                                    &self.table.columns,
-                                    self.table.pk_handle_offset(),
-                                    self.table.common_handle_offsets(),
-                                    &self.keep,
-                                )
-                                .map_err(|error| {
-                                    ExecError::unsupported(format!(
-                                        "prepared table decoder failed: {error:?}"
-                                    ))
-                                })?;
-                            let decoder = Arc::new(decoder);
-                            self.prepared_lookup_decoder = Some(Arc::clone(&decoder));
-                            decoder
-                        }
-                    };
-                    let context = crate::kv_table::PreparedPointGetDecodeContext::for_query(
-                        false,
-                        self.decode_context.zone().clone(),
-                    );
-                    self.table.get_rows_by_handles_prepared_with_context(
-                        &handles,
-                        decoder.as_ref(),
-                        &context,
-                    )
-                } else {
-                    self.table.get_rows_by_handles_projected_with_context(
-                        &handles,
-                        Some(&self.keep),
-                        &self.decode_context,
-                    )
-                }
-                .map_err(|error| {
-                    ExecError::unsupported(format!("direct table lookup failed: {error:?}"))
-                })?;
-
-                // Reuse the normal remote-row handoff: direct BatchGet
-                // has fully materialized rows and evaluated no residual
-                // table predicate. Preserve handle slots when the index
-                // lookup output still needs its synthetic identity column.
-                let lookup_handles = self
-                    .extra_handle_slot
-                    .is_some()
-                    .then(|| handles.into_iter().map(Some).collect())
-                    .unwrap_or_default();
-                return Ok(LookupBatchJob {
-                    physical_ids: Vec::new(),
-                    handle_count,
-                    adaptive_reserved_handles: 0,
-                    receiver: None,
-                    ready: Some(Ok(LookupFetch::DirectRows(rows, lookup_handles))),
-                });
-            }
             let staged = self
                 .table
                 .build_table_reader_from_handles(
                     &handles,
                     &self.keep,
                     &self.pushed,
-                    self.decode_context.zone(),
+                    &self.decode_context,
                     &self.statement,
                     self.meta.max_chunk_size(),
                 )
@@ -3312,7 +3275,7 @@ impl IndexRangeSourceExec {
         let mut worker_table = self.table.clone();
         let worker_keep = self.keep.clone();
         let worker_pushed = self.pushed.clone();
-        let worker_zone = self.decode_context.zone().clone();
+        let worker_decode_context = self.decode_context.clone();
         let worker_statement = self.statement.clone();
         let worker_required_rows = self.meta.max_chunk_size();
         let worker_allow_chunks = allow_lookup_chunks;
@@ -3321,7 +3284,7 @@ impl IndexRangeSourceExec {
                 &worker_handles,
                 &worker_keep,
                 &worker_pushed,
-                &worker_zone,
+                &worker_decode_context,
                 &worker_statement,
                 worker_required_rows,
             ) {
@@ -6345,7 +6308,7 @@ impl IndexJoinLookupExec {
                 handles,
                 &keep,
                 &predicates,
-                self.decode_context.zone(),
+                &self.decode_context,
                 &self.statement,
                 self.meta.max_chunk_size(),
             )

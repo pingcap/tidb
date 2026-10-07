@@ -1924,6 +1924,30 @@ fn reader_output_offsets(
     Ok((Schema::new(source_columns), offsets, extra_handle_slot))
 }
 
+/// Go's no-range reader builders retain one response-width policy for both
+/// ordinary reads and rebuilt index-join probes.
+fn cop_reader_statement(
+    plan: &PhysicalPlan,
+    table_lookup_plan: Option<&PhysicalPlan>,
+    encoded_key: bool,
+    net_bytes: Option<f64>,
+    ctx: &crate::StmtContext,
+) -> PushdownStatementContext {
+    let chunk_rpc = tidb_config::tikvcfg::get_global_config()
+        .tikv_client
+        .enable_chunk_rpc;
+    let average = table_lookup_plan.map(|plan| plan.cop_avg_row_size(false, chunk_rpc));
+    let mut statement = PushdownStatementContext::from_stmt(ctx)
+        .with_plan_id(i64::from(plan.id()))
+        .with_estimated_net_bytes(
+            average
+                .or(net_bytes)
+                .unwrap_or_else(|| plan.cop_net_data_size(encoded_key, chunk_rpc)),
+        );
+    statement.lookup_avg_row_bytes = average;
+    statement
+}
+
 fn build_index_reader(
     plan: &PhysicalPlan,
     index_plan: &PhysicalPlan,
@@ -2032,19 +2056,8 @@ fn build_index_reader(
         scan.index_id,
         ranges,
         RowDecodeContext::for_query(ctx),
-        {
-            let chunk_rpc = tidb_config::tikvcfg::get_global_config()
-                .tikv_client
-                .enable_chunk_rpc;
-            let mut statement = PushdownStatementContext::from_stmt(ctx)
-                .with_plan_id(i64::from(scan.base.base.id()))
-                .with_estimated_net_bytes(
-                    net_bytes.unwrap_or_else(|| index_plan.cop_net_data_size(true, chunk_rpc)),
-                );
-            statement.lookup_avg_row_bytes =
-                table_plan.map(|plan| plan.cop_avg_row_size(false, chunk_rpc));
-            statement
-        },
+        cop_reader_statement(index_plan, table_plan, true, net_bytes, ctx)
+            .with_plan_id(i64::from(scan.base.base.id())),
     );
     if let Some(slot) = extra_handle {
         source.read_extra_handle(slot);
@@ -2633,31 +2646,17 @@ fn build_index_inner_reader(
             collect_index_inner_filters(index_plan, &index_schema, &mut index_filters)?;
         }
     }
-    let chunk_rpc = tidb_config::tikvcfg::get_global_config()
-        .tikv_client
-        .enable_chunk_rpc;
-    // Go rebuilds the ordinary no-range reader for each outer task. Retain
-    // the same estimates used by that reader's adaptive replica policy.
-    let (network_plan, encoded_key, table_lookup_plan) = match plan {
+    // Go rebuilds the ordinary no-range reader for each outer task.
+    let (network_plan, table_lookup_plan) = match plan {
         PhysicalPlan::IndexLookUpReader(reader) => (
             reader.index_plan.as_deref().ok_or_else(|| {
                 DriverError::unsupported("an index-join lookup reader has no index plan")
             })?,
-            true,
             reader.table_plan.as_deref(),
         ),
-        _ => (embedded, covering, None),
+        _ => (embedded, None),
     };
-    let table_row_bytes = table_lookup_plan.map(|plan| plan.cop_avg_row_size(false, chunk_rpc));
-    // buildNoRangeIndexLookUpReader initializes both idxNetDataSize and
-    // avgRowSize from GetAvgTableRowSize. Table tasks later scale by handles.
-    let mut statement = PushdownStatementContext::from_stmt(ctx)
-        .with_plan_id(i64::from(network_plan.base().base.id()))
-        .with_estimated_net_bytes(
-            table_row_bytes
-                .unwrap_or_else(|| network_plan.cop_net_data_size(encoded_key, chunk_rpc)),
-        );
-    statement.lookup_avg_row_bytes = table_row_bytes;
+    let statement = cop_reader_statement(network_plan, table_lookup_plan, covering, None, ctx);
     let mut source = IndexJoinLookupExec::new_with_statement(
         meta(ctx, plan, row_schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
@@ -4517,6 +4516,7 @@ fn build_index_merge_reader(
         partials,
         reader.is_intersection_type,
     )
+    .with_table_statement(cop_reader_statement(table_scan, Some(table_plan), false, None, ctx))
     .with_batch_size(ctx.index_lookup_size())
     .with_output_columns(output_columns)
     .with_by_items(by_items)

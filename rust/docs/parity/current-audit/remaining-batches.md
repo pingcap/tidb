@@ -101,6 +101,8 @@ Integration dependencies: B01, B03.
 
 ## B09: Live information and statement observability
 
+Current B05/B09 maintenance shares ordinary/probe/merge table-request policy and actual handle-order restoration. The private small-batch bypass and orphan staging/prepared-batch helpers are retired; retained prepared/point decoding stays live. See [table-request validation](reader-task-batch-validation.json). N03/O13 stay partial; partition/common-handle remote execution, grouping estimates and full package obligations remain.
+
 Source owners: pkg/infoschema and remote executor retrievers; domain, plan replay, topsql, workloadlearning, telemetry and summary v1/v2.
 
 Completion: Real peers and SQL events feed owned providers, summaries, profiles/reports, replay archives and periodic learning/telemetry. Reuse process/session lifetimes and avoid synthetic rows or zero-field acceptance. Workload repository remains separate from learning. Dependencies gate relevant consumers, not every leaf prerequisite.

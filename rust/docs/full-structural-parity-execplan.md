@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [constraint admission/index backfill](constraint-admission-batch-execplan.md). Latest cleanup: [unused DDL leaf retirement](parity/current-audit/unused-carrier-cleanup-validation.json).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [shared table-request lifecycle](reader-task-batch-execplan.md). Latest cleanup: [unused DDL leaf retirement](parity/current-audit/unused-carrier-cleanup-validation.json).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -40,6 +40,8 @@ and validation results in those receipts apply only to their recorded point
 in time. This revision is a plan; it closes no production finding.
 
 ## Progress
+
+- [x] (Table-request batch) Share ordinary/probe estimates and merge/lookup request policy; restore actual row/chunk handle order and retire the private small-batch bypass. Four baseline failures, 214 Rust passes and 8 wire controls; see `parity/current-audit/reader-task-batch-validation.json`. N03/O13 remain partial.
 
 - [x] (Index-probe batch) Repair direct GROUP BY admission, self-join lookup alias identity and retained reader estimates together. See `parity/current-audit/index-probe-batch-validation.json`; three baseline failures, 21 Rust passes and six passing wire controls. E03/O13 remain partial; no package closure.
 
