@@ -103,7 +103,7 @@ Integration dependencies: B01, B03.
 
 ## B09: Live information and statement observability
 
-Current B05/B09 maintenance shares ordinary/probe/merge table-request policy and actual handle-order restoration. The private small-batch bypass and orphan staging/prepared-batch helpers are retired; retained prepared/point decoding stays live. See [table-request validation](reader-task-batch-validation.json). N03/O13 stay partial; partition-routed handle lookup execution, grouping estimates and full package obligations remain.
+Current B05/B09 maintenance shares ordinary/probe/merge table-request policy and actual handle-order restoration, now including routed physical partitions. Small-batch/partition-only bypasses are retired. Dirty fallback, unrouted point probes and broader configuration/estimate/live-cluster/package obligations remain. See [partition reader validation](partition-reader-batch-validation.json); N03/O13 stay partial.
 
 Source owners: pkg/infoschema and remote executor retrievers; domain, plan replay, topsql, workloadlearning, telemetry and summary v1/v2.
 
@@ -195,4 +195,4 @@ P03/P06/N03 now share construction-failure feedback, automatic healthy-backup ro
 
 ## Shared common-handle readers — 2026-10-07
 
-Latest connected repair: [shared common-handle readers](common-reader-batch-validation.json). Four baseline regressions precede 217 passing Rust cases and 11 real MySQL controls. Common-handle table tasks share remote request policy, row/chunk identity and pruned projections; ordered partition streams use the same identity owner. Integer-only extraction and refusal paths are retired. N03/O13 remain partial; counts stay86 tracked/30 repaired/56 unresolved (27open,29partial). Other54 roots retain carried evidence.
+Latest connected repair: [partitioned shared table readers](partition-reader-batch-validation.json). Ordinary lookup, index join and index merge now carry physical partition identity through the shared request owner, ordered row/chunk completion, projections and fallback. Three baseline policy failures precede 221 passing Rust cases and nine passing real MySQL controls. N03/O13 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 54 roots retain carried evidence.

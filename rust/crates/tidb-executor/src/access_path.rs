@@ -834,7 +834,7 @@ pub struct HandleSourceExec {
     preloaded: Option<crate::kv_table::PointReadValues>,
     /// Set only for a table task; PointGet/BatchPointGet retain native gets.
     table_statement: Option<PushdownStatementContext>,
-    remote_rows: Option<std::collections::VecDeque<(TableHandle, Vec<Datum>)>>,
+    remote_rows: Option<std::collections::VecDeque<(usize, TableHandle, Vec<Datum>)>>,
     decoder: Option<crate::kv_table::PointRowDecoder>,
     initialized: bool,
     /// Go's `PointGetExecutor` performs one direct record-key `Get`; the
@@ -973,53 +973,43 @@ impl HandleSourceExec {
 
     fn initialize(&mut self) -> Result<(), ExecError> {
         if let Some(statement) = &self.table_statement {
-            // The shared remote owner currently admits clean, unpartitioned
-            // handles. Validate route alignment before either path.
-            if self
-                .partition_ids
-                .as_ref()
-                .is_some_and(|ids| ids.len() != self.handles.len())
+            let keep = self.output_columns.as_ref().map_or_else(
+                || (0..self.table.visible_column_count()).collect::<Vec<_>>(),
+                |columns| {
+                    columns
+                        .iter()
+                        .filter_map(|column| match column {
+                            HandleOutputColumn::Stored(offset) => Some(*offset),
+                            _ => None,
+                        })
+                        .collect()
+                },
+            );
+            if let Some(staged) = self
+                .table
+                .build_table_reader_from_routed_handles(
+                    &self.handles,
+                    self.partition_ids.as_deref(),
+                    &keep,
+                    &[],
+                    &self.decode_context,
+                    statement,
+                    self.meta.max_chunk_size(),
+                )
+                .map_err(ExecError::from)?
             {
-                return Err(ExecError::unsupported(
-                    "table task partition routes lost alignment",
-                ));
-            }
-            if self
-                .partition_ids
-                .as_ref()
-                .is_none_or(|ids| ids.iter().all(|id| *id == self.table.table_id))
-            {
-                let keep = self.output_columns.as_ref().map_or_else(
-                    || (0..self.table.visible_column_count()).collect::<Vec<_>>(),
-                    |columns| {
-                        columns
-                            .iter()
-                            .filter_map(|column| match column {
-                                HandleOutputColumn::Stored(offset) => Some(*offset),
-                                _ => None,
-                            })
-                            .collect()
-                    },
-                );
-                if let Some(staged) = self
-                    .table
-                    .build_table_reader_from_handles(
-                        &self.handles,
-                        &keep,
-                        &[],
-                        &self.decode_context,
-                        statement,
-                        self.meta.max_chunk_size(),
-                    )
-                    .map_err(ExecError::from)?
+                if let Some((rows, _, _, indices)) =
+                    KvTable::finish_routed_rows_by_handles(&self.handles, staged)
+                        .map_err(ExecError::from)?
                 {
-                    if let Some((rows, _, _)) =
-                        KvTable::finish_rows_by_handles(&self.handles, staged)
-                            .map_err(ExecError::from)?
-                    {
-                        self.remote_rows = Some(rows.into());
-                        return Ok(());
-                    }
+                    self.remote_rows = Some(
+                        indices
+                            .into_iter()
+                            .zip(rows)
+                            .map(|(index, (handle, row))| (index, handle, row))
+                            .collect(),
+                    );
+                    return Ok(());
                 }
             }
         }
@@ -1152,10 +1142,10 @@ impl Executor for HandleSourceExec {
         }
         while !req.is_full() {
             if let Some(rows) = self.remote_rows.as_mut() {
-                let Some((handle, row)) = rows.pop_front() else {
+                let Some((index, handle, row)) = rows.pop_front() else {
                     return Ok(());
                 };
-                self.append_handle_row(req, self.cursor, &handle, &row, true)?;
+                self.append_handle_row(req, index, &handle, &row, true)?;
                 self.cursor += 1;
                 self.produced.set(self.produced.get() + 1);
                 continue;
@@ -1601,7 +1591,7 @@ enum LookupFetch {
     /// whether TiKV evaluated every pushed conjunct, and how many rows the
     /// region streamed (for the executor thread's storage probe -- a worker
     /// thread has no probe of its own).
-    Remote(Vec<(TableHandle, Vec<Datum>)>, bool, u64),
+    Remote(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>),
     /// The Go-shaped chunk handoff for clean remote table lookups. The
     /// executor consumes this directly into its output chunk when no local
     /// residual needs row materialization.
@@ -3058,7 +3048,8 @@ impl IndexRangeSourceExec {
                 }
             };
             match payload {
-                LookupFetch::Remote(rows, predicates_applied, wire_rows) => {
+                LookupFetch::Remote(rows, predicates_applied, wire_rows, indices) => {
+                    let physical_ids = indices.iter().filter_map(|index| job.physical_ids.get(*index).copied()).collect::<Vec<_>>();
                     if wire_rows > 0 {
                         crate::storage::note_storage_op(|ops| ops.cop_rows += wire_rows);
                     }
@@ -3077,7 +3068,7 @@ impl IndexRangeSourceExec {
                         match self.prefilter_adaptive_lookup_rows(
                             &mut lookup_rows,
                             &lookup_handles,
-                            &[],
+                            &physical_ids,
                         ) {
                             Ok(applied) => applied,
                             Err(error) => {
@@ -3089,7 +3080,7 @@ impl IndexRangeSourceExec {
                         }
                     };
                     return Ok(Some(LookupBatchResult {
-                        physical_ids: Vec::new(),
+                        physical_ids,
                         rows: lookup_rows,
                         handles: lookup_handles,
                         filter_complete: predicates_applied,
@@ -3100,11 +3091,12 @@ impl IndexRangeSourceExec {
                     }));
                 }
                 LookupFetch::RemoteChunk(chunk) => {
+                    let physical_ids = chunk.request_indices.iter().filter_map(|index| job.physical_ids.get(*index).copied()).collect();
                     if chunk.wire_rows > 0 {
                         crate::storage::note_storage_op(|ops| ops.cop_rows += chunk.wire_rows);
                     }
                     return Ok(Some(LookupBatchResult {
-                        physical_ids: Vec::new(),
+                        physical_ids,
                         rows: Vec::new(),
                         handles: Vec::new(),
                         filter_complete: chunk.predicates_applied,
@@ -3178,18 +3170,6 @@ impl IndexRangeSourceExec {
         physical_ids: Vec<i64>,
     ) -> Result<LookupBatchJob, ExecError> {
         let handle_count = handles.len();
-        if !physical_ids.is_empty() {
-            // The remote lookup seam currently refuses partitioned tables.
-            // Keep the per-entry routes for the bounded local BatchGet instead
-            // of probing every partition for each bare handle.
-            return Ok(LookupBatchJob {
-                physical_ids,
-                handle_count,
-                adaptive_reserved_handles: 0,
-                receiver: None,
-                ready: Some(Ok(LookupFetch::LocalFallback(handles))),
-            });
-        }
         let allow_lookup_chunks = self
             .filter
             .as_ref()
@@ -3198,7 +3178,7 @@ impl IndexRangeSourceExec {
             // A partial aggregate owns the answer end to end; the plain
             // lookup never ran for this shape.
             return Ok(LookupBatchJob {
-                physical_ids: Vec::new(),
+                physical_ids,
                 handle_count,
                 adaptive_reserved_handles: 0,
                 receiver: None,
@@ -3226,8 +3206,9 @@ impl IndexRangeSourceExec {
             }
             let staged = self
                 .table
-                .build_table_reader_from_handles(
+                .build_table_reader_from_routed_handles(
                     &handles,
+                    (!physical_ids.is_empty()).then_some(physical_ids.as_slice()),
                     &self.keep,
                     &self.pushed,
                     &self.decode_context,
@@ -3239,7 +3220,7 @@ impl IndexRangeSourceExec {
                 })?;
             let Some(staged) = staged else {
                 return Ok(LookupBatchJob {
-                    physical_ids: Vec::new(),
+                    physical_ids,
                     handle_count,
                     adaptive_reserved_handles: 0,
                     receiver: None,
@@ -3251,9 +3232,12 @@ impl IndexRangeSourceExec {
                 staged,
                 allow_lookup_chunks,
             ) {
-                Ok(Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows))) => {
-                    Ok(LookupFetch::Remote(rows, applied, wire_rows))
-                }
+                Ok(Some(crate::kv_table::FinishedLookup::Rows(
+                    rows,
+                    applied,
+                    wire_rows,
+                    indices,
+                ))) => Ok(LookupFetch::Remote(rows, applied, wire_rows, indices)),
                 Ok(Some(crate::kv_table::FinishedLookup::Chunk(chunk))) => {
                     Ok(LookupFetch::RemoteChunk(chunk))
                 }
@@ -3261,7 +3245,7 @@ impl IndexRangeSourceExec {
                 Err(error) => Err(format!("{error:?}")),
             };
             return Ok(LookupBatchJob {
-                physical_ids: Vec::new(),
+                physical_ids,
                 handle_count,
                 adaptive_reserved_handles: 0,
                 receiver: None,
@@ -3272,6 +3256,7 @@ impl IndexRangeSourceExec {
         // Moving it here avoids cloning every common-handle byte vector while
         // the executor retains only the count needed for its limit budget.
         let worker_handles = handles;
+        let worker_physical_ids = physical_ids.clone();
         let mut worker_table = self.table.clone();
         let worker_keep = self.keep.clone();
         let worker_pushed = self.pushed.clone();
@@ -3280,8 +3265,9 @@ impl IndexRangeSourceExec {
         let worker_required_rows = self.meta.max_chunk_size();
         let worker_allow_chunks = allow_lookup_chunks;
         let worker = move || {
-            let staged = match worker_table.build_table_reader_from_handles(
+            let staged = match worker_table.build_table_reader_from_routed_handles(
                 &worker_handles,
+                (!worker_physical_ids.is_empty()).then_some(worker_physical_ids.as_slice()),
                 &worker_keep,
                 &worker_pushed,
                 &worker_decode_context,
@@ -3299,9 +3285,12 @@ impl IndexRangeSourceExec {
                 staged,
                 worker_allow_chunks,
             ) {
-                Ok(Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows))) => {
-                    Ok(LookupFetch::Remote(rows, applied, wire_rows))
-                }
+                Ok(Some(crate::kv_table::FinishedLookup::Rows(
+                    rows,
+                    applied,
+                    wire_rows,
+                    indices,
+                ))) => Ok(LookupFetch::Remote(rows, applied, wire_rows, indices)),
                 Ok(Some(crate::kv_table::FinishedLookup::Chunk(chunk))) => {
                     Ok(LookupFetch::RemoteChunk(chunk))
                 }
@@ -3332,7 +3321,7 @@ impl IndexRangeSourceExec {
             })
             .map_err(|_| ExecError::internal("index lookup worker pool stopped"))?;
         Ok(LookupBatchJob {
-            physical_ids: Vec::new(),
+            physical_ids,
             handle_count,
             adaptive_reserved_handles: 0,
             receiver: Some(result_rx),
@@ -4083,43 +4072,53 @@ impl IndexRangeSourceExec {
         };
         let mut adaptive_output_rows = 0_usize;
         let output_width = self.meta.schema().columns.len();
-        let projection = if let Some(slot) = self.extra_handle_slot {
-            if lookup.appended_handle {
-                let mut source = 0;
-                (0..output_width)
-                    .map(|output| {
-                        if output == slot {
-                            lookup
-                                .handle_position
-                                .expect("extra rowid has integer identity")
-                        } else {
-                            let value = source;
-                            source += 1;
-                            value
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                (0..output_width)
-                    .map(|output| {
-                        if output == slot {
-                            lookup
-                                .handle_position
-                                .expect("extra rowid has integer identity")
-                        } else {
-                            output
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            }
-        } else {
-            (0..output_width).collect::<Vec<_>>()
-        };
+        let mut stored_slot = 0;
+        let projection = (0..output_width)
+            .map(|output| {
+                if Some(output) == self.physical_table_id_slot {
+                    return None;
+                }
+                if Some(output) == self.extra_handle_slot {
+                    if !lookup.appended_handle {
+                        stored_slot += 1;
+                    }
+                    return lookup.handle_position;
+                }
+                let source = stored_slot;
+                stored_slot += 1;
+                Some(source)
+            })
+            .collect::<Vec<_>>();
+        let stored_projection = projection
+            .iter()
+            .filter_map(|source| *source)
+            .collect::<Vec<_>>();
         while req.num_rows() < cap && self.lookup_chunk_row < lookup.row_positions.len() {
             let (batch_index, row_index) = lookup.row_positions[self.lookup_chunk_row];
             let row = lookup.batches[batch_index].get_row(row_index);
             debug_assert!(lookup.predicates_applied);
-            req.append_row_by_col_idxs(row, Some(&projection));
+            if let Some(slot) = self.physical_table_id_slot {
+                let id = self
+                    .lookup_physical_ids
+                    .get(self.lookup_chunk_row)
+                    .copied()
+                    .ok_or_else(|| {
+                        ExecError::internal("table lookup lost its physical partition identity")
+                    })?;
+                for (output, source) in projection.iter().enumerate() {
+                    if output == slot {
+                        req.append_datum(output, &Datum::Int(id));
+                    } else {
+                        req.append_partial_row_by_col_idxs(
+                            output,
+                            row,
+                            Some(&[source.expect("stored lookup column")]),
+                        );
+                    }
+                }
+            } else {
+                req.append_row_by_col_idxs(row, Some(&stored_projection));
+            }
             self.lookup_chunk_row += 1;
             adaptive_output_rows += 1;
             self.scanned.set(self.scanned.get() + 1);
@@ -5202,6 +5201,7 @@ impl LookupForkTemplate {
             remote_filters_complete: false,
             lookup_chunk: None,
             remote_handles: None,
+            last_partition_id: None,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
             produced: crate::executor::RowCount::default(),
@@ -5288,6 +5288,8 @@ pub struct IndexJoinLookupExec {
     /// iterator per point range instead costs one single-range MVCC scan RPC
     /// per probe.
     remote_handles: Option<RemoteIndexHandleCursor>,
+    /// Physical namespace of the last local index handle.
+    last_partition_id: Option<i64>,
     /// Rows returned by one batched handle lookup. Keeping the batch across
     /// output chunks avoids one remote point read per row handle.
     lookup_rows: Vec<Option<Vec<Datum>>>,
@@ -5382,6 +5384,7 @@ impl IndexJoinLookupExec {
             remote_filters_complete: false,
             lookup_chunk: None,
             remote_handles: None,
+            last_partition_id: None,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
             produced: crate::executor::RowCount::default(),
@@ -5916,6 +5919,7 @@ impl IndexJoinLookupExec {
         &mut self,
         mut covering_row: Option<&mut Vec<Datum>>,
     ) -> Result<Option<TableHandle>, ExecError> {
+        self.last_partition_id = None;
         loop {
             if let Some(cursor) = self.cursor.as_mut() {
                 let handle = if covering_row.is_some() || !self.index_filters.is_empty() {
@@ -5955,11 +5959,14 @@ impl IndexJoinLookupExec {
                             }
                             Ok::<_, ExecError>(std::ops::ControlFlow::Continue(true))
                         })?
-                        .map(|(handle, _)| handle)
                 } else {
-                    cursor.next_handle().map_err(ExecError::from)?
+                    cursor.next_handle_in_partition().map_err(ExecError::from)?
                 };
-                if let Some(handle) = handle {
+                if let Some((handle, partition)) = handle {
+                    self.last_partition_id =
+                        Some(*self.table.record_physical_ids().get(partition).ok_or_else(
+                            || ExecError::internal("index join lost its physical partition route"),
+                        )?);
                     return Ok(Some(handle));
                 }
                 self.cursor = None;
@@ -6280,13 +6287,15 @@ impl IndexJoinLookupExec {
     fn window_rows(
         &mut self,
         handles: &[TableHandle],
+        physical_ids: Option<&[i64]>,
     ) -> Result<Vec<Option<Vec<Datum>>>, ExecError> {
-        if let Some(rows) = self.window_rows_by_ranges(handles)? {
+        if let Some(rows) = self.window_rows_by_ranges(handles, physical_ids)? {
             return Ok(rows);
         }
         self.table
-            .get_rows_by_handles_projected_with_context(
+            .get_rows_by_routed_handles_projected_with_context(
                 handles,
+                physical_ids,
                 self.decode_offsets.as_deref(),
                 &self.decode_context,
             )
@@ -6295,10 +6304,11 @@ impl IndexJoinLookupExec {
 
     /// One window's rows through a record-range coprocessor scan. `None`
     /// permits the native reader for an unsupported shape (dirty staging,
-    /// partitions or non-integer handles); execution failures propagate.
+    /// absent routes); execution failures propagate.
     fn window_rows_by_ranges(
         &mut self,
         handles: &[TableHandle],
+        physical_ids: Option<&[i64]>,
     ) -> Result<Option<Vec<Option<Vec<Datum>>>>, ExecError> {
         let keep = self
             .decode_offsets
@@ -6308,8 +6318,9 @@ impl IndexJoinLookupExec {
             scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
         let Some(staged) = self
             .table
-            .build_table_reader_from_handles(
+            .build_table_reader_from_routed_handles(
                 handles,
+                physical_ids,
                 &keep,
                 &predicates,
                 &self.decode_context,
@@ -6333,6 +6344,7 @@ impl IndexJoinLookupExec {
     }
 
     fn next_batched_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+        self.last_partition_id = None;
         if !matches!(self.object, LookupObject::CommonHandle) {
             if let Some(remote) = self.remote_handles.as_mut() {
                 return remote.next_handle().map_err(ExecError::from);
@@ -6377,16 +6389,23 @@ impl IndexJoinLookupExec {
                     self.lookup_rows.clear();
                     self.lookup_row_at = 0;
                     let mut handles = Vec::with_capacity(INDEX_LOOKUP_BATCH_SIZE);
+                    let mut physical_ids = Vec::with_capacity(INDEX_LOOKUP_BATCH_SIZE);
                     while handles.len() < INDEX_LOOKUP_BATCH_SIZE {
                         let Some(handle) = self.next_batched_handle()? else {
                             break;
                         };
                         handles.push(handle);
+                        if let Some(id) = self.last_partition_id {
+                            physical_ids.push(id);
+                        }
                     }
                     if handles.is_empty() {
                         return Ok(None);
                     }
-                    self.lookup_rows = self.window_rows(&handles)?;
+                    self.lookup_rows = self.window_rows(
+                        &handles,
+                        (physical_ids.len() == handles.len()).then_some(physical_ids.as_slice()),
+                    )?;
                     // A window every row of which is gone -- the index named
                     // handles whose records no longer exist, and a range scan
                     // answers exactly what exists -- contributes nothing;
@@ -7136,6 +7155,30 @@ mod tests {
                             4,
                             "lookup output retains exact keyspaces"
                         );
+                    }
+                    if !covering {
+                        let mut batch = Chunk::new_with_capacity(&[long(), long()], 2);
+                        for value in [20, 10] {
+                            batch.append_int64(0, value);
+                            batch.append_int64(1, 7);
+                        }
+                        source.lookup_physical_ids = vec![102, 101];
+                        source.lookup_chunk = Some(crate::kv_table::FinishedLookupChunk {
+                            batches: vec![batch],
+                            row_positions: vec![(0, 0), (0, 1)],
+                            request_indices: vec![1, 3],
+                            handle_position: Some(1),
+                            appended_handle: true,
+                            predicates_applied: true,
+                            wire_rows: 2,
+                        });
+                        source.lookup_chunk_row = 0;
+                        chunk.reset();
+                        source.append_lookup_chunk(&mut chunk, 2).unwrap();
+                        assert_eq!((0..chunk.num_rows()).map(|index| {
+                            let row = chunk.get_row(index);
+                            (row.get_int64(physical_slot), row.get_int64(1), row.get_int64(handle_slot))
+                        }).collect::<Vec<_>>(), vec![(102, 20, 7), (101, 10, 7)]);
                     }
                 }
             }

@@ -1,0 +1,487 @@
+{
+  "date": "2026-10-07",
+  "baseline": "c31b8d06b1c7a603a0ab22d68968c5c425ee1f20",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_unchanged": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "scope": "B05 N03 / B09 O13 connected partitioned ordinary lookup, index-join and index-merge table readers; existing-owner maintenance, no complete package acceptance",
+  "sources": [
+    {
+      "path": "pkg/executor/builder.go",
+      "sha256": "7d47dc5eec64aa98de44014cf275061b102d6da57a4df2a565694637c53790e7",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/distsql.go",
+      "sha256": "eb7759a9a04bb67259380a36ee54fb065c6de21075ba287dd29dc213ab0235c7",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/index_merge_reader.go",
+      "sha256": "095630e208568307d04d052e735b385b07e6c8650ba05d89031c831a083e8dde",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/table_reader.go",
+      "sha256": "e9ef4388a5651f8e4780f34bdff3fad6427f99a2a1fb0f60dab9220b29d1009b",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/distsql/request_builder.go",
+      "sha256": "071875be37e32ef6b3568a715b46d5cd88c70ee235be452bf0f71c1c8375d245",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/planner/util/handle_cols.go",
+      "sha256": "b1a8bd17022727d9a57c51644b2a55ee5a251d48b436212a065bb80db6400d51",
+      "matches_fetched_blob": true
+    }
+  ],
+  "changes": [
+    "The shared routed reader validates aligned physical IDs and selected partitions before I/O, groups handles by physical namespace and retains shared table-batch statement/estimate policy.",
+    "Row and typed-chunk completion retain original request positions; equal integer/common handles across partitions do not alias, unordered completion restores input order, and missing/filtered rows leave identity gaps.",
+    "Ordinary inline and persistent-worker lookups retain physical routes through remote completion, residual/adaptive filters and transaction-aware fallback. Chunk projection synthesizes physical ID from the matching route.",
+    "Index-join index iteration retains partition ordinals through window collection and both remote and local table readers. Index-merge HandleSourceExec uses original request positions for physical-ID output.",
+    "Partition-only remote bypasses, bare-handle cross-partition association and discarded join routes are removed. Unpartitioned readers retain their original mutable storage owner; staged cursor Drop closes all opened streams on later refusal/error. Dirty reads preserve their separate fallback."
+  ],
+  "baseline_results": {
+    "passed": 0,
+    "failed": 3,
+    "reason": "All three SQL outputs were correct, but none opened a policy-carrying remote table request.",
+    "path": "/workspace/.cloud-setup/partition-reader-batch/before.log",
+    "sha256": "37b5122ff25a96b34b00221a201f30fc51eb2d57aefa6570fa7ce9d3dfcd09da"
+  },
+  "validation": {
+    "rust": {
+      "passed": 221,
+      "failed": 0,
+      "command": "cargo test --locked -p tidb-executor --lib -- partition_reader common_reader reader_task_ remote_scan::tests:: access_path::tests:: kv_table::table_scan::remote_cursor_tests:: index_merge point_get --test-threads=1",
+      "path": "/workspace/.cloud-setup/partition-reader-batch/grouped.log",
+      "sha256": "80d973d2bcadb758f3c1ee02f948f5439825b717011ca4631ed5d062a240ff68"
+    },
+    "downstream": {
+      "command": "cargo check --locked --all-targets -p tidb-executor -p tidb-session -p tidb-server",
+      "path": "/workspace/.cloud-setup/partition-reader-batch/check.log",
+      "sha256": "9022748ea1a1eac3b2788af111ddb3291ef3c16897493127f9c9bf7a77e76c27"
+    },
+    "build": {
+      "command": "cargo build --locked -p tidb-server",
+      "path": "/workspace/.cloud-setup/partition-reader-batch/build.log",
+      "sha256": "875a4dfd66cef4962ab44472ac3dac75c6ff8f8584e7099c478253456659c1be"
+    },
+    "lint": {
+      "command": "make lint",
+      "path": "/workspace/.cloud-setup/partition-reader-batch/lint.log",
+      "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef"
+    },
+    "wire": {
+      "passed": 9,
+      "total": 9,
+      "cases": [
+        {
+          "name": "ordered_lookup",
+          "sql": "SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b",
+          "expected": [
+            [
+              300
+            ],
+            [
+              200
+            ],
+            [
+              100
+            ]
+          ],
+          "actual": [
+            [
+              300
+            ],
+            [
+              200
+            ],
+            [
+              100
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "ordered_desc_limit",
+          "sql": "SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b DESC LIMIT 2",
+          "expected": [
+            [
+              100
+            ],
+            [
+              200
+            ]
+          ],
+          "actual": [
+            [
+              100
+            ],
+            [
+              200
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "index_join",
+          "sql": "SELECT /*+ INL_JOIN(r) */ r.c FROM t l JOIN t r USE INDEX(ib) ON r.b=l.b WHERE l.a<3 ORDER BY l.a",
+          "expected": [
+            [
+              100
+            ],
+            [
+              200
+            ]
+          ],
+          "actual": [
+            [
+              100
+            ],
+            [
+              200
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "index_merge",
+          "sql": "SELECT /*+ USE_INDEX_MERGE(t,ia,ib) */ c FROM t WHERE a<3 OR b<20 ORDER BY c",
+          "expected": [
+            [
+              100
+            ],
+            [
+              200
+            ],
+            [
+              300
+            ]
+          ],
+          "actual": [
+            [
+              100
+            ],
+            [
+              200
+            ],
+            [
+              300
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "partition_pruning",
+          "sql": "SELECT c FROM t PARTITION(p0) FORCE INDEX(ib) WHERE b<50 ORDER BY b",
+          "expected": [
+            [
+              200
+            ],
+            [
+              400
+            ]
+          ],
+          "actual": [
+            [
+              200
+            ],
+            [
+              400
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "residual_filter",
+          "sql": "SELECT c FROM t FORCE INDEX(ib) WHERE b<50 AND c<>200 ORDER BY b",
+          "expected": [
+            [
+              300
+            ],
+            [
+              100
+            ],
+            [
+              400
+            ]
+          ],
+          "actual": [
+            [
+              300
+            ],
+            [
+              100
+            ],
+            [
+              400
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "dirty_lookup",
+          "sql": "SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b",
+          "expected": [
+            [
+              300
+            ],
+            [
+              777
+            ],
+            [
+              200
+            ],
+            [
+              100
+            ]
+          ],
+          "actual": [
+            [
+              300
+            ],
+            [
+              777
+            ],
+            [
+              200
+            ],
+            [
+              100
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "dirty_join",
+          "sql": "SELECT /*+ INL_JOIN(r) */ r.c FROM t l JOIN t r USE INDEX(ib) ON r.b=l.b WHERE l.a=5 ORDER BY l.a",
+          "expected": [
+            [
+              777
+            ]
+          ],
+          "actual": [
+            [
+              777
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "rollback",
+          "sql": "SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b",
+          "expected": [
+            [
+              300
+            ],
+            [
+              200
+            ],
+            [
+              100
+            ]
+          ],
+          "actual": [
+            [
+              300
+            ],
+            [
+              200
+            ],
+            [
+              100
+            ]
+          ],
+          "passed": true
+        }
+      ]
+    }
+  },
+  "review": {
+    "wire_setup": {
+      "passed": 6,
+      "total": 6,
+      "cases": [
+        {
+          "name": "ordered_lookup",
+          "sql": "SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b",
+          "expected": [
+            [
+              300
+            ],
+            [
+              200
+            ],
+            [
+              100
+            ]
+          ],
+          "actual": [
+            [
+              300
+            ],
+            [
+              200
+            ],
+            [
+              100
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "ordered_desc_limit",
+          "sql": "SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b DESC LIMIT 2",
+          "expected": [
+            [
+              100
+            ],
+            [
+              200
+            ]
+          ],
+          "actual": [
+            [
+              100
+            ],
+            [
+              200
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "index_join",
+          "sql": "SELECT /*+ INL_JOIN(r) */ r.c FROM t l JOIN t r USE INDEX(ib) ON r.b=l.b WHERE l.a<3 ORDER BY l.a",
+          "expected": [
+            [
+              100
+            ],
+            [
+              200
+            ]
+          ],
+          "actual": [
+            [
+              100
+            ],
+            [
+              200
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "index_merge",
+          "sql": "SELECT /*+ USE_INDEX_MERGE(t,ia,ib) */ c FROM t WHERE a<3 OR b<20 ORDER BY c",
+          "expected": [
+            [
+              100
+            ],
+            [
+              200
+            ],
+            [
+              300
+            ]
+          ],
+          "actual": [
+            [
+              100
+            ],
+            [
+              200
+            ],
+            [
+              300
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "partition_pruning",
+          "sql": "SELECT c FROM t PARTITION(p0) FORCE INDEX(ib) WHERE b<50 ORDER BY b",
+          "expected": [
+            [
+              200
+            ],
+            [
+              400
+            ]
+          ],
+          "actual": [
+            [
+              200
+            ],
+            [
+              400
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "name": "residual_filter",
+          "sql": "SELECT c FROM t FORCE INDEX(ib) WHERE b<50 AND c<>200 ORDER BY b",
+          "expected": [
+            [
+              300
+            ],
+            [
+              100
+            ],
+            [
+              400
+            ]
+          ],
+          "actual": [
+            [
+              300
+            ],
+            [
+              100
+            ],
+            [
+              400
+            ]
+          ],
+          "passed": true
+        }
+      ],
+      "setup_blocker": {
+        "sql": "UPDATE t SET c=777 WHERE a=2",
+        "code": 1105,
+        "message": "SelectLock requires its physical partition ID",
+        "assessment": "Pre-existing: plan_builder/from.rs explicitly leaves tbl_id_to_phys_tbl_id_col empty; neither it nor the Lock executor construction changed in this batch."
+      }
+    },
+    "first_compile": "Caught and fixed missed remote-row tuple type; compile-review.log preserves the diagnostic.",
+    "first_grouped_run": {
+      "passed": 221,
+      "path": "/workspace/.cloud-setup/partition-reader-batch/grouped-review.log",
+      "sha256": "cbabc748237879895e9bb7e7466d340b3a7eb13678d63b294135d3b6c930104b"
+    },
+    "final_controls": "Extended existing fixtures with route admission/pruning/dirty fallback, first-stream cleanup after later refusal/error, physical-ID chunk projection, and equal-handle/missing-row association across row/chunk and integer/common domains."
+  },
+  "dispositions": {
+    "N03": "partial",
+    "O13": "partial",
+    "counts": {
+      "tracked": 86,
+      "repaired": 30,
+      "unresolved": 56,
+      "open": 27,
+      "partial": 29
+    },
+    "other_roots": "Other 54 unresolved roots retain carried evidence; not freshly reaudited."
+  },
+  "not_verified": [
+    "Existing partition UPDATE/SELECT FOR UPDATE planning omits physical IDs (1105); final dirty-read controls use INSERT and preserve the original setup failure.",
+    "Full upstream Go package suites and complete transcreation",
+    "Live multi-node TiKV, native partition routing or live AZ placement",
+    "Crash recovery, performance improvement or benchmark results",
+    "Dirty remote UnionScan and unrouted multi-partition point probes; existing local fallback remains"
+  ],
+  "publication": "Commit hook and fresh pre-push locked build are required; actual publication is recorded outside the checkout in final-handoff.json, not inferred from this receipt."
+}

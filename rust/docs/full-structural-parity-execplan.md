@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [cluster column composition](cluster-column-batch-execplan.md); previous [ALTER metadata admission](alter-admission-batch-execplan.md); previous [shared common-handle readers](common-reader-batch-execplan.md). Latest cleanup: [unused DDL leaf retirement](parity/current-audit/unused-carrier-cleanup-validation.json).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [partitioned shared readers](partition-reader-batch-execplan.md); previous [cluster column composition](cluster-column-batch-execplan.md); previous [ALTER metadata admission](alter-admission-batch-execplan.md); previous [shared common-handle readers](common-reader-batch-execplan.md). Latest cleanup: [unused DDL leaf retirement](parity/current-audit/unused-carrier-cleanup-validation.json).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -40,6 +40,8 @@ and validation results in those receipts apply only to their recorded point
 in time. This revision is a plan; it closes no production finding.
 
 ## Progress
+
+- [x] (Partition reader batch) Compose ordinary lookup, index join and index merge through one routed table-request owner, preserving physical identity, ordering/projection and cleanup/fallback. Three baseline failures precede 221 selected Rust passes and nine wire controls. See `parity/current-audit/partition-reader-batch-validation.json`; N03/O13 remain partial.
 
 - [x] (Cluster column batch) Preserve every supported sibling through original-schema admission and shared stable-ID application. Retire unsafe type reinterpretation and duplicate mutation/check branches. Evidence and retained durable-worker limits: `parity/current-audit/cluster-column-batch-validation.json`.
 

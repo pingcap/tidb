@@ -2702,6 +2702,102 @@ mod tests {
         }
     }
 
+    fn partition_reader_fixture() -> Fixture {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE t(a BIGINT,b BIGINT,c BIGINT) PARTITION BY HASH(a) PARTITIONS 2",
+            &mut catalog,
+        )
+        .unwrap();
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+            panic!("KV table")
+        };
+        let mut fixture =
+            fixture_with_columns(None, vec![column("a", 1), column("b", 2), column("c", 3)]);
+        fixture
+            .table
+            .set_partition(table.partition().unwrap().clone());
+        for (id, name, offset) in [(1, "ia", 0), (2, "ib", 1)] {
+            fixture.table.add_index(
+                KvIndex {
+                    id,
+                    name: name.into(),
+                    comment: String::new(),
+                    unique: false,
+                    column_offsets: vec![offset],
+                    prefix_lengths: vec![-1],
+                    visible: true,
+                    global: false,
+                    global_index_version: 0,
+                    clustered_primary: false,
+                },
+                false,
+            );
+        }
+        for row in [[1, 30, 100], [2, 20, 200], [3, 10, 300], [4, 40, 400]] {
+            fixture
+                .table
+                .insert_row(&row.map(Datum::Int), &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture
+            .scanner
+            .reverse_unordered
+            .store(true, Ordering::SeqCst);
+        fixture
+    }
+
+    fn assert_partition_reader(sql: &str, expected: Vec<Vec<Datum>>) {
+        let fixture = partition_reader_fixture();
+        let scanner = Arc::clone(&fixture.scanner);
+        let catalog = catalog_of(fixture.table);
+        assert_eq!(
+            run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap(),
+            expected
+        );
+        let requests = scanner.requested_read_estimates.lock().unwrap();
+        assert!(
+            requests
+                .iter()
+                .any(|(index, bytes, avg)| !index
+                    && avg.is_some_and(|avg| avg > 0.0 && *bytes >= avg)),
+            "partition table tasks must use shared request policy: {sql}; {requests:?}"
+        );
+    }
+
+    #[test]
+    fn partition_reader_ordinary_lookup_retains_remote_policy() {
+        assert_partition_reader(
+            "SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b",
+            vec![
+                vec![Datum::Int(300)],
+                vec![Datum::Int(200)],
+                vec![Datum::Int(100)],
+            ],
+        );
+    }
+
+    #[test]
+    fn partition_reader_join_retains_remote_policy() {
+        assert_partition_reader(
+            "SELECT /*+ INL_JOIN(r) */ r.c FROM t l JOIN t r USE INDEX(ib) ON r.b=l.b WHERE l.a<3 ORDER BY l.a",
+            vec![vec![Datum::Int(100)], vec![Datum::Int(200)]],
+        );
+    }
+
+    #[test]
+    fn partition_reader_merge_retains_remote_policy() {
+        assert_partition_reader(
+            "SELECT /*+ USE_INDEX_MERGE(t,ia,ib) */ c FROM t WHERE a<3 OR b<20 ORDER BY c",
+            vec![
+                vec![Datum::Int(100)],
+                vec![Datum::Int(200)],
+                vec![Datum::Int(300)],
+            ],
+        );
+    }
+
     #[test]
     fn reader_task_ordinary_lookup_uses_table_width() {
         let mut fixture = fixture();

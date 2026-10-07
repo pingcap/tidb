@@ -1071,19 +1071,114 @@ impl KvTable {
         statement: &PushdownStatementContext,
         required_rows: usize,
     ) -> Result<Option<StagedHandlesLookup>, KvTableError> {
-        if handles.is_empty() {
+        self.build_table_reader_from_routed_handles(
+            handles,
+            None,
+            scan_keep,
+            predicates,
+            context,
+            statement,
+            required_rows,
+        )
+    }
+
+    /// Builds table tasks with Go's partition-handle identity. Routes, when
+    /// present, are aligned with input handles and validated before any I/O.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_table_reader_from_routed_handles(
+        &mut self,
+        handles: &[TableHandle],
+        physical_ids: Option<&[i64]>,
+        scan_keep: &[usize],
+        predicates: &[ScanPredicate],
+        context: &RowDecodeContext,
+        statement: &PushdownStatementContext,
+        required_rows: usize,
+    ) -> Result<Option<StagedHandlesLookup>, KvTableError> {
+        if physical_ids.is_some_and(|ids| ids.len() != handles.len()) {
+            return Err(KvTableError::Encode(
+                "table reader partition routes lost alignment".into(),
+            ));
+        }
+        if handles.is_empty() || self.has_dirty_content(&statement.staged_writes) {
             return Ok(None);
         }
-        if self.has_dirty_content(&statement.staged_writes) || self.partition.is_some() {
-            return Ok(None);
+        let allowed = self.record_physical_ids();
+        let inferred;
+        let physical_ids = match physical_ids {
+            Some(ids) => ids,
+            None if allowed.len() == 1 => {
+                inferred = vec![allowed[0]; handles.len()];
+                &inferred
+            }
+            None => return Ok(None),
+        };
+        let mut groups = BTreeMap::<i64, (Vec<TableHandle>, Vec<usize>)>::new();
+        for (position, (handle, id)) in handles.iter().zip(physical_ids).enumerate() {
+            if !allowed.contains(id) {
+                return Err(KvTableError::Encode(
+                    "table reader route outside selected partitions".into(),
+                ));
+            }
+            let (group_handles, positions) = groups.entry(*id).or_default();
+            group_handles.push(handle.clone());
+            positions.push(position);
         }
-        // The cursor retains key columns after the requested projection.
-        // Table workers reconstruct the handle before dropping those columns,
-        // just like Go's HandleCols.BuildHandle for row and chunk responses.
-        let keep = scan_keep;
-        let (key_ranges, range_hints) =
-            Self::table_reader_handle_key_ranges(self.table_id, handles)?;
+        // Validate every group's key domain before opening the first stream.
+        let groups = groups
+            .into_iter()
+            .map(|(id, (handles, positions))| {
+                Self::table_reader_handle_key_ranges(id, &handles)
+                    .map(|ranges| (id, handles, positions, ranges))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let statement = statement.for_lookup_batch(handles.len());
+        let mut parts = Vec::with_capacity(groups.len());
+        for (id, handles, positions, (key_ranges, range_hints)) in groups {
+            // The ordinary table keeps its original mutable storage owner.
+            // Partition readers need distinct physical metadata, with storage
+            // cloning retaining the backend's shared transaction/snapshot.
+            let mut physical;
+            let table = if self.partition.is_none() && id == self.table_id {
+                &mut *self
+            } else {
+                physical = self.clone();
+                physical.table_id = id;
+                physical.partition = None;
+                physical.read_partitions = None;
+                &mut physical
+            };
+            let Some(reader) = table.build_physical_table_reader(
+                scan_keep,
+                predicates,
+                context,
+                &statement,
+                required_rows,
+                &key_ranges,
+                &range_hints,
+            )?
+            else {
+                // Dropping all previously staged cursors closes their streams.
+                return Ok(None);
+            };
+            parts.push((handles, positions, reader));
+        }
+        Ok(Some(StagedHandlesLookup { parts }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_physical_table_reader(
+        &mut self,
+        scan_keep: &[usize],
+        predicates: &[ScanPredicate],
+        context: &RowDecodeContext,
+        statement: &PushdownStatementContext,
+        required_rows: usize,
+        key_ranges: &[(Key, Key)],
+        range_hints: &[usize],
+    ) -> Result<Option<StagedPhysicalLookup>, KvTableError> {
+        // Each cursor retains transport identity after the requested projection.
+        let keep = scan_keep;
         let materialization = if keep
             .iter()
             .any(|offset| crate::generated_column::is_virtual(&self.columns[*offset]))
@@ -1122,7 +1217,7 @@ impl KvTable {
         else {
             return Ok(None);
         };
-        Ok(Some(StagedHandlesLookup {
+        Ok(Some(StagedPhysicalLookup {
             cursor,
             output_width: scan_keep.len(),
             materialization,
@@ -1177,8 +1272,44 @@ impl KvTable {
     #[must_use]
     pub fn finish_rows_by_handles(
         handles: &[TableHandle],
-        mut staged: StagedHandlesLookup,
+        staged: StagedHandlesLookup,
     ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64)>, KvTableError> {
+        Self::finish_routed_rows_by_handles(handles, staged)
+            .map(|answer| answer.map(|(rows, applied, wire_rows, _)| (rows, applied, wire_rows)))
+    }
+
+    /// Returns original request positions, retaining route identity across
+    /// missing rows, filters and equal handles in different partitions.
+    pub(crate) fn finish_routed_rows_by_handles(
+        handles: &[TableHandle],
+        staged: StagedHandlesLookup,
+    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>)>, KvTableError> {
+        let mut ordered = Vec::with_capacity(handles.len());
+        let mut applied = true;
+        let mut wire_rows = 0;
+        for (part_handles, positions, reader) in staged.parts {
+            let Some((rows, part_applied, count, indices)) =
+                Self::finish_physical_rows(&part_handles, reader)?
+            else {
+                return Ok(None);
+            };
+            applied &= part_applied;
+            wire_rows += count;
+            ordered.extend(
+                rows.into_iter()
+                    .zip(indices)
+                    .map(|(row, index)| (positions[index], row)),
+            );
+        }
+        ordered.sort_by_key(|(index, _)| *index);
+        let (indices, rows) = ordered.into_iter().unzip();
+        Ok(Some((rows, applied, wire_rows, indices)))
+    }
+
+    fn finish_physical_rows(
+        handles: &[TableHandle],
+        mut staged: StagedPhysicalLookup,
+    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>)>, KvTableError> {
         let wire_rows = staged.cursor.rows_returned();
         let predicates_applied =
             staged.materialization.is_none() && staged.cursor.predicates_applied();
@@ -1227,37 +1358,26 @@ impl KvTable {
             }
         }
         let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
-        // Region completion may be unordered even for sorted requested
-        // handles. Skip restoration only when both sequences prove sorted.
-        if !handles.windows(2).all(|window| window[0] <= window[1])
-            || !rows.windows(2).all(|window| window[0].0 <= window[1].0)
-        {
-            // Keep the source order in a map once instead of scanning
-            // `handles` for every returned row (the old position lookup was
-            // O(n²) for a large window).
-            // Go's `kv.HandleMap` is hash-backed; preserve the same O(1)
-            // handle-to-index lookup for keep-order restoration instead of
-            // paying the tree comparison cost for every returned row.
-            let positions = handles
-                .iter()
-                .enumerate()
-                .map(|(position, handle)| (handle, position))
-                .collect::<HashMap<_, _>>();
-            // Go's `tableWorker.executeTask` computes `rowIdx` once per row
-            // and sorts that integer field. Decorate before sorting for the
-            // same O(n) handle-map work; calling `HashMap::get` from a
-            // comparison key would repeat the hash lookup O(n log n) times.
-            let mut ordered = rows
-                .into_iter()
-                .map(|row| {
-                    let position = positions.get(&row.0).copied().unwrap_or(usize::MAX);
-                    (position, row)
-                })
-                .collect::<Vec<_>>();
-            ordered.sort_by_key(|(position, _)| *position);
-            rows = ordered.into_iter().map(|(_, row)| row).collect();
-        }
-        Ok(Some((rows, predicates_applied, wire_rows)))
+        let positions = handles
+            .iter()
+            .enumerate()
+            .map(|(position, handle)| (handle, position))
+            .collect::<HashMap<_, _>>();
+        let mut ordered = rows
+            .into_iter()
+            .map(|row| {
+                positions
+                    .get(&row.0)
+                    .copied()
+                    .map(|position| (position, row))
+                    .ok_or_else(|| {
+                        KvTableError::Decode("table reader returned an unrequested handle".into())
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        ordered.sort_by_key(|(position, _)| *position);
+        let (indices, rows) = ordered.into_iter().unzip();
+        Ok(Some((rows, predicates_applied, wire_rows, indices)))
     }
 
     /// Finishes one staged table lookup using the same chunk-backed handoff as
@@ -1268,19 +1388,51 @@ impl KvTable {
         staged: StagedHandlesLookup,
         allow_chunks: bool,
     ) -> Result<Option<FinishedLookup>, KvTableError> {
-        if staged.materialization.is_some()
-            || !allow_chunks
-            || !staged.cursor.supports_lookup_chunks()
-            || !staged.cursor.predicates_applied()
+        if !allow_chunks
+            || staged.parts.iter().any(|(_, _, reader)| {
+                reader.materialization.is_some()
+                    || !reader.cursor.supports_lookup_chunks()
+                    || !reader.cursor.predicates_applied()
+            })
         {
-            return Self::finish_rows_by_handles(handles, staged).map(|answer| {
-                answer.map(|(rows, applied, wire_rows)| {
-                    FinishedLookup::Rows(rows, applied, wire_rows)
+            return Self::finish_routed_rows_by_handles(handles, staged).map(|answer| {
+                answer.map(|(rows, applied, wire_rows, indices)| {
+                    FinishedLookup::Rows(rows, applied, wire_rows, indices)
                 })
             });
         }
-        Self::finish_lookup_chunks_by_handles(handles, staged)
-            .map(|answer| answer.map(FinishedLookup::Chunk))
+        let mut result: Option<FinishedLookupChunk> = None;
+        for (part_handles, positions, reader) in staged.parts {
+            let Some(mut part) = Self::finish_lookup_chunks_by_handles(&part_handles, reader)?
+            else {
+                return Ok(None);
+            };
+            for index in &mut part.request_indices {
+                *index = positions[*index];
+            }
+            if let Some(result) = result.as_mut() {
+                let offset = result.batches.len();
+                result.row_positions.extend(
+                    part.row_positions
+                        .into_iter()
+                        .map(|(batch, row)| (batch + offset, row)),
+                );
+                result.request_indices.extend(part.request_indices);
+                result.batches.extend(part.batches);
+                result.wire_rows += part.wire_rows;
+            } else {
+                result = Some(part);
+            }
+        }
+        if let Some(result) = result.as_mut() {
+            let mut ordered = std::mem::take(&mut result.request_indices)
+                .into_iter()
+                .zip(std::mem::take(&mut result.row_positions))
+                .collect::<Vec<_>>();
+            ordered.sort_by_key(|(index, _)| *index);
+            (result.request_indices, result.row_positions) = ordered.into_iter().unzip();
+        }
+        Ok(result.map(FinishedLookup::Chunk))
     }
 
     /// Retains decoded table batches and row positions instead of converting
@@ -1290,7 +1442,7 @@ impl KvTable {
     /// contract with `(batch,row)` positions.
     fn finish_lookup_chunks_by_handles(
         handles: &[TableHandle],
-        mut staged: StagedHandlesLookup,
+        mut staged: StagedPhysicalLookup,
     ) -> Result<Option<FinishedLookupChunk>, KvTableError> {
         let wire_rows = staged.cursor.rows_returned();
         let predicates_applied = staged.cursor.predicates_applied();
@@ -1322,23 +1474,29 @@ impl KvTable {
             batches.push(batch);
         }
         let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
-        if !handles.windows(2).all(|window| window[0] <= window[1])
-            || !rows.windows(2).all(|window| window[0].0 <= window[1].0)
-        {
-            let positions = handles
-                .iter()
-                .enumerate()
-                .map(|(position, handle)| (handle, position))
-                .collect::<HashMap<_, _>>();
-            rows.sort_by_key(|(handle, _, _)| positions.get(handle).copied().unwrap_or(usize::MAX));
-        }
-        let row_positions = rows
+        let positions = handles
+            .iter()
+            .enumerate()
+            .map(|(position, handle)| (handle, position))
+            .collect::<HashMap<_, _>>();
+        let mut ordered = rows
             .into_iter()
-            .map(|(_, batch, row)| (batch, row))
-            .collect();
+            .map(|(handle, batch, row)| {
+                positions
+                    .get(&handle)
+                    .copied()
+                    .map(|position| (position, (batch, row)))
+                    .ok_or_else(|| {
+                        KvTableError::Decode("table reader returned an unrequested handle".into())
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        ordered.sort_by_key(|(position, _)| *position);
+        let (request_indices, row_positions) = ordered.into_iter().unzip();
         Ok(Some(FinishedLookupChunk {
             batches,
             row_positions,
+            request_indices,
             handle_position: staged.cursor.handle_index,
             appended_handle: staged
                 .cursor
@@ -2880,6 +3038,10 @@ type StagedRow = (Vec<u8>, Option<Vec<Datum>>);
 /// [`KvTable::finish_rows_by_handles`]. `Send` so a bounded-concurrency
 /// lookup pipeline can drain it off the executor thread.
 pub struct StagedHandlesLookup {
+    parts: Vec<(Vec<TableHandle>, Vec<usize>, StagedPhysicalLookup)>,
+}
+
+struct StagedPhysicalLookup {
     cursor: RemoteRowCursor,
     output_width: usize,
     materialization: Option<RemoteRowMaterialization>,
@@ -2953,6 +3115,8 @@ pub(crate) struct FinishedLookupChunk {
     pub(crate) batches: Vec<Chunk>,
     /// `(batch index, row index)` entries in the caller's index-handle order.
     pub(crate) row_positions: Vec<(usize, usize)>,
+    /// Original request positions, including gaps left by missing/filtered rows.
+    pub(crate) request_indices: Vec<usize>,
     /// Integer identity, if present; common handles retain their key parts.
     pub(crate) handle_position: Option<usize>,
     /// Whether the handle column was appended only for lookup association.
@@ -2970,7 +3134,7 @@ pub(crate) enum FinishedLookup {
     /// A chunk-backed response from a real coprocessor stream.
     Chunk(FinishedLookupChunk),
     /// The compatibility path for row-only streams.
-    Rows(Vec<(TableHandle, Vec<Datum>)>, bool, u64),
+    Rows(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>),
 }
 
 #[derive(Clone)]
@@ -5590,6 +5754,8 @@ mod remote_cursor_tests {
     struct RequestCapture {
         captured: std::sync::Arc<std::sync::Mutex<Option<crate::remote_scan::PushdownScanRequest>>>,
         response_predicates_applied: Option<bool>,
+        /// Refuse or error on a later physical request to verify prior cleanup.
+        reject_table: Option<(i64, bool)>,
         closed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     }
 
@@ -5645,6 +5811,12 @@ mod remote_cursor_tests {
                 .captured
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner()) = Some(request.clone());
+            if let Some((id, error)) = self.reject_table {
+                if request.table_id == id {
+                    return error
+                        .then(|| Err(StorageError::Backend("partition request failed".into())));
+                }
+            }
             self.response_predicates_applied.map(|predicates_applied| {
                 Ok(crate::remote_scan::PushdownScan {
                     stream: Box::new(CapturedIndexStream {
@@ -6474,9 +6646,129 @@ mod remote_cursor_tests {
                 .iter()
                 .all(|(start, _)| { decode_table_id(start.as_bytes()) == request.table_id }));
         }
+        captured.lock().unwrap().clear();
+        let handles = [TableHandle::Int(7), TableHandle::Int(7)];
+        let context = RowDecodeContext::for_test_query_utc();
+        let statement = PushdownStatementContext::default();
+        for routes in [&[101][..], &[101, 999][..]] {
+            assert!(table
+                .build_table_reader_from_routed_handles(
+                    &handles,
+                    Some(routes),
+                    &[0],
+                    &[],
+                    &context,
+                    &statement,
+                    2,
+                )
+                .is_err());
+        }
+        assert!(
+            captured.lock().unwrap().is_empty(),
+            "validate every route before I/O"
+        );
+        assert!(
+            table
+                .build_table_reader_from_handles(&handles, &[0], &[], &context, &statement, 2,)
+                .unwrap()
+                .is_none(),
+            "bare handles cannot select a partition"
+        );
+        let staged = table
+            .build_table_reader_from_routed_handles(
+                &handles,
+                Some(&[102, 101]),
+                &[0],
+                &[],
+                &context,
+                &statement,
+                2,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            captured
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|request| request.table_id)
+                .collect::<Vec<_>>(),
+            vec![101, 102]
+        );
+        drop(staged);
+        captured.lock().unwrap().clear();
+        statement.staged_writes.mark_dirty(91);
+        assert!(table
+            .build_table_reader_from_routed_handles(
+                &handles,
+                Some(&[102, 101]),
+                &[0],
+                &[],
+                &context,
+                &statement,
+                2,
+            )
+            .unwrap()
+            .is_none());
+        assert!(
+            captured.lock().unwrap().is_empty(),
+            "dirty reads retain transaction-aware fallback"
+        );
+        let statement = PushdownStatementContext::default();
+        table.read_partitions = Some(vec![102]);
+        assert!(
+            table
+                .build_table_reader_from_routed_handles(
+                    &handles,
+                    Some(&[102, 101]),
+                    &[0],
+                    &[],
+                    &context,
+                    &statement,
+                    2,
+                )
+                .is_err(),
+            "pruned partitions cannot be reintroduced"
+        );
+        assert!(captured.lock().unwrap().is_empty());
+        assert!(
+            table
+                .build_table_reader_from_handles(&handles, &[0], &[], &context, &statement, 2,)
+                .unwrap()
+                .is_some(),
+            "one selected partition supplies an unambiguous route"
+        );
+        table.read_partitions = None;
+        for error in [false, true] {
+            let capture = RequestCapture {
+                response_predicates_applied: Some(true),
+                reject_table: Some((102, error)),
+                ..RequestCapture::default()
+            };
+            let closed = capture.closed.clone();
+            table.swap_storage(Box::new(capture));
+            let result = table.build_table_reader_from_routed_handles(
+                &handles,
+                Some(&[101, 102]),
+                &[0],
+                &[],
+                &context,
+                &statement,
+                2,
+            );
+            if error {
+                assert!(result.is_err());
+            } else {
+                assert!(result.unwrap().is_none());
+            }
+            assert!(
+                closed.load(std::sync::atomic::Ordering::SeqCst),
+                "later refusal/error closes the already-open first partition"
+            );
+        }
     }
 
-    /// Go's `PhysicalIndexReader.ToPB` names the clustered primary's column
+/// Go's `PhysicalIndexReader.ToPB` names the clustered primary's column
     /// ids on a covering-index aggregate and appends those key columns to the
     /// executor schema after the indexed ones -- TiKV decodes the executor as
     /// `[index datums..., handle datums...]` by subtracting their count from
@@ -7370,6 +7662,141 @@ mod remote_cursor_tests {
         );
     }
 
+    fn lookup_response_cursor(
+        stream: Box<dyn PushdownRowStream>,
+        identity: Option<RemoteCommonHandle>,
+    ) -> RemoteRowCursor {
+        RemoteRowCursor {
+            stream,
+            staged: Vec::new().into_iter(),
+            pending_staged: None,
+            pending_remote: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+            field_types: vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong); 2],
+            width: 1,
+            handle_index: Some(1),
+            common_identity: identity,
+            table_id: 0,
+            merge_staged: false,
+            unordered_shadowed: None,
+            unsigned_handle_order: false,
+            descending: false,
+            noted_rows: 0,
+            predicates_applied: true,
+        }
+    }
+
+    #[test]
+    fn partition_reader_restores_identity_with_equal_handles_and_missing_rows() {
+        for common in [false, true] {
+            for chunks in [false, true] {
+                for allow_chunks in [false, true] {
+                    let identity = common.then(|| RemoteCommonHandle {
+                        parts: vec![(
+                            1,
+                            -1,
+                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        )],
+                        zone: SessionTimeZone::utc(),
+                        use_new_collation: false,
+                    });
+                    let handle = |value| {
+                        identity.as_ref().map_or_else(
+                            || TableHandle::Int(value),
+                            |identity| {
+                                identity
+                                    .record_handle(&[Datum::Null, Datum::Int(value)])
+                                    .unwrap()
+                            },
+                        )
+                    };
+                    // Request order alternates physical partitions. Handle 99
+                    // is missing, and handle 7 exists in both namespaces.
+                    let handles = vec![handle(7), handle(99), handle(8), handle(7)];
+                    let mut parts = Vec::new();
+                    for (id, positions, responses) in [
+                        (101, vec![1, 3], vec![(107, 7)]),
+                        (102, vec![0, 2], vec![(208, 8), (207, 7)]),
+                    ] {
+                        let stream: Box<dyn PushdownRowStream> = if chunks {
+                            let types =
+                                vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong); 2];
+                            let mut batch = Chunk::new_with_capacity(&types, responses.len());
+                            for (value, handle) in &responses {
+                                batch.append_int64(0, *value);
+                                batch.append_int64(1, *handle);
+                            }
+                            Box::new(ChunkStream {
+                                chunks: [batch].into(),
+                                returned: 0,
+                            })
+                        } else {
+                            Box::new(VecStream {
+                                rows: responses
+                                    .into_iter()
+                                    .map(|(value, handle)| {
+                                        vec![Datum::Int(value), Datum::Int(handle)]
+                                    })
+                                    .collect(),
+                                returned: 0,
+                                predicates_applied: true,
+                            })
+                        };
+                        let mut cursor = lookup_response_cursor(stream, identity.clone());
+                        cursor.table_id = id;
+                        parts.push((
+                            positions
+                                .iter()
+                                .map(|index| handles[*index].clone())
+                                .collect(),
+                            positions,
+                            StagedPhysicalLookup {
+                                cursor,
+                                output_width: 1,
+                                materialization: None,
+                                required_rows: 2,
+                            },
+                        ));
+                    }
+                    let answer = KvTable::finish_lookup_by_handles(
+                        &handles,
+                        StagedHandlesLookup { parts },
+                        allow_chunks,
+                    )
+                    .unwrap()
+                    .unwrap();
+                    let (values, indices, count) = match answer {
+                        FinishedLookup::Rows(rows, applied, count, indices) => {
+                            assert!(applied);
+                            (
+                                rows.into_iter()
+                                    .map(|(_, row)| row[0].clone())
+                                    .collect::<Vec<_>>(),
+                                indices,
+                                count,
+                            )
+                        }
+                        FinishedLookup::Chunk(answer) => {
+                            assert!(chunks && allow_chunks);
+                            let values = answer
+                                .row_positions
+                                .iter()
+                                .map(|(batch, row)| {
+                                    Datum::Int(answer.batches[*batch].get_row(*row).get_int64(0))
+                                })
+                                .collect();
+                            (values, answer.request_indices, answer.wire_rows)
+                        }
+                    };
+                    assert_eq!(values, [207, 208, 107].map(Datum::Int));
+                    assert_eq!(indices, vec![0, 2, 3]);
+                    assert_eq!(count, 3);
+                }
+            }
+        }
+    }
+
     #[test]
     fn handle_lookup_drains_columnar_batches_and_restores_index_order() {
         for common in [false, true] {
@@ -7422,33 +7849,24 @@ mod remote_cursor_tests {
                 let mut second_batch = Chunk::new_with_capacity(&source_types, 1);
                 second_batch.append_int64(0, 80);
                 second_batch.append_int64(1, 8);
-                let cursor = RemoteRowCursor {
-                    stream: Box::new(ChunkStream {
+                let cursor = lookup_response_cursor(
+                    Box::new(ChunkStream {
                         chunks: std::collections::VecDeque::from([second_batch, first_batch]),
                         returned: 0,
                     }),
-                    staged: Vec::new().into_iter(),
-                    pending_staged: None,
-                    pending_remote: None,
-                    pending_chunk: None,
-                    pending_chunk_row: 0,
-                    field_types: source_types,
-                    width: 1,
-                    handle_index: Some(1),
-                    common_identity: identity,
-                    table_id: 0,
-                    merge_staged: false,
-                    unordered_shadowed: None,
-                    unsigned_handle_order: false,
-                    descending: false,
-                    noted_rows: 0,
-                    predicates_applied: true,
-                };
+                    identity,
+                );
                 let staged = StagedHandlesLookup {
-                    cursor,
-                    output_width: 1,
-                    materialization: None,
-                    required_rows: 1024,
+                    parts: vec![(
+                        handles.clone(),
+                        (0..handles.len()).collect(),
+                        StagedPhysicalLookup {
+                            cursor,
+                            output_width: 1,
+                            materialization: None,
+                            required_rows: 1024,
+                        },
+                    )],
                 };
                 let Some(FinishedLookup::Chunk(finished)) =
                     KvTable::finish_lookup_by_handles(&handles, staged, true).unwrap()

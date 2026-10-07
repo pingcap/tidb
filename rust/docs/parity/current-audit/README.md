@@ -2,7 +2,7 @@
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [cluster column composition](cluster-column-batch-validation.json). CHANGE/RENAME retain sibling jobs and MODIFY uses the same lowering owner. Original-schema admission shares Go conflict ordering across local and cluster callers; stable-ID application preserves column/index metadata and notifications. Conditional no-op notes survive. Unsafe same-family reinterpretation and duplicate mutation/check branches are retired. Six baseline Rust failures and eight wire failures precede 123 passing cluster cases, 56 shared admission cases and eight passing wire controls. D11 remains partial; counts stay86 tracked/30 repaired/56 unresolved (27open,29partial). Other55 roots retain carried evidence.
+Latest connected repair: [partitioned shared table readers](partition-reader-batch-validation.json). Ordinary lookup, index join and index merge now carry physical partition identity through the shared request owner, ordered row/chunk completion, projections and fallback. Three baseline policy failures precede 221 passing Rust cases and nine passing real MySQL controls. N03/O13 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 54 roots retain carried evidence.
 
 ## Work from these owners
 
