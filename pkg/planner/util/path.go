@@ -194,6 +194,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		IndexFilters:                 CloneExprs(path.IndexFilters),
 		TableFilters:                 CloneExprs(path.TableFilters),
 		IndexMergeIsIntersection:     path.IndexMergeIsIntersection,
+		IndexMergeAccessMVIndex:      path.IndexMergeAccessMVIndex,
 		IndexMergeMVCoveredConds:     CloneExprs(path.IndexMergeMVCoveredConds),
 		PartialIndexPaths:            nil,
 		StoreType:                    path.StoreType,
