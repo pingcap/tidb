@@ -1,0 +1,185 @@
+{
+  "date": "2026-10-07",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_unchanged": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "scope": "Connected N03/O13 common-handle request/identity maintenance; no complete package acceptance",
+  "sources": [
+    {
+      "path": "pkg/executor/builder.go",
+      "sha256": "7d47dc5eec64aa98de44014cf275061b102d6da57a4df2a565694637c53790e7",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/distsql.go",
+      "sha256": "eb7759a9a04bb67259380a36ee54fb065c6de21075ba287dd29dc213ab0235c7",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/table_reader.go",
+      "sha256": "e9ef4388a5651f8e4780f34bdff3fad6427f99a2a1fb0f60dab9220b29d1009b",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/index_merge_reader.go",
+      "sha256": "095630e208568307d04d052e735b385b07e6c8650ba05d89031c831a083e8dde",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/distsql/request_builder.go",
+      "sha256": "071875be37e32ef6b3568a715b46d5cd88c70ee235be452bf0f71c1c8375d245",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/planner/util/handle_cols.go",
+      "sha256": "b1a8bd17022727d9a57c51644b2a55ee5a251d48b436212a065bb80db6400d51",
+      "matches_fetched_blob": true
+    }
+  ],
+  "changes": [
+    "Shared table-handle range builder admits common handles, preserves sorting and Go point hints, rejects mixed domains.",
+    "Common-handle identity retained outside projections for ordinary, index-join and index-merge table tasks, with captured statement policy and handle-count estimates.",
+    "One identity extractor serves row/chunk association, staged merge and ordered partition merge; prefix/collation/timezone encoding stays under the existing owner.",
+    "Ordered common-handle partition streams merge by encoded identity; physical table ID does not order results. Wire output projection retains missing ordering columns, remaps identity positions and exposes only requested output.",
+    "Retired integer-only request refusal, ordered-common-partition refusal, duplicate handle extraction and lookup projection/remapping."
+  ],
+  "baseline": {
+    "head": "66084c94f8ccee412fa6e16cc6c086bd2701887a",
+    "rust": {
+      "status": "FAILED",
+      "passed": 212,
+      "failed": 4,
+      "ignored": 0
+    },
+    "failures": [
+      "common_reader_lookup_retains_identity_outside_projection: shared request refused",
+      "common_reader_partition_order_retains_pruned_identity: ordered remote request refused",
+      "reader_task_index_merge_uses_shared_table_requests: common table tasks missing",
+      "handle_lookup_drains_columnar_batches_and_restores_index_order: (8,80),(7,70) instead of (7,70),(8,80) for common handles"
+    ],
+    "wire_controls": 11
+  },
+  "after": {
+    "rust": {
+      "status": "ok",
+      "passed": 217,
+      "failed": 0,
+      "ignored": 0
+    },
+    "wire_controls": 11,
+    "gates": [
+      {
+        "gate": "check",
+        "command": [
+          "cargo",
+          "check",
+          "--locked",
+          "--all-targets",
+          "-p",
+          "tidb-executor",
+          "-p",
+          "tidb-session",
+          "-p",
+          "tidb-server"
+        ],
+        "cwd": "/workspace/tidb/rust",
+        "exit": 0,
+        "seconds": 111.67
+      },
+      {
+        "gate": "lint",
+        "command": [
+          "make",
+          "lint"
+        ],
+        "cwd": "/workspace/tidb",
+        "exit": 0,
+        "seconds": 12.35
+      },
+      {
+        "gate": "server-build",
+        "command": [
+          "cargo",
+          "build",
+          "--locked",
+          "-p",
+          "tidb-server"
+        ],
+        "cwd": "/workspace/tidb/rust",
+        "exit": 0,
+        "seconds": 156.27
+      }
+    ]
+  },
+  "development_corrections": [
+    "Initial final compilation exposed RecordHandle partition variant; shared extractor now returns the existing nonpartition TableHandle type rather than impossible conversion branches. No test executed in that failed compilation.",
+    "Real MySQL after the initial217-pass suite caught a pruned partition response dropping a common key part. Request projection now retains and remaps identity. The existing partition regression covers projected/unprojected responses in both directions; grouped checks and real-wire controls rerun on the final source."
+  ],
+  "commands": {
+    "rust": "cd rust && cargo test --locked -p tidb-executor --lib -- common_reader reader_task_ remote_scan::tests:: access_path::tests:: kv_table::table_scan::remote_cursor_tests:: index_merge point_get --test-threads=1",
+    "check": "cd rust && cargo check --locked --all-targets -p tidb-executor -p tidb-session -p tidb-server",
+    "lint": "make lint",
+    "build": "cd rust && cargo build --locked -p tidb-server"
+  },
+  "logs": {
+    "before.log": {
+      "path": "/workspace/.cloud-setup/common-reader-batch/before.log",
+      "sha256": "791052f9b80356b0de81a21df1296aa490e2d25ab98c11fce663eaa55b51fabe"
+    },
+    "tests.log": {
+      "path": "/workspace/.cloud-setup/common-reader-batch/tests.log",
+      "sha256": "e1215c678e7cb06b22f7a74e7615741eb836f349e951f1daac7e7c5f13a63209"
+    },
+    "compile-correction.log": {
+      "path": "/workspace/.cloud-setup/common-reader-batch/compile-correction.log",
+      "sha256": "55726eef22c9e0816460c23f49398a81cada67721ef735b5b8457c4f7456ff8b"
+    },
+    "wire-before.json": {
+      "path": "/workspace/.cloud-setup/common-reader-batch/wire-before.json",
+      "sha256": "c75cc9ed68ff5f55311f27316fb90003830c710f4a482675d71230083005fc1c"
+    },
+    "wire.json": {
+      "path": "/workspace/.cloud-setup/common-reader-batch/wire.json",
+      "sha256": "c75cc9ed68ff5f55311f27316fb90003830c710f4a482675d71230083005fc1c"
+    },
+    "wire-projection-failure.log": {
+      "path": "/workspace/.cloud-setup/common-reader-batch/wire-projection-failure.log",
+      "sha256": "2a2f90112f4991531d0f8e711626fa12e3e07215d88a735d13a8662625e450ea"
+    },
+    "tests-initial.log": {
+      "path": "/workspace/.cloud-setup/common-reader-batch/tests-initial.log",
+      "sha256": "dd14e2bbbe7e278e2cd204abb4a5a0c017403877679b155dd6e0bf2f94202d74"
+    },
+    "check.log": {
+      "path": "/workspace/.cloud-setup/common-reader-batch/check.log",
+      "sha256": "89aa280c17371a6d39addcff6da5dbda4e63ae2954bec96705eea36bc322e560"
+    },
+    "lint.log": {
+      "path": "/workspace/.cloud-setup/common-reader-batch/lint.log",
+      "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef"
+    },
+    "server-build.log": {
+      "path": "/workspace/.cloud-setup/common-reader-batch/server-build.log",
+      "sha256": "31202cf5d1c18da64e4029a2a0e5b8ffc7c194a57599ddabb8cc198bb0087422"
+    }
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "limits": [
+    "N03/O13 remain partial; other54 unresolved roots retain carried evidence, not fresh reproduction.",
+    "Partition-routed handle lookups and dirty table tasks retain their existing local fallback.",
+    "Fake coprocessor validates request/response composition, not live multi-node TiKV placement.",
+    "Retained index-merge table operators remain local; complete remote DAG/concurrency not accepted.",
+    "Partition/group estimates, local/stale scopes, task-build counters and live AZ remain open.",
+    "Full Go suites, complete upstream package obligations and performance not verified.",
+    "Real MySQL controls already pass before repair; these are no-regression checks, not proof of a preexisting SQL wrong result."
+  ],
+  "publication": {
+    "state": "pending actual precommit, fresh locked prepush build and remote SHA verification",
+    "completion_receipt": "/workspace/.cloud-setup/common-reader-batch/final-handoff.json"
+  }
+}

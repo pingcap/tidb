@@ -974,7 +974,7 @@ impl HandleSourceExec {
     fn initialize(&mut self) -> Result<(), ExecError> {
         if let Some(statement) = &self.table_statement {
             // The shared remote owner currently admits clean, unpartitioned
-            // integer handles. Validate route alignment before either path.
+            // handles. Validate route alignment before either path.
             if self
                 .partition_ids
                 .as_ref()
@@ -4089,7 +4089,9 @@ impl IndexRangeSourceExec {
                 (0..output_width)
                     .map(|output| {
                         if output == slot {
-                            lookup.handle_position
+                            lookup
+                                .handle_position
+                                .expect("extra rowid has integer identity")
                         } else {
                             let value = source;
                             source += 1;
@@ -4101,7 +4103,9 @@ impl IndexRangeSourceExec {
                 (0..output_width)
                     .map(|output| {
                         if output == slot {
-                            lookup.handle_position
+                            lookup
+                                .handle_position
+                                .expect("extra rowid has integer identity")
                         } else {
                             output
                         }

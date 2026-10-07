@@ -101,7 +101,7 @@ Integration dependencies: B01, B03.
 
 ## B09: Live information and statement observability
 
-Current B05/B09 maintenance shares ordinary/probe/merge table-request policy and actual handle-order restoration. The private small-batch bypass and orphan staging/prepared-batch helpers are retired; retained prepared/point decoding stays live. See [table-request validation](reader-task-batch-validation.json). N03/O13 stay partial; partition/common-handle remote execution, grouping estimates and full package obligations remain.
+Current B05/B09 maintenance shares ordinary/probe/merge table-request policy and actual handle-order restoration. The private small-batch bypass and orphan staging/prepared-batch helpers are retired; retained prepared/point decoding stays live. See [table-request validation](reader-task-batch-validation.json). N03/O13 stay partial; partition-routed handle lookup execution, grouping estimates and full package obligations remain.
 
 Source owners: pkg/infoschema and remote executor retrievers; domain, plan replay, topsql, workloadlearning, telemetry and summary v1/v2.
 
@@ -189,3 +189,8 @@ P03/P06/N03 now share nonblocking configured connections, accepted member public
 ## TSO failure/recovery checkpoint — 2026-10-07
 
 P03/P06/N03 now share construction-failure feedback, automatic healthy-backup routing, recovery and accepted-provider retention. Response-phase errors remain distinct from construction failures. See [validation](tso-failure-batch-validation.json); stream-readiness/prewarm, exact idle timing and complete packages remain open. No batch assignment or finding disposition changes.
+
+
+## Shared common-handle readers — 2026-10-07
+
+Latest connected repair: [shared common-handle readers](common-reader-batch-validation.json). Four baseline regressions precede 217 passing Rust cases and 11 real MySQL controls. Common-handle table tasks share remote request policy, row/chunk identity and pruned projections; ordered partition streams use the same identity owner. Integer-only extraction and refusal paths are retired. N03/O13 remain partial; counts stay86 tracked/30 repaired/56 unresolved (27open,29partial). Other54 roots retain carried evidence.

@@ -582,14 +582,6 @@ impl KvTable {
         if common_handle && common_primary.is_none() {
             return Ok(None);
         }
-        // The row-level merger below reconstructs an integer record key. A
-        // common handle needs the complete tuple encoding (and its collation)
-        // to merge partitions, so keep this less common ordered shape on the
-        // proven byte-level path until that encoder is carried through the
-        // remote stream seam.
-        if common_handle && self.partition.is_some() && keep_order {
-            return Ok(None);
-        }
         // A TiKV TableScan names one PHYSICAL table id.  A partitioned table
         // therefore needs one request per selected partition; sending the
         // logical table id (or a range spanning several partition ids) makes
@@ -643,41 +635,42 @@ impl KvTable {
         // partitioned integer read still merges its per-partition streams by
         // handle, so it keeps the column whatever the caller asked.
         let retain_identity = retain_identity || (self.partition.is_some() && keep_order);
-        let common_identity = common_primary
-            .as_ref()
-            .filter(|_| retain_identity)
-            .map(|primary| {
-                let parts = primary
-                    .column_offsets
-                    .iter()
-                    .enumerate()
-                    .map(|(part, offset)| {
-                        let column = &self.columns[*offset];
-                        let position = columns
-                            .iter()
-                            .position(|kept| kept.id == column.id)
-                            .unwrap_or_else(|| {
-                                columns.push(PushdownScanColumn {
-                                    id: column.id,
-                                    field_type: column.field_type.clone(),
-                                    is_handle: false,
-                                    origin_default: column.origin_default.clone(),
+        let mut common_identity =
+            common_primary
+                .as_ref()
+                .filter(|_| retain_identity)
+                .map(|primary| {
+                    let parts = primary
+                        .column_offsets
+                        .iter()
+                        .enumerate()
+                        .map(|(part, offset)| {
+                            let column = &self.columns[*offset];
+                            let position = columns
+                                .iter()
+                                .position(|kept| kept.id == column.id)
+                                .unwrap_or_else(|| {
+                                    columns.push(PushdownScanColumn {
+                                        id: column.id,
+                                        field_type: column.field_type.clone(),
+                                        is_handle: false,
+                                        origin_default: column.origin_default.clone(),
+                                    });
+                                    columns.len() - 1
                                 });
-                                columns.len() - 1
-                            });
-                        (
-                            position,
-                            primary.prefix_length(part),
-                            column.field_type.clone(),
-                        )
-                    })
-                    .collect();
-                RemoteCommonHandle {
-                    parts,
-                    zone: context.zone().clone(),
-                    use_new_collation: self.use_new_collation,
-                }
-            });
+                            (
+                                position,
+                                primary.prefix_length(part),
+                                column.field_type.clone(),
+                            )
+                        })
+                        .collect();
+                    RemoteCommonHandle {
+                        parts,
+                        zone: context.zone().clone(),
+                        use_new_collation: self.use_new_collation,
+                    }
+                });
         let handle_index = if common_handle {
             None
         } else {
@@ -705,6 +698,32 @@ impl KvTable {
                     Some(columns.len() - 1)
                 }
             }
+        };
+        // Go's sorted partition results retain their ordering columns in the
+        // wire schema. An output projection may otherwise drop or reorder a
+        // key part even though the scan requested it. Remap identity against
+        // the response and append only the missing transport columns.
+        let mut response_offsets = output_offsets.map(<[usize]>::to_vec);
+        let response_handle_index = if let Some(offsets) = &mut response_offsets {
+            let mut identity_position = |position| {
+                offsets
+                    .iter()
+                    .position(|offset| *offset == position)
+                    .or_else(|| {
+                        retain_identity.then(|| {
+                            offsets.push(position);
+                            offsets.len() - 1
+                        })
+                    })
+            };
+            if let Some(identity) = &mut common_identity {
+                for (position, _, _) in &mut identity.parts {
+                    *position = identity_position(*position).expect("common identity is retained");
+                }
+            }
+            handle_index.and_then(identity_position)
+        } else {
+            handle_index
         };
         let primary_column_ids: Vec<i64> = common_primary
             .as_ref()
@@ -753,7 +772,7 @@ impl KvTable {
             primary_column_ids: primary_column_ids.clone(),
             primary_prefix_column_ids: primary_prefix_column_ids.clone(),
             predicates: predicates.to_vec(),
-            output_offsets: output_offsets.map(<[usize]>::to_vec),
+            output_offsets: response_offsets.clone(),
             topn: topn.cloned(),
             limit,
             prefix_limit: None,
@@ -913,7 +932,8 @@ impl KvTable {
             if keep_order {
                 Box::new(PartitionMergedPushdownStream::new(
                     per_partition,
-                    handle_index.expect("integer partition merge has a handle"),
+                    response_handle_index,
+                    common_identity.clone(),
                     self.unsigned_pk_handle(),
                     descending,
                 ))
@@ -949,16 +969,23 @@ impl KvTable {
             pending_remote: None,
             pending_chunk: None,
             pending_chunk_row: 0,
-            // Handle lookups keep the complete request schema on the wire
-            // (`output_offsets` is None), so retain its types for the
-            // columnar drain below. Ordinary projected scans may narrow the
-            // wire schema; their existing chunk handoff remains unchanged.
-            field_types: columns
-                .iter()
-                .map(|column| column.field_type.clone())
-                .collect(),
+            // Chunk identity extraction uses the actual response layout.
+            field_types: response_offsets.map_or_else(
+                || {
+                    columns
+                        .iter()
+                        .map(|column| column.field_type.clone())
+                        .collect()
+                },
+                |offsets| {
+                    offsets
+                        .into_iter()
+                        .map(|offset| columns[offset].field_type.clone())
+                        .collect()
+                },
+            ),
             width: output_offsets.map_or(keep.len(), <[usize]>::len),
-            handle_index,
+            handle_index: response_handle_index,
             common_identity,
             table_id: self.table_id,
             merge_staged,
@@ -1047,49 +1074,13 @@ impl KvTable {
         if handles.is_empty() {
             return Ok(None);
         }
-        if self.has_dirty_content(&statement.staged_writes)
-            || self.partition.is_some()
-            || handles
-                .iter()
-                .any(|handle| !matches!(handle, TableHandle::Int(_)))
-        {
+        if self.has_dirty_content(&statement.staged_writes) || self.partition.is_some() {
             return Ok(None);
         }
-        let mut keep = scan_keep.to_vec();
-        let (handle_position, appended_handle) = match self.pk_handle_offset {
-            Some(handle_offset) => {
-                let appended = !keep.contains(&handle_offset);
-                let position = keep
-                    .iter()
-                    .position(|offset| *offset == handle_offset)
-                    .unwrap_or_else(|| {
-                        keep.push(handle_offset);
-                        keep.len() - 1
-                    });
-                (position, appended)
-            }
-            // Tables without an integer primary key use Go's hidden
-            // `_tidb_rowid`. `pushdown_row_cursor_with_context` appends that
-            // synthetic handle column itself; keep it out of `scan_keep` so
-            // predicate offsets still describe the visible row.
-            None => (keep.len(), true),
-        };
-        let layout = keep
-            .iter()
-            .map(|offset| {
-                scan_keep
-                    .iter()
-                    .position(|kept| kept == offset)
-                    .unwrap_or(usize::MAX)
-            })
-            .collect::<Vec<_>>();
-        let Some(predicates) = predicates
-            .iter()
-            .map(|predicate| predicate.remapped_columns(&layout))
-            .collect::<Option<Vec<_>>>()
-        else {
-            return Ok(None);
-        };
+        // The cursor retains key columns after the requested projection.
+        // Table workers reconstruct the handle before dropping those columns,
+        // just like Go's HandleCols.BuildHandle for row and chunk responses.
+        let keep = scan_keep;
         let (key_ranges, range_hints) =
             Self::table_reader_handle_key_ranges(self.table_id, handles)?;
         let statement = statement.for_lookup_batch(handles.len());
@@ -1099,21 +1090,21 @@ impl KvTable {
         {
             Some(RemoteRowMaterialization::new(
                 self,
-                &keep,
+                keep,
                 context,
-                self.pk_handle_offset.is_none(),
+                self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty(),
             )?)
         } else {
             None
         };
         let physical_predicates = materialization
             .as_ref()
-            .map(|projection| projection.remap_predicates(&keep, &predicates));
+            .map(|projection| projection.remap_predicates(keep, predicates));
         let Some(cursor) = self.pushdown_row_cursor_with_context_and_key_ranges(
             materialization
                 .as_ref()
-                .map_or(keep.as_slice(), |projection| projection.offsets.as_slice()),
-            physical_predicates.as_deref().unwrap_or(&predicates),
+                .map_or(keep, |projection| projection.offsets.as_slice()),
+            physical_predicates.as_deref().unwrap_or(predicates),
             None,
             None,
             None,
@@ -1133,29 +1124,40 @@ impl KvTable {
         };
         Ok(Some(StagedHandlesLookup {
             cursor,
-            handle_position,
-            appended_handle,
+            output_width: scan_keep.len(),
             materialization,
             required_rows: required_rows.max(1),
         }))
     }
 
-    /// Converts integer handles using the direct KV range builder shared with
+    /// Converts sorted handles using the direct KV range builder shared with
     /// Go's RequestBuilder.SetTableHandles, avoiding an IndexRange round trip.
     fn table_reader_handle_key_ranges(
         table_id: i64,
         handles: &[TableHandle],
     ) -> Result<(Vec<(Key, Key)>, Vec<usize>), KvTableError> {
-        let mut typed = handles
+        // TableHandlesToKVRanges requires one handle domain. Reject a corrupt
+        // mixed batch before its integer-run coalescer can assert.
+        let common = matches!(handles.first(), Some(TableHandle::Common(_)));
+        if handles
             .iter()
+            .any(|handle| matches!(handle, TableHandle::Common(_)) != common)
+        {
+            return Err(KvTableError::Encode(
+                "table reader mixed handle kinds".to_owned(),
+            ));
+        }
+        let mut sorted = handles.iter().collect::<Vec<_>>();
+        sorted.sort_unstable();
+        let typed = sorted
+            .into_iter()
             .map(|handle| match handle {
                 TableHandle::Int(value) => Ok(tidb_txnkv::IntHandle::new(*value).into()),
-                TableHandle::Common(_) => Err(KvTableError::Encode(
-                    "table reader handle ranges require integer handles".to_owned(),
-                )),
+                TableHandle::Common(bytes) => tidb_txnkv::CommonHandle::new(bytes.clone())
+                    .map(Into::into)
+                    .map_err(|error| KvTableError::Encode(format!("{error:?}"))),
             })
             .collect::<Result<Vec<tidb_txnkv::Handle>, KvTableError>>()?;
-        typed.sort_unstable_by_key(|handle| handle.int_value().expect("integer handle"));
         let (ranges, hints) = tidb_distsql::table_handles_to_kv_ranges(table_id, &typed);
         Ok((
             ranges
@@ -1181,34 +1183,22 @@ impl KvTable {
         let predicates_applied =
             staged.materialization.is_none() && staged.cursor.predicates_applied();
         let mut rows = Vec::with_capacity(handles.len());
-        // This helper asks the remote cursor to retain the synthetic
-        // `_tidb_rowid` appended by `pushdown_row_cursor_with_context`.
-        // Ordinary consumers intentionally truncate that transport-only
-        // column before returning a projected row, but the lookup caller
-        // needs it to associate each fetched row with its index handle.
+        let handle_index = staged.cursor.handle_index;
+        let common_identity = staged.cursor.common_identity.clone();
+        let wire_width = staged.cursor.width;
         let mut append_row = |mut row: Vec<Datum>| -> Result<(), KvTableError> {
+            let handle =
+                remote_record_handle(handle_index, common_identity.as_ref(), |position| {
+                    row.get(position).cloned()
+                })?;
             if let Some(projection) = &staged.materialization {
+                // Virtual-column evaluation reads physical columns. Only a
+                // heap's synthetic rowid belongs beside that projection;
+                // common/PK identity has already been reconstructed above.
+                row.truncate(wire_width + usize::from(projection.synthetic_handle));
                 row = projection.project_row(row)?;
             }
-            let handle = match row.get(staged.handle_position) {
-                Some(Datum::Int(value)) => *value,
-                Some(Datum::UInt(value)) => *value as i64,
-                _ => {
-                    return Err(KvTableError::Decode(
-                        "a coprocessor row carried no integer handle".to_owned(),
-                    ))
-                }
-            };
-            let handle = TableHandle::Int(handle);
-            if staged.appended_handle {
-                // pushdown_row_cursor_with_context appends a synthetic
-                // handle after every requested column. Go's table worker
-                // keeps that handle in a side field rather than shifting the
-                // row; pop the trailing slot to avoid an O(width) move for
-                // every fetched row.
-                debug_assert_eq!(staged.handle_position, row.len().saturating_sub(1));
-                row.pop();
-            }
+            row.truncate(staged.output_width);
             rows.push((handle, row));
             Ok(())
         };
@@ -1316,27 +1306,18 @@ impl KvTable {
             if batch.num_rows() == 0 {
                 break;
             }
-            if staged.handle_position >= batch.num_cols() {
-                return Err(KvTableError::Decode(
-                    "a coprocessor row carried no integer handle".to_owned(),
-                ));
-            }
             let batch_index = batches.len();
             for row_index in 0..batch.num_rows() {
                 let row = batch.get_row(row_index);
-                let handle = match row.get_datum(
-                    staged.handle_position,
-                    &staged.cursor.field_types[staged.handle_position],
-                ) {
-                    Datum::Int(handle) => handle,
-                    Datum::UInt(handle) => handle as i64,
-                    _ => {
-                        return Err(KvTableError::Decode(
-                            "a coprocessor row carried no integer handle".to_owned(),
-                        ));
-                    }
-                };
-                rows.push((TableHandle::Int(handle), batch_index, row_index));
+                let handle = remote_record_handle(
+                    staged.cursor.handle_index,
+                    staged.cursor.common_identity.as_ref(),
+                    |position| {
+                        (position < batch.num_cols())
+                            .then(|| row.get_datum(position, &staged.cursor.field_types[position]))
+                    },
+                )?;
+                rows.push((handle, batch_index, row_index));
             }
             batches.push(batch);
         }
@@ -1358,8 +1339,11 @@ impl KvTable {
         Ok(Some(FinishedLookupChunk {
             batches,
             row_positions,
-            handle_position: staged.handle_position,
-            appended_handle: staged.appended_handle,
+            handle_position: staged.cursor.handle_index,
+            appended_handle: staged
+                .cursor
+                .handle_index
+                .is_some_and(|position| position >= staged.output_width),
             predicates_applied,
             wire_rows,
         }))
@@ -2897,8 +2881,7 @@ type StagedRow = (Vec<u8>, Option<Vec<Datum>>);
 /// lookup pipeline can drain it off the executor thread.
 pub struct StagedHandlesLookup {
     cursor: RemoteRowCursor,
-    handle_position: usize,
-    appended_handle: bool,
+    output_width: usize,
     materialization: Option<RemoteRowMaterialization>,
     required_rows: usize,
 }
@@ -2970,8 +2953,8 @@ pub(crate) struct FinishedLookupChunk {
     pub(crate) batches: Vec<Chunk>,
     /// `(batch index, row index)` entries in the caller's index-handle order.
     pub(crate) row_positions: Vec<(usize, usize)>,
-    /// The source column carrying the integer handle.
-    pub(crate) handle_position: usize,
+    /// Integer identity, if present; common handles retain their key parts.
+    pub(crate) handle_position: Option<usize>,
     /// Whether the handle column was appended only for lookup association.
     pub(crate) appended_handle: bool,
     /// Whether the remote response evaluated every requested predicate.
@@ -2990,6 +2973,7 @@ pub(crate) enum FinishedLookup {
     Rows(Vec<(TableHandle, Vec<Datum>)>, bool, u64),
 }
 
+#[derive(Clone)]
 struct RemoteCommonHandle {
     /// Wire position, declared prefix length and type of each key part.
     parts: Vec<(usize, i64, FieldType)>,
@@ -2998,14 +2982,22 @@ struct RemoteCommonHandle {
 }
 
 impl RemoteCommonHandle {
-    fn record_handle(&self, row: &[Datum]) -> Result<RecordHandle, KvTableError> {
+    #[cfg(test)]
+    fn record_handle(&self, row: &[Datum]) -> Result<TableHandle, KvTableError> {
+        self.record_handle_with(|position| row.get(position).cloned())
+    }
+
+    fn record_handle_with(
+        &self,
+        mut datum: impl FnMut(usize) -> Option<Datum>,
+    ) -> Result<TableHandle, KvTableError> {
         // Go CommonHandleCols.buildHandleByDatumsBuffer truncates key parts
         // before EncodeKey, then NewCommonHandle pads short encodings.
         let values = self
             .parts
             .iter()
             .map(|(position, prefix, field_type)| {
-                let mut value = row.get(*position).cloned().ok_or_else(|| {
+                let mut value = datum(*position).ok_or_else(|| {
                     KvTableError::Decode("remote row omitted a common handle column".to_owned())
                 })?;
                 crate::index_prefix_cut::cut_datum_by_prefix_len(&mut value, *prefix, field_type);
@@ -3017,19 +3009,37 @@ impl RemoteCommonHandle {
             .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
         let handle = tidb_txnkv::CommonHandle::new(bytes)
             .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
-        Ok(RecordHandle::Common(handle.encoded().to_vec()))
+        Ok(TableHandle::Common(handle.encoded().to_vec()))
     }
 }
 
-/// Merges clean remote streams from several physical partitions by their
-/// integer record keys.  A partitioned TableScan cannot name more than one
-/// physical table id in a single TiPB executor, so ordered reads open one
-/// stream per partition.  The byte-level cursor already performs this merge;
-/// this small row-level adapter preserves the same order for the remote path.
+/// Reconstructs the shared transport identity without materializing a whole
+/// chunk row. CommonHandleCols and IntHandleCols supply this contract in Go.
+fn remote_record_handle(
+    handle_index: Option<usize>,
+    common_identity: Option<&RemoteCommonHandle>,
+    mut datum: impl FnMut(usize) -> Option<Datum>,
+) -> Result<TableHandle, KvTableError> {
+    if let Some(identity) = common_identity {
+        return identity.record_handle_with(datum);
+    }
+    match handle_index.and_then(&mut datum) {
+        Some(Datum::Int(value)) => Ok(TableHandle::Int(value)),
+        Some(Datum::UInt(value)) => Ok(TableHandle::Int(value as i64)),
+        _ => Err(KvTableError::Decode(
+            "remote row omitted its integer handle".to_owned(),
+        )),
+    }
+}
+
+/// Merges clean partition streams by their encoded handle, independently of
+/// the physical table ID. The common tuple encoder preserves key collation
+/// and prefix rules; unsigned integer handles retain value ordering.
 struct PartitionMergedPushdownStream {
     parts: Vec<(i64, Box<dyn PushdownRowStream>)>,
     pending: Vec<Option<(Vec<u8>, Vec<Datum>)>>,
-    handle_index: usize,
+    handle_index: Option<usize>,
+    common_identity: Option<RemoteCommonHandle>,
     unsigned_handle: bool,
     descending: bool,
 }
@@ -3037,7 +3047,8 @@ struct PartitionMergedPushdownStream {
 impl PartitionMergedPushdownStream {
     fn new(
         parts: Vec<(i64, Box<dyn PushdownRowStream>)>,
-        handle_index: usize,
+        handle_index: Option<usize>,
+        common_identity: Option<RemoteCommonHandle>,
         unsigned_handle: bool,
         descending: bool,
     ) -> Self {
@@ -3046,26 +3057,21 @@ impl PartitionMergedPushdownStream {
             parts,
             pending,
             handle_index,
+            common_identity,
             unsigned_handle,
             descending,
         }
     }
 
     fn row_key(&self, physical_id: i64, row: &[Datum]) -> Result<Vec<u8>, StorageError> {
-        let value = match row.get(self.handle_index) {
-            Some(Datum::Int(value)) => *value,
-            // The row codec stores an unsigned PK handle using the signed
-            // int64 record-key codec; preserving the bits reproduces Go's
-            // `Handle()` ordering at the transport boundary.
-            Some(Datum::UInt(value)) => *value as i64,
-            other => {
-                return Err(StorageError::Backend(format!(
-                    "a partition coprocessor row carried no integer handle, got {other:?}"
-                )));
-            }
-        };
+        let handle = remote_record_handle(
+            self.handle_index,
+            self.common_identity.as_ref(),
+            |position| row.get(position).cloned(),
+        )
+        .map_err(|error| StorageError::Backend(format!("{error:?}")))?;
         Ok(record_merge_key(
-            &encode_row_key_with_handle(physical_id, &RecordHandle::Int(value)),
+            &encode_row_key_with_handle(physical_id, &handle.record_handle()),
             self.unsigned_handle,
         ))
     }
@@ -3315,24 +3321,13 @@ impl RemoteRowCursor {
         let Some(mut row) = next else {
             return Ok(None);
         };
-        let handle = if let Some(identity) = &self.common_identity {
-            identity.record_handle(&row)?
-        } else {
-            let handle_index = self.handle_index.ok_or_else(|| {
-                KvTableError::Decode("remote row has no record identity".to_owned())
-            })?;
-            match row.get(handle_index) {
-                Some(Datum::Int(value)) => RecordHandle::Int(*value),
-                Some(Datum::UInt(value)) => RecordHandle::Int(*value as i64),
-                other => {
-                    return Err(KvTableError::Decode(format!(
-                        "a coprocessor row carried no integer handle, got {other:?}"
-                    )))
-                }
-            }
-        };
+        let handle = remote_record_handle(
+            self.handle_index,
+            self.common_identity.as_ref(),
+            |position| row.get(position).cloned(),
+        )?;
         row.truncate(self.width);
-        let key = encode_row_key_with_handle(self.table_id, &handle);
+        let key = encode_row_key_with_handle(self.table_id, &handle.record_handle());
         Ok(Some((key, row)))
     }
 
@@ -6704,7 +6699,7 @@ mod remote_cursor_tests {
         let expected = Encoder::new(true)
             .encode_key_in_timezone(&SessionTimeZone::utc(), &[truncated])
             .unwrap();
-        assert_eq!(actual, RecordHandle::Common(expected));
+        assert_eq!(actual, TableHandle::Common(expected));
 
         let identity = RemoteCommonHandle {
             parts: vec![(
@@ -6723,7 +6718,7 @@ mod remote_cursor_tests {
         expected.resize(9, 0);
         assert_eq!(
             identity.record_handle(&[value]).unwrap(),
-            RecordHandle::Common(expected)
+            TableHandle::Common(expected)
         );
         assert!(identity.record_handle(&[]).is_err());
     }
@@ -6775,7 +6770,8 @@ mod remote_cursor_tests {
                     }),
                 ),
             ],
-            0,
+            Some(0),
+            None,
             false,
             false,
         );
@@ -6805,7 +6801,8 @@ mod remote_cursor_tests {
                     }),
                 ),
             ],
-            0,
+            Some(0),
+            None,
             true,
             false,
         );
@@ -6844,7 +6841,8 @@ mod remote_cursor_tests {
                     }),
                 ),
             ],
-            0,
+            Some(0),
+            None,
             false,
             true,
         );
@@ -7374,77 +7372,104 @@ mod remote_cursor_tests {
 
     #[test]
     fn handle_lookup_drains_columnar_batches_and_restores_index_order() {
-        for handles in [
-            vec![TableHandle::Int(8), TableHandle::Int(7)],
-            vec![TableHandle::Int(7), TableHandle::Int(8)],
-        ] {
-            let source_types = vec![
-                FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-            ];
-            let mut first_batch = Chunk::new_with_capacity(&source_types, 1);
-            first_batch.append_int64(0, 70);
-            first_batch.append_int64(1, 7);
-            let mut second_batch = Chunk::new_with_capacity(&source_types, 1);
-            second_batch.append_int64(0, 80);
-            second_batch.append_int64(1, 8);
-            let cursor = RemoteRowCursor {
-                stream: Box::new(ChunkStream {
-                    chunks: std::collections::VecDeque::from([second_batch, first_batch]),
-                    returned: 0,
-                }),
-                staged: Vec::new().into_iter(),
-                pending_staged: None,
-                pending_remote: None,
-                pending_chunk: None,
-                pending_chunk_row: 0,
-                field_types: source_types,
-                width: 1,
-                handle_index: Some(1),
-                common_identity: None,
-                table_id: 0,
-                merge_staged: false,
-                unordered_shadowed: None,
-                unsigned_handle_order: false,
-                descending: false,
-                noted_rows: 0,
-                predicates_applied: true,
-            };
-            let staged = StagedHandlesLookup {
-                cursor,
-                handle_position: 1,
-                appended_handle: true,
-                materialization: None,
-                required_rows: 1024,
-            };
-            let Some(FinishedLookup::Chunk(finished)) =
-                KvTable::finish_lookup_by_handles(&handles, staged, true).unwrap()
-            else {
-                panic!("columnar handle lookup unexpectedly refused");
-            };
-            assert!(finished.predicates_applied);
-            assert_eq!(finished.wire_rows, 2);
-            let rows = finished
-                .row_positions
-                .iter()
-                .map(|(batch, row)| {
-                    (
-                        finished.batches[*batch].get_row(*row).get_int64(1),
-                        finished.batches[*batch].get_row(*row).get_int64(0),
-                    )
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(
-                rows,
-                handles
+        for common in [false, true] {
+            for handles in [
+                vec![TableHandle::Int(8), TableHandle::Int(7)],
+                vec![TableHandle::Int(7), TableHandle::Int(8)],
+            ] {
+                let expected = handles
                     .iter()
-                    .map(|handle| {
-                        let id = handle.int_value().unwrap();
+                    .map(|h| {
+                        let id = h.int_value().unwrap();
                         (id, id * 10)
                     })
-                    .collect::<Vec<_>>()
-            );
-            assert_eq!(finished.batches.len(), 2);
+                    .collect::<Vec<_>>();
+                let identity = common.then(|| RemoteCommonHandle {
+                    parts: vec![(
+                        1,
+                        -1,
+                        FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    )],
+                    zone: SessionTimeZone::utc(),
+                    use_new_collation: false,
+                });
+                let handles = if let Some(identity) = &identity {
+                    handles
+                        .iter()
+                        .map(|handle| {
+                            match identity
+                                .record_handle(&[
+                                    Datum::Null,
+                                    Datum::Int(handle.int_value().unwrap()),
+                                ])
+                                .unwrap()
+                            {
+                                TableHandle::Common(bytes) => TableHandle::Common(bytes),
+                                _ => unreachable!(),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    handles
+                };
+                let source_types = vec![
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ];
+                let mut first_batch = Chunk::new_with_capacity(&source_types, 1);
+                first_batch.append_int64(0, 70);
+                first_batch.append_int64(1, 7);
+                let mut second_batch = Chunk::new_with_capacity(&source_types, 1);
+                second_batch.append_int64(0, 80);
+                second_batch.append_int64(1, 8);
+                let cursor = RemoteRowCursor {
+                    stream: Box::new(ChunkStream {
+                        chunks: std::collections::VecDeque::from([second_batch, first_batch]),
+                        returned: 0,
+                    }),
+                    staged: Vec::new().into_iter(),
+                    pending_staged: None,
+                    pending_remote: None,
+                    pending_chunk: None,
+                    pending_chunk_row: 0,
+                    field_types: source_types,
+                    width: 1,
+                    handle_index: Some(1),
+                    common_identity: identity,
+                    table_id: 0,
+                    merge_staged: false,
+                    unordered_shadowed: None,
+                    unsigned_handle_order: false,
+                    descending: false,
+                    noted_rows: 0,
+                    predicates_applied: true,
+                };
+                let staged = StagedHandlesLookup {
+                    cursor,
+                    output_width: 1,
+                    materialization: None,
+                    required_rows: 1024,
+                };
+                let Some(FinishedLookup::Chunk(finished)) =
+                    KvTable::finish_lookup_by_handles(&handles, staged, true).unwrap()
+                else {
+                    panic!("columnar handle lookup unexpectedly refused");
+                };
+                assert!(finished.predicates_applied);
+                assert_eq!(finished.wire_rows, 2);
+                let rows = finished
+                    .row_positions
+                    .iter()
+                    .map(|(batch, row)| {
+                        (
+                            finished.batches[*batch].get_row(*row).get_int64(1),
+                            finished.batches[*batch].get_row(*row).get_int64(0),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(rows, expected);
+                assert_eq!(finished.batches.len(), 2);
+            }
         }
     }
 

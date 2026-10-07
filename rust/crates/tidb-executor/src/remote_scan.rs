@@ -2541,6 +2541,168 @@ mod tests {
     }
 
     #[test]
+    fn common_reader_lookup_retains_identity_outside_projection() {
+        let mut fixture = common_handle_without_catalog_index_fixture();
+        let mut handles = Vec::new();
+        for row in [[1, 10], [2, 20], [3, 30]] {
+            handles.push(
+                fixture
+                    .table
+                    .insert_row(&row.map(Datum::Int), &tidb_expr::NoColumns)
+                    .unwrap(),
+            );
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture
+            .scanner
+            .reverse_unordered
+            .store(true, Ordering::SeqCst);
+        for keep in [vec![1], vec![1, 0], vec![]] {
+            let (rows, _) = fixture
+                .table
+                .pushdown_rows_by_handles_filtered(
+                    &handles,
+                    &keep,
+                    &[],
+                    &SessionTimeZone::utc(),
+                    &PushdownStatementContext::from_stmt(&crate::StmtContext::for_query()),
+                    2,
+                )
+                .unwrap()
+                .expect("common handles use the shared table request");
+            assert_eq!(
+                rows,
+                handles
+                    .iter()
+                    .enumerate()
+                    .map(|(i, h)| {
+                        let row = [Datum::Int(i as i64 + 1), Datum::Int((i as i64 + 1) * 10)];
+                        (
+                            h.clone(),
+                            keep.iter().map(|offset| row[*offset].clone()).collect(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn common_reader_lookup_and_probe_share_table_requests() {
+        let mut fixture =
+            fixture_with_columns(None, vec![column("a", 1), column("b", 2), column("c", 3)]);
+        fixture.table.set_common_handle_offsets(vec![0, 1]);
+        fixture.table.add_index(
+            KvIndex {
+                id: 1,
+                name: "ib".into(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![1],
+                prefix_lengths: vec![-1],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        for row in [[1, 30, 100], [2, 20, 200], [3, 10, 300]] {
+            fixture
+                .table
+                .insert_row(&row.map(Datum::Int), &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        let scanner = Arc::clone(&fixture.scanner);
+        scanner.reverse_unordered.store(true, Ordering::SeqCst);
+        let catalog = catalog_of(fixture.table);
+        for (sql, expected) in [
+            (
+                "SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b",
+                vec![
+                    vec![Datum::Int(300)],
+                    vec![Datum::Int(200)],
+                    vec![Datum::Int(100)],
+                ],
+            ),
+            (
+                "SELECT /*+ INL_JOIN(r) */ r.c FROM t l JOIN t r USE INDEX(ib) ON r.b=l.b WHERE l.a<3 ORDER BY l.a",
+                vec![vec![Datum::Int(100)], vec![Datum::Int(200)]],
+            ),
+        ] {
+            scanner.requested_read_estimates.lock().unwrap().clear();
+            assert_eq!(
+                run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap(),
+                expected
+            );
+            let requests = scanner.requested_read_estimates.lock().unwrap();
+            assert!(
+                requests.iter().any(|(index, bytes, avg)| !*index
+                    && avg.is_some_and(|avg| avg > 0.0 && *bytes >= avg)),
+                "common table task must carry Go estimates: {sql}; {requests:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn common_reader_partition_order_retains_pruned_identity() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT, PRIMARY KEY(a,b) CLUSTERED) PARTITION BY HASH(a) PARTITIONS 2", &mut catalog).unwrap();
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+            panic!("KV table");
+        };
+        let partition = table.partition().unwrap().clone();
+        let mut fixture = common_handle_without_catalog_index_fixture();
+        fixture.table.set_partition(partition);
+        for row in [[1, 30], [2, 20], [3, 10], [4, 40]] {
+            fixture
+                .table
+                .insert_row(&row.map(Datum::Int), &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        for projected in [false, true] {
+            for desc in [false, true] {
+                let mut cursor = fixture
+                    .table
+                    .pushdown_row_cursor_with_context(
+                        &[1],
+                        &[],
+                        projected.then_some([0].as_slice()),
+                        None,
+                        None,
+                        None,
+                        None,
+                        desc,
+                        true,
+                        false,
+                        &crate::kv_table::RowDecodeContext::for_test_query_utc(),
+                        &PushdownStatementContext::default(),
+                        PushdownReadEngine::TiKv,
+                        0,
+                    )
+                    .unwrap()
+                    .expect("ordered common-handle partitions remain remote");
+                let mut rows = Vec::new();
+                while let Some(row) = cursor.next_row().unwrap() {
+                    rows.push(row);
+                }
+                let mut expected = vec![
+                    vec![Datum::Int(30)],
+                    vec![Datum::Int(20)],
+                    vec![Datum::Int(10)],
+                    vec![Datum::Int(40)],
+                ];
+                if desc {
+                    expected.reverse();
+                }
+                assert_eq!(rows, expected);
+            }
+        }
+    }
+
+    #[test]
     fn reader_task_ordinary_lookup_uses_table_width() {
         let mut fixture = fixture();
         fixture.table.add_index(
@@ -2594,8 +2756,11 @@ mod tests {
 
     #[test]
     fn reader_task_index_merge_uses_shared_table_requests() {
-        for clustered in [false, true] {
-            let mut fixture = fixture_with(clustered.then_some(0));
+        for mut fixture in [
+            fixture(),
+            clustered_fixture(),
+            common_handle_without_catalog_index_fixture(),
+        ] {
             for (id, name, offset) in [(1, "ia", 0), (2, "ib", 1)] {
                 fixture.table.add_index(
                     KvIndex {
