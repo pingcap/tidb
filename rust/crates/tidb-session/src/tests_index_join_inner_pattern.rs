@@ -158,29 +158,37 @@ fn an_index_joins_dedup_build_side_keeps_its_ordered_index_stream_agg() {
         &mut session,
         "EXPLAIN SELECT /*+ TIDB_INLJ(t1) */ * FROM t1 WHERE t1.a IN (SELECT t2.a FROM t2)",
     );
-    // Refreshed against the LIVE oracle (SELECT tidb_version() =>
-    // fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85): Go builds the hinted
-    // IndexJoin with the dedup StreamAgg chain as the OUTER build side and
-    // t1 as the INNER probe through its `a(a)` index -- `IndexJoin ->
-    // IndexLookUp(Probe) -> [IndexRangeScan decided-by | TableRowIDScan]`.
-    // The hint reaches the rewritten join through Go's
-    // `SetPreferredJoinTypeAndOrder(b.TableHints())` stamp on the subquery
-    // apply (logical_plan_builder.go:5760).
+    // Keep Go's operator/ordering contract; old plan IDs and pseudo-NDV
+    // estimates belonged to a different source revision.
+    assert!(plan_text.contains("inner join, inner:IndexLookUp_"));
+    assert_eq!(
+        plan_text
+            .lines()
+            .filter(|line| line.contains("StreamAgg_") && line.contains("group by:test.t2.a"))
+            .count(),
+        2
+    );
     for expected in [
-        "IndexJoin_11 10000.00 root  inner join, inner:IndexLookUp_26, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
-        "StreamAgg_40(Build) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-        "IndexReader_41 8000.00 root  index:StreamAgg_30",
-        "StreamAgg_30 8000.00 cop[tikv]  group by:test.t2.a, ",
-        "IndexFullScan_19 10000.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
-        "IndexLookUp_26(Probe) 10000.00 root",
-        "IndexRangeScan_24(Build) 10000.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo",
-        "TableRowIDScan_25(Probe) 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+        "outer key:test.t2.a, inner key:test.t1.a",
+        "group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+        "cop[tikv] table:t2, index:a(a) keep order:true",
+        "table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)]",
+        "cop[tikv] table:t1 keep order:false",
     ] {
         assert!(
             plan_text.contains(expected),
             "missing `{expected}` in:\n{plan_text}"
         );
     }
+    session
+        .run("INSERT INTO t1 VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    session
+        .run("INSERT INTO t2 VALUES (1,100),(1,101),(2,200)")
+        .unwrap();
+    assert_eq!(row_text(session.run(
+        "SELECT /*+ TIDB_INLJ(t1) */ * FROM t1 WHERE t1.a IN (SELECT t2.a FROM t2) ORDER BY t1.a")),
+        vec![vec!["1", "10"], vec!["2", "20"]]);
 }
 
 /// Task 65: a common (composite/CLUSTERED) handle table probed by an index
@@ -230,50 +238,31 @@ fn a_common_handle_probes_prefix_key_reader_labels_table_range_scan() {
     );
 }
 
-/// Go `admitIndexJoinInnerChildPattern` (`exhaust_physical_plans.go:643`)
-/// admits a `LogicalSelection` between an index join and the `DataSource` it
-/// re-seeds ONLY when `tidb_enable_inl_join_inner_multi_pattern` (default ON)
-/// holds. `t2.c REGEXP 'x'` is not TiKV-pushable, so it survives as a real
-/// `LogicalSelection` above `t2` rather than folding into the scan's own
-/// pushed-down conditions -- exactly the shape the gate has to see.
-///
-/// Before `admits_index_join_inner_child_pattern` was wired into
-/// `find_best_task`'s generic dispatch tail (`find_best_task/dispatch.rs`),
-/// Rust had no equivalent of this up-front gate at all: `SET SESSION
-/// tidb_enable_inl_join_inner_multi_pattern = OFF` was silently ignored and
-/// the walk-through-Selection IndexJoin below was built either way.
+/// Go scalarExprSupportedByTiKV admits REGEXP for nonbinary collations.
+/// Its cop Selection does not require a LogicalSelection inner pattern.
 #[test]
-fn a_selection_probe_walks_through_only_with_multi_pattern_on() {
+fn a_pushdown_filter_keeps_the_index_probe_without_multi_pattern() {
     let mut session = fixture();
-    let sql = "EXPLAIN SELECT /*+ INL_JOIN(t2) */ * FROM t1 JOIN t2 ON t1.a = t2.a \
-               WHERE t2.c REGEXP 'x'";
-
-    let on = plan(&mut session, sql);
-    assert!(
-        on.contains("IndexJoin") && on.contains("inner:Selection"),
-        "multi_pattern defaults ON: the probe must walk through the residual \
-         Selection above t2:\n{on}"
-    );
-    assert!(
-        on.contains("range: decided by"),
-        "the walked-through Selection's child scan must still be the \
-         runtime-ranged probe:\n{on}"
-    );
-
-    session
-        .run("SET SESSION tidb_enable_inl_join_inner_multi_pattern = OFF")
-        .unwrap();
-    let off = plan(&mut session, sql);
-    assert!(
-        !off.contains("IndexJoin"),
-        "multi_pattern OFF: Go refuses Selection as an index-join inner \
-         pattern, so no IndexJoin -- got:\n{off}"
-    );
-    assert!(
-        !off.contains("range: decided by"),
-        "with the walk-through refused, t2 must plan as an ordinary scan, \
-         not a runtime-ranged probe:\n{off}"
-    );
+    let sql = "SELECT /*+ INL_JOIN(t2) */ t1.a FROM t1 JOIN t2 ON t1.a=t2.a \
+        WHERE t2.c REGEXP '1$'";
+    for enabled in ["ON", "OFF"] {
+        session
+            .run(&format!(
+                "SET tidb_enable_inl_join_inner_multi_pattern={enabled}"
+            ))
+            .unwrap();
+        let text = plan(&mut session, &format!("EXPLAIN {sql}"));
+        assert!(
+            text.contains("IndexJoin") && text.contains("range: decided by"),
+            "{text}"
+        );
+        assert!(
+            text.lines()
+                .any(|line| line.contains("cop[tikv]") && line.contains("regexp(")),
+            "{text}"
+        );
+        assert_eq!(row_text(session.run(sql)), vec![vec!["1"]]);
+    }
 }
 
 #[test]
@@ -524,5 +513,35 @@ fn prepared_index_probe_fixed_prefix_changes_match_go() {
             );
         }
         session.run("DEALLOCATE PREPARE stmt").unwrap();
+    }
+}
+
+// Go tests/integrationtest/t/planner/core/indexjoin.test, issue #71737.
+#[test]
+fn index_probe_group_expression_preserves_whole_groups() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE o(c1 INT,c2 INT)",
+        "CREATE TABLE i(c1 INT,c2 INT,KEY(c2))",
+        "INSERT INTO o VALUES (1,2)",
+        "INSERT INTO i VALUES (1,2),(1,4)",
+        "SET sql_mode=''",
+        "SET tidb_index_join_batch_size=1",
+    ] {
+        session.run(sql).unwrap();
+    }
+    session
+        .run(&format!(
+            "INSERT INTO o VALUES {}",
+            vec!["(0,1001)"; 200].join(",")
+        ))
+        .unwrap();
+    session.run("INSERT INTO o VALUES (2,4)").unwrap();
+    for hint in ["INL_JOIN", "INL_HASH_JOIN", "HASH_JOIN"] {
+        let sql = format!(
+            "SELECT /*+ {hint}(d) */ d.cnt FROM o JOIN \
+            (SELECT c2,COUNT(*) cnt FROM i GROUP BY c2%2) d ON o.c2=d.c2 ORDER BY d.cnt"
+        );
+        assert_eq!(row_text(session.run(&sql)), vec![vec!["2"]], "{hint}");
     }
 }

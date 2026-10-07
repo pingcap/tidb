@@ -2547,13 +2547,6 @@ fn index_inner_scan_order(plan: &PhysicalPlan) -> Option<(bool, bool)> {
     }
 }
 
-/// Whether `plan`'s subtree contains the reader that ANSWERS the index-join
-/// runtime probe: the one reading the join's retained inner table. A subtree
-/// can hold several readers (an inner-side `HashJoin` of two aggregated
-/// branches, for example); only the retained access path consumes the runtime
-/// key, so mere reader presence cannot choose the probe side. Go identifies it
-/// through `IndexJoinInfo`/the chosen `AccessPath`, whose table is what
-/// `join.inner_access_table_id` records here.
 /// The cop partial aggregate Go pushes into an index-join inner reader's
 /// table plan (`attach2Task4PhysicalHashAgg`). The lookup leaf emits
 /// physical-width rows, so the port runs the partial aggregate locally above
@@ -2569,15 +2562,25 @@ fn index_inner_partial_aggregate(
     }
 }
 
-fn contains_index_inner_reader(plan: &PhysicalPlan, table_id: Option<i64>) -> bool {
-    if let Some((embedded, _)) = index_inner_reader_payload(plan) {
-        if retained_table_id(embedded).ok() == table_id {
-            return true;
-        }
+/// Go `indexJoinLookupChildIdx`: physical table IDs cannot distinguish aliases.
+/// Every retained probe key must belong to exactly one child's logical schema.
+fn index_join_lookup_child_idx(plan: &PhysicalPlan, keys: &[Column]) -> Option<usize> {
+    let [left, right] = plan.children() else {
+        return None;
+    };
+    if keys.is_empty() {
+        return None;
     }
-    plan.children()
-        .iter()
-        .any(|child| contains_index_inner_reader(child, table_id))
+    let contains_keys = |child: &PhysicalPlan| {
+        child
+            .schema()
+            .is_some_and(|schema| keys.iter().all(|key| schema.contains(key)))
+    };
+    match (contains_keys(left), contains_keys(right)) {
+        (true, false) => Some(0),
+        (false, true) => Some(1),
+        _ => None,
+    }
 }
 
 fn build_index_inner_reader(
@@ -2630,11 +2633,37 @@ fn build_index_inner_reader(
             collect_index_inner_filters(index_plan, &index_schema, &mut index_filters)?;
         }
     }
-    let mut source = IndexJoinLookupExec::new_with_context(
+    let chunk_rpc = tidb_config::tikvcfg::get_global_config()
+        .tikv_client
+        .enable_chunk_rpc;
+    // Go rebuilds the ordinary no-range reader for each outer task. Retain
+    // the same estimates used by that reader's adaptive replica policy.
+    let (network_plan, encoded_key, table_lookup_plan) = match plan {
+        PhysicalPlan::IndexLookUpReader(reader) => (
+            reader.index_plan.as_deref().ok_or_else(|| {
+                DriverError::unsupported("an index-join lookup reader has no index plan")
+            })?,
+            true,
+            reader.table_plan.as_deref(),
+        ),
+        _ => (embedded, covering, None),
+    };
+    let table_row_bytes = table_lookup_plan.map(|plan| plan.cop_avg_row_size(false, chunk_rpc));
+    // buildNoRangeIndexLookUpReader initializes both idxNetDataSize and
+    // avgRowSize from GetAvgTableRowSize. Table tasks later scale by handles.
+    let mut statement = PushdownStatementContext::from_stmt(ctx)
+        .with_plan_id(i64::from(network_plan.base().base.id()))
+        .with_estimated_net_bytes(
+            table_row_bytes
+                .unwrap_or_else(|| network_plan.cop_net_data_size(encoded_key, chunk_rpc)),
+        );
+    statement.lookup_avg_row_bytes = table_row_bytes;
+    let mut source = IndexJoinLookupExec::new_with_statement(
         meta(ctx, plan, row_schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
         object,
         RowDecodeContext::for_query(ctx),
+        statement,
     );
     source.set_probe_parts(probe_parts.to_vec());
     source.set_probe_key_prefix_lengths(join.idx_col_lens.clone());
@@ -2797,16 +2826,11 @@ fn build_index_inner_subtree(
                     "an index-join inner HashJoin has the wrong child count",
                 ));
             };
-            let left_has_reader =
-                contains_index_inner_reader(left_plan, join.inner_access_table_id);
-            let right_has_reader =
-                contains_index_inner_reader(right_plan, join.inner_access_table_id);
-            if left_has_reader == right_has_reader {
-                return Err(DriverError::unsupported(
-                    "an index-join inner HashJoin must contain one retained lookup reader",
-                ));
-            }
-            let left = if left_has_reader {
+            let lookup_child = index_join_lookup_child_idx(plan, &join.inner_join_keys)
+                .ok_or_else(|| DriverError::unsupported(
+                    "an index-join inner HashJoin cannot locate its lookup child",
+                ))?;
+            let left = if lookup_child == 0 {
                 build_index_inner_subtree(
                     left_plan,
                     join,
@@ -2819,7 +2843,7 @@ fn build_index_inner_subtree(
             } else {
                 build_with_state(left_plan, catalog, ctx, state)?
             };
-            let right = if right_has_reader {
+            let right = if lookup_child == 1 {
                 build_index_inner_subtree(
                     right_plan,
                     join,
@@ -6594,6 +6618,79 @@ mod tests {
     }
 
     #[test]
+    fn index_probe_hash_join_distinguishes_aliases_of_one_table() {
+        use tidb_planner::physical::{PhysicalHashJoin, PhysicalIndexJoin};
+        for right_table in [40, 41] {
+            let mut catalog = Catalog::default();
+            catalog.register_kv(
+                "t",
+                crate::KvTable::new(40, vec![long_column("id", 1), long_column("value", 2)]),
+            );
+            catalog.register_kv(
+                "other",
+                crate::KvTable::new(41, vec![long_column("id", 1), long_column("value", 2)]),
+            );
+            let left = table_scan(1, 40, 1, 3);
+            let mut right = table_scan(2, right_table, 1, 3);
+            let mut right_schema = right.schema().unwrap().clone();
+            for column in &mut right_schema.columns {
+                column.unique_id += 10;
+            }
+            right.base_mut().base.set_schema(Some(right_schema.clone()));
+            if let PhysicalPlan::TableScan(scan) = &mut right {
+                scan.cost_columns = right_schema.columns.clone();
+            }
+            let key = left.schema().unwrap().columns[0].clone();
+            let mut base = BasePhysicalPlan::with_id(3, "HashJoin", 0);
+            let mut output = left.schema().unwrap().columns.clone();
+            output.extend(right_schema.columns.clone());
+            for (index, column) in output.iter_mut().enumerate() {
+                column.index = index as i64;
+            }
+            base.base.set_schema(Some(Schema::new(output)));
+            base.set_children(vec![left, right]);
+            let inner = PhysicalPlan::HashJoin(PhysicalHashJoin {
+                base,
+                left_join_keys: vec![key.clone()],
+                right_join_keys: vec![right_schema.columns[0].clone()],
+                ..Default::default()
+            });
+            let other_key = right_schema.columns[0].clone();
+            assert_eq!(index_join_lookup_child_idx(&inner, &[]), None);
+            assert_eq!(
+                index_join_lookup_child_idx(&inner, &[key.clone(), other_key.clone()]),
+                None
+            );
+            for (expected_child, probe_key) in [key, other_key].into_iter().enumerate() {
+                assert_eq!(
+                    index_join_lookup_child_idx(&inner, std::slice::from_ref(&probe_key)),
+                    Some(expected_child)
+                );
+                let join = PhysicalIndexJoin {
+                    inner_access_table_id: Some(if expected_child == 0 { 40 } else { right_table }),
+                    inner_join_keys: vec![probe_key],
+                    ..Default::default()
+                };
+                let probes = Arc::new(Mutex::new(SharedIndexJoinProbes::default()));
+                let result = build_index_inner_subtree(
+                    &inner,
+                    &join,
+                    &[LookupProbePart::Dynamic(0)],
+                    &probes,
+                    &catalog,
+                    &crate::StmtContext::for_query(),
+                    &mut BuildState::default(),
+                );
+                assert!(
+                    result.is_ok(),
+                    "the probe key identifies one alias: {:?}",
+                    result.err()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn table_reader_build_records_go_stmtctx_table_access() {
         let table_id = 40;
         let mut catalog = Catalog::default();
@@ -6629,33 +6726,6 @@ mod tests {
             &ctx,
             std::time::Duration::from_secs(1)
         ));
-    }
-
-    /// The index-join inner probe reader is identified by the join's RETAINED
-    /// inner table, not by reader presence: an inner-side HashJoin can hold
-    /// readers on both branches (TPCC condition ten's two aggregated
-    /// subqueries), and only the retained access path consumes the runtime
-    /// key. Matching on presence alone reported "must contain one retained
-    /// lookup reader" for that plan.
-    #[test]
-    fn index_inner_reader_identification_matches_the_retained_table() {
-        let retained_table = 41;
-        let other_table = 42;
-        let retained = table_scan(1, retained_table, 1, 1);
-        let other = table_scan(2, other_table, 1, 1);
-        assert!(contains_index_inner_reader(&retained, Some(retained_table)));
-        assert!(!contains_index_inner_reader(&other, Some(retained_table)));
-
-        let both = union(3, vec![retained.clone(), other.clone()]);
-        let retained_branches = both
-            .children()
-            .iter()
-            .filter(|child| contains_index_inner_reader(child, Some(retained_table)))
-            .count();
-        assert_eq!(
-            retained_branches, 1,
-            "exactly one branch of the inner subtree answers the runtime probe"
-        );
     }
 
     #[test]

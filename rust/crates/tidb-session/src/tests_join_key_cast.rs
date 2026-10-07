@@ -175,14 +175,14 @@ fn the_multiway_cartesian_builds_the_joined_side() {
     session
         .run("insert into t_mj values ('1', 1), ('2', 2)")
         .unwrap();
-    let rows = row_text(session.run(
+    let mut rows = row_text(session.run(
         "select * from t_mj t1 \
          join t_mj t2 on t1.b = t2.b \
          join t_mj t3 \
          join (t_mj t4 straight_join t_mj t5 on t4.a = t5.b) on t1.b = t4.b \
          where t1.a = t5.b",
     ));
-    let expected: Vec<Vec<String>> = [
+    let mut expected: Vec<Vec<String>> = [
         ["2", "2", "2", "2", "1", "1", "2", "2", "2", "2"],
         ["1", "1", "1", "1", "1", "1", "1", "1", "1", "1"],
         ["2", "2", "2", "2", "2", "2", "2", "2", "2", "2"],
@@ -191,5 +191,8 @@ fn the_multiway_cartesian_builds_the_joined_side() {
     .into_iter()
     .map(|row| row.into_iter().map(str::to_owned).collect())
     .collect();
+    // Go's query has no ORDER BY; compare the complete result multiset.
+    rows.sort();
+    expected.sort();
     assert_eq!(rows, expected);
 }

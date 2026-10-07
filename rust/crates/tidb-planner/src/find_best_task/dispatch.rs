@@ -1268,8 +1268,7 @@ fn admits_index_join_inner_child_pattern(
             // Go `checkIndexJoinInnerTaskWithAgg`: an inner join key that
             // reaches the DataSource must be a bare GROUP BY column, so
             // grouping cannot split rows the probe expects to find intact.
-            let groups =
-                tidb_expr::simple_expr::extract_columns_from_expressions(&agg.group_by_items, None);
+            let groups = agg.get_group_by_cols();
             let mut child = plan;
             let schema = loop {
                 if let LogicalPlan::DataSource(ds) = child {
@@ -7110,6 +7109,22 @@ mod tests {
             !admits_index_join_inner_child_pattern(&mismatched_agg, &prop, true),
             "the inner join key is not a GROUP BY column, so grouping may \
              split rows the probe expects intact -- Go `checkIndexJoinInnerTaskWithAgg`"
+        );
+
+        // Go #71767: a column nested in GROUP BY is not a grouping key.
+        let mut expression_agg = matching_agg.clone();
+        if let LogicalPlan::Aggregation(agg) = &mut expression_agg {
+            agg.group_by_items = vec![Expression::ScalarFunction(
+                tidb_expr::scalar_function::ScalarFunction::new(
+                    tidb_ast::CiString::new("mod"),
+                    FieldType::new(FieldTypeCode::LongLong),
+                    vec![Expression::Column(col(1)), Expression::Column(col(2))],
+                ),
+            )];
+        }
+        assert!(
+            !admits_index_join_inner_child_pattern(&expression_agg, &prop, true),
+            "GROUP BY expressions must not split one group into per-key probes"
         );
 
         // UnionScan: unconditionally admitted.

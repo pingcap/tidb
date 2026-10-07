@@ -5376,6 +5376,18 @@ impl IndexJoinLookupExec {
         decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
         let statement = PushdownStatementContext::from_stmt(decode_context.expression());
+        Self::new_with_statement(meta, table, object, decode_context, statement)
+    }
+
+    /// Retains the selected reader's statement policy across rebuilt inner tasks.
+    #[must_use]
+    pub(crate) fn new_with_statement(
+        meta: ExecutorMeta,
+        table: KvTable,
+        object: LookupObject,
+        decode_context: crate::kv_table::RowDecodeContext,
+        statement: PushdownStatementContext,
+    ) -> Self {
         // Go evaluates the inner Selection before its final projection. Keep
         // that physical table shape here even when `meta` already describes
         // the compact row emitted to the join above.

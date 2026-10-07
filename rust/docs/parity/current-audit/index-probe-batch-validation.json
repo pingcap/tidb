@@ -1,0 +1,261 @@
+{
+  "baseline": "8125137b883db931e87669640c5e0ffe8f14a58a",
+  "comparison_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "scope": "Connected index-join candidate/probe/reader existing-owner maintenance; E03/O13 stay partial; no whole Go package acceptance",
+  "source_inputs": [
+    {
+      "path": "pkg/planner/core/exhaust_physical_plans.go",
+      "sha256": "b3f732fad90cc87628f18cf145190aa36458d2a225ff96ad63bcb4d1a10b7907"
+    },
+    {
+      "path": "pkg/executor/builder.go",
+      "sha256": "7d47dc5eec64aa98de44014cf275061b102d6da57a4df2a565694637c53790e7"
+    },
+    {
+      "path": "pkg/executor/distsql.go",
+      "sha256": "eb7759a9a04bb67259380a36ee54fb065c6de21075ba287dd29dc213ab0235c7"
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/physical_table_reader.go",
+      "sha256": "9869ea4aa9cc175c1d35f79072d652913a36602deed4ddacc5332567a9d3cc72"
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/physical_index_reader.go",
+      "sha256": "975e2c2c596c4ce699db1e66664402f9631bfdb52aaedafd8f4d01838c6a050b"
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/physical_indexlookup_reader.go",
+      "sha256": "c65e1cb478ab3332006a7c225685edca3eaa54b1136ccd01eab072e58eedb3e9"
+    },
+    {
+      "path": "tests/integrationtest/t/planner/core/indexjoin.test",
+      "sha256": "24529acf99a0d664bbc2f0c2c25c9a163e842056fc1a38b1572026004b506609"
+    },
+    {
+      "path": "pkg/expression/infer_pushdown.go",
+      "sha256": "dc4b66f871047815e87be4d1a550e5b7f03f8adbecdf74af65da20838d0fee08"
+    },
+    {
+      "path": "tests/integrationtest/t/planner/core/join_key_type_cast.test",
+      "sha256": "e8404ebda0c72d40c97a949f950af9cf225a5444d0c33c9ebf9f1fc979ddc07e"
+    }
+  ],
+  "confirmed_before": [
+    {
+      "test": "admits_index_join_inner_child_pattern_matches_go",
+      "failure": "Nested GROUP BY expression incorrectly admits probe key"
+    },
+    {
+      "test": "index_probe_hash_join_distinguishes_aliases_of_one_table",
+      "failure": "Unsupported: inner HashJoin must contain one retained lookup reader"
+    },
+    {
+      "test": "index_probe_readers_retain_network_estimates",
+      "failure": "Actual outer/inner estimates [81250.0, 0.0]"
+    }
+  ],
+  "before_controls": {
+    "rust_passed": 4,
+    "wire_passed": 6,
+    "notes": "Two-row wire probe and full 200-filler Go fixture already pass; no reproduced wire wrong-result claim"
+  },
+  "after": {
+    "rust_passed": 21,
+    "per_target_summaries": [
+      [
+        "6",
+        "0",
+        "0"
+      ],
+      [
+        "1",
+        "0",
+        "0"
+      ],
+      [
+        "14",
+        "0",
+        "0"
+      ]
+    ],
+    "wire_passed": 6,
+    "commands": [
+      "cargo test --locked --no-fail-fast -p tidb-planner -p tidb-executor -p tidb-session --lib -- index_probe_ admits_index_join_inner_child_pattern_matches_go tests_index_join_inner_pattern:: tests_join_key_cast:: remote_scan::tests::an_index_join access_path::tests::a_common_handle_ --test-threads=1",
+      "cargo test --locked -p tidb-executor --lib -- index_probe_ remote_scan::tests::an_index_join access_path::tests::a_common_handle_ --test-threads=1"
+    ],
+    "cwd": "/workspace/tidb/rust",
+    "note": "Retained planner/session suites pass on final production code; after correcting only executor fixture scan identity and joined output coordinates, rerun only the affected executor suite. Earlier fixture failures are retained as intermediate evidence."
+  },
+  "gates": [
+    {
+      "command": [
+        "make",
+        "lint"
+      ],
+      "cwd": "/workspace/tidb",
+      "exit_code": 0,
+      "seconds": 14.97,
+      "log": "/workspace/.cloud-setup/index-probe-batch/lint.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "--all-targets",
+        "-p",
+        "tidb-planner",
+        "-p",
+        "tidb-executor",
+        "-p",
+        "tidb-session",
+        "-p",
+        "tidb-server"
+      ],
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "seconds": 180.71,
+      "log": "/workspace/.cloud-setup/index-probe-batch/check.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "tidb-server"
+      ],
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "seconds": 197.6,
+      "log": "/workspace/.cloud-setup/index-probe-batch/server-build.log"
+    }
+  ],
+  "repairs": [
+    "Reuse direct group-by column owner in runtime probe admission",
+    "Select exactly one inner hash-join child by every retained key UniqueID, preserving alias identity and rejecting ambiguous/empty keys",
+    "Carry selected reader policy into shared IndexJoinLookupExec and clones; table/covering plan-size estimates, Go double-read index average and actual table handle-batch scaling"
+  ],
+  "retired": [
+    "contains_index_inner_reader table-ID subtree selector and obsolete ownership comment; no caller remains",
+    "index_inner_reader_identification_matches_the_retained_table: obsolete helper-only contract replaced by production builder regressions over aliases and distinct tables, both child positions and ambiguous-key rejection"
+  ],
+  "intermediate_results": [
+    "Initial command launched from repository root was refused before compilation; corrected Cargo cwd to rust",
+    "Intermediate grouped build interrupted with exit130 before tests to correct reviewed Go double-read estimate; no test result claimed",
+    "Compilation found three calls in the obsolete table-ID helper test; retired that test after migrating its distinct-table obligation into the new production builder test",
+    "Three broad session test failures reproduce unchanged in the preserved baseline: obsolete REGEXP non-pushdown premise, stale exact plan IDs/cardinalities and unordered-result sequence. Current Go infer_pushdown.go admits nonbinary REGEXP. Replaced these stale expectations with cop-filter/result checks, retained stream-aggregation structure/results, and complete multiset equality. The new alias fixture also needed its scan cost_columns identity and joined output indexes to match resolved physical-plan metadata",
+    "Superseded test executables compressed and hash-verified for disk headroom; production server/dependency caches retained"
+  ],
+  "limits": [
+    "The 56 unresolved parent findings are carried totals, not freshly re-proven in this batch",
+    "No complete upstream package acceptance",
+    "No full Go suites, live multi-node TiKV replica selection or performance benchmarks",
+    "General ordinary double-read/partition estimate and remaining local/stale/error-counter policies are not accepted by this scoped receipt",
+    "The Go GROUP BY wire fixture passes before and after; the reproduced failure is admission of an unsafe candidate",
+    "E03 full DML retained/pruned handle metadata and chunk streaming remain unresolved",
+    "Old source-revision plan IDs/cardinalities are not reaccepted: current structural checks preserve stream aggregation, ordered scan and deduplicated SQL rows; full upstream golden obligations remain open"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "logs": [
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/before.log",
+      "sha256": "601afef54bcd85dfc1ca818516a516528082ef9751599520366bd52cf52ebf82"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/check.log",
+      "sha256": "964eb85c895f39411bdb97bb1170b2640caddbdb5372041976d96b1be996cad9"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/lint.log",
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/retained-tests.log",
+      "sha256": "20191e58b96fa6d581e4efb298a662b71994772afcade40a916f8cc4f719f909"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/server-build.log",
+      "sha256": "53b6b62fec4848a7dfec10374299b7707437ae2700eec276024d225e970ccdcb"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/stale-tests-before.log",
+      "sha256": "474826c757527f39568cb73ada083d815b30f9699310d8fc9d4d69e4b4348328"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/test-cwd-error.log",
+      "sha256": "35ce3709dec79165813a3ce0ada38d7b0823a4aa8f4f4679a7e64a5931c669a5"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/tests-intermediate.log",
+      "sha256": "1f8eb9b7814a78a7a87977a37aa2e25b008a56bde34bbdf59b0c6a1b6e877b0b"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/tests-interrupted.log",
+      "sha256": "9eb1f7654e3925d78878f53032ccde75cd9963dc7d6e0bee8e1d635f47425a64"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/tests-stale-selector-compile-error.log",
+      "sha256": "345fe2e93fae47130d3dec3fb2f7989da2efced6657fcebcdbb83669d972a3ed"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/tests.log",
+      "sha256": "499e911416239e9eca41776726eb3b1a026782ea7a5bd22b5c4864453da56403"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/wire-before-full.json.server.log",
+      "sha256": "e60782e5b65bce1a26a0b185da558cb7753f6559f975fc360bd5089260833531"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/wire-before.json.server.log",
+      "sha256": "d981d30402f30ea9352075feac3d27b3939e2c8073a720d3f1fa5d9ec001be91"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/wire.json.server.log",
+      "sha256": "a324c5d46986ee3c4eb32e9c56e856a7bf56b2a0c2e6f997e0090f70d47df354"
+    },
+    {
+      "path": "/workspace/.cloud-setup/index-probe-batch/wire.json",
+      "sha256": "834ece3ab7da00020379984f044e9a1ef958783dde4d749db94b4747fff0b801"
+    }
+  ],
+  "setup_cleanup": [
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/b899d8761355aa7f/out/tidb_session-b899d8761355aa7f",
+      "bytes": 289771504,
+      "sha256": "2c576e08a7520ddf7ab59e9a5e0d1b282f960f95fa129b2e632a6b4258ea9366",
+      "archive": "/workspace/.cloud-setup/index-probe-batch/tidb_session-b899d8761355aa7f.gz",
+      "reason": "Superseded test profile; source changed; recoverable gzip verified",
+      "archive_retired": true,
+      "retirement_basis": "Current 21 selected Rust tests pass; baseline behavior and executable hashes are preserved in receipts. Current production server and dependency caches remain."
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-executor/ba74aa7ebb815716/out/tidb_executor-ba74aa7ebb815716",
+      "bytes": 260221504,
+      "sha256": "33d305984d3edf150760c0b56088dc8415ed8abf1691bc7786341da44646a746",
+      "archive": "/workspace/.cloud-setup/index-probe-batch/tidb_executor-ba74aa7ebb815716.gz",
+      "reason": "Superseded test profile; source changed; recoverable gzip verified",
+      "archive_retired": true,
+      "retirement_basis": "Current 21 selected Rust tests pass; baseline behavior and executable hashes are preserved in receipts. Current production server and dependency caches remain."
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/4d0d0986e2abb0b4/out/tidb_server-4d0d0986e2abb0b4",
+      "bytes": 435333600,
+      "sha256": "fa1c58618b2842f0637d7f2d248aba63f3008abf35d4d28dedcaebe48276afa1",
+      "archive": "/workspace/.cloud-setup/index-probe-batch/tidb_server-4d0d0986e2abb0b4.gz",
+      "reason": "Prior server lib-test executable invalidated by changed planner/executor dependencies; compressed verified recovery retained",
+      "archive_retired": true,
+      "retirement_basis": "Current 21 selected Rust tests pass; baseline behavior and executable hashes are preserved in receipts. Current production server and dependency caches remain."
+    }
+  ],
+  "publication": {
+    "status": "pending actual hook/fresh prepush build/normal push",
+    "final_receipt": "/workspace/.cloud-setup/index-probe-batch/final-handoff.json"
+  }
+}

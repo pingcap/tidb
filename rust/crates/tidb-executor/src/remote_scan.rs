@@ -967,6 +967,7 @@ mod tests {
         /// order. A region acts on these bits; a fake that ignored them would
         /// let the literal `0` back in unnoticed.
         requested_flags: Arc<Mutex<Vec<u64>>>,
+        requested_read_estimates: Arc<Mutex<Vec<(bool, f64, Option<f64>)>>>,
         /// Whether each remote scan was required to preserve key order.
         requested_keep_orders: Arc<Mutex<Vec<bool>>>,
         /// Simulate region completion order only for explicitly unordered reads.
@@ -985,6 +986,11 @@ mod tests {
             &self,
             request: &PushdownScanRequest,
         ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
+            self.requested_read_estimates.lock().unwrap().push((
+                request.index.is_some(),
+                request.statement.estimated_net_bytes,
+                request.statement.lookup_avg_row_bytes,
+            ));
             // This fake decodes record values, not secondary-index entries.
             // Decline that capability instead of reporting an empty table
             // when handed index keys; live TiKV covers the remote index side.
@@ -1526,6 +1532,7 @@ mod tests {
             lower_predicates: std::sync::atomic::AtomicBool::new(true),
             refuse_on_read: std::sync::atomic::AtomicBool::new(false),
             requested_flags: Arc::default(),
+            requested_read_estimates: Arc::default(),
             requested_keep_orders: Arc::default(),
             reverse_unordered: std::sync::atomic::AtomicBool::new(false),
             requested_output_offsets: Arc::default(),
@@ -2463,6 +2470,74 @@ mod tests {
             vec![true, true],
             "both MergeJoin children must ask DistSQL to preserve record-key order",
         );
+    }
+
+    #[test]
+    fn index_probe_readers_retain_network_estimates() {
+        let mut secondary = fixture();
+        secondary.table.add_index(
+            KvIndex {
+                id: 1,
+                name: "ia".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![0],
+                prefix_lengths: vec![-1],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        for mut fixture in [clustered_fixture(), common_handle_fixture(), secondary] {
+            for row in [[1, 10], [2, 20]] {
+                fixture
+                    .table
+                    .insert_row(
+                        &[Datum::Int(row[0]), Datum::Int(row[1])],
+                        &tidb_expr::NoColumns,
+                    )
+                    .unwrap();
+            }
+            commit(&fixture.buffer, &fixture.snapshot);
+            let scanner = Arc::clone(&fixture.scanner);
+            let catalog = catalog_of(fixture.table);
+            let ctx = crate::StmtContext::for_query();
+            for (hint, output) in [
+                ("INL_JOIN", "i.b"),
+                ("INL_HASH_JOIN", "i.b"),
+                ("INL_JOIN", "i.a"),
+                ("INL_HASH_JOIN", "i.a"),
+            ] {
+                scanner.requested_read_estimates.lock().unwrap().clear();
+                let rows = run_select_on(
+                    &format!("SELECT /*+ {hint}(i) */ o.a, {output} FROM t o JOIN t i ON o.a=i.a"),
+                    &catalog,
+                    &ctx,
+                )
+                .unwrap();
+                assert_eq!(rows.len(), 2);
+                let estimates = scanner.requested_read_estimates.lock().unwrap();
+                assert!(
+                    estimates.len() >= 2,
+                    "outer and inner requests: {estimates:?}"
+                );
+                assert!(
+                    estimates.iter().all(|(_, bytes, _)| *bytes > 0.0),
+                    "each rebuilt inner reader must carry its plan estimate: {estimates:?}"
+                );
+                for (index, bytes, average) in estimates.iter() {
+                    if let Some(average) = average {
+                        assert_eq!(
+                            *bytes,
+                            *average * if *index { 1.0 } else { 2.0 },
+                            "double reads retain Go's index estimate and actual handle count"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// `DAGRequest.flags` reaches the region from the STATEMENT, through the

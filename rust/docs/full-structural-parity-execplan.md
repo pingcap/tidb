@@ -41,6 +41,8 @@ in time. This revision is a plan; it closes no production finding.
 
 ## Progress
 
+- [x] (Index-probe batch) Repair direct GROUP BY admission, self-join lookup alias identity and retained reader estimates together. See `parity/current-audit/index-probe-batch-validation.json`; three baseline failures, 21 Rust passes and six passing wire controls. E03/O13 remain partial; no package closure.
+
 - [x] (2026-10-07, B04 constraint admission) Share FK/CHECK original-schema admission, implicit-index backfill and persisted CHECK metadata. Remove the metadata-only FK index path and replace stale grouped-CHECK success assertions. See `parity/current-audit/constraint-admission-batch-validation.json` for grouped results and limits; D01/D02/D11 remain unresolved.
 
 - [x] (2026-10-06, PD bootstrap policy) P03/P06/N03 now share nonblocking configured connections, accepted member publication and forced-PD timestamp provider selection. Eight regressions failed before repair; 364 selected tests, affected all-target checks and lint pass. The separate TSO primary may be unreachable while an explicitly enabled healthy proxy serves requests. Automatic network-failure forwarding and full-package obligations remain open. See `parity/current-audit/pd-bootstrap-policy-batch-validation.json`.
