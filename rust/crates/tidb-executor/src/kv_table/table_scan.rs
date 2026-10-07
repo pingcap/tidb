@@ -111,14 +111,7 @@ impl KvTable {
         self.row_cursor_projected_with_context(None, None, context)
     }
 
-    /// Legacy zone-only cursor retained while write callers await an explicit
-    /// statement-class migration. Origin defaults use the exact former
-    /// `DEFAULT_STATEMENT_FLAGS` behavior.
-    pub fn row_cursor(&mut self, zone: &SessionTimeZone) -> Result<RowCursor, KvTableError> {
-        self.row_cursor_with_context(&RowDecodeContext::legacy_default(zone))
-    }
-
-    /// [`KvTable::row_cursor`] narrowed to the columns at `keep`: the cursor
+    /// [`KvTable::row_cursor_with_context`] narrowed to the columns at `keep`: the cursor
     /// decodes and yields exactly those columns, in `keep`'s order.
     ///
     /// `handle_ranges` narrows which RECORDS are read, as
@@ -329,44 +322,6 @@ impl KvTable {
             merge_heap,
             decoder,
         })
-    }
-
-    /// Legacy zone-only projected cursor; see [`KvTable::row_cursor`].
-    pub fn row_cursor_projected(
-        &mut self,
-        keep: Option<&[usize]>,
-        handle_ranges: Option<&[IndexRange]>,
-        zone: &SessionTimeZone,
-    ) -> Result<RowCursor, KvTableError> {
-        self.row_cursor_projected_with_context(
-            keep,
-            handle_ranges,
-            &RowDecodeContext::legacy_default(zone),
-        )
-    }
-
-    /// Reads only the first row covered by `handle_ranges`, using the
-    /// storage backend's bounded primitive when it has one. This is the
-    /// byte-level counterpart of a `TableRangeScan` with `LIMIT 1`.
-    pub fn first_row_in_handle_ranges(
-        &mut self,
-        keep: Option<&[usize]>,
-        handle_ranges: &[IndexRange],
-        zone: &SessionTimeZone,
-    ) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let context = RowDecodeContext::legacy_default(zone);
-        let decoder = self.row_decoder_projected(keep, &context)?;
-        for (low, upper) in self.record_key_ranges(Some(handle_ranges), zone, false)? {
-            let Some((key, value)) = self
-                .store
-                .first(Some(&low), Some(&upper))
-                .map_err(KvTableError::from)?
-            else {
-                continue;
-            };
-            return decoder.decode_record(key.as_bytes(), &value).map(Some);
-        }
-        Ok(None)
     }
 
     /// The record ranges this scan reads, as the storage seam's half-open
@@ -997,91 +952,6 @@ impl KvTable {
         }))
     }
 
-    /// Legacy zone-only coprocessor cursor; see [`KvTable::row_cursor`].
-    #[allow(clippy::too_many_arguments)]
-    pub fn pushdown_row_cursor(
-        &mut self,
-        keep: &[usize],
-        predicates: &[ScanPredicate],
-        limit: Option<u64>,
-        handle_ranges: Option<&[IndexRange]>,
-        zone: &SessionTimeZone,
-        statement: &PushdownStatementContext,
-    ) -> Result<Option<RemoteRowCursor>, KvTableError> {
-        self.pushdown_row_cursor_with_context(
-            keep,
-            predicates,
-            None,
-            None,
-            limit,
-            handle_ranges,
-            None,
-            false,
-            false,
-            true,
-            &RowDecodeContext::legacy_default(zone),
-            statement,
-            crate::remote_scan::PushdownReadEngine::TiKv,
-            0,
-        )
-    }
-
-    /// Reads a batch of integer handles through one coprocessor table request,
-    /// applying the supplied residual predicates before rows cross back. The
-    /// caller still keeps its local probe for the staged/fallback path.
-    pub fn pushdown_rows_by_handles_filtered(
-        &mut self,
-        handles: &[TableHandle],
-        scan_keep: &[usize],
-        predicates: &[ScanPredicate],
-        zone: &SessionTimeZone,
-        statement: &PushdownStatementContext,
-        required_rows: usize,
-    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool)>, KvTableError> {
-        let Some(staged) = self.build_table_reader_from_handles(
-            handles,
-            scan_keep,
-            predicates,
-            &RowDecodeContext::legacy_default(zone),
-            statement,
-            required_rows,
-        )?
-        else {
-            return Ok(None);
-        };
-        Self::finish_rows_by_handles(handles, staged)
-            .map(|answer| answer.map(|(rows, applied, _wire)| (rows, applied)))
-    }
-
-    /// Everything [`Self::pushdown_rows_by_handles_filtered`] does BEFORE any
-    /// row crosses back: the refusal gates, the record-range grouping, the
-    /// region request OPEN. Split from the drain so a caller may run the
-    /// (network-bound) drain on another thread while this thread keeps
-    /// issuing the next requests -- go's table-worker pool. Staging runs on
-    /// the CALLER's thread on purpose: the storage-operation probe it feeds
-    /// is thread-local, so the read is counted exactly where a serial walk
-    /// would count it.
-    #[allow(clippy::too_many_arguments)]
-    pub fn build_table_reader_from_handles(
-        &mut self,
-        handles: &[TableHandle],
-        scan_keep: &[usize],
-        predicates: &[ScanPredicate],
-        context: &RowDecodeContext,
-        statement: &PushdownStatementContext,
-        required_rows: usize,
-    ) -> Result<Option<StagedHandlesLookup>, KvTableError> {
-        self.build_table_reader_from_routed_handles(
-            handles,
-            None,
-            scan_keep,
-            predicates,
-            context,
-            statement,
-            required_rows,
-        )
-    }
-
     /// Builds table tasks with Go's partition-handle identity. Routes, when
     /// present, are aligned with input handles and validated before any I/O.
     #[allow(clippy::too_many_arguments)]
@@ -1261,21 +1131,6 @@ impl KvTable {
                 .collect(),
             hints,
         ))
-    }
-
-    /// Drains a staged handle lookup and pairs each returned row back to the
-    /// CALLER's handle order -- index order for a keep-order read, whatever
-    /// order the windows were collected in otherwise -- so the answer never
-    /// depends on how the drain was scheduled. The trailing count is what
-    /// crossed the wire, for the caller's storage probe (a worker thread has
-    /// no probe of its own).
-    #[must_use]
-    pub fn finish_rows_by_handles(
-        handles: &[TableHandle],
-        staged: StagedHandlesLookup,
-    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64)>, KvTableError> {
-        Self::finish_routed_rows_by_handles(handles, staged)
-            .map(|answer| answer.map(|(rows, applied, wire_rows, _)| (rows, applied, wire_rows)))
     }
 
     /// Returns original request positions, retaining route identity across
@@ -2394,7 +2249,7 @@ impl KvTable {
             .collect())
     }
 
-    /// Legacy zone-only materializing scan; see [`KvTable::row_cursor`].
+    /// Zone-only scan retained for foreign-key callers using legacy decode flags.
     pub fn scan_rows(&mut self, zone: &SessionTimeZone) -> Result<Vec<Vec<Datum>>, KvTableError> {
         self.scan_rows_with_context(&RowDecodeContext::legacy_default(zone))
     }
@@ -2405,7 +2260,7 @@ impl KvTable {
     /// Uses the backend's table reader, merging staged writes, or the local
     /// [`RowCursor`] when the backend cannot serve the table's shape. A caller
     /// that does not need the whole relation in memory should hold a cursor
-    /// instead (see [`KvTable::row_cursor`]).
+    /// instead (see [`KvTable::row_cursor_with_context`]).
     pub fn scan_rows_with_handles_with_context(
         &mut self,
         context: &RowDecodeContext,
@@ -2433,7 +2288,7 @@ impl KvTable {
         Ok(rows)
     }
 
-    /// Legacy zone-only handle scan; see [`KvTable::row_cursor`].
+    /// Zone-only handle scan retained for foreign-key callers using legacy decode flags.
     pub fn scan_rows_with_handles(
         &mut self,
         zone: &SessionTimeZone,
@@ -2533,50 +2388,6 @@ impl KvTable {
         let mut cursor =
             self.row_cursor_with_decoder(decoder, None, descending, true, context.zone())?;
         cursor.next_row()
-    }
-
-    /// Legacy zone-only ranged handle scan; see [`KvTable::row_cursor`].
-    pub fn scan_rows_with_handles_in(
-        &mut self,
-        handle_ranges: Option<&[IndexRange]>,
-        zone: &SessionTimeZone,
-    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        self.scan_rows_with_handles_in_with_context(
-            handle_ranges,
-            &RowDecodeContext::legacy_default(zone),
-        )
-    }
-
-    /// [`KvTable::scan_rows_with_handles`] narrowed to the columns at `keep`
-    /// (offsets into [`KvTable::columns`], ascending and unique): the row
-    /// codec is asked for **only** those columns' ids, and each returned row
-    /// holds exactly them, in `keep`'s order.
-    ///
-    /// This drains a projected [`RowCursor`]; the projection lives in the
-    /// cursor so the streaming path prunes too.
-    pub fn scan_rows_with_handles_projected_with_context(
-        &mut self,
-        keep: &[usize],
-        context: &RowDecodeContext,
-    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let mut cursor = self.row_cursor_projected_with_context(Some(keep), None, context)?;
-        let mut rows = Vec::new();
-        while let Some(entry) = cursor.next_row()? {
-            rows.push(entry);
-        }
-        Ok(rows)
-    }
-
-    /// Legacy zone-only projected handle scan; see [`KvTable::row_cursor`].
-    pub fn scan_rows_with_handles_projected(
-        &mut self,
-        keep: &[usize],
-        zone: &SessionTimeZone,
-    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        self.scan_rows_with_handles_projected_with_context(
-            keep,
-            &RowDecodeContext::legacy_default(zone),
-        )
     }
 
     /// The handles an index range covers, in index order.
@@ -2899,7 +2710,7 @@ pub(crate) fn note_decoded_column_ids(ids: impl Iterator<Item = i64>) {
 
 /// A forward cursor over a table's record range, decoding one row per pull.
 ///
-/// See [`KvTable::row_cursor`]. Over
+/// See [`KvTable::row_cursor_with_context`]. Over
 /// [`ClusterTableStorage`](crate::cluster_storage::ClusterTableStorage) the
 /// iterator is the merged stream (snapshot plus the session's staged mutation
 /// buffer), so a cursor sees exactly the rows a materializing scan saw.
@@ -3033,10 +2844,9 @@ type KeyedRow = (Vec<u8>, Vec<Datum>);
 /// One staged write of the same range: `None` is a staged delete.
 type StagedRow = (Vec<u8>, Option<Vec<Datum>>);
 
-/// One OPEN remote handle lookup: [`KvTable::build_table_reader_from_handles`]
-/// built the request and the region is already streaming; draining it is
-/// [`KvTable::finish_rows_by_handles`]. `Send` so a bounded-concurrency
-/// lookup pipeline can drain it off the executor thread.
+/// A staged routed table task. The request builder opens its physical streams;
+/// the shared row/chunk completion path retains original handle positions.
+/// Dropping an unfinished task closes every cursor.
 pub struct StagedHandlesLookup {
     parts: Vec<(Vec<TableHandle>, Vec<usize>, StagedPhysicalLookup)>,
 }
@@ -4354,24 +4164,6 @@ impl TableScanExec {
             extra_handle_slot: None,
             extra_commit_ts_slot: None,
         }
-    }
-
-    /// Legacy zone-only constructor retained for unmigrated write/server
-    /// callers. Origin defaults use the exact former
-    /// `DEFAULT_STATEMENT_FLAGS` behavior.
-    #[must_use]
-    pub fn new(
-        meta: ExecutorMeta,
-        table: KvTable,
-        zone: SessionTimeZone,
-        statement: PushdownStatementContext,
-    ) -> Self {
-        Self::new_with_context(
-            meta,
-            table,
-            RowDecodeContext::legacy_default(&zone),
-            statement,
-        )
     }
 
     /// The live count of rows read from storage, before any pushed filter.
@@ -5730,10 +5522,10 @@ mod remote_cursor_tests {
                     })
                     .collect(),
             );
-            let mut scan = TableScanExec::new(
+            let mut scan = TableScanExec::new_with_context(
                 ExecutorMeta::new(schema, 0, 4, 4),
                 table.clone(),
-                context.session_zone(),
+                RowDecodeContext::legacy_default(&context.session_zone()),
                 PushdownStatementContext::default(),
             );
             assert!(scan.accept_column_prune(&keep));
@@ -6544,10 +6336,10 @@ mod remote_cursor_tests {
                     })
                     .collect(),
             );
-            let mut scan = TableScanExec::new(
+            let mut scan = TableScanExec::new_with_context(
                 ExecutorMeta::new(schema, 0, 4, 4),
                 table,
-                SessionTimeZone::utc(),
+                RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
                 statement,
             );
             assert!(scan.accept_column_prune(&[1]));
@@ -6669,7 +6461,15 @@ mod remote_cursor_tests {
         );
         assert!(
             table
-                .build_table_reader_from_handles(&handles, &[0], &[], &context, &statement, 2,)
+                .build_table_reader_from_routed_handles(
+                    &handles,
+                    None,
+                    &[0],
+                    &[],
+                    &context,
+                    &statement,
+                    2,
+                )
                 .unwrap()
                 .is_none(),
             "bare handles cannot select a partition"
@@ -6733,7 +6533,15 @@ mod remote_cursor_tests {
         assert!(captured.lock().unwrap().is_empty());
         assert!(
             table
-                .build_table_reader_from_handles(&handles, &[0], &[], &context, &statement, 2,)
+                .build_table_reader_from_routed_handles(
+                    &handles,
+                    None,
+                    &[0],
+                    &[],
+                    &context,
+                    &statement,
+                    2,
+                )
                 .unwrap()
                 .is_some(),
             "one selected partition supplies an unambiguous route"
@@ -7583,8 +7391,9 @@ mod remote_cursor_tests {
 
         assert!(
             table
-                .build_table_reader_from_handles(
+                .build_table_reader_from_routed_handles(
                     &handles,
+                    None,
                     &[0],
                     &[],
                     &RowDecodeContext::for_test_query_utc(),

@@ -1661,7 +1661,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         panic!("bd")
     };
     let schema = Schema::new(vec![Column::new(1, table.columns[0].field_type.clone())]);
-    let mut source = crate::access_path::HandleSourceExec::new_projected_with_context(
+    let mut source = crate::access_path::HandleSourceExec::new_mapped_with_context(
         crate::ExecutorMeta::new(schema, 1, 8, 8),
         (**table).clone(),
         vec![
@@ -1669,7 +1669,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             crate::kv_table::TableHandle::Int(99),
             crate::kv_table::TableHandle::Int(2),
         ],
-        vec![0],
+        vec![crate::access_path::HandleOutputColumn::Stored(0)],
         crate::kv_table::RowDecodeContext::for_test_query_utc(),
     );
     for _ in 0..2 {
@@ -1763,14 +1763,14 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         )
         .unwrap();
     malformed.replace_storage(Box::new(storage));
-    let mut source = crate::access_path::HandleSourceExec::new_projected_with_context(
+    let mut source = crate::access_path::HandleSourceExec::new_mapped_with_context(
         crate::ExecutorMeta::new(schema, 1, 8, 8),
         malformed,
         vec![
             crate::kv_table::TableHandle::Int(1),
             crate::kv_table::TableHandle::Int(2),
         ],
-        vec![0],
+        vec![crate::access_path::HandleOutputColumn::Stored(0)],
         crate::kv_table::RowDecodeContext::for_test_query_utc(),
     );
     for pull_bad_row in [false, true] {

@@ -2,7 +2,7 @@
 
 Latest connected repair: [partitioned shared table readers](partition-reader-batch-validation.json). Ordinary lookup, index join and index merge now carry physical partition identity through the shared request owner, ordered row/chunk completion, projections and fallback. Three baseline policy failures precede 221 passing Rust cases and nine passing real MySQL controls. N03/O13 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 54 roots retain carried evidence.
 
-Latest cleanup: [unused DDL leaf retirement](unused-carrier-cleanup-validation.json). Remove two modules with no external callers, their 20 private tests and a stale completed plan. Live SQL/DDL behavior and finding dispositions remain unchanged; archived Go contracts remain unaccepted.
+Latest cleanup: [obsolete reader APIs and duplicated setup](reader-api-cleanup-validation.json). Remove 15 obsolete APIs and three superseded plans; tests and the remaining index-join caller use the live routed/mapped owners. Three partition queries share one fixture, and sorted integer-response coverage joins the projection matrix. All behavioral assertions remain; 221 selected tests, affected all-target checks and lint pass. Finding dispositions stay unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

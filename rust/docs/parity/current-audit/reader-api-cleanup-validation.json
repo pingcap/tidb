@@ -1,0 +1,129 @@
+{
+  "baseline": "b92350c81e9a3e4214e7ff92c19e828e0c3ce207",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "sources": [
+    {
+      "path": "pkg/executor/builder.go",
+      "sha256": "7d47dc5eec64aa98de44014cf275061b102d6da57a4df2a565694637c53790e7",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/table_reader.go",
+      "sha256": "e9ef4388a5651f8e4780f34bdff3fad6427f99a2a1fb0f60dab9220b29d1009b",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/distsql.go",
+      "sha256": "eb7759a9a04bb67259380a36ee54fb065c6de21075ba287dd29dc213ab0235c7",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/distsql/request_builder.go",
+      "sha256": "071875be37e32ef6b3568a715b46d5cd88c70ee235be452bf0f71c1c8375d245",
+      "matches_fetched_blob": true
+    }
+  ],
+  "scope": "Retire obsolete reader APIs and duplicated validation setup after all production readers migrated to explicit decode context and routed tasks. No SQL behavior or finding disposition change.",
+  "removed_apis": {
+    "access_path.rs": [
+      "HandleSourceExec::new",
+      "HandleSourceExec::new_projected_with_context",
+      "IndexRangeSourceExec::new",
+      "IndexJoinLookupExec::new"
+    ],
+    "kv_table/table_scan.rs": [
+      "KvTable::row_cursor",
+      "KvTable::row_cursor_projected",
+      "KvTable::first_row_in_handle_ranges",
+      "KvTable::pushdown_row_cursor",
+      "KvTable::pushdown_rows_by_handles_filtered",
+      "KvTable::build_table_reader_from_handles",
+      "KvTable::finish_rows_by_handles",
+      "KvTable::scan_rows_with_handles_in",
+      "KvTable::scan_rows_with_handles_projected_with_context",
+      "KvTable::scan_rows_with_handles_projected",
+      "TableScanExec::new"
+    ]
+  },
+  "removed_api_count": 15,
+  "retired_plans": [
+    {
+      "path": "rust/docs/virtual-column-reader-execplan.md",
+      "lines": 65,
+      "sha256": "570e91fb5dcafc84fe1b85c47ec3bc71e3b97e87989d6c8c0ae2bd075eca768d",
+      "archive": "https://github.com/pingcap/tidb/blob/b92350c81e9a3e4214e7ff92c19e828e0c3ce207/rust/docs/virtual-column-reader-execplan.md"
+    },
+    {
+      "path": "rust/docs/reader-task-batch-execplan.md",
+      "lines": 81,
+      "sha256": "03d9e4b64a7abc83fa998266423a8d3c468186589dfc80069c0ee10011f06993",
+      "archive": "https://github.com/pingcap/tidb/blob/b92350c81e9a3e4214e7ff92c19e828e0c3ce207/rust/docs/reader-task-batch-execplan.md"
+    },
+    {
+      "path": "rust/docs/common-reader-batch-execplan.md",
+      "lines": 79,
+      "sha256": "f95b1ff6f201d39ad3600512d4529716369519712604aa42acc3c93e8170ab42",
+      "archive": "https://github.com/pingcap/tidb/blob/b92350c81e9a3e4214e7ff92c19e828e0c3ce207/rust/docs/common-reader-batch-execplan.md"
+    }
+  ],
+  "caller_review": {
+    "retired_named_api_executable_references": [],
+    "scope": [
+      "rust/crates",
+      "rust/difftests",
+      "rust/scripts"
+    ],
+    "historical_receipts_retained": true,
+    "retired_plan_current_references": []
+  },
+  "migrated_consumers": [
+    "IndexJoinLookupExec directly consumes the existing routed row result, discarding the same unused request positions as its former wrapper.",
+    "Virtual/default/projection tests use the live routed builder/drain and preserve legacy decode flags.",
+    "Point tests use the mapped constructor with Stored offsets; lazy batch decoding, missing rows and malformed bytes retain their assertions.",
+    "Table scan tests use new_with_context with the same legacy defaults."
+  ],
+  "test_consolidation": [
+    "Three partition-reader tests now run their same three SQL/result/request-policy cases against one fixture, clearing request captures between queries.",
+    "The standalone sorted integer-response test is folded into the integer/common-handle projection matrix. Sorted inputs, reversed completion and exact values remain checked; integer projections now also cover reordered and empty columns.",
+    "Three fewer registered test functions; no meaningful behavioral assertion discarded. No permanent test-count or source-shape gate introduced."
+  ],
+  "retained": [
+    "Foreign-key scan_rows/scan_rows_with_handles wrappers with production consumers.",
+    "Row/chunk identity, dirty fallback, stream cleanup, request-policy and point-read regressions.",
+    "Go correctness contracts, original source inventories and historical receipts.",
+    "Maintained live runners and their path-safety, authentication and protobuf-sync tests."
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "cargo test --locked -p tidb-executor --lib -- partition_reader table_reader common_reader reader_task_ remote_scan::tests:: access_path::tests:: kv_table::table_scan::remote_cursor_tests:: index_merge point_get --test-threads=1",
+        "cwd": "/workspace/tidb/rust",
+        "passed": 221,
+        "log": "/workspace/.cloud-setup/reader-cleanup-batch/tests.log",
+        "sha256": "7f6ca6b57e4905ce79711fd26d8d67564cd42924ee0a55b2df39c175266518d9"
+      },
+      {
+        "command": "cargo check --locked --all-targets -p tidb-executor -p tidb-session -p tidb-server",
+        "cwd": "/workspace/tidb/rust",
+        "log": "/workspace/.cloud-setup/reader-cleanup-batch/check.log",
+        "sha256": "a638de4b5e4cbd6ed1406c266498426e207d85b5f0c9f3d39057826068df2a17"
+      },
+      {
+        "command": "make lint",
+        "cwd": "/workspace/tidb",
+        "log": "/workspace/.cloud-setup/reader-cleanup-batch/lint.log",
+        "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef"
+      }
+    ],
+    "registered_tests": 1555,
+    "git_diff_check": "passed",
+    "not_run": [
+      "Full Go suites",
+      "Live multi-node TiKV or repeated wire suite; cleanup uses the unchanged reader implementations",
+      "Compile-time or benchmark comparison; no measured speedup claimed"
+    ],
+    "publication": "Actual locked-build hook, fresh pre-push build, remote SHA and Cloud checkpoint are recorded in /workspace/.cloud-setup/reader-cleanup-batch/final-handoff.json."
+  },
+  "finding_dispositions_changed": false,
+  "go_package_accepted": false
+}

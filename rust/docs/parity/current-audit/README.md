@@ -1,5 +1,7 @@
 # Structural parity audit: current evidence
 
+Latest cleanup: [obsolete reader APIs and duplicated setup](reader-api-cleanup-validation.json). Remove 15 obsolete APIs and three superseded plans; tests and the remaining index-join caller use the live routed/mapped owners. Three partition queries share one fixture, and sorted integer-response coverage joins the projection matrix. All behavioral assertions remain; 221 selected tests, affected all-target checks and lint pass. Finding dispositions stay unchanged.
+
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
 Latest connected repair: [partitioned shared table readers](partition-reader-batch-validation.json). Ordinary lookup, index join and index merge now carry physical partition identity through the shared request owner, ordered row/chunk completion, projections and fallback. Three baseline policy failures precede 221 passing Rust cases and nine passing real MySQL controls. N03/O13 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 54 roots retain carried evidence.

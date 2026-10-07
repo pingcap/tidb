@@ -1948,21 +1948,14 @@ mod tests {
             }
             commit(&fixture.buffer, &fixture.snapshot);
             let ctx = crate::StmtContext::for_query();
-            let lookup = fixture
-                .table
-                .pushdown_rows_by_handles_filtered(
-                    &[
-                        crate::kv_table::TableHandle::Int(3),
-                        crate::kv_table::TableHandle::Int(1),
-                    ],
-                    &[1],
-                    &[],
-                    &ctx.session_zone(),
-                    &PushdownStatementContext::from_stmt(&ctx),
-                    2,
-                )
-                .unwrap()
-                .expect("the table probe remains remote");
+            let handles = [TableHandle::Int(3), TableHandle::Int(1)];
+            let staged = fixture.table.build_table_reader_from_routed_handles(
+                &handles, None, &[1], &[],
+                &crate::RowDecodeContext::legacy_default(&ctx.session_zone()),
+                &PushdownStatementContext::from_stmt(&ctx), 2,
+            ).unwrap().expect("the table probe remains remote");
+            let lookup = KvTable::finish_routed_rows_by_handles(&handles, staged)
+                .unwrap().expect("remote table rows");
             assert_eq!(
                 lookup.0,
                 vec![
@@ -2541,49 +2534,57 @@ mod tests {
     }
 
     #[test]
-    fn common_reader_lookup_retains_identity_outside_projection() {
-        let mut fixture = common_handle_without_catalog_index_fixture();
-        let mut handles = Vec::new();
-        for row in [[1, 10], [2, 20], [3, 30]] {
-            handles.push(
-                fixture
+    fn table_reader_lookup_retains_identity_outside_projection() {
+        for mut fixture in [
+            clustered_fixture(),
+            common_handle_without_catalog_index_fixture(),
+        ] {
+            let mut handles = Vec::new();
+            for row in [[1, 10], [2, 20], [3, 30]] {
+                handles.push(
+                    fixture
+                        .table
+                        .insert_row(&row.map(Datum::Int), &tidb_expr::NoColumns)
+                        .unwrap(),
+                );
+            }
+            commit(&fixture.buffer, &fixture.snapshot);
+            fixture
+                .scanner
+                .reverse_unordered
+                .store(true, Ordering::SeqCst);
+            for keep in [vec![1], vec![1, 0], vec![]] {
+                let staged = fixture
                     .table
-                    .insert_row(&row.map(Datum::Int), &tidb_expr::NoColumns)
-                    .unwrap(),
-            );
-        }
-        commit(&fixture.buffer, &fixture.snapshot);
-        fixture
-            .scanner
-            .reverse_unordered
-            .store(true, Ordering::SeqCst);
-        for keep in [vec![1], vec![1, 0], vec![]] {
-            let (rows, _) = fixture
-                .table
-                .pushdown_rows_by_handles_filtered(
-                    &handles,
-                    &keep,
-                    &[],
-                    &SessionTimeZone::utc(),
-                    &PushdownStatementContext::from_stmt(&crate::StmtContext::for_query()),
-                    2,
-                )
-                .unwrap()
-                .expect("common handles use the shared table request");
-            assert_eq!(
-                rows,
-                handles
-                    .iter()
-                    .enumerate()
-                    .map(|(i, h)| {
-                        let row = [Datum::Int(i as i64 + 1), Datum::Int((i as i64 + 1) * 10)];
-                        (
-                            h.clone(),
-                            keep.iter().map(|offset| row[*offset].clone()).collect(),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            );
+                    .build_table_reader_from_routed_handles(
+                        &handles,
+                        None,
+                        &keep,
+                        &[],
+                        &crate::RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
+                        &PushdownStatementContext::from_stmt(&crate::StmtContext::for_query()),
+                        2,
+                    )
+                    .unwrap()
+                    .expect("integer/common handles use the shared table request");
+                let (rows, _, _, _) = KvTable::finish_routed_rows_by_handles(&handles, staged)
+                    .unwrap()
+                    .expect("remote table rows");
+                assert_eq!(
+                    rows,
+                    handles
+                        .iter()
+                        .enumerate()
+                        .map(|(i, h)| {
+                            let row = [Datum::Int(i as i64 + 1), Datum::Int((i as i64 + 1) * 10)];
+                            (
+                                h.clone(),
+                                keep.iter().map(|offset| row[*offset].clone()).collect(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                );
+            }
         }
     }
 
@@ -2748,54 +2749,23 @@ mod tests {
         fixture
     }
 
-    fn assert_partition_reader(sql: &str, expected: Vec<Vec<Datum>>) {
+    #[test]
+    fn partition_readers_retain_remote_policy() {
         let fixture = partition_reader_fixture();
         let scanner = Arc::clone(&fixture.scanner);
         let catalog = catalog_of(fixture.table);
-        assert_eq!(
-            run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap(),
-            expected
-        );
-        let requests = scanner.requested_read_estimates.lock().unwrap();
-        assert!(
-            requests
-                .iter()
-                .any(|(index, bytes, avg)| !index
-                    && avg.is_some_and(|avg| avg > 0.0 && *bytes >= avg)),
-            "partition table tasks must use shared request policy: {sql}; {requests:?}"
-        );
-    }
-
-    #[test]
-    fn partition_reader_ordinary_lookup_retains_remote_policy() {
-        assert_partition_reader(
-            "SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b",
-            vec![
-                vec![Datum::Int(300)],
-                vec![Datum::Int(200)],
-                vec![Datum::Int(100)],
-            ],
-        );
-    }
-
-    #[test]
-    fn partition_reader_join_retains_remote_policy() {
-        assert_partition_reader(
-            "SELECT /*+ INL_JOIN(r) */ r.c FROM t l JOIN t r USE INDEX(ib) ON r.b=l.b WHERE l.a<3 ORDER BY l.a",
-            vec![vec![Datum::Int(100)], vec![Datum::Int(200)]],
-        );
-    }
-
-    #[test]
-    fn partition_reader_merge_retains_remote_policy() {
-        assert_partition_reader(
-            "SELECT /*+ USE_INDEX_MERGE(t,ia,ib) */ c FROM t WHERE a<3 OR b<20 ORDER BY c",
-            vec![
-                vec![Datum::Int(100)],
-                vec![Datum::Int(200)],
-                vec![Datum::Int(300)],
-            ],
-        );
+        for (sql, values) in [
+            ("SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b", vec![300, 200, 100]),
+            ("SELECT /*+ INL_JOIN(r) */ r.c FROM t l JOIN t r USE INDEX(ib) ON r.b=l.b WHERE l.a<3 ORDER BY l.a", vec![100, 200]),
+            ("SELECT /*+ USE_INDEX_MERGE(t,ia,ib) */ c FROM t WHERE a<3 OR b<20 ORDER BY c", vec![100, 200, 300]),
+        ] {
+            scanner.requested_read_estimates.lock().unwrap().clear();
+            let expected = values.into_iter().map(|value| vec![Datum::Int(value)]).collect::<Vec<_>>();
+            assert_eq!(run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap(), expected);
+            let requests = scanner.requested_read_estimates.lock().unwrap();
+            assert!(requests.iter().any(|(index, bytes, avg)| !index && avg.is_some_and(|avg| avg > 0.0 && *bytes >= avg)),
+                "partition table tasks must use shared request policy: {sql}; {requests:?}");
+        }
     }
 
     #[test]
@@ -2925,48 +2895,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn reader_task_sorted_handles_restore_remote_completion_order() {
-        let mut fixture = clustered_fixture();
-        for row in [[1, 10], [2, 20], [3, 30]] {
-            fixture
-                .table
-                .insert_row(&row.map(Datum::Int), &tidb_expr::NoColumns)
-                .unwrap();
-        }
-        commit(&fixture.buffer, &fixture.snapshot);
-        fixture
-            .scanner
-            .reverse_unordered
-            .store(true, Ordering::SeqCst);
-        let handles = vec![
-            TableHandle::Int(1),
-            TableHandle::Int(2),
-            TableHandle::Int(3),
-        ];
-        let (rows, _) = fixture
-            .table
-            .pushdown_rows_by_handles_filtered(
-                &handles,
-                &[1],
-                &[],
-                &SessionTimeZone::utc(),
-                &PushdownStatementContext::from_stmt(&crate::StmtContext::for_query()),
-                2,
-            )
-            .unwrap()
-            .expect("remote table rows");
-        assert_eq!(
-            rows,
-            vec![
-                (TableHandle::Int(1), vec![Datum::Int(10)]),
-                (TableHandle::Int(2), vec![Datum::Int(20)]),
-                (TableHandle::Int(3), vec![Datum::Int(30)])
-            ]
-        );
-    }
-
-    /// `DAGRequest.flags` reaches the region from the STATEMENT, through the
+/// `DAGRequest.flags` reaches the region from the STATEMENT, through the
     /// production request builder, and is not the literal `0` it used to be.
     ///
     /// `0` is TiKV's strictest branch: no truncation tolerated, no

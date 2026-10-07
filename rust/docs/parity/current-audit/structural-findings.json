@@ -802,9 +802,9 @@
     "scope": "B05 N03 / B09 O13 connected partitioned ordinary lookup, index-join and index-merge table readers; existing-owner maintenance, no complete package acceptance"
   },
   "latest_test_cleanup": {
-    "receipt": "unused-carrier-cleanup-validation.json",
-    "scope": "Retire unreferenced storage-class and materialized-view helper modules with 20 private tests and a stale completed plan. Live DDL, metadata and all existing findings unchanged; removed Go contracts remain unaccepted.",
-    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+    "receipt": "reader-api-cleanup-validation.json",
+    "scope": "Remove 15 obsolete reader APIs, merge duplicated test setup without losing assertions, and retire three superseded plans. Runtime behavior and all findings unchanged.",
+    "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
   },
   "test_cleanup_history": [
     {
@@ -1189,6 +1189,11 @@
       "receipt": "unused-carrier-cleanup-validation.json",
       "scope": "Retire unreferenced storage-class and materialized-view helper modules with 20 private tests and a stale completed plan. Live DDL, metadata and all existing findings unchanged; removed Go contracts remain unaccepted.",
       "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+    },
+    {
+      "receipt": "reader-api-cleanup-validation.json",
+      "scope": "Remove 15 obsolete reader APIs, merge duplicated test setup without losing assertions, and retire three superseded plans. Runtime behavior and all findings unchanged.",
+      "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
     }
   ],
   "repair_history": [

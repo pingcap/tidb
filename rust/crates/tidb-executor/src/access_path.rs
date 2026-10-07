@@ -22,7 +22,7 @@
 //! index range, and materializing it into a `Vec<Vec<Datum>>` to hand to a
 //! `MemTableSourceExec` costs the whole relation in decoded form before the
 //! first row leaves the source. These executors hold the cursor instead
-//! ([`KvTable::row_cursor`], [`KvTable::index_range_cursor`]) and decode one
+//! ([`KvTable::row_cursor_with_context`], [`KvTable::index_range_cursor`]) and decode one
 //! row per pull, so the decoded rows alive at once are one chunk's worth
 //! regardless of how many rows the range covers, and a pushed `LIMIT` never
 //! decodes or looks up a row past its cap.
@@ -877,45 +877,6 @@ impl HandleSourceExec {
             single_point_get: false,
             partition_ids: None,
         }
-    }
-
-    /// Legacy zone-only constructor retained for unmigrated callers. Origin
-    /// defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
-    #[must_use]
-    pub fn new(
-        meta: ExecutorMeta,
-        table: KvTable,
-        handles: Vec<TableHandle>,
-        zone: SessionTimeZone,
-    ) -> Self {
-        Self::new_with_context(
-            meta,
-            table,
-            handles,
-            crate::kv_table::RowDecodeContext::legacy_default(&zone),
-        )
-    }
-
-    /// Builds Go's complete point plan, projecting source offsets while the
-    /// row is read instead of leaving a root Projection above the lookup.
-    #[must_use]
-    pub fn new_projected_with_context(
-        meta: ExecutorMeta,
-        table: KvTable,
-        handles: Vec<TableHandle>,
-        output_offsets: Vec<usize>,
-        decode_context: crate::kv_table::RowDecodeContext,
-    ) -> Self {
-        Self::new_mapped_with_context(
-            meta,
-            table,
-            handles,
-            output_offsets
-                .into_iter()
-                .map(HandleOutputColumn::Stored)
-                .collect(),
-            decode_context,
-        )
     }
 
     /// Builds the final table reader for a retained physical plan whose
@@ -2298,25 +2259,6 @@ impl IndexRangeSourceExec {
     pub(crate) fn enable_lookup_pushdown(&mut self) {
         debug_assert!(self.can_reorder_handles);
         self.lookup_pushdown = true;
-    }
-
-    /// Legacy zone-only constructor retained for unmigrated callers. Origin
-    /// defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
-    #[must_use]
-    pub fn new(
-        meta: ExecutorMeta,
-        table: KvTable,
-        index_id: i64,
-        ranges: Vec<IndexRange>,
-        zone: SessionTimeZone,
-    ) -> Self {
-        Self::new_with_context(
-            meta,
-            table,
-            index_id,
-            ranges,
-            crate::kv_table::RowDecodeContext::legacy_default(&zone),
-        )
     }
 
     /// The live count of rows this source produced.
@@ -5403,23 +5345,6 @@ impl IndexJoinLookupExec {
         }
     }
 
-    /// Legacy zone-only constructor retained for unmigrated callers. Origin
-    /// defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
-    #[must_use]
-    pub fn new(
-        meta: ExecutorMeta,
-        table: KvTable,
-        object: LookupObject,
-        zone: SessionTimeZone,
-    ) -> Self {
-        Self::new_with_context(
-            meta,
-            table,
-            object,
-            crate::kv_table::RowDecodeContext::legacy_default(&zone),
-        )
-    }
-
     /// Seeds the next outer batch's probe list and rewinds the walk.
     ///
     /// `produced` is NOT reset: it accumulates across batches, because the
@@ -6335,8 +6260,8 @@ impl IndexJoinLookupExec {
         // value, so emitting the found rows in that order is fine, and a
         // handle naming no stored row simply contributes nothing -- the same
         // answer the batch-get gave as a `None` slot.
-        let Some((pairs, _, _)) =
-            KvTable::finish_rows_by_handles(handles, staged).map_err(ExecError::from)?
+        let Some((pairs, _, _, _)) =
+            KvTable::finish_routed_rows_by_handles(handles, staged).map_err(ExecError::from)?
         else {
             return Ok(None);
         };
@@ -7205,11 +7130,11 @@ mod tests {
             tidb_expr::column::Column::new(2, long()),
             tidb_expr::column::Column::new(1, long()),
         ]);
-        let mut source = HandleSourceExec::new_projected_with_context(
+        let mut source = HandleSourceExec::new_mapped_with_context(
             ExecutorMeta::new(schema, 0, 1, 1024),
             table,
             vec![TableHandle::Int(7)],
-            vec![1, 0],
+            vec![HandleOutputColumn::Stored(1), HandleOutputColumn::Stored(0)],
             crate::kv_table::RowDecodeContext::for_test_query_utc(),
         );
         // The row decoder supplies the full table layout, including the
