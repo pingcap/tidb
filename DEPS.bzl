@@ -3784,8 +3784,8 @@ def go_deps():
         name = "com_github_pingcap_log",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/log",
-        sum = "h1:Gdg+HJrHOg4suytbZUrR0vITtGOgufme94srbScI3hk=",
-        version = "v1.1.1-0.20260604211921-80a4a2dc3943",
+        sum = "h1:roxS/6JKWcGS+hyfe5pioftbUmeTKbPkDBY67d7THIU=",
+        version = "v1.1.1-0.20261007233122-0034994d1a22",
     )
     go_repository(
         name = "com_github_pingcap_metering_sdk",
