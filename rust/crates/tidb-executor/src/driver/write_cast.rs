@@ -557,10 +557,26 @@ fn cast_value_with_flags(
     Ok(converted.value)
 }
 
-// Temporal targets retain their existing adapters.
+// Calendar targets retain their existing adapters; TIME uses typed diagnostics.
 // Scalar, temporal and binary sources share numeric/string diagnostics here.
 fn contextual_cast_supported(value: &Datum, field: &FieldType) -> bool {
     use tidb_datatype::FieldTypeCode as T;
+    if field.code() == T::Duration {
+        return matches!(
+            value,
+            Datum::Int(_)
+                | Datum::UInt(_)
+                | Datum::Real(_)
+                | Datum::Float32(_)
+                | Datum::Decimal(_)
+                | Datum::String(_)
+                | Datum::Bytes(_)
+                | Datum::Time(_)
+                | Datum::Duration(_)
+                | Datum::Json(_)
+        );
+    }
+
     matches!(
         value,
         Datum::Int(_)
@@ -724,6 +740,14 @@ fn complete_typed_cast(
             column: column.to_owned(),
             row: row + 1,
         },
+        1292 if insert && field.code() == tidb_datatype::FieldTypeCode::Duration => {
+            DriverError::IncorrectTemporalValue {
+                type_name: tidb_datatype::type_str(field.code()).to_owned(),
+                value: datum_error_text(source),
+                column: column.to_owned(),
+                row: row + 1,
+            }
+        }
         1292 if insert => DriverError::IncorrectValue {
             type_name: tidb_datatype::type_str(field.code()).to_owned(),
             value: datum_error_text(source),

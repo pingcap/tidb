@@ -31,11 +31,11 @@ use crate::{
     convert_decimal_to_uint, convert_float_to_int, convert_float_to_uint, convert_int_to_int,
     convert_int_to_uint, convert_uint_to_int, convert_uint_to_uint, integer_signed_lower_bound,
     integer_signed_upper_bound, integer_unsigned_upper_bound, parse_enum, parse_enum_value,
-    parse_set, parse_set_value, parse_time, parse_time_from_num, str_to_duration, truncate_float,
-    BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Charset, Collation, ConversionFlags, Converted,
-    CoreTime, Datum, DatumValueError, Decimal, DurationOrTime, FieldType, FieldTypeCode,
-    MySqlDuration, ScalarConversionError, ScalarConversionEvent, SessionTimeZone, Time, TimeType,
-    VectorFloat32, UNSPECIFIED_LENGTH,
+    parse_set, parse_set_value, parse_time, parse_time_from_num, truncate_float, BinaryJSON,
+    BinaryLiteral, BinaryLiteralWidth, Charset, Collation, ConversionFlags, Converted, CoreTime,
+    Datum, DatumValueError, Decimal, FieldType, FieldTypeCode, MySqlDuration,
+    ScalarConversionError, ScalarConversionEvent, SessionTimeZone, Time, TimeType, VectorFloat32,
+    UNSPECIFIED_LENGTH,
 };
 
 /// Direction used by reverse expression evaluation.
@@ -219,7 +219,7 @@ impl Datum {
                 diagnostics.unreported(self.convert_to_time_target(target, flags, zone))
             }
             FieldTypeCode::Duration => {
-                diagnostics.unreported(self.convert_to_duration_target(target, zone))
+                self.convert_to_duration_target(target, flags, zone, diagnostics)
             }
             FieldTypeCode::Year => diagnostics.unreported(self.convert_to_year(flags, zone)),
             FieldTypeCode::Enum => diagnostics.unreported(self.convert_to_enum(target, flags)),
@@ -815,36 +815,96 @@ impl Datum {
     fn convert_to_duration_target(
         &self,
         target: &FieldType,
+        flags: ConversionFlags,
         zone: &SessionTimeZone,
+        diagnostics: &mut Diagnostics<'_, '_>,
     ) -> Result<Converted<Self>, DatumValueError> {
         let fsp = if target.decimal() == UNSPECIFIED_LENGTH {
             0
         } else {
             target.decimal()
         };
-        let converted = match self {
-            Self::Time(value) => exact(
-                value
+        match self {
+            Self::Time(value) => {
+                return value
                     .to_duration()
                     .map_err(conversion_error)?
                     .round_frac(fsp)
-                    .map_err(conversion_error)?,
-            ),
-            Self::Duration(value) => exact(value.round_frac(fsp).map_err(conversion_error)?),
-            Self::String(value) => duration_from_text(value.as_utf8()?, fsp, zone)?,
-            Self::Bytes(value) => duration_from_text(std::str::from_utf8(value)?, fsp, zone)?,
-            Self::Int(_) | Self::UInt(_) | Self::Real(_) | Self::Float32(_) | Self::Decimal(_) => {
-                duration_from_text(
-                    &self.sql_string().map_err(|error| {
-                        DatumValueError::Comparison(format!("duration conversion failed: {error}"))
-                    })?,
-                    fsp,
-                    zone,
-                )?
+                    .map(|v| exact(Self::new_duration(v)))
+                    .map_err(conversion_error)
             }
-            Self::Json(value) => duration_from_text(&value.unquote()?, fsp, zone)?,
+            Self::Duration(value) => {
+                return value
+                    .round_frac(fsp)
+                    .map(|v| exact(Self::new_duration(v)))
+                    .map_err(conversion_error)
+            }
+            _ => {}
+        }
+        let text = match self {
+            Self::String(value) => value.as_utf8()?.to_owned(),
+            Self::Bytes(value) => std::str::from_utf8(value)?.to_owned(),
+            Self::Json(value) => value.unquote()?,
+            Self::Int(_) | Self::UInt(_) | Self::Real(_) | Self::Float32(_) | Self::Decimal(_) => {
+                let text = self.sql_string().map_err(conversion_error)?;
+                // Datum.ConvertTo has a numeric admission step before
+                // ParseDuration; expression cast signatures deliberately do not.
+                let number = self.convert_to_signed_reported(
+                    FieldTypeCode::LongLong,
+                    flags,
+                    zone,
+                    diagnostics,
+                )?;
+                if diagnostics.error.is_some()
+                    || matches!(number.event, Some(ScalarConversionEvent::Overflow(_)))
+                {
+                    return Ok(Converted {
+                        value: Self::Null,
+                        event: number.event,
+                    });
+                }
+                const MAX_DURATION: i64 = 838 * 10000 + 59 * 100 + 59;
+                if (number.value > MAX_DURATION && number.value < 10_000_000_000)
+                    || number.value < -MAX_DURATION
+                {
+                    diagnostics.error(|| {
+                        crate::parser_types_errors::ERR_WRONG_VALUE
+                            .generate(format!("Incorrect time value: '{text}'"))
+                    });
+                    return Ok(Converted {
+                        value: if number.value > 0 {
+                            Self::new_duration(MySqlDuration::maximum(0).map_err(conversion_error)?)
+                        } else {
+                            Self::Null
+                        },
+                        event: Some(ScalarConversionEvent::Truncated),
+                    });
+                }
+                text
+            }
             _ => return Err(DatumValueError::Unsupported(self.kind(), "duration")),
         };
+        let parsed = crate::parse_duration_with_flags(&text, fsp, flags, zone);
+        let converted = match parsed {
+            Ok(converted) => converted,
+            Err(error) => {
+                if !diagnostics.enabled() {
+                    return Err(conversion_error(error));
+                }
+                Converted {
+                    value: MySqlDuration::from_raw_parts(0, 0),
+                    event: Some(ScalarConversionEvent::Truncated),
+                }
+            }
+        };
+        if converted.event.is_some() {
+            // Return the raw error beside the value; table.CastColumnValue
+            // applies HandleTruncate and each write caller completes its text.
+            diagnostics.error(|| {
+                ERR_TRUNCATED_WRONG_VALUE
+                    .generate(format!("Truncated incorrect time value: '{text}'"))
+            });
+        }
         Ok(map_converted(Self::new_duration)(converted))
     }
 
@@ -1549,14 +1609,6 @@ fn decimal_to_unsigned(value: &Decimal, upper: u64, target: FieldTypeCode) -> Co
     numeric_outcome(converted)
 }
 
-/// Go `StrToDuration(ctx, str, fsp)` (pkg/types/convert.go), whose `ctx`
-/// carries the session location: a 12-or-more-digit literal is parsed as a
-/// DATETIME first, and rounding it to `fsp` goes through the same
-/// zone-sensitive `RoundFrac` as [`Datum::convert_to_signed`]'s time arm.
-/// Measured against Go at `fsp=0`, `"20110313015959.999999"` yields
-/// `2011-03-13 02:00:00` under UTC but `2011-03-13 03:00:00` under
-/// America/Los_Angeles, and `"20111106015959.999999"` yields
-/// `2011-11-06 02:00:00` under UTC but `2011-11-06 01:00:00` there.
 /// Go's `gotime.Now()` projected with `.In(ctx.Location())`: the one place
 /// this file decides what "now" means.
 ///
@@ -1566,22 +1618,6 @@ fn decimal_to_unsigned(value: &Decimal, upper: u64, target: FieldTypeCode) -> Co
 /// zone choice; `with_timezone` is Go's `In`.
 fn session_now(zone: &SessionTimeZone) -> chrono::DateTime<SessionTimeZone> {
     Utc::now().with_timezone(zone)
-}
-
-fn duration_from_text(
-    text: &str,
-    fsp: i64,
-    zone: &SessionTimeZone,
-) -> Result<Converted<MySqlDuration>, DatumValueError> {
-    let converted = str_to_duration(text, fsp, zone).map_err(conversion_error)?;
-    let value = match converted.value {
-        DurationOrTime::Duration(value) => value,
-        DurationOrTime::Time(value) => value.to_duration().map_err(conversion_error)?,
-    };
-    Ok(Converted {
-        value,
-        event: converted.event,
-    })
 }
 
 fn year_from_text(
@@ -1729,6 +1765,42 @@ mod go_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn duration_batch_datum_uses_parse_duration_and_caller_date_flags() {
+        let target = crate::FieldType::new(crate::FieldTypeCode::Duration).with_decimal(0);
+        let zone = crate::SessionTimeZone::utc();
+        let flags = crate::DEFAULT_STATEMENT_FLAGS.with_ignore_invalid_date_err(true);
+        for (input, expected) in [
+            ("2024-01-01 23:59:59.999999", "24:00:00"),
+            ("2024-02-31 12:34:56", "12:34:56"),
+        ] {
+            let converted = crate::Datum::new_string(input.to_owned())
+                .convert_to_in(&target, flags, &zone)
+                .unwrap();
+            assert_eq!(converted.value.sql_string().unwrap(), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn duration_batch_numeric_admission_retains_go_error_side_values() {
+        let target = crate::FieldType::new(crate::FieldTypeCode::Duration).with_decimal(3);
+        let context = crate::ConversionContext::new(
+            crate::DEFAULT_STATEMENT_FLAGS,
+            crate::ConversionLocation::UTC,
+            &crate::IGNORE_CONVERSION_WARNINGS,
+        );
+        for (input, expected) in [(8_390_000, "838:59:59"), (-8_390_000, "")] {
+            let result = crate::Datum::Int(input)
+                .convert_to_in_context(&target, &context, &crate::SessionTimeZone::utc())
+                .unwrap();
+            assert_eq!(result.value.sql_string().unwrap(), expected);
+            assert_eq!(result.value.is_null(), input < 0);
+            let error = result.error.unwrap().to_sql_error();
+            assert_eq!(error.code, 1292);
+            assert_eq!(error.message, format!("Incorrect time value: '{input}'"));
+        }
+    }
+
     use super::*;
     use crate::{parse_enum_value, parse_set_value, FieldTypeFlags};
 

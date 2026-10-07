@@ -17,7 +17,7 @@ A batch groups a shared production lifecycle. Complete Go packages remain the at
 | B09 | Live information and statement observability | I01, I02, I03, O08, O11, O13, O16, O17, O18 | 9 |
 | B10 | Inference provider, batching and cache runtime | X02 | 1 |
 
-Current connected maintenance: [read consistency](read-consistency-batch-validation.json) links B02/S04, B05/N03 and B09/O13. Session-selected scope/stale mode now reaches shared point/batch and coprocessor consumers. Ordinary snapshot and low-level scan distinctions remain. Complete local-transaction/SafeTS and package acceptance are still open.
+Current connected maintenance: [TIME conversion](duration-owner-batch-validation.json) links B02/K03 and B06/X01. One flag-aware ParseDuration owner serves column and expression consumers; numeric admission, JSON source distinctions and typed write diagnostics follow their separate Go callers. Calendar targets and full package obligations remain open.
 
 ## Execution and validation cadence
 

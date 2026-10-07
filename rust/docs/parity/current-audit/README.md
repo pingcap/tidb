@@ -4,14 +4,14 @@ Latest cleanup: [disconnected sort pipeline](sort-cleanup-validation.json). Remo
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [shared read consistency](read-consistency-batch-validation.json). Session-selected scope and stale mode now reach point/batch snapshots and coprocessor requests. Native stale flags reset between statements; tidb_snapshot and low-level KV Scan retain their distinct Go behavior. Four baseline failures precede 114 passing grouped Rust tests, affected all-target checking, lint and the locked server build. S04/O13/N03 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other53 roots retain carried evidence. Live SafeTS/local-transaction and complete package obligations remain open.
+Latest connected repair: [shared TIME conversion](duration-owner-batch-validation.json). K03/X01 now share source ParseDuration, numeric column admission, typed write errors and JSON duration signatures. Six baseline regressions fail; source-pinned Go, grouped Rust and live SQL evidence is in the receipt. Counts remain 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other54 roots retain carried evidence; complete packages remain unaccepted.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../read-consistency-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../duration-owner-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](read-consistency-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](duration-owner-batch-validation.json): exact source/log identities and verification limits.
 
 Current Go comparison: `7a3dacb52efe58d28db360ae8639d8838c376544`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master remains `8b752f9638ad157931725b66ffdc57e0465432a9`; maintained sync is unchanged. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 

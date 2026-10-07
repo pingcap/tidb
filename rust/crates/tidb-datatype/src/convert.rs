@@ -897,6 +897,33 @@ pub fn str_to_datetime<TZ: chrono::TimeZone>(
     })
 }
 
+/// Go ParseDuration's value and truncation result with the caller's date policy.
+/// Unlike StrToDuration, this always produces TIME and rounds after extracting
+/// a datetime fallback's clock. The caller owns warning/error and NULL policy.
+pub fn parse_duration_with_flags<TZ: chrono::TimeZone>(
+    input: &str,
+    fsp: i64,
+    flags: ConversionFlags,
+    timezone: &TZ,
+) -> Result<Converted<MySqlDuration>, crate::DurationValueError> {
+    let parsed = parse_mysql_duration(
+        input,
+        fsp,
+        timezone,
+        flags.ignore_zero_in_date_err(),
+        flags.ignore_invalid_date_err(),
+    )?;
+    let value = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp())
+        .map_err(crate::DurationParseError::InvalidFsp)
+        .map_err(crate::DurationValueError::Duration)?;
+    Ok(Converted {
+        value,
+        // ParseDuration uses ErrTruncatedWrongVal for both malformed suffixes
+        // and saturated TIME values, not the numeric ErrOverflow.
+        event: parsed.event().map(|_| ScalarConversionEvent::Truncated),
+    })
+}
+
 /// `StrToDuration`.
 pub fn str_to_duration<TZ: chrono::TimeZone>(
     input: &str,

@@ -1,0 +1,200 @@
+{
+  "date": "2026-10-07",
+  "base": "95c8a23ae8aac8ddb7a5d380666e213310508c61",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_head": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "findings": [
+    "K03",
+    "X01"
+  ],
+  "scope": "Existing TIME conversion ownership across datatype parsing, column conversion, typed JSON/expression signatures and write diagnostic completion. No complete upstream package acceptance.",
+  "repairs": [
+    "Parse fallback DATETIME at input precision, extract TIME, then round; retain midnight/DST distinctions.",
+    "Column numeric TIME admission shares existing signed conversion and preserves positive saturation versus negative NULL beside raw 1292.",
+    "ParseDuration consumes caller invalid/zero-date flags; remove column-to-StrToDuration adapter.",
+    "Malformed strings retain zero duration and raw truncation error for caller warning/strict policy.",
+    "Native JSON duration/time casts consume typed values; embedded duration precision is retained.",
+    "JSON string conversion preserves zero duration beside handled errors; scalar numeric JSON retains NULL.",
+    "INSERT/UPDATE/ODKU/IGNORE share typed temporal diagnostics and source-specific naming."
+  ],
+  "retained_contracts": [
+    "Go StrToDuration remains separate and still rounds calendar values across DST.",
+    "Expression integer casts retain NumberToDuration; Real/Decimal use ParseDuration without column numeric admission.",
+    "Other calendar targets retain their existing adapters.",
+    "No native client/dependency/generated/Go source changes."
+  ],
+  "baseline_regressions_failed": 6,
+  "distinct_rust_tests_passed": 103,
+  "commands": [
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked --no-fail-fast -p tidb-datatype -p tidb-expr --lib -- duration_batch_ --test-threads=1",
+      "log": "/workspace/.cloud-setup/duration-owner-batch/before.log",
+      "result": "six behavioral failures",
+      "sha256": "d592b65adcabd3cc2b45e89190ed1cc676a90b96ae47bf25d685b2d7df502079"
+    },
+    {
+      "cwd": "/workspace/.cloud-setup/go-master",
+      "command": "GOFLAGS=-mod=readonly go run /workspace/.cloud-setup/duration-owner-batch/oracle.go",
+      "log": "/workspace/.cloud-setup/duration-owner-batch/go-oracle-dst.json",
+      "result": "21 source boundary/date-policy/DST outputs; exit 0",
+      "sha256": "a3f3b123eef340c220eb8746e1b789a3867a107ea555ce7ba90974459002af42"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked --no-fail-fast -p tidb-datatype -p tidb-expr --lib -- duration_tests:: datum_convert:: cast::tests:: convert::tests:: --test-threads=1",
+      "log": "/workspace/.cloud-setup/duration-owner-batch/after-ready.log",
+      "result": "23 expression tests pass; datatype 78 pass/two test-expectation failures corrected against Go",
+      "sha256": "1b9fb39700f95b58a30e8196dc89a5880b62a92e44cae71dfeb57947756fa330"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked -p tidb-datatype --lib -- duration_tests:: datum_convert:: convert::tests:: --test-threads=1",
+      "log": "/workspace/.cloud-setup/duration-owner-batch/after-datatype-final.log",
+      "result": "80 passed; all datatype failures resolved",
+      "sha256": "7040876a6763286d06aadc19d60835783a2641f25df1d8f0fcfa133c023672b5"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/duration-owner-batch/wire.py before-ready",
+      "log": "/workspace/.cloud-setup/duration-owner-batch/before-ready-wire.json",
+      "result": "ten SQL scenarios fail against old server; original first probe corrected expected TIME(3) display precision without changing observed failures",
+      "sha256": "77bd61d45235a443ad5f995aed8d2650a79efdca94d5ed3083d6f18a98a32222"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo check --locked --all-targets -p tidb-datatype -p tidb-expr -p tidb-executor -p tidb-server",
+      "log": "/workspace/.cloud-setup/duration-owner-batch/check.log",
+      "result": "passed",
+      "sha256": "bf343542e4f4b7b87cee615291d30d5ea6da3538aba2685bc914aab5344572e1"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "make lint",
+      "log": "/workspace/.cloud-setup/duration-owner-batch/lint.log",
+      "result": "passed",
+      "sha256": "69ab95ca99ea41bd60ad47ae1fdbfc6e887ffafde7b05dec71c167e4ff23ed05"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo build --locked -p tidb-server",
+      "log": "/workspace/.cloud-setup/duration-owner-batch/build.log",
+      "result": "passed; exit 0",
+      "sha256": "c4218c92b68d4de14a8c101c0ee973bb9cdf5e3dee4f7d32e01d1e4ff113d1ae"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/duration-owner-batch/wire.py after",
+      "log": "/workspace/.cloud-setup/duration-owner-batch/after-wire.json",
+      "result": "ten live unistore SQL scenarios passed; exit 0",
+      "sha256": "b22b336ed91da6cea757c60345876c1748de5a52bed90b5ad3d0fd1db802acb8"
+    }
+  ],
+  "source_files": {
+    "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+    "files": [
+      {
+        "path": "pkg/types/time.go",
+        "sha256": "e4f3da22a90a6271f86e11f073c7afb6b6fc25ee32bb95e59904ccb861e0c425"
+      },
+      {
+        "path": "pkg/types/datum.go",
+        "sha256": "a7e97bcf032c6abd2e5c8d59516212cb6ead164dc3ec826bfd87392bc66475fc"
+      },
+      {
+        "path": "pkg/types/convert.go",
+        "sha256": "256d7882460e5e2ec9705cbad7238c7e0d08de2a732519e3075eeffff3b501dd"
+      },
+      {
+        "path": "pkg/types/context.go",
+        "sha256": "4f95c649cecf84cfdb3378b156fb4577762b53d8f2c4ade1600ef66ff237606a"
+      },
+      {
+        "path": "pkg/expression/builtin_cast.go",
+        "sha256": "12741863129c46a008a9064f94e11bf8be0a20f0b4efd83ef0a9e6b40b731ab5"
+      },
+      {
+        "path": "pkg/expression/builtin_cast_vec.go",
+        "sha256": "bc5556808e300885467d8af4422762bb089acaae1d40184ab042dcc611f2a8b7"
+      },
+      {
+        "path": "pkg/table/column.go",
+        "sha256": "39640cb6940ab803b1ed9eb9b6fe2b8a8f71e3b11fe62f2e09791d6ed9deaaac"
+      },
+      {
+        "path": "pkg/executor/insert_common.go",
+        "sha256": "4cadcb2be9b681c2b53ff584cbb26b0ee2645d5b98745b83ac68a2252de8f388"
+      },
+      {
+        "path": "pkg/executor/update.go",
+        "sha256": "e4b3b1ca4669032a647d6fc0c1def39c583e097d671ea4ea95be59499512bb10"
+      }
+    ]
+  },
+  "rust_changes": [
+    {
+      "path": "rust/crates/tidb-datatype/src/convert.rs",
+      "before_sha256": "8ba350c36006cef2e20f7a76733b7020c8ad1ebfe8e3949f3534edb622176b86",
+      "after_sha256": "5201df0535a495b57a8ee1bd274a8089a348e0f01e386beb157ca4f35271b136"
+    },
+    {
+      "path": "rust/crates/tidb-datatype/src/datum_convert.rs",
+      "before_sha256": "c3b7a2238c650acea8ee0af566aee3d41a711c5cffa4b67d6e7db204f684da4d",
+      "after_sha256": "bf5f7c022c8541c52d1c4c47c07f39f0f48ed69147d270c7255a5fcd6061c205"
+    },
+    {
+      "path": "rust/crates/tidb-datatype/src/datum_convert_go_tests.rs",
+      "before_sha256": "79de9140605ec79fd0eec98a3f66c208da1015d76dbd381a1e43b593c5f251fe",
+      "after_sha256": "1d972b1fe264ff1dd515d0c8f09c2e50a9709520a50590c20858ed4c825c186d"
+    },
+    {
+      "path": "rust/crates/tidb-datatype/src/duration.rs",
+      "before_sha256": "d55b2b756b51a8e297051f64d4c0552880813c68868661192104d7a7afd12797",
+      "after_sha256": "833a34538e0477c5e4f5ecb9354c35f89474435e48fda5230c16a9f7e53eeed4"
+    },
+    {
+      "path": "rust/crates/tidb-datatype/src/duration_tests.rs",
+      "before_sha256": "ecbbd0e5ecd58768edeb44e260c4cdcc67ee5d37a384031a7fa21cbf25dad2b7",
+      "after_sha256": "88f77f0ebcd3f9d5d7d5790585597b869959f966742cb78ccd30a4153d3e2065"
+    },
+    {
+      "path": "rust/crates/tidb-datatype/src/lib.rs",
+      "before_sha256": "947546044a812c3de82d06744f885a379dfd040dd64e6ce696b0873328918b58",
+      "after_sha256": "49721274749d271d801a076e5e73d3a16801f65c6888a99ba4ce77761cd8343d"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/write_cast.rs",
+      "before_sha256": "8c70b0d0bdccf4c718cc4307ddd6c342bc443e556ebd17fbe3924bfa5c411594",
+      "after_sha256": "7eef8d7dc7327e4166bb6cadf0efff045a689843919708ec66a799d3e51764ac"
+    },
+    {
+      "path": "rust/crates/tidb-expr/src/cast.rs",
+      "before_sha256": "2be412345c3076d25730da7b3ec36696d2966242a918bc35272be93cf6e9f406",
+      "after_sha256": "44f0bb859665f463293d6e559d4633517734b698ddb76e253aaf689259f89cba"
+    }
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "finding_statuses_changed": false,
+  "validation_notes": [
+    "The initial post-edit compile rejected a private Converted::truncated constructor; replaced it with the public value/event fields before testing.",
+    "The grouped run exposed a NULL display assumption in the new test (Go and Rust render an unset datum as empty text) and a stale existing DST expectation from StrToDuration; corrected tests retain explicit NULL identity and both separate Go contracts.",
+    "Retired identified inactive completed test executables with hashes/link/process checks to reserve server-link space. No compiler library or source purge."
+  ],
+  "package_boundary": "Complete pkg/types, pkg/expression, pkg/table and pkg/executor remain unaccepted. Their full source/generated/platform/test/fixture/build obligations remain in package-coverage.json and existing inventories; this receipt is bounded maintenance, not a partial-package transcreation claim.",
+  "not_verified": [
+    "Full Go package suites",
+    "Live multi-node TiKV",
+    "Complete SQL/PB vector signature matrix",
+    "Workload performance",
+    "Fresh Cloud restoration"
+  ],
+  "publication": "Actual hook, fresh pre-push locked build, remote SHA and Cloud checkpoint are recorded in /workspace/.cloud-setup/duration-owner-batch/final-handoff.json.",
+  "live_sql_scenarios_passed": 10,
+  "self_review": "Reviewed all production changes against the pinned Go owners and verified Rust/source receipt hashes. Only K03/X01 evidence changed; broad statuses remain partial."
+}

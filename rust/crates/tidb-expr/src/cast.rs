@@ -591,19 +591,55 @@ fn cast_to_duration(
     let source_eval_type = source.map(FieldType::eval_type);
 
     if let Datum::Json(value) = v {
-        if !matches!(
-            value.type_code(),
-            JSON_TYPE_CODE_DATE
-                | JSON_TYPE_CODE_DATETIME
-                | JSON_TYPE_CODE_TIMESTAMP
-                | JSON_TYPE_CODE_DURATION
-                | JSON_TYPE_CODE_STRING
-        ) {
-            ctx.handle_truncate(&format!(
-                "Truncated incorrect time value: '{}'",
-                tidb_datatype::warning_subject_byte_cap(&input)
-            ))?;
-            return Ok(Datum::Null);
+        match value.type_code() {
+            JSON_TYPE_CODE_DURATION => {
+                return value
+                    .as_duration()
+                    .map(Datum::Duration)
+                    .map_err(|_| EvalError::Unsupported("JSON duration payload"))
+            }
+            JSON_TYPE_CODE_DATE | JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP => {
+                let time = value
+                    .as_time(fsp)
+                    .map_err(|_| EvalError::Unsupported("JSON time payload"))?;
+                let duration = time
+                    .to_duration()
+                    .map_err(|_| EvalError::Unsupported("JSON time conversion"))?;
+                return duration
+                    .round_frac(fsp)
+                    .map(Datum::Duration)
+                    .map_err(|_| EvalError::Unsupported("JSON time precision"));
+            }
+            JSON_TYPE_CODE_STRING => {
+                let text = value
+                    .unquote()
+                    .map_err(|_| EvalError::Unsupported("JSON string payload"))?;
+                let parsed = tidb_datatype::parse_duration_with_flags(
+                    &text,
+                    fsp,
+                    ctx.type_flags(),
+                    &ctx.time_zone(),
+                );
+                let value = match parsed {
+                    Ok(parsed) if parsed.event.is_none() => {
+                        return Ok(Datum::Duration(parsed.value))
+                    }
+                    Ok(parsed) => parsed.value,
+                    Err(_) => tidb_datatype::MySqlDuration::from_raw_parts(0, 0),
+                };
+                ctx.handle_truncate(&format!(
+                    "Truncated incorrect time value: '{}'",
+                    tidb_datatype::warning_subject_byte_cap(&text)
+                ))?;
+                return Ok(Datum::Duration(value));
+            }
+            _ => {
+                ctx.handle_truncate(&format!(
+                    "Truncated incorrect TIME value: '{}'",
+                    tidb_datatype::warning_subject_byte_cap(&input)
+                ))?;
+                return Ok(Datum::Null);
+            }
         }
     }
 
@@ -628,9 +664,13 @@ fn cast_to_duration(
         number_to_duration(number, fsp)
             .map(|converted| (Datum::new_duration(converted.value), converted.event))
             .map_err(|error| DatumValueError::Comparison(error.to_string()))
-    } else {
-        v.convert_to_in(&target, ConversionFlags::default(), &ctx.time_zone())
+    } else if matches!(v, Datum::Time(_) | Datum::Duration(_)) {
+        v.convert_to_in(&target, ctx.type_flags(), &ctx.time_zone())
             .map(|converted| (converted.value, converted.event))
+    } else {
+        tidb_datatype::parse_duration_with_flags(&input, fsp, ctx.type_flags(), &ctx.time_zone())
+            .map(|converted| (Datum::Duration(converted.value), converted.event))
+            .map_err(|error| DatumValueError::Comparison(error.to_string()))
     };
 
     match converted {
@@ -2700,5 +2740,44 @@ mod tests {
         .expect("JSON mismatch is a warning");
         assert_eq!(json, Datum::Null);
         assert_eq!(warnings.0.borrow().len(), 3);
+    }
+    #[test]
+    fn duration_batch_json_duration_preserves_embedded_precision() {
+        let duration = tidb_datatype::MySqlDuration::new(12, 34, 56, 123_456, 6).unwrap();
+        let json = Datum::Json(tidb_datatype::BinaryJSON::from_duration(duration));
+        let result = eval_cast(
+            &CastType::Time { fsp: Some(0) },
+            json,
+            Some(&FieldType::new(FieldTypeCode::Json)),
+            &NoColumns,
+        )
+        .unwrap();
+        assert_eq!(result, Datum::Duration(duration));
+    }
+
+    #[test]
+    fn duration_batch_json_string_parse_error_keeps_zero_value() {
+        let json = Datum::Json(tidb_datatype::BinaryJSON::parse("\"bad\"").unwrap());
+        let result = eval_cast(
+            &CastType::Time { fsp: Some(3) },
+            json,
+            Some(&FieldType::new(FieldTypeCode::Json)),
+            &NoColumns,
+        )
+        .unwrap();
+        assert!(matches!(result, Datum::Duration(_)), "{result:?}");
+        assert_eq!(result.sql_string().unwrap(), "00:00:00");
+    }
+
+    #[test]
+    fn duration_batch_string_calendar_fallback_keeps_midnight_carry() {
+        let result = eval_cast(
+            &CastType::Time { fsp: Some(0) },
+            Datum::new_string("2024-01-01 23:59:59.999999".to_owned()),
+            Some(&FieldType::new(FieldTypeCode::VarString)),
+            &NoColumns,
+        )
+        .unwrap();
+        assert_eq!(result.sql_string().unwrap(), "24:00:00");
     }
 }

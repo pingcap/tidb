@@ -1022,8 +1022,9 @@ fn session_zone_reaches_signed_and_duration_conversion() {
         }
     }
 
-    // `StrToDuration`'s DATETIME branch: the literal is >= 12 digits, so the
-    // fsp=0 rounding carry crosses the same transition instants.
+    // Datum.ConvertTo(TIME) uses ParseDuration: extract the clock before
+    // rounding. StrToDuration is a separate Go helper whose calendar result
+    // still rounds across these zone transitions.
     let duration_type = FieldType::new(FieldTypeCode::Duration).with_decimal(0);
     for (input, in_utc, in_la) in [
         ("20110313015959.999999", "02:00:00", "03:00:00"),
@@ -1038,7 +1039,12 @@ fn session_zone_reaches_signed_and_duration_conversion() {
             let Datum::Duration(got) = got else {
                 panic!("{input} in {zone:?}: expected a Duration, got {got:?}")
             };
-            assert_eq!(got.to_string(), expected, "{input} in {zone:?}");
+            assert_eq!(got.to_string(), "02:00:00", "{input} in {zone:?}");
+            let legacy = crate::str_to_duration(input, 0, zone).unwrap();
+            let crate::DurationOrTime::Time(calendar) = legacy.value else {
+                panic!("StrToDuration must retain its calendar result");
+            };
+            assert_eq!(calendar.to_duration().unwrap().to_string(), expected);
         }
     }
 }

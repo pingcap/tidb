@@ -705,18 +705,20 @@ pub fn parse_mysql_duration<TZ: TimeZone>(
     match parse_duration(input.as_bytes(), target_fsp) {
         Ok(parsed) => Ok(parsed),
         Err(DurationParseError::DateTimeFallback(_)) => {
-            let time = crate::parse_time(
-                input,
-                TimeType::DateTime,
-                target_fsp,
-                false,
-                allow_zero_in_date,
-                allow_invalid_date,
-                timezone,
-            )
-            .map_err(DurationValueError::Time)?
-            .time;
+            // Go ParseDuration parses at the input's precision, extracts the
+            // clock, then rounds TIME. Rounding the calendar first loses a
+            // carry such as 23:59:59.999999 -> 24:00:00.
+            let time =
+                crate::parse_datetime(input, timezone, allow_zero_in_date, allow_invalid_date)
+                    .map_err(DurationValueError::Time)?
+                    .time;
             let duration = time.to_duration().map_err(DurationValueError::Time)?;
+            let duration = duration.round_frac(target_fsp).map_err(|error| {
+                DurationValueError::Duration(match error {
+                    DurationRoundError::InvalidFsp(error) => DurationParseError::InvalidFsp(error),
+                    DurationRoundError::Overflow => DurationParseError::NumericOverflow,
+                })
+            })?;
             Ok(ParsedDuration {
                 nanoseconds: duration.nanoseconds(),
                 fsp: duration.fsp(),

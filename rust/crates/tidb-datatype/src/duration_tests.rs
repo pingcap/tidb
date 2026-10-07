@@ -727,3 +727,17 @@ fn malformed_duration_input_has_only_the_two_source_outcomes() {
         );
     }
 }
+
+#[test]
+fn duration_batch_calendar_fallback_rounds_after_extracting_the_clock() {
+    for input in ["2024-01-01 23:59:59.999999", "20240101235959.999999"] {
+        let parsed = parse_mysql_duration(input, 0, &chrono::Utc, true, false).unwrap();
+        assert_eq!(
+            MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp())
+                .unwrap()
+                .to_string(),
+            "24:00:00",
+            "{input}"
+        );
+    }
+}
