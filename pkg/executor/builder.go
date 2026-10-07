@@ -4675,6 +4675,12 @@ func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexRead
 		e.dummy = true
 	}
 
+	if v.LooseScan != nil {
+		if e.looseScan, err = buildLooseScanInfo(v); err != nil {
+			return nil, err
+		}
+	}
+
 	return e, nil
 }
 

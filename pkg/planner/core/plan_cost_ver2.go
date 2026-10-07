@@ -19,6 +19,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -288,6 +289,9 @@ func getPlanCostVer24PhysicalIndexReader(pp base.PhysicalPlan, taskType property
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
+	if p.LooseScan != nil {
+		return getPlanCostVer24LooseIndexReader(p, taskType, option), nil
+	}
 
 	rows := getCardinality(p.IndexPlan, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
@@ -307,6 +311,43 @@ func getPlanCostVer24PhysicalIndexReader(pp base.PhysicalPlan, taskType property
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexReaderCostFactor)
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexReaderCostFactor)
 	return p.PlanCostVer2, nil
+}
+
+// getPlanCostVer24LooseIndexReader returns the plan-cost of a loose index scan,
+// which issues one coprocessor request per distinct prefix, one after another:
+// plan-cost = request-cost + scan-cost + net-cost
+// request-cost = seeks * request-factor
+// scan-cost = seeks * rows-scanned-per-seek * log2(row-size) * scan-factor
+// net-cost = seeks * batch-size * row-size * net-factor
+// The requests are sequential, so the cost is not divided by the scan
+// concurrency.
+func getPlanCostVer24LooseIndexReader(p *physicalop.PhysicalIndexReader, taskType property.TaskType, option *costusage.PlanCostOption) costusage.CostVer2 {
+	is := p.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+	limit := p.IndexPlan.(*physicalop.PhysicalLimit)
+	seeks := max(getCardinality(p, option.CostFlag), 1)
+	batch := float64(p.LooseScan.BatchSize)
+	scanRows := getCardinality(is, option.CostFlag)
+	matchRows := max(getCardinality(limit.Children()[0], option.CostFlag), 1)
+	// Rows scanned per seek: enough to find a batch of matching rows, but never
+	// more than the whole group.
+	rowsPerSeek := max(min(scanRows/seeks, batch*scanRows/matchRows), batch)
+	rowSize := getAvgRowSize(is.StatsInfo(), is.Schema().Columns)
+	requestFactor := getTaskRequestFactorVer2(p, taskType)
+
+	requestCost := costusage.NewCostVer2(option, requestFactor,
+		seeks*requestFactor.Value,
+		func() string { return fmt.Sprintf("seeks(%v*%v)", seeks, requestFactor) })
+	scanCost := scanCostVer2(option, seeks*rowsPerSeek, rowSize, getTaskScanFactorVer2(is, kv.TiKV, property.CopSingleReadTaskType))
+	netCost := netCostVer2(option, seeks*batch, getAvgRowSize(p.StatsInfo(), p.Schema().Columns), getTaskNetFactorVer2(p, taskType))
+
+	p.PlanCostVer2 = costusage.SumCostVer2(requestCost, scanCost, netCost)
+	failpoint.Inject("forceLooseIndexScan", func() {
+		p.PlanCostVer2 = costusage.NewCostVer2(option, requestFactor, 0, func() string { return "forced" })
+	})
+	p.PlanCostInit = true
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexReaderCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexReaderCostFactor)
+	return p.PlanCostVer2
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:

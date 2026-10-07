@@ -278,6 +278,9 @@ type IndexReaderExecutor struct {
 	// If dummy flag is set, this is not a real IndexReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+
+	// looseScan is set when the reader skips between distinct index prefixes.
+	looseScan *looseScanInfo
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -424,6 +427,13 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
+	if e.looseScan != nil {
+		if e.desc {
+			slices.Reverse(kvRanges)
+		}
+		e.result = newLooseScanResult(e, kvRanges)
+		return nil
+	}
 	if !needMergeSort(e.byItems, len(kvRanges)) {
 		kvReq, err := e.buildKVReq(kvRanges)
 		if err != nil {

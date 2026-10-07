@@ -5,11 +5,12 @@ go_test(
     timeout = "moderate",
     srcs = [
         "distsql_test.go",
+        "loose_index_scan_test.go",
         "main_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 2,
+    shard_count = 4,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -17,6 +18,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",

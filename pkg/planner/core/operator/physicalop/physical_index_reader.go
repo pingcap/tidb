@@ -15,6 +15,8 @@
 package physicalop
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
@@ -43,6 +45,44 @@ type PhysicalIndexReader struct {
 
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
+
+	// LooseScan is set when the reader skips from one distinct index prefix
+	// to the next instead of scanning every key. See LooseScanInfo.
+	LooseScan *LooseScanInfo
+}
+
+// LooseScanInfo describes a loose (skip) index scan. The reader reads the
+// first BatchSize rows of a key range, then seeks past the index prefix of the
+// last row it read, so each distinct prefix value costs one coprocessor
+// request instead of a scan of all its keys. The aggregation above the reader
+// still merges the rows, so the reader only has to return a superset of the
+// rows each group needs.
+type LooseScanInfo struct {
+	// PrefixCols are the leading index columns that define a group, in index
+	// order. They are always part of the reader's schema.
+	PrefixCols []*expression.Column
+	// NullSkipCol is the index column right after the prefix when MIN() is
+	// computed on it. NULLs sort first, so when the first row of a group has a
+	// NULL there, the reader seeks past (prefix, NULL) instead of past the
+	// prefix, to also return the first non-NULL value of the group.
+	NullSkipCol *expression.Column
+	// BatchSize is the number of rows read per seek.
+	BatchSize uint64
+}
+
+// Clone deep-copies the LooseScanInfo.
+func (l *LooseScanInfo) Clone() *LooseScanInfo {
+	if l == nil {
+		return nil
+	}
+	cloned := &LooseScanInfo{
+		PrefixCols: util.CloneCols(l.PrefixCols),
+		BatchSize:  l.BatchSize,
+	}
+	if l.NullSkipCol != nil {
+		cloned.NullSkipCol = l.NullSkipCol.Clone().(*expression.Column)
+	}
+	return cloned
 }
 
 // Init initializes PhysicalIndexReader.
@@ -69,6 +109,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	}
 	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
 	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
+	cloned.LooseScan = p.LooseScan.Clone()
 	return cloned, err
 }
 
@@ -156,12 +197,19 @@ func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObj
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.IndexPlan.ExplainID().String()
+	return "index:" + p.IndexPlan.ExplainID().String() + p.looseScanExplainInfo()
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return "index:" + p.IndexPlan.TP()
+	return "index:" + p.IndexPlan.TP() + p.looseScanExplainInfo()
+}
+
+func (p *PhysicalIndexReader) looseScanExplainInfo() string {
+	if p.LooseScan == nil {
+		return ""
+	}
+	return fmt.Sprintf(", loose scan prefix:%d", len(p.LooseScan.PrefixCols))
 }
 
 // GetNetDataSize calculates the cost of the plan in network data transfer.
