@@ -65,12 +65,14 @@ impl TimestampOracle {
         cluster_id: u64,
         routes: Vec<(super::service_discovery::TsoRoute, Channel)>,
         forwarding: super::service_discovery::TsoForwarding,
+        options: Arc<super::opt::Options>,
         timeout: Duration,
     ) -> Result<Self> {
         let (sender, receiver) = tokio::sync::watch::channel(routes);
         let mut oracle = Self::with_transport(
             cluster_id,
             Transport::Discovered(receiver, forwarding),
+            options,
             timeout,
         )?;
         Arc::get_mut(&mut oracle.inner).unwrap().routes = Some(sender);
@@ -93,13 +95,19 @@ impl TimestampOracle {
         }
     }
 
-    fn with_transport(cluster_id: u64, transport: Transport, timeout: Duration) -> Result<Self> {
+    fn with_transport(
+        cluster_id: u64,
+        transport: Transport,
+        options: Arc<super::opt::Options>,
+        timeout: Duration,
+    ) -> Result<Self> {
         let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
         let cancellation = Cancellation::default();
         let worker = tokio::spawn(run_tso(
             cluster_id,
             transport,
             request_rx,
+            options,
             timeout,
             cancellation.clone(),
         ));
@@ -119,7 +127,12 @@ impl TimestampOracle {
         pd_client: &PdClient<Channel>,
         timeout: Duration,
     ) -> Result<TimestampOracle> {
-        Self::with_transport(cluster_id, Transport::Pd(pd_client.clone()), timeout)
+        Self::with_transport(
+            cluster_id,
+            Transport::Pd(pd_client.clone()),
+            Arc::new(super::opt::Options::new()),
+            timeout,
+        )
     }
 
     pub(crate) async fn get_timestamp(self) -> Result<Timestamp> {
@@ -164,16 +177,18 @@ async fn run_tso(
     cluster_id: u64,
     transport: Transport,
     request_rx: mpsc::Receiver<TimestampRequest>,
+    options: Arc<super::opt::Options>,
     timeout: Duration,
     cancellation: Cancellation,
 ) -> Result<()> {
     let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
     let watcher = Watcher::new(&cancellation, DEADLINE_CAPACITY, "tso");
-    let request_stream = request_stream(
+    let request_stream = request_stream_with_options(
         cluster_id,
         request_rx,
         pending_requests.clone(),
         watcher.clone(),
+        options,
         timeout,
         cancellation.clone(),
     );
@@ -334,11 +349,32 @@ impl Drop for RequestBatch {
     }
 }
 
+#[cfg(test)]
 fn request_stream(
     cluster_id: u64,
     request_rx: mpsc::Receiver<TimestampRequest>,
     pending_requests: Arc<Mutex<VecDeque<RequestGroup>>>,
     watcher: Watcher,
+    timeout: Duration,
+    cancellation: Cancellation,
+) -> impl Stream<Item = TsoRequest> + Send + 'static {
+    request_stream_with_options(
+        cluster_id,
+        request_rx,
+        pending_requests,
+        watcher,
+        Arc::new(super::opt::Options::new()),
+        timeout,
+        cancellation,
+    )
+}
+
+fn request_stream_with_options(
+    cluster_id: u64,
+    request_rx: mpsc::Receiver<TimestampRequest>,
+    pending_requests: Arc<Mutex<VecDeque<RequestGroup>>>,
+    watcher: Watcher,
+    options: Arc<super::opt::Options>,
     timeout: Duration,
     cancellation: Cancellation,
 ) -> impl Stream<Item = TsoRequest> + Send + 'static {
@@ -349,6 +385,7 @@ fn request_stream(
         let pending_capacity = pending_capacity.clone();
         let batch_pool = batch_pool.clone();
         let watcher = watcher.clone();
+        let options = options.clone();
         let cancellation = cancellation.clone();
         async move {
             let prepare = async {
@@ -358,7 +395,7 @@ fn request_stream(
                         &cancellation,
                         &mut request_rx,
                         Some(&pending_capacity),
-                        Duration::ZERO,
+                        options.get_max_tso_batch_wait_interval(),
                     )
                     .await
                     .ok()??;

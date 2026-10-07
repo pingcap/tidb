@@ -210,6 +210,8 @@ pub trait PdRegionPolicy: std::fmt::Debug + Send + Sync {
     fn set_follower_handle(&self, enabled: bool);
     /// Applies Go EnableTSOFollowerProxy to the same process PD client.
     fn set_tso_follower_proxy(&self, _enabled: bool) {}
+    /// Applies the maximum additional collection wait to the shared PD owner.
+    fn set_tso_batch_wait(&self, _wait: std::time::Duration) {}
 }
 
 /// Storage-oracle authority installed once by the process session factory.
@@ -218,6 +220,12 @@ pub trait ExternalTimestampProvider: std::fmt::Debug + Send + Sync {
     fn get(&self) -> Result<u64, String>;
     /// Updates the timestamp under that authority's monotonicity rules.
     fn set(&self, ts: u64) -> Result<(), String>;
+}
+
+// Go Domain converts fractional milliseconds to integer nanoseconds.
+fn tso_batch_wait(value: &str) -> std::time::Duration {
+    let milliseconds = value.parse::<f64>().expect("validated TSO wait is numeric");
+    std::time::Duration::from_nanos((milliseconds * 1_000_000.0) as u64)
 }
 
 impl Default for GlobalSysvars {
@@ -497,16 +505,19 @@ impl GlobalSysvars {
             .resolved
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let enabled = |name| {
+        let value = |name| {
             let index = crate::sysvar::sys_var_index_lookup(name).expect("PD policy is registered");
-            let value = resolved
+            resolved
                 .values
                 .get(index)
                 .and_then(|slot| slot.as_deref())
                 .map(str::to_owned)
                 .unwrap_or_else(|| {
                     crate::sysvar::effective_default(&crate::sysvar::SYS_VARS[index])
-                });
+                })
+        };
+        let enabled = |name| {
+            let value = value(name);
             value.eq_ignore_ascii_case("ON") || value == "1"
         };
         *self
@@ -520,6 +531,9 @@ impl GlobalSysvars {
             policy.set_tso_follower_proxy(enabled(
                 tidb_vardef::tidb_vars::TIDB_ENABLE_TSO_FOLLOWER_PROXY,
             ));
+            policy.set_tso_batch_wait(tso_batch_wait(&value(
+                tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME,
+            )));
         }
         drop(resolved);
     }
@@ -684,6 +698,9 @@ impl GlobalSysvars {
         let pd_region_value = effective(tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION);
         let pd_region_enabled =
             pd_region_value.eq_ignore_ascii_case("ON") || pd_region_value == "1";
+        let tso_wait = tso_batch_wait(&effective(
+            tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME,
+        ));
         let tso_proxy_value = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_TSO_FOLLOWER_PROXY);
         let tso_proxy_enabled =
             tso_proxy_value.eq_ignore_ascii_case("ON") || tso_proxy_value == "1";
@@ -788,6 +805,7 @@ impl GlobalSysvars {
             if let Some(policy) = policy {
                 policy.set_follower_handle(pd_region_enabled);
                 policy.set_tso_follower_proxy(tso_proxy_enabled);
+                policy.set_tso_batch_wait(tso_wait);
             }
         }
     }

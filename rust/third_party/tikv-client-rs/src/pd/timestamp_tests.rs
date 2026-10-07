@@ -1238,6 +1238,7 @@ async fn source_pd_error_owner_reports_stream_eof() {
             42,
             Transport::Pd(PdClient::new(channel)),
             rx,
+            Arc::new(crate::pd::opt::Options::new()),
             Duration::from_secs(2),
             Cancellation::default(),
         ),
@@ -2946,4 +2947,32 @@ async fn tso_failure_batch_established_eof_does_not_enable_forwarding() {
     }
     assert_eq!(follower.service.received.load(Ordering::SeqCst), 0);
     client.close().await;
+}
+
+#[tokio::test]
+async fn collection_batch_live_wait_option_reaches_existing_oracle() {
+    let server = Server::start(Reply::Timestamp).await;
+    let connection = Connection::new(Arc::new(SecurityManager::default()));
+    let cluster = connection
+        .connect_cluster(&[server.service.endpoint.clone()], Duration::from_secs(3))
+        .await
+        .unwrap();
+    let oracle = cluster.tso_for_test();
+    // Establish transport before measuring the collection policy itself.
+    oracle.clone().get_timestamp().await.unwrap();
+    connection
+        .options
+        .set_max_tso_batch_wait_interval(Duration::from_millis(10))
+        .unwrap();
+    // Go samples the option before waiting for a first request. Complete
+    // the collector already waiting under the old value before measuring.
+    oracle.clone().get_timestamp().await.unwrap();
+    let started = std::time::Instant::now();
+    oracle.clone().get_timestamp().await.unwrap();
+    let waited = started.elapsed();
+    oracle.close().await;
+    assert!(
+        waited >= Duration::from_millis(9),
+        "live collector ignored configured wait: {waited:?}"
+    );
 }

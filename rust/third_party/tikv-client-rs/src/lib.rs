@@ -255,6 +255,8 @@ pub use crate::kv::{
 };
 #[doc(inline)]
 pub use crate::pd::backoff as pd_backoff;
+/// Shared PD request batch collection and completion.
+pub use crate::pd::batch as pd_batch;
 pub use crate::pd::circuitbreaker as pd_circuitbreaker;
 pub use crate::pd::metrics as pd_metrics;
 #[doc(inline)]

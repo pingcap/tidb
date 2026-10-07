@@ -20,6 +20,24 @@ const DEFAULT_BEST_BATCH_SIZE: usize = 8;
 /// Indexed completion callback; owned requests may be non-Clone Rust senders.
 pub type Finisher<'a, T> = dyn FnMut(usize, T, Option<&Error>) + Send + 'a;
 
+/// A request queue projected by its owner. This lets synchronous-facing
+/// clients share collection without copying the batch algorithm.
+pub trait RequestReceiver<T> {
+    /// Waits for the next request; None means the owner closed the queue.
+    fn recv(&mut self) -> impl std::future::Future<Output = Option<T>> + Send;
+    /// Takes a queued request without waiting.
+    fn try_recv(&mut self) -> std::result::Result<T, mpsc::error::TryRecvError>;
+}
+
+impl<T: Send> RequestReceiver<T> for mpsc::Receiver<T> {
+    async fn recv(&mut self) -> Option<T> {
+        mpsc::Receiver::recv(self).await
+    }
+    fn try_recv(&mut self) -> std::result::Result<T, mpsc::error::TryRecvError> {
+        mpsc::Receiver::try_recv(self)
+    }
+}
+
 /// Collects one batch at a time and retains its buffer for the next round.
 pub struct Controller<T> {
     max_batch_size: usize,
@@ -56,7 +74,7 @@ impl<T> Controller<T> {
     pub async fn fetch_pending_requests(
         &mut self,
         ctx: &Cancellation,
-        requests: &mut mpsc::Receiver<T>,
+        requests: &mut impl RequestReceiver<T>,
         tokens: Option<&Arc<Semaphore>>,
         max_batch_wait: Duration,
     ) -> Result<Option<OwnedSemaphorePermit>> {
@@ -92,7 +110,7 @@ impl<T> Controller<T> {
     pub async fn fetch_requests_with_timer(
         &mut self,
         ctx: &Cancellation,
-        requests: &mut mpsc::Receiver<T>,
+        requests: &mut impl RequestReceiver<T>,
         mut timer: Pin<&mut Sleep>,
     ) -> Result<()> {
         while self.requests.len() < self.max_batch_size {
@@ -115,7 +133,11 @@ impl<T> Controller<T> {
         self.requests.push(request);
     }
 
-    fn drain_ready(&mut self, ctx: &Cancellation, requests: &mut mpsc::Receiver<T>) -> Result<()> {
+    fn drain_ready(
+        &mut self,
+        ctx: &Cancellation,
+        requests: &mut impl RequestReceiver<T>,
+    ) -> Result<()> {
         while self.requests.len() < self.max_batch_size {
             if ctx.is_cancelled() {
                 return Err(Error::ContextCanceled);
@@ -211,7 +233,7 @@ impl<T> Fetching<'_, T> {
     async fn collect(
         &mut self,
         ctx: &Cancellation,
-        requests: &mut mpsc::Receiver<T>,
+        requests: &mut impl RequestReceiver<T>,
         tokens: Option<&Arc<Semaphore>>,
         max_batch_wait: Duration,
     ) -> Result<()> {

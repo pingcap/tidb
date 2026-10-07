@@ -158,7 +158,7 @@ struct PdClientShared {
     timeout: Duration,
     cluster_id: u64,
     state: Arc<RwLock<PdSharedState>>,
-    commands: mpsc::Sender<WorkerCommand>,
+    commands: tokio::sync::mpsc::UnboundedSender<WorkerCommand>,
     shutdown: watch::Sender<bool>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
@@ -277,7 +277,7 @@ impl PdClient {
         // service discovery. Native and adapter callers use the same registry.
         crate::metrics::init_dashboard_series();
         let seeds = normalize_endpoints(raw_seeds, false)?;
-        let (commands, receiver) = mpsc::channel();
+        let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (ready_tx, ready_rx) = mpsc::channel();
         let options = Arc::new(options);
@@ -350,6 +350,14 @@ impl PdClient {
                 Err(PdClientError::Runtime(error.to_string()))
             }
         }
+    }
+
+    /// Changes the additional collection wait sampled by subsequent TSO batches.
+    pub fn set_max_tso_batch_wait_interval(&self, wait: Duration) -> Result<(), PdClientError> {
+        self.shared
+            .options
+            .set_max_tso_batch_wait_interval(wait)
+            .map_err(|error| PdClientError::Runtime(error.to_string()))
     }
 
     /// Updates timestamp proxy selection and wakes the owned discovery worker.
@@ -881,14 +889,16 @@ mod worker_lifecycle_tests {
     };
 
     fn test_client(
-        worker: impl FnOnce(mpsc::Receiver<WorkerCommand>, watch::Receiver<bool>) + Send + 'static,
+        worker: impl FnOnce(tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>, watch::Receiver<bool>)
+            + Send
+            + 'static,
     ) -> PdClient {
         let members = PdMemberSet {
             cluster_id: 42,
             leader_url: "http://127.0.0.1:2379".to_owned(),
             member_urls: vec!["http://127.0.0.1:2379".to_owned()],
         };
-        let (commands, receiver) = mpsc::channel();
+        let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
         let worker: JoinHandle<()> = std::thread::spawn(move || worker(receiver, shutdown_rx));
         PdClient {
@@ -910,10 +920,11 @@ mod worker_lifecycle_tests {
     }
 
     fn acknowledge_close(
-        receiver: mpsc::Receiver<WorkerCommand>,
+        mut receiver: tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
         _shutdown: watch::Receiver<bool>,
     ) {
-        let WorkerCommand::Close { reply } = receiver.recv().expect("close command") else {
+        let WorkerCommand::Close { reply } = receiver.blocking_recv().expect("close command")
+        else {
             panic!("fixture accepts only Close")
         };
         reply.send(()).expect("shutdown receiver");
@@ -937,8 +948,9 @@ mod worker_lifecycle_tests {
 
     #[test]
     fn shutdown_reports_worker_panic_after_acknowledgement() {
-        let owner = test_client(|receiver, _shutdown| {
-            let WorkerCommand::Close { reply } = receiver.recv().expect("close command") else {
+        let owner = test_client(|mut receiver, _shutdown| {
+            let WorkerCommand::Close { reply } = receiver.blocking_recv().expect("close command")
+            else {
                 panic!("fixture accepts only Close")
             };
             reply.send(()).expect("shutdown receiver");
@@ -950,8 +962,9 @@ mod worker_lifecycle_tests {
 
     #[test]
     fn shutdown_reports_missing_acknowledgement() {
-        let owner = test_client(|receiver, _shutdown| {
-            let WorkerCommand::Close { reply } = receiver.recv().expect("close command") else {
+        let owner = test_client(|mut receiver, _shutdown| {
+            let WorkerCommand::Close { reply } = receiver.blocking_recv().expect("close command")
+            else {
                 panic!("fixture accepts only Close")
             };
             drop(reply);
@@ -995,9 +1008,9 @@ mod worker_lifecycle_tests {
     #[test]
     fn close_cancels_in_flight_request_before_join() {
         let (started, observed) = mpsc::channel();
-        let owner = test_client(move |receiver, shutdown| {
+        let owner = test_client(move |mut receiver, shutdown| {
             let WorkerCommand::RefreshMembers { reply } =
-                receiver.recv().expect("foreground command")
+                receiver.blocking_recv().expect("foreground command")
             else {
                 panic!("expected RefreshMembers")
             };
@@ -1009,7 +1022,8 @@ mod worker_lifecycle_tests {
                 .send(Err(PdClientError::Closed))
                 .expect("foreground receiver");
 
-            let WorkerCommand::Close { reply } = receiver.recv().expect("close command") else {
+            let WorkerCommand::Close { reply } = receiver.blocking_recv().expect("close command")
+            else {
                 panic!("expected Close")
             };
             reply.send(()).expect("shutdown receiver");

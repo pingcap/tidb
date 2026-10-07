@@ -2849,3 +2849,37 @@ fn tso_proxy_batch_sql_global_policy_publication() {
         .unwrap();
     assert!(!policy.0.load(Ordering::SeqCst));
 }
+
+#[test]
+fn collection_batch_sql_publication_preserves_fractional_wait_and_scratch_isolation() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    #[derive(Debug)]
+    struct Policy(AtomicU64);
+    impl vars::PdRegionPolicy for Policy {
+        fn set_follower_handle(&self, _: bool) {}
+        fn set_tso_batch_wait(&self, wait: std::time::Duration) {
+            self.0.store(wait.as_nanos() as u64, Ordering::SeqCst);
+        }
+    }
+    let (mut session, mut peer, globals) = two_sessions_sharing_globals();
+    let policy = std::sync::Arc::new(Policy(AtomicU64::new(999)));
+    globals.set_pd_region_policy(policy.clone());
+    assert_eq!(policy.0.load(Ordering::SeqCst), 0);
+    session
+        .run("SET GLOBAL tidb_tso_client_batch_max_wait_time=1.25")
+        .unwrap();
+    assert_eq!(policy.0.load(Ordering::SeqCst), 1_250_000);
+    assert!(peer
+        .run("SET GLOBAL tidb_tso_client_batch_max_wait_time='wrong'")
+        .is_err());
+    assert_eq!(policy.0.load(Ordering::SeqCst), 1_250_000);
+    let name = "tidb_tso_client_batch_max_wait_time";
+    let scratch = vars::GlobalSysvars::from_cluster_rows([(name.to_owned(), "8".to_owned())]);
+    scratch.set_pd_region_policy(policy.clone());
+    assert_eq!(policy.0.load(Ordering::SeqCst), 1_250_000);
+    globals.replace_from(&scratch);
+    assert_eq!(policy.0.load(Ordering::SeqCst), 8_000_000);
+    peer.run("SET GLOBAL tidb_tso_client_batch_max_wait_time=DEFAULT")
+        .unwrap();
+    assert_eq!(policy.0.load(Ordering::SeqCst), 0);
+}

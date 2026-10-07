@@ -1244,3 +1244,89 @@ fn tso_failure_batch_response_error_does_not_enable_forwarding() {
     assert_eq!(follower.state.lock().unwrap().stream_opens, 0);
     client.shutdown().unwrap();
 }
+
+#[test]
+fn collection_batch_configured_wait() {
+    let server = Server::start_auto_batching();
+    let mut options = tikv_client::pd_options::Options::new();
+    options.timeout = Duration::from_secs(5);
+    options
+        .set_max_tso_batch_wait_interval(Duration::from_millis(10))
+        .unwrap();
+    let client =
+        PdClient::connect_seeds_with_options([server.address.clone()], Default::default(), options)
+            .unwrap();
+    client.get_timestamp().unwrap();
+    let started = std::time::Instant::now();
+    client.get_timestamp().unwrap();
+    let elapsed = started.elapsed();
+    client.shutdown().unwrap();
+    assert!(
+        elapsed >= Duration::from_millis(9),
+        "adapter ignored batch wait: {elapsed:?}"
+    );
+}
+
+#[test]
+fn collection_batch_uses_twenty_thousand_request_bound() {
+    let server = Server::start_auto_batching();
+    // Keep the first exchange in flight so the next collector sees the full queue.
+    server
+        .state
+        .lock()
+        .unwrap()
+        .replies
+        .push_back(TsoReply::Delayed(
+            Duration::from_millis(500),
+            timestamp(0, 1),
+        ));
+    let client = PdClient::connect(&server.address, Duration::from_secs(10)).unwrap();
+    let first = client.get_timestamp_async().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while server.state.lock().unwrap().requests.is_empty() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let waiters = (0..20_001)
+        .map(|_| client.get_timestamp_async().unwrap())
+        .collect::<Vec<_>>();
+    first.wait().unwrap();
+    for waiter in waiters {
+        waiter.wait().unwrap();
+    }
+    client.shutdown().unwrap();
+    let counts = server
+        .state
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .map(|r| r.count)
+        .collect::<Vec<_>>();
+    assert_eq!(counts, vec![1, 20_000, 1]);
+}
+
+#[test]
+fn collection_batch_preserves_other_commands_and_joins_shutdown() {
+    let server = Server::start_auto_batching();
+    let mut options = tikv_client::pd_options::Options::new();
+    options.timeout = Duration::from_secs(3);
+    options
+        .set_max_tso_batch_wait_interval(Duration::from_millis(10))
+        .unwrap();
+    let owner =
+        PdClient::connect_seeds_with_options([server.address.clone()], Default::default(), options)
+            .unwrap();
+    let timestamp = owner.get_timestamp_async().unwrap();
+    let metadata_client = owner.clone();
+    let metadata = std::thread::spawn(move || metadata_client.refresh_members());
+    assert!(timestamp.wait().is_ok());
+    assert!(metadata.join().unwrap().is_ok());
+    let pending = owner.get_timestamp_async().unwrap();
+    owner.shutdown().unwrap();
+    // A completed reply may win shutdown; otherwise its owned sender is closed.
+    match pending.wait() {
+        Ok(_) | Err(tidb_pd_client::PdClientError::Closed) => {}
+        other => panic!("unexpected shutdown result: {other:?}"),
+    }
+}

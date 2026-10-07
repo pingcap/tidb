@@ -34,8 +34,8 @@ use crate::tso::{
 
 /// Upper bound on waiters merged into one PD Tso round trip.
 ///
-/// Go boundary: `pd/client`'s `defaultMaxTSOBatchSize` in `tso_client.go`.
-const MAX_TSO_BATCH_SIZE: usize = 10000;
+/// Go dispatcher uses `defaultMaxTSOBatchSize * 2` for its controller.
+const MAX_TSO_BATCH_SIZE: usize = 20000;
 
 /// What one batched PD Tso round trip must satisfy: the earliest waiter's
 /// deadline, and how many waiters share the reply.
@@ -63,10 +63,54 @@ use super::{wait_for_shutdown, PdSharedState, RpcControl, WorkerCommand};
 const BOOTSTRAP_MAX_ATTEMPTS: usize = 30;
 const BOOTSTRAP_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
+type TsoWaiter = (Instant, mpsc::Sender<Result<u64, PdClientError>>);
+
+// Project the timestamp queue while keeping other commands in their original
+// order. Collection, adaptive waiting and completion belong to native batch.
+struct TsoRequests<'a> {
+    first: Option<TsoWaiter>,
+    commands: &'a mut tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
+    deferred: &'a mut VecDeque<WorkerCommand>,
+}
+
+impl tikv_client::pd_batch::RequestReceiver<TsoWaiter> for TsoRequests<'_> {
+    async fn recv(&mut self) -> Option<TsoWaiter> {
+        if let Some(first) = self.first.take() {
+            return Some(first);
+        }
+        loop {
+            match self.commands.recv().await? {
+                WorkerCommand::GetTimestamp { deadline, reply } => return Some((deadline, reply)),
+                close @ WorkerCommand::Close { .. } => {
+                    self.deferred.push_back(close);
+                    return None;
+                }
+                other => self.deferred.push_back(other),
+            }
+        }
+    }
+
+    fn try_recv(&mut self) -> Result<TsoWaiter, tokio::sync::mpsc::error::TryRecvError> {
+        if let Some(first) = self.first.take() {
+            return Ok(first);
+        }
+        loop {
+            match self.commands.try_recv()? {
+                WorkerCommand::GetTimestamp { deadline, reply } => return Ok((deadline, reply)),
+                close @ WorkerCommand::Close { .. } => {
+                    self.deferred.push_back(close);
+                    return Err(tokio::sync::mpsc::error::TryRecvError::Disconnected);
+                }
+                other => self.deferred.push_back(other),
+            }
+        }
+    }
+}
+
 pub(super) fn run_worker(
     runtime: tokio::runtime::Runtime,
     mut clients: PdChannelCache,
-    receiver: mpsc::Receiver<WorkerCommand>,
+    mut receiver: tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
     timeout: Duration,
     state: Arc<RwLock<PdSharedState>>,
     shutdown: watch::Receiver<bool>,
@@ -83,13 +127,30 @@ pub(super) fn run_worker(
     let mut last_timestamp = None;
     // Non-TSO commands displaced while draining the channel for TSO waiters.
     let mut deferred: VecDeque<WorkerCommand> = VecDeque::new();
+    let mut collector = tikv_client::pd_batch::Controller::new(
+        MAX_TSO_BATCH_SIZE,
+        Some(Box::new(|_, (_, reply): TsoWaiter, _| {
+            let _ = reply.send(Err(PdClientError::Closed));
+        })),
+        Some(
+            tikv_client::pd_metrics::global_metrics()
+                .tso_best_batch_size
+                .clone(),
+        ),
+    );
     loop {
         let command = match deferred.pop_front() {
             Some(command) => command,
             None => {
-                match receiver.recv_timeout(tikv_client::pd_service_discovery::UPDATE_INTERVAL) {
-                    Ok(command) => command,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                match runtime.block_on(async {
+                    tokio::time::timeout(
+                        tikv_client::pd_service_discovery::UPDATE_INTERVAL,
+                        receiver.recv(),
+                    )
+                    .await
+                }) {
+                    Ok(Some(command)) => command,
+                    Err(_) => {
                         if *shutdown.borrow() {
                             // The owner signals cancellation before enqueueing
                             // Close. Keep receiving until we acknowledge it.
@@ -102,7 +163,7 @@ pub(super) fn run_worker(
                         }
                         continue;
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Ok(None) => break,
                 }
             }
         };
@@ -369,25 +430,32 @@ pub(super) fn run_worker(
                 let _ = reply.send(result);
             }
             WorkerCommand::GetTimestamp { deadline, reply } => {
-                // Go boundary: `tso_dispatcher.go` -> `tsoBatchController`
-                // collects every waiter already queued and serves them with a
-                // single `count`-wide request.
-                let mut waiters = vec![(deadline, reply)];
-                let mut batch_deadline = deadline;
-                while waiters.len() < MAX_TSO_BATCH_SIZE {
-                    match receiver.try_recv() {
-                        Ok(WorkerCommand::GetTimestamp { deadline, reply }) => {
-                            batch_deadline = batch_deadline.min(deadline);
-                            waiters.push((deadline, reply));
-                        }
-                        Ok(other) => {
-                            deferred.push_back(other);
-                            break;
-                        }
-                        Err(_) => break,
+                let cancellation = tikv_client::async_util::Cancellation::default();
+                let mut shutdown_wait = shutdown.clone();
+                let mut requests = TsoRequests {
+                    first: Some((deadline, reply)),
+                    commands: &mut receiver,
+                    deferred: &mut deferred,
+                };
+                let collected = runtime.block_on(async {
+                    tokio::select! {
+                        biased;
+                        () = super::shutdown_requested(&mut shutdown_wait) => Err(tikv_client::Error::ContextCanceled),
+                        result = collector.fetch_pending_requests(&cancellation, &mut requests, None,
+                            clients.options.get_max_tso_batch_wait_interval()) => result,
                     }
+                });
+                if collected.is_err() {
+                    continue;
                 }
-                let count = u32::try_from(waiters.len()).expect("TSO batch fits u32");
+                collector.adjust_best_batch_size();
+                let batch_deadline = collector
+                    .get_collected_requests()
+                    .iter()
+                    .map(|(deadline, _)| *deadline)
+                    .min()
+                    .expect("collected first request");
+                let count = collector.get_collected_request_count() as u32;
                 let result = get_timestamps_with_retry(
                     &runtime,
                     &mut clients,
@@ -405,13 +473,15 @@ pub(super) fn run_worker(
                     &mut tso_stream,
                     &mut last_timestamp,
                 );
-                for (index, (_, reply)) in waiters.into_iter().enumerate() {
-                    let index = u32::try_from(index).expect("TSO batch fits u32");
-                    let one = result
-                        .clone()
-                        .and_then(|batch| batch.split(index).compose());
-                    let _ = reply.send(one);
-                }
+                collector.finish_collected_requests(
+                    Some(&mut |index, (_, reply), _| {
+                        let one = result
+                            .clone()
+                            .and_then(|batch| batch.split(index as u32).compose());
+                        let _ = reply.send(one);
+                    }),
+                    None,
+                );
             }
             WorkerCommand::ExternalTimestamp {
                 deadline,

@@ -1,0 +1,149 @@
+{
+  "date": "2026-10-07",
+  "baseline": {
+    "tidb": "d8fd3f8bd6de1e426ebacfcf140ca3a9f8c2e61a",
+    "native": "8b752f9638ad157931725b66ffdc57e0465432a9",
+    "native_live_wait": {
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0
+    },
+    "adapter_wait_and_bound": {
+      "passed": 0,
+      "failed": 2,
+      "ignored": 0
+    }
+  },
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "pd_module": "v0.0.0-20260805103528-afa43111d149",
+  "native_published": "aa2c60f37481c2fe7f03997535d4f238ed485956",
+  "findings": [
+    "P06",
+    "N03"
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "scope": "Existing native batch owner, timestamp call sites, TiDB adapter collection and live SQL maximum-wait publication; no complete-package acceptance",
+  "go_sources": [
+    "pinned PD clients/tso/dispatcher.go: batch.Controller capacity and dynamic wait sampling",
+    "pinned PD pkg/batch: collection, adaptive waiting, cancellation and completion",
+    "TiDB pkg/domain/domain_sysvars.go::setPDClientDynamicOption"
+  ],
+  "production": [
+    "native src/pd/{batch,timestamp,cluster}.rs and lib.rs pd_batch export",
+    "tidb-pd-client/src/client/{mod,worker}.rs",
+    "tidb-session/src/vars.rs",
+    "tidb-server/src/cluster_session_node/boot.rs"
+  ],
+  "removed": "Private TiDB Vec/drain/per-waiter completion loop, replaced by native Controller through a timestamp projection of the mixed command queue. Unrelated commands retain FIFO order; native waiters retain earliest deadline. No behavioral tests removed.",
+  "validation": {
+    "native": {
+      "command": "cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib -- pd::timestamp:: pd::batch:: pd::opt:: --test-threads=1",
+      "passed": 83,
+      "failed": 0,
+      "ignored": 0
+    },
+    "adapter": {
+      "command": "cargo test --locked -p tidb-pd-client --lib --test all -- tso_source:: pd_client_source:: client::worker_lifecycle_tests:: --test-threads=1",
+      "passed": 74,
+      "failed": 0,
+      "ignored": 0
+    },
+    "session": {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_global_vars vars::pd_region_batch_tests --test-threads=1",
+      "passed": 73,
+      "failed": 0,
+      "ignored": 0
+    },
+    "native_all_targets": "PASS: cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked --all-targets",
+    "all_targets": "PASS: cargo check --locked --all-targets -p tidb-pd-client -p tidb-session -p tidb-server",
+    "lint": "PASS: make lint; no Go/Bazel files changed",
+    "locked_build": "PASS: cargo build --locked -p tidb-server",
+    "live_mysql": {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/tso-collection-batch/wire.py",
+      "passed": 6,
+      "failed": 0,
+      "server_exit": 0,
+      "binary_sha256": "5eb4f4ee00af3cf817d2c4b27ac9142a4a126162fc69349e49ddd2cdf127513e",
+      "scope": "SQL SET/SHOW fractional, maximum and DEFAULT values against real MySQL/unistore server; not live PD integration"
+    },
+    "native_publication": "Normal commit and push succeeded after fresh locked TiDB build; remote SHA verified; maintained sync applied four patches and regenerated protobuf inputs",
+    "tidb_publication": "Actual hook and fresh locked prepush build required; final results recorded in external final-handoff.json",
+    "distinct_rust_passes": 230
+  },
+  "validation_correction": "Initial native compilation exposed one existing run_tso test call needing the new Options argument. First native after-run passed82/failed1 because the test incorrectly expected an already-waiting collector to resample the option. Go samples before the first-request wait. Corrected regression completes that cycle, then measures the next; rerun against original timestamp/cluster code failed, then fixed code passed83. SQL callback and mixed-command/shutdown controls are additional after-checks, not independent baseline failures.",
+  "limitations": [
+    "P06/N03 remain partial; other54 unresolved roots retain carried evidence",
+    "TiDB still owns a separate synchronous command/stream worker; shared collection does not establish one shared dispatcher",
+    "RPC concurrency option consumption, stream readiness/prewarm, idle recovery and complete TSO/grpcutil obligations remain open",
+    "No full Go suites, live multi-node TiKV/PD, crash recovery, performance or fresh-task restoration acceptance"
+  ],
+  "external_logs": "/workspace/.cloud-setup/tso-collection-batch",
+  "artifacts": {
+    "native-before-corrected.log": {
+      "sha256": "52600b46d98b82194fc3718d01b8df0a697ec4df3ab0a00a87143de54299e8bc",
+      "bytes": 1020
+    },
+    "adapter-before.log": {
+      "sha256": "ec06ad0ad09c2eb8100f81d10e51e755f48e71fc6336715e8b668c8edb641674",
+      "bytes": 2493
+    },
+    "native-final.log": {
+      "sha256": "76718c0cfcd3ab1f9580c101def4d16184a8a0765859cc31501a47005fdbf437",
+      "bytes": 7831
+    },
+    "adapter-after.log": {
+      "sha256": "f65121d5af473b04fd8179dca79e48f52863ec53b014f98ba02d4aa73a423820",
+      "bytes": 8309
+    },
+    "session-after.log": {
+      "sha256": "617f3b8d522fd167df060f0d90b1130a043769b3c9544e7b3246082cc0f4fa4a",
+      "bytes": 102416
+    },
+    "native-check.log": {
+      "sha256": "caee90662d54d5dd1e52873bd8a58d653705bd83eea199f07ff86e06ed7687c4",
+      "bytes": 487
+    },
+    "all-targets.log": {
+      "sha256": "28b3ccb1df3abbd071fb848c14977a9b20c86f08eff45be370f6ed76914a1913",
+      "bytes": 113088
+    },
+    "lint.log": {
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+      "bytes": 2164
+    },
+    "server-build.log": {
+      "sha256": "3d948df316c29ba4ee3870774b102df188ac20ef87e3fccb4b7a03652c5dbbdc",
+      "bytes": 107599
+    },
+    "wire.json": {
+      "sha256": "6fc4721d5f436c907e60a943e800da53550f6262b6517603f22e72db71645069",
+      "bytes": 1519
+    },
+    "native-commit.log": {
+      "sha256": "555e089876eb185cf4438856ce5f3745d2f2bfef7b1a9fce21422127f6fe9e4d",
+      "bytes": 127
+    },
+    "native-prepush-build.log": {
+      "sha256": "70891312b7acec7a90011fd84f1933c7c32a08a0076efb8528768dc0e55e7cb4",
+      "bytes": 104075
+    },
+    "native-push.log": {
+      "sha256": "4af518191f811df8c1e596cea8a041b0bfc55a870ddfdafaf00bbb8ecd2371d4",
+      "bytes": 80
+    },
+    "native-remote-head.txt": {
+      "sha256": "06f62b119a1db1828de4e5b65c6674d4c7990c05290d535f9f4fc0fd8f3c3ddc",
+      "bytes": 59
+    },
+    "sync.log": {
+      "sha256": "77e46834a6bc7dadbc21b9bbb07430f381838452c31e56a3e537cdc8aa3101ef",
+      "bytes": 1885
+    }
+  }
+}

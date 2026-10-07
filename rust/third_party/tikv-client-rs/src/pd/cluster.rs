@@ -646,6 +646,7 @@ impl Cluster {
                 route.clone(),
                 routes.clone(),
                 discovery.forwarding(),
+                self.connection.options.clone(),
                 timeout,
             )?;
             // Go's dispatcher releases canceled contexts before reconnecting.
@@ -711,10 +712,11 @@ fn tso_connection(
     route: TsoRoute,
     routes: Vec<(TsoRoute, Channel)>,
     forwarding: super::service_discovery::TsoForwarding,
+    options: Arc<super::opt::Options>,
     timeout: Duration,
 ) -> Result<Arc<ConnectionCtx<TimestampOracle>>> {
     let url = route.endpoint.clone();
-    let oracle = TimestampOracle::discovered(cluster_id, routes, forwarding, timeout)?;
+    let oracle = TimestampOracle::discovered(cluster_id, routes, forwarding, options, timeout)?;
     let ctx = oracle.cancellation();
     let cancel = ctx.clone();
     Ok(Arc::new(ConnectionCtx::new(
@@ -824,7 +826,14 @@ impl Connection {
             .await?;
         let tso = Manager::new();
         tso.store(
-            &tso_connection(id, route.clone(), routes, discovery.forwarding(), timeout)?,
+            &tso_connection(
+                id,
+                route.clone(),
+                routes,
+                discovery.forwarding(),
+                self.options.clone(),
+                timeout,
+            )?,
             false,
         );
         let cluster = Cluster {

@@ -846,4 +846,9 @@ impl tidb_session::vars::PdRegionPolicy for ProcessPdRegionPolicy {
     fn set_tso_follower_proxy(&self, enabled: bool) {
         self.0.set_enable_tso_follower_proxy(enabled);
     }
+    fn set_tso_batch_wait(&self, wait: Duration) {
+        self.0
+            .set_max_tso_batch_wait_interval(wait)
+            .expect("validated TSO batch wait");
+    }
 }
