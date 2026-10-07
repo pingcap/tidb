@@ -1156,6 +1156,16 @@ impl Session {
             snapshot.mem_quota
         };
         let replica_read = self.effective_replica_read(snapshot.replica_read);
+        // Go's stale provider selects the instance scope independently of the
+        // replica preference. tidb_snapshot uses the ordinary provider even
+        // though this adapter shares the historical catalog implementation.
+        let is_staleness = self.vars.snapshot_ts() == 0
+            && self.txn.as_ref().is_some_and(|txn| txn.is_stale_read());
+        let read_replica_scope = if is_staleness || replica_read.is_closest_read() {
+            tidb_config::config_tree::config::get_txn_scope_from_config()
+        } else {
+            "global".into()
+        };
         let isolation_read_engines = snapshot.isolation_read_engines.clone();
         let max_allowed_packet = snapshot.max_allowed_packet;
         let group_concat_max_len = snapshot.group_concat_max_len;
@@ -1357,6 +1367,7 @@ impl Session {
                     .with_enable_check_constraint(self.enable_check_constraint())
                     .with_sysdate_is_now(sysdate_is_now)
                     .with_replica_read(replica_read)
+                    .with_read_consistency(read_replica_scope, is_staleness)
                     .with_coprocessor_read_policy(snapshot.coprocessor_read_policy.clone())
                     .with_dist_sql_scan_concurrency(
                         self.vars
@@ -2022,6 +2033,46 @@ mod tests {
             session.statement_context(false).dist_sql_scan_concurrency(),
             3
         );
+    }
+
+    #[test]
+    fn read_consistency_session_distinguishes_stale_and_snapshot_modes() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE read_consistency (id INT)")
+            .unwrap();
+        session
+            .run("INSERT INTO read_consistency VALUES (1)")
+            .unwrap();
+        let ts = session.catalog.lock().unwrap().allocate_tso();
+        assert!(
+            !session
+                .statement_context(false)
+                .snapshot_read_options(0.0)
+                .is_staleness
+        );
+        session.open_stale_transaction(ts).unwrap();
+        let retained = session.statement_context(false);
+        assert!(retained.snapshot_read_options(0.0).is_staleness);
+        session.discard_stale_statement_transaction();
+        assert!(
+            !session
+                .statement_context(false)
+                .snapshot_read_options(0.0)
+                .is_staleness
+        );
+        assert!(retained.snapshot_read_options(0.0).is_staleness);
+        session.vars.restore_snapshot_ts(ts);
+        session.open_stale_transaction(ts).unwrap();
+        assert!(
+            !session
+                .statement_context(false)
+                .snapshot_read_options(0.0)
+                .is_staleness,
+            "tidb_snapshot shares the catalog adapter, not stale routing"
+        );
+        session.discard_stale_statement_transaction();
+        session.vars.restore_snapshot_ts(0);
     }
 
     #[test]

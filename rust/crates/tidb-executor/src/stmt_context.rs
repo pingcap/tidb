@@ -517,6 +517,8 @@ pub struct StmtContextData {
     resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` for this statement.
     replica_read: ReplicaReadType,
+    read_replica_scope: Option<String>,
+    is_staleness: bool,
     coprocessor_read_policy: crate::remote_scan::CoprocessorReadPolicy,
     /// Go `StmtCtx.Priority` (`mysql.PriorityEnum`): the statement's own
     /// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier, which
@@ -1786,6 +1788,14 @@ context_configuration! {
         self
     }
 
+    /// Retains the transaction provider's scope and stale-read mode.
+    #[must_use]
+    pub fn with_read_consistency(mut self, scope: impl Into<String>, is_staleness: bool) -> Self {
+        self.read_replica_scope = Some(scope.into());
+        self.is_staleness = is_staleness;
+        self
+    }
+
     /// Retain the session's coprocessor read policy for this statement.
     #[must_use]
     pub fn with_coprocessor_read_policy(mut self, policy: crate::remote_scan::CoprocessorReadPolicy) -> Self {
@@ -1969,6 +1979,8 @@ impl StmtContext {
             time_zone: None,
             resource_group_name: session.resource_group_name,
             replica_read: ReplicaReadType::Leader,
+            read_replica_scope: None,
+            is_staleness: false,
             coprocessor_read_policy: Default::default(),
             statement_priority: tidb_ast::StatementPriority::None,
             not_fill_cache: false,
@@ -3462,16 +3474,31 @@ impl StmtContext {
         self.replica_read
     }
 
+    /// Transaction-provider scope, also used by coprocessor readers.
+    #[must_use]
+    pub fn read_replica_scope(&self) -> String {
+        self.read_replica_scope.clone().unwrap_or_else(|| {
+            if self.replica_read.is_closest_read() {
+                tidb_config::config_tree::config::get_txn_scope_from_config()
+            } else {
+                "global".into()
+            }
+        })
+    }
+
+    /// Go StmtCtx.IsStaleness, distinct from a historical snapshot timestamp.
+    #[must_use]
+    pub fn is_staleness(&self) -> bool {
+        self.is_staleness
+    }
+
     /// Go executor InitSnapshotWithSessCtx/newReplicaReadAdjuster for point readers.
     pub fn snapshot_read_options(&self, avg_row_bytes: f64) -> tidb_txnkv::SnapshotReadOptions {
         let zone = tidb_config::config_tree::config::get_txn_scope_from_config();
         tidb_txnkv::SnapshotReadOptions {
+            is_staleness: self.is_staleness,
             replica_read: self.replica_read,
-            read_replica_scope: if self.replica_read.is_closest_read() {
-                zone.clone()
-            } else {
-                "global".into()
-            },
+            read_replica_scope: self.read_replica_scope(),
             read_timeout_ms: self.coprocessor_read_policy.read_timeout_ms,
             resource_group_name: Some(self.resource_group_name().to_owned()),
             busy_threshold_ns: self.coprocessor_read_policy.busy_threshold_ns,

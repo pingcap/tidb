@@ -1,0 +1,209 @@
+{
+  "baseline": "480abecaed1edcda2b93f7010025538104ad26f8",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_client_unchanged": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "scope": "S04/O13/N03 shared read consistency maintenance. No complete Go package acceptance.",
+  "sources": [
+    {
+      "path": "pkg/sessiontxn/isolation/base.go",
+      "sha256": "a2ce01dd7970b176bf8e00cfd85a9a2c8fb645b7264314a3f96e26c3c33fb523",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/sessiontxn/staleread/provider.go",
+      "sha256": "432b10ff69841162b7f6cbb370f33a2efc29a7b1bad532d6d942172813406421",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/sessiontxn/staleread/util.go",
+      "sha256": "8a13cb4309a61108632799fc66ab573e6d8ec5e7bcc889bc7f5002088f307d29",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/builder.go",
+      "sha256": "7d47dc5eec64aa98de44014cf275061b102d6da57a4df2a565694637c53790e7",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/distsql/request_builder.go",
+      "sha256": "071875be37e32ef6b3568a715b46d5cd88c70ee235be452bf0f71c1c8375d245",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/store/driver/txn/snapshot.go",
+      "sha256": "85ee5bca1c22a917bf94248f167252797cebbbe15305da7e37341b5cd539834a",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "client-go@8edb23f6c7ee/txnkv/txnsnapshot/snapshot.go",
+      "sha256": "d33e17bbe75e3c288b94859b445cf60d10ed7d34ca65a2d334955967fe9d52c5"
+    },
+    {
+      "path": "client-go@8edb23f6c7ee/txnkv/txnsnapshot/scan.go",
+      "sha256": "624db2aaeff610817fcea812a2bb9a9f35b0fa383d93dea4702210f783bbb698"
+    }
+  ],
+  "source_changes": [
+    {
+      "path": "rust/crates/tidb-exec/src/cop_scan.rs",
+      "before_sha256": "d0f64334df17f5ea6eb38eea656df0bbadc1b5c60c4a3420226e1eed17ee6469",
+      "after_sha256": "4decb1289e9cd77b8af405829017fe06daae8ad7600af8e6c4cfdbdd1afd0840"
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/cop_scan_partial_predicate_limit_source.rs",
+      "before_sha256": "42394f00c25721f37442daf2051b92381316c1994b12c2d42bcac08b76d6ca33",
+      "after_sha256": "1d1727a7f848f7d1127613f52853a9412b8a34fa3237c08c356821317b43f03c"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/tests/point_get.rs",
+      "before_sha256": "445d31a1027121c8009fd9c5854445a6baf109a6260a2bbdaadbba1ee6066afc",
+      "after_sha256": "9969908b5cee98fb9d6256492a20d7ac34649fd530fcbd6a75cffb7da472580c"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/remote_scan.rs",
+      "before_sha256": "d3011b3806cbd47719eeb9ec9435725e75b992cd4244c77b7269b548369b7f4f",
+      "after_sha256": "75576c1f7ccb26e1af90c26666afda2f8eb642a18358e9ee5bec84dbd46fc21a"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/stmt_context.rs",
+      "before_sha256": "3ab8ff25cbe876b85142ed0c885a2af34db8aa4e91455994bc8819a31fde62cd",
+      "after_sha256": "13249b953f43fea7c34a5282672be092691ecc8cd4527de262ae7d6773718d75"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/stmt_ctx.rs",
+      "before_sha256": "ba6abcc15651902ace101a0fd633cc9ddda0c46bde8bc7ba5c07dcb06d1b3f54",
+      "after_sha256": "4ad180dcc8ce06898a056f687d8ae062fa2e2ffdfe0dab7768d2abaaeeb425c9"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/src/option.rs",
+      "before_sha256": "bc998d3d717c5cbddf41ecd71b1b24400537ba5b7c66183662cf237afcf71cdf",
+      "after_sha256": "256692a87b367d79fe6302d01fa7464c6ed494f6c2fa2c9a551e33a59e5d49fc"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/src/transaction/client.rs",
+      "before_sha256": "493f991e6727b1dc8355804dae325877a1f4e985d69ce1f702202bf82d182501",
+      "after_sha256": "74f0623e87b71301b1a3bcdf3a32b11e311aabde18e06847e7dca4cc377a0289"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/snapshot_lock_wait_source.rs",
+      "before_sha256": "d6a091f038f928e70b03d3ca60b7f0fa4373a051cfff94f70d9d85a16808f4e4",
+      "after_sha256": "37cf38b0f86045a7b8cf48b78288ed2ce7e7fe8b38521864f43033d762e209dc"
+    }
+  ],
+  "changes": [
+    "Capture transaction-provider replica scope and stale mode in the shared statement context; distinguish tidb_snapshot from stale routing despite the shared historical catalog adapter.",
+    "Point/batch/prepared snapshot options and pushdown statement context carry the same captured consistency. Coprocessor request building consumes it instead of reconstructing closest-only scope.",
+    "Native snapshot Get/BatchGet applies stale mode after replica configuration reset; a following ordinary statement clears it. Low-level Scan retains the separate client-go non-stale construction. Native source and synchronization pins are unchanged.",
+    "Remove duplicated reader-side scope decisions and condense the three current finding descriptions; original repair evidence remains linked. Preserve Go-derived/Rust-correctness tests."
+  ],
+  "reviewed_not_a_defect": [
+    "Native Transaction::set_replica_read already replaces the replica config and clears prior labels. No label-reset repair is claimed.",
+    "Client-go txnsnapshot/scan.go omits stale mode on low-level Scan. The existing Rust scanner behavior is retained and tested."
+  ],
+  "before": {
+    "interface_note": "Minimal additive fields/setter allowed the new tests to compile; production consumers remained disconnected and existing read behavior unchanged.",
+    "results": [
+      {
+        "path": "/workspace/.cloud-setup/read-consistency-batch/before-sql.log",
+        "sha256": "27b82c048c35f116f85b475ad909da607e25d537b97ca177c1e098ede8bc919b",
+        "command": "cargo test --locked --no-fail-fast -p tidb-executor -p tidb-session --lib -- read_consistency --test-threads=1",
+        "passed": 1,
+        "failed": 2,
+        "ignored": 0
+      },
+      {
+        "path": "/workspace/.cloud-setup/read-consistency-batch/before-cop.log",
+        "sha256": "6e0af67fffbf19e338ddee8d3168e5a62af5339a5b6c9988727a6e03a7a14f6c",
+        "command": "cargo test --locked -p tidb-exec --test all -- read_consistency --test-threads=1",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0
+      },
+      {
+        "path": "/workspace/.cloud-setup/read-consistency-batch/before-native.log",
+        "sha256": "d779961dddc240d371b05e1389030974d8031a089a657b507450a89ec8bac4d9",
+        "command": "cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source -- read_consistency --test-threads=1",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0
+      }
+    ],
+    "passed": 1,
+    "failed": 4
+  },
+  "validation": {
+    "rust": [
+      {
+        "path": "/workspace/.cloud-setup/read-consistency-batch/after-sql.log",
+        "sha256": "591c2e3a10a954f82a34beeac524df2c76cb7864b5265dfdd4956f4b2127ca2c",
+        "command": "cargo test --locked --no-fail-fast -p tidb-executor -p tidb-session --lib -- driver::tests::point_get:: stmt_ctx::tests:: tests_core::transactions:: --test-threads=1",
+        "passed": 71,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "path": "/workspace/.cloud-setup/read-consistency-batch/after-cop.log",
+        "sha256": "adcfb1e8b77032ac4afcdf1d4b923fa65abc89c0b65e9c65212ae3b19563a245",
+        "command": "cargo test --locked -p tidb-exec --test all -- cop_scan_partial_predicate_limit_source:: --test-threads=1",
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "path": "/workspace/.cloud-setup/read-consistency-batch/after-native.log",
+        "sha256": "d6c08fb9cbffe1c5ad3ae98829c8e73c81b0be35280ac1688f97f8648fa01e7f",
+        "command": "cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source -- --test-threads=1",
+        "passed": 31,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "distinct_passed": 114,
+    "gates": [
+      {
+        "path": "/workspace/.cloud-setup/read-consistency-batch/check.log",
+        "sha256": "ecfeb720b8a20726edfb54af6f98bc658e850a5131c38e69914eb45f42b5a16c",
+        "command": "cargo check --locked --all-targets -p tidb-executor -p tidb-session -p tidb-exec -p tidb-txnkv -p tidb-server",
+        "exit_code": 0
+      },
+      {
+        "path": "/workspace/.cloud-setup/read-consistency-batch/lint.log",
+        "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+        "command": "make lint",
+        "exit_code": 0
+      },
+      {
+        "path": "/workspace/.cloud-setup/read-consistency-batch/build.log",
+        "sha256": "b1f6c297542c32fed3496cfebcf8cb6e959dd7e52b80d11c61f73d58307c288e",
+        "command": "cargo build --locked -p tidb-server",
+        "exit_code": 0
+      }
+    ]
+  },
+  "operational_recovery": [
+    "An initial invalid Cargo test-target name was corrected; it executed no tests.",
+    "An over-broad combined --lib/--test all baseline command hit disk exhaustion before running tests. Narrowed affected targets produced the recorded baseline. This failed build is not validation.",
+    "Retired one abandoned linker temporary, three newly built unused test executables, and the completed coprocessor test executable after evidence capture to reserve server-link space. No cargo clean, dependency-cache purge, test-source removal, or library-cache deletion. External retirement receipts contain paths/hashes."
+  ],
+  "not_verified": [
+    "Full Go packages and complete original test/fixture/platform/generated/build obligations",
+    "Live multi-node TiKV/AZ/SafeTS and local-transaction topology",
+    "Performance or benchmark improvements",
+    "Fresh-task Cloud restoration"
+  ],
+  "disposition": {
+    "counts": {
+      "tracked": 86,
+      "repaired": 30,
+      "unresolved": 56,
+      "open": 27,
+      "partial": 29
+    },
+    "advanced": [
+      "S04",
+      "O13",
+      "N03"
+    ],
+    "remaining": "These three broad findings remain partial; other53 unresolved roots retain carried evidence. No root was closed by this maintenance batch."
+  }
+}

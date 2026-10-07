@@ -283,7 +283,10 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             _ => ReplicaReadType::Leader,
         };
         let transaction = self.engine.transaction_mut().inner_mut();
+        // set_replica_read replaces the entire native replica configuration,
+        // clearing the previous statement's labels and stale flag first.
         transaction.set_replica_read(mode);
+        transaction.set_stale_read(options.is_staleness);
         let scope = if options.read_replica_scope.is_empty() {
             "global"
         } else {

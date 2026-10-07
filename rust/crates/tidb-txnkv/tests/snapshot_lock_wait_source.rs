@@ -2598,13 +2598,18 @@ impl tidb_txnkv::region::RegionQueryLoader for OneRegion {
 }
 
 #[test]
-fn snapshot_read_policy_timeout_and_group_reach_native_requests_and_reset() {
+fn read_consistency_snapshot_options_reach_native_requests_and_reset() {
     let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let client = LockingClient::new(recorded.clone());
     client
         .remaining_locked
         .store(0, std::sync::atomic::Ordering::Relaxed);
+    for _ in 0..3 {
+        client
+            .scan_responses
+            .push_back(KvrpcScanResponse::default());
+    }
     let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
     let mut transaction = RealOptimisticTransaction::new_injected(
         runtime,
@@ -2618,6 +2623,7 @@ fn snapshot_read_policy_timeout_and_group_reach_native_requests_and_reset() {
         let group = format!("read-group-{index}");
         transaction.set_snapshot_read_options(&tidb_txnkv::SnapshotReadOptions {
             read_timeout_ms: timeout,
+            is_staleness: index != 1,
             resource_group_name: Some(group.clone()),
             ..Default::default()
         });
@@ -2628,7 +2634,14 @@ fn snapshot_read_policy_timeout_and_group_reach_native_requests_and_reset() {
         transaction
             .snapshot_batch_get(&[format!("batch-{index}").into_bytes()], &call)
             .unwrap();
+        transaction
+            .snapshot_scan_at(b"a", b"z", Some(1), START_TS + index as u64 + 1, &call)
+            .unwrap();
         let recorded = recorded.lock().unwrap();
+        assert!(
+            !recorded.scans.last().unwrap().1.stale_read,
+            "client-go low-level Scan does not carry the stale-read flag"
+        );
         for (context, duration) in [
             (
                 recorded.get_contexts.last().unwrap(),
@@ -2639,6 +2652,11 @@ fn snapshot_read_policy_timeout_and_group_reach_native_requests_and_reset() {
                 *recorded.batch_timeouts.last().unwrap(),
             ),
         ] {
+            assert_eq!(
+                context.stale_read,
+                index != 1,
+                "Get/BatchGet stale mode must reset"
+            );
             assert_eq!(
                 context
                     .resource_control_context

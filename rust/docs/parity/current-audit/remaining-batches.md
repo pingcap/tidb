@@ -17,6 +17,8 @@ A batch groups a shared production lifecycle. Complete Go packages remain the at
 | B09 | Live information and statement observability | I01, I02, I03, O08, O11, O13, O16, O17, O18 | 9 |
 | B10 | Inference provider, batching and cache runtime | X02 | 1 |
 
+Current connected maintenance: [read consistency](read-consistency-batch-validation.json) links B02/S04, B05/N03 and B09/O13. Session-selected scope/stale mode now reaches shared point/batch and coprocessor consumers. Ordinary snapshot and low-level scan distinctions remain. Complete local-transaction/SafeTS and package acceptance are still open.
+
 ## Execution and validation cadence
 
 Start with B01 native ownership, then move shared SQL/table and schema/durable DDL through their coupled gates. B03 timestamp reporting precedes GC; B04 delete-range registration gates collection. B05 security/charset packages can progress independently. Resource/DXF owners precede their history/import consumers. No worker is accepted just because startup calls a seed helper.

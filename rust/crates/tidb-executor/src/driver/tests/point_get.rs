@@ -2828,3 +2828,22 @@ fn snapshot_read_policy_prepared_follow_go() {
         assert_snapshot_policy(&options, mode, 0.0);
     }
 }
+
+#[test]
+fn read_consistency_point_and_batch_preserve_transaction_scope() {
+    let (catalog, options) = snapshot_policy_catalog();
+    for sql in [
+        "SELECT v FROM read_policy WHERE id=1",
+        "SELECT v FROM read_policy WHERE id IN (1,2)",
+    ] {
+        for (scope, stale) in [("zone-a", true), ("zone-b", false), ("global", false)] {
+            let context = snapshot_policy_context(crate::ReplicaReadType::Follower)
+                .with_read_consistency(scope, stale);
+            run_select_on(sql, &catalog, &context).unwrap();
+            let retained = options.lock().unwrap();
+            let actual = retained.last().unwrap();
+            assert_eq!(actual.read_replica_scope, scope, "{sql}");
+            assert_eq!(actual.is_staleness, stale, "{sql}");
+        }
+    }
+}

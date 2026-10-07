@@ -700,6 +700,8 @@ where
             time_zone: request.statement.time_zone.clone(),
             resource_group_name: request.statement.resource_group_name.clone(),
             replica_read: request.statement.replica_read,
+            read_replica_scope: request.statement.read_replica_scope.clone(),
+            is_staleness: request.statement.is_staleness,
             read_policy: request.statement.read_policy.clone(),
             estimated_net_bytes: request.statement.estimated_net_bytes,
             max_execution_time_ms: request.statement.max_execution_time_ms,
@@ -763,6 +765,8 @@ struct RemoteScanPlan {
     resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` for this request.
     replica_read: tidb_distsql::ReplicaReadType,
+    read_replica_scope: String,
+    is_staleness: bool,
     read_policy: tidb_executor::remote_scan::CoprocessorReadPolicy,
     estimated_net_bytes: f64,
     max_execution_time_ms: u64,
@@ -868,10 +872,9 @@ where
         context.request.paging.max_size = context.request.paging.max_size.max(min_size);
     }
     let mut builder = RequestBuilder::from_context(&context);
-    if plan.replica_read.is_closest_read() {
-        builder
-            .set_read_replica_scope(tidb_config::config_tree::config::get_txn_scope_from_config());
-    }
+    builder
+        .set_read_replica_scope(plan.read_replica_scope)
+        .set_is_staleness(plan.is_staleness);
     builder.set_closest_replica_read_adjuster(closest_read_adjuster(
         plan.replica_read,
         plan.estimated_net_bytes,

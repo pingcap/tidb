@@ -544,6 +544,10 @@ pub struct PushdownStatementContext {
     pub resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` copied to every DistSQL request.
     pub replica_read: tidb_distsql::ReplicaReadType,
+    /// Scope and stale mode selected by the transaction provider.
+    pub read_replica_scope: String,
+    /// Go StmtCtx.IsStaleness; not inferred from the request timestamp.
+    pub is_staleness: bool,
     /// Retained settings, independent of later SET statements.
     pub read_policy: CoprocessorReadPolicy,
     /// Go reader GetNetDataSize; supplied by the retained physical plan.
@@ -584,6 +588,8 @@ impl Default for PushdownStatementContext {
             time_zone: SessionTimeZone::default(),
             resource_group_name: "default".to_owned(),
             replica_read: tidb_distsql::ReplicaReadType::Leader,
+            read_replica_scope: "global".into(),
+            is_staleness: false,
             read_policy: CoprocessorReadPolicy::default(),
             estimated_net_bytes: 0.0,
             lookup_avg_row_bytes: None,
@@ -615,6 +621,8 @@ impl PushdownStatementContext {
             time_zone: ctx.session_zone(),
             resource_group_name: ctx.resource_group_name().to_owned(),
             replica_read: ctx.replica_read(),
+            read_replica_scope: ctx.read_replica_scope(),
+            is_staleness: ctx.is_staleness(),
             read_policy: ctx.coprocessor_read_policy().clone(),
             estimated_net_bytes: 0.0,
             lookup_avg_row_bytes: None,

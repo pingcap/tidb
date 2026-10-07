@@ -91,6 +91,8 @@ fn encode_signed_varint(output: &mut Vec<u8>, value: i64) {
 /// half of the seam produced the answer.
 #[derive(Clone, Debug, Default)]
 struct Observation {
+    read_replica_scope: String,
+    is_staleness: bool,
     request_concurrency: isize,
     request_limit_size: u64,
     max_execution_time_ms: u64,
@@ -184,6 +186,8 @@ impl QueryTransport for FakeTransport {
         observation.request_concurrency = metadata.concurrency;
         observation.request_limit_size = metadata.limit_size;
         observation.replica_read = metadata.replica_read;
+        observation.read_replica_scope = metadata.read_replica_scope.clone();
+        observation.is_staleness = metadata.is_staleness;
         observation.max_execution_time_ms = metadata.max_execution_time_ms;
         observation.busy_threshold_ns = metadata.store_busy_threshold_ns;
         observation.read_timeout_ms = metadata.tikv_client_read_timeout_ms;
@@ -833,5 +837,25 @@ fn coprocessor_read_policy_preserves_large_reads_and_explicit_modes() {
         );
         assert_eq!(observation.adaptive_mode_after_adjustment, expected);
         assert_eq!(observation.adaptive_labels.len(), labels);
+    }
+}
+
+#[test]
+fn read_consistency_scan_preserves_transaction_scope_and_staleness() {
+    let (catalog, region) = fixture();
+    for (scope, stale) in [("zone-a", true), ("zone-b", false), ("global", false)] {
+        let context = StmtContext::for_query()
+            .with_replica_read(tidb_txnkv::ReplicaReadType::Follower)
+            .with_read_consistency(scope, stale);
+        assert_eq!(
+            run_select_on("SELECT id FROM t", &catalog, &context)
+                .unwrap()
+                .len(),
+            20
+        );
+        let observations = region.observations.lock().unwrap();
+        let actual = observations.last().unwrap();
+        assert_eq!(actual.read_replica_scope, scope);
+        assert_eq!(actual.is_staleness, stale);
     }
 }

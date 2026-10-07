@@ -178,6 +178,8 @@ impl ReplicaReadType {
 /// options have a different owner; ordinary Get/BatchGet must configure this one.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SnapshotReadOptions {
+    /// Go IsStalenessReadOnly; independent of replica read preference.
+    pub is_staleness: bool,
     /// Go SessionVars.GetReplicaRead, before client-go's mode mapping.
     pub replica_read: ReplicaReadType,
     /// Scope used for snapshot visibility and closest-replica matching.
