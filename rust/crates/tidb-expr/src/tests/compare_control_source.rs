@@ -13,8 +13,7 @@
 
 //! GO PORTS of `pkg/expression/builtin_compare_test.go`,
 //! `pkg/expression/builtin_control_test.go`, and the vectorized harness
-//! tests belonging to those families -- plus `#[ignore]` stubs recording each
-//! part those ports cannot reach.
+//! cases belonging to those families. Missing branches remain in the parity audit.
 //!
 //! Shape vocabulary used by [`shape`]: `lt(col(Some(Long)), Const:INT:1)`
 //! mirrors what Go's `Expression.StringWithCtx` prints for the same tree

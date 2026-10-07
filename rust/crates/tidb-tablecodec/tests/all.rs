@@ -16,5 +16,4 @@
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
 mod index_prefix_truncation_go_vectors;
-mod tablecodec_bench_source;
 mod tablecodec_package_source;

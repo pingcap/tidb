@@ -338,7 +338,7 @@ fn modify_column_null_to_not_null_rejects_rows_holding_nulls() {
 // Go `modify_column_test.go:1044::TestModifyIntegerColumn`, value halves.
 // Go runs the full signed/unsigned matrix with boundary values; the
 // `expectedReorgTp` halves (captured through the `getModifyColumnType`
-// failpoint) are the [`#[ignore]`d] sibling. Pinned here: every
+// failpoint) remain a separate coverage obligation. Pinned here: every
 // out-of-new-range boundary value is refused with Go's
 // "Data truncated for column 'a'" (or overflow) message, every in-range
 // boundary set converts cleanly, for signed→signed, signed→unsigned,
@@ -435,7 +435,7 @@ fn modify_integer_column_boundary_values_are_refused_or_converted_exactly() {
 
 // Go `modify_column_test.go:1190::TestModifyStringColumn`, pass/fail halves.
 // Go's `expectedReorgTp` captures (the `getModifyColumnType` failpoint) are
-// the [`#[ignore]`d] sibling. Pinned here: each of Go's twelve
+// a separate coverage obligation. Pinned here: each of Go's twelve
 // (old type, new type, value) cases refuses with "Data truncated for
 // column 'a'" or converts cleanly — including the CHAR trailing-space
 // semantics that let a 15-character mostly-spaces value fit `char(10)`.

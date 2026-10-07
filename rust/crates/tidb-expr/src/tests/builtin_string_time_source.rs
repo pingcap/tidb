@@ -1443,12 +1443,9 @@ fn test_format_with_locale() {
 // builtin_string_vec_test.go / builtin_string_vec_generated_test.go
 // ---------------------------------------------------------------------------
 //
-// Go's four vectorized drivers compare a whole-chunk vectorized evaluation
-// against a per-row scalar loop over randomly generated data. This evaluator
-// has ONE row-based tier, so the two directions trivially agree; the ports
-// keep the GENERATORS' boundary semantics instead of the randomness: the
-// literal shapes each generator family produces, asserted against the same
-// dispatch path live SQL uses.
+// Boundary vectors from Go's generated and handwritten string case maps.
+// These cases exercise scalar/chunk results; the complete randomized
+// vector-versus-scalar driver obligations remain separate.
 
 /// Go `pkg/expression/builtin_string_vec_generated_test.go:37
 /// TestVectorizedGeneratedBuiltinStringEvalOneVec` and `:41
@@ -1483,14 +1480,6 @@ fn test_vectorized_generated_builtin_string_eval_one_vec() {
     ] {
         assert_eq!(chunk_e(expr), want, "{expr}");
     }
-}
-
-/// Go `pkg/expression/builtin_string_vec_generated_test.go:41
-/// TestVectorizedGeneratedBuiltinStringFunc`: one evaluator serves both
-/// directions, so this driver re-runs the vector pins.
-#[test]
-fn test_vectorized_generated_builtin_string_func() {
-    test_vectorized_generated_builtin_string_eval_one_vec();
 }
 
 /// Go `pkg/expression/builtin_string_vec_test.go:567
@@ -1537,13 +1526,6 @@ fn test_vectorized_builtin_string_eval_one_vec() {
     );
 }
 
-/// Go `pkg/expression/builtin_string_vec_test.go:571
-/// TestVectorizedBuiltinStringFunc`.
-#[test]
-fn test_vectorized_builtin_string_func() {
-    test_vectorized_builtin_string_eval_one_vec();
-}
-
 /// Go `pkg/expression/builtin_string_vec_test.go:583
 /// TestVectorizedBuiltinStringEvalOneVec2`. The second case map drives BIN,
 /// OCT, ELT, QUOTE, MAKE_SET, FROM_BASE64, TO_BASE64, EXPORT_SET, FORMAT,
@@ -1575,13 +1557,6 @@ fn test_vectorized_builtin_string_eval_one_vec_2() {
     assert_eq!(chunk_e("format(12345.67, 2, 'en_us')"), "STR:12,345.67");
     assert_eq!(e("isnull(1)"), "INT:0");
     assert_eq!(e("isnull(NULL)"), "INT:1");
-}
-
-/// Go `pkg/expression/builtin_string_vec_test.go:587
-/// TestVectorizedBuiltinStringFunc2`.
-#[test]
-fn test_vectorized_builtin_string_func_2() {
-    test_vectorized_builtin_string_eval_one_vec_2();
 }
 
 // ---------------------------------------------------------------------------

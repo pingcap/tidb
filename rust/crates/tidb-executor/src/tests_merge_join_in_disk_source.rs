@@ -12,19 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of Go `pkg/executor/join/test/mergejoin/merge_join_test.go` and
-//! `pkg/executor/join_pkg_test.go` whose observable contract this tier owns:
-//! the merge-join SQL results (including under a 1-byte memory quota with
-//! `tidb_mem_oom_action = 'LOG'`, which drives the same spill path Go's
-//! failpoint forces), the SMJ-vs-HJ row equivalence, and the hash join's row
-//! contract across row counts.
-//!
-//! NOT ported here (recorded as `#[ignore]` gaps): Go's `explain` text
-//! assertions (`MergeJoin`/`Shuffle` operator trees), the
-//! `testMergeJoinRowContainerSpill` / `testRowContainerSpill` failpoint
-//! switches, the executor-level `MemTracker`/`DiskTracker` peak checks, and
-//! the hash join's worker-concurrency dimension -- all execution-mode or
-//! plan-text surface this tier does not have.
+//! Merge/hash join SQL-result cases from Go's merge_join_test.go and
+//! join_pkg_test.go. These cases cover result equivalence and quota-driven
+//! execution, not complete plan-text, failpoint, peak-tracker or concurrency
+//! obligations; those remain in the current parity audit.
 
 use crate::mem_quota::OomAction;
 use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};

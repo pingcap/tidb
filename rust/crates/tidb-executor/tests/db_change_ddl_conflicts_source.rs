@@ -555,9 +555,3 @@ fn concurrent_set_default_value_new_rows_take_modified_default() {
     run_insert_on("insert into t value()", &mut catalog2, &ctx)
         .expect("empty insert takes the settled TIMESTAMP default");
 }
-
-// --- go-parity-gap documentaries -------------------------------------------------
-//
-// Each `#[ignore]` below pins one Go test whose contract CANNOT be asserted
-// in this tier without inventing behavior. Bodies stay empty on purpose:
-// the doc comment is the restoration note.

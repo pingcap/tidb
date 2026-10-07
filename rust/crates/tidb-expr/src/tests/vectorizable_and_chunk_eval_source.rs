@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! GO PORTS of `pkg/expression/expression_test.go`'s vectorization tests:
-//! `TestVectorizable` (:196) and `TestEvalExpr` (:299), plus the unportable
-//! `TestExpressionMemeoryUsage` (:328) recorded as an `#[ignore]` stub with its
-//! go-parity-gap reason.
+//! Cases from Go `TestVectorizable` and `TestEvalExpr`.
+//! `TestExpressionMemeoryUsage` remains a separate coverage obligation.
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Decimal, FieldType, FieldTypeCode, MySqlDuration, Time, TimeType};

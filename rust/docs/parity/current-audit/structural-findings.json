@@ -803,8 +803,8 @@
     "scope": "B02 E02/E03/K03: complete joined writable rows, hidden generation, explicit handle candidate and duplicate consumers"
   },
   "latest_test_cleanup": {
-    "receipt": "test-owner-cleanup-validation.json",
-    "scope": "Consolidate table-key suites while preserving unique vectors; remove 12 ignored partition placeholders, a duplicate constant case and the superseded divergence plan. Go obligations and finding dispositions unchanged.",
+    "receipt": "retired-gap-cleanup-validation.json",
+    "scope": "Remove 14 redundant test registrations, two private key helpers, 19 stale comment blocks and the obsolete unit-test-infrastructure plan. Distinct vectors migrate to current owners; production behavior and findings unchanged.",
     "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
   },
   "test_cleanup_history": [
@@ -1179,6 +1179,11 @@
     {
       "receipt": "test-owner-cleanup-validation.json",
       "scope": "Consolidate table-key suites while preserving unique vectors; remove 12 ignored partition placeholders, a duplicate constant case and the superseded divergence plan. Go obligations and finding dispositions unchanged.",
+      "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+    },
+    {
+      "receipt": "retired-gap-cleanup-validation.json",
+      "scope": "Remove 14 redundant test registrations, two private key helpers, 19 stale comment blocks and the obsolete unit-test-infrastructure plan. Distinct vectors migrate to current owners; production behavior and findings unchanged.",
       "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
     }
   ],

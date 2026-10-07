@@ -35,8 +35,7 @@ fn create_error(catalog: &mut Catalog, sql: &str) -> DriverError {
 /// either builds or answers `dbterror.ErrNotAllowedTypeInPartition` (1659,
 /// "Field '<col>' is of a not allowed type for this type of partitioning") or
 /// `dbterror.ErrWrongExprInPartitionFunc` (1486, the timezone-dependent
-/// expression message). The one divergence — Go accepts `list (c)` — is the
-/// `#[ignore]` test below.
+/// expression message). LIST(c) acceptance is a separate coverage obligation.
 #[test]
 fn partition_by_column_checks_create_half_matches_go_per_clause() {
     // (clause, expected): Err(None) = accepted, Err(1659, col) / Err(1486) =

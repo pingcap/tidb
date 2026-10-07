@@ -12,15 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of Go `pkg/executor/test/executor/executor_test.go` items 1108–2700
-//! plus the package `main_test.go` — the statement-behavior slice: UNION
-//! semantics, result-field names, scalar-subquery limits, decimal division
-//! scale, insert defaults, MVCC snapshot reads at the catalog boundary, and
-//! the session/memory/kill surfaces that stay recorded gaps.
-//!
-//! Every running test re-derives its expectation from the Go source (the Go
-//! literals are quoted in the comments); divergences measured THIS session
-//! are recorded as `#[ignore]` go-parity-gap tests, never approximated.
+//! Statement-result cases from Go `pkg/executor/test/executor/executor_test.go`:
+//! UNION, fields, scalar subqueries, decimal division, defaults and snapshots.
+//! Broader session, memory and kill obligations remain in the parity audit.
 
 use crate::{
     run_create_table_on, run_delete_on, run_insert_on, run_select_meta_in, run_select_on,

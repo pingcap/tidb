@@ -12,24 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port of the observable half of Go
-//! `pkg/executor/batch_point_get_test.go::TestPointGetForTemporaryTable`
-//! (`pkg/executor/batch_point_get_test.go:204`): point and batch point gets
-//! over a GLOBAL temporary table read the session's own rows and nothing
-//! else.
-//!
-//! Go pins the "never visits the shared store" half with the
-//! `unistore/rpcServerBusy` failpoint (any store RPC would fail); that
-//! mechanism does not exist here -- this tier's storage seam is in-process --
-//! and the same property is structural:
-//! `pkg/executor/batch_point_get_test.go` needs a failpoint because Go's read
-//! path COULD silently fall through to the shared store, while this tier's
-//! global temporary rows live in the table's own session overlay
-//! (`kv_table.rs` `swap_storage`, citing Go's
-//! `temptable.TemporaryTableSnapshotInterceptor`). The row-level assertions
-//! below are the same contract on both sides. The pessimistic-lock and
-//! cached-snapshot halves of that Go file are recorded as `#[ignore]` gap
-//! tests in the sibling `tests_batch_point_get_locking_gaps` module.
+//! Row-visibility cases from Go `TestPointGetForTemporaryTable`: point and
+//! batch point gets over a global temporary table read session-owned rows.
+//! Store-RPC failpoints, pessimistic locking and cached-snapshot obligations
+//! are separate; the retired locking-gap module is not an executable owner.
 
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;

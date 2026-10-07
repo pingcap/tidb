@@ -78,17 +78,6 @@ fn table_column(id: i64, offset: usize, code: FieldTypeCode) -> TableColumn {
     }
 }
 
-/// Source: `main_test.go::TestMain`.
-///
-/// Go installs process-global collation state and leaktest around the package.
-/// Rust carries collation mode in `Encoder`, owns allocations through RAII,
-/// and the aggregate test process therefore needs no mutable setup/cleanup.
-#[test]
-fn test_main() {
-    assert!(Encoder::new(true).use_new_collation());
-    assert!(!Encoder::new(false).use_new_collation());
-}
-
 /// Source: `tablecodec_test.go::TestTableCodec`.
 #[test]
 fn test_table_codec() {
@@ -97,6 +86,13 @@ fn test_table_codec() {
     let mut encoded = Vec::new();
     encode_int(&mut encoded, 2);
     assert_eq!(tidb_codec::encode_row_key(1, &encoded), key);
+
+    let start = encode_row_key_with_handle(100, &RecordHandle::Int(100));
+    assert_eq!(start.len(), RECORD_ROW_KEY_LEN);
+    assert_eq!(decode_row_key(&start).unwrap(), RecordHandle::Int(100));
+    let end = encode_row_key_with_handle(100, &RecordHandle::Int(101));
+    assert!(start < end);
+    assert_eq!(tidb_txnkv::Key::from_bytes(start).prefix_next().as_bytes(), end);
 }
 
 /// Source: `tablecodec_test.go::TestTableCodecInvalid`.
@@ -161,6 +157,15 @@ fn test_row_codec() {
         encode_old_table_row(Some(&UTC), &[], &[]).unwrap(),
         [tidb_codec::NIL_FLAG]
     );
+
+    // Preserve the benchmark's zero enum/set and float32 encoding vectors.
+    for datum in [
+        Datum::Enum(MysqlEnum::new("a", 0), Collation::Binary),
+        Datum::Set(MysqlSet::new("a", 0), Collation::Binary),
+        Datum::Float32(1.5),
+    ] {
+        assert!(!encode_table_value(Some(&UTC), &datum).unwrap().is_empty());
+    }
 }
 
 /// Source: `tablecodec_test.go::TestDecodeColumnValue`.
@@ -443,6 +448,9 @@ fn test_prefix() {
     )));
     assert!(is_index_key(&encode_table_index_prefix(66, 1)));
     assert!(is_table_key(&key));
+
+    assert!(!b"foobar".starts_with(TABLE_PREFIX));
+    assert!(gen_table_prefix(1).starts_with(TABLE_PREFIX));
 }
 
 /// Source: `tablecodec_test.go::TestDecodeIndexKey`.
@@ -454,6 +462,14 @@ fn test_decode_index_key() {
         decode_index_key(&key).unwrap(),
         (4, 5, vec!["1".into(), "abc".into(), "123.45".into()])
     );
+
+    // Go BenchmarkDecodeIndexKeyCommonHandle's two-column version-one value.
+    let encoded = encode_key(&[Datum::Int(1), Datum::Int(2)]).unwrap();
+    let mut value = vec![0, INDEX_VERSION_FLAG, 1, COMMON_HANDLE_FLAG];
+    value.extend_from_slice(&(encoded.len() as u16).to_be_bytes());
+    value.extend_from_slice(&encoded);
+    let decoded = decode_handle_in_index_value(&value).unwrap().unwrap();
+    assert!(decoded.equal(&common_handle(encoded)));
 }
 
 /// Source: `tablecodec_test.go::TestCutPrefix`.
@@ -1154,7 +1170,7 @@ fn temporary_index_untouched_suffix_is_exact() {
 /// Source support: legacy integer handle raw bytes.
 #[test]
 fn unique_index_handle_raw_bytes_round_trip_signed_domain() {
-    for value in [i64::MIN, -1, 0, 1, i64::MAX] {
+    for value in [i64::MIN, -1, 0, 1, 256, i64::MAX] {
         let encoded = encode_handle_in_unique_index_value(&int_handle(value), false);
         assert_eq!(
             decode_handle_in_index_value(&encoded)

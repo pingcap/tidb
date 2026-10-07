@@ -1,18 +1,6 @@
-//! SQL behaviors harvested from the retired `tidb_exec::Database` relation
-//! engine, re-homed onto the live `Session` path before that engine is deleted.
-//!
-//! The relation engine's own tests encoded a large body of TiDB semantics that
-//! had been probed against real Go. Those assertions are knowledge, not code:
-//! deleting the engine would destroy them silently. Every expectation below was
-//! re-captured against real TiDB through `gorun` (mock-store `testkit`) for this
-//! module rather than copied on the old tests' authority, so each one stands on
-//! its own evidence.
-//!
-//! Tests marked `#[ignore]` assert the captured Go answer for a behavior the
-//! live engine currently gets WRONG. They are deliberately left failing: each
-//! one names a real divergence, and papering over it by writing the Rust answer
-//! into the assertion would destroy exactly the knowledge this module exists to
-//! preserve.
+//! SQL result cases moved from the retired relation engine to live Session.
+//! Expectations were captured against Go testkit at the original receipt's
+//! revision. Missing behavior remains tracked in the current parity audit.
 
 #![cfg(test)]
 

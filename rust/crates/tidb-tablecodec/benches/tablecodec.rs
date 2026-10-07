@@ -23,7 +23,7 @@ use tidb_tablecodec::{
     decode_handle_in_index_value, encode_handle_in_unique_index_value, encode_table_value,
     is_record_key, COMMON_HANDLE_FLAG, INDEX_VERSION_FLAG,
 };
-use tidb_txnkv::IntHandle;
+use tidb_txnkv::{IntHandle, Key};
 
 const ITERATIONS: usize = 10_000;
 
@@ -33,18 +33,6 @@ fn measure(name: &str, mut operation: impl FnMut()) {
         operation();
     }
     println!("{name}: {:?}", started.elapsed());
-}
-
-fn prefix_next(mut key: Vec<u8>) -> Vec<u8> {
-    for index in (0..key.len()).rev() {
-        if key[index] != u8::MAX {
-            key[index] += 1;
-            key.truncate(index + 1);
-            return key;
-        }
-    }
-    key.push(0);
-    key
 }
 
 fn main() {
@@ -61,10 +49,8 @@ fn main() {
 
     // Source: `bench_test.go::BenchmarkEncodeRowKeyWithPrefixNex`.
     measure("BenchmarkEncodeRowKeyWithPrefixNex", || {
-        black_box(prefix_next(encode_row_key_with_handle(
-            100,
-            &RecordHandle::Int(100),
-        )));
+        let key = Key::from_bytes(encode_row_key_with_handle(100, &RecordHandle::Int(100)));
+        black_box(key.prefix_next());
     });
 
     // Source: `bench_test.go::BenchmarkDecodeRowKey`.

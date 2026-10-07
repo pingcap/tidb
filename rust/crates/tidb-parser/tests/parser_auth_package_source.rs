@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete source-test translation for `pkg/parser/auth`.
+//! Behavioral cases from `pkg/parser/auth`. Benchmark timing obligations
+//! are separate from these correctness tests.
 
 use tidb_ast::{RestoreCtx, RestoreFlags};
 use tidb_mysql::{AuthCachingSha2Password, AuthTiDBSM3Password};
@@ -180,11 +181,6 @@ fn hashing_password_preserves_the_full_go_string_byte_domain() {
 }
 
 #[test]
-fn benchmark_sha_password_obligation_executes_one_round() {
-    test_check_sha_password_good();
-}
-
-#[test]
 fn test_sm3() {
     assert_eq!(
         hex::encode(sm3_hash(b"abc")),
@@ -255,11 +251,6 @@ fn test_new_sm3_password() {
     assert!(salt
         .iter()
         .all(|byte| *byte < 128 && *byte != 0 && *byte != b'$'));
-}
-
-#[test]
-fn benchmark_sm3_password_obligation_executes_one_round() {
-    test_check_sm3_password_good();
 }
 
 mod hex {

@@ -1,0 +1,139 @@
+{
+  "baseline": "3a0580dd045bee6ea47ea5908090ad141478006b",
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "scope": "Benchmark/test ownership and stale gap guidance; production code and finding dispositions unchanged. No package accepted.",
+  "removed_test_registrations": 14,
+  "removed_test_files": 1,
+  "removed_private_prefix_helpers": 2,
+  "removed_wrapper_mappings": {
+    "rust/crates/tidb-parser/tests/parser_auth_package_source.rs": {
+      "benchmark_sha_password_obligation_executes_one_round": "test_check_sha_password_good",
+      "benchmark_sm3_password_obligation_executes_one_round": "test_check_sm3_password_good"
+    },
+    "rust/crates/tidb-expr/src/tests/builtin_string_time_source.rs": {
+      "test_vectorized_generated_builtin_string_func": "test_vectorized_generated_builtin_string_eval_one_vec",
+      "test_vectorized_builtin_string_func": "test_vectorized_builtin_string_eval_one_vec",
+      "test_vectorized_builtin_string_func_2": "test_vectorized_builtin_string_eval_one_vec_2"
+    }
+  },
+  "retained_wrapper_target_bodies_unchanged": true,
+  "removed_benchmark_suite": "rust/crates/tidb-tablecodec/tests/tablecodec_bench_source.rs",
+  "canonical_suite": "rust/crates/tidb-tablecodec/tests/tablecodec_package_source.rs",
+  "benchmark_mappings": {
+    "benchmark_encode_row_key_with_handle": "test_table_codec: keep table/handle 100 and exact encoded length",
+    "benchmark_encode_end_key": "test_table_codec: retain ordered handles 100/101",
+    "benchmark_encode_row_key_with_prefix_nex": "Remove incorrect private algorithm and inequality assertion; use the shared Key::prefix_next and Go-equal handle 101 bytes",
+    "benchmark_decode_row_key": "test_table_codec: retained handle 100 round trip",
+    "benchmark_decode_index_key_int_handle": "unique_index_handle_raw_bytes_round_trip_signed_domain: add 256",
+    "benchmark_decode_index_key_common_handle": "test_decode_index_key: retain V1 common handle [1,2], strengthen assertion to exact handle equality",
+    "benchmark_has_table_prefix": "test_prefix: preserve foobar/table-prefix checks",
+    "benchmark_encode_value": "test_row_codec: preserve unique zero-valued enum/set and float32 inputs; existing row vectors cover int/bytes/decimal/bit",
+    "test_main": "tidb-codec/tests/collation_keys.rs::default_utf8mb4_bin_key_ignores_trailing_spaces retains both encoder-mode assertions and actual encoded behavior"
+  },
+  "maintained_benchmark": "rust/crates/tidb-tablecodec/benches/tablecodec.rs retains all nine measurements and uses tidb_txnkv::Key::prefix_next",
+  "prefix_evidence": {
+    "go": "pkg/kv/key.go::Key.PrefixNext",
+    "benchmark": "pkg/tablecodec/bench_test.go::BenchmarkEncodeRowKeyWithPrefixNex",
+    "input": [
+      123,
+      123,
+      255,
+      255
+    ],
+    "go_expected": [
+      123,
+      124,
+      0,
+      0
+    ],
+    "old_benchmark_actual": [
+      123,
+      124
+    ],
+    "before_exit": 101,
+    "retained_regression": "tidb-txnkv/src/key.rs::tests::prefix_next_preserves_source_overflow_cases"
+  },
+  "stale_comment_blocks_removed_or_rewritten": 19,
+  "comment_only_files_with_executable_lines_unchanged": [
+    "rust/crates/tidb-executor/src/tests_batch_point_get_temporary_source.rs",
+    "rust/crates/tidb-executor/src/tests_ddl_modify_column_types.rs",
+    "rust/crates/tidb-executor/src/tests_ddl_table_cache.rs",
+    "rust/crates/tidb-executor/src/tests_executor_suite_statements_source.rs",
+    "rust/crates/tidb-executor/src/tests_merge_join_in_disk_source.rs",
+    "rust/crates/tidb-executor/src/tests_partition_table_sql_source.rs",
+    "rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs",
+    "rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs",
+    "rust/crates/tidb-executor/tests/sequence_function_values_source.rs",
+    "rust/crates/tidb-executor/tests/serial_create_table_like_source.rs",
+    "rust/crates/tidb-expr/src/tests/compare_control_source.rs",
+    "rust/crates/tidb-expr/src/tests/expression_null_const_source.rs",
+    "rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs",
+    "rust/crates/tidb-expr/src/tests/vectorizable_and_chunk_eval_source.rs",
+    "rust/crates/tidb-session/src/tests_dml_lock_keys.rs",
+    "rust/crates/tidb-session/src/tests_harvested_relation_engine.rs"
+  ],
+  "coverage_limits": [
+    "SHA/SM3 performance benchmarks remain unverified; rerunning a correctness test once never measured them.",
+    "Go generated and handwritten string vector/scalar drivers and randomized matrices remain unverified; retained literal boundary cases are partial coverage.",
+    "Retired-gap comments never proved current defects or complete coverage. Historical testport receipts and current audit keep outstanding lock/DDL/cache/plan/memory/failpoint obligations.",
+    "No production change, finding repair, package acceptance, Go suite, live TiKV or measured performance claim."
+  ],
+  "retired_plan": {
+    "path": "rust/docs/rust-unit-test-infrastructure-execplan.md",
+    "archive": "https://github.com/pingcap/tidb/blob/3a0580dd045bee6ea47ea5908090ad141478006b/rust/docs/rust-unit-test-infrastructure-execplan.md",
+    "reason": "Superseded 2026-08 baseline and ignored-carrier workflow, obsolete paths, worktree/per-change compilation guidance; no incoming references. Outstanding infrastructure goals are not declared complete.",
+    "current_owners": [
+      "rust/scripts/README.md",
+      "rust/docs/full-structural-parity-execplan.md",
+      "rust/docs/parity/current-audit/remaining-batches.md"
+    ]
+  },
+  "validation": {
+    "status": "passed",
+    "commands": [
+      {
+        "cwd": "rust",
+        "command": "cargo test --locked -p tidb-codec -p tidb-tablecodec -p tidb-parser --test all -- collation_keys:: tablecodec_package_source:: index_prefix_truncation_go_vectors:: parser_auth_package_source:: --test-threads=1",
+        "passed": 66,
+        "log": "integration-tests.log"
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo test --locked -p tidb-expr -p tidb-txnkv --lib -- builtin_string_time_source::test_vectorized key::tests:: --test-threads=1",
+        "passed": 7,
+        "log": "unit-tests.log"
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo bench --locked -p tidb-tablecodec --bench tablecodec --profile dev",
+        "completed_cases": 9,
+        "log": "benchmark.log"
+      },
+      {
+        "cwd": ".",
+        "command": "make lint",
+        "log": "lint.log"
+      },
+      {
+        "cwd": ".",
+        "command": "rustfmt --check --edition 2021 rust/crates/tidb-tablecodec/benches/tablecodec.rs"
+      },
+      {
+        "cwd": ".",
+        "command": "git diff --check"
+      }
+    ],
+    "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+    "log_directory": "/workspace/.cloud-setup/retired-gap-cleanup",
+    "log_sha256": {
+      "integration-tests.log": "9d0dad59f31eb04d96a86987511cdfbf0269e191f63f9514074bb564e2352750",
+      "unit-tests.log": "40b222887390d90764b7e76ca7c083e79407e404f3d89d3be92c919753d03ac2",
+      "benchmark.log": "1a38c78228b66bd6f034f7c1785211b84249548ecdf928aef4dd212714bd2efd",
+      "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+      "prefix-before.log": "e93ff657049ffceafbfd32bfa6afc8968b7d3a7ef13027b26fe87daf82e11569"
+    },
+    "publication": "Actual hook and fresh locked prepush build required; final commit and verified remote SHA recorded externally in final-handoff.json.",
+    "benchmark_limit": "Development-profile execution proves the maintained runner works, not a performance improvement."
+  },
+  "net_rust_lines_removed": 308
+}

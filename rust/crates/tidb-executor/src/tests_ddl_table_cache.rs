@@ -73,11 +73,8 @@ fn code_of(error: crate::DriverError) -> u16 {
     error.to_mysql_error().code
 }
 
-/// `db_cache_test.go:41::TestAlterTableCache`, portable halves.
-///
-/// Go's sequence and every refusal it pins, minus the two transaction blocks
-/// that need the schema-lease machinery this tier does not have (see the
-/// `#[ignore]`d sibling below). Each assertion cites its Go statement.
+/// Statement cases from Go `TestAlterTableCache`. The two transaction
+/// blocks involving schema leases are separate coverage obligations.
 #[test]
 fn alter_table_cache_pins_enable_disable_and_the_refusals_around_them() {
     let mut catalog = Catalog::default();
@@ -109,9 +106,8 @@ fn alter_table_cache_pins_enable_disable_and_the_refusals_around_them() {
     );
     drop(&mut catalog, "drop table if exists t1");
 
-    // [Go's two transaction blocks here (metadata-lock rollback with
-    // domain.ErrInfoSchemaChanged, then the schema-checker-skip commit) need
-    // the schema-version lease; the `#[ignore]`d sibling below carries them.]
+    // Go additionally tests MDL rollback with ErrInfoSchemaChanged and
+    // schema-checker-skip commit. Neither is asserted by this case.
 
     // Cache status survives a `CREATE TABLE t3 LIKE t`: the like-copy resets
     // the cache/replica status (Go BuildTableInfoWithLike), asserted at :109-111

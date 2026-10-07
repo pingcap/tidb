@@ -14,8 +14,7 @@
 
 //! GO PORTS of `pkg/expression/expression_test.go`'s constant-node table tests:
 //! `TestConstant` (:135), `TestIsBinaryLiteral` (:157) and `TestConstLevel`
-//! (:173), plus the unportable fragments recorded as `#[ignore]` stubs with
-//! their go-parity-gap reasons.
+//! (:173). Missing fragments remain in the parity audit.
 //!
 //! Go builds every case through `newFunctionWithMockCtx`, which runs the real
 //! `NewFunction`; a node's level therefore reflects what CONSTRUCTION produces,

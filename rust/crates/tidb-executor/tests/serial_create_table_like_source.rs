@@ -135,12 +135,8 @@ fn create_table_like_copies_structure_without_rows_fks_or_autoinc_and_reports_go
     };
     assert!(pt2.partition().is_some(), "pt2 must copy the partitioning");
 
-    // Go `serial_test.go:225-231`: the failure battery. Go runs it with the
-    // targets already existing (its preprocess resolves a LIKE source BEFORE
-    // the DDL's TableExists check, so `t1` still answers 1146); this tier
-    // checks the target name first, so the missing-source arms are ported
-    // over fresh target names and the existing-target ordering is pinned by
-    // the `#[ignore]` test below.
+    // These failure cases use fresh target names. Go's existing-target
+    // source-resolution precedence is a separate coverage obligation.
     assert_eq!(
         message_of(&create_error(&mut catalog, "create table lk1 like test_not_exist.t")),
         "Table 'test_not_exist.t' doesn't exist"
@@ -204,10 +200,9 @@ fn create_table_like_copies_structure_without_rows_fks_or_autoinc_and_reports_go
         .expect("Go: the like copy of information_schema.columns succeeds");
 }
 
-/// Go `serial_test.go:256-537::TestCreateTableWithLikeAtTemporaryMode`: the
-/// `CREATE TABLE ... LIKE` pairs across temporary scopes. This port covers
-/// the refusals and copies this tier implements; each measured divergence is
-/// an `#[ignore]` test below.
+/// CREATE TABLE LIKE temporary-scope cases from Go
+/// `TestCreateTableWithLikeAtTemporaryMode`; remaining scope combinations
+/// are separate coverage obligations in the parity audit.
 #[test]
 fn create_table_like_at_temporary_mode_refusals_match_go() {
     let mut catalog = Catalog::default();

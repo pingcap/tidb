@@ -56,3 +56,16 @@ Baseline 84e786d24085d2589c76d10d47f3f4a65a416de3; Go master 3ca96b1d5df8da123e7
 From rust/, run cargo test --locked -p tidb-codec -p tidb-tablecodec --test all -- --test-threads=1 and cargo test --locked -p tidb-executor --test all -- partition_exchange_global_index_source:: partition_modify_column_allowlist_source:: partition_pk_global_index_source:: partition_truncate_issue57780_source:: --test-threads=1. Expected: retained tests pass; removed placeholders cannot imply new coverage. No production implementation or finding disposition changes.
 
 Outcome: three test files, twelve ignored placeholders, fourteen net running registrations, 537 net Rust lines and the 251-line stale plan retired. All 218 selected tests and lint pass. Production behavior, finding dispositions and unverified Go obligations remain unchanged.
+
+## Continuation: benchmark and retired-gap cleanup
+
+
+Baseline 3a0580dd045bee6ea47ea5908090ad141478006b; fetched Go master remains 3ca96b1d5df8da123e7a650512654eedab12c861. Remove five wrappers that only invoke an already registered test, eight fixed-loop benchmark tests and a duplicate collation flag marker. Migrate distinct tablecodec vectors into their current owner and make the maintained benchmark call tidb_txnkv::Key::prefix_next. Retire stale comments referring to deleted ignored tests and the superseded unit-test-infrastructure plan; preserve historical evidence through the baseline archive and current audit. No production code or finding disposition changes.
+
+- [x] Review the shared Go owners, preserve distinct inputs, remove duplicate registrations/helpers and stale guidance together.
+- [x] Original private prefix helper fails the Go overflow vector (exit 101); all 73 retained tests pass, including shared-key overflow. Nine dev-profile benchmark cases, make lint, benchmark formatting and diff checks pass.
+- [x] Record mappings/limits and prepare publication through the actual hook and fresh locked server build. Final commit/remote results belong in /workspace/.cloud-setup/retired-gap-cleanup/final-handoff.json.
+
+Run Cargo from rust/ after sourcing the Cloud environment, with one build job and --locked. Use existing --test all owners for parser auth and codec, and --lib filters for expression string cases and txnkv key tests. The benchmark command is cargo bench --locked -p tidb-tablecodec --bench tablecodec --profile dev. Preserve actual benchmarks and Rust-specific correctness checks. Missing vectorized/performance/Go package obligations stay unverified; one correctness invocation never discharges a benchmark. Recovery uses the baseline commit, without resetting concurrent work. Exact logs and publication results belong in /workspace/.cloud-setup/retired-gap-cleanup.
+
+Outcome: 14 redundant registrations and two private prefix helpers removed; unique vectors preserved, 19 stale comment blocks corrected, and the 566-line superseded plan retired. Surviving executable lines in all 16 comment-only files and both wrapper owners are verified unchanged after removing the five pure wrappers. All selected validation passes; no production finding or Go package accepted.

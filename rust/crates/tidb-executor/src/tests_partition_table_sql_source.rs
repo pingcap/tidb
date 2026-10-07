@@ -12,22 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Data-level ports of Go `pkg/executor/partition_table_test.go`: the
-//! partition-pruning, routing and DML contracts that suite pins by running
-//! the same statement over a partitioned table and an unpartitioned twin and
-//! requiring identical rows.
-//!
-//! SCOPE NOTE. Go's suite additionally asserts PLAN SHAPES everywhere
-//! (`MustHavePlan(sql, "Point_Get")`, `EXPLAIN FORMAT='brief'` text,
-//! `MustPartition(sql, "p0,p1")`, `HasTiFlashPlan`), drives
-//! `testfailpoint.Enable(".../forceDynamicPrune")`, starts multi-session
-//! pessimistic transactions for the lock tests, and compares against random
-//! data. This tier's driver has no explain text, failpoint, TiFlash-replica,
-//! or transaction/lock surface; those assertions are recorded as `#[ignore]`
-//! gap tests below, and the row-level contracts are ported as running tests
-//! with deterministic fixtures (Go's random draws replaced by fixed points
-//! that include the partition boundaries Go's ranges would stress). Every
-//! expected multiset below is Go's expectation for the same statement shape.
+//! Data-level cases from Go `pkg/executor/partition_table_test.go`, comparing
+//! partitioned and unpartitioned results with deterministic boundary data.
+//! These cases do not establish Go's complete randomized, plan-shape,
+//! dynamic-pruning, TiFlash or concurrent-locking coverage.
 
 use crate::{
     run_create_table_on, run_delete_on, run_drop_table_in, run_insert_on, run_select_on,

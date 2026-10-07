@@ -11,10 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! GO PORTS of `pkg/expression/builtin_ilike_test.go`,
-//! `pkg/expression/builtin_info_test.go`, and the cast-vectorized specials
-//! from `pkg/expression/builtin_cast_vec_test.go`, plus `#[ignore]` stubs for
-//! everything those ports cannot reach on this tier.
+//! Cases from Go builtin_ilike_test.go, builtin_info_test.go and
+//! builtin_cast_vec_test.go. Missing branches remain in the parity audit.
 
 use super::{chunk_e, Columns, Datum};
 use crate::constant::Constant;

@@ -12,20 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of Go `pkg/ddl/sequence_test.go::TestSequenceFunction` (master,
-//! `pkg/ddl/sequence_test.go:95`) and `::BenchmarkInsertCacheDefaultExpr`
-//! (`pkg/ddl/sequence_test.go:527`). Go drives every row through
-//! `select nextval/lastval/setval(seq)`; the same SQL surface is carried here
-//! by the sequence-function evaluation in `StmtContext`'s
-//! [`tidb_executor::SequenceSnapshot`] (`src/stmt_context.rs:2462-2503`,
-//! mirroring Go `expression`'s sequence functions over
-//! `table.TableCommon.GetSequenceNextVal/SetSequenceVal`), executed through
-//! `run_select_on`. The allocator semantics live in `src/sequence.rs`.
-//!
-//! Go's `GetSequenceBaseEndRound` assertions read the TABLE INSTANCE's
-//! internal cache state; where that state is not observable in this tier the
-//! affected rows are split into an `#[ignore]` gap test and the VALUE LADDER
-//! around it is kept as a running test. Nothing is approximated.
+//! SQL nextval/lastval/setval value cases from Go `TestSequenceFunction`,
+//! using StmtContext's SequenceSnapshot and the shared sequence allocator.
+//! These result assertions do not verify the table-instance cache state
+//! observed by Go's GetSequenceBaseEndRound assertions.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

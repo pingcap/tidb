@@ -12,34 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! WHICH KEYS a DML statement touches -- ported from
-//! `pkg/executor/delete_test.go:27` `TestDeleteLockKey` and
-//! `pkg/executor/insert_test.go:534` `TestInsertLockUnchangedKeys`.
+//! Record/index key sets left by the DML shapes in Go `TestDeleteLockKey`
+//! and `TestInsertLockUnchangedKeys`. These cases inspect stored keys;
+//! they do not verify cross-session blocking or transaction lock lifetimes.
 //!
-//! Those two Go tests are *lock* tests: each runs the statement in one
-//! pessimistic transaction and then races a second transaction at a key the
-//! statement should have locked, asserting from the block (or the absence of
-//! one) which keys the DML took. This engine has no DML lock path at all --
-//! `tidb_txnkv`'s `Transaction::lock_keys` exists but no statement drives it,
-//! and `tidb_lock_unchanged_keys` is a registered variable nothing reads --
-//! so the blocking half of each row is `#[ignore]`d here WITH GO'S ANSWER
-//! asserted, and every ignored row has a running guard beside it that pins
-//! what this engine does today. The guard is the point: when locking lands,
-//! the ignored row starts passing and the guard starts failing, so neither can
-//! go stale in silence.
-//!
-//! What DOES run is the substance the lock set is derived from: the exact key
-//! set -- record keys and index keys together -- that each of Go's statements
-//! leaves behind. A `DELETE` that forgets a unique-index key is the same lost
-//! write the Go test guards against, and it is findable at this tier today.
-//!
-//! DIVERGENCE, stated once: Go's `TestDeleteLockKey` sets
-//! `EnableClusteredIndex = ClusteredIndexDefModeIntOnly`, so its
-//! `primary key(k, kk)` is NOT clustered -- the row handle is a `_tidb_rowid`
-//! and the PK becomes an ordinary unique index. This engine clusters a
-//! composite primary key (`KvTable::common_handle_offsets`), so the key COUNT
-//! per row differs from Go's by the PK index entry. Each case below states
-//! which shape it is asserting.
+//! Go's fixtures force integer-only clustered indexes. The cases here state
+//! their selected clustered/nonclustered shape beside the expected keys.
 
 #![cfg(test)]
 
