@@ -463,20 +463,9 @@ fn assumed_server_info_syncer_current_keyspace_arm() {
     let info = syncer.local_server_info();
     assert!(!info.static_info.is_assumed());
     assert!(info.static_info.assumed_keyspace.is_empty());
-}
 
-/// Go `pkg/domain/serverinfo/syncer_test.go:270-278`, cross-keyspace arm:
-/// `NewCrossKSSyncer(..., "ks1")` reports `IsAssumed()` with the assumed
-/// keyspace name, while `Keyspace` stays the system keyspace.
-// go-parity-gap: NewCrossKSSyncer is not transcreated (keyspaces arrive
-// with their own track, per the serverinfo_syncer module doc); only the
-// IsAssumed predicate over the carried field is pinnable today.
-#[test]
-#[ignore = "go-parity-gap: NewCrossKSSyncer (cross-keyspace syncer wiring) is \
-           not transcreated; keyspace track pending"]
-fn assumed_server_info_syncer_cross_keyspace_arm() {
-    // The predicate NewCrossKSSyncer's result must satisfy: a non-empty
-    // assumed keyspace IS assumed.
+    // The value predicate is distinct from the unimplemented cross-keyspace
+    // constructor/session wiring in Go's TestAssumedServerInfoSyncer.
     let assumed = StaticInfo {
         keyspace: "SYSTEM".to_owned(),
         assumed_keyspace: "ks1".to_owned(),
@@ -484,9 +473,6 @@ fn assumed_server_info_syncer_cross_keyspace_arm() {
     };
     assert!(assumed.is_assumed());
     assert_eq!(assumed.assumed_keyspace, "ks1");
-    // And the wiring this arm pins once the constructor exists:
-    // NewCrossKSSyncer("1", getter, nil, nil, "ks1").GetLocalServerInfo()
-    //   .Keyspace == "SYSTEM" (the global KeyspaceName, syncer.go:491).
 }
 
 // Go Domain.TestCheckReplicaRead and infoschema's component retriever contract.

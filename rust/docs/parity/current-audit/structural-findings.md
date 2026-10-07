@@ -1,10 +1,10 @@
 # Remaining structural mismatches, maintained 2026-10-07
 
-Latest cleanup: [disconnected sort pipeline](sort-cleanup-validation.json). Retired private worker/spill/merger/cursor code and 37 tests. Active Sort/TopN coverage remains; Go parallel sort is still missing. Finding statuses and counts are unchanged.
+Latest cleanup: [inert gap tests](inert-gap-cleanup-validation.json). Remove four registrations, constant-only locking placeholders and the inverted DELETE expectation; preserve meaningful DML assertions and activate the existing server-info predicate coverage. Missing locking/cross-keyspace obligations and all 56 unresolved finding dispositions remain unchanged.
 
 Latest connected repair: [rename admission and publication](rename-owner-batch-validation.json). D01/D11/E02/I04 share ordered RENAME/ALTER admission, FK metadata retention and peer catalog publication. Remove private source/destination checks and use original schema IDs for the direct multi-table transition. Seven Rust regressions and nine of18 live assertions fail on the baseline; exact final gates are in the receipt. Counts remain86 tracked/30 repaired/56 unresolved (27open,29partial). Complete durable DDL and package ownership remain open; other52 roots retain carried evidence.
 
-Latest cleanup: [shared read consistency](read-consistency-batch-validation.json). Retire duplicated reader-side scope decisions and condense the three affected current finding descriptions while retaining linked evidence and behavioral tests. Prior [FK cleanup](fk-access-batch-validation.json) remains valid.
+Earlier owner cleanup: [shared read consistency](read-consistency-batch-validation.json). Retire duplicated reader-side scope decisions and condense the three affected current finding descriptions while retaining linked evidence and behavioral tests. Prior [FK cleanup](fk-access-batch-validation.json) remains valid.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

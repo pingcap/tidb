@@ -804,8 +804,8 @@
     "scope": "Shared rename admission, retained FK metadata and peer schema publication; existing direct-owner maintenance, not complete durable DDL/package acceptance."
   },
   "latest_test_cleanup": {
-    "receipt": "smoke-target-cleanup-validation.json",
-    "scope": "Remove the manual cluster diagnostic from default server builds with an explicit diagnostics feature; migrate both live runners without changing diagnostic source or dependencies.",
+    "receipt": "inert-gap-cleanup-validation.json",
+    "scope": "Remove four test registrations and 118 net Rust lines: two constant-only locking placeholders, one divergence-preserving DELETE guard and one ignored cross-keyspace placeholder. Preserve ten DML test bodies and move the cross-keyspace value predicate to the running normal-arm test; replace the misleading serial inertness check with variable assignment checks.",
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
   },
   "test_cleanup_history": [
@@ -1230,6 +1230,11 @@
     {
       "receipt": "smoke-target-cleanup-validation.json",
       "scope": "Remove the manual cluster diagnostic from default server builds with an explicit diagnostics feature; migrate both live runners without changing diagnostic source or dependencies.",
+      "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
+    },
+    {
+      "receipt": "inert-gap-cleanup-validation.json",
+      "scope": "Remove four test registrations and 118 net Rust lines: two constant-only locking placeholders, one divergence-preserving DELETE guard and one ignored cross-keyspace placeholder. Preserve ten DML test bodies and move the cross-keyspace value predicate to the running normal-arm test; replace the misleading serial inertness check with variable assignment checks.",
       "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
     }
   ],

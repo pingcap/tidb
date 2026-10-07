@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [opt-in cluster diagnostic](smoke-target-cleanup-validation.json). The maintained cluster-session smoke binary now requires the explicit `diagnostics` build feature. Both live runners enable it. Ordinary server builds select one binary; diagnostic source, dependencies and behavioral tests are unchanged.
+Latest cleanup: [inert gap tests](inert-gap-cleanup-validation.json). Remove four registrations, constant-only locking placeholders and the inverted DELETE expectation; preserve meaningful DML assertions and activate the existing server-info predicate coverage. Missing locking/cross-keyspace obligations and all 56 unresolved finding dispositions remain unchanged.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 

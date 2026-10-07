@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-07",
+  "baseline": "2aeda975e75bf0b0aecf3386d5e45ba23a8f28ef",
+  "go_reference": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "scope": "Remove four test registrations and 118 net Rust lines: two constant-only locking placeholders, one divergence-preserving DELETE guard and one ignored cross-keyspace placeholder. Preserve ten DML test bodies and move the cross-keyspace value predicate to the running normal-arm test; replace the misleading serial inertness check with variable assignment checks.",
+  "before": [
+    {
+      "path": "rust/crates/tidb-session/src/tests_dml_lock_keys.rs",
+      "sha256": "da4680407cba504ca37b5940997827149e5df98290f9426a4c43fedb8aab36b4",
+      "lines": 517
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_domain_serverinfo_syncer_source.rs",
+      "sha256": "716f51fc224d40249abfc5206cf3a6d4d755540e0507b8f21aeee6a0be7a697c",
+      "lines": 990
+    }
+  ],
+  "retained_functions": {
+    "evidence": "/workspace/.cloud-setup/inert-gap-cleanup/retained-functions.json",
+    "sha256": "f8e18641f6a410d153594e629878c6bec41759e9c8b49995fe24ae45da2b2197",
+    "dml": "Ten retained behavioral test bodies and three helpers byte-identical; 14 registrations reduced to 11.",
+    "server_info": "Only current-keyspace test gains moved value assertions; all other retained function bodies unchanged; 17 registrations reduced to 16."
+  },
+  "go_obligations": [
+    "pkg/executor/delete_test.go::TestDeleteLockKey: competing INSERT waits until pessimistic DELETE commits; immediate duplicate-key refusal is not the expected behavior.",
+    "pkg/executor/insert_test.go::TestInsertLockUnchangedKeys: with the flag off unique-key competitors must not block; clustered-PK blocking is permitted, not required. Constant false compared with is_clustered_pk does not test that contract.",
+    "pkg/domain/serverinfo/syncer_test.go::TestAssumedServerInfoSyncer: NewCrossKSSyncer constructor and cross-keyspace session lifecycle remain missing/unverified; manually filling StaticInfo does not exercise them."
+  ],
+  "preserved": [
+    "Real ignored stale-owner cleanup regression remains.",
+    "Live TiKV runners, path guards, protobuf-sync and authentication tests remain.",
+    "Original Go test/support artifacts and all production sources unchanged.",
+    "Historical b118 command/results remain; a retirement annotation clarifies the current test owner."
+  ],
+  "findings_unresolved": 56,
+  "finding_statuses_changed": false,
+  "validation": {
+    "grouped_tests": {
+      "command": "cd rust && cargo test --locked -p tidb-session --lib -- tests_dml_lock_keys tests_domain_serverinfo_syncer_source --test-threads=1",
+      "status": "passed",
+      "passed": 25,
+      "failed": 0,
+      "ignored": 2,
+      "ignored_scope": [
+        "SEM subprocess helper (invoked by its retained parent test)",
+        "Unimplemented stale DDL owner cleanup regression"
+      ],
+      "exit_code": 0,
+      "sha256": "fbdcd81ec1e24435ba9a3eed80154dd5a244189982f45cae2c4188d1477622b2"
+    },
+    "lint": {
+      "command": "make lint",
+      "status": "passed",
+      "exit_code": 0,
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    },
+    "hook": "Normal commit must run actual hooks/pre-commit locked server build; final-handoff.json records result.",
+    "prepush": "A fresh cargo build --locked -p tidb-server is required immediately before normal push; final-handoff.json records result.",
+    "diff_check": "git diff --check: passed"
+  },
+  "limitations": [
+    "No production behavior changed or Go package accepted. No claim that missing concurrency/keyspace obligations were fixed.",
+    "No full Go/Rust suites, live cluster, or performance measurement. Four registrations removed, no binary target removed."
+  ],
+  "external_logs": "/workspace/.cloud-setup/inert-gap-cleanup"
+}

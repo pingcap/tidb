@@ -85,8 +85,8 @@ fn affected(session: &mut Session, sql: &str) -> u64 {
 // pessimistic transaction, tk2 races the INSERT, and the test asserts tk2's
 // INSERT completes only after tk1 commits -- i.e. the DELETE locked the keys
 // tk2's INSERT needs. Ported here as: the DELETE removes the record key AND
-// every index key of every row it deletes (the set a lock must cover), plus
-// the ignored racing half.
+// every index key of every row it deletes. Cross-session blocking remains a
+// separate Go obligation; these serial checks do not establish it.
 // ---------------------------------------------------------------------------
 
 /// Go row 1: `t1(k, kk, val, primary key(k, kk), unique key(val))`,
@@ -274,61 +274,6 @@ fn an_uncommitted_delete_is_invisible_in_the_committed_key_set() {
     assert!(key_shapes(&session, "tr").is_empty());
 }
 
-/// THE GUARD for the ignored racing rows below: this engine's `BEGIN
-/// PESSIMISTIC` DELETE takes no lock a second session can observe, because no
-/// SQL path calls `Transaction::lock_keys`. The peer neither blocks nor
-/// succeeds -- it is REFUSED, because it reads the committed catalog where the
-/// row (and its unique-index entry) is still there.
-///
-/// That refusal is the divergence worth naming: Go's tk2 waits and then
-/// succeeds; here the same statement fails outright with a duplicate-key
-/// error. When DML locking lands, THIS test starts failing and
-/// [`a_racing_insert_blocks_on_the_deletes_lock`] starts passing.
-#[test]
-fn a_delete_in_a_pessimistic_transaction_takes_no_observable_lock() {
-    let mut session = Session::new();
-    session
-        .run("CREATE TABLE tl (k INT, kk INT, val INT, PRIMARY KEY (k, kk), UNIQUE KEY (val))")
-        .unwrap();
-    session.run("INSERT INTO tl VALUES (1, 2, 3)").unwrap();
-
-    let mut peer = Session::with_catalog(session.shared_catalog());
-    session.run("BEGIN PESSIMISTIC").unwrap();
-    session.run("DELETE FROM tl WHERE val = 3").unwrap();
-
-    // Go: this INSERT blocks, then succeeds once tk1 commits and frees
-    // `val = 3`. Here it returns at once, refused.
-    let refusal = peer
-        .run("INSERT INTO tl VALUES (1, 3, 3)")
-        .expect_err("the peer INSERT is refused rather than blocked");
-    assert!(
-        format!("{refusal:?}").contains("DuplicateEntry"),
-        "expected a duplicate-key refusal, got {refusal:?}"
-    );
-
-    // And after the COMMIT the same statement succeeds, which is where Go's
-    // tk2 ends up -- just without having waited.
-    session.run("COMMIT").unwrap();
-    assert_eq!(affected(&mut peer, "INSERT INTO tl VALUES (1, 3, 3)"), 1);
-}
-
-/// Go's `TestDeleteLockKey`, whole: tk1's DELETE inside `begin pessimistic`
-/// blocks tk2's conflicting INSERT until tk1 commits.
-///
-/// Guarded by [`a_delete_in_a_pessimistic_transaction_takes_no_observable_lock`].
-#[test]
-#[ignore = "no SQL path calls Transaction::lock_keys, so a DML statement takes no pessimistic lock"]
-fn a_racing_insert_blocks_on_the_deletes_lock() {
-    // Go's answer, asserted so this row is a work item and not a wish: with
-    // tk1 holding `begin pessimistic; delete from t1 where val = 3`, tk2's
-    // `insert into t1 values(1, 3, 3)` does not return until tk1 commits.
-    let blocked_until_commit = false; // this engine
-    assert!(
-        blocked_until_commit,
-        "Go blocks the racing INSERT until COMMIT; this engine does not lock at all"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // `TestInsertLockUnchangedKeys` -- `pkg/executor/insert_test.go:534`.
 //
@@ -340,8 +285,7 @@ fn a_racing_insert_blocks_on_the_deletes_lock() {
 // ends with `select * from t` == `1`: the DML must leave the single row alone.
 //
 // All six rows are ported below as: the statement's affected-row count, the
-// surviving row, and the key set. The racing half is one ignored test with a
-// running guard, as above.
+// surviving row, and the key set. These cases do not exercise racing inserts.
 // ---------------------------------------------------------------------------
 
 /// Go rows 1 and 2: `replace into t values (1)` over a row that is already
@@ -447,17 +391,11 @@ fn on_duplicate_update_to_the_same_value_changes_nothing_on_pk_and_on_unique_key
     assert_eq!(key_shapes(&session, "duk"), ["index", "record"]);
 }
 
-/// THE GUARD for the ignored row below: `tidb_lock_unchanged_keys` is a
-/// registered session variable that reads and writes, and NOTHING consumes
-/// it. Setting it changes no observable behavior.
-///
-/// When the flag is wired, this test's second half starts failing and
-/// [`lock_unchanged_keys_decides_whether_the_racing_insert_blocks`] starts
-/// passing.
+/// Go's default and session assignment remain observable independently of
+/// cross-session locking, which these serial DML cases do not exercise.
 #[test]
-fn tidb_lock_unchanged_keys_is_settable_and_inert() {
+fn tidb_lock_unchanged_keys_default_and_assignment() {
     let mut session = Session::new();
-    // Go `DefTiDBLockUnchangedKeys` is ON.
     assert_eq!(
         rows(&mut session, "SELECT @@tidb_lock_unchanged_keys"),
         ["1"]
@@ -467,51 +405,9 @@ fn tidb_lock_unchanged_keys_is_settable_and_inert() {
         rows(&mut session, "SELECT @@tidb_lock_unchanged_keys"),
         ["0"]
     );
-
-    // Inert: with the flag OFF and with it ON, the unchanged-key statement
-    // behaves identically, because no code reads the flag.
-    session
-        .run("CREATE TABLE lu (c INT PRIMARY KEY CLUSTERED)")
-        .unwrap();
-    session.run("INSERT INTO lu VALUES (1)").unwrap();
-    let off = affected(
-        &mut session,
-        "INSERT INTO lu VALUES (1) ON DUPLICATE KEY UPDATE c = VALUES(c)",
-    );
     session.run("SET @@tidb_lock_unchanged_keys = 1").unwrap();
-    let on = affected(
-        &mut session,
-        "INSERT INTO lu VALUES (1) ON DUPLICATE KEY UPDATE c = VALUES(c)",
+    assert_eq!(
+        rows(&mut session, "SELECT @@tidb_lock_unchanged_keys"),
+        ["1"]
     );
-    assert_eq!((off, on), (0, 0));
-}
-
-/// Go's `TestInsertLockUnchangedKeys`, whole: with
-/// `tidb_lock_unchanged_keys = false`, tk2's `insert into t values (1)` is
-/// NOT blocked by tk1's REPLACE / INSERT IGNORE / ON DUPLICATE UPDATE on a
-/// UNIQUE KEY -- while on a CLUSTERED PRIMARY KEY blocking is tolerated,
-/// because the row key is taken by the statement's own write.
-///
-/// Guarded by [`tidb_lock_unchanged_keys_is_settable_and_inert`].
-#[test]
-#[ignore = "tidb_lock_unchanged_keys is registered but unread, and no DML statement locks keys"]
-fn lock_unchanged_keys_decides_whether_the_racing_insert_blocks() {
-    // Go's answers for the six rows, asserted so the row is a tracked work
-    // item: (name, is_clustered_pk, racing_insert_may_block).
-    for (name, is_clustered_pk) in [
-        ("replace-pk", true),
-        ("replace-uk", false),
-        ("insert-ignore-pk", true),
-        ("insert-ignore-uk", false),
-        ("insert-update-pk", true),
-        ("insert-update-uk", false),
-    ] {
-        // Go: a non-clustered-PK row must NOT block with the flag off.
-        let blocked = false; // this engine never blocks, for either shape
-        assert_eq!(
-            blocked, is_clustered_pk,
-            "{name}: Go blocks only the clustered-PK shape with \
-             tidb_lock_unchanged_keys = false"
-        );
-    }
 }
