@@ -604,10 +604,11 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 func getBestIndexJoinPathResult(
 	join *logicalop.LogicalJoin,
 	innerChild *logicalop.DataSource,
+	rangeOtherConds []expression.Expression,
 	innerJoinKeys, outerJoinKeys []*expression.Column,
 	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
 	indexJoinInfo := &indexJoinPathInfo{
-		joinOtherConditions:   join.OtherConditions,
+		joinOtherConditions:   rangeOtherConds,
 		outerJoinKeys:         outerJoinKeys,
 		innerJoinKeys:         innerJoinKeys,
 		innerPushedConditions: innerChild.PushedDownConds,
