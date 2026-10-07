@@ -69,7 +69,6 @@ mod on_duplicate_key_source;
 mod partial_aggregate_primary_ids_source;
 mod partition_db_partition_ddl_source;
 mod partition_exchange_global_index_source;
-mod partition_global_index_version_source;
 mod partition_modify_column_allowlist_source;
 mod partition_pk_global_index_source;
 mod partition_truncate_issue57780_source;

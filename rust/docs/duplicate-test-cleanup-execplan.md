@@ -43,3 +43,16 @@ Baseline 7b1c2d0b19752441589009054414b24ab7c4bddc; freshly fetched Go master is 
 - [x] Prepare publication through the actual locked-build hook and fresh prepush gate; final commit, remote and Cloud checkpoint results are recorded externally in final-handoff.json.
 
 This batch changes test ownership only. It does not close any production finding or establish complete upstream package acceptance. Commands, mappings, logs and limits belong in parity/current-audit/lexer-info-cleanup-validation.json and /workspace/.cloud-setup/lexer-info-cleanup.
+
+## Continuation: table-key owners and partition placeholders
+
+
+Baseline 84e786d24085d2589c76d10d47f3f4a65a416de3; Go master 3ca96b1d5df8da123e7a650512654eedab12c861. Consolidate the two codec table-key suites into tidb-tablecodec's existing package suite, preserving unique raw-handle, malformed-key, nonunique-index, range and metadata vectors. Remove twelve ignored partition placeholders and the duplicate global-index constant test. Retire go-divergence-plan.md; the current structural plan and audit own sequencing. Historical Git contents preserve recovery without resetting concurrent work. Missing Go obligations remain explicitly unverified in the cleanup receipt; no finding is repaired by deleting a placeholder.
+
+- [x] Review and apply the complete cleanup batch; preserve distinct byte/error vectors.
+- [x] Validate both codec suites (208 passes) and the four retained partition modules (10 passes) in grouped test runs; make lint and diff checks pass.
+- [x] Record mappings and results and self-review. Publication must execute the actual locked-build hook and fresh locked prepush build; final commit/remote results are recorded externally in /workspace/.cloud-setup/test-owner-cleanup/final-handoff.json.
+
+From rust/, run cargo test --locked -p tidb-codec -p tidb-tablecodec --test all -- --test-threads=1 and cargo test --locked -p tidb-executor --test all -- partition_exchange_global_index_source:: partition_modify_column_allowlist_source:: partition_pk_global_index_source:: partition_truncate_issue57780_source:: --test-threads=1. Expected: retained tests pass; removed placeholders cannot imply new coverage. No production implementation or finding disposition changes.
+
+Outcome: three test files, twelve ignored placeholders, fourteen net running registrations, 537 net Rust lines and the 251-line stale plan retired. All 218 selected tests and lint pass. Production behavior, finding dispositions and unverified Go obligations remain unchanged.

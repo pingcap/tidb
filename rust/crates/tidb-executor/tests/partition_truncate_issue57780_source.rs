@@ -12,37 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port of `pkg/ddl/tests/partition/db_partition_test.go:3873::TestTruncateNumberOfPhases`
-//! and `pkg/ddl/tests/partition/db_partition_test.go:3896::TestIssue57780`.
+//! `pkg/ddl/tests/partition/db_partition_test.go::TestIssue57780`.
+//! The separate truncate schema-version obligation remains recorded in
+//! `docs/parity/current-audit/test-owner-cleanup-validation.json`.
 
 use tidb_datatype::Datum;
 use tidb_executor::{run_alter_table_in, run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
-}
-
-/// Go `db_partition_test.go:3873::TestTruncateNumberOfPhases`: TRUNCATE
-/// PARTITION on a hash-partitioned table consumes exactly 4 schema-meta
-/// versions both WITHOUT a global index (single state change claim,
-/// `:3888`) and WITH one (`unique key (b) global`, `:3892`).
-// go-parity-gap: the assertion is `dom.InfoSchema().SchemaMetaVersion()`
-// deltas (`:3887`, `:3894`), and this tier has no schema-meta-version
-// carrier at all — its DDL applies synchronously to metadata (the
-// `crate::ddl` module doc). The truncate itself succeeds (measured); the
-// observable contract Go pins here, the version count, is unobservable.
-#[test]
-#[ignore]
-fn truncate_partition_schema_version_phases() {
-    let mut catalog = Catalog::default();
-    run_create_table_on(
-        "create table t (a int primary key, b varchar(255)) partition by hash(a) partitions 3",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on("insert into t values (1,1),(2,2),(3,3)", &mut catalog, &ctx()).unwrap();
-    run_alter_table_in("alter table t truncate partition p1", &mut catalog, "test", &ctx())
-        .expect("the truncate itself succeeds on this tier");
 }
 
 /// Go `db_partition_test.go:3896::TestIssue57780`: the `cis_assay_report_detail`

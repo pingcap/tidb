@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [DML writable rows and explicit handles](dml-identity-batch-validation.json). E02/E03/K03 share complete preimages and candidate identity across INSERT, joined writes, duplicate resolution, indexes and FK callbacks. 286 Rust cases and 20 TCP assertions pass. Counts remain 86 tracked /30 repaired /56 unresolved (27 open,29 partial); no complete package acceptance.
 
-Latest cleanup: [lexer and information-test consolidation](lexer-info-cleanup-validation.json). Remove two redundant modules, 12 repeated registrations and 756 net Rust lines; retain unique Go-contract vectors in their owning suites. Production behavior and finding dispositions are unchanged.
+Latest cleanup: [table-key owners and partition placeholders](test-owner-cleanup-validation.json). Remove three test files, 12 ignored placeholders, 14 net running registrations and the superseded divergence plan; preserve unique byte/error vectors and missing Go obligations. Production behavior and finding dispositions are unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

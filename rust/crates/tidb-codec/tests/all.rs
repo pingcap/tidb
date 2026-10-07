@@ -34,8 +34,6 @@ mod row_layout_source;
 mod rowcodec_package_source;
 mod rowv2_go_vectors;
 mod runtime_collation_mode_source;
-mod table_key_source;
-mod table_row_key_source;
 mod temporal_source;
 mod typed_column_source;
 mod unsigned_decimal_key_order;

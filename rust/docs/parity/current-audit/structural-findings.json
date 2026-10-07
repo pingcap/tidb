@@ -803,8 +803,8 @@
     "scope": "B02 E02/E03/K03: complete joined writable rows, hidden generation, explicit handle candidate and duplicate consumers"
   },
   "latest_test_cleanup": {
-    "receipt": "lexer-info-cleanup-validation.json",
-    "scope": "Retire two redundant lexer modules and the duplicate scalar information fixture; merge all unique scanner, keyword, escape, feature and builtin vectors into their owning suites. Remove 12 repeated registrations and 756 net Rust lines. Production behavior and finding dispositions unchanged.",
+    "receipt": "test-owner-cleanup-validation.json",
+    "scope": "Consolidate table-key suites while preserving unique vectors; remove 12 ignored partition placeholders, a duplicate constant case and the superseded divergence plan. Go obligations and finding dispositions unchanged.",
     "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
   },
   "test_cleanup_history": [
@@ -1174,6 +1174,11 @@
     {
       "receipt": "lexer-info-cleanup-validation.json",
       "scope": "Retire two redundant lexer modules and the duplicate scalar information fixture; merge all unique scanner, keyword, escape, feature and builtin vectors into their owning suites. Remove 12 repeated registrations and 756 net Rust lines. Production behavior and finding dispositions unchanged.",
+      "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+    },
+    {
+      "receipt": "test-owner-cleanup-validation.json",
+      "scope": "Consolidate table-key suites while preserving unique vectors; remove 12 ignored partition placeholders, a duplicate constant case and the superseded divergence plan. Go obligations and finding dispositions unchanged.",
       "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
     }
   ],

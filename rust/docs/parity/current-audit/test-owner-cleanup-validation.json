@@ -1,0 +1,137 @@
+{
+  "baseline": "84e786d24085d2589c76d10d47f3f4a65a416de3",
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "scope": "Test ownership and stale-document cleanup; no production behavior, package acceptance or finding disposition changes.",
+  "removed_test_files": 3,
+  "removed_ignored_placeholders": 12,
+  "net_running_test_registrations_removed": 14,
+  "retained_executor_function_bodies_unchanged": 21,
+  "canonical_codec_suite": "rust/crates/tidb-tablecodec/tests/tablecodec_package_source.rs",
+  "table_key_source_mappings": {
+    "test_table_codec": "test_table_codec",
+    "test_table_codec_invalid": "test_table_codec_invalid",
+    "test_row_key_codec": "test_record_key",
+    "test_index_key": "test_index_key",
+    "test_record_key": "test_record_key",
+    "test_prefix": "test_prefix",
+    "test_decode_index_key": "test_decode_index_key",
+    "test_cut_prefix": "test_cut_prefix",
+    "non_unique_int_index_key_matches_go_gen_index_key": "non_unique_int_index_key_matches_go_gen_index_key",
+    "non_unique_index_value_is_the_single_zero_byte": "non_unique_int_index_key_matches_go_gen_index_key",
+    "test_range": "test_range",
+    "test_decode_auto_id_meta": "test_decode_auto_id_meta"
+  },
+  "table_row_key_source_mapping": "Both raw row-key cases merge into test_record_key, preserving all six table IDs, opaque bytes, empty and variable-width handles.",
+  "unique_vectors_preserved": "Four signed nonunique-index byte fixtures and value 0x30; four table/handle pairs; seven malformed row keys; exact handle-range endpoints; metadata trailing bytes.",
+  "constant_owner": "rust/crates/tidb-executor/tests/partition_exchange_global_index_source.rs::global_index_version_constants",
+  "missing_coverage_status": "UNVERIFIED Go obligations. Retired ignored bodies did not assert these contracts. Stale comments are not fresh proof of a production defect; recheck live owners before repair.",
+  "missing_go_obligations": [
+    {
+      "retired": "partition_modify_column_allowlist_source.rs::modify_column_key_partition_collation_change_answers_gos_8200",
+      "go": "pkg/ddl/tests/partition/modify_column_test.go::TestModifyColumnPartitionedTableKeyPartitionAllowlist",
+      "obligation": "Collation change must answer the Go partition-column error."
+    },
+    {
+      "retired": "partition_modify_column_allowlist_source.rs::modify_column_expression_unix_timestamp_and_dynamic_prune_arms",
+      "go": "pkg/ddl/tests/partition/modify_column_test.go::TestModifyColumnPartitionedTableExpressionAllowlist",
+      "obligation": "Timestamp field-type errors and dynamic pruning across FSP changes."
+    },
+    {
+      "retired": "partition_modify_column_allowlist_source.rs::modify_column_partitioned_recreate_index_cursor_resets_per_partition",
+      "go": "pkg/ddl/tests/partition/modify_column_test.go::TestModifyColumnPartitionedTableRecreateIndexCursorReset",
+      "obligation": "Observe the persisted recreate-index cursor advance per physical partition."
+    },
+    {
+      "retired": "partition_modify_column_allowlist_source.rs::modify_column_partitioned_forced_failure_rolls_back_cleanly",
+      "go": "pkg/ddl/tests/partition/modify_column_test.go::TestModifyColumnPartitionedTableRollbackCleanup",
+      "obligation": "Inject index-record decode failure and verify rollback metadata, index and row cleanup."
+    },
+    {
+      "retired": "partition_modify_column_allowlist_source.rs::modify_column_partitioned_global_index_consistency",
+      "go": "pkg/ddl/tests/partition/modify_column_test.go::TestModifyColumnPartitionedTableGlobalIndexConsistency",
+      "obligation": "Modify indexed column, read through global unique index, check duplicates and admin consistency."
+    },
+    {
+      "retired": "partition_global_index_version_source.rs::global_index_version_legacy_zero_under_failpoint",
+      "go": "pkg/ddl/tests/partition/global_index_version_test.go::TestGlobalIndexVersion0",
+      "obligation": "Forced legacy index version with exchanges and corrupted-duplicate behavior."
+    },
+    {
+      "retired": "partition_global_index_version_source.rs::global_index_version_v1_is_the_default_for_new_global_indexes",
+      "go": "pkg/ddl/tests/partition/global_index_version_test.go::TestGlobalIndexVersion1",
+      "obligation": "Default version-one global-index behavior through the complete exchange/index battery."
+    },
+    {
+      "retired": "partition_global_index_version_source.rs::global_index_entries_survive_truncate_drop_reorganize_of_other_partitions",
+      "go": "pkg/ddl/tests/partition/global_index_version_test.go::TestGlobalIndexTruncateAndDropPartition",
+      "obligation": "Preserve global entries across truncate/drop/exchange/reorganize and NULL cases."
+    },
+    {
+      "retired": "partition_global_index_version_source.rs::update_indexes_flip_to_local_resets_the_global_index_version",
+      "go": "pkg/ddl/tests/partition/global_index_version_test.go::TestUpdateIndexesResetsGlobalIndexVersion",
+      "obligation": "Global/local UPDATE INDEXES transitions must reset stored versions."
+    },
+    {
+      "retired": "partition_truncate_issue57780_source.rs::truncate_partition_schema_version_phases",
+      "go": "pkg/ddl/tests/partition/db_partition_test.go::TestTruncateNumberOfPhases",
+      "obligation": "Exactly four schema-meta version increments, with and without a global index."
+    },
+    {
+      "retired": "partition_pk_global_index_source.rs::primary_global_index_online_repartition_and_global_pk_arms",
+      "go": "pkg/ddl/tests/partition/db_partition_test.go::TestPrimaryGlobalIndex",
+      "obligation": "Online repartition and GLOBAL primary-key create/drop/add/transitions."
+    },
+    {
+      "retired": "partition_pk_global_index_source.rs::primary_no_global_index_online_repartition_arms",
+      "go": "pkg/ddl/tests/partition/db_partition_test.go::TestPrimaryNoGlobalIndex",
+      "obligation": "Online repartition accepted/refused according to local nonclustered primary-key constraints."
+    }
+  ],
+  "retired_plan": {
+    "path": "rust/docs/go-divergence-plan.md",
+    "archive": "https://github.com/pingcap/tidb/blob/84e786d24085d2589c76d10d47f3f4a65a416de3/rust/docs/go-divergence-plan.md",
+    "replacement": "rust/docs/full-structural-parity-execplan.md and rust/docs/parity/current-audit/remaining-batches.md",
+    "reason": "Superseded sequencing, obsolete harness paths and stale implementation claims; historical sweep and inventories retained."
+  },
+  "historical_references": "Dated testport receipts and candidate-gaps.tsv describe their original source revision; this mapping supersedes retired paths for current navigation.",
+  "validation": {
+    "status": "passed",
+    "commands": [
+      {
+        "cwd": "rust",
+        "command": "cargo test --locked -p tidb-codec -p tidb-tablecodec --test all -- --test-threads=1",
+        "passed": 208,
+        "log": "codec-tests.log"
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo test --locked -p tidb-executor --test all -- partition_exchange_global_index_source:: partition_modify_column_allowlist_source:: partition_pk_global_index_source:: partition_truncate_issue57780_source:: --test-threads=1",
+        "passed": 10,
+        "log": "partition-tests.log"
+      },
+      {
+        "cwd": ".",
+        "command": "make lint",
+        "log": "lint.log"
+      },
+      {
+        "cwd": ".",
+        "command": "git diff --check"
+      }
+    ],
+    "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+    "log_directory": "/workspace/.cloud-setup/test-owner-cleanup",
+    "log_sha256": {
+      "codec-tests.log": "256590588322e9c92f0c806d17197e77ca4e645d7534ad5941647fb5116ff2e4",
+      "partition-tests.log": "520d2c9bb06e81ed1d3e59c5773ee8b5225a3618a57d36638672ab55063b704f",
+      "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    },
+    "review": "Retained executor function bodies unchanged; distinct codec vectors migrated; removed live registrations and stale plan references checked. New test function rustfmt check passed. Existing file-wide formatting drift left untouched. Only latest_test_cleanup and test_cleanup_history changed in JSON register.",
+    "publication": "Actual hook and fresh locked prepush build are required next; completion, commit and remote verification are recorded externally in final-handoff.json."
+  },
+  "limits": [
+    "No Go suites, live TiKV, performance benchmark or complete upstream package validation performed.",
+    "No measured build-time speedup claimed; ignored placeholders did not run before cleanup."
+  ],
+  "net_rust_lines_removed": 537
+}

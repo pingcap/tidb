@@ -29,7 +29,7 @@ use tidb_datatype::{
 use tidb_tablecodec::table_key::{
     cut_index_prefix, cut_row_key_prefix, decode_index_id, decode_index_key, decode_key_head,
     decode_meta_key, decode_record_key, decode_row_key, encode_index_seek_key, encode_meta_key,
-    encode_meta_key_prefix, encode_record_key, encode_row_key_with_handle,
+    encode_meta_key_prefix, encode_record_key, encode_row_key, encode_row_key_with_handle,
     encode_table_index_prefix, encode_table_prefix, gen_table_index_prefix, gen_table_prefix,
     gen_table_record_prefix, get_table_handle_key_range, truncate_to_row_key_len, KeyHead,
     RecordHandle, META_PREFIX, RECORD_ROW_KEY_LEN, TABLE_PREFIX,
@@ -369,6 +369,50 @@ fn test_record_key() {
         ),
         encode_row_key_with_handle(42, &RecordHandle::Int(9))
     );
+
+    // Direct port of pkg/table/tables/tables_test.go::TestRowKeyCodec.
+    for (table_id, handle) in [(1, 1_234_567_890), (2, 1), (3, -1), (4, -1)] {
+        let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));
+        assert_eq!(
+            decode_record_key(&key),
+            Ok((table_id, RecordHandle::Int(handle)))
+        );
+        assert_eq!(decode_row_key(&key), Ok(RecordHandle::Int(handle)));
+    }
+
+    for invalid in [
+        "",
+        "x",
+        "t1",
+        "t12345678",
+        "t12345678_i",
+        "t12345678_r1",
+        "t12345678_r1234567",
+    ] {
+        assert!(decode_row_key(invalid.as_bytes()).is_err(), "{invalid:?}");
+    }
+
+    // Raw row-key encoding preserves opaque handle bytes.
+    for table_id in [i64::MIN, -1, 0, 1, 55, i64::MAX] {
+        let mut prefix = vec![b't'];
+        encode_int(&mut prefix, table_id);
+        prefix.extend_from_slice(b"_r");
+        assert_eq!(gen_table_record_prefix(table_id), prefix);
+
+        let handle = [0x00, 0x7f, 0x80, 0xff];
+        let mut expected = prefix;
+        expected.extend_from_slice(&handle);
+        assert_eq!(encode_row_key(table_id, &handle), expected);
+    }
+
+    let prefix = gen_table_record_prefix(42);
+    assert_eq!(encode_row_key(42, &[]), prefix);
+
+    let common_handle = [1, 2, 3, 0, 4, 5, 6, 7, 8, 9, 10];
+    assert_eq!(
+        &encode_row_key(42, &common_handle)[prefix.len()..],
+        common_handle
+    );
 }
 
 /// Source: `tablecodec_test.go::TestPrefix`.
@@ -429,6 +473,17 @@ fn test_range() {
     let (start_666, end_666) = get_table_index_key_range(42, 666);
     let (start_667, end_667) = get_table_index_key_range(42, 667);
     assert!(start_666 < end_666 && end_666 < start_667 && start_667 < end_667);
+    assert_eq!(
+        start_22,
+        [b't', 0x80, 0, 0, 0, 0, 0, 0, 22, b'_', b'r', 0, 0, 0, 0, 0, 0, 0, 0,]
+    );
+    assert_eq!(
+        end_22,
+        [
+            b't', 0x80, 0, 0, 0, 0, 0, 0, 22, b'_', b'r', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff,
+        ]
+    );
 }
 
 /// Source: `tablecodec_test.go::TestDecodeAutoIDMeta`.
@@ -444,6 +499,12 @@ fn test_decode_auto_id_meta() {
     );
     assert_eq!(encode_meta_key(b"DB:56", b"TID:108"), encoded);
     assert!(encoded.starts_with(&encode_meta_key_prefix(b"DB:56")));
+    let mut with_remainder = encoded.to_vec();
+    with_remainder.extend_from_slice(b"ignored");
+    assert_eq!(
+        decode_meta_key(&with_remainder),
+        Ok((b"DB:56".to_vec(), b"TID:108".to_vec()))
+    );
 }
 
 /// Source: `tablecodec_test.go::TestError`.
@@ -1249,4 +1310,58 @@ fn flatten_rejects_truncated_binary_literals() {
             .to_string(),
         "invalid binary literal exceeds uint64 datum"
     );
+}
+
+#[test]
+fn non_unique_int_index_key_matches_go_gen_index_key() {
+    use tidb_tablecodec::table_key::{encode_non_unique_index_key, hex, non_unique_index_value};
+
+    // Byte fixtures from Go `tablecodec.GenIndexKey`'s non-unique int-handle
+    // composition (`EncodeIndexSeekKey(tableID, idxID, EncodeKey(values...) +
+    // IntHandleFlag + EncodeInt(handle))`): t + memcomp(tableID) + _i +
+    // memcomp(idxID) + INT_FLAG + memcomp(k) + INT_FLAG + memcomp(handle).
+    let cases: &[(i64, i64, i64, i64, &str)] = &[
+        (
+            100,
+            1,
+            42,
+            7,
+            "7480000000000000645f69800000000000000103800000000000002a038000000000000007",
+        ),
+        (
+            100,
+            1,
+            -5,
+            1,
+            "7480000000000000645f698000000000000001037ffffffffffffffb038000000000000001",
+        ),
+        (
+            256,
+            2,
+            0,
+            9_223_372_036_854_775_807,
+            "7480000000000001005f69800000000000000203800000000000000003ffffffffffffffff",
+        ),
+        (
+            100,
+            1,
+            42,
+            -3,
+            "7480000000000000645f69800000000000000103800000000000002a037ffffffffffffffd",
+        ),
+    ];
+    for &(table_id, index_id, k, handle, expected) in cases {
+        let key = encode_non_unique_index_key(table_id, index_id, &[Datum::new_int(k)], handle)
+            .expect("integer index key encodes");
+        assert_eq!(
+            hex(&key),
+            expected,
+            "table={table_id} idx={index_id} k={k} handle={handle}",
+        );
+    }
+
+    // Go `genIndexValueVersion0` emits a single '0' (0x30) for a non-unique
+    // integer-handle index with no restored data — confirmed against real
+    // GenIndexValuePortal for several (k, handle) pairs, all yielding 0x30.
+    assert_eq!(non_unique_index_value(), vec![0x30]);
 }

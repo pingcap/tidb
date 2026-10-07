@@ -12,42 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port of the MODIFY-COLUMN-on-partitioned-tables tests of
-//! `pkg/ddl/tests/partition/modify_column_test.go`
-//! (`:34::TestModifyColumnPartitionedTableRecreateIndexCursorReset` through
-//! `:868::TestModifyColumnPartitionedTableExpressionAllowlist`).
-//!
-//! The five allowlist/verify tests (:859-:864 in the batch window's
-//! enumeration: `TestModifyColumnPartitionedTableListAndKeyPartition`,
-//! `...KeyPartitionAllowlist`, `...RangeListColumnsAllowlist`,
-//! `...PartitionColumnNullability`, `...PartitionColumnDefaultComment`,
-//! `...ExpressionAllowlist`) pin
-//! `checkPartitionModifiableColumn` (`pkg/ddl/modify_column.go:1449`) /
-//! `checkPartitionColumnModifiable` (`:1477`): renames of a partitioning
-//! column answer 3855, type changes are gated per partitioning kind
-//! (integer widen / string extend / enum-set append / time FSP, expression
-//! usage kinds via `checkPartitionColumnTypeChangeAllowlist` `:1559`), and
-//! every other change answers 8200 "can't change the partitioning column,
-//! since it would require reorganize all partitions"
-//! (`partitionTypeChangeNotAllowedErr`, `:1787`). That decision table is
-//! transcreated as `crate::ddl::alter_table::partition_column_change_allowed`
-//! (`src/ddl/alter_table.rs:2013`), so those tests run here.
-//!
-//! One substitution, applied uniformly: Go ends its success cases with
-//! `admin check table` (`adminCheckPartitionTable`, :241). This tier's
-//! `admin_check::check_table` is NOT partition-aware — measured, it answers
-//! a false `Inconsistent` on a partitioned clustered-handle PRIMARY (index
-//! entries are looked up by table id, not the partition physical ids) and
-//! under-counts rows — so the admin-check assertion is dropped and the
-//! exact result-set assertions the same Go tests make carry the contract.
-//!
-//! The three process tests (:856-:858:
-//! `TestModifyColumnPartitionedTableRecreateIndexCursorReset`,
-//! `...RollbackCleanup`, `...GlobalIndexConsistency`) pin the ONLINE reorg
-//! (per-partition reorg cursor, injected index-record decode failures,
-//! global unique indexes) and have no carrier on this tier: DDL is
-//! synchronous and `CREATE [UNIQUE] INDEX ... GLOBAL` is refused 1105
-//! (measured). They are `#[ignore]` gap ports.
+//! CREATE/MODIFY partition-column contracts from
+//! `pkg/ddl/tests/partition/modify_column_test.go`.
+//! Online reorganization, collation and dynamic-pruning obligations remain
+//! recorded in `docs/parity/current-audit/test-owner-cleanup-validation.json`.
+//! These running cases do not establish complete package coverage.
 
 use tidb_datatype::{Datum, FieldTypeFlags};
 use tidb_executor::{run_alter_table_in, run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext, TableEntry};
@@ -341,32 +310,6 @@ fn modify_column_key_partition_allowlist_success_and_rejects() {
         "alter table t_key_wl_change_rename change column a a2 int",
         3855,
         "Column 'a' has a partitioning function dependency and cannot be dropped or renamed",
-    );
-}
-
-/// Go `modify_column_test.go:301::TestModifyColumnPartitionedTableKeyPartitionAllowlist`,
-/// the "string collation change rejected" case (:426-:440): Go answers
-/// errno.ErrUnsupportedDDLOperation (8200) from
-/// `checkPartitionColumnModifiable`'s collate/charset gate
-/// (`modify_column.go:1491-:1494`).
-// go-parity-gap: this tier refuses the `character set`/`collate` column
-// OPTION itself during MODIFY COLUMN with 1105 "this column option is not
-// supported in ALTER TABLE MODIFY COLUMN" (measured) — it never reaches
-// the partition gate, so Go's 8200 is unreachable and the case is
-// unportable without approximation.
-#[test]
-#[ignore]
-fn modify_column_key_partition_collation_change_answers_gos_8200() {
-    let mut catalog = Catalog::default();
-    run_create_table_on(
-        "create table t_key_wl_str_collate (a varchar(8) character set utf8mb4 collate utf8mb4_bin, b int) \
-         partition by key(a) partitions 3",
-        &mut catalog,
-    )
-    .unwrap();
-    let _ = alter(
-        &mut catalog,
-        "alter table t_key_wl_str_collate modify column a varchar(32) character set utf8mb4 collate utf8mb4_general_ci",
     );
 }
 
@@ -816,101 +759,4 @@ fn modify_column_expression_allowlist_success_and_rejects() {
     )
     .unwrap();
     expect_err(&mut catalog, "alter table t_expr_combo_other modify column a datetime(3) not null", 8200, refusal);
-}
-
-/// Go `modify_column_test.go:868::TestModifyColumnPartitionedTableExpressionAllowlist`,
-/// the arms whose refusal is keyed to the FIELD TYPE gate instead of the
-/// usage-kind gate:
-/// - "unix timestamp rejected" :947-:961 — `isColTypeAllowedAsPartitioningCol`
-///   (`pkg/ddl/partition.go:807`) refuses `timestamp(3)` with
-///   ErrFieldTypeNotAllowedAsPartitionField 1659 BEFORE the usage gate runs;
-/// - "to_days datetime fsp pruning unchanged" / "extract time fsp pruning
-///   unchanged" :1016-:1061 — pin dynamic-mode pruning (`MustPartition`)
-///   across the FSP modify;
-/// - "to_days and unix_timestamp on two columns" :1062-:1081 — the
-///   timestamp column arm answers 1659, the datetime column widens.
-// go-parity-gap: this tier has no field-type-allowed-as-partition-field
-// check in `partition_column_change_allowed` (the unix arms measure 8200
-// "can't change the partitioning column" instead of Go's 1659 — measured),
-// and the `tidb_partition_prune_mode='dynamic'` + `MustPartition` pruning
-// helper is unported.
-#[test]
-#[ignore]
-fn modify_column_expression_unix_timestamp_and_dynamic_prune_arms() {
-    let mut catalog = Catalog::default();
-    run_create_table_on(
-        "create table t_expr_unix (ts timestamp) partition by range (floor(unix_timestamp(ts))) \
-         (partition p0 values less than (unix_timestamp('2024-01-02 00:00:00')), partition p1 values less than (maxvalue))",
-        &mut catalog,
-    )
-    .unwrap();
-    // Go :957 expects 1659 here; this tier answers 8200 (measured).
-    let _ = alter(&mut catalog, "alter table t_expr_unix modify column ts timestamp(3)");
-}
-
-// --- The online-reorg process tests (gap ports) ---
-
-/// Go `modify_column_test.go:34::TestModifyColumnPartitionedTableRecreateIndexCursorReset`:
-/// a widening MODIFY of an indexed column on a 4-partition range table must
-/// advance the recreate-index reorg stage per PHYSICAL partition, observed
-/// through the `afterUpdatePartitionReorgInfo` failpoint reading
-/// `mysql.tidb_ddl_reorg.physical_id` (`:64-:84`) — the first observed
-/// value must be the SECOND partition's id (`:89`).
-// go-parity-gap: no failpoints, no job/worker reorg stage machine, no
-// mysql.tidb_ddl_reorg system table; this tier's MODIFY COLUMN is a single
-// synchronous step.
-#[test]
-#[ignore]
-fn modify_column_partitioned_recreate_index_cursor_resets_per_partition() {
-    let mut catalog = Catalog::default();
-    run_create_table_on(
-        "create table t_cursor_reset (a int primary key, b int, key idx_b(b)) partition by range (a) \
-         (partition p0 values less than (10), partition p1 values less than (20), \
-          partition p2 values less than (30), partition pMax values less than (MAXVALUE))",
-        &mut catalog,
-    )
-    .unwrap();
-    // Go :47-:50 loads 8 rows and observes the reorg cursor.
-}
-
-/// Go `modify_column_test.go:91::TestModifyColumnPartitionedTableRollbackCleanup`:
-/// a forced index-record decode failure (`MockGetIndexRecordErr` →
-/// "Cannot decode index value", :124-:127) must roll the MODIFY COLUMN job
-/// back leaving NO `tidb_ddl_history`/`tidb_ddl_reorg` residue, NO changing
-/// or removing columns/indexes (:130-:143), and an admin-check-clean table.
-// go-parity-gap: failpoint injection and the job/rollback lifecycle do not
-// exist on this tier; the synchronous modify either applies or errors
-// without transient states to inspect.
-#[test]
-#[ignore]
-fn modify_column_partitioned_forced_failure_rolls_back_cleanly() {
-    let mut catalog = Catalog::default();
-    run_create_table_on(
-        "create table t_rb (a int primary key, b int, key idx_b(b)) partition by range (a) \
-         (partition p0 values less than (30), partition p1 values less than (60), \
-          partition p2 values less than (90), partition pMax values less than (MAXVALUE))",
-        &mut catalog,
-    )
-    .unwrap();
-    // Go :108-:110 loads 128 rows, :121-:127 injects the failure.
-}
-
-/// Go `modify_column_test.go:148::TestModifyColumnPartitionedTableGlobalIndexConsistency`:
-/// widening a column covered by a UNIQUE GLOBAL index
-/// (`unique key uk_c(c) global`) on a hash-partitioned table keeps the
-/// index-lookup reads correct (:166-:168), keeps duplicate detection
-/// (:169), and stays admin-check clean.
-// go-parity-gap: `unique key uk_c(c) global` is refused at create time on
-// this tier (8264-style GLOBAL reasoning, measured), so the global-index
-// carrier the whole test is about does not exist.
-#[test]
-#[ignore]
-fn modify_column_partitioned_global_index_consistency() {
-    let mut catalog = Catalog::default();
-    let _ = run_create_table_on(
-        "create table t_global_idx (a int primary key, b int, c int, unique key uk_c(c) global) \
-         partition by hash (a) partitions 4",
-        &mut catalog,
-    );
-    // Go :160-:172 is the modify + use index(uk_c) + duplicate battery.
 }

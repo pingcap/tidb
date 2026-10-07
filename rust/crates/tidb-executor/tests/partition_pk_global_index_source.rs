@@ -12,25 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port of `pkg/ddl/tests/partition/db_partition_test.go:3731::TestPrimaryGlobalIndex`
-//! and `pkg/ddl/tests/partition/db_partition_test.go:3805::TestPrimaryNoGlobalIndex`.
-//!
-//! Both Go tests share one shape: a battery of CREATE/ALTER statements around
-//! "may a primary key be (or become) a GLOBAL index of a partitioned table",
-//! with `checkGlobalAndPK` (`db_partition_test.go:3872`) asserting the table
-//! metadata after each accepted statement.
-//!
-//! What runs here is the CREATE-TIME contract, whose decision logic is
-//! transcreated in `crate::ddl::table_partition::check_unique_keys_include_partition_columns`
-//! (Go `checkPartitionKeysConstraint`, `pkg/ddl/partition.go:686`) plus the
-//! clustered-handle metadata facts (`TableInfo.PKIsHandle` /
-//! `IsCommonHandle`). What cannot run is every arm that re-partitions or
-//! flips a primary key online: `ALTER TABLE ... PARTITION BY` is refused by
-//! this tier, and a GLOBAL primary key — which Go ACCEPTS at create time
-//! (`db_partition_test.go:3793` builds exactly that table) — is refused
-//! here because this node maintains only per-partition index entries and so
-//! could not enforce the cross-partition constraint (see the `#[ignore]`
-//! tests below).
+//! CREATE-time cases from `pkg/ddl/tests/partition/db_partition_test.go`
+//! (`TestPrimaryGlobalIndex` and `TestPrimaryNoGlobalIndex`).
+//! Online primary-key/repartition obligations remain recorded in
+//! `docs/parity/current-audit/test-owner-cleanup-validation.json`.
 
 use tidb_executor::{run_create_table_on, run_drop_table_in, Catalog, DriverError, TableEntry};
 
@@ -243,58 +228,4 @@ fn primary_no_global_index_create_refusals_and_table_metadata() {
     )
     .unwrap();
     check_global_and_pk(&catalog, "t", 1, false, false, false);
-}
-
-/// Go `db_partition_test.go:3731::TestPrimaryGlobalIndex`, the ONLINE arms:
-/// `alter table t partition by key(b) partitions 3` accepted at :3747/:3766/
-/// :3777/:3803 (re-partitioning to a key layout the PK covers) and refused
-/// with 1503 at :3744/:3755/:3760; `alter table t drop primary key` at
-/// :3745/:3751 answering Go's ErrUnsupportedModifyPrimaryKey "Unsupported
-/// drop primary key when the table is using clustered index"; and the
-/// GLOBAL primary-key flips at :3793-:3799 (`primary key ... global` create
-/// accepted, `drop primary key` + `add primary key (a) global`, and
-/// `alter table t partition by ... update indexes (`primary` global/local)`).
-// go-parity-gap: this tier has no online re-partitioning — `ALTER TABLE ...
-// PARTITION BY`, `REMOVE PARTITIONING`, and ADD PRIMARY KEY answer 1105
-// "not supported yet" (measured) — and it refuses a GLOBAL primary key at
-// create time with 8264 where Go accepts it (`db_partition_test.go:3793`),
-// because its index writer maintains only per-partition entries
-// (crate::ddl::table_partition, the GLOBAL-exemption arm).
-#[test]
-#[ignore]
-fn primary_global_index_online_repartition_and_global_pk_arms() {
-    let mut catalog = Catalog::default();
-    // Go :3793 builds this table; the tier refuses it.
-    let error = create_error(
-        &mut catalog,
-        "create table t (a int primary key nonclustered global, b varchar(255)) partition by key(b) partitions 3",
-    );
-    assert_eq!(rendered(&error).0, 8264, "tier refuses the GLOBAL PK Go accepts");
-    // The remaining arms need `alter table t partition by ...` and
-    // `alter table t add/drop primary key`, both unsupported here.
-    let _ = &mut catalog;
-}
-
-/// Go `db_partition_test.go:3805::TestPrimaryNoGlobalIndex`, the ONLINE arms:
-/// `alter table t partition by key(b) partitions 3` refused with 8264 at
-/// :3815/:3831 (a local nonclustered PK cannot become a key-partition
-/// index) and `alter table t partition by hash(a) partitions 3` accepted at
-/// :3825 (the PK covers the hash column).
-// go-parity-gap: `ALTER TABLE ... PARTITION BY` answers 1105 "not supported
-// yet" in this tier (measured), so neither the refusals nor the acceptance
-// can be observed; the create-time halves are pinned by the running tests.
-#[test]
-#[ignore]
-fn primary_no_global_index_online_repartition_arms() {
-    let mut catalog = Catalog::default();
-    run_create_table_on(
-        "create table t (a int primary key nonclustered, b varchar(255))",
-        &mut catalog,
-    )
-    .unwrap();
-    let error = create_error(
-        &mut catalog,
-        "alter table t partition by key(b) partitions 3",
-    );
-    assert_eq!(rendered(&error).0, 1105, "this tier's refusal replaces Go's 8264/acceptance pair");
 }
