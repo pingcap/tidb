@@ -1545,66 +1545,9 @@ fn empty_range_dual_task(ds: &crate::logical::DataSource, ctx: &DispatchContext<
     Task::Root(root)
 }
 
-/// Go `findBestTask4LogicalDataSource` (`find_best_task.go:2027`), the
-/// TABLE-PATH slice: the dual short-circuit, then one cop-task candidate
-/// per TABLE access path (`convertToTableScan` without ranger — the scan is
-/// the full range the enumerated path carries), finished through
-/// [`crate::task::Task::convert_to_root_task`]'s table branch.
-///
-/// # Narrowings, each naming its Go symbol
-///
-/// * A non-empty required order answers the invalid task: the
-///   `isMatchProp` handle-order admission of `convertToTableScan`
-///   (`:2834`) is keep-order work over ranges this slice does not build.
-/// * INDEX paths (`convertToIndexScan`), `PointGet`/`BatchPointGet`, and
-///   index merge enumerate NO candidate here — fewer candidates than Go,
-///   the same class of narrowing as the projection's cop branch. The
-///   skyline prune (`skylinePruning`) has nothing to prune with one
-///   candidate shape.
-/// * `isolation read engines`, `IsForUpdateRead` filtering (`:2036`), and
-///   the TiFlash arms narrow with the absent tiers.
-/// Go `matchProperty`'s INT-HANDLE arm (`find_best_task.go:1082`): a table
-/// path over an integer handle delivers the required order exactly when the
-/// property is ONE sort item on the handle column (asc or desc; Go's
-/// TiFlash-desc refusal narrows with the tier). Cluster tables, vector
-/// properties, and the index-column prefix walk (`:1095`) are later slices,
-/// named here.
-///
-/// The handle column is Go `ds.GetPKIsHandleCol()`: through
-/// `getPKIsHandleColFromSchema` (`logical_datasource.go:578`) it is the pk
-/// column when `PKIsHandle`, ELSE the schema's extra-handle column — so a
-/// no-PK table's implicit `_tidb_rowid` walk satisfies
-/// `ORDER BY _tidb_rowid` for free. Verified live (Go master fdfadb96b2):
-/// Whether `condition` is an `eq`/`in` scalar function whose FIRST argument
-/// is the column with `unique_id` and whose remaining arguments are
-/// constants — the shape of a point range. Used by the table-path skyline
-/// prune: only point-range predicates prove index dominance.
-fn is_eq_or_in_on_column(condition: &tidb_expr::expression::Expression, unique_id: i64) -> bool {
-    let tidb_expr::expression::Expression::ScalarFunction(function) = condition else {
-        return false;
-    };
-    let name = function.func_name.lowercase();
-    if name != "eq" && name != "in" {
-        return false;
-    }
-    let Some(first) = function.args.first() else {
-        return false;
-    };
-    let tidb_expr::expression::Expression::Column(column) = first else {
-        return false;
-    };
-    if column.unique_id != unique_id {
-        return false;
-    }
-    function.args[1..]
-        .iter()
-        .all(|argument| matches!(argument, tidb_expr::expression::Expression::Constant(_)))
-}
-
-/// `where a > 10 order by _tidb_rowid` on a no-PK table reads
-/// `TableFullScan ... keep order:true`. [`DataSource::handle_is_int`] only
-/// stays true while that handle column survives pruning, so the liveness
-/// half of Go's schema scan is this port's flag reset.
+/// Whether the table handle columns deliver the required order. Go
+/// `matchProperty` checks integer handles directly and common-handle prefixes
+/// through the schema columns retained after pruning.
 pub(super) fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProperty) -> bool {
     if ds.handle_is_int {
         let Some(pk_col) = ds.handle_cols.first() else {

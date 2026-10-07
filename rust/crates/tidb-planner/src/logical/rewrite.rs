@@ -779,54 +779,6 @@ fn histogram_prefix_range_selectivity(
     Some(estimate.map(|estimate| (estimate.est / table_stats.row_count()).min(1.0)))
 }
 
-/// A `prefix%` LIKE estimated from the column histogram's bucket bounds: sum
-/// the rows of every bucket whose lower or upper bound starts with the
-/// prefix, over the realtime row count. `None` when the pattern is not a
-/// plain trailing-`%` prefix or the collection carries no histogram.
-fn histogram_prefix_selectivity(
-    table_stats: &StatsInfo,
-    column: &tidb_expr::column::Column,
-    pattern: &tidb_datatype::Datum,
-) -> Option<f64> {
-    let pattern = match pattern {
-        tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-        tidb_datatype::Datum::String(string) => {
-            String::from_utf8_lossy(string.bytes()).into_owned()
-        }
-        _ => return None,
-    };
-    let prefix = pattern.strip_suffix('%')?;
-    if prefix.is_empty() || prefix.contains('%') || prefix.contains('_') {
-        return None;
-    }
-    let hist_coll = table_stats.hist_coll()?;
-    let column_stats = hist_coll.histogram_for_estimation(column.unique_id)?;
-    if column_stats.histogram.buckets.is_empty() {
-        return None;
-    }
-    let realtime = hist_coll.realtime_count();
-    if realtime <= 0 {
-        return None;
-    }
-    let starts_with = |value: &tidb_datatype::Datum| match value {
-        tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).starts_with(prefix),
-        tidb_datatype::Datum::String(string) => {
-            String::from_utf8_lossy(string.bytes()).starts_with(prefix)
-        }
-        _ => false,
-    };
-    let mut matched = 0.0_f64;
-    let mut previous = 0.0_f64;
-    for bucket in &column_stats.histogram.buckets {
-        let rows = (bucket.count as f64 - previous).max(0.0);
-        previous = bucket.count as f64;
-        if starts_with(&bucket.lower_bound) || starts_with(&bucket.upper_bound) {
-            matched += rows;
-        }
-    }
-    Some((matched / realtime as f64).max(1.0 / realtime as f64))
-}
-
 /// Go `GetSelectivityByFilter`'s string-match arm: a single-column
 /// (NOT) LIKE evaluated against the stats-ver-2 TopN values (weighted by
 /// their counts) and the histogram's bucket bounds (upper bounds weighted

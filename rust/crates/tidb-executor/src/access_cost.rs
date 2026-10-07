@@ -1155,52 +1155,30 @@ fn selectivity(
 /// `tidb_default_string_match_selectivity` value. A non-zero value disables
 /// Go's TopN-assisted string-match estimation and uses that value as the
 /// fallback selectivity instead.
-pub(crate) fn selectivity_with_default_string_match_selectivity(
+#[cfg(test)]
+fn selectivity_with_default_string_match_selectivity(
     predicate: &tidb_ast::Expr,
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
     default_string_match_selectivity: f64,
 ) -> f64 {
-    selectivity_with_default_string_match_selectivity_and_factor(
+    selectivity_with_range_context(
         predicate,
         table,
         resolver,
         stats,
-        default_string_match_selectivity,
-        tidb_planner::cost_factors::SELECTION_FACTOR,
-        true,
-    )
-}
-
-/// [`selectivity_with_default_string_match_selectivity`] with the session's
-/// `tidb_opt_selectivity_factor` supplied by the caller. `trigger_load` is
-/// false only for the executor's eager precompute; see
-/// [`SelectivityDefaults::trigger_load`].
-pub(crate) fn selectivity_with_default_string_match_selectivity_and_factor(
-    predicate: &tidb_ast::Expr,
-    table: &KvTable,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-    stats: Option<&TableStatistics>,
-    default_string_match_selectivity: f64,
-    selectivity_factor: f64,
-    trigger_load: bool,
-) -> f64 {
-    let mut conjuncts = Vec::new();
-    crate::plan_trace::collect_and(predicate, &mut conjuncts);
-    selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor(
-        &conjuncts,
-        table,
-        resolver,
-        stats,
-        default_string_match_selectivity,
-        selectivity_factor,
-        trigger_load,
+        SelectivityDefaults::from_session(
+            default_string_match_selectivity,
+            tidb_planner::cost_factors::SELECTION_FACTOR,
+        ),
+        crate::index_range::RangeContext::default(),
     )
 }
 
 /// Estimates a predicate with the statement's range quota and fallback sink.
-pub(crate) fn selectivity_with_range_context(
+#[cfg(test)]
+fn selectivity_with_range_context(
     predicate: &tidb_ast::Expr,
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
@@ -1220,34 +1198,11 @@ pub(crate) fn selectivity_with_range_context(
     )
 }
 
-/// Estimates a predicate and reports the statistics nodes the estimator
-/// actually consumes to the statement-local used-statistics ledger.
-pub(crate) fn selectivity_with_range_context_observing(
-    predicate: &tidb_ast::Expr,
-    table: &KvTable,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-    stats: Option<&TableStatistics>,
-    defaults: SelectivityDefaults,
-    range_context: crate::index_range::RangeContext<'_>,
-    observe: &mut dyn FnMut(i64, bool),
-) -> f64 {
-    let mut conjuncts = Vec::new();
-    crate::plan_trace::collect_and(predicate, &mut conjuncts);
-    selectivity_of_conjuncts_with_range_context_observing(
-        &conjuncts,
-        table,
-        resolver,
-        stats,
-        defaults,
-        range_context,
-        observe,
-    )
-}
-
 /// Estimates selected conditions with Go's full histogram `Selectivity`
 /// machinery, preserving their existing CNF boundaries and the statement's
 /// range budget/fallback state.
-pub(crate) fn selectivity_of_conjuncts_with_range_context(
+#[cfg(test)]
+fn selectivity_of_conjuncts_with_range_context(
     conjuncts: &[&tidb_ast::Expr],
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
@@ -1284,33 +1239,6 @@ pub(crate) fn selectivity_of_conjuncts_with_range_context_observing(
         resolver,
         stats,
         true,
-        defaults,
-        range_context,
-        observe,
-    )
-    .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
-}
-
-/// Estimates filters before access paths have been filled. Go passes nil
-/// `filledPaths` to `cardinality.Selectivity` at this point, so a clustered
-/// PRIMARY index remains eligible as a statistics node.
-pub(crate) fn selectivity_with_range_context_without_filled_paths_observing(
-    predicate: &tidb_ast::Expr,
-    table: &KvTable,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-    stats: Option<&TableStatistics>,
-    defaults: SelectivityDefaults,
-    range_context: crate::index_range::RangeContext<'_>,
-    observe: &mut dyn FnMut(i64, bool),
-) -> f64 {
-    let mut conjuncts = Vec::new();
-    crate::plan_trace::collect_and(predicate, &mut conjuncts);
-    try_selectivity_of_conjuncts_with_defaults_observing(
-        &conjuncts,
-        table,
-        resolver,
-        stats,
-        false,
         defaults,
         range_context,
         observe,
@@ -1365,71 +1293,14 @@ pub(crate) fn selectivity_of_conjuncts(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
 ) -> f64 {
-    selectivity_of_conjuncts_with_default_string_match_selectivity(
-        conjuncts, table, resolver, stats, 0.0,
-    )
-}
-
-/// [`selectivity_of_conjuncts`] with the session's raw string-match setting.
-pub(crate) fn selectivity_of_conjuncts_with_default_string_match_selectivity(
-    conjuncts: &[&tidb_ast::Expr],
-    table: &KvTable,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-    stats: Option<&TableStatistics>,
-    default_string_match_selectivity: f64,
-) -> f64 {
-    selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor(
+    selectivity_of_conjuncts_with_range_context(
         conjuncts,
         table,
         resolver,
         stats,
-        default_string_match_selectivity,
-        tidb_planner::cost_factors::SELECTION_FACTOR,
-        true,
-    )
-}
-
-fn selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor(
-    conjuncts: &[&tidb_ast::Expr],
-    table: &KvTable,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-    stats: Option<&TableStatistics>,
-    default_string_match_selectivity: f64,
-    selectivity_factor: f64,
-    trigger_load: bool,
-) -> f64 {
-    let mut defaults =
-        SelectivityDefaults::from_session(default_string_match_selectivity, selectivity_factor);
-    defaults.trigger_load = trigger_load;
-    selectivity_of_conjuncts_with_defaults(
-        conjuncts,
-        table,
-        resolver,
-        stats,
-        defaults,
+        SelectivityDefaults::from_session(0.0, tidb_planner::cost_factors::SELECTION_FACTOR),
         crate::index_range::RangeContext::default(),
     )
-}
-
-fn selectivity_of_conjuncts_with_defaults(
-    conjuncts: &[&tidb_ast::Expr],
-    table: &KvTable,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-    stats: Option<&TableStatistics>,
-    defaults: SelectivityDefaults,
-    range_context: crate::index_range::RangeContext<'_>,
-) -> f64 {
-    // Go core derives filter statistics with the fixed SelectionFactor on error.
-    // Recursive terms must return the error before this outer fallback is applied.
-    try_selectivity_of_conjuncts_with_defaults(
-        conjuncts,
-        table,
-        resolver,
-        stats,
-        defaults,
-        range_context,
-    )
-    .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
 }
 
 fn try_selectivity_of_conjuncts_with_defaults(

@@ -1,0 +1,124 @@
+{
+  "baseline": "7925470e986542e9e248fb14a4dba06a5027280e",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "sources": [
+    {
+      "path": "pkg/planner/cardinality/selectivity.go",
+      "sha256": "b544e397eb2216a57a927d04692123e803cb9d1f3b52746e3ef7b5387a961e37"
+    },
+    {
+      "path": "pkg/planner/core/find_best_task.go",
+      "sha256": "04ec38161e73e14e9e73ac7b9ab65607e44f3f1001e49525c4d0f176d765af63"
+    },
+    {
+      "path": "pkg/executor/distsql.go",
+      "sha256": "eb7759a9a04bb67259380a36ee54fb065c6de21075ba287dd29dc213ab0235c7"
+    },
+    {
+      "path": "pkg/executor/internal/exec/adaptive_limit_controller_test.go",
+      "sha256": "9e985f3b4dd28a3572c693756c4714c368f9664e0708ad48166d17cb76d5931d"
+    }
+  ],
+  "scope": "Remove disconnected access-path adapters and old planner estimators; keep Go-derived tests and live algorithms.",
+  "removed_symbols": {
+    "access_cost.rs": [
+      "selectivity_with_range_context_observing",
+      "selectivity_with_range_context_without_filled_paths_observing",
+      "selectivity_with_default_string_match_selectivity_and_factor",
+      "selectivity_of_conjuncts_with_default_string_match_selectivity",
+      "selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor",
+      "selectivity_of_conjuncts_with_defaults"
+    ],
+    "access_path.rs": [
+      "calculate_lookup_batch_size"
+    ],
+    "adaptive_limit.rs": [
+      "AdmissionWait (including Drop)",
+      "begin_outer_wait",
+      "begin_lookup_wait",
+      "begin_wait"
+    ],
+    "find_best_task/dispatch.rs": [
+      "is_eq_or_in_on_column"
+    ],
+    "logical/rewrite.rs": [
+      "histogram_prefix_selectivity"
+    ]
+  },
+  "removed_symbol_count": 13,
+  "test_only_adapters": [
+    "selectivity_with_default_string_match_selectivity",
+    "selectivity_with_range_context",
+    "selectivity_of_conjuncts_with_range_context"
+  ],
+  "retained": [
+    "Both production observing estimator APIs and recursive typed-error propagation",
+    "All adaptive blocking-reservation tests, their controller implementation and benchmarks",
+    "All estimator assertions and all seven lookup-batch tuples; the latter directly exercise the live capped API"
+  ],
+  "behavior": "No production caller used a retired symbol. Default selection factor, trigger_load=true, range context and error fallback are preserved for migrated fixtures.",
+  "validation": {
+    "status": "passed",
+    "commands": [
+      {
+        "command": "cargo test --locked -p tidb-planner -p tidb-executor --lib -- access_cost::tests:: access_path::tests:: adaptive_limit::tests:: logical::rewrite::tests:: find_best_task::dispatch::tests:: --test-threads=1",
+        "cwd": "/workspace/tidb/rust",
+        "log": "/workspace/.cloud-setup/test-owner-cleanup-next/tests.log",
+        "sha256": "e7ccba13e6fc41d5e7d5a8dfec1e35c69cdf039a75cd64ea3e7392967b0869f1",
+        "status": "passed",
+        "passed": 116,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "command": "make lint",
+        "cwd": "/workspace/tidb",
+        "log": "/workspace/.cloud-setup/test-owner-cleanup-next/lint.log",
+        "sha256": "df1c9f4422de165bdedf9bd7df24b1ca74a45da99298e61b6747df42435ecacb",
+        "status": "passed"
+      },
+      {
+        "command": [
+          "/workspace/tidb/rust/target/debug/build/tidb-executor/5de42d9d66be6928/out/tidb_executor-5de42d9d66be6928",
+          "access_cost::index_async_load_queue_tests::",
+          "--test-threads=1"
+        ],
+        "cwd": "/workspace/tidb",
+        "log": "/workspace/.cloud-setup/test-owner-cleanup-next/executor-load-queue.log",
+        "sha256": "c81fd57851290319c9fc44b163e8ca969696501d66856da6913d54b4687a3309",
+        "passed": 14,
+        "status": "passed"
+      },
+      {
+        "command": [
+          "/workspace/tidb/rust/target/debug/build/tidb-planner/a07fd2f5f262961b/out/tidb_planner-a07fd2f5f262961b",
+          "logical::rewrite::",
+          "--test-threads=1"
+        ],
+        "cwd": "/workspace/tidb",
+        "log": "/workspace/.cloud-setup/test-owner-cleanup-next/planner-selectivity.log",
+        "sha256": "d1ac3eb91718d3da27d2c8c4e7b86ca84ba9262ac49b066ecf79d489077dd7f3",
+        "passed": 11,
+        "status": "passed"
+      },
+      {
+        "command": "cargo check --locked --all-targets -p tidb-planner -p tidb-executor -p tidb-session -p tidb-server",
+        "cwd": "/workspace/tidb/rust",
+        "log": "/workspace/.cloud-setup/test-owner-cleanup-next/check.log",
+        "sha256": "1ff3649969cd08630ba3afb294efe729e9ccc24186b20d916fec9447094eeb99",
+        "status": "passed"
+      }
+    ],
+    "not_run": [
+      "Full Go suites",
+      "Live multi-node TiKV",
+      "Compile-time or workload benchmarks; no measured speedup claimed"
+    ],
+    "publication": "Actual hook, fresh pre-push locked build, remote SHA and Cloud checkpoint are recorded in /workspace/.cloud-setup/test-owner-cleanup-next/final-handoff.json.",
+    "distinct_tests_passed": 141,
+    "filter_review": "logical::rewrite::tests:: matched no cases: actual modules use analyzed_filter_selectivity_tests and access_path_context_tests. Ran logical::rewrite:: (11) and the additional executor async-load module (14) against the just-built binaries, without recompiling or repeating the 116 earlier cases.",
+    "git_diff_check": "passed"
+  },
+  "finding_dispositions_changed": false,
+  "go_package_accepted": false
+}

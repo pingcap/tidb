@@ -802,8 +802,8 @@
     "scope": "B05 N03 / B09 O13 connected partitioned ordinary lookup, index-join and index-merge table readers; existing-owner maintenance, no complete package acceptance"
   },
   "latest_test_cleanup": {
-    "receipt": "completed-plan-cleanup-validation.json",
-    "scope": "Retire seven completed plans (1,011 lines) and preserve their exact evidence in immutable Git archives. Source, tests, scripts and finding dispositions unchanged.",
+    "receipt": "access-adapter-cleanup-validation.json",
+    "scope": "Remove 13 obsolete access-path helpers/types; gate three fixture-only adapters and retain all Go-derived behavior assertions. Finding dispositions unchanged.",
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
   },
   "test_cleanup_history": [
@@ -1203,6 +1203,11 @@
     {
       "receipt": "completed-plan-cleanup-validation.json",
       "scope": "Retire seven completed plans (1,011 lines) and preserve their exact evidence in immutable Git archives. Source, tests, scripts and finding dispositions unchanged.",
+      "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
+    },
+    {
+      "receipt": "access-adapter-cleanup-validation.json",
+      "scope": "Remove 13 obsolete access-path helpers/types; gate three fixture-only adapters and retain all Go-derived behavior assertions. Finding dispositions unchanged.",
       "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
     }
   ],

@@ -181,20 +181,6 @@ pub(crate) struct AdaptiveLimitController {
     changed: Condvar,
 }
 
-/// A native pull executor's time waiting for admission capacity. Independent
-/// waiters are counted as a union, like Go's blocked-time accounting.
-pub(crate) struct AdmissionWait {
-    controller: Arc<AdaptiveLimitController>,
-    stage: Stage,
-}
-
-impl Drop for AdmissionWait {
-    fn drop(&mut self) {
-        let mut state = self.controller.lock();
-        end_blocked(&mut state, self.stage, Instant::now());
-    }
-}
-
 impl AdaptiveLimitController {
     pub(crate) fn for_index_join(config: AdaptiveLimitConfig) -> Arc<Self> {
         Self::new(config, Mode::IndexJoin)
@@ -346,14 +332,6 @@ impl AdaptiveLimitController {
                 .wait(state)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
-    }
-
-    pub(crate) fn begin_outer_wait(self: &Arc<Self>) -> AdmissionWait {
-        begin_wait(self, Stage::Outer)
-    }
-
-    pub(crate) fn begin_lookup_wait(self: &Arc<Self>) -> AdmissionWait {
-        begin_wait(self, Stage::Lookup)
     }
 
     /// Settles an outer reservation with the number of rows actually fetched.
@@ -641,16 +619,6 @@ impl AdaptiveLimitController {
         state.lookup_batch_size =
             grow_window(state.lookup_batch_size, self.bounds.max_lookup_batch_size);
         state.lookup_no_output_rows = 0;
-    }
-}
-
-fn begin_wait(controller: &Arc<AdaptiveLimitController>, stage: Stage) -> AdmissionWait {
-    let mut state = controller.lock();
-    begin_blocked(&mut state, stage, Instant::now());
-    drop(state);
-    AdmissionWait {
-        controller: Arc::clone(controller),
-        stage,
     }
 }
 

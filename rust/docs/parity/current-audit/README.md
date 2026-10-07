@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [completed removal and test plans](completed-plan-cleanup-validation.json). Retire seven completed plans containing 1,011 lines of historical workflow instructions. Current links retain immutable archives; maintained scripts guidance, original validation receipts, tests and open Go obligations remain. Executable files and finding dispositions are unchanged.
+Latest cleanup: [obsolete access-path adapters](access-adapter-cleanup-validation.json). Remove 13 disconnected helpers/types and gate three fixture-only adapters out of production builds. Existing tests use the shared estimator and capped lookup API; Go-derived adaptive blocking tests and all behavioral assertions remain. Finding dispositions stay unchanged.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 

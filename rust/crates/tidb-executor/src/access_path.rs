@@ -1859,19 +1859,6 @@ fn lookup_initial_batch_size(initial_batch_size: usize, required_rows: usize) ->
     initial_batch_size.min(required_rows).min(MAX_HANDLE_BATCH)
 }
 
-fn calculate_lookup_batch_size(
-    estimated_rows: Option<f64>,
-    initial_batch_size: usize,
-    index_paging: bool,
-) -> usize {
-    calculate_lookup_batch_size_with_cap(
-        estimated_rows,
-        initial_batch_size,
-        index_paging,
-        MAX_HANDLE_BATCH,
-    )
-}
-
 pub(crate) fn calculate_lookup_batch_size_with_cap(
     estimated_rows: Option<f64>,
     initial_batch_size: usize,
@@ -7927,25 +7914,21 @@ mod tests {
 
     #[test]
     fn lookup_initial_batch_matches_go_calculate_batch_size() {
-        assert_eq!(calculate_lookup_batch_size(Some(252.17), 100, false), 400);
-        assert_eq!(
-            calculate_lookup_batch_size(Some(20_000.0), 100, false),
-            20_000
-        );
-        assert_eq!(
-            calculate_lookup_batch_size(Some(20_001.0), 100, false),
-            20_000
-        );
-        assert_eq!(calculate_lookup_batch_size(Some(5_000.0), 100, true), 100);
-        assert_eq!(calculate_lookup_batch_size(None, 100, false), 100);
-        assert_eq!(
-            calculate_lookup_batch_size_with_cap(Some(5_000.0), 100, false, 512),
-            512
-        );
-        assert_eq!(
-            calculate_lookup_batch_size_with_cap(Some(5_000.0), 100, false, 1),
-            1
-        );
+        for (estimate, paging, cap, expected) in [
+            (Some(252.17), false, MAX_HANDLE_BATCH, 400),
+            (Some(20_000.0), false, MAX_HANDLE_BATCH, 20_000),
+            (Some(20_001.0), false, MAX_HANDLE_BATCH, 20_000),
+            (Some(5_000.0), true, MAX_HANDLE_BATCH, 100),
+            (None, false, MAX_HANDLE_BATCH, 100),
+            (Some(5_000.0), false, 512, 512),
+            (Some(5_000.0), false, 1, 1),
+        ] {
+            assert_eq!(
+                calculate_lookup_batch_size_with_cap(estimate, 100, paging, cap),
+                expected,
+                "estimate={estimate:?}, paging={paging}, cap={cap}",
+            );
+        }
     }
 
     /// Go copies `SessionVars.IndexLookupConcurrency()` into every
