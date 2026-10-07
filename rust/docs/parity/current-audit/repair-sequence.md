@@ -14,7 +14,7 @@ Use [remaining-batches.md](remaining-batches.md) and its machine-readable JSON f
 
 Original planning started at TiDB integration `4285385fad20855487ec1d8ff113290d48f949a5`, freshly fetched Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, and native client-rust `6f663b396552eec6d1bfad76b65f813e317884a4`. The normative pins come from that Go master's go.mod: client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, PD client `v0.0.0-20260805103528-afa43111d149`, kvproto `v0.0.0-20260820070758-623e58e60fa9`, TiPB `v0.0.0-20260908093239-fed7bc47c39d`, etcd API `v3.5.15`, and Ristretto `v0.1.1`.
 
-Historical reconciliation: [review after removals](post-removal-structural-review.md)
+Historical reconciliation: [review after removals](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/post-removal-structural-review.md)
 at integration `68d6de685a5e58c559a861ec7b85d10bc8a2aa60`, unchanged Go master and
 native master `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`. At that checkpoint all 77 IDs below remained
 open/partial. The old repartition, IMPORT and cluster-fixture implementations
@@ -54,7 +54,7 @@ The eight repaired register entries remain outside this queue: C01, E01, O12, P0
 
 **Migration and removal:** Native `src/pd/client.rs`, `retry.rs`, `timestamp.rs`: own service discovery, request deadlines, bounded synchronization and retained/joined workers. Preserve Go fallback and reconnection contracts; remove network-duration global write locking and discarded worker ownership.
 
-Current status is reconciled in the [post-removal review](post-removal-structural-review.md):
+Current status is reconciled in the [post-removal review](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/post-removal-structural-review.md):
 native timestamp deadlines and retained/joined stream retirement are implemented.
 Keep those owners; public PD shutdown and complete parent ownership remain open.
 Go default pick_first reconnects on demand after an established connection becomes

@@ -164,7 +164,7 @@ The entries below preserve earlier completed work and still-open obligations.
 ### Review after removals at 68d6de685a
 
 
-The [latest complete known-register review](parity/current-audit/post-removal-structural-review.md)
+The [latest complete known-register review](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/post-removal-structural-review.md)
 retains 77 unresolved IDs. Six fresh diagnostics confirm removed repartition,
 IMPORT and cluster fixtures no longer produce their old misleading behavior;
 partial multi-action ALTER, ignored password history, generated-value truncation,
@@ -1604,73 +1604,16 @@ DDL/owner-loss, upgrade/GC/TTL deployment, cluster TLS or sysbench/TPCC/TPCH/YCS
 benchmark was run. No package or repository-wide completion is claimed.
 
 
-## Session/executor/runtime-provider audit receipt (2026-09-30)
+## Archived session/executor/runtime-provider audit (2026-09-30)
 
-Pulled integration 960fa95b48 and refreshed Go master e953a09d9d; both were
-already current. Reviewed the shared physical builder, DML source/write
-handoff, per-statement SELECT/DML cache stores and session cache admission,
-Apply construction, optional configured-server startup and metadata refresh,
-and live information-schema row providers. The register adds D11, C01–C02,
-E01–E04, S01–S02 and I01–I03: 12 additions, 41 known open findings in total.
-No keyword hit was promoted merely because a gap comment existed.
 
-The retained session-ownership-probe.rs runs 46 SQL commands through Session.
-It reproduces five ownership groups: lost alias updates, multi-update FK
-bypass, partial in-process ALTER publication after error, per-statement cache
-capacity/flush gaps, and fixture/constant dynamic virtual-table results.
-JOIN USING and referred-FK multi-DELETE controls behave correctly. Go expected
-contracts come from pinned master source; no new Go-server execution occurred.
-The diagnostic intentionally prints SQL errors instead of returning a failed
-process status, so its successful exit must not be called a passing parity
-suite. Full SQL stdout is committed in session-ownership-probe.txt.
+The original print-only diagnostic, commands and review are [archived at the
+pre-cleanup revision](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/session-ownership-review.md). Its observed SQL results remain in
+`parity/current-audit/session-ownership-probe.txt`. Successful diagnostic exit
+never established parity. Use the maintained assertion suites in
+`../scripts/README.md`; do not recreate temporary examples or overwrite dated
+outputs. Current dispositions belong to the JSON/Markdown finding registers.
 
-Files changed: this ExecPlan, current-audit/README.md, structural-findings.md,
-session-ownership-review.md, session-ownership-probe.rs and its .txt output.
-The example was temporarily copied into the existing session crate for the
-locked run and removed after verifying byte identity. No production crate,
-Go/Bazel input, dependency pin, generated source or native client file changed.
-No bazel_prepare or Go failpoint setup is triggered. No complete package was
-implemented, integrated or accepted by this audit.
-
-Exact validation commands from the repository root:
-
-    git pull --ff-only origin hparser-integration
-    git fetch origin master
-    mkdir -p rust/crates/tidb-session/examples
-    cp rust/docs/parity/current-audit/session-ownership-probe.rs rust/crates/tidb-session/examples/audit_session_ownership.rs
-    (cd rust && cargo run --locked -p tidb-session --example audit_session_ownership)
-    rustfmt --check --edition 2024 rust/docs/parity/current-audit/session-ownership-probe.rs
-    make lint
-    git diff --check
-
-The cargo command alone is scoped to rust/; the others are root commands.
-Probe, formatting, root lint and whitespace checks completed successfully;
-the probe's observed SQL failures remain unresolved by design. An inline
-Python check verified 41 unique IDs, 12 additions, all 46 SQL/result pairs,
-local Markdown links and removal of the temporary example. Source files were
-read from origin/master using git show/git grep. Existing source/descriptor
-inventory receipts were not regenerated because their inputs did not change.
-Logs: /private/tmp/tidb-session-ownership-{probe,lint}.log.
-
-Publication commands, with the final result reported in the response:
-
-    TERM=xterm git -c core.hooksPath=hooks commit -m "audit: trace session executor and runtime provider mismatches"
-    (cd rust && cargo build --locked -p tidb-server)
-    git push origin HEAD:hparser-integration
-
-The pre-commit hook must itself pass the locked server build, and the separate
-locked build must pass immediately before push. Publication logs use
-/private/tmp/tidb-session-ownership-{commit,prepush-build}.log.
-
-Correctness risks discovered include lost writes, orphan FK values and local
-schema changes surviving statement errors. Compatibility/performance findings
-include incomplete cache eviction/sharing, whole-read materialization,
-serial-only Apply, stale optional-server descriptors and missing real cluster
-providers. This audit introduces no runtime behavior changes. Full upstream
-package variants/original tests, distributed failure injection, the ten prior
-embedded baseline failures, multi-node/TLS interoperability and
-sysbench/TPC-C/TPC-H/YCSB remain unverified. The exhaustive audit is unfinished;
-41 records are all currently established findings, not a proof of no others.
 
 ## Complete protocol-owner removal outcome
 
@@ -2720,3 +2663,14 @@ The [batch plan](temporary-ddl-batch-execplan.md) and [receipt](parity/current-a
 
 
 Latest connected repair: [DROP completion](drop-completion-batch-validation.json). D01/E02/I04/O18 share ordered target completion, persistent FK preflight, object admission, per-target schema publication and view replacement identities. Sixteen of 28 baseline live checks failed; 182 selected Rust cases and 39 real MySQL checks pass after repair, including the retained 60-vector Go view-parser test. Counts remain 86 tracked / 30 repaired / 56 unresolved (27 open, 29 partial). These are existing-owner repairs; complete durable DDL and package obligations remain open. Other 52 unresolved roots retain carried evidence. See [the batch ExecPlan](drop-completion-batch-execplan.md) and its durable receipt. The direct transaction owner is still not complete durable DDL.
+
+
+## Diagnostic harness retirement (2026-10-07)
+
+
+Retired seven print-only Rust probes, their temporary-example Python runner and
+nine superseded review/runbooks. Historical outputs and source revisions remain
+available through the [retirement receipt](parity/current-audit/diagnostic-cleanup-validation.json).
+Maintained Go behavior tests, Rust correctness checks, runtime code and all
+56 unresolved findings are unchanged. This removes an obsolete manual workflow;
+it does not claim reduced Cargo suite time or a repaired parity finding.

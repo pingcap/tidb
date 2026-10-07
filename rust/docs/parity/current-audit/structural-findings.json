@@ -164,7 +164,7 @@
       "status": "repaired",
       "group": "DDL: migrate responsibility before deleting implementations",
       "finding": "**Recorded mode ownership repaired:** persisted workers select MDL registration/recovery or non-MDL schema-version recovery from the source mode. Disabled mode neither requires nor writes MDL rows; a replacement owner recovers the latest nonempty diff before another action/history. Each committed phase still waits, notification failures retain Go's mode distinction, and MDL-only cleanup is skipped. Followers no longer replay stale job versions into the loaded self-version key.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::DdlJobSchemaState` / `plan_persisted_ddl_job_with`; `real_tikv_ddl.rs::run_persisted_ddl_job`; `rust/crates/tidb-server/src/cluster_session_node/schema_sync.rs::run_ack_loop`; [repair/review receipt](mdl-mode-review.md)",
+      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::DdlJobSchemaState` / `plan_persisted_ddl_job_with`; `real_tikv_ddl.rs::run_persisted_ddl_job`; `rust/crates/tidb-server/src/cluster_session_node/schema_sync.rs::run_ack_loop`; [repair/review receipt](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/mdl-mode-review.md)",
       "go_owner": "Master `pkg/ddl/job_worker.go::registerMDLInfo` / `updateGlobalVersionAndWaitSynced`, `job_scheduler.go::transitOneJobStepAndWaitSync` / `cleanMDLInfo`, `schema_version.go::waitVersionSyncedWithoutMDL`, and `pkg/infoschema/issyncer/syncer.go::MDLCheckLoop`. Reuses the existing dual-mode schemaver owner; no invented fixed-delay fallback or complete pkg/ddl acceptance.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Recorded worker/follower mode gap repaired. Four red-to-green regressions cover no MDL registration/table dependency, recovery before history, and stale follower acknowledgements. Controls preserve enabled-mode barriers, notification failure policy and every DROP phase. Other DDL owners remain unresolved. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
     },
@@ -790,7 +790,7 @@
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Contract repaired: both handwritten restore protocol types are removed. Range merging retains shared complete generated files; lookup borrows generated rules and explicit cloning deep-copies them. SHA-256, versions, table metadata, size and cipher IV survive by identity. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
     }
   ],
-  "review_receipt": "mdl-mode-review.md",
+  "review_receipt": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-07",
     "receipt": "drop-completion-batch-validation.json",
@@ -804,8 +804,8 @@
     "scope": "Ordered DROP completion, FK preflight, shared object guards, per-target schema publication, view replacement identity and CHECK OPTION admission; existing-owner maintenance."
   },
   "latest_test_cleanup": {
-    "receipt": "sort-cleanup-validation.json",
-    "scope": "Retire the disconnected substitute parallel-sort worker/spill/merger/cursor closure and 37 private tests; preserve active Sort/TopN behavior and missing Go parallel-sort obligations. Finding dispositions unchanged.",
+    "receipt": "diagnostic-cleanup-validation.json",
+    "scope": "Retire obsolete print-only audit execution and duplicate dated runbooks; no production behavior or assertion test removal.",
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
   },
   "test_cleanup_history": [
@@ -1215,6 +1215,11 @@
     {
       "receipt": "sort-cleanup-validation.json",
       "scope": "Retire the disconnected substitute parallel-sort worker/spill/merger/cursor closure and 37 private tests; preserve active Sort/TopN behavior and missing Go parallel-sort obligations. Finding dispositions unchanged.",
+      "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
+    },
+    {
+      "receipt": "diagnostic-cleanup-validation.json",
+      "scope": "Retire obsolete print-only audit execution and duplicate dated runbooks; no production behavior or assertion test removal.",
       "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
     }
   ],

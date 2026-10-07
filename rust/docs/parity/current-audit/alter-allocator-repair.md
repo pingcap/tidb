@@ -68,8 +68,8 @@ existing `next()` accessor, which returns the reserved global boundary 30001.
 The continuation does not change that accessor or those tests. They are retained
 as baseline failures, not counted as passing tests or newly fixed contracts.
 
-The retained [session diagnostic](alter-residual-probe.rs) was rerun using
-`run-expanded-probes.py::run` with temporary example name
+The archived [session diagnostic](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/alter-residual-probe.rs) was rerun using
+the now-retired diagnostic runner with temporary example name
 `alter_allocator_repaired`. Its [new output](alter-allocator-repaired.txt)
 returns IDs 1 and 2; the [prior output](alter-review-recheck/alter-residual.txt)
 returned 1 and 1000000. The temporary source was removed after execution.

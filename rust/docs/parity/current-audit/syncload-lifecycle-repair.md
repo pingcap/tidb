@@ -8,7 +8,7 @@ the native repository's remote master matches the maintained dependency.
 
 **O19's missing event observations are repaired. There are now 69 unresolved
 findings (61 open, eight partial) and 17 repaired, out of 86 tracked.** The other
-69 dispositions carry forward the [previous full-register review](mdl-mode-review.md);
+69 dispositions carry forward the [previous full-register review](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/mdl-mode-review.md);
 this follow-up does not claim a new exhaustive review or full package acceptance.
 
 ## Source boundary and design

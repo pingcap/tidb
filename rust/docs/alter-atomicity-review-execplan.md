@@ -124,7 +124,7 @@ not a count of freshly reproduced runtime failures.
 All 71 known unresolved IDs still describe an unmet contract; D11 advances to
 partial, so the register is 63 open, eight partial, 15 repaired (86 tracked).
 Six retained diagnostics and one allocator diagnostic were rerun; the LFU
-admission regression still fails. See [the full review](parity/current-audit/alter-review.md)
+admission regression still fails. See [the full review](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/alter-review.md)
 and [validation](parity/current-audit/alter-review-recheck/validation.json).
 
 The code change removes the FK-only staging branch and duplicate parsing.

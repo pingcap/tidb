@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [disconnected sort pipeline](sort-cleanup-validation.json). Remove the disabled substitute workers, spill helper, generic merger/cursors, no-op concurrency setting and 37 private tests. Active Sort/TopN behavior remains; the corrected package inventory explicitly retains missing Go parallel-sort obligations.
+Latest cleanup: [obsolete diagnostic bundle](diagnostic-cleanup-validation.json). Seven print-only probes, their temporary-example runner and nine superseded runbooks are retired. Dated outputs and archived source remain available; maintained assertion suites and all 56 unresolved findings are unchanged.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
@@ -84,14 +84,14 @@ The repeated milestone summaries and stale count tables formerly copied into thi
 - [the removal receipt](complete-protocol-owner-repair.md)
 - [configuration/statistics maintenance batch](config-statistics-maintenance-repair.md)
 - [shared server session batch](shared-server-session-repair.md)
-- [2026-10-02 review after shared worker repairs](worker-followup-structural-review.md)
+- [2026-10-02 review after shared worker repairs](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/worker-followup-structural-review.md)
 - [atomic health-publication repair](../../health-feedback-publication-execplan.md)
 - [PD request-ownership follow-up](../../pd-request-ownership-execplan.md)
 - [DDL error identity repair](../../ddl-error-identity-execplan.md)
 - [CHECK error generation follow-up](../../ddl-error-generation-execplan.md)
-- [2026-10-01 full register reconciliation](remaining-structure-review.md)
-- [review of every unresolved finding](structural-review-followup.md)
-- [review after removals](post-removal-structural-review.md)
+- [2026-10-01 full register reconciliation](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/remaining-structure-review.md)
+- [review of every unresolved finding](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/structural-review-followup.md)
+- [review after removals](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/post-removal-structural-review.md)
 - [partition shortcut removal](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/partition-owner-removal-execplan.md)
 - [IMPORT shortcut removal](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/import-shortcut-removal-execplan.md)
 - [cluster fixture removal](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/cluster-fixture-removal-execplan.md)
@@ -108,10 +108,10 @@ The repeated milestone summaries and stale count tables formerly copied into thi
 - [restore-utils protocol repair](restore-utils-protocol-repair.md)
 - [range-tree protocol repair](rtree-protocol-repair.md)
 - [global-config synchronization repair](global-config-sync-repair.md)
-- [subsystem ownership review](subsystem-structure-review.md)
+- [subsystem ownership review](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/subsystem-structure-review.md)
 - [complete scope matrix](structural-coverage.md)
-- [expanded production-owner review](expanded-ownership-review.md)
-- [session/executor follow-up](session-ownership-review.md)
+- [expanded production-owner review](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/expanded-ownership-review.md)
+- [session/executor follow-up](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/session-ownership-review.md)
 - [shared session cache repair](shared-session-plan-cache-repair.md)
 - [shared UPDATE owner repair](shared-update-owner-repair.md)
 - [progress-ownership follow-up](rtree-progress-ownership-repair.md)

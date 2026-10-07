@@ -1,0 +1,142 @@
+{
+  "date": "2026-10-07",
+  "baseline": "0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95",
+  "scope": "Retire obsolete print-only audit execution and duplicate dated runbooks; no production behavior or assertion test removal.",
+  "removed": [
+    {
+      "path": "rust/docs/parity/current-audit/session-ownership-probe.rs",
+      "sha256": "a9701b1cae65783a2a9a7ab7be39cf4502cafaf3b8a4586352a6de44085eec6d",
+      "lines": 76,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/session-ownership-probe.rs"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/expanded-ownership-probe.rs",
+      "sha256": "7a5e0887263329408a619471f73d226fa483b227e68455fd5d0ca29c08dbc3da",
+      "lines": 90,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/expanded-ownership-probe.rs"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/expanded-server-probe.rs",
+      "sha256": "e2597a55f3f1877700c486b60a2669e2003b64f00ea90689ecd2c97b7eb3d903",
+      "lines": 115,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/expanded-server-probe.rs"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/subsystem-structure-probe.rs",
+      "sha256": "32520468db3c34734984a968035f6c3fe13f345f893193645dace3c731c473f0",
+      "lines": 43,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/subsystem-structure-probe.rs"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/remaining-structure-probe.rs",
+      "sha256": "143c7b7551ba9396b2cd8b40503943c5afcf5f32e6248f3b2729caf8df83b707",
+      "lines": 33,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/remaining-structure-probe.rs"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/partition-structure-probe.rs",
+      "sha256": "7d0d4ecc16d9450eca2e8e453b913f7d5d9ce71c9d638b1313c9af9dcaaaf3cf",
+      "lines": 38,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/partition-structure-probe.rs"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/alter-residual-probe.rs",
+      "sha256": "4ed292ee20466f9f201934c2b7d7b77671d49f79e2131ef1e1914eb3c28c5448",
+      "lines": 18,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/alter-residual-probe.rs"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/run-expanded-probes.py",
+      "sha256": "acda4a5a44dad479b4e05b3a95bbc28ed6c4eeca85323010f67c0a21185b50c1",
+      "lines": 48,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/run-expanded-probes.py"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/session-ownership-review.md",
+      "sha256": "f316116df0a1dbe05c4cf0d9bc1bed73ad6c0b9547b6e292d97239f561d465e9",
+      "lines": 167,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/session-ownership-review.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/expanded-ownership-review.md",
+      "sha256": "87bf5cac788b3e93237789f425b22914a0ceee66cffecafe967c7930a5f4f829",
+      "lines": 215,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/expanded-ownership-review.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/subsystem-structure-review.md",
+      "sha256": "8eab857b1b76548988e9b8524a792ca8104dd65223ddd3cebd4c1c22c5b1763f",
+      "lines": 145,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/subsystem-structure-review.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/remaining-structure-review.md",
+      "sha256": "8d7318ba63e91b887c7c870f2c4dc2773c5008ec7eed4fa145759b9c9a42361f",
+      "lines": 227,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/remaining-structure-review.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/structural-review-followup.md",
+      "sha256": "ac0b91b3b2d28d5157285281fdc92c422136f668be8ba65c313e67368df2db03",
+      "lines": 223,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/structural-review-followup.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/post-removal-structural-review.md",
+      "sha256": "9e230fbf4722b53c914a6ef80326f7835c3cb81ef2fb6f3e6bb6413c8502b066",
+      "lines": 178,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/post-removal-structural-review.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/worker-followup-structural-review.md",
+      "sha256": "826a4a7280920a4c508ac80542fe98268da499306f1ce3b9cb627347a79ff0d2",
+      "lines": 244,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/worker-followup-structural-review.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/alter-review.md",
+      "sha256": "012b89e7793a588deba56159f774f54f83aa0b9e0eb366e15cf35f35b9c09eee",
+      "lines": 246,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/alter-review.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/mdl-mode-review.md",
+      "sha256": "032e83f5ad76b348e893ec87da84dbbd9aa22cbeafa2dec2295b3a9b6e92f31a",
+      "lines": 240,
+      "archive": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/mdl-mode-review.md"
+    }
+  ],
+  "counts": {
+    "retired_rust_probes": 7,
+    "retired_python_runners": 1,
+    "retired_review_runbooks": 9,
+    "removed_file_lines": 2346,
+    "assertion_tests_removed": 0,
+    "findings_unresolved": 56
+  },
+  "reason": "The runner installed temporary examples into production crates, built extra executables, hard-coded /private/tmp and overwrote dated evidence. Its zero exit never indicated parity. Reviews duplicate historical dispositions superseded by current registers.",
+  "retained": [
+    "All dated probe .txt outputs and other validation receipts",
+    "All Go-derived and Rust correctness assertions",
+    "Current JSON/Markdown finding dispositions",
+    "Maintained scripts/README.md test commands and live runners"
+  ],
+  "validation": {
+    "reference_integrity": "PASS: archived file hashes, retired local links, unchanged output bytes, runtime/manifests/tests and finding dispositions verified",
+    "lint": {
+      "command": "make lint",
+      "result": "PASS (exit 0)",
+      "sha256": "614fa8c8e4b42d39d9cde8cad5993c319195d3278961a86d2e15326315886a54"
+    },
+    "actual_precommit_locked_server_build": "Required by executable hooks/pre-commit on the normal commit; final result is recorded in /workspace/.cloud-setup/diagnostic-cleanup/final-handoff.json after execution.",
+    "commands": [
+      "python3 /workspace/.cloud-setup/diagnostic-cleanup/verify.py",
+      "git diff --check",
+      "make lint"
+    ]
+  },
+  "limits": [
+    "No automatic Cargo target was removed; no build-time or workload speedup measured.",
+    "No full suite, live TiKV or complete Go package acceptance."
+  ]
+}
