@@ -256,6 +256,10 @@ type Config struct {
 	IndexLimit                 int                     `toml:"index-limit" json:"index-limit"`
 	TableColumnCountLimit      uint32                  `toml:"table-column-count-limit" json:"table-column-count-limit"`
 	GracefulWaitBeforeShutdown int                     `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
+	// GracefulCloseConnectionsLingerMs is the number of milliseconds a connection outside of a transaction keeps
+	// reading during shutdown, to reject the client's next command with ER_SERVER_SHUTDOWN before it is closed.
+	// 0 closes the connection right away.
+	GracefulCloseConnectionsLingerMs int `toml:"graceful-close-connections-linger-ms" json:"graceful-close-connections-linger-ms"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -1794,6 +1798,9 @@ func (c *Config) Valid() error {
 	}
 	if c.IndexLimit < DefIndexLimit || c.IndexLimit > DefMaxOfIndexLimit {
 		return fmt.Errorf("index-limit should be [%d, %d]", DefIndexLimit, DefMaxOfIndexLimit)
+	}
+	if c.GracefulCloseConnectionsLingerMs < 0 {
+		return fmt.Errorf("graceful-close-connections-linger-ms should not be negative")
 	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)

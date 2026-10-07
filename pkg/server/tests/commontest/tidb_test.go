@@ -1211,6 +1211,99 @@ func TestDrainClientsClosesIdleConnections(t *testing.T) {
 	}
 }
 
+func TestGracefulShutdownRejectsCommandsWithServerShutdown(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	cli := testserverclient.NewTestServerClient()
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.GracefulCloseConnectionsLingerMs = 2000
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	listenAddr := server.ListenAddr().String()
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+
+	db, err := sql.Open("mysql", cli.GetDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+	ctx := context.Background()
+	_, err = db.ExecContext(ctx, "create table if not exists shutdown_reject (id int primary key)")
+	require.NoError(t, err)
+	idleConn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer idleConn.Close()
+	busyConn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer busyConn.Close()
+	var busyID uint64
+	require.NoError(t, busyConn.QueryRowContext(ctx, "select connection_id()").Scan(&busyID))
+	require.NoError(t, idleConn.PingContext(ctx))
+
+	busyResult := make(chan error, 1)
+	go func() {
+		var v int
+		if err := busyConn.QueryRowContext(ctx, "select sleep(2)").Scan(&v); err != nil {
+			busyResult <- err
+			return
+		}
+		// Reuse the connection right after its statement finished in shutdown mode.
+		_, err := busyConn.ExecContext(ctx, "insert into shutdown_reject values (2)")
+		busyResult <- err
+	}()
+	require.Eventually(t, func() bool {
+		pi, ok := server.ShowProcessList()[busyID]
+		return ok && strings.Contains(pi.Info, "sleep")
+	}, 5*time.Second, 10*time.Millisecond)
+
+	drainWait := 10 * time.Second
+	drained := make(chan time.Duration, 1)
+	go func() {
+		begin := time.Now()
+		server.Close()
+		server.DrainClients(drainWait, time.Second)
+		drained <- time.Since(begin)
+	}()
+	// The listener is closed after the server enters shutdown mode.
+	require.Eventually(t, func() bool {
+		c, err := net.DialTimeout("tcp", listenAddr, 100*time.Millisecond)
+		if err == nil {
+			terror.Log(c.Close())
+		}
+		return err != nil
+	}, 5*time.Second, 10*time.Millisecond)
+
+	isServerShutdown := func(err error) bool {
+		myErr, ok := err.(*mysql.MySQLError)
+		return ok && myErr.Number == tmysql.ErrServerShutdown
+	}
+	// The idle connection lingers and rejects the command instead of dropping it.
+	_, err = idleConn.ExecContext(ctx, "insert into shutdown_reject values (1)")
+	require.True(t, isServerShutdown(err), "%v", err)
+	// The busy connection finishes its statement, then rejects the next one.
+	err = <-busyResult
+	require.True(t, isServerShutdown(err), "%v", err)
+
+	select {
+	case elapsed := <-drained:
+		require.Less(t, elapsed, drainWait)
+	case <-time.After(drainWait):
+		require.Fail(t, "drain clients did not finish")
+	}
+
+	// Neither rejected command was executed.
+	testkit.NewTestKit(t, ts.Store).MustQuery("select count(*) from test.shutdown_reject").Check(testkit.Rows("0"))
+}
+
 func TestPessimisticInsertSelectForUpdate(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 

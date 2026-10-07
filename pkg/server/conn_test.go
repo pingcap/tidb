@@ -1347,6 +1347,31 @@ func TestCommitWaitGroup(t *testing.T) {
 	require.Less(t, time.Since(begin), time.Second)
 }
 
+func TestRejectCommandInShutdown(t *testing.T) {
+	var outBuffer bytes.Buffer
+	cc := &clientConn{
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		alloc:      arena.NewAllocator(512),
+		capability: mysql.ClientProtocol41,
+	}
+	ctx := context.Background()
+
+	// The commands that expect no response are not answered, to keep the protocol in sync.
+	for _, cmd := range []byte{mysql.ComQuit, mysql.ComStmtClose, mysql.ComStmtSendLongData} {
+		require.False(t, cc.rejectCommandInShutdown(ctx, []byte{cmd}))
+	}
+	require.False(t, cc.rejectCommandInShutdown(ctx, nil))
+	require.Zero(t, outBuffer.Len())
+
+	require.True(t, cc.rejectCommandInShutdown(ctx, append([]byte{mysql.ComQuery}, "insert into t values (1)"...)))
+	// 4 bytes packet header, then the ERR packet: 0xff, error code, '#', SQLSTATE, message.
+	data := outBuffer.Bytes()
+	require.Greater(t, len(data), 13)
+	require.Equal(t, byte(mysql.ErrHeader), data[4])
+	require.Equal(t, uint16(mysql.ErrServerShutdown), binary.LittleEndian.Uint16(data[5:7]))
+	require.Equal(t, "#08S01", string(data[7:13]))
+}
+
 type snapshotCache interface {
 	SnapCacheHitCount() int
 }

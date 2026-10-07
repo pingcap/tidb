@@ -1171,6 +1171,9 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	// anything, so drivers that check the connection before reusing it (for example go-sql-driver/mysql)
 	// can retry on a new connection transparently. The CAS fails for a connection that is executing a
 	// command; it is closed in `clientConn.Run` after the command finishes.
+	// With `graceful-close-connections-linger-ms`, the idle connections stay readable for that long, so that a
+	// command the client is about to send is rejected with ER_SERVER_SHUTDOWN instead of hitting a closed socket.
+	linger := s.gracefulCloseLinger()
 	idleConns := make(map[uint64]struct{}, len(conns))
 	for id, conn := range conns {
 		if conn.getCtx().GetSessionVars().InTxn() || !conn.CompareAndSwapStatus(connStatusReading, connStatusWaitShutdown) {
@@ -1178,7 +1181,7 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 		}
 		idleConns[id] = struct{}{}
 		if conn.bufReadConn != nil {
-			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+			if err := conn.bufReadConn.SetReadDeadline(time.Now().Add(linger)); err != nil {
 				logger.Warn("error setting read deadline for idle connection", zap.Error(err))
 			}
 		}
@@ -1191,8 +1194,9 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 		defer close(allDone)
 		for id, conn := range conns {
 			_, idle := idleConns[id]
-			// Wait for the connections with explicit transaction or an executing auto-commit query.
-			if idle || (conn.getStatus() == connStatusReading && !conn.getCtx().GetSessionVars().InTxn()) {
+			// Wait for the connections with explicit transaction or an executing auto-commit query, and for the
+			// lingering idle connections.
+			if (idle && linger <= 0) || (!idle && conn.getStatus() == connStatusReading && !conn.getCtx().GetSessionVars().InTxn()) {
 				// The waitgroup is not protected by the `quitWaitingForConns`. However, the implementation
 				// of `client-go` will guarantee this `Wait` will return at least after killing the
 				// connections. We also wait for a similar `WaitGroup` on the store after killing the connections.
@@ -1233,6 +1237,15 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	case <-time.After(cancelWait):
 		logger.Warn("some sessions do not quit in cancel wait time")
 	}
+}
+
+// gracefulCloseLinger returns how long a connection outside of a transaction keeps reading during shutdown, to reject
+// the client's next command with ER_SERVER_SHUTDOWN before it is closed.
+func (s *Server) gracefulCloseLinger() time.Duration {
+	if s.cfg == nil {
+		return 0
+	}
+	return time.Duration(s.cfg.GracefulCloseConnectionsLingerMs) * time.Millisecond
 }
 
 // ServerID implements SessionManager interface.
