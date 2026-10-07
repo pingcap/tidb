@@ -1191,6 +1191,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
 	parentCtx := ctx
+	// lingerUntil is set when the server is shutting down and this connection, being outside of a transaction,
+	// only waits a short time for the client's next command to reject it with ER_SERVER_SHUTDOWN.
+	var lingerUntil time.Time
 	for {
 		sessVars := cc.ctx.GetSessionVars()
 		if alias := sessVars.SessionAlias; traceInfo == nil || traceInfo.SessionAlias != alias {
@@ -1205,9 +1208,15 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 		// Close connection between txn when we are going to shutdown server.
 		// A connection that is idle in readPacket() is woken up by `Server.DrainClients`.
-		if cc.server.inShutdownMode.Load() {
-			if !sessVars.InTxn() {
-				return
+		// With `graceful-close-connections-linger-ms`, the connection keeps reading for a short time instead, so that
+		// a client reusing it right away gets ER_SERVER_SHUTDOWN instead of a connection reset.
+		if cc.server.inShutdownMode.Load() && !sessVars.InTxn() {
+			if lingerUntil.IsZero() {
+				linger := cc.server.gracefulCloseLinger()
+				if linger <= 0 {
+					return
+				}
+				lingerUntil = time.Now().Add(linger)
 			}
 		}
 
@@ -1222,10 +1231,22 @@ func (cc *clientConn) Run(ctx context.Context) {
 		// close connection when idle time is more than wait_timeout
 		// default 28800(8h), FIXME: should not block at here when we kill the connection.
 		waitTimeout := cc.getWaitTimeout(ctx)
-		cc.pkt.SetReadTimeout(time.Duration(waitTimeout) * time.Second)
+		if !lingerUntil.IsZero() {
+			remaining := time.Until(lingerUntil)
+			if remaining <= 0 {
+				return
+			}
+			cc.pkt.SetReadTimeout(remaining)
+		} else {
+			cc.pkt.SetReadTimeout(time.Duration(waitTimeout) * time.Second)
+		}
 		start := time.Now()
 		data, err := cc.readPacket()
 		if err != nil {
+			if !lingerUntil.IsZero() {
+				server_metrics.DisconnectNormal.Inc()
+				return
+			}
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
 					if cc.getStatus() == connStatusWaitShutdown {
@@ -1263,12 +1284,22 @@ func (cc *clientConn) Run(ctx context.Context) {
 		//   because the connection is in the `connStatusReading` status.
 		// 3. The connection changes its status to `connStatusDispatching` and starts to execute the command.
 		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
+			// `Server.DrainClients` closes the idle connection, but the client has already sent a command.
+			if cc.getStatus() == connStatusWaitShutdown && cc.server.inShutdownMode.Load() {
+				cc.rejectCommandInShutdown(ctx, data)
+			}
 			return
 		}
 
 		// Should check InTxn() to avoid execute `begin` stmt and allow executing statements in the not committed txn.
+		// The command is not executed, and the client is told so with ER_SERVER_SHUTDOWN, which makes it safe to
+		// retry on another server.
 		if cc.server.inShutdownMode.Load() {
 			if !cc.ctx.GetSessionVars().InTxn() {
+				if !cc.rejectCommandInShutdown(ctx, data) && !lingerUntil.IsZero() {
+					// The command expects no response, keep waiting for the next one.
+					continue
+				}
 				return
 			}
 		}
@@ -1728,6 +1759,23 @@ func (cc *clientConn) writeOkWith(ctx context.Context, header byte, flush bool, 
 	}
 
 	return nil
+}
+
+// rejectCommandInShutdown replies ER_SERVER_SHUTDOWN to a command that is read but not executed because the server
+// is shutting down. It returns false without writing anything for the commands that expect no response.
+func (cc *clientConn) rejectCommandInShutdown(ctx context.Context, data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	switch data[0] {
+	case mysql.ComQuit, mysql.ComStmtClose, mysql.ComStmtSendLongData:
+		return false
+	}
+	logutil.Logger(ctx).Info("reject command because the server is shutting down", zap.Uint8("command", data[0]))
+	if err := cc.writeError(ctx, servererr.ErrServerShutdown); err != nil {
+		terror.Log(err)
+	}
+	return true
 }
 
 func (cc *clientConn) writeError(ctx context.Context, e error) error {
