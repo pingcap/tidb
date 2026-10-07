@@ -1,49 +1,15 @@
-# `pkg/server/internal/testutil` parity receipt
+# Go server test-support boundary
 
-Status: complete inventory and test-support ownership boundary; no production
-edit was required. This receipt covers the complete Go test utility package and
-does not claim repository-wide parity.
+Go `pkg/server/internal/testutil` supplies `BytesConn` and `GetPort` for Go
+server tests. Its two source/build artifacts remain in the Go inventory.
+Rust packet tests use `std::io::Cursor` directly; real socket consumers use
+`SocketAddr`. No production adapter is needed for these native APIs.
 
-Comparison source: Go `origin/master` at
-`c6054025ed4c32ab3672a2a24ea46892714d21ec`.
+The private Rust `ReadOnlyBytesConn` had no consumer outside its own two tests.
+Those tests checked its hard-coded no-ops and `SocketAddr::port`; their packet
+read assertion is covered by the maintained `packetio_source` suite. The helper
+and both self-checks are retired. This decision does not accept the complete Go
+server test package or its network/platform obligations.
 
-## Complete Go inventory
-
-Before deciding ownership, both tracked artifacts were read in full: 79 total
-lines. There is no package `doc.go`, test, fixture, generated source, platform
-variant, benchmark, fuzz target, or nested package.
-
-| artifact | lines | role |
-| --- | ---: | --- |
-| `BUILD.bazel` | 8 | test-support library target |
-| `testutil.go` | 71 | no-op `net.Conn` over a byte buffer and TCP-port helper |
-
-The two files are byte-identical to the pinned Go master source.
-
-## Rust ownership and parity decision
-
-`rust/crates/tidb-protocol/tests/server_internal_testutil_source.rs` provides
-the Rust test-only counterpart. It preserves byte-buffer reads, no-op writes,
-close/deadline/address methods, and IPv4/IPv6 port extraction without exposing
-an unrelated production socket abstraction. The packet-reader assertion covers
-the actual server-test usage.
-
-No Rust-only behavior or missing Go behavior was found. Keeping this as a
-test-only support type avoids polluting production crates with a Go-specific
-mock connection.
-
-## Validation
-
-Profile: **Ready** for this documentation-only test-support boundary.
-
-- `go test ./pkg/server/internal/testutil -count=1` — package compile check (no
-  Go test files).
-- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-protocol --test all server_internal_testutil -- --test-threads=1` — passed both source-derived tests.
-- `make lint` and `git diff --check` — passed in the surrounding Ready gate.
-- No Go or Bazel artifact changed, so `make bazel_prepare` was not required.
-
-## Risks and unverified scope
-
-The support type is intentionally test-only; live server test harnesses,
-generated Bazel execution, and non-host platform builds remain outside this
-boundary.
+[Prior inventory and validation](https://github.com/pingcap/tidb/blob/c36e9b3be561108bf879080faae6b1b58c123c14/rust/testport/receipts/server_internal_testutil.md) remain archived.
+Current cleanup and retained coverage: [validation](../../docs/parity/current-audit/mock-selfcheck-cleanup-validation.json).

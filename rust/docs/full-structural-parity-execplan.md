@@ -2674,3 +2674,15 @@ available through the [retirement receipt](parity/current-audit/diagnostic-clean
 Maintained Go behavior tests, Rust correctness checks, runtime code and all
 56 unresolved findings are unchanged. This removes an obsolete manual workflow;
 it does not claim reduced Cargo suite time or a repaired parity finding.
+
+
+## Mock self-check retirement (2026-10-07)
+
+
+Retire the private ReadOnlyBytesConn and RecordingUnaryClient doubles and four
+tests that mostly assert their own no-ops/canned responses. The retained
+packetio_source and physical_channel_evidence_source suites cover their small
+production assertions; five remaining client-contract cases are unchanged.
+The [receipt](parity/current-audit/mock-selfcheck-cleanup-validation.json) records
+file identities, retained coverage and grouped validation. No runtime or
+Go-package acceptance change is implied; all 56 findings remain unresolved.

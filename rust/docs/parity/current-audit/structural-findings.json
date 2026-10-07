@@ -804,8 +804,8 @@
     "scope": "Ordered DROP completion, FK preflight, shared object guards, per-target schema publication, view replacement identity and CHECK OPTION admission; existing-owner maintenance."
   },
   "latest_test_cleanup": {
-    "receipt": "diagnostic-cleanup-validation.json",
-    "scope": "Retire obsolete print-only audit execution and duplicate dated runbooks; no production behavior or assertion test removal.",
+    "receipt": "mock-selfcheck-cleanup-validation.json",
+    "scope": "Retire four self-checking tests and two unused private connection/client doubles; retain all production transport and packet assertions.",
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
   },
   "test_cleanup_history": [
@@ -1220,6 +1220,11 @@
     {
       "receipt": "diagnostic-cleanup-validation.json",
       "scope": "Retire obsolete print-only audit execution and duplicate dated runbooks; no production behavior or assertion test removal.",
+      "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
+    },
+    {
+      "receipt": "mock-selfcheck-cleanup-validation.json",
+      "scope": "Retire four self-checking tests and two unused private connection/client doubles; retain all production transport and packet assertions.",
       "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
     }
   ],

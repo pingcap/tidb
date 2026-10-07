@@ -15,95 +15,15 @@
 #![allow(missing_docs)]
 
 use std::collections::BTreeMap;
-use std::time::Duration;
 
 use tidb_proto::{KvrpcContext, KvrpcSourceStmt};
-use tidb_txnkv::region::StoreLiveness;
 use tidb_txnkv::{
     endpoint_type, inject_source_stmt, map_replica_read_type, BackoffMetadata,
-    ClientReplicaReadType, DirectUnaryClient, DirectUnaryClientError, DirectUnaryConnectionError,
-    DirectUnaryGrpcCode, DirectUnaryRequest, DirectUnaryResponse, DirectUnaryTransportClass,
+    ClientReplicaReadType, DirectUnaryConnectionError,
+    DirectUnaryGrpcCode, DirectUnaryTransportClass,
     DriverDefaults, DriverOptions, EndpointType, PdClientConfig, SecurityConfig, TikvClientConfig,
     TikvDriverConfig, TraceInfo, TxnLocalLatchesConfig,
 };
-
-#[derive(Default)]
-struct RecordingUnaryClient {
-    calls: Vec<(String, DirectUnaryRequest, Duration)>,
-    exact_closes: Vec<(String, u64)>,
-}
-
-impl DirectUnaryClient for RecordingUnaryClient {
-    fn send_request(
-        &mut self,
-        address: &str,
-        request: &DirectUnaryRequest,
-        timeout: Duration,
-    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        self.calls
-            .push((address.to_owned(), request.clone(), timeout));
-        Ok(DirectUnaryResponse::new(
-            b"raw-response".to_vec(),
-            address,
-            7,
-        ))
-    }
-
-    fn send_request_with_context(
-        &mut self,
-        address: &str,
-        request: &DirectUnaryRequest,
-        call: &tidb_txnkv::UnaryCallContext,
-    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        if call.cancellation().is_cancelled() {
-            return Err(DirectUnaryClientError::CallerCancelled);
-        }
-        let result = self.send_request(address, request, call.timeout());
-        if call.cancellation().is_cancelled() {
-            Err(DirectUnaryClientError::CallerCancelled)
-        } else {
-            result
-        }
-    }
-
-    fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {
-        Ok(())
-    }
-
-    fn close_address_version(
-        &mut self,
-        address: &str,
-        version: u64,
-    ) -> Result<(), DirectUnaryClientError> {
-        self.exact_closes.push((address.to_owned(), version));
-        Ok(())
-    }
-
-    fn liveness(
-        &self,
-        _address: &str,
-        _timeout: Duration,
-    ) -> Result<StoreLiveness, DirectUnaryClientError> {
-        Ok(StoreLiveness::Unknown)
-    }
-
-    fn close(&mut self) -> Result<(), DirectUnaryClientError> {
-        Ok(())
-    }
-}
-
-#[test]
-fn unary_client_contract_requires_exact_generation_close_and_liveness() {
-    let mut client = RecordingUnaryClient::default();
-    client.close_address_version("tikv-1:20160", 7).unwrap();
-    assert_eq!(client.exact_closes, [("tikv-1:20160".to_owned(), 7)]);
-    assert_eq!(
-        client
-            .liveness("tikv-1:20160", Duration::from_millis(23))
-            .unwrap(),
-        StoreLiveness::Unknown
-    );
-}
 
 #[test]
 fn transport_fact_constructors_preserve_valid_class_and_code_combinations() {
@@ -140,44 +60,6 @@ fn transport_fact_constructors_preserve_valid_class_and_code_combinations() {
     );
     assert_eq!(remote.grpc_code(), Some(DirectUnaryGrpcCode::Canceled));
     assert_eq!(remote.message(), "remote canceled");
-}
-
-#[test]
-fn unary_client_contract_keeps_address_request_timeout_and_result_separate() {
-    // client-go/internal/client/client.go:96-105 Client.SendRequest
-    let request = DirectUnaryRequest {
-        endpoint: EndpointType::TiKv,
-        replica_read_type: ClientReplicaReadType::Leader,
-        replica_read: false,
-        stale_read: false,
-        input_request_source: "external".to_owned(),
-        predicted_read_bytes: 4096,
-        read_replica_scope: "global".to_owned(),
-        txn_scope: "global".to_owned(),
-        context: KvrpcContext {
-            region_id: 42,
-            ..KvrpcContext::default()
-        },
-        encoded_request: b"immutable-cop-request".to_vec(),
-    };
-    let mut client = RecordingUnaryClient::default();
-    let response = client
-        .send_request("tikv-1:20160", &request, Duration::from_millis(777))
-        .unwrap();
-    assert_eq!(request.encoded_request, b"immutable-cop-request");
-    assert_eq!(request.context.region_id, 42);
-    assert_eq!(request.predicted_read_bytes, 4096);
-    assert_eq!(response.encoded_response.as_ref(), b"raw-response");
-    assert_eq!(response.physical_address(), "tikv-1:20160");
-    assert_eq!(response.physical_channel_version(), 7);
-    assert_eq!(
-        client.calls,
-        [(
-            "tikv-1:20160".to_owned(),
-            request,
-            Duration::from_millis(777),
-        )]
-    );
 }
 
 #[test]

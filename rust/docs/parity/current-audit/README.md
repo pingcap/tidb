@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [obsolete diagnostic bundle](diagnostic-cleanup-validation.json). Seven print-only probes, their temporary-example runner and nine superseded runbooks are retired. Dated outputs and archived source remain available; maintained assertion suites and all 56 unresolved findings are unchanged.
+Latest cleanup: [mock self-check retirement](mock-selfcheck-cleanup-validation.json). Four self-checking tests and two private connection/client doubles are removed from the protocol and transaction aggregates. Maintained packet I/O, physical-channel identity and production mapping tests remain. No parity finding closes.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 

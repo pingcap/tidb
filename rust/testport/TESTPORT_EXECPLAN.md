@@ -8478,9 +8478,10 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   BinaryTime, BinaryDateTime, and row framing behavior with source-derived
   vectors; no duplicate dump facade or Rust-only behavior removal is needed.
 - `pkg/server/internal/testutil` is byte-identical to Go master across two
-  artifacts and 79 lines. The Rust protocol test owner preserves the complete
-  no-op byte-buffer connection and TCP-port helper without introducing a
-  production mock socket abstraction.
+  artifacts and 79 lines at that historical pin. The unused Rust no-op
+  connection and its self-tests were retired on 2026-10-07; maintained packet
+  tests use Cursor directly. See receipts/server_internal_testutil.md for the
+  current native-support decision and archived evidence.
 - `pkg/server/internal/testserverclient` is byte-identical to Go master across
   two artifacts and 3,159 lines, including all 55 integration helpers and SQL,
   TLS, load-data, DDL, metrics, and failpoint scenarios. It remains an explicit

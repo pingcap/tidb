@@ -1,0 +1,75 @@
+{
+  "date": "2026-10-07",
+  "baseline": "c36e9b3be561108bf879080faae6b1b58c123c14",
+  "go_reference": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "scope": "Remove four self-checking tests and two private test doubles across protocol and transaction aggregates; no production edits.",
+  "before": [
+    {
+      "path": "rust/crates/tidb-protocol/tests/server_internal_testutil_source.rs",
+      "sha256": "3aeaacbba12a8ee07ae3d3907f3a4daa94adda1b8e44e9cce08a3d4f44f5920c",
+      "lines": 106
+    },
+    {
+      "path": "rust/crates/tidb-protocol/tests/all.rs",
+      "sha256": "bdab547b36c52f6a3085c589ede12bb23bf28e35ad4c367b5847820e6cb15c48",
+      "lines": 29
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/tikv_client_contract_source.rs",
+      "sha256": "d31698250c9307133b98d8a6d86574eaa5a575bedf5125fa3cfa505cea5b3593",
+      "lines": 312
+    },
+    {
+      "path": "rust/testport/receipts/server_internal_testutil.md",
+      "sha256": "435ec826f8855a235a6cdb56b9ee654d4f1a0b8edb115155751d9fa0679a3153",
+      "lines": 49
+    },
+    {
+      "path": "rust/testport/TESTPORT_EXECPLAN.md",
+      "sha256": "1e29fc0cf3993e28b65d340a368a33780f7791667ea529ab01049128d2a4fcde",
+      "lines": 11586
+    }
+  ],
+  "removed_tests": [
+    "read_only_bytes_connection_preserves_the_source_test_contract",
+    "socket_address_port_is_the_native_get_port_contract",
+    "unary_client_contract_requires_exact_generation_close_and_liveness",
+    "unary_client_contract_keeps_address_request_timeout_and_result_separate"
+  ],
+  "removed_helpers": [
+    "ReadOnlyBytesConn",
+    "RecordingUnaryClient"
+  ],
+  "reason": "Only callers of each private fake were its own tests. The unary tests checked locally manufactured response/close/liveness values without exercising a transport consumer. Protocol tests mostly checked native APIs and local no-op methods.",
+  "retained_coverage": [
+    "tidb-protocol/tests/packetio_source.rs: packet decoding, framing, sequence, compression, errors",
+    "tidb-txnkv/tests/physical_channel_evidence_source.rs: response identity and generation, publication, invalid version and typed shutdown errors",
+    "tidb-txnkv/tests/tikv_client_contract_source.rs: five production mapping/default/trace/backoff/error tests unchanged",
+    "All downstream DirectUnary transport/recovery tests",
+    "Rust Send and transaction-event nil regressions retained"
+  ],
+  "findings_unresolved": 56,
+  "validation": {
+    "grouped_tests": {
+      "command": "cd rust && cargo test --locked -p tidb-protocol -p tidb-txnkv --test all -- packetio_source physical_channel_evidence_source tikv_client_contract_source --test-threads=1",
+      "result": "PASS",
+      "passed": 36,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "ccf381a17f1872f4d24a5ea586e9b9791c60d64d2ee0de8eba275a8753f18750"
+    },
+    "lint": {
+      "command": "make lint",
+      "result": "PASS, exit 0",
+      "log_sha256": "598e7888a3e1cdd8ef97fa0b07cfdd634018d0ac7e0c6c99eb634b0abe5ad301"
+    },
+    "hook": "Actual hooks/pre-commit must run cargo build --locked -p tidb-server on this normal commit; final-handoff.json records its outcome and fresh pre-push gate.",
+    "retained_coverage": "PASS: five remaining contract test bodies, packet and physical-channel suites byte-identical; production and finding dispositions unchanged"
+  },
+  "limitations": [
+    "No Cargo binary target removed and no measured build-time or workload gain.",
+    "No full Go/Rust suite, live cluster or complete package acceptance."
+  ],
+  "external_logs": "/workspace/.cloud-setup/mock-selfcheck-cleanup",
+  "recovered_setup_issue": "First documentation-update helper was run from rust instead of the repository root and failed before edits; rerun from the correct directory. Cargo test ran from its correct rust directory."
+}
