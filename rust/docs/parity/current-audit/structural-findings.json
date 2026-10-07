@@ -110,7 +110,7 @@
       "status": "open",
       "group": "DDL: migrate responsibility before deleting implementations",
       "finding": "**P1; durable owner still open:** ordinary SQL DDL still uses a direct metadata transaction; only CHECK SQL submits to the persisted worker. The unsafe ALTER TABLE PARTITION BY shortcut has been withdrawn from local execution and cluster lowering/planning. Repartition now remains unsupported until the complete durable owner is ready; existing rows and schema survive refusal. The thread-local metadata handoff that also broke fresh-thread ADD/DROP/TRUNCATE planning is removed. Earlier row-loss observations remain historical evidence, not current admitted behavior. Existing worker handlers still do not establish general SQL integration. Existing persisted CHECK submission now uses shared ALTER metadata admission with Go missing-column errors and CHECK-only name scope; grouped CHECK no longer bypasses Go multi-schema eligibility. General durable DDL ownership remains open.",
-      "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/ddl.rs::RealClusterDdl`; `rust/crates/tidb-exec/src/real_tikv_ddl.rs`; `rust/crates/tidb-executor/src/ddl/alter_table.rs::run_alter_table_in`; `rust/crates/tidb-exec/src/cluster_ddl.rs::lower_alter_table_catalog` / `apply_partition_change`; safety regressions in `rust/crates/tidb-session/tests/add_truncate_partition_source.rs` and `rust/crates/tidb-exec/tests/cluster_ddl_source.rs`; [removal receipt](../../partition-owner-removal-execplan.md); `ddl/constraint_changes.rs`, `ddl/check_constraint.rs::CheckConstraintBuildMode`, `tidb-exec/src/{cluster_ddl,table_info_build}.rs`; [constraint validation](constraint-admission-batch-validation.json)",
+      "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/ddl.rs::RealClusterDdl`; `rust/crates/tidb-exec/src/real_tikv_ddl.rs`; `rust/crates/tidb-executor/src/ddl/alter_table.rs::run_alter_table_in`; `rust/crates/tidb-exec/src/cluster_ddl.rs::lower_alter_table_catalog` / `apply_partition_change`; safety regressions in `rust/crates/tidb-session/tests/add_truncate_partition_source.rs` and `rust/crates/tidb-exec/tests/cluster_ddl_source.rs`; [removal receipt](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/partition-owner-removal-execplan.md); `ddl/constraint_changes.rs`, `ddl/check_constraint.rs::CheckConstraintBuildMode`, `tidb-exec/src/{cluster_ddl,table_info_build}.rs`; [constraint validation](constraint-admission-batch-validation.json)",
       "go_owner": "`pkg/ddl/executor.go`, `pkg/ddl/jobsubmit`, `pkg/ddl/job_worker.go` and `pkg/ddl/partition.go::onReorganizePartition`: typed job submission, persisted schema transitions, index/row reorganization, rollback and completion. Go StateWriteReorganization calls doPartitionReorgWork before publication. Replace the direct publisher after all callers migrate; do not treat syntactic acceptance or metadata replacement as complete partition DDL. Live TiKV repartition and crash recovery were not exercised in this review.",
       "review_basis": "Cloud constraint-admission batch from64a1784320 against freshGo3ca96b1d5d: seven distinct Rust regressions and two wire mismatches reproduced before repair; grouped retained checks and concrete limits are in constraint-admission-batch-validation.json. Existing-owner repair only."
     },
@@ -272,7 +272,7 @@
       "status": "open",
       "group": "DML and executor handoff",
       "finding": "**P1; complete import owner still open:** the unsafe private IMPORT INTO file/SELECT execution pipeline is withdrawn. Its local CSV parser, nested precheck/INSERT loop and SELECT-to-INSERT rewrite are removed; execution now explicitly refuses before reading files or modifying tables. The prior skip_rows/assignment omissions are historical observations of the removed pipeline. Go supports both forms through its import controller, with durable job/task lifecycle for file imports; that complete owner and runtime integration remain absent.",
-      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs::DmlStmt::ImportInto`; `src/tests_core/dml.rs::import_into_refusal_preserves_file_targets_and_options`; `::import_into_refusal_preserves_select_targets_and_transaction`; receipt `../../import-shortcut-removal-execplan.md`; historical `expanded-ownership-probe.txt`",
+      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs::DmlStmt::ImportInto`; `src/tests_core/dml.rs::import_into_refusal_preserves_file_targets_and_options`; `::import_into_refusal_preserves_select_targets_and_transaction`; [archived removal receipt](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/import-shortcut-removal-execplan.md); historical `expanded-ownership-probe.txt`",
       "go_owner": "`pkg/executor/import_into.go::ImportIntoExec.Next`/`submitTask`, `pkg/executor/importer` controller and `pkg/dxf/importinto` (including standalone tasks). Replace the complete import lifecycle and option/encoding ownership; SELECT import has its own Go path and is not used to infer file-import result shape.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Retained IMPORT refuses and leaves its target empty. The removed parser/INSERT pipeline stays removed; Go's import controller and durable tasks remain absent. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
     },
@@ -802,8 +802,8 @@
     "scope": "B05 N03 / B09 O13 connected partitioned ordinary lookup, index-join and index-merge table readers; existing-owner maintenance, no complete package acceptance"
   },
   "latest_test_cleanup": {
-    "receipt": "mutation-api-cleanup-validation.json",
-    "scope": "Remove five obsolete table mutation APIs and three private forwarding layers; migrate two tests to live statement-context APIs with every assertion retained. Replace stale storage backend guidance. Finding dispositions unchanged.",
+    "receipt": "completed-plan-cleanup-validation.json",
+    "scope": "Retire seven completed plans (1,011 lines) and preserve their exact evidence in immutable Git archives. Source, tests, scripts and finding dispositions unchanged.",
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
   },
   "test_cleanup_history": [
@@ -1198,6 +1198,11 @@
     {
       "receipt": "mutation-api-cleanup-validation.json",
       "scope": "Remove five obsolete table mutation APIs and three private forwarding layers; migrate two tests to live statement-context APIs with every assertion retained. Replace stale storage backend guidance. Finding dispositions unchanged.",
+      "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
+    },
+    {
+      "receipt": "completed-plan-cleanup-validation.json",
+      "scope": "Retire seven completed plans (1,011 lines) and preserve their exact evidence in immutable Git archives. Source, tests, scripts and finding dispositions unchanged.",
       "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
     }
   ],

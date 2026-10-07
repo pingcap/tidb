@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [partitioned shared readers](partition-reader-batch-execplan.md); previous [cluster column composition](cluster-column-batch-execplan.md); previous [ALTER metadata admission](alter-admission-batch-execplan.md); previous [shared common-handle reader evidence](parity/current-audit/common-reader-batch-validation.json). Latest cleanup: [obsolete mutation APIs](parity/current-audit/mutation-api-cleanup-validation.json).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [partitioned shared readers](partition-reader-batch-execplan.md); previous [cluster column composition](cluster-column-batch-execplan.md); previous [ALTER metadata admission](alter-admission-batch-execplan.md); previous [shared common-handle reader evidence](parity/current-audit/common-reader-batch-validation.json). Latest cleanup: [completed removal and test plans](parity/current-audit/completed-plan-cleanup-validation.json).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -2194,7 +2194,7 @@ package and its callers remain the next unit; no top-level finding closes here.
 
 
 The full-register review at b01f97d6b5 reproduced accepted repartition making
-existing rows invisible. The [removal ExecPlan](partition-owner-removal-execplan.md)
+existing rows invisible. The [removal ExecPlan](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/partition-owner-removal-execplan.md)
 withdraws that complete unaccepted local/cluster shortcut and its thread-local
 metadata handoff. Three regressions fail before removal; five scoped tests pass
 afterward, including ordinary ADD/DROP/TRUNCATE on fresh threads. Parser and AST
@@ -2220,7 +2220,7 @@ No partial production package, dependency update or structural closure follows.
 ## Revision note — 2026-10-01 remove private import execution
 
 
-The [import removal ExecPlan](import-shortcut-removal-execplan.md) withdraws the
+The [import removal ExecPlan](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/import-shortcut-removal-execplan.md) withdraws the
 entire private IMPORT INTO runtime: local CSV parsing, nested COUNT/INSERT
 execution and the SELECT-to-INSERT rewrite. The incomplete adapter ignored
 options and assignments and did not own Go's import lifecycle. File/SELECT
@@ -2619,7 +2619,7 @@ The [observed-plan batch](observation-plan-batch-execplan.md) advances existing 
 
 Snapshot selection continuation: [plan](snapshot-validation-batch-execplan.md) and [receipt](parity/current-audit/snapshot-validation-batch-validation.json) track the shared SET/GC/schema/typed-policy repair. Named parents remain partial; the register owns current dispositions.
 
-Comment-only harness cleanup continues the existing [test-build cleanup plan](test-build-cleanup-execplan.md). The [receipt](parity/current-audit/comment-test-cleanup-validation.json) retains exact retired identities and recovery coordinates; no behavioral root or complete package is accepted by this removal.
+Comment-only harness cleanup followed the [archived test-build cleanup plan](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/test-build-cleanup-execplan.md). The [receipt](parity/current-audit/comment-test-cleanup-validation.json) retains exact retired identities and recovery coordinates; no behavioral root or complete package is accepted by this removal.
 
 The [aggregate-model cleanup](parity/current-audit/aggregate-leaf-cleanup-validation.json) removes unused JSON/percentile models after tracing their only test callers and moving distinctive vectors to the live HashAgg owners. Package and root acceptance remain unchanged.
 
@@ -2680,7 +2680,7 @@ maintenance in native and TiDB. Native fixes are published then synchronized
 with the maintained codec patch and protobuf regeneration. P03/P06/T02 remain
 partial for their retained broader obligations; no complete package acceptance.
 
-The [duplicate-test cleanup](duplicate-test-cleanup-execplan.md) removes repeated behavioral cases across seven crates. Its [mapping and validation receipt](parity/current-audit/duplicate-test-cleanup-validation.json) identifies each retained owner; no root or complete package is newly accepted.
+The [duplicate-test cleanup](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/duplicate-test-cleanup-execplan.md) removes repeated behavioral cases across seven crates. Its [mapping and validation receipt](parity/current-audit/duplicate-test-cleanup-validation.json) identifies each retained owner; no root or complete package is newly accepted.
 
 
 ## TSO failure/recovery continuation — 2026-10-07

@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [obsolete mutation APIs](mutation-api-cleanup-validation.json). Remove five legacy entry points and three private forwarding layers after caller migration. Update/delete use the existing statement context directly; two tests retain every behavioral assertion on live APIs. Stale storage backend guidance is replaced. Finding dispositions stay unchanged.
+Latest cleanup: [completed removal and test plans](completed-plan-cleanup-validation.json). Retire seven completed plans containing 1,011 lines of historical workflow instructions. Current links retain immutable archives; maintained scripts guidance, original validation receipts, tests and open Go obligations remain. Executable files and finding dispositions are unchanged.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
@@ -80,9 +80,9 @@ The repeated milestone summaries and stale count tables formerly copied into thi
 - [2026-10-01 full register reconciliation](remaining-structure-review.md)
 - [review of every unresolved finding](structural-review-followup.md)
 - [review after removals](post-removal-structural-review.md)
-- [partition shortcut removal](../../partition-owner-removal-execplan.md)
-- [IMPORT shortcut removal](../../import-shortcut-removal-execplan.md)
-- [cluster fixture removal](../../cluster-fixture-removal-execplan.md)
+- [partition shortcut removal](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/partition-owner-removal-execplan.md)
+- [IMPORT shortcut removal](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/import-shortcut-removal-execplan.md)
+- [cluster fixture removal](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/cluster-fixture-removal-execplan.md)
 - [PD preface ownership experiment](pd-grpcutil-contract/h2-preface-review.md)
 - [full-picture repair sequence](repair-sequence.md)
 - [PD deadline owner repair](pd-deadline-owner-repair.md)

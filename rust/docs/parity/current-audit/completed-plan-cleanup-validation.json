@@ -1,0 +1,69 @@
+{
+  "baseline": "8d92a6bab3d28e7c47b34dadecfc064273f1edf9",
+  "scope": "Documentation-only retirement of completed plans; current Go obligations, behavioral tests and maintained runners remain intact.",
+  "retired_plans": [
+    {
+      "path": "rust/docs/duplicate-test-cleanup-execplan.md",
+      "lines": 86,
+      "sha256": "6e49130c32a7e2832f0fdd96b9240dbd49a42d18d4fc1bde45e0a776a6787196",
+      "archive": "https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/duplicate-test-cleanup-execplan.md"
+    },
+    {
+      "path": "rust/docs/test-build-cleanup-execplan.md",
+      "lines": 70,
+      "sha256": "d689cf74e0293e8147270351333105c9aeeaadad92291f91f1258728803685c9",
+      "archive": "https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/test-build-cleanup-execplan.md"
+    },
+    {
+      "path": "rust/docs/session-cleanup-execplan.md",
+      "lines": 285,
+      "sha256": "1b06ad7f88760fc7042d4673a93dbe76f51e0bcbf799540c675e53225ce594a3",
+      "archive": "https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/session-cleanup-execplan.md"
+    },
+    {
+      "path": "rust/docs/matrix-write-removal-execplan.md",
+      "lines": 52,
+      "sha256": "6e59b6385f396381548d326a31482125fd9c983ca5bd05ab51678fdbeefbdf85",
+      "archive": "https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/matrix-write-removal-execplan.md"
+    },
+    {
+      "path": "rust/docs/cluster-fixture-removal-execplan.md",
+      "lines": 164,
+      "sha256": "f106e9d251e9f6706c508c7a5cddb3982d76ff85502f1783936d954e460bf079",
+      "archive": "https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/cluster-fixture-removal-execplan.md"
+    },
+    {
+      "path": "rust/docs/partition-owner-removal-execplan.md",
+      "lines": 196,
+      "sha256": "a0e24c6c29f6ed49c73d542d44c652b6cbe22caa5267de1e3aef9cdb9170ec61",
+      "archive": "https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/partition-owner-removal-execplan.md"
+    },
+    {
+      "path": "rust/docs/import-shortcut-removal-execplan.md",
+      "lines": 158,
+      "sha256": "34c192f736417f84ec04feb8867b3972744ad32215842665ac22865b601df116",
+      "archive": "https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/import-shortcut-removal-execplan.md"
+    }
+  ],
+  "retired_lines": 1011,
+  "retained": [
+    "Current full structural plan, batch map and scripts README",
+    "Original Go source/test obligations and all historical validation receipts",
+    "D01 durable repartition and E05 complete import ownership requirements; containment is not Go parity"
+  ],
+  "validation": {
+    "status": "passed",
+    "command": "python3 /workspace/.cloud-setup/completed-plan-cleanup/verify.py",
+    "not_run": "Behavioral suites, all-target checks, lint, live TiKV and performance comparisons: no executable or build configuration changes.",
+    "publication": "Actual hook, fresh pre-push locked server build, remote SHA and Cloud checkpoint are recorded in /workspace/.cloud-setup/completed-plan-cleanup/final-handoff.json.",
+    "archives_verified": 7,
+    "current_archive_links": 9,
+    "broken_retired_plan_links": [],
+    "executable_test_script_build_files_changed": [],
+    "finding_dispositions_unchanged": true,
+    "git_diff_check": "passed"
+  },
+  "finding_dispositions_changed": false,
+  "go_package_accepted": false,
+  "measured_speedup": false
+}
