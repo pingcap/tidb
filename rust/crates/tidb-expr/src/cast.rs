@@ -1480,6 +1480,73 @@ fn cast_to_time_value(
     kind: tidb_datatype::TimeType,
     fsp: Option<i64>,
 ) -> Result<Option<tidb_datatype::Time>, EvalError> {
+    let json_string;
+    let is_json_string =
+        matches!(v, Datum::Json(value) if value.type_code() == JSON_TYPE_CODE_STRING);
+    let v = if let Datum::Json(value) = v {
+        match value.type_code() {
+            JSON_TYPE_CODE_DATE | JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP => {
+                // Go's native JSON calendar signature only changes type/FSP.
+                // It neither rounds the packed clock nor runs Time.Convert.
+                let mut time = value
+                    .as_time(fsp.unwrap_or(6))
+                    .map_err(|_| EvalError::Unsupported("JSON calendar payload"))?;
+                time.set_kind(kind);
+                return Ok(Some(truncate_clock_for_date(time, kind)));
+            }
+            JSON_TYPE_CODE_DURATION => {
+                let duration = value
+                    .as_duration()
+                    .map_err(|_| EvalError::Unsupported("JSON duration payload"))?;
+                return cast_to_time_value(&Datum::Duration(duration), None, ctx, kind, fsp);
+            }
+            JSON_TYPE_CODE_STRING => {
+                json_string = Datum::new_string(
+                    value
+                        .unquote()
+                        .map_err(|_| EvalError::Unsupported("JSON string payload"))?,
+                );
+                &json_string
+            }
+            _ => {
+                let label = match kind {
+                    tidb_datatype::TimeType::Date => "date",
+                    tidb_datatype::TimeType::DateTime => "datetime",
+                    tidb_datatype::TimeType::Timestamp => "timestamp",
+                };
+                ctx.handle_truncate(&format!("Truncated incorrect {label} value: '{value}'"))?;
+                return Ok(None);
+            }
+        }
+    } else {
+        v
+    };
+    if let Datum::Time(value) = v {
+        let flags = ctx.type_flags();
+        let zone = ctx.time_zone();
+        let (time, adjusted) = match value.convert_kind(
+            kind,
+            flags.ignore_zero_in_date_err(),
+            flags.ignore_invalid_date_err(),
+            &zone,
+        ) {
+            Ok(value) => value,
+            Err(_) => {
+                ctx.handle_truncate(&format!("Incorrect time value: '{:?}'", value.core_time()))?;
+                return Ok(None);
+            }
+        };
+        if adjusted {
+            ctx.append_warning(8179, &format!("Timestamp is not valid, since it is in Daylight Saving Time transition '{:?}' for time zone '{}'", value.core_time(), zone.dag_zone().0));
+        }
+        let time = match fsp {
+            Some(fsp) => time
+                .round_frac(fsp, &zone)
+                .map_err(|_| EvalError::Unsupported("temporal cast rounding"))?,
+            None => time,
+        };
+        return Ok(Some(truncate_clock_for_date(time, kind)));
+    }
     // A `YEAR` source is the one case the datum kind cannot speak for. Go
     // `builtinCastIntAsTimeSig.evalTime` (`builtin_cast.go:1127-1131`) asks the
     // ARGUMENT'S TYPE, not the integer's digits:
@@ -1563,14 +1630,7 @@ fn cast_to_time_value(
     // where TiDB answers `2012-12-12 00:00:00` and `2000-01-11 00:00:00`
     // (`expression/cast`). The parser choice mirrors `Datum::convert_to_time`,
     // the faithful write-path port.
-    let parsed = parse_time_by_source(
-        v,
-        &s,
-        kind,
-        fsp,
-        modes.allow_invalid_dates,
-        &ctx.time_zone(),
-    );
+    let parsed = parse_time_by_source(v, &s, kind, fsp, ctx.type_flags(), &ctx.time_zone());
     let Ok((time, truncated, dst_adjusted)) = parsed else {
         // go routes each source TYPE to its own parser and its own warning:
         // the STRING sources warn `Incorrect datetime value: '<text>'`; the
@@ -1610,14 +1670,10 @@ fn cast_to_time_value(
         );
     }
     if dst_adjusted {
-        ctx.append_warning(
-            8179,
-            &format!(
-                "Timestamp is not valid, since it is in Daylight Saving Time transition '{}' for time zone '{:?}'",
-                s,
-                ctx.time_zone(),
-            ),
-        );
+        // handleInvalidTimeError does not downgrade the DST error. Unlike
+        // Time.Convert's warning, ParseTime's returned error fails this cast.
+        return Err(EvalError::Conversion(tidb_datatype::ERR_TIMESTAMP_IN_DST_TRANSITION.generate(format!(
+            "Timestamp is not valid, since it is in Daylight Saving Time transition '{}' for time zone '{}'", s, ctx.time_zone().dag_zone().0))));
     }
     // Go's SECOND check is the STRING signature's ALONE
     // (`builtinCastStringAsTimeSig`: `res.IsZero() && HasNoZeroDateMode()`).
@@ -1626,11 +1682,14 @@ fn cast_to_time_value(
     // `0`-valued double/decimal column read `0000-00-00 00:00:00`, matching
     // `expression/cast`. Gating this on the text sources keeps the numeric
     // sources on Go's own no-rejection path.
-    if matches!(v, Datum::String(_) | Datum::Bytes(_)) && time.is_zero() && modes.no_zero_date {
-        // The go warning text renders the PARSED value: the string sources
-        // parse at go's MaxFsp (6), so the zero time renders with its full
-        // `.000000` fraction (oracle-captured on g-fsp's DAYOFYEAR row).
-        invalid_time_warning(ctx, &s, 6);
+    if !is_json_string
+        && matches!(v, Datum::String(_) | Datum::Bytes(_))
+        && time.is_zero()
+        && modes.no_zero_date
+    {
+        // Only the string signature performs this SQL-mode check, using
+        // the parsed target's own type and precision in its diagnostic.
+        ctx.handle_truncate(&format!("Incorrect datetime value: '{time}'"))?;
         return Ok(None);
     }
     Ok(Some(truncate_clock_for_date(time, kind)))
@@ -1909,7 +1968,7 @@ fn parse_time_by_source(
     text: &str,
     kind: tidb_datatype::TimeType,
     fsp: Option<i64>,
-    allow_invalid: bool,
+    flags: ConversionFlags,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(tidb_datatype::Time, bool, bool), ()> {
     match v {
@@ -1917,9 +1976,9 @@ fn parse_time_by_source(
             *value,
             kind,
             fsp.unwrap_or(0),
-            true,
-            allow_invalid,
-            true,
+            flags.ignore_zero_in_date_err(),
+            flags.ignore_invalid_date_err(),
+            flags.ignore_zero_date_err(),
             zone,
         )
         .map(|parsed| (parsed.time, false, parsed.dst_adjusted))
@@ -1930,17 +1989,22 @@ fn parse_time_by_source(
                 signed,
                 kind,
                 fsp.unwrap_or(0),
-                true,
-                allow_invalid,
-                true,
+                flags.ignore_zero_in_date_err(),
+                flags.ignore_invalid_date_err(),
+                flags.ignore_zero_date_err(),
                 zone,
             )
             .map(|parsed| (parsed.time, false, parsed.dst_adjusted))
             .map_err(|_| ())
         }
         Datum::Decimal(value) => {
-            let mut time = tidb_datatype::parse_time_from_decimal(value, true, allow_invalid, zone)
-                .map_err(|_| ())?;
+            let mut time = tidb_datatype::parse_time_from_decimal(
+                value,
+                flags.ignore_zero_in_date_err(),
+                flags.ignore_invalid_date_err(),
+                zone,
+            )
+            .map_err(|_| ())?;
             time.set_kind(kind);
             match fsp {
                 Some(fsp) => time
@@ -1950,21 +2014,10 @@ fn parse_time_by_source(
                 None => Ok((time, false, false)),
             }
         }
-        Datum::Real(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone)
+        Datum::Real(value) => real_to_time(*value, kind, fsp.unwrap_or(0), flags, zone)
             .map(|time| (time, false, false)),
-        Datum::Float32(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone)
+        Datum::Float32(value) => real_to_time(*value, kind, fsp.unwrap_or(0), flags, zone)
             .map(|time| (time, false, false)),
-        Datum::Time(value) => {
-            let mut time = *value;
-            time.set_kind(kind);
-            match fsp {
-                Some(fsp) => time
-                    .round_frac(fsp, zone)
-                    .map(|time| (time, false, false))
-                    .map_err(|_| ()),
-                None => Ok((time, false, false)),
-            }
-        }
         // STRING/BYTES and every other coercible source keep Go's
         // `builtinCastStringAsTimeSig` path: parse the wall-clock TEXT.
         //
@@ -1984,8 +2037,8 @@ fn parse_time_by_source(
             kind,
             fsp.unwrap_or_else(|| i64::from(tidb_datatype::get_fsp(text))),
             false,
-            true,
-            allow_invalid,
+            flags.ignore_zero_in_date_err(),
+            flags.ignore_invalid_date_err(),
             zone,
         )
         .map(|parsed| (parsed.time, parsed.truncated, parsed.dst_adjusted))
@@ -2002,11 +2055,16 @@ fn real_to_time(
     value: f64,
     kind: tidb_datatype::TimeType,
     fsp: i64,
-    allow_invalid: bool,
+    flags: ConversionFlags,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<tidb_datatype::Time, ()> {
-    let mut time =
-        tidb_datatype::parse_time_from_float64(value, true, allow_invalid, zone).map_err(|_| ())?;
+    let mut time = tidb_datatype::parse_time_from_float64(
+        value,
+        flags.ignore_zero_in_date_err(),
+        flags.ignore_invalid_date_err(),
+        zone,
+    )
+    .map_err(|_| ())?;
     time.set_kind(kind);
     time.round_frac(fsp, zone).map_err(|_| ())
 }
@@ -2453,7 +2511,7 @@ mod tests {
     }
 
     #[test]
-    fn a_string_cast_to_timestamp_adjusts_dst_gap_and_warns() {
+    fn a_string_cast_to_timestamp_propagates_dst_gap_error() {
         struct ZonedWarnings {
             zone: tidb_datatype::SessionTimeZone,
             warnings: RefCell<Vec<(u16, String)>>,
@@ -2481,14 +2539,16 @@ mod tests {
             tidb_datatype::TimeType::Timestamp,
             0,
         )
-        .expect("DST-gap TIMESTAMP cast keeps Go's adjusted value");
-        assert_eq!(render_time(&got), "2018-03-11 03:00:00");
-        let warnings = ctx.warnings.borrow();
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].0, 8179);
-        assert!(warnings[0]
-            .1
+        .expect_err("Go handleInvalidTimeError preserves the DST error");
+        let EvalError::Conversion(error) = got else {
+            panic!("typed DST error")
+        };
+        assert_eq!(error.to_sql_error().code, 8179);
+        assert!(error
+            .to_sql_error()
+            .message
             .contains("Daylight Saving Time transition '2018-03-11 02:00:16'"));
+        assert!(ctx.warnings.borrow().is_empty());
     }
 
     fn render_time(v: &Datum) -> String {
@@ -2779,5 +2839,115 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.sql_string().unwrap(), "24:00:00");
+    }
+    #[test]
+    fn calendar_batch_json_calendar_preserves_native_fields() {
+        let time =
+            tidb_datatype::parse_datetime("2024-01-02 03:04:05.999999", &chrono::Utc, true, false)
+                .unwrap()
+                .time;
+        let json = Datum::Json(tidb_datatype::BinaryJSON::from_time(time));
+        let result = cast_to_time(
+            &json,
+            None,
+            &NoColumns,
+            tidb_datatype::TimeType::DateTime,
+            0,
+        )
+        .unwrap();
+        let Datum::Time(value) = result else {
+            panic!("native JSON calendar")
+        };
+        assert_eq!(value.core_time(), time.core_time());
+        assert_eq!(value.fsp(), 0);
+    }
+
+    #[test]
+    fn calendar_batch_json_duration_uses_statement_clock() {
+        struct Clock;
+        impl crate::Columns for Clock {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn now(&self) -> Option<(i64, u32, i32)> {
+                Some((1_785_974_400, 0, 0))
+            }
+        }
+        let duration = tidb_datatype::MySqlDuration::new(12, 34, 56, 789_000, 3).unwrap();
+        let json = Datum::Json(tidb_datatype::BinaryJSON::from_duration(duration));
+        let value =
+            cast_to_time(&json, None, &Clock, tidb_datatype::TimeType::DateTime, 0).unwrap();
+        assert_eq!(value.sql_string().unwrap(), "2026-08-06 12:34:57");
+    }
+
+    #[test]
+    fn calendar_batch_json_source_admission_keeps_numeric_null() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        let json = Datum::Json(tidb_datatype::BinaryJSON::parse("20240102").unwrap());
+        let value = cast_to_time(&json, None, &ctx, tidb_datatype::TimeType::DateTime, 0).unwrap();
+        assert!(value.is_null());
+        assert_eq!(
+            ctx.0.borrow().as_slice(),
+            &[(
+                1292,
+                "Truncated incorrect datetime value: '20240102'".to_owned()
+            )]
+        );
+        struct NoZero(RefCell<Vec<(u16, String)>>);
+        impl crate::Columns for NoZero {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn date_modes(&self) -> tidb_datatype::DateModes {
+                tidb_datatype::DateModes {
+                    no_zero_date: true,
+                    ..Default::default()
+                }
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.0.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+        let zero_ctx = NoZero(RefCell::new(Vec::new()));
+        let json = Datum::Json(tidb_datatype::BinaryJSON::parse("\"0000-00-00\"").unwrap());
+        let value =
+            cast_to_time(&json, None, &zero_ctx, tidb_datatype::TimeType::DateTime, 3).unwrap();
+        assert_eq!(value.sql_string().unwrap(), "0000-00-00 00:00:00.000");
+        assert!(zero_ctx.0.borrow().is_empty());
+        let value = cast_to_time(
+            &Datum::new_string("0000-00-00"),
+            None,
+            &zero_ctx,
+            tidb_datatype::TimeType::DateTime,
+            3,
+        )
+        .unwrap();
+        assert!(value.is_null());
+        assert_eq!(
+            zero_ctx.0.borrow().as_slice(),
+            &[(
+                1292,
+                "Incorrect datetime value: '0000-00-00 00:00:00.000'".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn calendar_batch_typed_time_validates_timestamp_target() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        let time = tidb_datatype::parse_datetime("1960-01-01 12:34:56", &chrono::Utc, true, false)
+            .unwrap()
+            .time;
+        let value = cast_to_time(
+            &Datum::Time(time),
+            None,
+            &ctx,
+            tidb_datatype::TimeType::Timestamp,
+            0,
+        )
+        .unwrap();
+        assert!(value.is_null());
+        assert_eq!(ctx.0.borrow().len(), 1);
+        assert_eq!(ctx.0.borrow()[0].0, 1292);
     }
 }

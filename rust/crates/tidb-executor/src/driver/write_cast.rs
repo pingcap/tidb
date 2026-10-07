@@ -373,15 +373,6 @@ fn cast_value_with_flags(
     // is expressed in wall-clock time, so it MOVES with that zone.
     let mut converted = match value.convert_to_in(field_type, flags, &ctx.session_zone()) {
         Ok(converted) => converted,
-        // Go returns the value BESIDE the error here, and the temporal seam
-        // is the one place the write path needs it: without `NO_ZERO_DATE`
-        // and friends a bad date is stored as the zero date with a warning,
-        // so an error with no value would have nothing to store.
-        Err(tidb_datatype::DatumValueError::IncorrectTemporal(fallback)) => {
-            return apply_zero_date(
-                fallback, true, field_type, &value, column, row_index, ctx, shape,
-            );
-        }
         // Go's vector conversion errors are plain errors: neither
         // `castColumnValue` nor `completeInsertErr` retitles them as an
         // incorrect/truncated column value.
@@ -416,43 +407,6 @@ fn cast_value_with_flags(
         }
     };
     converted.value = truncate_char_trailing_spaces(converted.value, field_type);
-    if let tidb_datatype::Datum::Time(time) = converted.value {
-        let stored = apply_zero_date(
-            time, false, field_type, &value, column, row_index, ctx, shape,
-        )?;
-        if matches!(
-            converted.event,
-            Some(tidb_datatype::ScalarConversionEvent::TimestampInDSTTransition)
-        ) {
-            // Go's insert caller (`insert_common.go:completeInsertErr` then
-            // `handleErr`) retitles the internal DST-transition diagnostic
-            // as `ErrTruncateWrongInsertValue` (1292), while raw
-            // `table.CastValue` and UPDATE keep the internal 8179 error.
-            let error = if shape == CastShape::InsertRow {
-                DriverError::IncorrectTemporalValue {
-                    type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
-                    value: datum_error_text(&source),
-                    column: column.to_owned(),
-                    row: row_index + 1,
-                }
-            } else {
-                DriverError::TimestampInDSTTransition {
-                    value: datum_error_text(&source),
-                    timezone: ctx.session_zone().dag_zone().0,
-                }
-            };
-            if shape == CastShape::RawTable {
-                handle_raw_cast_error(error, ctx, flags, force_ignore_truncate)?;
-            } else {
-                if ctx.strict() {
-                    return Err(error);
-                }
-                let reported = error.to_mysql_error();
-                ctx.append_warning_parts(reported.code, &reported.message);
-            }
-        }
-        return Ok(stored);
-    }
     let Some(event) = converted.event else {
         return Ok(converted.value);
     };
@@ -557,11 +511,14 @@ fn cast_value_with_flags(
     Ok(converted.value)
 }
 
-// Calendar targets retain their existing adapters; TIME uses typed diagnostics.
+// Temporal targets share typed diagnostics; table zero-date policy remains here.
 // Scalar, temporal and binary sources share numeric/string diagnostics here.
 fn contextual_cast_supported(value: &Datum, field: &FieldType) -> bool {
     use tidb_datatype::FieldTypeCode as T;
-    if field.code() == T::Duration {
+    if matches!(
+        field.code(),
+        T::Duration | T::Date | T::Datetime | T::Timestamp
+    ) {
         return matches!(
             value,
             Datum::Int(_)
@@ -678,6 +635,18 @@ fn cast_contextual_value(
             )
         })
     })?;
+    if let Datum::Time(time) = converted.value {
+        let invalid = converted
+            .error
+            .as_ref()
+            .is_some_and(|error| error.to_sql_error().code == 1292);
+        if time.is_zero()
+            || time.invalid_zero()
+            || (field.code() == tidb_datatype::FieldTypeCode::Timestamp && invalid)
+        {
+            return apply_zero_date(time, invalid, field, source, column, row, ctx, shape);
+        }
+    }
     if let Some(error) = converted.error {
         let mut raw = error.to_sql_error();
         // castColumnValue retitles only bare ErrTruncated, after ConvertTo.
@@ -706,6 +675,17 @@ fn cast_contextual_value(
                 .to_mysql_error();
                 ctx.append_warning_parts(reported.code, &reported.message);
             } else if !force_ignore {
+                if raw.code == 8179
+                    && shape == CastShape::InsertRow
+                    && field.code() == tidb_datatype::FieldTypeCode::Timestamp
+                {
+                    return Err(DriverError::IncorrectTemporalValue {
+                        type_name: "timestamp".to_owned(),
+                        value: datum_error_text(source),
+                        column: column.to_owned(),
+                        row: row + 1,
+                    });
+                }
                 return Err(complete_typed_cast(raw, source, field, column, row, shape));
             }
         }
@@ -740,7 +720,15 @@ fn complete_typed_cast(
             column: column.to_owned(),
             row: row + 1,
         },
-        1292 if insert && field.code() == tidb_datatype::FieldTypeCode::Duration => {
+        1292 if insert
+            && matches!(
+                field.code(),
+                tidb_datatype::FieldTypeCode::Duration
+                    | tidb_datatype::FieldTypeCode::Date
+                    | tidb_datatype::FieldTypeCode::Datetime
+                    | tidb_datatype::FieldTypeCode::Timestamp
+            ) =>
+        {
             DriverError::IncorrectTemporalValue {
                 type_name: tidb_datatype::type_str(field.code()).to_owned(),
                 value: datum_error_text(source),

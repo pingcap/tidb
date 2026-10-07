@@ -92,7 +92,7 @@ pub(crate) fn handle_zero_datetime(
     modes: DateModes,
     strict: bool,
 ) -> ZeroDateAction {
-    let zero = Datum::new_time(zero_of(converted));
+    let zero = Datum::new_time(zero_of(code));
     let store_zero = |warn: bool| {
         if warn && strict {
             ZeroDateAction::Refuse
@@ -128,16 +128,16 @@ pub(crate) fn handle_zero_datetime(
     ZeroDateAction::Store(Datum::new_time(converted))
 }
 
-/// Go's `zeroV`: `ZeroDate`, `ZeroDatetime` or `ZeroTimestamp`, picked by the
-/// column's type. Derived from the converted value so the fsp and kind that
-/// the column asked for survive.
-fn zero_of(converted: Time) -> Time {
-    Time::new(
-        tidb_datatype::CoreTime::default(),
-        converted.kind(),
-        i64::from(converted.fsp()),
-    )
-    .unwrap_or(converted)
+/// Go's table fallback is selected by the column type, with FSP zero.
+/// The conversion's error-side value can have a different type (for example,
+/// unsigned overflow returns ZeroDate even for a DATETIME target).
+fn zero_of(code: FieldTypeCode) -> Time {
+    let kind = match code {
+        FieldTypeCode::Date => tidb_datatype::TimeType::Date,
+        FieldTypeCode::Timestamp => tidb_datatype::TimeType::Timestamp,
+        _ => tidb_datatype::TimeType::DateTime,
+    };
+    Time::new(tidb_datatype::CoreTime::default(), kind, 0).expect("valid zero temporal type")
 }
 
 /// Go `GetTypeFlagsForInsert` / `ResetUpdateStmtCtx`, in the two bits that

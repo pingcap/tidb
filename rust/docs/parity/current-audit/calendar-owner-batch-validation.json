@@ -1,0 +1,185 @@
+{
+  "date": "2026-10-07",
+  "base": "387c5d771c528c6b3f9d80216f9b7091439555a2",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_head": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "findings": [
+    "K03",
+    "X01"
+  ],
+  "scope": "Shared calendar datum warning/error ownership, table zero fallback and typed/JSON expression source dispatch. Existing-owner maintenance; no complete package acceptance.",
+  "repairs": [
+    "DATE results clear clock fields for supported datum sources.",
+    "Calendar parser truncation emits a warning through the context even in strict mode; INSERT/UPDATE/ODKU callers retain it.",
+    "Typed Time.Convert DST adjustment emits a warning and succeeds; string ParseTime DST adjustment returns its original error.",
+    "Invalid typed timestamps retain original fields and target type beside their error.",
+    "DATE/DATETIME unsigned overflow retains ZeroDate; unsigned TIMESTAMP datum conversion remains unsupported as in Go.",
+    "Table zero fallback uses destination type and default FSP rather than the error-side value type.",
+    "Native JSON calendar expressions retain packed fields and target display precision without text parsing/rounding.",
+    "Native JSON durations use the shared statement clock; numeric JSON calendar casts return NULL with truncation diagnostics.",
+    "JSON strings and ordinary strings retain distinct NO_ZERO_DATE policy; ordinary zero diagnostics use parsed target precision."
+  ],
+  "removed": [
+    "Legacy calendar conversion/error/DST branch in write_cast.rs after contextual caller migration.",
+    "Expression Time source branch that only changed the type tag without Time.Convert validation."
+  ],
+  "baseline_rust_failures": 8,
+  "distinct_rust_tests_passed": 125,
+  "commands": [
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked --no-fail-fast -p tidb-datatype -p tidb-expr --lib -- calendar_batch_ --test-threads=1",
+      "log": "/workspace/.cloud-setup/calendar-owner-batch/before.log",
+      "result": "eight failed before production edits",
+      "sha256": "d2880695f205d5636008e7848da5242a97b71bc956a77718c05dfcf4e8f879c1"
+    },
+    {
+      "cwd": "/workspace/.cloud-setup/go-master",
+      "command": "GOFLAGS=-mod=readonly go run /workspace/.cloud-setup/calendar-owner-batch/oracle.go",
+      "log": "/workspace/.cloud-setup/calendar-owner-batch/go-oracle.json",
+      "result": "39 source oracle observations; exit 0",
+      "sha256": "a3287b38c259f1438be378912b5d6d951032e269d9342d14b0e4b6695643ba6b"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked --no-fail-fast -p tidb-datatype -p tidb-expr --lib -- datum_convert:: mysql_time::tests:: time_parse::tests:: cast::tests:: --test-threads=1",
+      "log": "/workspace/.cloud-setup/calendar-owner-batch/after-ready.log",
+      "result": "27 expression tests pass; 97 datatype pass and one new test expectation corrected against Go",
+      "sha256": "b9556a96d7560a07148a5279dc787672995e91e86c7283ee9ca17ddc60bac213"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked -p tidb-datatype --lib -- datum_convert:: mysql_time::tests:: time_parse::tests:: --test-threads=1",
+      "log": "/workspace/.cloud-setup/calendar-owner-batch/after-datatype.log",
+      "result": "98 passed",
+      "sha256": "4e41ad2e1042906ea203270f8c1bb6f90a518d7c3a4ab523e27b711f56ee5bbc"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/calendar-owner-batch/wire.py before-ready",
+      "log": "/workspace/.cloud-setup/calendar-owner-batch/before-ready-wire.json",
+      "result": "eleven SQL scenarios failed against original server",
+      "sha256": "6234b4bcc3287c1f5518e8f7395fe769338c4c967ea9560a212050e15ca014d8"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "make lint",
+      "log": "/workspace/.cloud-setup/calendar-owner-batch/lint-final.log",
+      "result": "passed",
+      "sha256": "03b64f66941f64088dc9882f3acf1bf36da3dbfc3e47e4f1e9098daa9f3a8183"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo check --locked --all-targets -p tidb-datatype -p tidb-expr -p tidb-executor -p tidb-server",
+      "log": "/workspace/.cloud-setup/calendar-owner-batch/check.log",
+      "result": "passed; exit 0",
+      "sha256": "a6bd88b4c04d20a61545f503bd004bcf69f48f8f5b4fc3a6f9e6a1c0b923a143"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo build --locked -p tidb-server",
+      "log": "/workspace/.cloud-setup/calendar-owner-batch/build.log",
+      "result": "passed; exit 0",
+      "sha256": "d36c35c4865403aa9a58010527c57611c93f79608711fd4069ac9da8feba0445"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/calendar-owner-batch/wire.py after",
+      "log": "/workspace/.cloud-setup/calendar-owner-batch/after-wire.json",
+      "result": "eleven live SQL scenarios passed; exit 0",
+      "sha256": "3b883fa596aaf5df22ddbfc75d55b338ea2b52cf7ef9777b37ec9793ab163abd"
+    }
+  ],
+  "sources": {
+    "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+    "go_files": [
+      {
+        "path": "pkg/types/datum.go",
+        "sha256": "a7e97bcf032c6abd2e5c8d59516212cb6ead164dc3ec826bfd87392bc66475fc"
+      },
+      {
+        "path": "pkg/types/time.go",
+        "sha256": "e4f3da22a90a6271f86e11f073c7afb6b6fc25ee32bb95e59904ccb861e0c425"
+      },
+      {
+        "path": "pkg/types/context.go",
+        "sha256": "4f95c649cecf84cfdb3378b156fb4577762b53d8f2c4ade1600ef66ff237606a"
+      },
+      {
+        "path": "pkg/table/column.go",
+        "sha256": "39640cb6940ab803b1ed9eb9b6fe2b8a8f71e3b11fe62f2e09791d6ed9deaaac"
+      },
+      {
+        "path": "pkg/expression/builtin_cast.go",
+        "sha256": "12741863129c46a008a9064f94e11bf8be0a20f0b4efd83ef0a9e6b40b731ab5"
+      },
+      {
+        "path": "pkg/expression/errors.go",
+        "sha256": "20b780015eb49f627b6a5b580ae554d5e3fb7fcac7ba89429f3c90f58d18dad7"
+      },
+      {
+        "path": "pkg/executor/insert_common.go",
+        "sha256": "4cadcb2be9b681c2b53ff584cbb26b0ee2645d5b98745b83ac68a2252de8f388"
+      },
+      {
+        "path": "pkg/executor/update.go",
+        "sha256": "e4b3b1ca4669032a647d6fc0c1def39c583e097d671ea4ea95be59499512bb10"
+      }
+    ],
+    "rust_changes": [
+      {
+        "path": "rust/crates/tidb-datatype/src/datum_convert.rs",
+        "before_sha256": "bf5f7c022c8541c52d1c4c47c07f39f0f48ed69147d270c7255a5fcd6061c205",
+        "after_sha256": "2a7d254155dc1bcb1b8cf0b0b50b9bceebb6d04115a51911065d334ecfe1ce83"
+      },
+      {
+        "path": "rust/crates/tidb-executor/src/driver/write_cast.rs",
+        "before_sha256": "7eef8d7dc7327e4166bb6cadf0efff045a689843919708ec66a799d3e51764ac",
+        "after_sha256": "0cf982bd8d4254bf339a77a4c6d01c6bf7450c173c1ca99220665fa96f78db87"
+      },
+      {
+        "path": "rust/crates/tidb-executor/src/zero_date.rs",
+        "before_sha256": "78808dd7f3303ce7b0c742cfb8301028d8b3fa33b3db7de6499b7296cfd8cf66",
+        "after_sha256": "b7b59145bb77aa3e202346b4fd8ea6659b04566737b66de77da021bf1002b3ae"
+      },
+      {
+        "path": "rust/crates/tidb-expr/src/cast.rs",
+        "before_sha256": "44f0bb859665f463293d6e559d4633517734b698ddb76e253aaf689259f89cba",
+        "after_sha256": "0ae2a43d58bfc22f7dbc5109c09406728871486126c221215ecf1b2b545bbb2e"
+      }
+    ]
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "statuses_changed": false,
+  "validation_notes": [
+    "Source env.sh and set CARGO_BUILD_JOBS=1 before Cargo; Cargo cwd is rust/.",
+    "Initial wire probe omitted env.sh and exceeded the server thread stack; corrected activation and JSON string quoting reproduced all eleven baseline SQL failures.",
+    "First post-edit compile used a private module path; corrected to the existing public ERR_TIMESTAMP_IN_DST_TRANSITION re-export.",
+    "The grouped run exposed an incorrect native-JSON expectation in the new DATE test. Go Unquote returns quoted native temporal text for datum column conversion; retained both its refusal and the accepted JSON-string control.",
+    "Initial lint invocation lacked environment activation; final invocation uses the tested environment and passes.",
+    "Inactive completed test executables were retired with hashes, link counts and process checks to reserve link space; sources and compiler caches remain.",
+    "The first server link failed with LLVM SIGBUS. Free space (394MiB) was smaller than the roughly452MB output; cgroup memory.events showed zero OOM events. Retired two inactive historical expression test binaries (238691848 bytes), preserving the old server and compiler caches. Identical locked build then linked successfully in6.23seconds; details in build-link-failed.log and retired-historical-expression-artifacts.json."
+  ],
+  "remaining": [
+    "Full parse-error taxonomy, warning multiplicity and error-side values for every malformed input",
+    "Remaining generated/read/ANALYZE adapters",
+    "Complete SQL/PB signature and vector matrices",
+    "Complete pkg/types, pkg/expression, pkg/table and pkg/executor inventories and original generated/platform/test/fixture/build obligations",
+    "Complete unsupported-calendar conversion error taxonomy and every malformed-input diagnostic remain outside this bounded receipt."
+  ],
+  "not_verified": [
+    "Full Go package suites",
+    "Live multi-node TiKV",
+    "Workload performance",
+    "Fresh Cloud restoration"
+  ],
+  "publication": "Actual hook, fresh pre-push locked build, remote SHA and saved checkpoint are recorded externally in /workspace/.cloud-setup/calendar-owner-batch/final-handoff.json.",
+  "live_sql_scenarios_passed": 11,
+  "self_review": "Reviewed the four Rust source diffs, checked receipt/source hashes and both finding registers. Only X01/K03 evidence changed; statuses/counts remain unchanged. All eleven previously failing wire scenarios pass."
+}

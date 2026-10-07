@@ -31,11 +31,10 @@ use crate::{
     convert_decimal_to_uint, convert_float_to_int, convert_float_to_uint, convert_int_to_int,
     convert_int_to_uint, convert_uint_to_int, convert_uint_to_uint, integer_signed_lower_bound,
     integer_signed_upper_bound, integer_unsigned_upper_bound, parse_enum, parse_enum_value,
-    parse_set, parse_set_value, parse_time, parse_time_from_num, truncate_float, BinaryJSON,
-    BinaryLiteral, BinaryLiteralWidth, Charset, Collation, ConversionFlags, Converted, CoreTime,
-    Datum, DatumValueError, Decimal, FieldType, FieldTypeCode, MySqlDuration,
-    ScalarConversionError, ScalarConversionEvent, SessionTimeZone, Time, TimeType, VectorFloat32,
-    UNSPECIFIED_LENGTH,
+    parse_set, parse_set_value, parse_time_from_num, truncate_float, BinaryJSON, BinaryLiteral,
+    BinaryLiteralWidth, Charset, Collation, ConversionFlags, Converted, CoreTime, Datum,
+    DatumValueError, Decimal, FieldType, FieldTypeCode, MySqlDuration, ScalarConversionError,
+    ScalarConversionEvent, SessionTimeZone, Time, TimeType, VectorFloat32, UNSPECIFIED_LENGTH,
 };
 
 /// Direction used by reverse expression evaluation.
@@ -216,7 +215,7 @@ impl Datum {
             }
             FieldTypeCode::NewDecimal => self.convert_to_decimal_target(target, flags, diagnostics),
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
-                diagnostics.unreported(self.convert_to_time_target(target, flags, zone))
+                self.convert_to_time_target(target, flags, zone, diagnostics)
             }
             FieldTypeCode::Duration => {
                 self.convert_to_duration_target(target, flags, zone, diagnostics)
@@ -652,24 +651,15 @@ impl Datum {
         })
     }
 
-    /// Go `Datum.convertToMysqlTime` / `convertToMysqlTimestamp`.
-    ///
-    /// The three date flags are read off `flags` rather than hardcoded, because
-    /// they are exactly what the SQL mode moves: Go's `Time.Check` takes
-    /// `IgnoreZeroDateErr` for `NO_ZERO_DATE`, `IgnoreZeroInDate` for
-    /// `NO_ZERO_IN_DATE`, and `IgnoreInvalidDateErr` for
-    /// `ALLOW_INVALID_DATES`, so an all-zero value, `'2024-00-01'`, or
-    /// `'2024-02-31'` either parses into a real value or fails HERE depending
-    /// on the mode the statement runs under.
-    ///
-    /// A failure returns [`DatumValueError::IncorrectTemporal`] carrying the
-    /// zero value of the target type, which is what Go returns in the datum
-    /// beside the error and what the non-strict write path stores.
+    /// Go Datum.convertToMysqlTime / convertToMysqlTimestamp. Calendar
+    /// parser warnings and the final error have different owners: preserve
+    /// both until table or expression policy handles the returned value.
     fn convert_to_time_target(
         &self,
         target: &FieldType,
         flags: ConversionFlags,
         zone: &SessionTimeZone,
+        diagnostics: &mut Diagnostics<'_, '_>,
     ) -> Result<Converted<Self>, DatumValueError> {
         let kind = match target.code() {
             FieldTypeCode::Date => TimeType::Date,
@@ -683,133 +673,167 @@ impl Datum {
             target.decimal()
         };
         let zero_in_date = flags.ignore_zero_in_date_err();
-        let ignore_zero_date_err = flags.ignore_zero_date_err();
         let invalid_date = flags.ignore_invalid_date_err();
-        // Go's fallback datum: `NewTime(ZeroCoreTime, tp, DefaultFsp)`.
         let zero = Time::new(CoreTime::default(), kind, 0).map_err(conversion_error)?;
-        let wrong_value = move |_error| DatumValueError::IncorrectTemporal(zero);
-        let mut event = None;
-        let time = match self {
-            Self::Time(value) => {
-                let (converted, adjusted) = value
-                    .convert_kind(kind, zero_in_date, invalid_date, zone)
-                    .map_err(wrong_value)?;
-                if adjusted {
-                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
-                }
-                converted.round_frac(fsp, zone).map_err(wrong_value)?
+        let finish = |mut time: Time, event| {
+            // Datum's DATE conversion clears the clock after conversion.
+            if kind == TimeType::Date {
+                let c = time.core_time();
+                time.set_core_time(CoreTime::from_date(
+                    c.year() as u16,
+                    c.month(),
+                    c.day(),
+                    0,
+                    0,
+                    0,
+                    0,
+                ));
             }
-            // Go `Duration.ConvertToTime`: `gotime.Now().In(ctx.Location())`,
-            // which is [`session_now`] -- the same one the YEAR arm reads.
-            Self::Duration(value) => value
+            Ok(Converted {
+                value: Self::Time(time),
+                event,
+            })
+        };
+        let failure =
+            |fallback: Time, label: &str, text: &str, diagnostics: &mut Diagnostics<'_, '_>| {
+                if !diagnostics.enabled() {
+                    return Err(DatumValueError::IncorrectTemporal(fallback));
+                }
+                diagnostics.error(|| {
+                    crate::parser_types_errors::ERR_WRONG_VALUE
+                        .generate(format!("Incorrect {label} value: '{text}'"))
+                });
+                finish(fallback, Some(ScalarConversionEvent::Truncated))
+            };
+        let dst = |text: &str| {
+            crate::parser_types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION.generate(format!(
+            "Timestamp is not valid, since it is in Daylight Saving Time transition '{}' for time zone '{}'", text, zone.dag_zone().0))
+        };
+        if let Self::Time(value) = self {
+            let (converted, adjusted) =
+                match value.convert_kind(kind, zero_in_date, invalid_date, zone) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let mut fallback = *value;
+                        fallback.set_kind(kind);
+                        return failure(
+                            fallback,
+                            if kind == TimeType::Timestamp {
+                                "timestamp"
+                            } else {
+                                "datetime"
+                            },
+                            &fallback.to_string(),
+                            diagnostics,
+                        );
+                    }
+                };
+            if adjusted {
+                diagnostics.warn(|| dst(&format!("{:?}", value.core_time())));
+            }
+            let mut rounded = match converted.round_frac(fsp, zone) {
+                Ok(value) => value,
+                Err(_) => return failure(converted, "datetime", &value.to_string(), diagnostics),
+            };
+            // convertToMysqlTimestamp reimposes its target after Convert,
+            // including Convert's adjusted DATETIME result.
+            if kind == TimeType::Timestamp {
+                rounded.set_kind(kind);
+            }
+            return finish(
+                rounded,
+                adjusted.then_some(ScalarConversionEvent::TimestampInDSTTransition),
+            );
+        }
+        if let Self::Duration(value) = self {
+            let time = value
                 .convert_to_time(session_now(zone), kind, zero_in_date, invalid_date)
-                .and_then(|time| time.round_frac(fsp, zone))
-                .map_err(wrong_value)?,
-            Self::String(value) => {
-                let parsed = parse_time(
-                    value.as_utf8()?,
-                    kind,
-                    fsp,
-                    false,
-                    zero_in_date,
-                    invalid_date,
-                    zone,
-                )
-                .map_err(wrong_value)?;
-                if parsed.dst_adjusted {
-                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
-                }
-                parsed.time
+                .and_then(|time| time.round_frac(fsp, zone));
+            return match time {
+                Ok(time) => finish(time, None),
+                Err(_) => failure(zero, "datetime", &value.to_string(), diagnostics),
+            };
+        }
+        let text = match self {
+            Self::String(value) => value.as_utf8()?.to_owned(),
+            Self::Bytes(value) => std::str::from_utf8(value)?.to_owned(),
+            Self::Json(value) => value.unquote()?,
+            Self::Int(_) | Self::Decimal(_) => self.sql_string().map_err(conversion_error)?,
+            Self::UInt(_) if kind != TimeType::Timestamp => {
+                self.sql_string().map_err(conversion_error)?
             }
-            Self::Bytes(value) => {
-                let parsed = parse_time(
-                    std::str::from_utf8(value)?,
-                    kind,
-                    fsp,
-                    false,
-                    zero_in_date,
-                    invalid_date,
-                    zone,
-                )
-                .map_err(wrong_value)?;
-                if parsed.dst_adjusted {
-                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+            _ => return Err(DatumValueError::Unsupported(self.kind(), "time")),
+        };
+        let parsed = match self {
+            Self::Int(value) => parse_time_from_num(
+                *value,
+                kind,
+                fsp,
+                zero_in_date,
+                invalid_date,
+                flags.ignore_zero_date_err(),
+                zone,
+            ),
+            Self::UInt(value) => {
+                if *value > i64::MAX as u64 {
+                    let zero_date = Time::new(CoreTime::default(), TimeType::Date, 0)
+                        .map_err(conversion_error)?;
+                    return failure(zero_date, "time", &text, diagnostics);
                 }
-                parsed.time
-            }
-            Self::Int(value) => {
-                let parsed = parse_time_from_num(
-                    *value,
-                    kind,
-                    fsp,
-                    zero_in_date,
-                    invalid_date,
-                    ignore_zero_date_err,
-                    zone,
-                )
-                .map_err(wrong_value)?;
-                if parsed.dst_adjusted {
-                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
-                }
-                parsed.time
-            }
-            Self::UInt(value) if *value <= i64::MAX as u64 => {
-                let parsed = parse_time_from_num(
+                parse_time_from_num(
                     *value as i64,
                     kind,
                     fsp,
                     zero_in_date,
                     invalid_date,
-                    ignore_zero_date_err,
+                    flags.ignore_zero_date_err(),
                     zone,
                 )
-                .map_err(wrong_value)?;
-                if parsed.dst_adjusted {
-                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
-                }
-                parsed.time
             }
-            Self::Decimal(value) => {
-                // Datum.ConvertTo uses ParseTimeFromFloatString, not the
-                // distinct ParseTimeFromDecimal helper used by numeric casts.
-                // Parse at the target FSP so every discarded digit and any
-                // carry across a date/DST boundary are handled in one step.
-                let parsed = crate::time_parse::parse_time_with_flags(
-                    &value.to_string(),
-                    kind,
-                    fsp,
-                    true,
-                    flags,
-                    zone,
-                )
-                .map_err(wrong_value)?;
-                if parsed.dst_adjusted {
-                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
-                }
-                parsed.time
-            }
-            Self::Json(value) => {
-                let parsed = parse_time(
-                    &value.unquote()?,
-                    kind,
-                    fsp,
-                    false,
-                    zero_in_date,
-                    invalid_date,
-                    zone,
-                )
-                .map_err(wrong_value)?;
-                if parsed.dst_adjusted {
-                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
-                }
-                parsed.time
-            }
-            _ => return Err(DatumValueError::Unsupported(self.kind(), "time")),
+            _ => crate::time_parse::parse_time_with_flags(
+                &text,
+                kind,
+                fsp,
+                matches!(self, Self::Decimal(_)),
+                flags,
+                zone,
+            ),
         };
-        Ok(Converted {
-            value: Self::new_time(time),
-            event,
-        })
+        let parsed = match parsed {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                return failure(
+                    zero,
+                    if matches!(self, Self::Int(_) | Self::UInt(_)) {
+                        "time"
+                    } else {
+                        "datetime"
+                    },
+                    &text,
+                    diagnostics,
+                )
+            }
+        };
+        if parsed.truncated {
+            // parseDatetime appends this directly, including in strict mode.
+            diagnostics.warn(|| {
+                ERR_TRUNCATED_WRONG_VALUE
+                    .generate(format!("Truncated incorrect datetime value: '{text}'"))
+            });
+        }
+        if parsed.dst_adjusted {
+            diagnostics.error(|| dst(&text));
+        }
+        finish(
+            parsed.time,
+            if parsed.dst_adjusted {
+                Some(ScalarConversionEvent::TimestampInDSTTransition)
+            } else if parsed.truncated {
+                Some(ScalarConversionEvent::Truncated)
+            } else {
+                None
+            },
+        )
     }
 
     fn convert_to_duration_target(
@@ -1765,6 +1789,134 @@ mod go_tests;
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn calendar_batch_date_conversion_clears_clock_for_supported_sources() {
+        let time = crate::parse_datetime("2024-01-02 03:04:05.123456", &chrono::Utc, true, false)
+            .unwrap()
+            .time;
+        for source in [
+            Datum::Time(time),
+            Datum::new_string("2024-01-02 03:04:05.123456"),
+            Datum::Json(BinaryJSON::parse("\"2024-01-02 03:04:05.123456\"").unwrap()),
+        ] {
+            let converted = source
+                .convert_to(
+                    &FieldType::new(FieldTypeCode::Date),
+                    crate::DEFAULT_STATEMENT_FLAGS,
+                )
+                .unwrap();
+            let Datum::Time(value) = converted.value else {
+                panic!("calendar value")
+            };
+            assert_eq!(value.to_duration().unwrap().nanoseconds(), 0, "{source:?}");
+        }
+        // Unlike the expression JSON signature, Datum.ConvertTo calls
+        // Unquote: native JSON time keeps its quotes and is not a date string.
+        assert!(Datum::Json(BinaryJSON::from_time(time))
+            .convert_to(
+                &FieldType::new(FieldTypeCode::Date),
+                crate::DEFAULT_STATEMENT_FLAGS
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn calendar_batch_context_retains_parser_warning_and_unsigned_error() {
+        struct Warnings(std::cell::RefCell<Vec<tidb_error::terror::TerrorError>>);
+        impl crate::ConversionWarningAppender for Warnings {
+            fn append_conversion_warning(&self, e: tidb_error::terror::TerrorError) {
+                self.0.borrow_mut().push(e);
+            }
+        }
+        let warnings = Warnings(Default::default());
+        let ctx = crate::ConversionContext::new(
+            crate::STRICT_FLAGS,
+            crate::ConversionLocation::UTC,
+            &warnings,
+        );
+        let field = FieldType::new(FieldTypeCode::Datetime).with_decimal(3);
+        let parsed = Datum::new_string("150101.a")
+            .convert_to_in_context(&field, &ctx, &SessionTimeZone::utc())
+            .unwrap();
+        assert_eq!(
+            parsed.value.sql_string().unwrap(),
+            "2015-01-01 00:00:00.000"
+        );
+        assert!(parsed.error.is_none());
+        assert_eq!(warnings.0.borrow().len(), 1);
+        assert_eq!(
+            warnings.0.borrow()[0].to_sql_error().message,
+            "Truncated incorrect datetime value: '150101.a'"
+        );
+        let overflow = Datum::UInt(u64::MAX)
+            .convert_to_in_context(&field, &ctx, &SessionTimeZone::utc())
+            .unwrap();
+        assert_eq!(overflow.value.sql_string().unwrap(), "0000-00-00");
+        assert_eq!(
+            overflow.error.unwrap().to_sql_error().message,
+            "Incorrect time value: '18446744073709551615'"
+        );
+    }
+
+    #[test]
+    fn calendar_batch_context_distinguishes_typed_and_string_dst() {
+        struct Warnings(std::cell::RefCell<Vec<tidb_error::terror::TerrorError>>);
+        impl crate::ConversionWarningAppender for Warnings {
+            fn append_conversion_warning(&self, e: tidb_error::terror::TerrorError) {
+                self.0.borrow_mut().push(e);
+            }
+        }
+        let warnings = Warnings(Default::default());
+        let zone = SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+        let ctx = crate::ConversionContext::new(
+            crate::STRICT_FLAGS,
+            crate::ConversionLocation::from_time_zone(&zone),
+            &warnings,
+        );
+        let field = FieldType::new(FieldTypeCode::Timestamp);
+        let text = "2011-03-13 02:30:00";
+        let time = crate::parse_datetime(text, &zone, true, false)
+            .unwrap()
+            .time;
+        let typed = Datum::Time(time)
+            .convert_to_in_context(&field, &ctx, &zone)
+            .unwrap();
+        assert!(typed.error.is_none());
+        assert_eq!(typed.value.sql_string().unwrap(), "2011-03-13 03:00:00");
+        assert_eq!(warnings.0.borrow().len(), 1);
+        assert_eq!(warnings.0.borrow()[0].to_sql_error().code, 8179);
+        let string = Datum::new_string(text)
+            .convert_to_in_context(&field, &ctx, &zone)
+            .unwrap();
+        assert_eq!(string.error.unwrap().to_sql_error().code, 8179);
+        assert_eq!(warnings.0.borrow().len(), 1);
+    }
+
+    #[test]
+    fn calendar_batch_typed_timestamp_error_retains_original_fields() {
+        let time = crate::parse_datetime("1960-01-01 12:34:56", &chrono::Utc, true, false)
+            .unwrap()
+            .time;
+        let result = Datum::Time(time)
+            .convert_to_in_context(
+                &FieldType::new(FieldTypeCode::Timestamp),
+                &crate::ConversionContext::strict(),
+                &SessionTimeZone::utc(),
+            )
+            .unwrap();
+        assert_eq!(result.value.sql_string().unwrap(), "1960-01-01 12:34:56");
+        assert_eq!(
+            result.error.unwrap().to_sql_error().message,
+            "Incorrect timestamp value: '1960-01-01 12:34:56'"
+        );
+        assert!(Datum::UInt(20240102030405)
+            .convert_to(
+                &FieldType::new(FieldTypeCode::Timestamp),
+                crate::DEFAULT_STATEMENT_FLAGS
+            )
+            .is_err());
+    }
     #[test]
     fn duration_batch_datum_uses_parse_duration_and_caller_date_flags() {
         let target = crate::FieldType::new(crate::FieldTypeCode::Duration).with_decimal(0);
