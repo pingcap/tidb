@@ -4,14 +4,14 @@ Latest cleanup: [disconnected sort pipeline](sort-cleanup-validation.json). Remo
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [shared DDL admission and observation](ddl-visit-batch-validation.json). A01/D01/D11/O18 remain open/partial; counts remain 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Six baseline regressions fail; 204 grouped Rust cases and 36 live SQL checks pass. The other 52 unresolved roots retain carried evidence. Earlier numeric/ordinal repairs remain in their dated receipts.
+Latest connected repair: [temporary DDL ownership](temporary-ddl-batch-validation.json). A01/D01/D11/O18 share resolved local targets, DROP splitting, transaction policy and original observation visits. Seventeen baseline live assertions and a later identity-collision assertion failed; 196 selected Rust cases and 51 live SQL checks pass. Parent dispositions remain open/partial: 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other52 roots retain carried evidence; no complete package acceptance.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../ddl-visit-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../temporary-ddl-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](ddl-visit-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](temporary-ddl-batch-validation.json): exact source/log identities and verification limits.
 
 Current Go comparison: `7a3dacb52efe58d28db360ae8639d8838c376544`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master remains `8b752f9638ad157931725b66ffdc57e0465432a9`; maintained sync is unchanged. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
@@ -30,6 +30,8 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 Earlier implementation: [shared read consistency](read-consistency-batch-validation.json). Prior partition reorganization safety remains in place until its durable owner exists.
 
 ## Historical evidence
+
+- [shared DDL visits](ddl-visit-batch-validation.json)
 
 - [numeric production](numeric-production-batch-validation.json)
 

@@ -290,3 +290,8 @@ The [plan](../../cte-scope-batch-execplan.md) and [receipt](cte-scope-batch-vali
 ## YEAR, ENUM, SET and BIT conversion owner
 
 The [plan](../../ordinal-owner-batch-execplan.md) and [receipt](ordinal-owner-batch-validation.json) repair four related conversion targets and migrate all table callers together. Remove the legacy event fallback, ODKU warning rewrite and duplicate diagnostic formatter. K03 remains partial for its broader table/DDL obligations; the other 55 unresolved roots were not freshly audited. Counts remain 86 tracked/30 repaired/56 unresolved.
+
+
+## Temporary DDL ownership checkpoint — 2026-10-07
+
+Latest connected repair: [temporary DDL ownership](temporary-ddl-batch-validation.json). A01/D01/D11/O18 share resolved local targets, DROP splitting, transaction policy and original observation visits. Seventeen baseline live assertions and a later identity-collision assertion failed; 196 selected Rust cases and 51 live SQL checks pass. Parent dispositions remain open/partial: 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other52 roots retain carried evidence; no complete package acceptance. Local-only and mixed DROP must retain their distinct transaction lifecycles; do not restore the unconditional cluster DROP or local ALTER routing.

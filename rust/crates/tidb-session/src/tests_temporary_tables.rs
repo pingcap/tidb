@@ -838,3 +838,159 @@ fn ttl_on_a_temporary_table_is_8151() {
         )
     );
 }
+
+/// Go DDLExec.Next returns before NewTxnInStmt for local-only DROP, including
+/// explicit local mismatches. Catalog removal survives rollback; prior rows don't.
+#[test]
+fn local_drop_transaction_boundary_follows_resolved_targets() {
+    for drop in ["DROP TABLE loc", "DROP TEMPORARY TABLE loc"] {
+        let mut session = temporary_session();
+        session.run("CREATE TABLE durable_drop(a INT)").unwrap();
+        session.run("CREATE TEMPORARY TABLE loc(a INT)").unwrap();
+        session.run("BEGIN").unwrap();
+        session.run("INSERT INTO durable_drop VALUES(1)").unwrap();
+        session.run(drop).unwrap();
+        assert!(session.in_transaction(), "{drop}");
+        session.run("ROLLBACK").unwrap();
+        assert!(row_text(session.run("SELECT * FROM durable_drop")).is_empty());
+        assert_eq!(refusal(&mut session, "SELECT * FROM loc").0, 1146);
+    }
+}
+
+#[test]
+fn mixed_drop_retires_local_targets_only_after_persistent_success() {
+    let mut session = temporary_session();
+    session.run("CREATE TEMPORARY TABLE loc(a INT)").unwrap();
+    session.run("INSERT INTO loc VALUES(7)").unwrap();
+    assert_eq!(refusal(&mut session, "DROP TABLE loc,missing").0, 1051);
+    assert_eq!(row_text(session.run("SELECT * FROM loc")), vec![vec!["7"]]);
+    session.run("DROP TABLE IF EXISTS loc,missing").unwrap();
+    assert_eq!(refusal(&mut session, "SELECT * FROM loc").0, 1146);
+}
+
+#[test]
+fn explicit_local_drop_mismatch_is_one_note_and_keeps_transaction() {
+    let mut session = temporary_session();
+    session.run("CREATE TEMPORARY TABLE loc(a INT)").unwrap();
+    session.run("BEGIN").unwrap();
+    session
+        .run("DROP TEMPORARY TABLE IF EXISTS loc,missing_a,missing_b")
+        .unwrap();
+    assert!(session.in_transaction());
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Note",
+            "1051",
+            "Unknown table 'test.missing_a,test.missing_b'"
+        ]]
+    );
+    session.run("SELECT * FROM loc").unwrap();
+    session.run("ROLLBACK").unwrap();
+}
+
+#[test]
+fn global_drop_kind_errors_precede_commit_for_local_and_permanent_targets() {
+    let mut session = temporary_session();
+    session.run("CREATE TABLE durable_drop(a INT)").unwrap();
+    session.run("CREATE TEMPORARY TABLE loc(a INT)").unwrap();
+    for target in ["loc", "durable_drop"] {
+        session.run("BEGIN").unwrap();
+        session.run("INSERT INTO durable_drop VALUES(1)").unwrap();
+        assert_eq!(
+            refusal(
+                &mut session,
+                &format!("DROP GLOBAL TEMPORARY TABLE {target}")
+            )
+            .0,
+            8007
+        );
+        assert!(session.in_transaction());
+        session.run("ROLLBACK").unwrap();
+        assert!(row_text(session.run("SELECT * FROM durable_drop")).is_empty());
+    }
+}
+
+#[test]
+fn local_rename_guard_precedes_all_persistent_job_validation() {
+    let mut session = temporary_session();
+    session.run("CREATE TABLE durable_drop(a INT)").unwrap();
+    session.run("CREATE TEMPORARY TABLE loc(a INT)").unwrap();
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO durable_drop VALUES(1)").unwrap();
+    assert_eq!(
+        refusal(&mut session, "RENAME TABLE absent TO renamed, loc TO loc2"),
+        (
+            8200,
+            "TiDB doesn't support RENAME TABLE for local temporary table".to_owned()
+        )
+    );
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT * FROM durable_drop")),
+        vec![vec!["1"]]
+    );
+    session.run("SELECT * FROM loc").unwrap();
+}
+
+/// Go TestTruncateLocalTemporaryTable exercises a new identity and memory allocator
+/// after TRUNCATE. IDs come from the same owner on CREATE and CREATE LIKE.
+#[test]
+fn local_create_like_and_truncate_share_global_identity_owner() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    #[derive(Debug)]
+    struct Ids(AtomicI64);
+    impl tidb_executor::driver::LocalTemporaryTableIdAllocator for Ids {
+        fn allocate(&self) -> Result<i64, tidb_executor::DriverError> {
+            Ok(self.0.fetch_add(1, Ordering::SeqCst))
+        }
+    }
+    let mut session = temporary_session();
+    session
+        .with_catalog_mut(|catalog| {
+            catalog
+                .set_local_temporary_id_allocator(std::sync::Arc::new(Ids(AtomicI64::new(900000))));
+            Ok(())
+        })
+        .unwrap();
+    session
+        .run("create table identity_template(a int)")
+        .unwrap();
+    session.run("create table identity_t(a int)").unwrap();
+    session.run("insert into identity_t values (99)").unwrap();
+    session
+        .run("create temporary table identity_t(a int primary key auto_increment)")
+        .unwrap();
+    session.run("insert into identity_t values (5)").unwrap();
+    session
+        .run("create temporary table identity_copy like identity_template")
+        .unwrap();
+    let ids = |session: &mut Session| {
+        session
+            .with_catalog_mut(|catalog| {
+                let id = |name| match catalog.table_in("test", name).unwrap() {
+                    tidb_executor::TableEntry::Kv(table) => table.table_id,
+                    _ => unreachable!(),
+                };
+                Ok((id("identity_t"), id("identity_copy")))
+            })
+            .unwrap()
+    };
+    assert_eq!(ids(&mut session), (900000, 900001));
+    session.run("begin").unwrap();
+    session.run("insert into identity_t values (6)").unwrap();
+    session.run("truncate table identity_t").unwrap();
+    session.run("rollback").unwrap();
+    assert_eq!(ids(&mut session), (900002, 900001));
+    assert!(row_text(session.run("select a from identity_t")).is_empty());
+    session.run("insert into identity_t values (null)").unwrap();
+    assert_eq!(
+        row_text(session.run("select a from identity_t")),
+        vec![vec!["1"]]
+    );
+    session.run("drop temporary table identity_t").unwrap();
+    assert_eq!(
+        row_text(session.run("select a from identity_t")),
+        vec![vec!["99"]]
+    );
+}

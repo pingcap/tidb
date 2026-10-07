@@ -178,12 +178,19 @@ fn enqueue_sync_load_failures(
     }
 }
 
+/// Go local temporary DDL reserves real IDs in an independent metadata
+/// transaction, sharing the persistent DDL allocator across every SQL node.
+pub trait LocalTemporaryTableIdAllocator: std::fmt::Debug + Send + Sync {
+    fn allocate(&self) -> Result<i64, DriverError>;
+}
+
 /// A catalog of databases and their tables, the position Go's `infoschema`
 /// occupies. Database and table names are case-insensitive, as in MySQL.
 #[derive(Clone, Debug)]
 pub struct Catalog {
     /// Domain-scoped plan-cache flush generation, shared by catalog snapshots.
     plan_cache_epoch: Arc<super::plan_cache::PlanCacheInvalidation>,
+    local_temporary_ids: Option<Arc<dyn LocalTemporaryTableIdAllocator>>,
     // Snapshot creation shares schema maps. Mutation detaches only the outer
     // name map and the database it touches, retaining all other table maps.
     databases: Arc<HashMap<String, Arc<Database>>>,
@@ -495,6 +502,7 @@ impl CatalogSnapshot {
     fn restore(&self, owner: &Catalog) -> Catalog {
         Catalog {
             plan_cache_epoch: Arc::clone(&owner.plan_cache_epoch),
+            local_temporary_ids: owner.local_temporary_ids.clone(),
             databases: Arc::clone(&self.databases),
             max_index_length: self.max_index_length,
             enable_enum_length_limit: self.enable_enum_length_limit,
@@ -659,6 +667,7 @@ impl Default for Catalog {
             version: 0,
             metadata_version: next_metadata_version(),
             plan_cache_epoch: Arc::default(),
+            local_temporary_ids: None,
             latest_index_schema: std::sync::OnceLock::new(),
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
@@ -3068,20 +3077,24 @@ impl Catalog {
         self.get(name).is_some()
     }
 
-    /// Allocates the next table id (a monotone counter standing in for the
-    /// global autoid allocator, like KvTable's handle counter).
-    ///
-    /// Go's autoid allocator is monotone for the PROCESS lifetime: ids are
-    /// never re-issued across connections, even after DROP DATABASE/DROP
-    /// TABLE removed the metadata. This tier's counter is per-catalog
-    /// (catalogs rebuild from the store's surviving tables), so after a
-    /// dropped database the counter restarts LOW and re-issues ids whose
-    /// key prefixes still hold the dropped tables' unpurged rows — the new
-    /// table then reads another table's ghosts (oracle m24: TRUNCATE
-    /// PARTITION on an empty table answered (1,NULL),(3,NULL), the
-    /// previous run's hash-partition rows, and the COALESCE over the same
-    /// keys failed with a DuplicateEntry). The process-wide high-water
-    /// keeps every issued id unique for the server's lifetime.
+    /// Install the storage owner's independent metadata allocator.
+    pub fn set_local_temporary_id_allocator(
+        &mut self,
+        allocator: Arc<dyn LocalTemporaryTableIdAllocator>,
+    ) {
+        self.local_temporary_ids = Some(allocator);
+    }
+
+    pub fn allocate_local_temporary_table_id(&mut self) -> Result<i64, DriverError> {
+        match &self.local_temporary_ids {
+            Some(allocator) => allocator.allocate(),
+            // Embedded catalogs share the same allocator for both table kinds.
+            None => Ok(self.allocate_table_id()),
+        }
+    }
+
+    /// Embedded-catalog allocator, shared by persistent and local tables.
+    /// Cluster temporary DDL must use the storage-backed allocator above.
     pub fn allocate_table_id(&mut self) -> i64 {
         let id = TABLE_ID_HIGHWATER.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         self.next_table_id = id;
@@ -3089,10 +3102,7 @@ impl Catalog {
     }
 }
 
-/// The process-wide table-id high-water. The unistore cluster store is
-/// in-memory, so a process restart wipes its data and the counter restarts
-/// with it — matching go, whose allocator state lives exactly as long as
-/// the data it names.
+/// Embedded catalog IDs survive catalog rebuilds within the process.
 static TABLE_ID_HIGHWATER: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 impl crate::keydecoder::KeyInfoCatalog for Catalog {

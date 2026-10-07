@@ -385,13 +385,17 @@ pub use transactions::{ClusterTransactions, OpenClusterTransaction, RealClusterT
 /// [`ClusterDdl`], the accounts through
 /// [`crate::cluster_account_seam::ClusterAccountWriter`] -- and each has its
 /// own refusals.
-enum StatementRoute {
-    /// Changes nothing stored outside this process.
+enum StatementRoute {    /// Changes nothing stored outside this process.
     Ordinary,
     /// One catalog change this node can express.
     Ddl(DdlStatement),
     /// DDL owned by this connection's LOCAL temporary-table namespace.
     LocalTemporaryDdl,
+    /// Only persistent targets reach cluster metadata; local targets follow success.
+    MixedTemporaryDrop {
+        statement: DdlStatement,
+        local: Vec<Vec<String>>,
+    },
     /// One `mysql.*` account change.
     Accounts,
     /// One `SET GLOBAL` change to `mysql.global_variables`.
@@ -3243,6 +3247,58 @@ impl QuerySessionFactory for ClusterSessionFactory {
     }
 }
 
+struct ClusterLocalTemporaryIds {
+    transactions: Arc<dyn ClusterTransactions>,
+    global_vars: GlobalSysvars,
+}
+
+impl std::fmt::Debug for ClusterLocalTemporaryIds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ClusterLocalTemporaryIds")
+    }
+}
+
+impl tidb_executor::driver::LocalTemporaryTableIdAllocator for ClusterLocalTemporaryIds {
+    fn allocate(&self) -> Result<i64, tidb_executor::DriverError> {
+        let allocate_once = || -> Result<i64, SqlQueryError> {
+            let snapshot = self
+                .transactions
+                .open_snapshot("default")
+                .map_err(SqlQueryError::unknown)?;
+            let read_ts = snapshot.start_ts();
+            let (id, mutation) = tidb_exec::ddl_job_submit::reserve_global_id(
+                &mut SnapshotMetaSnapshot::new(snapshot),
+            )
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            self.transactions.commit_optimistic_mutations(
+                vec![mutation],
+                read_ts,
+                "default",
+                crate::session_transaction::restricted_transaction_options(&self.global_vars),
+            )?;
+            Ok(id)
+        };
+        let mut attempt = 0;
+        loop {
+            match allocate_once() {
+                Err(error) if error.code == 9007 && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT => {
+                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                    attempt += 1;
+                }
+                result => {
+                    return result.map_err(|error| {
+                        tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
+                            error.code,
+                            error.state,
+                            error.message,
+                        ))
+                    })
+                }
+            }
+        }
+    }
+}
+
 impl ClusterSessionFactory {
     // No authentication identity, process-list entry, or user transaction is
     // copied into internal storage work. Its MDL holds nest in the caller's
@@ -3291,6 +3347,12 @@ impl ClusterSessionFactory {
                     .get_or_init(tidb_executor::driver::StatisticsLoadWorkers::new),
             ),
         };
+        built
+            .catalog
+            .set_local_temporary_id_allocator(Arc::new(ClusterLocalTemporaryIds {
+                transactions: Arc::clone(&self.transactions),
+                global_vars: self.global_vars.clone(),
+            }));
         statistics_loading.attach(&mut built.catalog);
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_restricted_sql(true);
@@ -6096,6 +6158,12 @@ impl ClusterServerSession {
             &self.storage,
             None,
         );
+        built
+            .catalog
+            .set_local_temporary_id_allocator(Arc::new(ClusterLocalTemporaryIds {
+                transactions: Arc::clone(&self.transactions),
+                global_vars: self.global_vars.clone(),
+            }));
         self.statistics_loading.attach(&mut built.catalog);
         let shared = self.session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -6230,8 +6298,22 @@ impl ClusterServerSession {
                 }
             }
             StoredStateChange::Schema => {
+                self.session.validate_temporary_ddl_preprocess(stmt).map_err(map_error)?;
                 if self.session.is_local_temporary_ddl_parsed(stmt) {
                     return Ok(StatementRoute::LocalTemporaryDdl);
+                }
+                if let Stmt::Ddl(ddl) = stmt {
+                    if let tidb_ast::DdlStmt::DropTable(drop) = ddl.as_ref() {
+                        let (persistent, local) = self.session.split_local_temporary_drop(drop);
+                        if !local.is_empty() {
+                            let split = Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::DropTable(Box::new(persistent))));
+                            let context = self.session.ddl_statement_context();
+                            let statement = prepare_cluster_ddl_parsed(&split, self.session.current_database(), &context)
+                                .map_err(|error| SqlQueryError::new(error.code, error.sql_state(), error.to_string()))?
+                                .ok_or_else(|| SqlQueryError::unknown("DROP TABLE has no cluster metadata operation"))?;
+                            return Ok(StatementRoute::MixedTemporaryDrop { statement, local });
+                        }
+                    }
                 }
                 // Go refuses three statement shapes with their OWN errors
                 // before any catalog work: `OPTIMIZE TABLE` (SimpleExec's
@@ -7134,6 +7216,19 @@ impl ClusterServerSession {
         })
     }
 
+    fn run_mixed_temporary_drop(
+        &mut self,
+        parsed: &Stmt,
+        statement: &DdlStatement,
+        local: Vec<Vec<String>>,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        let outcome = self.run_ddl(parsed, statement)?;
+        self.session
+            .drop_local_temporary_targets(local)
+            .map_err(map_error)?;
+        Ok(outcome)
+    }
+
     /// Executes DDL whose metadata belongs to this connection rather than to
     /// the cluster catalog.
     fn run_local_temporary_ddl(
@@ -7141,7 +7236,7 @@ impl ClusterServerSession {
         sql: &str,
         parsed: &tidb_ast::Stmt,
     ) -> Result<WriteOutcome, SqlQueryError> {
-        // Go returns before NewTxnInStmt only for local CREATE, not TRUNCATE.
+        // Go returns before NewTxnInStmt for local CREATE and local-only DROP.
         // Check before committing the cluster transaction; Session::run then
         // owns the session-local table operation and observation.
         self.session
@@ -7150,12 +7245,12 @@ impl ClusterServerSession {
         self.session
             .require_statement_table_privileges(parsed)
             .map_err(map_error)?;
-        if !Session::is_local_temporary_create_parsed(parsed)
+        if !self.session.ddl_preserves_transaction(parsed)
             && (self.explicit.is_some() || self.session.in_transaction())
         {
             self.control_transaction("COMMIT")?;
         }
-        match self.session.run(sql).map_err(map_error)? {
+        match self.session.run_parsed(parsed.clone(), sql).map_err(map_error)? {
             tidb_session::StmtResult::Affected(affected_rows) => Ok(WriteOutcome {
                 affected_rows,
                 last_insert_id: self.session.statement_insert_id(),
@@ -7428,6 +7523,11 @@ impl QuerySession for ClusterServerSession {
                 return self
                     .observe_routed_write(sql, stmt, |node| node.run_ddl(stmt, &statement))
                     .map(Some)
+            }
+            StatementRoute::MixedTemporaryDrop { statement, local } => {
+                return self.observe_routed_write(sql, stmt, |node| {
+                    node.run_mixed_temporary_drop(stmt, &statement, local)
+                }).map(Some);
             }
             StatementRoute::LocalTemporaryDdl => {
                 return self
@@ -7949,6 +8049,14 @@ impl QuerySession for ClusterServerSession {
         match self.schema_route(stmt)? {
             StatementRoute::Ddl(statement) => {
                 self.observe_routed_write(sql, stmt, |node| node.run_ddl(stmt, &statement))?;
+                return Ok(QueryResult::new(Box::new(
+                    crate::pipeline_session::affected_rows_source(0),
+                )));
+            }
+            StatementRoute::MixedTemporaryDrop { statement, local } => {
+                self.observe_routed_write(sql, stmt, |node| {
+                    node.run_mixed_temporary_drop(stmt, &statement, local)
+                })?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));

@@ -92,6 +92,17 @@ impl GlobalIdAllocator {
     }
 }
 
+/// Plans Go `Mutator.GenGlobalID` without creating a persistent DDL job.
+/// Commit the returned mutation at this snapshot's timestamp before exposing
+/// the ID; a write conflict requires a fresh read and allocation.
+pub fn reserve_global_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+) -> Result<(i64, BufferMutation), DdlPlanError> {
+    let mut allocator = GlobalIdAllocator::load(snapshot)?;
+    let id = allocator.allocate(1)?[0];
+    Ok((id, allocator.mutation()?.expect("one allocated global ID")))
+}
+
 fn create_table_args(spec: &JobSpec) -> GoShared<tidb_model::CreateTableArgs> {
     match &spec.args {
         JobArgsValue::CreateTable(Some(args)) => args.clone(),

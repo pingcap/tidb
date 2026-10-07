@@ -2599,6 +2599,16 @@ impl KvTable {
         self.auto_random_id.reset()
     }
 
+    /// Go `temptable.TruncateLocalTemporaryTable` retains metadata but gives
+    /// the replacement a new identity, empty storage and memory allocators.
+    pub fn recreate_local_temporary(&mut self, table_id: i64) {
+        debug_assert_eq!(self.temp_table_type(), tidb_model::TempTableType::LOCAL);
+        self.table_id = table_id;
+        self.store = Box::new(MemTableStorage::new());
+        self.auto_id = AutoIdAllocator::new();
+        self.auto_random_id = AutoIdAllocator::new();
+    }
+
     /// Sets the table's name, used to qualify a duplicate-key error.
     pub fn set_name(&mut self, name: &str) {
         self.name = name.to_owned();

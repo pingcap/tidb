@@ -388,21 +388,13 @@ impl Session {
         stmt: &Stmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
         self.validate_snapshot_statement(stmt)?;
-        let local_temporary_create = matches!(
-            stmt,
-            Stmt::Ddl(ddl)
-                if matches!(
-                    ddl.as_ref(),
-                    tidb_ast::DdlStmt::CreateTable(create)
-                        if create.temporary == tidb_ast::CreateTableTemporary::Local
-                )
-        );
-        if matches!(stmt, Stmt::Ddl(_)) && !local_temporary_create {
-            // Go commits the open transaction before ordinary DDL
+        self.validate_temporary_ddl_preprocess(stmt)?;
+        if matches!(stmt, Stmt::Ddl(_)) && !self.ddl_preserves_transaction(stmt) {
+// Go commits the open transaction before ordinary DDL
             // (`session.ExecuteStmt`, which calls `sessiontxn`'s
             // `OnStmtStart` -> `checkBeforeNewTxn` for a DDL node). LOCAL
-            // `CREATE TEMPORARY TABLE` is the exception: `DDLExec.Next`
-            // returns through `createSessionTemporaryTable` before
+            // CREATE and local-only DROP are exceptions: `DDLExec.Next`
+            // returns through the temporary-table owner before
             // `NewTxnInStmt`, retaining the user's transaction. For ordinary
             // DDL, everything staged before it is already durable when it
             // starts. Captured from TiDB: after
@@ -418,6 +410,9 @@ impl Session {
             // a TRUNCATE's counter reset lands on the table that survives
             // rather than on a copy about to be discarded.
             self.commit()?;
+        }
+        if let Some(error) = self.local_temporary_ddl_refusal(stmt) {
+            return Err(error);
         }
         match stmt {
             Stmt::Session(session_stmt) => match &**session_stmt {
@@ -2943,15 +2938,14 @@ impl Session {
                     self.drain_eval_warnings(&ctx);
                     result
                 }
-                DdlStmt::DropTable(_) => {
+                DdlStmt::DropTable(drop) => {
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = self.foreign_key_checks();
                     let missing = self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_table_in(
-                            sql,
+                        tidb_executor::run_drop_table_stmt_in(
+                            drop,
                             catalog,
                             &current_db,
-                            sql_mode,
                             foreign_key_checks,
                         )
                     })?;

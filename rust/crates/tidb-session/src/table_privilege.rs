@@ -325,7 +325,7 @@ pub(crate) fn required_table_privileges(
     // Preserve original table visits for observation, but retain Go's
     // statement-specific temporary-table policy for each execution's grants.
     // Exempt only operations whose execution resolves the session overlay.
-    // Other cluster DDL still lacks Go's complete local-target splitting.
+    // The temporary DDL router shares those resolved targets with execution.
     if matches!(stmt, Stmt::Query(_) | Stmt::Dml(_)) {
         for request in &mut requests {
             request.temporary_privilege = TemporaryPrivilege::SkipLocal;
@@ -347,14 +347,23 @@ pub(crate) fn required_table_privileges(
                     }
                 }
             }
-            DdlStmt::TruncateTable(_) => {
+            DdlStmt::TruncateTable(_)
+            | DdlStmt::AlterTable(_)
+            | DdlStmt::CreateIndex(_)
+            | DdlStmt::DropIndex(_)
+            | DdlStmt::RenameTable(_) => {
                 for request in &mut requests {
                     request.temporary_privilege = TemporaryPrivilege::SkipLocal;
                 }
             }
-            DdlStmt::DropTable(drop) if drop.temporary == tidb_ast::DropTemporary::Local => {
+            DdlStmt::DropTable(drop) => {
                 for request in &mut requests {
-                    request.temporary_privilege = TemporaryPrivilege::Skip;
+                    request.temporary_privilege =
+                        if drop.temporary == tidb_ast::DropTemporary::Local {
+                            TemporaryPrivilege::Skip
+                        } else {
+                            TemporaryPrivilege::SkipLocal
+                        };
                 }
             }
             _ => {}

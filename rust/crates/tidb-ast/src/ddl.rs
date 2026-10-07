@@ -322,8 +322,7 @@ impl RenameTableStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropTableStmt {
     /// The `TEMPORARY` / `GLOBAL TEMPORARY` modifier (restored before
-    /// `TABLE`). This executor never models temporary tables, so a
-    /// temporary drop is `Unsupported` at execution — parse+restore only.
+    /// `TABLE`). Execution splits session-local targets from persisted ones.
     pub temporary: DropTemporary,
     /// Suppresses the "table doesn't exist" error for any name in `names`
     /// that isn't in the catalog — each name is still checked

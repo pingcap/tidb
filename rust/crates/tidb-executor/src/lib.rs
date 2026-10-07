@@ -222,8 +222,9 @@ pub use ddl::{
     escape_partition_name, linear_partitioning_warning, partition_placement_text,
     resolve_database_charset, run_alter_placement_policy, run_alter_table_in, run_create_index_in,
     run_create_placement_policy, run_create_table_in, run_create_table_on, run_drop_index_in,
-    run_drop_placement_policy, run_drop_table_in, run_rename_table_in, run_truncate_table_in,
-    run_truncate_table_in_with_foreign_key_checks, CreateTableSettings,
+    run_drop_placement_policy, run_drop_table_in, run_drop_table_stmt_in, run_rename_table_in,
+    run_truncate_table_in, run_truncate_table_in_with_foreign_key_checks, split_drop_table_targets,
+    CreateTableSettings,
 };
 pub use ddl_sequence::{
     run_alter_sequence_in, run_create_sequence_in, run_drop_sequence_in, show_create_sequence,
@@ -297,7 +298,10 @@ pub use tidb_expr::{
     JsonError, MysqlRng, SessionTimeZone,
 };
 pub use topn::TopNExec;
-pub use view::{resolve_view_definition, run_alter_view_in, run_create_view_in, run_drop_view_in, view_column_list};
+pub use view::{
+    resolve_view_definition, run_alter_view_in, run_create_view_in, run_drop_view_in,
+    view_column_list,
+};
 
 #[cfg(test)]
 mod tests_admin_check_admintest_source;

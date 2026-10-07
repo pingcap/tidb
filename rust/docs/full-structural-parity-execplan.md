@@ -2710,3 +2710,8 @@ The [connected plan](shared-dml-contract-batch-execplan.md) and [receipt](parity
 
 
 Latest connected repair: [index evaluation and removal](parity/current-audit/index-lifecycle-batch-validation.json). Seven baseline assertions failed (five wire, two Rust); 107 selected Rust tests and 6 real MySQL assertions pass after repair. Index creation preserves SQL mode/timezone and typed errors; removal uses physical ranges, including implicit indexes removed with columns. D02 stays open; K03/D11 stay partial for broader durable/package obligations. Counts remain86 tracked/30 repaired/56 unresolved (27open,29partial). The [plan](index-lifecycle-batch-execplan.md) records connected production migration and rollback coverage. Shared statement/table owners replace default contexts, string error flattening and row-based index deletion.
+
+
+## Temporary DDL ownership checkpoint — 2026-10-07
+
+The [batch plan](temporary-ddl-batch-execplan.md) and [receipt](parity/current-audit/temporary-ddl-batch-validation.json) repair shared target resolution, grants, DROP completion and transaction boundaries across both session wrappers. 196 selected Rust cases and 51 live checks pass after17 baseline live failures. A01/D01/D11/O18 remain open/partial for their broader package boundaries; no complete package acceptance or performance claim.

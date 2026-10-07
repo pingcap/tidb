@@ -358,8 +358,8 @@ use table_constraints::{
 
 use indexes::{index_part_names, is_visible};
 pub use table_lifecycle::{
-    run_drop_table_in, run_rename_table_in, run_truncate_table_in,
-    run_truncate_table_in_with_foreign_key_checks,
+    run_drop_table_in, run_drop_table_stmt_in, run_rename_table_in, run_truncate_table_in,
+    run_truncate_table_in_with_foreign_key_checks, split_drop_table_targets,
 };
 
 use crate::driver::{Catalog, DriverError};
@@ -1179,7 +1179,11 @@ pub fn run_create_table_in(
         let partitions = create_like_source(&source_db, &source_name, catalog)?
             .partition()
             .map_or(0, |partition| partition.definitions.len());
-        let id = catalog.allocate_table_id();
+        let id = if temporary == tidb_model::TempTableType::LOCAL {
+            0 // Assigned after metadata validation, before session publication.
+        } else {
+            catalog.allocate_table_id()
+        };
         let mut ids = (0..partitions)
             .map(|_| catalog.allocate_table_id())
             .collect::<Vec<_>>()
@@ -1532,7 +1536,11 @@ pub fn run_create_table_in(
         set_no_default_value_flag(&mut column.field_type, has_default_values[offset]);
     }
 
-    let table_id = catalog.allocate_table_id();
+    let table_id = if temporary == tidb_model::TempTableType::LOCAL {
+        0 // Local temporary DDL assigns a real ID in register_created_table.
+    } else {
+        catalog.allocate_table_id()
+    };
 
     // The generated columns, built against the table's own final column list
     // so their expressions index the stored row directly.
@@ -2054,10 +2062,11 @@ fn register_created_table(
     catalog: &mut Catalog,
     database: &str,
     name: &str,
-    table: KvTable,
+    mut table: KvTable,
     temporary: tidb_model::TempTableType,
 ) -> Result<(), DriverError> {
     if temporary == tidb_model::TempTableType::LOCAL {
+        table.table_id = catalog.allocate_local_temporary_table_id()?;
         catalog.register_local_temporary_in(database, name, table)
     } else {
         catalog.register_kv_in(database, name, table)

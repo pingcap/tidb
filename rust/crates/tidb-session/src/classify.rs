@@ -374,20 +374,8 @@ impl Session {
         }
     }
 
-    /// Whether this is Go's session-owned LOCAL temporary-table create.
-    ///
-    /// `DDLExec.Next` gives this one statement an early return before opening
-    /// a DDL transaction. Other DDL shapes, including mixed `DROP TABLE`,
-    /// have their own splitting and transaction rules and must not be swept
-    /// into this route merely because one resolved name is temporary.
-    pub fn is_local_temporary_create(&mut self, sql: &str) -> Result<bool, DriverError> {
-        let stmt = self.parse(sql)?;
-        Ok(Self::is_local_temporary_create_parsed(&stmt))
-    }
-
-    /// [`Self::is_local_temporary_create`] over an already-parsed statement.
-    #[must_use]
-    pub fn is_local_temporary_create_parsed(stmt: &Stmt) -> bool {
+    /// Go DDLExec.Next's session-local CREATE exception.
+    fn is_local_temporary_create_parsed(stmt: &Stmt) -> bool {
         let Stmt::Ddl(ddl) = stmt else {
             return false;
         };
@@ -398,8 +386,8 @@ impl Session {
         )
     }
 
-    /// Whether DDL targets metadata owned only by this session. TRUNCATE
-    /// resolves its one table; mixed DROP keeps its separate splitting rules.
+    /// Whether the session overlay owns DDL execution or its local-target
+    /// refusal. Mixed DROP retains a separate persistent operation.
     pub fn is_local_temporary_ddl_parsed(&self, stmt: &Stmt) -> bool {
         if Self::is_local_temporary_create_parsed(stmt) {
             return true;
@@ -407,10 +395,85 @@ impl Session {
         let Stmt::Ddl(ddl) = stmt else {
             return false;
         };
-        let tidb_ast::DdlStmt::TruncateTable(name) = ddl.as_ref() else {
-            return false;
+        use tidb_ast::DdlStmt;
+        match ddl.as_ref() {
+            DdlStmt::TruncateTable(name) => self.is_local_temporary_table_path(name),
+            DdlStmt::DropTable(drop) => {
+                drop.temporary == tidb_ast::DropTemporary::Local
+                    || self.split_local_temporary_drop(drop).0.names.is_empty()
+            }
+            _ => self.local_temporary_ddl_refusal(stmt).is_some(),
+        }
+    }
+
+    /// DDLExec checks every rename source before starting any durable job.
+    /// The refusal is an executor error, after the implicit commit.
+    pub(crate) fn local_temporary_ddl_refusal(&self, stmt: &Stmt) -> Option<DriverError> {
+        let Stmt::Ddl(ddl) = stmt else {
+            return None;
         };
-        self.is_local_temporary_table_path(name)
+        use tidb_ast::DdlStmt;
+        let operation = match ddl.as_ref() {
+            DdlStmt::AlterTable(alter) if self.is_local_temporary_table_path(&alter.name) => {
+                "ALTER TABLE"
+            }
+            DdlStmt::CreateIndex(index) if self.is_local_temporary_table_path(&index.table) => {
+                "CREATE INDEX"
+            }
+            DdlStmt::DropIndex(index) if self.is_local_temporary_table_path(&index.table) => {
+                "DROP INDEX"
+            }
+            DdlStmt::RenameTable(rename)
+                if rename
+                    .pairs
+                    .iter()
+                    .any(|(from, _)| self.is_local_temporary_table_path(from)) =>
+            {
+                "RENAME TABLE"
+            }
+            _ => return None,
+        };
+        Some(DriverError::UnsupportedLocalTempTableDDL(operation))
+    }
+
+    /// Resolve DROP against the same overlay used by execution and privileges.
+    pub fn split_local_temporary_drop(
+        &self,
+        drop: &tidb_ast::DropTableStmt,
+    ) -> (tidb_ast::DropTableStmt, Vec<Vec<String>>) {
+        tidb_executor::split_drop_table_targets(drop, |name| {
+            self.is_local_temporary_table_path(name)
+        })
+    }
+
+    /// DDLExec.Next's early-return exceptions preserve the user's transaction.
+    /// Explicit local DROP returns early even when some names are missing.
+    pub fn ddl_preserves_transaction(&self, stmt: &Stmt) -> bool {
+        if Self::is_local_temporary_create_parsed(stmt) {
+            return true;
+        }
+        matches!(stmt, Stmt::Ddl(ddl) if matches!(ddl.as_ref(), tidb_ast::DdlStmt::DropTable(drop)
+            if drop.temporary == tidb_ast::DropTemporary::Local
+                || self.split_local_temporary_drop(drop).0.names.is_empty()))
+    }
+
+    /// Complete only the already-resolved local leg of a successful cluster DROP.
+    /// This does not start another statement or replace its warnings/attribution.
+    pub fn drop_local_temporary_targets(
+        &mut self,
+        names: Vec<Vec<String>>,
+    ) -> Result<(), DriverError> {
+        let database = self.current_db.clone();
+        // The shared splitter reverses local names; restore input order here
+        // so its executor walks the same reverse order as the original DROP.
+        let drop = tidb_ast::DropTableStmt {
+            temporary: tidb_ast::DropTemporary::Local,
+            if_exists: false,
+            names: names.into_iter().rev().collect(),
+        };
+        self.with_catalog_mut(|catalog| {
+            tidb_executor::run_drop_table_stmt_in(&drop, catalog, &database, false).map(|_| ())
+        })
     }
 
     pub(crate) fn is_local_temporary_table_path(&self, name: &[String]) -> bool {
@@ -477,15 +540,6 @@ impl Session {
             // partition DDL change persistent schema and must reach the same
             // cluster authority as every other schema change.
             Stmt::Ddl(ddl) if matches!(ddl.as_ref(), tidb_ast::DdlStmt::AlterInstance(_)) => {
-                StoredStateChange::None
-            }
-            Stmt::Ddl(ddl)
-                if matches!(ddl.as_ref(), tidb_ast::DdlStmt::DropTable(drop)
-                if matches!(drop.temporary, tidb_ast::DropTemporary::Local)) =>
-            {
-                // DROP TEMPORARY TABLE (LOCAL) targets the session's own
-                // catalog's local temp tables: the ordinary route runs the
-                // session's DropTable arm, whose Local arm judges the names.
                 StoredStateChange::None
             }
             Stmt::Ddl(_) => StoredStateChange::Schema,

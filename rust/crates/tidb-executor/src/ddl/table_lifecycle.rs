@@ -237,6 +237,18 @@ pub fn run_truncate_table_in_with_foreign_key_checks(
             return Err(error);
         }
     }
+    if let Some(crate::TableEntry::Kv(table)) = catalog.table_in(&database, &name) {
+        if table.temp_table_type() == tidb_model::TempTableType::LOCAL {
+            let mut replacement = table.as_ref().clone();
+            let id = catalog.allocate_local_temporary_table_id()?;
+            replacement.recreate_local_temporary(id);
+            *catalog
+                .table_mut_in(&database, &name)
+                .expect("resolved local table") =
+                crate::TableEntry::Kv(std::sync::Arc::new(replacement));
+            return Ok(());
+        }
+    }
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(&database, &name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{name}"),
@@ -302,19 +314,34 @@ pub fn run_drop_table_in(
             ))
         }
     };
-    // The kind of table each written name currently resolves to, resolved
+    run_drop_table_stmt_in(drop, catalog, current_db, foreign_key_checks)
+}
+
+/// Execute the already parsed DROP using one resolved temporary/persistent split.
+pub fn run_drop_table_stmt_in(
+    drop: &tidb_ast::DropTableStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    foreign_key_checks: bool,
+) -> Result<Vec<String>, DriverError> {
+// The kind of table each written name currently resolves to, resolved
     // ONCE so the two temporary arms below and the ordinary drop all judge
     // the same catalog state.
     // `None` is "no such object"; a view or a sequence answers
     // `TempTableType::NONE`, because Go's `TableByName` finds those too and
     // judges them by the `TempTableType` their `TableInfo` carries.
-    let kind_of =
-        |catalog: &Catalog, database: &str, name: &str| match catalog.table_in(database, name) {
+    let kind_of = |catalog: &Catalog, database: &str, name: &str| {        match catalog.table_in(database, name) {
             Some(crate::TableEntry::Kv(table)) => Some(table.temp_table_type()),
             Some(_) => Some(tidb_model::TempTableType::NONE),
             None => None,
-        };
+        }
+    };
 
+    let (persistent, local) = split_drop_table_targets(drop, |path| {
+        crate::driver::split_table_path_pub(path, current_db).is_ok_and(|(db, table)| {
+            kind_of(catalog, db, table) == Some(tidb_model::TempTableType::LOCAL)
+        })
+    });
     match drop.temporary {
         tidb_ast::DropTemporary::None => {}
         // Go `DDLExec.Next` (`pkg/executor/ddl.go:129`): `DROP TEMPORARY
@@ -336,17 +363,13 @@ pub fn run_drop_table_in(
                 if drop.if_exists {
                     // Go files the same error as a NOTE and returns success,
                     // which is what the caller's returned list becomes.
-                    return Ok(not_local);
+                    return Ok(vec![not_local.join(",")]);
                 }
                 return Err(DriverError::Schema(crate::SchemaErrorKind::BadTable(
                     not_local.join(","),
                 )));
             }
-            for path in &drop.names {
-                let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
-                let (database, name) = (database.to_owned(), name.to_owned());
-                catalog.drop_table_in(&database, &name);
-            }
+            drop_local_table_targets(&local, catalog, current_db)?;
             return Ok(Vec::new());
         }
         // Go `checkDropTemporaryTableGrammar` (`preprocess.go:1122`): a name
@@ -365,6 +388,9 @@ pub fn run_drop_table_in(
         }
     }
 
+    // Local targets have no durable FK/index owner. Execute the persistent
+    // operation first; an error must leave every local target intact.
+    let drop = &persistent;
     // Go `checkDropTableHasForeignKeyReferredInOwner` runs over the WHOLE
     // statement before anything is dropped, so a parent and its child dropped
     // together succeed regardless of the order they are listed in, while a
@@ -412,5 +438,41 @@ pub fn run_drop_table_in(
             missing.join(","),
         )));
     }
+    drop_local_table_targets(&local, catalog, current_db)?;
     Ok(missing)
+}
+
+/// Go DDLExec.Next removes local names backwards, preserving the persistent
+/// order and dropping local names in reverse order after cluster success.
+pub fn split_drop_table_targets(
+    drop: &tidb_ast::DropTableStmt,
+    mut is_local: impl FnMut(&[String]) -> bool,
+) -> (tidb_ast::DropTableStmt, Vec<Vec<String>>) {
+    let mut persistent = drop.clone();
+    let mut local = Vec::new();
+    for index in (0..persistent.names.len()).rev() {
+        if is_local(&persistent.names[index]) {
+            local.push(persistent.names.remove(index));
+        }
+    }
+    (persistent, local)
+}
+
+fn drop_local_table_targets(
+    names: &[Vec<String>],
+    catalog: &mut Catalog,
+    current_db: &str,
+) -> Result<(), DriverError> {
+    for path in names {
+        let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
+        if !matches!(catalog.table_in(database, name), Some(crate::TableEntry::Kv(table))
+            if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
+        {
+            return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+                format!("{database}.{name}"),
+            )));
+        }
+        catalog.drop_table_in(database, name);
+    }
+    Ok(())
 }

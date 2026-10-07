@@ -333,6 +333,7 @@ impl Session {
         &self,
         stmt: &tidb_ast::Stmt,
     ) -> Result<(), DriverError> {
+        self.validate_temporary_ddl_preprocess(stmt)?;
         if self.privilege_context().is_none() && self.statement_observation.is_none() {
             return Ok(());
         }
@@ -345,21 +346,7 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         preparing: bool,
     ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
-        // Go checkCreateTableGrammar resolves LIKE through the session
-        // infoschema and rejects temporary sources before privilege checking.
-        // A cluster lowerer must never clone the permanent table hidden by a
-        // local temporary source with the same name.
-        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
-            if let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() {
-                if create
-                    .like_table
-                    .as_ref()
-                    .is_some_and(|name| self.is_local_temporary_table_path(name))
-                {
-                    return Err(DriverError::OptOnTemporaryTable("create table like"));
-                }
-            }
-        }
+        self.validate_temporary_ddl_preprocess(stmt)?;
         crate::table_privilege::required_table_privileges(stmt, &self.current_db, |dml| {
             let mut ctx = self.statement_context_for_stmt(stmt, false);
             if preparing {
@@ -393,6 +380,52 @@ impl Session {
                 }
             }
         })
+    }
+
+    /// Preprocessor errors precede both grant checking and implicit commits.
+    pub fn validate_temporary_ddl_preprocess(
+        &self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<(), DriverError> {
+        // Go checkCreateTableGrammar resolves LIKE through the session
+        // infoschema and rejects temporary sources before privilege checking.
+        // A cluster lowerer must never clone the permanent table hidden by a
+        // local temporary source with the same name.
+        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+            if let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() {
+                if create
+                    .like_table
+                    .as_ref()
+                    .is_some_and(|name| self.is_local_temporary_table_path(name))
+                {
+                    return Err(DriverError::OptOnTemporaryTable("create table like"));
+                }
+            }
+        }
+        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+            if let tidb_ast::DdlStmt::DropTable(drop) = ddl.as_ref() {
+                if drop.temporary == tidb_ast::DropTemporary::Global {
+                    let catalog = self.lock_catalog()?;
+                    let catalog = self.txn.as_ref().map_or(&*catalog, |txn| &txn.working);
+                    for path in &drop.names {
+                        let (db, name) = match path.as_slice() {
+                            [name] => (self.current_db.as_str(), name.as_str()),
+                            [db, name] => (db.as_str(), name.as_str()),
+                            _ => continue,
+                        };
+                        if self.is_local_temporary_table(db, name)
+                            || catalog.table_in(db, name).is_some_and(|table| {
+                                !matches!(table, tidb_executor::TableEntry::Kv(table)
+                                    if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
+                            })
+                        {
+                            return Err(DriverError::DropTableOnTemporaryTable);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Checks one statement's derived requests against the live grants.

@@ -1,0 +1,694 @@
+{
+  "date": "2026-10-07",
+  "scope": "Shared temporary DDL resolution, DROP split and completion, preprocessor/grant admission, transaction and observation lifecycle, shared global table-ID allocation and TRUNCATE replacement; existing-owner maintenance.",
+  "integration_start": "45e4abb96e9c5f027d7e1c80df2c4aadc4094bfd",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_head": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "findings": [
+    "A01",
+    "D01",
+    "D11",
+    "O18"
+  ],
+  "statuses_unchanged": true,
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "repairs": [
+    " Temporary DDL now resolves the same local overlay for grants and execution: ordinary/mixed DROP skips local privileges, while local ALTER/index/rename reaches its own refusal instead of the hidden permanent object. GLOBAL DROP kind errors precede grants/commit; explicit local mismatch notes remain combined. Complete planner visit ownership remains open.",
+    " Local CREATE/LIKE and TRUNCATE now reserve real global metadata IDs through an independent transaction; TRUNCATE replaces local storage and memory auto-ID allocators. This fixes collisions with persistent objects. Ordinary and mixed DROP now split local names before cluster lowering, preserve original visits, and retire local targets only after persistent success. Local-only DROP and explicit local mismatches preserve the transaction; ordinary local ALTER/index/rename refusals occur after Go's implicit commit and cannot mutate hidden persistent metadata. The direct metadata transaction still lacks complete durable DDL job ownership. Its existing multi-persistent DROP planner also rejects missing names before applying present targets, unlike Go\u2019s per-object job loop; that residual is not repaired by local-target splitting.",
+    " Local ALTER (including grouped actions), CREATE/DROP INDEX and RENAME now use the session overlay refusal owner; the cluster path cannot mutate the permanent table hidden by a local target. Shared DROP resolution and implicit-commit policy preserve local/persistent lifetimes. Complete durable multi-schema ownership remains unresolved.",
+    " Mixed DROP keeps original local/persistent table visits in one routed observation; local completion no longer reparses or starts a second SQL statement. Broader plan/runtime metadata and complete package obligations remain unresolved."
+  ],
+  "removals": [
+    "Static explicit-local DROP routing exception",
+    "Unconditional CREATE-only DDL commit rule in both session wrappers",
+    "DROP reparsing in Session and wrapper parsing for local DDL",
+    "Unused SQL-text temporary-CREATE classification wrapper"
+  ],
+  "intermediate_identity_regression": {
+    "binary_sha256": "e78541caa908b1351784ea49a44a4f010a747ee91fa61addc59a16ff21b27620",
+    "checks": [
+      {
+        "name": "create local shadow",
+        "sql": "CREATE TEMPORARY TABLE shadow(a INT, KEY ka(a))",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "ordinary DROP resolves local without DROP privilege",
+        "sql": "DROP TABLE shadow",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "ordinary local DROP preserves hidden table",
+        "sql": "SELECT a FROM shadow",
+        "rows": [
+          [
+            99
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "local rejection ALTER TABLE",
+        "sql": "ALTER TABLE shadow ADD COLUMN b INT",
+        "rows": null,
+        "error": [
+          8200,
+          "TiDB doesn't support ALTER TABLE for local temporary table"
+        ],
+        "passed": true
+      },
+      {
+        "name": "executor refusal commits prior writes ALTER TABLE",
+        "sql": "SELECT a FROM durable WHERE a=1",
+        "rows": [
+          [
+            1
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "local rejection CREATE INDEX",
+        "sql": "CREATE INDEX kb ON shadow(a)",
+        "rows": null,
+        "error": [
+          8200,
+          "TiDB doesn't support CREATE INDEX for local temporary table"
+        ],
+        "passed": true
+      },
+      {
+        "name": "executor refusal commits prior writes CREATE INDEX",
+        "sql": "SELECT a FROM durable WHERE a=2",
+        "rows": [
+          [
+            2
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "local rejection DROP INDEX",
+        "sql": "DROP INDEX ka ON shadow",
+        "rows": null,
+        "error": [
+          8200,
+          "TiDB doesn't support DROP INDEX for local temporary table"
+        ],
+        "passed": true
+      },
+      {
+        "name": "executor refusal commits prior writes DROP INDEX",
+        "sql": "SELECT a FROM durable WHERE a=3",
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "local rejection RENAME TABLE",
+        "sql": "RENAME TABLE shadow TO renamed",
+        "rows": null,
+        "error": [
+          8200,
+          "TiDB doesn't support RENAME TABLE for local temporary table"
+        ],
+        "passed": true
+      },
+      {
+        "name": "executor refusal commits prior writes RENAME TABLE",
+        "sql": "SELECT a FROM durable WHERE a=4",
+        "rows": [
+          [
+            4
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "unsupported DDL preserves hidden table",
+        "sql": "SELECT a FROM shadow",
+        "rows": [
+          [
+            99
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "local drop ",
+        "sql": "DROP TABLE local_10",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "local drop preserves rollback ",
+        "sql": "SELECT a FROM durable WHERE a=10",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "local drop TEMPORARY ",
+        "sql": "DROP TEMPORARY TABLE local_11",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "local drop preserves rollback TEMPORARY ",
+        "sql": "SELECT a FROM durable WHERE a=11",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "mixed drop splits names",
+        "sql": "DROP TABLE local_mixed,mixed",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "mixed drop commits cluster transaction",
+        "sql": "SELECT a FROM durable WHERE a=20",
+        "rows": [
+          [
+            20
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "mixed drop removes local target",
+        "sql": "SELECT * FROM local_mixed",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'temp_batch.local_mixed' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "mixed drop removes persistent target",
+        "sql": "SELECT * FROM mixed",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'temp_batch.mixed' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "failed persistent drop leaves local target",
+        "sql": "DROP TABLE local_missing,not_there",
+        "rows": null,
+        "error": [
+          1051,
+          "Unknown table 'temp_batch.not_there'"
+        ],
+        "passed": true
+      },
+      {
+        "name": "local survives mixed failure",
+        "sql": "SELECT a FROM local_missing",
+        "rows": [
+          [
+            8
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "IF EXISTS completes both scopes",
+        "sql": "DROP TABLE IF EXISTS local_missing,not_there",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "IF EXISTS removes local after persistent success",
+        "sql": "SELECT * FROM local_missing",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'temp_batch.local_missing' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "explicit local mismatch note",
+        "sql": "DROP TEMPORARY TABLE IF EXISTS local_bad,missing_a,missing_b",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "one combined local mismatch note",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Note",
+            1051,
+            "Unknown table 'temp_batch.missing_a,temp_batch.missing_b'"
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "explicit local mismatch preserves rollback",
+        "sql": "SELECT a FROM durable WHERE a=30",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "local survives missing explicit local names",
+        "sql": "SELECT a FROM local_bad",
+        "rows": [
+          [
+            9
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "global DROP cannot target local",
+        "sql": "DROP GLOBAL TEMPORARY TABLE local_bad",
+        "rows": null,
+        "error": [
+          8007,
+          "`drop global temporary table` can only drop global temporary table"
+        ],
+        "passed": true
+      },
+      {
+        "name": "global grammar error preserves rollback",
+        "sql": "SELECT a FROM durable WHERE a=31",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "prepared DROP resolves new local shadow",
+        "sql": "EXECUTE temp_drop",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "prepared local DROP preserves hidden persistent object",
+        "sql": "SELECT a FROM prepared_shadow",
+        "rows": [
+          [
+            77
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "prepared local DROP preserves rollback",
+        "sql": "SELECT a FROM durable WHERE a=40",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "GLOBAL grammar rejects persistent target",
+        "sql": "DROP GLOBAL TEMPORARY TABLE durable",
+        "rows": null,
+        "error": [
+          8007,
+          "`drop global temporary table` can only drop global temporary table"
+        ],
+        "passed": true
+      },
+      {
+        "name": "GLOBAL persistent kind error preserves rollback",
+        "sql": "SELECT a FROM durable WHERE a=41",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "DROP uses Go Unicode folding",
+        "sql": "DROP TABLE `\u00e4temp`",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "Unicode DROP preserves hidden object",
+        "sql": "SELECT a FROM `\u00e4temp`",
+        "rows": [
+          [
+            66
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "all rename sources checked before persistent job validation",
+        "sql": "RENAME TABLE absent TO renamed_again, shadow TO shadow_renamed",
+        "rows": null,
+        "error": [
+          8200,
+          "TiDB doesn't support RENAME TABLE for local temporary table"
+        ],
+        "passed": true
+      },
+      {
+        "name": "rename local refusal retains executor commit",
+        "sql": "SELECT a FROM durable WHERE a=42",
+        "rows": [
+          [
+            42
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "mixed DROP still checks persistent privileges",
+        "sql": "DROP TABLE limited_local,durable",
+        "rows": null,
+        "error": [
+          1142,
+          "DROP command denied to user 'limited_temp'@'%' for table 'durable'"
+        ],
+        "passed": true
+      },
+      {
+        "name": "denied mixed DROP preserves rollback",
+        "sql": "SELECT a FROM durable WHERE a=43",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "denied mixed DROP preserves local table",
+        "sql": "SELECT a FROM limited_local",
+        "rows": [
+          [
+            66
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "local ALTER exemption reaches its own refusal",
+        "sql": "ALTER TABLE limited_local ADD COLUMN b INT",
+        "rows": null,
+        "error": [
+          8200,
+          "TiDB doesn't support ALTER TABLE for local temporary table"
+        ],
+        "passed": true
+      },
+      {
+        "name": "summary retains both drop scopes",
+        "rows": [
+          [
+            "temp_batch.local_mixed,temp_batch.mixed"
+          ]
+        ],
+        "passed": true
+      }
+    ],
+    "exit": 0
+  },
+  "baseline": {
+    "checks": 31,
+    "failed": 17,
+    "failures": [
+      {
+        "name": "ordinary DROP resolves local without DROP privilege",
+        "sql": "DROP TABLE shadow",
+        "rows": null,
+        "error": [
+          1142,
+          "DROP command denied to user 'temp_user'@'%' for table 'shadow'"
+        ],
+        "passed": false
+      },
+      {
+        "name": "local rejection ALTER TABLE",
+        "sql": "ALTER TABLE shadow ADD COLUMN b INT",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "local rejection CREATE INDEX",
+        "sql": "CREATE INDEX kb ON shadow(a)",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "local rejection DROP INDEX",
+        "sql": "DROP INDEX ka ON shadow",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "local rejection RENAME TABLE",
+        "sql": "RENAME TABLE shadow TO renamed",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "unsupported DDL preserves hidden table",
+        "sql": "SELECT a FROM shadow",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'temp_batch.shadow' doesn't exist"
+        ],
+        "passed": false
+      },
+      {
+        "name": "local drop ",
+        "sql": "DROP TABLE local_10",
+        "rows": null,
+        "error": [
+          1051,
+          "Unknown table 'temp_batch.local_10'"
+        ],
+        "passed": false
+      },
+      {
+        "name": "local drop preserves rollback ",
+        "sql": "SELECT a FROM durable WHERE a=10",
+        "rows": [
+          [
+            10
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "local drop preserves rollback TEMPORARY ",
+        "sql": "SELECT a FROM durable WHERE a=11",
+        "rows": [
+          [
+            11
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "mixed drop splits names",
+        "sql": "DROP TABLE local_mixed,mixed",
+        "rows": null,
+        "error": [
+          1051,
+          "Unknown table 'temp_batch.local_mixed'"
+        ],
+        "passed": false
+      },
+      {
+        "name": "mixed drop removes local target",
+        "sql": "SELECT * FROM local_mixed",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "mixed drop removes persistent target",
+        "sql": "SELECT * FROM mixed",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "IF EXISTS removes local after persistent success",
+        "sql": "SELECT * FROM local_missing",
+        "rows": [
+          [
+            8
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "one combined local mismatch note",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Note",
+            1051,
+            "Unknown table 'temp_batch.missing_a'"
+          ],
+          [
+            "Note",
+            1051,
+            "Unknown table 'temp_batch.missing_b'"
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "explicit local mismatch preserves rollback",
+        "sql": "SELECT a FROM durable WHERE a=30",
+        "rows": [
+          [
+            30
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "global DROP cannot target local",
+        "sql": "DROP GLOBAL TEMPORARY TABLE local_bad",
+        "rows": null,
+        "error": [
+          1051,
+          "Unknown table 'temp_batch.local_bad'"
+        ],
+        "passed": false
+      },
+      {
+        "name": "global grammar error preserves rollback",
+        "sql": "SELECT a FROM durable WHERE a=31",
+        "rows": [
+          [
+            31
+          ]
+        ],
+        "error": null,
+        "passed": false
+      }
+    ]
+  },
+  "rust_tests": {
+    "passed": 196,
+    "failed": 0,
+    "ignored": 0,
+    "new_methods": 6
+  },
+  "wire": {
+    "checks": 51,
+    "failed": 0,
+    "exit": 0,
+    "store": "unistore",
+    "owned_server_joined": true
+  },
+  "validation": {
+    "activation": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1",
+    "cargo_cwd": "/workspace/tidb/rust",
+    "commands": [
+      "cargo test --locked -p tidb-session --lib -- tests_temporary_tables tests_grants tests_observation_batch --test-threads=1",
+      "cargo check --locked --all-targets -p tidb-session -p tidb-server -p tidb-executor -p tidb-exec",
+      "make lint (repository root)",
+      "cargo build --locked -p tidb-server",
+      "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/temporary-ddl-batch/wire.py"
+    ],
+    "scoped_format_and_diff_check": "passed"
+  },
+  "go_evidence": [
+    "pkg/executor/ddl.go::DDLExec.Next and local DDL guards",
+    "pkg/planner/core/optimizer.go::VisitInfo4PrivCheck",
+    "pkg/planner/core/preprocess.go::checkDropTemporaryTableGrammar",
+    "pkg/table/temptable/ddl.go::DropLocalTemporaryTable,newTemporaryTableFromTableInfo,TruncateLocalTemporaryTable",
+    "pkg/ddl/db_integration_test.go::TestDropTemporaryTable,TestTruncateLocalTemporaryTable"
+  ],
+  "go_source_identities": {
+    "pkg/executor/ddl.go": "03e0494943e159d3a1d154020e5fa63f97d6cf999fe05eb8decda67467a24bba",
+    "pkg/planner/core/optimizer.go": "aca019d1b4a13b4a5decacfaa203feeea89b08e292cf1c662aefd3cb470fd60b",
+    "pkg/planner/core/preprocess.go": "d06df0725ad616e2aa5d0afdac55f8f5f125baf3c25ea1abd2e784dff21bba99",
+    "pkg/table/temptable/ddl.go": "3295e6aa388e5c5302f08be75fa0f786f6533a980f246e77cc74645f395af3a4",
+    "pkg/ddl/db_integration_test.go": "b35d064a05bcc6d67980e8af84efc6d9ac63c11760f519fc02d26bc3b4d32435",
+    "pkg/ddl/executor.go": "da64dbe0b8c84efa64b61326c899cdc45a50272c823f7ebf7cea4eb888b02d3d"
+  },
+  "source_identities": {
+    "rust/crates/tidb-ast/src/ddl.rs": "dd60d9a55c6fa0fb4c4c8e8d2b5d2717d78a98906e145c9450148c5828be450a",
+    "rust/crates/tidb-exec/src/ddl_job_submit.rs": "7b521e11a8e9a22c1ec5c245eade5e37be4a03378314e5a9b20acc6fa73d155a",
+    "rust/crates/tidb-executor/src/ddl.rs": "d420c01e4d6bf47e639c7ce6179b9f28c55b55c299a7b0c3f2b2442b59f79f0c",
+    "rust/crates/tidb-executor/src/ddl/table_lifecycle.rs": "f584e9491635ce36aed7128ed92321ed10cbc37f401746a303010c914205436a",
+    "rust/crates/tidb-executor/src/driver/catalog.rs": "40324e284ed647018c96440cd73dc3ec7045d74213e23265c732290580e2bdff",
+    "rust/crates/tidb-executor/src/kv_table.rs": "7f6e3a5b55919a91eb371d2fdc6e0d2e23147bb42dd24f17db06ff6bfcb9e8f1",
+    "rust/crates/tidb-executor/src/lib.rs": "92f146c406387751f65ef2ee959819c08127a2cf67af3abd8f4c50ad16673ce0",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs": "b1b3e5ad50290cc9dd3c21543f939f4bd231761945cd1818a58c87ad99428570",
+    "rust/crates/tidb-session/src/classify.rs": "daa96ebf1a6a2c21724b1d0e19d5cebc31b5819451fe9e694e768aef66587043",
+    "rust/crates/tidb-session/src/dispatch.rs": "2e0e489706a6bb0aef014c59f03c8a64dfc756d45fda76d77b8a02cf06b3a101",
+    "rust/crates/tidb-session/src/identity.rs": "1d150c5a0086c131025c45213b4d2df5e0601a45fc01f0c232a348d7b294880f",
+    "rust/crates/tidb-session/src/table_privilege.rs": "054c953be0d4115a560280551c1ef136aa924340991ac8669c908f5fc87d15d6",
+    "rust/crates/tidb-session/src/tests_temporary_tables.rs": "3f731042b924ce983e500af8443be2854f2e8874cd3a78d624124b9a649af23a"
+  },
+  "log_sha256": {
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "first-tests.log": "e3f3933c72fe1fb988c028e87a743f74cd7c2c9296a2a34e9b3c1a47218aca1d",
+    "wire-run.log": "56bfa8dc0d8aaca2f2dfe44823484ffeb8549384e2d7ee773205f0b6478e462d",
+    "identity-fixture-correction.log": "59c48dbc5849d91cc2e9bfafcfb66bbf94e1df4d790ca0d2037db57fbe8d409f",
+    "tests.log": "62067e2de39a6742239a753bbe57f5b27906569048e5a642cf132c3682762742",
+    "all-targets.log": "6701d03dfcbff9796fa8dfe4e5e48050850d56e45ff50a82572262ecb2e2eede",
+    "server-build.log": "f9321a10bfeeff8af1ec7abff37915ceaabdfc788ed35c5bfa20466ee8b4511d",
+    "wire-server.log": "5786b3b14442e6105f5818b53e4f9a45f9627306779de9a50bc3e83613871ebb",
+    "before-wire.log": "e65d8e88e7d2bdf639952e70b9e9c618f099b23938e7ec26f4e2e244ca85e36d"
+  },
+  "tests_removed": 0,
+  "not_verified": [
+    "Complete upstream packages/tests and independent Go runtime oracle",
+    "Live multi-node TiKV and mixed-version durable DDL recovery",
+    "Performance benchmarks",
+    "Remaining planner visits, durable DDL jobs, complete observation metadata",
+    "Existing cluster multi-persistent DROP still rejects missing names before applying present targets, unlike the Go per-object job loop; retained D01 source-confirmed residual",
+    "Other52 unresolved roots not freshly reproduced"
+  ],
+  "publication": "Required actual hook, fresh pre-push locked build and normal push/remote SHA are recorded in external final-handoff.json after commit.",
+  "external_evidence": "/workspace/.cloud-setup/temporary-ddl-batch"
+}
