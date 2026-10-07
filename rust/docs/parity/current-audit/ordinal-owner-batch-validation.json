@@ -1,0 +1,697 @@
+{
+  "date": "2026-10-07",
+  "scope": "K03 existing-owner maintenance: YEAR, ENUM, SET and BIT conversion and all table write callers. No complete Go package acceptance.",
+  "integration_start": "88086505a3805d90205561b08b9cc6e7e45a2153",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_head": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "native_changed": false,
+  "findings": [
+    "K03"
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "statuses_changed": false,
+  "other_unresolved_roots_freshly_reviewed": false,
+  "repairs": [
+    "YEAR applies source warning policy before adjustment, stops with zero on fatal conversion and reports adjustment error1264. JSON uses caller flags.",
+    "ENUM/SET parse numeric results only after handled source diagnostics; preserve earlier warnings, zero sentinels and SQL cause1265. ENUM uses its own unsigned bound.",
+    "BIT performs source conversion before width validation, retains warnings and gives width1406 precedence over source errors. Invalid vector conversion retains zero; SET retains NULL; failed numeric YEAR retains zero, all with plain SQL fallback1105.",
+    "Every table caller shares contextual conversion; ENUM/SET are excluded from generic1265 retitling. INSERT/UPDATE/ODKU and generated ODKU retain their completion rules.",
+    "Warning value text delegates to shared Datum.ToString bytes, including ENUM/SET names. Context creation in the legacy interface is limited to the four migrated targets."
+  ],
+  "removals": [
+    "Legacy table value/event conversion fallback and its error reconstruction",
+    "Conditional contextual-cast admission matrix",
+    "Separate generated/ordinary ODKU fallback and warning rewrite",
+    "StmtContext.rewrite_warnings_from (last caller migrated)",
+    "Duplicate datum_error_text scalar formatter; keep only the existing UTF-8 projection adapter",
+    "Private convert_to_signed/convert_to_unsigned wrappers, year_from_text and value_to_literal_uint"
+  ],
+  "retained": "conversion_event_is_silent remains for three DDL callers. No tests were removed merely for exposing a failure. Existing neighboring regressions remain.",
+  "rust_tests": {
+    "baseline_failed": 5,
+    "final_passed": 70,
+    "datatype": 54,
+    "executor": 16,
+    "final_failed": 0,
+    "ignored": 0,
+    "names_sha256": "75912753239ea8453aa70368c1040ea430c641c7a024548c2179d7c1a0c3c183",
+    "new_test_methods": 6
+  },
+  "go_comparison": {
+    "cases": 120,
+    "mismatches": 0,
+    "target_types": [
+      "YEAR",
+      "ENUM",
+      "SET",
+      "BIT(8)"
+    ],
+    "policies": [
+      "strict",
+      "warn",
+      "ignore"
+    ],
+    "inputs": [
+      "12tail",
+      "0tail",
+      "99999",
+      "bad",
+      "JSON string 1tail",
+      "JSON object",
+      "negative integer",
+      "nine-byte BIT",
+      "uint64 maximum",
+      "vector"
+    ],
+    "compared": [
+      "value",
+      "SQL error code/message",
+      "ordered source warnings"
+    ],
+    "plain_go_error_normalization": "Unregistered/plain errors map to MySQL fallback1105; comparison does not claim identical Go wrapping/stack formatting.",
+    "oracle_path": "/workspace/.cloud-setup/ordinal-owner-batch/oracle-expanded.json",
+    "comparison_path": "/workspace/.cloud-setup/ordinal-owner-batch/comparison.json"
+  },
+  "live_sql": {
+    "baseline_checks": 17,
+    "baseline_failed": 6,
+    "baseline_failures": [
+      {
+        "name": "e JSON warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [],
+        "error": null,
+        "pass": false
+      },
+      {
+        "name": "s JSON warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1265,
+            "Data truncated for column 's' at row 1"
+          ]
+        ],
+        "error": null,
+        "pass": false
+      },
+      {
+        "name": "s converted value",
+        "sql": "SELECT s FROM t",
+        "rows": [
+          [
+            ""
+          ]
+        ],
+        "error": null,
+        "pass": false
+      },
+      {
+        "name": "b JSON warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1406,
+            "Data too long for column 'b' at row 1"
+          ]
+        ],
+        "error": null,
+        "pass": false
+      },
+      {
+        "name": "strict ENUM rejects",
+        "sql": "INSERT INTO t(e) VALUES (CAST('\"1tail\"' AS JSON))",
+        "rows": [],
+        "error": null,
+        "pass": false
+      },
+      {
+        "name": "strict writes retain row",
+        "sql": "SELECT COUNT(*) FROM t",
+        "rows": [
+          [
+            2
+          ]
+        ],
+        "error": null,
+        "pass": false
+      }
+    ],
+    "intermediate_failure": [
+      {
+        "name": "ODKU completes warning over converted value",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1366,
+            "Incorrect enum value: 'Enum(MysqlEnum { name: GoString([97]), value: 1 }, Utf8Mb4Bin)' for column 'e' at row 1"
+          ]
+        ],
+        "error": null,
+        "pass": false
+      }
+    ],
+    "final_checks": 29,
+    "final_failed": 0,
+    "server_sha256": "be80e1450b7d508b54068259a808c344206d35869b23df63528bcd3a73d07231",
+    "server_exit": 0,
+    "checks": [
+      {
+        "name": "y JSON write",
+        "sql": "INSERT INTO t (y) VALUES (CAST('\"1tail\"' AS JSON))",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "y JSON warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1366,
+            "Incorrect year value: '\"1tail\"' for column 'y' at row 1"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "y converted value",
+        "sql": "SELECT CAST(y AS CHAR) FROM t",
+        "rows": [
+          [
+            "2001"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "e JSON write",
+        "sql": "INSERT INTO t (e) VALUES (CAST('\"1tail\"' AS JSON))",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "e JSON warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1366,
+            "Incorrect enum value: '\"1tail\"' for column 'e' at row 1"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "e converted value",
+        "sql": "SELECT e FROM t",
+        "rows": [
+          [
+            "a"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "s JSON write",
+        "sql": "INSERT INTO t (s) VALUES (CAST('\"1tail\"' AS JSON))",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "s JSON warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1366,
+            "Incorrect set value: '\"1tail\"' for column 's' at row 1"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "s converted value",
+        "sql": "SELECT s FROM t",
+        "rows": [
+          [
+            "a"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "b JSON write",
+        "sql": "INSERT INTO t (b) VALUES (CAST('\"1tail\"' AS JSON))",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "b JSON warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1366,
+            "Incorrect bit value: '\"1tail\"' for column 'b' at row 1"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "b converted value",
+        "sql": "SELECT HEX(b) FROM t",
+        "rows": [
+          [
+            "1"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "enum/set retain 1265",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1265,
+            "Data truncated for column 'e' at row 1"
+          ],
+          [
+            "Warning",
+            1265,
+            "Data truncated for column 's' at row 1"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "enum/set retain zero",
+        "sql": "SELECT e,s FROM t",
+        "rows": [
+          [
+            "",
+            ""
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "strict ENUM rejects",
+        "sql": "INSERT INTO t(e) VALUES (CAST('\"1tail\"' AS JSON))",
+        "rows": null,
+        "error": [
+          1265,
+          "Data truncated for column 'e' at row 1"
+        ],
+        "pass": true
+      },
+      {
+        "name": "strict SET rejects",
+        "sql": "INSERT INTO t(s) VALUES (CAST('\"1tail\"' AS JSON))",
+        "rows": null,
+        "error": [
+          1265,
+          "Data truncated for column 's' at row 1"
+        ],
+        "pass": true
+      },
+      {
+        "name": "strict writes retain row",
+        "sql": "SELECT COUNT(*) FROM t",
+        "rows": [
+          [
+            1
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "YEAR fatal source keeps plain warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1105,
+            "cannot convert datum from unsigned bigint to type year"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "YEAR fatal source retains zero",
+        "sql": "SELECT y+0 FROM t",
+        "rows": [
+          [
+            0
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "SET invalid vector keeps plain warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1105,
+            "cannot convert datum from vector to type set"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "SET invalid vector retains NULL",
+        "sql": "SELECT s FROM t",
+        "rows": [
+          [
+            null
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "BIT invalid vector keeps plain warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1105,
+            "cannot convert datum from vector to type bit"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "BIT invalid vector retains zero",
+        "sql": "SELECT HEX(b) FROM t",
+        "rows": [
+          [
+            "0"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "UPDATE retains raw source warning",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1292,
+            "Truncated incorrect DOUBLE value: '1tail'"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "UPDATE retains parsed SET",
+        "sql": "SELECT s FROM t",
+        "rows": [
+          [
+            "a"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "ODKU completes warning over converted value",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1366,
+            "Incorrect enum value: 'a' for column 'e' at row 1"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "ODKU retains parsed ENUM",
+        "sql": "SELECT e FROM u",
+        "rows": [
+          [
+            "a"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "ODKU SET uses shared name formatter",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Warning",
+            1366,
+            "Incorrect set value: 'a' for column 's' at row 1"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "ODKU retains parsed SET",
+        "sql": "SELECT s FROM u",
+        "rows": [
+          [
+            "a"
+          ]
+        ],
+        "error": null,
+        "pass": true
+      }
+    ]
+  },
+  "validation_commands": {
+    "activation": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1",
+    "cwd": "/workspace/tidb/rust",
+    "baseline": "cargo test --locked --no-fail-fast -p tidb-datatype -p tidb-executor --lib -- ordinal_owner_batch_ --test-threads=1",
+    "final_tests": "cargo test --locked --no-fail-fast -p tidb-datatype -p tidb-executor --lib -- datum_convert:: datum::stringify:: enum_set_tests:: binary_literal_tests:: driver::write_cast:: --test-threads=1",
+    "final_check": "cargo check --locked --all-targets -p tidb-datatype -p tidb-executor -p tidb-server",
+    "locked_build": "cargo build --locked -p tidb-server",
+    "lint": {
+      "cwd": "/workspace/tidb",
+      "command": "make lint"
+    },
+    "live": {
+      "cwd": "/workspace/tidb",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/ordinal-owner-batch/wire.py final"
+    },
+    "go_oracle": {
+      "cwd": "/workspace/.cloud-setup/go-master",
+      "command": "GOFLAGS=-mod=readonly go run /workspace/.cloud-setup/ordinal-owner-batch/oracle.go"
+    },
+    "direct_rust_comparison": "Exact rustc command, matched metadata dependencies and output are retained in comparison-build-final.json/log."
+  },
+  "rust_source_hashes": [
+    {
+      "path": "rust/crates/tidb-datatype/src/datum/mod.rs",
+      "sha256": "fe36e31cb3546882693a40a5ba05c6637a794b97aee963fccf4babdf68f1e528"
+    },
+    {
+      "path": "rust/crates/tidb-datatype/src/datum_convert.rs",
+      "sha256": "f83b9a3ce40e1daa6eed995611b4c83ae1b8e6056ebd50d8caeef689ecaa823e"
+    },
+    {
+      "path": "rust/crates/tidb-datatype/src/datum_convert/diagnostics.rs",
+      "sha256": "b8b3b44d6d99a53787a9bffbf0f015a81c3025e572ba7993b024b1e2f186419b"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/write_cast.rs",
+      "sha256": "434ddd5eca9ad8ebaba6d3d5abfd84b334d667ac00c611101e1abf96b33cbe02"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/stmt_context.rs",
+      "sha256": "1f8b954b0631d5485983afceddd961fa11e22a13d2e46dbdd5092d574b2329bc"
+    }
+  ],
+  "go_source_hashes": [
+    {
+      "path": "pkg/types/datum.go",
+      "sha256": "a7e97bcf032c6abd2e5c8d59516212cb6ead164dc3ec826bfd87392bc66475fc",
+      "matches_fetched_master": true
+    },
+    {
+      "path": "pkg/types/convert.go",
+      "sha256": "256d7882460e5e2ec9705cbad7238c7e0d08de2a732519e3075eeffff3b501dd",
+      "matches_fetched_master": true
+    },
+    {
+      "path": "pkg/types/time.go",
+      "sha256": "e4f3da22a90a6271f86e11f073c7afb6b6fc25ee32bb95e59904ccb861e0c425",
+      "matches_fetched_master": true
+    },
+    {
+      "path": "pkg/types/enum.go",
+      "sha256": "0c6c53aae4b0916a33f64cc27507b9f98158af0f53fce145ce3de1e2ba83f6c0",
+      "matches_fetched_master": true
+    },
+    {
+      "path": "pkg/types/set.go",
+      "sha256": "591b6284a4925b45e7f95996ebefe72a7075ac17fdd69cca8b45e854e6f26b00",
+      "matches_fetched_master": true
+    },
+    {
+      "path": "pkg/types/binary_literal.go",
+      "sha256": "44f9a34b1639c5d454c9b1c726ef26af85f952fb40103ded708e79d83b407850",
+      "matches_fetched_master": true
+    },
+    {
+      "path": "pkg/types/etc.go",
+      "sha256": "f8fe3b7caa4b52eba7284959bce2b3992b079c0477dcb1e6895a71ce9bbd5d7e",
+      "matches_fetched_master": true
+    },
+    {
+      "path": "pkg/table/column.go",
+      "sha256": "39640cb6940ab803b1ed9eb9b6fe2b8a8f71e3b11fe62f2e09791d6ed9deaaac",
+      "matches_fetched_master": true
+    },
+    {
+      "path": "pkg/executor/insert_common.go",
+      "sha256": "4cadcb2be9b681c2b53ff584cbb26b0ee2645d5b98745b83ac68a2252de8f388",
+      "matches_fetched_master": true
+    },
+    {
+      "path": "pkg/executor/update.go",
+      "sha256": "e4b3b1ca4669032a647d6fc0c1def39c583e097d671ea4ea95be59499512bb10",
+      "matches_fetched_master": true
+    }
+  ],
+  "validation_status": {
+    "tests": "passed",
+    "go_comparison": "passed",
+    "live_sql": "passed",
+    "format_and_diff": "passed",
+    "lint": "passed",
+    "all_targets": "passed",
+    "locked_server_build": "passed"
+  },
+  "limits": [
+    "K03 remains partial; other55 unresolved roots retain carried evidence.",
+    "No complete upstream package, full Go suite, live multi-node TiKV, TLS policy or measured performance acceptance.",
+    "The BIT API safely rejects widths65–127 where Go panics in its byte constructor; valid SQL widths1–64 are the supported domain.",
+    "Initial grouped checks used repository-root --manifest-path and omitted the crate-local parallel frontend option; final tests, check and locked builds run from rust/.",
+    "SQL diagnostic equivalence does not imply identical error wrapper/stack text."
+  ],
+  "publication": "Actual hook, fresh locked pre-push build, normal push/remote SHA, bundle and Cloud draft readback are recorded in /workspace/.cloud-setup/ordinal-owner-batch/final-handoff.json after this receipt is committed. Saving a draft is not Publish or a fresh-task restoration test.",
+  "evidence": [
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/before-tests.log",
+      "sha256": "253ff9764e7b55a3a70eaab6c90bf05af07b1ecfec765e3f56a1a72d578c0b31"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/final-tests.log",
+      "sha256": "e2264ec2d5e2bb2fd70c0c0ae4abeac84ae36805155b218e26b7cd3b418126a3"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/comparison.json",
+      "sha256": "9f289955f2f4ecec8eb6113322dbcabc22312eb9d0a0097be12778a40363a5a3"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/comparison-build-final.json",
+      "sha256": "11c33b007ef694df287cd8b1ef4672d60b82296063e9f2d19c309b5a1f719127"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/comparison-build-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/oracle.go",
+      "sha256": "1defdd09e326308a5c09f166be33a7a87d898182e8b8db8e22be409bc4d51b6c"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/oracle-expanded.json",
+      "sha256": "3e013329a6277ea81ab87879c77f007882af9192ff8e8ee129105748473276b8"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/before-wire.json",
+      "sha256": "a0a70d2ce2c74b325df3a71fff03cc7ebeba2c78a6a74ddd974dfdc0c1b60e57"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/after-wire.json",
+      "sha256": "8f21acd7f84aa6f1810c5dcbaf407a4d106714627eced04a5f120b2e1efbe10f"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/final-wire.json",
+      "sha256": "ba06b6b0f00439b7ba5233478e32666db9b2913937054c5dd3e13bb3d1bd1f7b"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/wire.py",
+      "sha256": "9c717f0fc397bd8637921e8af78ff3c12ef8620a16936eacce99fa79480d0257"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/final-server-build.log",
+      "sha256": "00388d7909e8ffbc28c7d9092e3495ea91ab9ed1c11180978eca8896fe1c4a54"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/final-lint.log",
+      "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/fmt-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/retired-final-test-executables.json",
+      "sha256": "f9df30bd9eaebd9add0e2807346aefedd086501e5e862ff65099bf60eeaed161"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/retired-baseline-server.json",
+      "sha256": "9cde82f6c91559ea1e30baa317e6c09665863a65fa5830ca2a790f37046343c0"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/retired-intermediate-server.json",
+      "sha256": "176185fe44a1821990756dcb1e705d0c41ff59a4f23aa22a3d7930cc18746264"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/retired-completed-validation-executables.json",
+      "sha256": "98488eccd386d0b28b4dfb1fa4083605e1fce6d870d54ebb30c199e3985c2856"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/retired-baseline-executor.json",
+      "sha256": "a1fae0643983f9266c091adfdba0ac5839e0af75e33b06b683f389653a2739a2"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/format-cleanup.json",
+      "sha256": "cf6883bba5c27e0bbbcdde552f1e7485447910b54e1f58193499d515639db7ae"
+    },
+    {
+      "path": "/workspace/.cloud-setup/ordinal-owner-batch/final-check.log",
+      "sha256": "42ffc5218329a2b7e7e116d0ee189cd95283e29dee3447653bcbba7beb559708"
+    }
+  ]
+}

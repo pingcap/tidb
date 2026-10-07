@@ -85,6 +85,33 @@ pub enum DatumKind {
     VectorFloat32,
 }
 
+impl DatumKind {
+    /// Go `types.KindStr`, used in invalid-conversion diagnostics.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Null => "null",
+            Self::MinNotNull => "min_not_null",
+            Self::MaxValue => "max_value",
+            Self::Int => "bigint",
+            Self::UInt => "unsigned bigint",
+            Self::Decimal => "decimal",
+            Self::Real => "double",
+            Self::Float32 => "float",
+            Self::String => "char",
+            Self::Bytes => "bytes",
+            Self::BinaryLiteral => "bit/hex literal",
+            Self::Duration => "time",
+            Self::Enum => "enum",
+            Self::Bit => "bit",
+            Self::Set => "set",
+            Self::Time => "datetime",
+            Self::Json => "json",
+            Self::Raw => "raw",
+            Self::VectorFloat32 => "vector",
+        }
+    }
+}
+
 /// A byte-preserving SQL string and its registered collation.
 ///
 /// Go strings can contain arbitrary bytes. Consequently the payload is not a

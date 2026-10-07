@@ -44,6 +44,176 @@ mod tests {
         }
     }
 
+    #[test]
+    fn ordinal_owner_batch_year_source_policy_precedes_adjustment() {
+        for mode in 0..3 {
+            let flags = crate::STRICT_FLAGS
+                .with_truncate_as_warning(mode == 1)
+                .with_ignore_truncate_err(mode == 2);
+            for (input, expected, warning) in [
+                (Datum::new_string("12tail"), 2012, "DOUBLE value: '12tail'"),
+                (Datum::new_string("0tail"), 2000, "DOUBLE value: '0tail'"),
+                (
+                    Datum::Json(crate::BinaryJSON::parse(r#""1tail""#).unwrap()),
+                    2001,
+                    "DOUBLE value: '1tail'",
+                ),
+                (
+                    Datum::Json(crate::BinaryJSON::parse("{}").unwrap()),
+                    0,
+                    "INTEGER value: '{}'",
+                ),
+            ] {
+                let warnings = Warnings::default();
+                let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
+                let result = input
+                    .convert_to_in_context(
+                        &FieldType::new(FieldTypeCode::Year),
+                        &context,
+                        &SessionTimeZone::utc(),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    result.value,
+                    Datum::Int(if mode == 0 { 0 } else { expected })
+                );
+                let message = format!("[types:1292]Truncated incorrect {warning}");
+                assert_eq!(
+                    result.error.map(|e| e.to_string()),
+                    (mode == 0).then_some(message.clone())
+                );
+                assert_eq!(
+                    *warnings.0.borrow(),
+                    if mode == 1 { vec![message] } else { vec![] }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ordinal_owner_batch_enum_set_keep_source_warning_before_parse() {
+        for code in [FieldTypeCode::Enum, FieldTypeCode::Set] {
+            let field = FieldType::new(code).with_elems(["a", "b"]);
+            for mode in 0..3 {
+                let flags = crate::STRICT_FLAGS
+                    .with_truncate_as_warning(mode == 1)
+                    .with_ignore_truncate_err(mode == 2);
+                let warnings = Warnings::default();
+                let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
+                let input = Datum::Json(crate::BinaryJSON::parse(r#""1tail""#).unwrap());
+                let result = input
+                    .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
+                    .unwrap();
+                assert_eq!(
+                    result.value.sql_string().unwrap(),
+                    if mode == 0 { "" } else { "a" }
+                );
+                assert_eq!(
+                    result.error.map(|e| e.to_sql_error().code),
+                    (mode == 0).then_some(1265)
+                );
+                assert_eq!(
+                    *warnings.0.borrow(),
+                    if mode == 1 {
+                        vec!["[types:1292]Truncated incorrect DOUBLE value: '1tail'".to_owned()]
+                    } else {
+                        vec![]
+                    }
+                );
+            }
+            let warnings = Warnings::default();
+            let context =
+                ConversionContext::new(crate::STRICT_FLAGS, ConversionLocation::UTC, &warnings);
+            let result = Datum::new_string("bad")
+                .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
+                .unwrap();
+            assert_eq!(result.value.sql_string().unwrap(), "");
+            assert_eq!(result.error.unwrap().to_sql_error().code, 1265);
+        }
+    }
+
+    #[test]
+    fn ordinal_owner_batch_bit_source_warning_survives_width_error() {
+        for mode in 0..3 {
+            let flags = crate::STRICT_FLAGS
+                .with_truncate_as_warning(mode == 1)
+                .with_ignore_truncate_err(mode == 2);
+            let warnings = Warnings::default();
+            let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
+            let result = Datum::new_bytes([1; 9])
+                .convert_to_in_context(
+                    &FieldType::new(FieldTypeCode::Bit).with_flen(8),
+                    &context,
+                    &SessionTimeZone::utc(),
+                )
+                .unwrap();
+            assert_eq!(
+                result.value,
+                Datum::new_mysql_bit(crate::BinaryLiteral::from(&[255]))
+            );
+            assert_eq!(
+                result.error.unwrap().to_string(),
+                "[types:1406]Data Too Long, field len 8"
+            );
+            assert_eq!(
+                *warnings.0.borrow(),
+                if mode == 1 {
+                    vec![
+                        "[types:1292]Truncated incorrect BINARY value: '0x010101010101010101'"
+                            .to_owned(),
+                    ]
+                } else {
+                    vec![]
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn ordinal_owner_batch_plain_failures_keep_source_value_and_sql_error() {
+        for (input, code, expected, message) in [
+            (
+                Datum::UInt(u64::MAX),
+                FieldTypeCode::Year,
+                Datum::Int(0),
+                "cannot convert datum from unsigned bigint to type year",
+            ),
+            (
+                Datum::new_mysql_bit(crate::BinaryLiteral::from(&[1; 9])),
+                FieldTypeCode::Year,
+                Datum::Int(0),
+                "cannot convert datum from bit to type year",
+            ),
+            (
+                Datum::new_vector_float32(crate::VectorFloat32::parse("[1]").unwrap()),
+                FieldTypeCode::Set,
+                Datum::Null,
+                "cannot convert datum from vector to type set",
+            ),
+            (
+                Datum::new_vector_float32(crate::VectorFloat32::parse("[1]").unwrap()),
+                FieldTypeCode::Bit,
+                Datum::new_mysql_bit(crate::BinaryLiteral::from(&[0])),
+                "cannot convert datum from vector to type bit",
+            ),
+        ] {
+            let warnings = Warnings::default();
+            let context =
+                ConversionContext::new(crate::STRICT_FLAGS, ConversionLocation::UTC, &warnings);
+            let converted = input
+                .convert_to_in_context(
+                    &FieldType::new(code).with_flen(8),
+                    &context,
+                    &SessionTimeZone::utc(),
+                )
+                .unwrap();
+            assert_eq!(converted.value, expected);
+            let error = converted.error.unwrap().to_sql_error();
+            assert_eq!((error.code, error.message.as_str()), (1105, message));
+            assert!(warnings.0.borrow().is_empty());
+        }
+    }
+
     #[derive(serde::Deserialize)]
     struct OracleRow {
         name: String,
@@ -689,6 +859,25 @@ impl<'a, 'w> Diagnostics<'a, 'w> {
         if self.context.is_some() {
             self.error = Some(make());
         }
+    }
+
+    pub(super) fn invalid_conversion(
+        &mut self,
+        source: crate::DatumKind,
+        target: crate::FieldTypeCode,
+    ) {
+        // invalidConv is a plain Go error. The compatibility form has no
+        // registered RFC identity and therefore preserves SQL fallback 1105.
+        self.replace_error(|| {
+            TerrorError::compatible(
+                tidb_error::terror::CODE_UNKNOWN,
+                format!(
+                    "cannot convert datum from {} to type {}",
+                    source.as_str(),
+                    crate::type_str(target)
+                ),
+            )
+        });
     }
 
     pub(super) fn warn(&mut self, make: impl FnOnce() -> TerrorError) {

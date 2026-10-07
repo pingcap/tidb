@@ -284,3 +284,7 @@ O11/O18/N03 advance together through shared plan samples, binary prepared/Global
 ## Shared CTE scope maintenance, 2026-10-07
 
 The [plan](../../cte-scope-batch-execplan.md) and [receipt](cte-scope-batch-validation.json) connect A01/S03/O18 through one query-local visibility state. Remove global-name suppression and the redundant PREPARE scan after both callers migrate. Six Rust baseline failures and five live failures establish the defects; broader parent obligations remain partial. Counts stay86 tracked/30 repaired/56 unresolved. This is existing-owner maintenance, not complete Go package acceptance.
+
+## YEAR, ENUM, SET and BIT conversion owner
+
+The [plan](../../ordinal-owner-batch-execplan.md) and [receipt](ordinal-owner-batch-validation.json) repair four related conversion targets and migrate all table callers together. Remove the legacy event fallback, ODKU warning rewrite and duplicate diagnostic formatter. K03 remains partial for its broader table/DDL obligations; the other 55 unresolved roots were not freshly audited. Counts remain 86 tracked/30 repaired/56 unresolved.

@@ -4,14 +4,14 @@ Latest cleanup: [disconnected sort pipeline](sort-cleanup-validation.json). Remo
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [shared string conversion](string-owner-batch-validation.json). K03/X01 retain their partial status; counts remain 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Seven Rust regressions and seven live-server checks reproduced; other 54 unresolved roots retain carried evidence.
+Latest connected repair: [YEAR/ENUM/SET/BIT conversion](ordinal-owner-batch-validation.json). K03 remains partial; counts remain 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Five Rust regressions and six baseline SQL checks failed before; a subsequent live ODKU formatter failure was also repaired. Direct comparison covers 120 Go cases. Other 55 unresolved roots retain carried evidence. Previous [string conversion](string-owner-batch-validation.json) evidence remains valid.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../string-owner-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../ordinal-owner-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](string-owner-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](ordinal-owner-batch-validation.json): exact source/log identities and verification limits.
 
 Current Go comparison: `7a3dacb52efe58d28db360ae8639d8838c376544`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master remains `8b752f9638ad157931725b66ffdc57e0465432a9`; maintained sync is unchanged. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 

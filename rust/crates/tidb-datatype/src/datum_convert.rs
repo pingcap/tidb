@@ -82,7 +82,20 @@ impl Datum {
         flags: ConversionFlags,
         zone: &SessionTimeZone,
     ) -> Result<Converted<Self>, DatumValueError> {
-        self.convert_to_reported(target, flags, zone, &mut Diagnostics::new(None))
+        // These targets need the source's handled-error state before their next
+        // stage, even when the legacy caller only consumes a value/event pair.
+        let context = matches!(
+            target.code(),
+            FieldTypeCode::Year | FieldTypeCode::Enum | FieldTypeCode::Set | FieldTypeCode::Bit
+        )
+        .then(|| {
+            crate::ConversionContext::new(
+                flags,
+                crate::ConversionLocation::from_time_zone(zone),
+                &crate::IGNORE_CONVERSION_WARNINGS,
+            )
+        });
+        self.convert_to_reported(target, flags, zone, &mut Diagnostics::new(context.as_ref()))
     }
 
     /// Go `Datum.ToFloat64`: conversion diagnostics belong to the source
@@ -236,10 +249,10 @@ impl Datum {
             FieldTypeCode::Duration => {
                 self.convert_to_duration_target(target, flags, zone, diagnostics)
             }
-            FieldTypeCode::Year => diagnostics.unreported(self.convert_to_year(flags, zone)),
-            FieldTypeCode::Enum => diagnostics.unreported(self.convert_to_enum(target, flags)),
-            FieldTypeCode::Set => diagnostics.unreported(self.convert_to_set(target, flags)),
-            FieldTypeCode::Bit => diagnostics.unreported(self.convert_to_bit(target, flags)),
+            FieldTypeCode::Year => self.convert_to_year(flags, zone, diagnostics),
+            FieldTypeCode::Enum => self.convert_to_enum(target, flags, diagnostics),
+            FieldTypeCode::Set => self.convert_to_set(target, flags, diagnostics),
+            FieldTypeCode::Bit => self.convert_to_bit(target, flags, diagnostics),
             FieldTypeCode::Json => diagnostics.unreported(self.convert_to_json_target()),
             FieldTypeCode::VectorFloat32 => diagnostics.unreported(self.convert_to_vector(target)),
             other => Err(DatumValueError::Unsupported(
@@ -311,15 +324,6 @@ impl Datum {
             })?
         };
         Ok(TransformResult::new(bytes, None))
-    }
-
-    fn convert_to_signed(
-        &self,
-        target: FieldTypeCode,
-        flags: ConversionFlags,
-        zone: &SessionTimeZone,
-    ) -> Result<Converted<i64>, DatumValueError> {
-        self.convert_to_signed_reported(target, flags, zone, &mut Diagnostics::new(None))
     }
 
     fn convert_to_signed_reported(
@@ -468,14 +472,6 @@ impl Datum {
             _ => diagnostics.unhandled(converted.event.as_ref()),
         }
         Ok(converted)
-    }
-
-    fn convert_to_unsigned(
-        &self,
-        target: FieldTypeCode,
-        flags: ConversionFlags,
-    ) -> Result<Converted<u64>, DatumValueError> {
-        self.convert_to_unsigned_reported(target, flags, &mut Diagnostics::new(None))
     }
 
     fn convert_to_unsigned_reported(
@@ -967,26 +963,35 @@ impl Datum {
         &self,
         flags: ConversionFlags,
         zone: &SessionTimeZone,
+        diagnostics: &mut Diagnostics<'_, '_>,
     ) -> Result<Converted<Self>, DatumValueError> {
         let (year, adjust_zero, event) = match self {
-            Self::String(value) => year_from_text(value.as_utf8()?)?,
-            Self::Bytes(value) => year_from_text(std::str::from_utf8(value)?)?,
+            Self::String(_) | Self::Bytes(_) => {
+                let text = match self {
+                    Self::String(value) => value.as_utf8()?,
+                    Self::Bytes(value) => std::str::from_utf8(value)?,
+                    _ => unreachable!(),
+                };
+                let trimmed = text.trim();
+                let converted = crate::convert::str_to_int_reported(
+                    trimmed,
+                    false,
+                    flags.truncate_as_warning() || flags.ignore_truncate_err(),
+                    diagnostics,
+                );
+                if diagnostics.error.is_some() {
+                    return Ok(Converted {
+                        value: Self::Int(0),
+                        event: converted.event,
+                    });
+                }
+                (
+                    converted.value,
+                    text.len() != 4 && converted.value == 0 && trimmed.starts_with('0'),
+                    converted.event,
+                )
+            }
             Self::Time(value) => (i64::from(value.core_time().year()), false, None),
-            // Go `Duration.ConvertToYearFromNow` (`pkg/types/time.go`):
-            //
-            // ```go
-            // if ctx.Flags().CastTimeToYearThroughConcat() { ... }
-            // year, month, day := now.In(ctx.Location()).Date()
-            // ```
-            //
-            // Both halves come from the STATEMENT and both were hardcoded
-            // here. `now` is an INSTANT, and only projecting it into the
-            // session zone picks the calendar day -- and so the YEAR -- that
-            // Go picks; that projection is [`session_now`], shared with the
-            // DATETIME arm so the two cannot pick different days. The flag
-            // selects Go's OTHER source entirely (the time fields read as a
-            // number, `00:20:12` -> 2012), so pinning it to `false` made that
-            // whole branch unreachable.
             Self::Duration(value) => {
                 let converted = value
                     .convert_to_year_with_event(
@@ -994,18 +999,51 @@ impl Datum {
                         flags.cast_time_to_year_through_concat(),
                     )
                     .map_err(conversion_error)?;
+                if converted.event.is_some() {
+                    diagnostics.error(|| crate::ERR_WARN_DATA_OUT_OF_RANGE.clone());
+                }
                 return Ok(map_converted(Self::Int)(converted));
             }
             Self::Json(value) => {
-                let converted = crate::json_to_int64(value, false, crate::DEFAULT_STATEMENT_FLAGS);
+                let converted = crate::convert::json_to_int_reported(
+                    value,
+                    false,
+                    FieldTypeCode::LongLong,
+                    flags,
+                    diagnostics,
+                );
+                if diagnostics.error.is_some() {
+                    return Ok(Converted {
+                        value: Self::Int(0),
+                        event: converted.event,
+                    });
+                }
                 (converted.value, false, converted.event)
             }
             _ => {
-                let converted = self.convert_to_signed(FieldTypeCode::LongLong, flags, zone)?;
+                let converted = self
+                    .convert_to_signed_reported(FieldTypeCode::LongLong, flags, zone, diagnostics)
+                    .unwrap_or_else(|_| {
+                        diagnostics.invalid_conversion(self.kind(), FieldTypeCode::Year);
+                        Converted {
+                            value: 0,
+                            event: Some(ScalarConversionEvent::Truncated),
+                        }
+                    });
+                if diagnostics.error.is_some() {
+                    diagnostics.invalid_conversion(self.kind(), FieldTypeCode::Year);
+                    return Ok(Converted {
+                        value: Self::Int(0),
+                        event: converted.event,
+                    });
+                }
                 (converted.value, false, converted.event)
             }
         };
         let adjusted = crate::time_parse::adjust_year_with_event(year, adjust_zero);
+        if adjusted.event.is_some() {
+            diagnostics.error(|| crate::ERR_WARN_DATA_OUT_OF_RANGE.clone());
+        }
         Ok(Converted {
             value: Self::Int(adjusted.value),
             event: prefer_event(event, adjusted.event),
@@ -1016,42 +1054,43 @@ impl Datum {
         &self,
         target: &FieldType,
         flags: ConversionFlags,
+        diagnostics: &mut Diagnostics<'_, '_>,
     ) -> Result<Converted<Self>, DatumValueError> {
         let parsed = target.with_elems_visible(|elements| match self {
             Self::String(value) => {
-                parse_enum(elements, value.bytes(), target.runtime_collator()).map_err(|_| ())
+                parse_enum(elements, value.bytes(), target.runtime_collator()).ok()
             }
             Self::Bytes(value) => {
-                parse_enum(elements, value.as_slice(), target.runtime_collator()).map_err(|_| ())
+                parse_enum(elements, value.as_slice(), target.runtime_collator()).ok()
             }
             Self::BinaryLiteral(value) => {
-                parse_enum(elements, value.as_bytes(), target.runtime_collator()).map_err(|_| ())
+                parse_enum(elements, value.as_bytes(), target.runtime_collator()).ok()
             }
-            Self::Enum(value, _) if value.value() == 0 => Ok(crate::MysqlEnum::new("", 0)),
+            Self::Enum(value, _) if value.value() == 0 => Some(crate::MysqlEnum::default()),
             Self::Enum(value, _) => {
-                parse_enum(elements, value.name(), target.runtime_collator()).map_err(|_| ())
+                parse_enum(elements, value.name(), target.runtime_collator()).ok()
             }
             Self::Set(value, _) => {
-                parse_enum(elements, value.name(), target.runtime_collator()).map_err(|_| ())
+                parse_enum(elements, value.name(), target.runtime_collator()).ok()
             }
-            // Go wraps `convertToUint`'s own failure in `ErrTruncated` too
-            // (`datum.go`'s "convert to MySQL enum failed: " arm), so it
-            // reaches the caller as the same truncation event, not an error.
-            _ => match self.convert_to_unsigned(FieldTypeCode::LongLong, flags) {
-                Ok(number) => parse_enum_value(elements, number.value).map_err(|_| ()),
-                Err(_) => Err(()),
+            _ => match self.convert_to_unsigned_reported(target.code(), flags, diagnostics) {
+                Ok(number) if diagnostics.error.is_none() => {
+                    parse_enum_value(elements, number.value).ok()
+                }
+                _ => None,
             },
         });
-        // Go `convertToMysqlEnum` calls `SetMysqlEnum` UNCONDITIONALLY and
-        // returns the value beside `ErrTruncated`: a failed parse stores the
-        // zero enum (`Enum{Name: "", Value: 0}`) and only raises an event, so
-        // a non-strict write keeps the row and warns 1265.
         Ok(match parsed {
-            Ok(value) => exact(Self::new_enum(value, target.collation())),
-            Err(_) => Converted {
-                value: Self::new_enum(crate::MysqlEnum::default(), target.collation()),
-                event: Some(ScalarConversionEvent::Truncated),
-            },
+            Some(value) => exact(Self::new_enum(value, target.collation())),
+            None => {
+                // Go wraps the source error in ErrTruncated; the SQL cause is
+                // 1265, while already-emitted source warnings remain intact.
+                diagnostics.replace_error(|| ERR_TRUNCATED.clone());
+                Converted {
+                    value: Self::new_enum(crate::MysqlEnum::default(), target.collation()),
+                    event: Some(ScalarConversionEvent::Truncated),
+                }
+            }
         })
     }
 
@@ -1059,59 +1098,46 @@ impl Datum {
         &self,
         target: &FieldType,
         flags: ConversionFlags,
+        diagnostics: &mut Diagnostics<'_, '_>,
     ) -> Result<Converted<Self>, DatumValueError> {
-        // Go keeps this as a hard invalid conversion instead of wrapping it
-        // in the SET truncation event used by every other failed source.
         if matches!(self, Self::VectorFloat32(_)) {
-            return Err(DatumValueError::Unsupported(self.kind(), "set"));
+            diagnostics.invalid_conversion(self.kind(), FieldTypeCode::Set);
+            return Ok(Converted {
+                value: Self::Null,
+                event: Some(ScalarConversionEvent::Truncated),
+            });
         }
-        // `convertToMysqlSet` leaves the zero SET beside a failed numeric
-        // `convertToUint` and wraps that failure as `ErrTruncated`.  Keep
-        // that event instead of letting a saturated numeric value of zero
-        // look like the valid SET zero (notably `INSERT ... VALUES (-1)`).
-        let mut numeric_conversion_failed = false;
         let parsed = target.with_elems_visible(|elements| match self {
             Self::String(value) => {
-                parse_set(elements, value.bytes(), target.runtime_collator()).map_err(|_| ())
+                parse_set(elements, value.bytes(), target.runtime_collator()).ok()
             }
             Self::Bytes(value) => {
-                parse_set(elements, value.as_slice(), target.runtime_collator()).map_err(|_| ())
+                parse_set(elements, value.as_slice(), target.runtime_collator()).ok()
             }
             Self::BinaryLiteral(value) => {
-                parse_set(elements, value.as_bytes(), target.runtime_collator()).map_err(|_| ())
+                parse_set(elements, value.as_bytes(), target.runtime_collator()).ok()
             }
             Self::Enum(value, _) => {
-                parse_set(elements, value.name(), target.runtime_collator()).map_err(|_| ())
+                parse_set(elements, value.name(), target.runtime_collator()).ok()
             }
             Self::Set(value, _) => {
-                parse_set(elements, value.name(), target.runtime_collator()).map_err(|_| ())
+                parse_set(elements, value.name(), target.runtime_collator()).ok()
             }
-            Self::VectorFloat32(_) => unreachable!("vector returned before borrowing elements"),
-            _ => match self.convert_to_unsigned(FieldTypeCode::LongLong, flags) {
-                Ok(number) if number.event.is_none() => {
-                    parse_set_value(elements, number.value).map_err(|_| ())
+            _ => match self.convert_to_unsigned_reported(target.code(), flags, diagnostics) {
+                Ok(number) if diagnostics.error.is_none() => {
+                    parse_set_value(elements, number.value).ok()
                 }
-                Ok(_) | Err(_) => {
-                    numeric_conversion_failed = true;
-                    Err(())
-                }
+                _ => None,
             },
         });
-        // Go `convertToMysqlSet` wraps EVERY failure in `ErrTruncated` and
-        // still calls `SetMysqlSet`, so the zero set is stored and the caller
-        // decides between a 1265 warning and a strict error.
-        Ok(if numeric_conversion_failed {
-            Converted {
-                value: Self::new_set(crate::MysqlSet::default(), target.collation()),
-                event: Some(ScalarConversionEvent::Truncated),
-            }
-        } else {
-            match parsed {
-                Ok(value) => exact(Self::new_set(value, target.collation())),
-                Err(()) => Converted {
+        Ok(match parsed {
+            Some(value) => exact(Self::new_set(value, target.collation())),
+            None => {
+                diagnostics.replace_error(|| ERR_TRUNCATED.clone());
+                Converted {
                     value: Self::new_set(crate::MysqlSet::default(), target.collation()),
                     event: Some(ScalarConversionEvent::Truncated),
-                },
+                }
             }
         })
     }
@@ -1120,31 +1146,58 @@ impl Datum {
         &self,
         target: &FieldType,
         flags: ConversionFlags,
+        diagnostics: &mut Diagnostics<'_, '_>,
     ) -> Result<Converted<Self>, DatumValueError> {
-        let flen = target.flen();
-        if !(1..=64).contains(&flen) {
-            return Err(DatumValueError::Comparison(format!(
-                "Data Too Long, field len {flen}"
-            )));
-        }
-        let mut event = None;
-        let mut value = match self {
-            Self::String(value) => value_to_literal_uint(value.bytes(), &mut event),
-            Self::Bytes(value) => value_to_literal_uint(value, &mut event),
-            Self::Int(value) => *value as u64,
-            _ => {
-                let converted = self.convert_to_unsigned(target.code(), flags)?;
-                event = converted.event;
-                converted.value
+        let converted = match self {
+            Self::String(_) | Self::Bytes(_) => {
+                let bytes = match self {
+                    Self::String(value) => value.bytes(),
+                    Self::Bytes(value) => value.as_slice(),
+                    _ => unreachable!(),
+                };
+                let (value, failed) =
+                    diagnostics.binary_integer(&BinaryLiteral::from(bytes), flags);
+                Converted {
+                    value,
+                    event: failed.then_some(ScalarConversionEvent::Truncated),
+                }
             }
+            Self::Int(value) => Self::UInt(*value as u64).convert_to_unsigned_reported(
+                target.code(),
+                flags,
+                diagnostics,
+            )?,
+            _ => self
+                .convert_to_unsigned_reported(target.code(), flags, diagnostics)
+                .unwrap_or_else(|_| {
+                    diagnostics.invalid_conversion(self.kind(), target.code());
+                    Converted {
+                        value: 0,
+                        event: Some(ScalarConversionEvent::Truncated),
+                    }
+                }),
         };
-        if flen < 64 {
-            let upper = (1_u64 << flen) - 1;
-            if value > upper {
-                value = upper;
-                event = Some(ScalarConversionEvent::Truncated);
-            }
+        let flen = target.flen();
+        if flen <= 0 || flen >= 128 {
+            diagnostics.replace_error(|| {
+                ERR_DATA_TOO_LONG.generate(format!("Data Too Long, field len {flen}"))
+            });
+            return Ok(Converted {
+                value: Self::Null,
+                event: Some(ScalarConversionEvent::Truncated),
+            });
         }
+        let mut value = converted.value;
+        let mut event = converted.event;
+        if flen < 64 && value >= (1_u64 << flen) {
+            value = (1_u64 << flen) - 1;
+            event = Some(ScalarConversionEvent::Truncated);
+            diagnostics.replace_error(|| {
+                ERR_DATA_TOO_LONG.generate(format!("Data Too Long, field len {flen}"))
+            });
+        }
+        // Go's constructor panics above eight bytes. Keep Rust's checked
+        // width instead of introducing a panic for an invalid SQL BIT type.
         let width = BinaryLiteralWidth::try_from(((flen + 7) / 8) as u8)
             .map_err(|error| DatumValueError::Comparison(error.to_string()))?;
         Ok(Converted {
@@ -1673,34 +1726,6 @@ fn decimal_to_unsigned(value: &Decimal, upper: u64, target: FieldTypeCode) -> Co
 /// zone choice; `with_timezone` is Go's `In`.
 fn session_now(zone: &SessionTimeZone) -> chrono::DateTime<SessionTimeZone> {
     Utc::now().with_timezone(zone)
-}
-
-fn year_from_text(
-    text: &str,
-) -> Result<(i64, bool, Option<ScalarConversionEvent>), DatumValueError> {
-    let trimmed = text.trim();
-    let mut converted = crate::str_to_int(trimmed, false);
-    // Go `ConvertToMysqlYear` returns the zero YEAR beside any `StrToInt`
-    // error. In particular, an overflowing decimal string must not continue
-    // through `AdjustYear` with `i64::MAX`, which would turn the error-side
-    // value into the upper YEAR bound (2155).
-    if matches!(
-        converted.event.as_ref(),
-        Some(ScalarConversionEvent::Overflow(_))
-    ) {
-        converted.value = 0;
-    }
-    let adjust_zero = text.len() != 4 && converted.value == 0 && trimmed.starts_with('0');
-    Ok((converted.value, adjust_zero, converted.event))
-}
-
-fn value_to_literal_uint(bytes: &[u8], event: &mut Option<ScalarConversionEvent>) -> u64 {
-    let literal = BinaryLiteral::from(bytes);
-    let outcome = literal.to_int();
-    if outcome.is_truncated() {
-        *event = Some(ScalarConversionEvent::Truncated);
-    }
-    outcome.value()
 }
 
 /// The byte offset `flen` characters into `bytes`, or `None` when the value

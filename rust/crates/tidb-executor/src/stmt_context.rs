@@ -4079,29 +4079,6 @@ impl StmtContext {
             .clone()
     }
 
-    /// Go `StmtCtx.TruncateWarnings(warnCnt)` + `AppendWarnings`: rewrites
-    /// every warning raised since a [`Self::warning_count`] bookmark.
-    ///
-    /// `rewrite` is handed each warning's code and message and answers a
-    /// replacement message, or `None` to leave that warning alone. This is
-    /// how `completeInsertErr` re-titles the warnings a cast produced without
-    /// disturbing anything that was already there.
-    pub fn rewrite_warnings_from(
-        &self,
-        bookmark: usize,
-        rewrite: impl Fn(u16, &str) -> Option<String>,
-    ) {
-        let mut warnings = self
-            .warnings
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (_, code, message) in warnings.iter_mut().skip(bookmark) {
-            if let Some(replacement) = rewrite(*code, message) {
-                *message = replacement;
-            }
-        }
-    }
-
     /// Drains local diagnostics without consuming the shared coprocessor sinks.
     #[must_use]
     pub(crate) fn take_local_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
