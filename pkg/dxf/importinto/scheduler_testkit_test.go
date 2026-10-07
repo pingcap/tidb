@@ -222,6 +222,45 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", gotJobInfo.Status)
+
+	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
+		"root", "", &importer.ImportParameters{}, 123)
+	require.NoError(t, err)
+	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
+	logicalPlan.JobID = jobID
+	bs, err = logicalPlan.ToTaskMeta()
+	require.NoError(t, err)
+	task.Meta = bs
+	task.Step = proto.StepInit
+	task.State = proto.TaskStatePending
+	if kerneltype.IsNextGen() {
+		// If a nextgen dangling import job was already cancelled before scheduler
+		// admission, the scheduler should enter the existing cancel/revert path
+		// without planning work or generating subtasks.
+		err = ext.OnPrepare(ctx, d, task)
+		require.Error(t, err)
+		require.True(t, storage.IsCancelledErr(err), err)
+		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, "cancelled", gotJobInfo.Status)
+		require.Equal(t, "", gotJobInfo.Step)
+
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+		require.Error(t, err)
+		require.True(t, storage.IsCancelledErr(err), err)
+		require.Nil(t, subtaskMetas)
+	} else {
+		// Classic has no dangling import job window: CANCEL IMPORT JOB changes the
+		// DXF task to cancelling, so this import-job status check must not reject
+		// scheduler planning if a test calls the hook directly.
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+		require.NoError(t, err)
+		require.NotNil(t, subtaskMetas)
+	}
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", gotJobInfo.Status)
+	require.Equal(t, "", gotJobInfo.Step)
 }
 
 func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(t *testing.T) {
@@ -281,87 +320,139 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 	require.NoError(t, mgr.InitMeta(ctx, ":4000", scope))
 
 	conn := tk.Session().GetSQLExecutor()
-	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tblInfo.ID,
-		"root", "", &importer.ImportParameters{}, 0)
-	require.NoError(t, err)
-	defaultCharset := "utf8mb4"
-	logicalPlan := &importinto.LogicalPlan{
-		JobID: jobID,
-		Plan: importer.Plan{
-			Path:   fmt.Sprintf("gs://test-load/*.csv?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
-			Format: importer.DataFormatAuto,
-			DBName: "test",
-			TableInfo: func() *model.TableInfo {
-				c := tblInfo.Clone()
-				c.Name = ast.NewCIStr("t")
-				c.State = model.StatePublic
-				return c
-			}(),
-			DisableTiKVImportMode: true,
-			CloudStorageURI:       sortStorageURI,
-			InImportInto:          true,
-			Charset:               &defaultCharset,
-			FieldNullDef:          []string{`\N`},
-			LineFieldsInfo: plannercore.LineFieldsInfo{
-				FieldsTerminatedBy: ",",
-				FieldsEnclosedBy:   `"`,
-				FieldsEscapedBy:    `\`,
-				LinesStartingBy:    ``,
-				LinesTerminatedBy:  ``,
-			},
-		},
-		Stmt: `IMPORT INTO test.t FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-	}
-	require.True(t, importinto.ShouldUseAsyncPrepare(&logicalPlan.Plan))
-	bs, err := logicalPlan.ToTaskMeta()
-	require.NoError(t, err)
-	task := &proto.Task{
-		TaskBase: proto.TaskBase{
-			Type:        proto.ImportInto,
-			Step:        proto.StepInit,
-			State:       proto.TaskStatePending,
-			ExtraParams: proto.ExtraParams{PrepareMode: proto.PrepareModeRequired},
-		},
-		Meta:            bs,
-		StateUpdateTime: time.Now(),
-	}
-	task.ID, err = mgr.CreateTask(
-		ctx,
-		importinto.TaskKey(jobID),
-		proto.ImportInto,
-		keyspace,
-		1,
-		scope,
-		1,
-		proto.ExtraParams{PrepareMode: proto.PrepareModeRequired},
-		bs,
-	)
-	require.NoError(t, err)
-	d := sch.MockScheduler(task)
 	var taskMgr scheduler.TaskManager = mgr
-	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+	createPrepareTask := func(t *testing.T) (int64, *proto.Task) {
+		t.Helper()
+		jobID, err := importer.CreateJob(ctx, conn, "test", "t", tblInfo.ID,
+			"root", "", &importer.ImportParameters{}, 0)
+		require.NoError(t, err)
+		defaultCharset := "utf8mb4"
+		logicalPlan := &importinto.LogicalPlan{
+			JobID: jobID,
+			Plan: importer.Plan{
+				Path:   fmt.Sprintf("gs://test-load/*.csv?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+				Format: importer.DataFormatAuto,
+				DBName: "test",
+				TableInfo: func() *model.TableInfo {
+					c := tblInfo.Clone()
+					c.Name = ast.NewCIStr("t")
+					c.State = model.StatePublic
+					return c
+				}(),
+				DisableTiKVImportMode: true,
+				CloudStorageURI:       sortStorageURI,
+				InImportInto:          true,
+				Charset:               &defaultCharset,
+				FieldNullDef:          []string{`\N`},
+				LineFieldsInfo: plannercore.LineFieldsInfo{
+					FieldsTerminatedBy: ",",
+					FieldsEnclosedBy:   `"`,
+					FieldsEscapedBy:    `\`,
+					LinesStartingBy:    ``,
+					LinesTerminatedBy:  ``,
+				},
+			},
+			Stmt: `IMPORT INTO test.t FROM 'gs://test-load/*.csv?endpoint=xxx'`,
+		}
+		require.True(t, importinto.ShouldUseAsyncPrepare(&logicalPlan.Plan))
+		bs, err := logicalPlan.ToTaskMeta()
+		require.NoError(t, err)
+		task := &proto.Task{
+			TaskBase: proto.TaskBase{
+				Type:        proto.ImportInto,
+				Step:        proto.StepInit,
+				State:       proto.TaskStatePending,
+				ExtraParams: proto.ExtraParams{PrepareMode: proto.PrepareModeRequired},
+			},
+			Meta:            bs,
+			StateUpdateTime: time.Now(),
+		}
+		task.ID, err = mgr.CreateTask(
+			ctx,
+			importinto.TaskKey(jobID),
+			proto.ImportInto,
+			keyspace,
+			1,
+			scope,
+			1,
+			proto.ExtraParams{PrepareMode: proto.PrepareModeRequired},
+			bs,
+		)
+		require.NoError(t, err)
+		return jobID, task
+	}
 
-	require.NoError(t, ext.OnPrepare(ctx, d, task))
-	gotJobInfo, err := importer.GetJob(ctx, conn, jobID, "root", true)
-	require.NoError(t, err)
-	require.Equal(t, importer.JobStatusRunning, gotJobInfo.Status)
-	require.Equal(t, importer.JobStepPreparing, gotJobInfo.Step)
-	require.Equal(t, importer.DataFormatCSV, gotJobInfo.Parameters.Format)
-	require.EqualValues(t, 2, gotJobInfo.SourceFileSize)
-	require.False(t, gotJobInfo.StartTime.IsZero())
-	startTime := gotJobInfo.StartTime
+	t.Run("transitions_to_encode_and_sort", func(t *testing.T) {
+		jobID, task := createPrepareTask(t)
+		d := sch.MockScheduler(task)
+		ext := importinto.NewImportSchedulerForTest(true, task,
+			scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 
-	task.Step = proto.StepPrepared
-	nextStep := ext.GetNextStep(&task.TaskBase)
-	require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, nextStep)
-	require.NoError(t, err)
-	require.NotEmpty(t, subtaskMetas)
-	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
-	require.NoError(t, err)
-	require.Equal(t, importer.JobStatusRunning, gotJobInfo.Status)
-	require.Equal(t, importer.JobStepGlobalSorting, gotJobInfo.Step)
-	require.Equal(t, startTime, gotJobInfo.StartTime)
+		require.NoError(t, ext.OnPrepare(ctx, d, task))
+		info, err := importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepPreparing, info.Step)
+		require.Equal(t, importer.DataFormatCSV, info.Parameters.Format)
+		require.EqualValues(t, 2, info.SourceFileSize)
+		require.False(t, info.StartTime.IsZero())
+		startTime := info.StartTime
+
+		task.Step = proto.StepPrepared
+		nextStep := ext.GetNextStep(&task.TaskBase)
+		require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
+		metas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, nextStep)
+		require.NoError(t, err)
+		require.NotEmpty(t, metas)
+		info, err = importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepGlobalSorting, info.Step)
+		require.Equal(t, startTime, info.StartTime)
+	})
+
+	t.Run("cancelled_before_prepare", func(t *testing.T) {
+		jobID, task := createPrepareTask(t)
+		require.NoError(t, importer.CancelJob(ctx, conn, jobID))
+		d := sch.MockScheduler(task)
+		ext := importinto.NewImportSchedulerForTest(true, task,
+			scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+
+		err := ext.OnPrepare(ctx, d, task)
+		require.Error(t, err)
+		require.True(t, storage.IsCancelledErr(err), err)
+		info, err := importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, "cancelled", info.Status)
+		require.Equal(t, "", info.Step)
+		require.Equal(t, 0, task.RequiredSlots)
+		require.Equal(t, 0, task.MaxNodeCount)
+	})
+
+	t.Run("cancelled_after_prepare", func(t *testing.T) {
+		jobID, task := createPrepareTask(t)
+		d := sch.MockScheduler(task)
+		ext := importinto.NewImportSchedulerForTest(true, task,
+			scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+		require.NoError(t, ext.OnPrepare(ctx, d, task))
+		info, err := importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepPreparing, info.Step)
+		require.NoError(t, importer.CancelJob(ctx, conn, jobID))
+
+		task.Step = proto.StepPrepared
+		nextStep := ext.GetNextStep(&task.TaskBase)
+		require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
+		metas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, nextStep)
+		require.Error(t, err)
+		require.True(t, storage.IsCancelledErr(err), err)
+		require.Nil(t, metas)
+		info, err = importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, "cancelled", info.Status)
+		require.Equal(t, importer.JobStepPreparing, info.Step)
+	})
 }
 
 func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {

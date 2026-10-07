@@ -15,6 +15,7 @@ go_test(
         "util_test.go",
     ],
     embedsrcs = [
+        "logical-time-nanos.parquet",
         "test.parquet",
         "part0.parquet",
         "part1.parquet",

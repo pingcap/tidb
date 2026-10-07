@@ -156,6 +156,19 @@ const (
 	TiDBSoftDeleteTableStatusTableID = ReservedGlobalIDUpperBound - 61
 	// TiDBMaskingPolicyTableID is the table ID of `tidb_masking_policy`.
 	TiDBMaskingPolicyTableID = ReservedGlobalIDUpperBound - 62
+	// TiDBStorageClassTransitionHistoryTableID is the table ID of
+	// `tidb_storage_class_transition_history`.
+	TiDBStorageClassTransitionHistoryTableID = ReservedGlobalIDUpperBound - 63
+	// TiDBMViewRefreshInfoTableID is the table ID of `tidb_mview_refresh_info`.
+	TiDBMViewRefreshInfoTableID = ReservedGlobalIDUpperBound - 64
+	// TiDBMLogPurgeInfoTableID is the table ID of `tidb_mlog_purge_info`.
+	TiDBMLogPurgeInfoTableID = ReservedGlobalIDUpperBound - 65
+	// TiDBMViewRefreshHistTableID is the table ID of `tidb_mview_refresh_hist`.
+	TiDBMViewRefreshHistTableID = ReservedGlobalIDUpperBound - 66
+	// TiDBMViewRefreshAlertTableID is the table ID of `tidb_mview_refresh_alert`.
+	TiDBMViewRefreshAlertTableID = ReservedGlobalIDUpperBound - 67
+	// TiDBMLogPurgeHistTableID is the table ID of `tidb_mlog_purge_hist`.
+	TiDBMLogPurgeHistTableID = ReservedGlobalIDUpperBound - 68
 )
 
 // IsReservedID checks if the given ID is a reserved global ID.

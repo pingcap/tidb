@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gogo/protobuf/proto"
@@ -203,6 +204,24 @@ type MetaDataClient struct {
 
 func NewMetaDataClient(c *clientv3.Client) *MetaDataClient {
 	return &MetaDataClient{c}
+}
+
+var metadataWatcherMu sync.Mutex
+
+func (c MetaDataClient) getWatcher() clientv3.Watcher {
+	metadataWatcherMu.Lock()
+	defer metadataWatcherMu.Unlock()
+	return c.Client.Watcher
+}
+
+func (c MetaDataClient) resetWatcher() {
+	metadataWatcherMu.Lock()
+	oldWatcher := c.Client.Watcher
+	c.Client.Watcher = clientv3.NewWatcher(c.Client)
+	metadataWatcherMu.Unlock()
+	if oldWatcher != nil {
+		_ = oldWatcher.Close()
+	}
 }
 
 // ParseCheckpoint parses the checkpoint from a key & value pair.

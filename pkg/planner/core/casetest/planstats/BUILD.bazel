@@ -25,7 +25,6 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
-        "//pkg/statistics/asyncload",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
         "//pkg/testkit",

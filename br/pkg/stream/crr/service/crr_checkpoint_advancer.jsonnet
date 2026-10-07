@@ -264,7 +264,7 @@ local checkpointP = graphPanel.new(
     title='Global Log Backup Checkpoint',
     datasource=myDS,
     legend_rightSide=true,
-    description='Log backup current upstream/downstream global checkpoint.',
+    description='Log backup current upstream/downstream global checkpoint and the checkpoint persisted to external storage.',
     format='dateTimeAsIso',
 )
 .addTarget(
@@ -277,6 +277,18 @@ local checkpointP = graphPanel.new(
     prometheus.target(
         'tidb_br_crr_safe_checkpoint{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"} / 262144',
         legendFormat='downstream-{{task}}'
+    )
+)
+.addTarget(
+    prometheus.target(
+        'tidb_log_backup_last_checkpoint{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"} / 262144',
+        legendFormat='last-checkpoint-{{task}}'
+    )
+)
+.addTarget(
+    prometheus.target(
+        'tidb_log_backup_external_storage_checkpoint{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"} / 262144',
+        legendFormat='external-storage-{{task}}'
     )
 );
 

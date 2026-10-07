@@ -22,7 +22,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -39,6 +42,7 @@ import (
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 var (
@@ -145,6 +149,11 @@ func TestNextGenS3ExternalID(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("only for nextgen")
 	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
 	store := testkit.CreateMockStore(t)
 	outerTK := testkit.NewTestKit(t, store)
 	outerTK.MustExec("create table test.t (id int);")
@@ -233,6 +242,80 @@ func TestNextGenS3ExternalID(t *testing.T) {
 		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket?external-id=allowed'")
 		require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
 	})
+
+	t.Run("Starter SEM enabled, require and preserve explicit external ID", func(t *testing.T) {
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		bak := config.GetGlobalKeyspaceName()
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = "aaa"
+		})
+		t.Cleanup(func() {
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.KeyspaceName = bak
+			})
+			require.NoError(t, deploymode.Set(deploymode.Premium))
+		})
+		for i, fns := range semTestPatternFns {
+			t.Run(fmt.Sprint(i), func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				fns[0](t, tk)
+				t.Cleanup(func() {
+					fns[1](t, tk)
+				})
+				for _, schema := range []string{"s3", "oss"} {
+					for _, query := range []string{
+						"access-key=ak&secret-access-key=sk",
+						"EXTERNAL_ID=&access-key=ak&secret-access-key=sk",
+						"external-id=allowed&EXTERNAL_ID=&access-key=ak&secret-access-key=sk",
+					} {
+						tk.MustMatchErrMsg(
+							fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?%s'", schema, query),
+							`(?i).*The URI of data source is invalid.*external ID is required for Starter deployments.*`)
+					}
+					tk.MustMatchErrMsg(
+						fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?external-id=allowed'", schema),
+						`(?i).*Feature 'IMPORT INTO .*without access key/secret access key or role ARN' is not supported when security enhanced mode is enabled`)
+				}
+				for _, tc := range []struct {
+					name  string
+					param string
+					value string
+				}{
+					{name: "canonical", param: "external-id", value: "allowed"},
+					{name: "alias", param: "EXTERNAL_ID", value: "caller-provided"},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+							u, err := url.Parse(plan.Path)
+							require.NoError(t, err)
+							require.Equal(t, []string{tc.value}, u.Query()[tc.param])
+							panic("FAIL IT, AS WE CANNOT RUN IT HERE")
+						})
+						for _, schema := range []string{"s3", "oss"} {
+							err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?%s=%s&access-key=ak&secret-access-key=sk'", schema, tc.param, tc.value))
+							require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+						}
+					})
+				}
+			})
+		}
+	})
+
+	t.Run("Starter SEM disabled, external ID remains optional", func(t *testing.T) {
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(deploymode.Premium))
+		})
+		tk := testkit.NewTestKit(t, store)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+			u, err := url.Parse(plan.Path)
+			require.NoError(t, err)
+			require.NotContains(t, u.Query(), s3like.S3ExternalID)
+			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
+		})
+		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket'")
+		require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+	})
 }
 
 func TestNextGenUnsupportedLocalSortAndOptions(t *testing.T) {
@@ -252,6 +335,73 @@ func TestNextGenUnsupportedLocalSortAndOptions(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestCancelImportJobWithoutDXFTask(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("import job and dxf task is submitted together in classic, no such case")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	ctx := tikvutil.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	manager, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	assertNoDXFTask := func(jobID int64) {
+		taskKey := importinto.TaskKey(jobID)
+		tk.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", taskKey).
+			Check(testkit.Rows("0"))
+		tk.MustQuery("select count(1) from mysql.tidb_global_task_history where task_key = ?", taskKey).
+			Check(testkit.Rows("0"))
+	}
+
+	jobID, err := importer.CreateJob(ctx, tk.Session().GetSQLExecutor(), "test", "t", 1,
+		tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		}, 0)
+	require.NoError(t, err)
+	assertNoDXFTask(jobID)
+
+	tk.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+	tk.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+		Check(testkit.Rows("cancelled cancelled by user"))
+	assertNoDXFTask(jobID)
+
+	backgroundJobID, err := importer.CreateJob(ctx, tk.Session().GetSQLExecutor(), "test", "t", 1,
+		tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		}, 0)
+	require.NoError(t, err)
+	assertNoDXFTask(backgroundJobID)
+
+	// The KILL path enters the helper with a fresh background context.
+	require.NoError(t, executor.CancelAndWaitImportJobForTest(context.Background(), backgroundJobID))
+	tk.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", backgroundJobID).
+		Check(testkit.Rows("cancelled cancelled by user"))
+	assertNoDXFTask(backgroundJobID)
+
+	err = tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID))
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidOperation)
+	require.ErrorContains(t, err, "The current job status cannot perform the operation. CANCEL")
+	tk.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+		Check(testkit.Rows("cancelled cancelled by user"))
+	assertNoDXFTask(jobID)
+
+	runningJobID, err := importer.CreateJob(ctx, tk.Session().GetSQLExecutor(), "test", "t", 1,
+		tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		}, 0)
+	require.NoError(t, err)
+	require.NoError(t, importer.StartJob(ctx, tk.Session().GetSQLExecutor(), runningJobID, importer.JobStepImporting))
+	assertNoDXFTask(runningJobID)
+
+	err = tk.ExecToErr(fmt.Sprintf("cancel import job %d", runningJobID))
+	require.ErrorContains(t, err, "job state changed during cancel, please try again later")
+	tk.MustQuery("select status, step from mysql.tidb_import_jobs where id = ?", runningJobID).
+		Check(testkit.Rows("running importing"))
+	assertNoDXFTask(runningJobID)
 }
 
 func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, initFn func(t *testing.T, tk *testkit.TestKit)) {
@@ -315,7 +465,7 @@ func TestImportIntoValidateColAssignmentsWithEncodeCtx(t *testing.T) {
 		error string
 	}{
 		{
-			exprs: []string{"'x'", "1+@1", "concat('hello', 'world')", "getvar('var1')"},
+			exprs: []string{"'x'", "1+@1", "concat('hello', 'world')", "getvar('var1')", "uncompress(compress(@raw))"},
 		},
 		{
 			exprs: []string{"setvar('a', 'b')"},
@@ -367,4 +517,48 @@ func TestImportIntoValidateColAssignmentsWithEncodeCtx(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table src (a int)")
+	tk.MustExec("insert into src values (1), (2)")
+	tk.MustExec("create table dst (a int)")
+
+	sessionVars := tk.Session().GetSessionVars()
+	origRestricted := sessionVars.InRestrictedSQL
+	origMaintenance := sessionVars.InMViewMaintenance
+	sessionVars.InRestrictedSQL = true
+	sessionVars.InMViewMaintenance = true
+	defer func() {
+		sessionVars.InRestrictedSQL = origRestricted
+		sessionVars.InMViewMaintenance = origMaintenance
+	}()
+
+	var invoked, childMaintenance bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/inheritMViewMaintenanceFlagApplied", func(maintenance bool) {
+		invoked = true
+		childMaintenance = maintenance
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr", `return(true)`)
+
+	err := tk.ExecToErr("import into dst from select * from src with disable_precheck")
+	require.ErrorContains(t, err, "mock import from select setup error")
+	require.True(t, invoked)
+	require.True(t, childMaintenance)
+}
+
+func TestImportIntoRejectsMaterializedViewLogBaseTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("create table src (a int)")
+	tk.MustExec("create table dst (a int)")
+	tk.MustExec("create materialized view log on dst (a)")
+
+	err := tk.ExecToErr("import into dst from select * from src with disable_precheck")
+	require.ErrorContains(t, err, "IMPORT INTO on tables with materialized view log")
 }

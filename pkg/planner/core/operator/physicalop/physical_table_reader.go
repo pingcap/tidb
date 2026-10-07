@@ -231,6 +231,7 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	cloned.StoreType = p.StoreType
 	cloned.ReadReqType = p.ReadReqType
 	cloned.IsCommonHandle = p.IsCommonHandle
+	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
 	if cloned.TablePlan, err = p.TablePlan.Clone(newCtx); err != nil {
 		return nil, err
 	}

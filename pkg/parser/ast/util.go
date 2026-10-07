@@ -42,7 +42,7 @@ func IsReadOnly(node Node, checkGlobalVars bool) bool {
 			readOnly: true,
 		}
 
-		node.Accept(&checker)
+		Walk(node, &checker)
 		return checker.readOnly
 	case *ExplainStmt:
 		return !st.Analyze || IsReadOnly(st.Stmt, checkGlobalVars)
@@ -86,19 +86,19 @@ type readOnlyChecker struct {
 	readOnly bool
 }
 
-// Enter implements Visitor interface.
-func (checker *readOnlyChecker) Enter(in Node) (out Node, skipChildren bool) {
+// Enter implements InPlaceVisitor interface.
+func (checker *readOnlyChecker) Enter(in Node) (skipChildren bool) {
 	if node, ok := in.(*VariableExpr); ok {
 		// like func rewriteVariable(), this stands for SetVar.
 		if node.IsSystem && node.Value != nil {
 			checker.readOnly = false
-			return in, true
+			return true
 		}
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (checker *readOnlyChecker) Leave(in Node) (out Node, ok bool) {
-	return in, checker.readOnly
+// Leave implements InPlaceVisitor interface.
+func (checker *readOnlyChecker) Leave(Node) (proceed bool) {
+	return checker.readOnly
 }

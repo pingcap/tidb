@@ -510,3 +510,26 @@ func TestMemtableInfoschemaExtractorPart4(t *testing.T) {
 	}
 	testMemtableInfoschemaExtractor(t, tcs)
 }
+
+func TestInfoSchemaTableNameLikeEscape(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database like_escape")
+	tk.MustExec("use like_escape")
+	tk.MustExec("create table `abc_def` (a int)")
+	tk.MustExec("create table `abc#x` (a int)")
+
+	// With ESCAPE '#', "#_" is a literal underscore, so only `abc_def` matches
+	// (not `abc#x`). The extractor pushes the pattern down compiled with the '#'
+	// escape, so the memtable scan matches exactly the LIKE ... ESCAPE predicate
+	// instead of diverging under the default '\' escape. See issue #69653.
+	tk.MustQuery("select table_name, table_name like '%#_%' escape '#' as self_true " +
+		"from information_schema.tables " +
+		"where table_schema = 'like_escape' and table_name like '%#_%' escape '#'").
+		Check(testkit.Rows("abc_def 1"))
+
+	// A default-escape LIKE is unaffected and still matches both tables.
+	tk.MustQuery("select table_name from information_schema.tables " +
+		"where table_schema = 'like_escape' and table_name like 'abc%'").
+		Sort().Check(testkit.Rows("abc#x", "abc_def"))
+}

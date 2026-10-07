@@ -108,7 +108,7 @@ func TestCheckRuleWithKeyspaceID(t *testing.T) {
 		})
 	}
 
-	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 42})
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42}})
 	require.NoError(t, err)
 	rule := &label.Rule{Labels: []pd.RegionLabel{{Key: "merge_option", Value: "allow"}}}
 	rule.Reset(codecV2, "test", "t4", "", 123)

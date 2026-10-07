@@ -60,8 +60,8 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		testenv.UpdateConfigForNextgen(t)
 		keyspaceMeta = &keyspacepb.KeyspaceMeta{
-			Id:   uint32(0xFFFFFF) - 1,
-			Name: keyspace.System,
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: uint32(0xFFFFFF) - 1},
+			Name:     keyspace.System,
 		}
 	}
 

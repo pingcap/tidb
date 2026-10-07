@@ -331,10 +331,6 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 				if options.skipAutoIDOwner && svr.IsAutoIDOwner() {
 					logutil.BgLogger().Info("auto id service is owner, skip exit")
 					w.WriteHeader(http.StatusNotModified)
-					_, err := w.Write([]byte("auto id service is owner"))
-					if err != nil {
-						logutil.BgLogger().Warn("failed to write response", zap.Error(err))
-					}
 					return
 				}
 				if !options.graceful {
@@ -556,6 +552,14 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 			c.Performance.RunAutoAnalyze = activateRequest.RunAutoAnalyze
 		}
 	})
+}
+
+// PrepareForActivation binds the server listener and only then ends standby, so the
+// activation API reports success after the server is ready to accept connections.
+func (c *LoadKeyspaceController) PrepareForActivation(svr server.StandbyReadyServer) error {
+	err := svr.InitTiDBListener()
+	c.EndStandby(err)
+	return err
 }
 
 // EndStandby is used to notify the temp http server that the tidb server is ready or failed to init.

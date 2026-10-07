@@ -150,6 +150,8 @@ type semImpl struct {
 	restrictedPrivileges      map[string]struct{}
 	restrictedStatusVariables map[string]struct{}
 	restrictedSQL             func(ast.StmtNode) bool
+	// restrictedHints is the set of lower-case hint names to strip.
+	restrictedHints map[string]struct{}
 }
 
 type restrictedVariableAttr struct {
@@ -282,6 +284,7 @@ func buildSEMFromConfig(cfg *Config) *semImpl {
 		restrictedVariables:       make(map[string]restrictedVariableAttr, len(cfg.RestrictedVariables)),
 		restrictedStatusVariables: make(map[string]struct{}, len(cfg.RestrictedStatusVar)),
 		restrictedPrivileges:      make(map[string]struct{}, len(cfg.RestrictedPrivileges)),
+		restrictedHints:           make(map[string]struct{}, len(cfg.RestrictedHints)),
 	}
 
 	for _, db := range cfg.RestrictedDatabases {
@@ -310,6 +313,10 @@ func buildSEMFromConfig(cfg *Config) *semImpl {
 	for _, priv := range cfg.RestrictedPrivileges {
 		priv = strings.ToUpper(priv)
 		sem.restrictedPrivileges[priv] = struct{}{}
+	}
+
+	for _, h := range cfg.RestrictedHints {
+		sem.restrictedHints[strings.ToLower(h)] = struct{}{}
 	}
 
 	sem.restrictedSQL = buildSEMSqlValidateFunction(&cfg.RestrictedSQL)

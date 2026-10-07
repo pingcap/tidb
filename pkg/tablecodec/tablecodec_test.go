@@ -37,6 +37,10 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
+func defaultCodecEncoder() codec.Encoder {
+	return codec.NewEncoder(collate.NewCollationEnabled())
+}
+
 // TestTableCodec  tests some functions in package tablecodec
 // TODO: add more tests.
 func TestTableCodec(t *testing.T) {
@@ -595,6 +599,15 @@ func TestUntouchedIndexKValue(t *testing.T) {
 	untouchedIndexKey := []byte("t00000001_i000000001")
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
+	commonHandleV1CommittedValue := []byte{0, IndexVersionFlag, 1}
+	require.False(t, IsUntouchedIndexKValue(untouchedIndexKey, commonHandleV1CommittedValue))
+	commonHandleV1UntouchedValue := []byte{1, IndexVersionFlag, 1, kv.UnCommitIndexKVFlag}
+	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, commonHandleV1UntouchedValue))
+	legacyUniqueValueWithMarkerLikeBytes := EncodeHandleInUniqueIndexValue(kv.IntHandle(0x017d010000000031), false)
+	require.Len(t, legacyUniqueValueWithMarkerLikeBytes, 8)
+	require.Equal(t, IndexVersionFlag, legacyUniqueValueWithMarkerLikeBytes[1])
+	require.Equal(t, kv.UnCommitIndexKVFlag, legacyUniqueValueWithMarkerLikeBytes[len(legacyUniqueValueWithMarkerLikeBytes)-1])
+	require.False(t, IsUntouchedIndexKValue(untouchedIndexKey, legacyUniqueValueWithMarkerLikeBytes))
 	IndexKey2TempIndexKey(untouchedIndexKey)
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
 	elem := TempIndexValueElem{Handle: kv.IntHandle(1), Delete: true, Distinct: true}
@@ -732,7 +745,7 @@ func TestTempIndexValueCodec(t *testing.T) {
 func TestV2TableCodec(t *testing.T) {
 	const tableID int64 = 31415926
 	key := EncodeTablePrefix(tableID)
-	c, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 271828})
+	c, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 271828}})
 	require.NoError(t, err)
 	key = c.EncodeKey(key)
 	tbid := DecodeTableID(key)
@@ -875,7 +888,7 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 	indexedValues := []types.Datum{types.NewIntDatum(123)}
 	handle := kv.NewPartitionHandle(partitionID, kv.IntHandle(handleID))
 
-	key, distinct, err := GenIndexKey(loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
+	key, distinct, err := GenIndexKey(defaultCodecEncoder(), loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
 	require.NoError(t, err)
 	require.True(t, distinct, "unique index with non-NULL value should be distinct")
 
@@ -893,7 +906,7 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 	indexedValues = []types.Datum{types.NewDatum(nil)} // NULL value
 	handle = kv.NewPartitionHandle(partitionID, kv.IntHandle(handleID))
 
-	key, distinct, err = GenIndexKey(loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
+	key, distinct, err = GenIndexKey(defaultCodecEncoder(), loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
 	require.NoError(t, err)
 	require.False(t, distinct, "unique index with NULL value should NOT be distinct")
 
@@ -963,7 +976,7 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 	indexedValues = []types.Datum{types.NewDatum(nil)} // NULL value
 	intHandle = kv.IntHandle(handleID)
 
-	key, distinct, err = GenIndexKey(loc, tblInfo, idxInfoV0, tableID, indexedValues, intHandle, nil)
+	key, distinct, err = GenIndexKey(defaultCodecEncoder(), loc, tblInfo, idxInfoV0, tableID, indexedValues, intHandle, nil)
 	require.NoError(t, err)
 	require.False(t, distinct, "unique index with NULL value should NOT be distinct")
 

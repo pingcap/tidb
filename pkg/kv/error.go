@@ -70,6 +70,8 @@ var (
 			mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB].RedactArgPos,
 		),
 	)
+	// ErrSharedLockLost is a transaction-fatal indication that shared-lock ownership may have been lost during upgrade.
+	ErrSharedLockLost = dbterror.ClassTiKV.NewStd(mysql.ErrSharedLockLost)
 	// ErrLockExpire is the error when the lock is expired.
 	ErrLockExpire = dbterror.ClassTiKV.NewStd(mysql.ErrLockExpire)
 	// ErrAssertionFailed is the error when an assertion fails.

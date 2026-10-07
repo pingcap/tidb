@@ -670,7 +670,7 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 		keyRanges: req.Ranges,
 	}
 	if reqCtx := req.Context; reqCtx != nil {
-		dagCtx.keyspaceID = reqCtx.KeyspaceId
+		dagCtx.keyspaceID = reqCtx.GetKeyspaceId()
 	}
 	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	builder := mppExecBuilder{

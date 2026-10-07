@@ -51,25 +51,25 @@ func NormalizeDigest(sqlText string) (normalizedSQL, digest string) {
 
 type nodeVisitor struct {
 	enter func(n ast.Node) (skip bool)
-	leave func(n ast.Node) (ok bool)
+	leave func(n ast.Node) (proceed bool)
 }
 
-func (v *nodeVisitor) Enter(n ast.Node) (out ast.Node, skipChildren bool) {
+func (v *nodeVisitor) Enter(n ast.Node) (skipChildren bool) {
 	if v.enter != nil {
-		return n, v.enter(n)
+		return v.enter(n)
 	}
-	return n, false
+	return false
 }
 
-func (v *nodeVisitor) Leave(n ast.Node) (out ast.Node, ok bool) {
+func (v *nodeVisitor) Leave(n ast.Node) bool {
 	if v.leave != nil {
-		return n, v.leave(n)
+		return v.leave(n)
 	}
-	return n, true
+	return true
 }
 
-func visitNode(n ast.Node, enter func(n ast.Node) (skip bool), leave func(n ast.Node) (ok bool)) {
-	n.Accept(&nodeVisitor{enter, leave})
+func visitNode(n ast.Node, enter func(n ast.Node) (skip bool), leave func(n ast.Node) (proceed bool)) {
+	ast.Walk(n, &nodeVisitor{enter, leave})
 }
 
 // CollectTableNamesFromQuery returns all referenced table names in the given Query text.
@@ -532,7 +532,7 @@ func evaluateIndexSetCost(
 
 func exec(sctx sessionctx.Context, sql string, args ...any) (ret []chunk.Row, err error) {
 	executor := sctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	result, err := executor.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("execute %v failed: %v", sql, err)

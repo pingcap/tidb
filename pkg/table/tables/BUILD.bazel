@@ -7,6 +7,7 @@ go_library(
         "cache.go",
         "index.go",
         "mutation_checker.go",
+        "mview_log.go",
         "partition.go",
         "state_remote.go",
         "tables.go",
@@ -80,7 +81,7 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
-    shard_count = 43,
+    shard_count = 44,
     deps = [
         "//pkg/ddl",
         "//pkg/domain",

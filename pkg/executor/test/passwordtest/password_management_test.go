@@ -318,15 +318,15 @@ func TestFailedLoginTrackingBasic(t *testing.T) {
 
 	tk.MustExec("CREATE USER 'u6'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3;")
 	tk.MustQuery(" SHOW CREATE USER 'u6'@'localhost';").Check(
-		testkit.Rows("CREATE USER 'u6'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3"))
+		testkit.Rows("CREATE USER `u6`@`localhost` IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3"))
 
 	tk.MustExec("CREATE USER 'u7'@'localhost' IDENTIFIED BY 'password';")
 	tk.MustQuery(" SHOW CREATE USER 'u7'@'localhost';").Check(
-		testkit.Rows("CREATE USER 'u7'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
+		testkit.Rows("CREATE USER `u7`@`localhost` IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
 	tk.MustExec("CREATE USER 'u8'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED;")
 	tk.MustQuery(" SHOW CREATE USER 'u8'@'localhost';").Check(
-		testkit.Rows("CREATE USER 'u8'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED"))
+		testkit.Rows("CREATE USER `u8`@`localhost` IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED"))
 
 	tk.MustExec("ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME 0 FAILED_LOGIN_ATTEMPTS 0")
 	tk.MustQuery("select user_attributes from mysql.user where user = 'u4' and host = 'localhost'").Check(testkit.Rows(`<nil>`))
@@ -779,7 +779,7 @@ func TestFailedLoginTrackingCheckPrivilges(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, nil, nil, nil))
 	// Specify FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME attributes when creating user ,
 	// Check user privileges  after successful login.
-	tk.MustQuery(`show grants`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'testu1'@'localhost'"))
+	tk.MustQuery(`show grants`).Check(testkit.Rows("GRANT USAGE ON *.* TO `testu1`@`localhost`"))
 	tk.MustQuery(`select user()`).Check(testkit.Rows("testu1@localhost"))
 }
 
@@ -987,44 +987,6 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 	require.NoError(t, err)
 	require.Equal(t, failedLoginCount, ua[0].PasswordLocking.FailedLoginCount)
 	require.Equal(t, autoAccountLocked, ua[0].PasswordLocking.AutoAccountLocked)
-}
-
-// TestDualPasswordParserOnlyStub guards the executor stub added in the
-// parser-only PR (#68028). The grammar now accepts MySQL 8.0 dual-password
-// clauses (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD), but the matching
-// executor / privilege / storage logic lands in the follow-up PR (#68393).
-// Until then the executor must fail fast with ER_NOT_SUPPORTED_YET so users
-// don't see silent success.
-//
-// When #68393 lands and removes the stubs, this test should be replaced by
-// the real dual-password coverage that lives there.
-func TestDualPasswordParserOnlyStub(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-
-	tk.MustExec("DROP USER IF EXISTS dpstub")
-	tk.MustExec("CREATE USER dpstub IDENTIFIED BY 'old'")
-
-	// ALTER USER ... RETAIN CURRENT PASSWORD must fail with ER_NOT_SUPPORTED_YET.
-	tk.MustGetErrCode("ALTER USER dpstub IDENTIFIED BY 'new' RETAIN CURRENT PASSWORD", errno.ErrNotSupportedYet)
-	// ALTER USER ... DISCARD OLD PASSWORD must fail with ER_NOT_SUPPORTED_YET.
-	tk.MustGetErrCode("ALTER USER dpstub DISCARD OLD PASSWORD", errno.ErrNotSupportedYet)
-	// SET PASSWORD ... RETAIN CURRENT PASSWORD must fail with ER_NOT_SUPPORTED_YET.
-	tk.MustGetErrCode("SET PASSWORD FOR dpstub = 'new' RETAIN CURRENT PASSWORD", errno.ErrNotSupportedYet)
-
-	// Current-user form: MySQL 8.0 accepts dual-password on the USER() branch.
-	// The stub propagates CurrentDualPasswordOption to the synthetic UserSpec
-	// and also fails with ER_NOT_SUPPORTED_YET. Authenticate as dpstub first
-	// so USER() resolves to dpstub@%.
-	subTK := testkit.NewTestKit(t, store)
-	require.NoError(t, subTK.Session().Auth(&auth.UserIdentity{Username: "dpstub", Hostname: "%"}, sha1Password("old"), nil, nil))
-	subTK.MustGetErrCode("ALTER USER USER() IDENTIFIED BY 'p3' RETAIN CURRENT PASSWORD", errno.ErrNotSupportedYet)
-	subTK.MustGetErrCode("ALTER USER USER() DISCARD OLD PASSWORD", errno.ErrNotSupportedYet)
-
-	// A regular ALTER USER (no dual-password clause) must still succeed —
-	// the stub guard only triggers when DualPasswordOption is set.
-	tk.MustExec("ALTER USER dpstub IDENTIFIED BY 'plain'")
 }
 
 func selectSQL(user string) string {

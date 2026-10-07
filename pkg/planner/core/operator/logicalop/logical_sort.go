@@ -154,8 +154,6 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
-
 // *************************** end implementation of logicalPlan interface ***************************
 
 // GetUsedCols extracts all of the Columns used by agg including ByItems.

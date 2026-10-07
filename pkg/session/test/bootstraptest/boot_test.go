@@ -107,6 +107,124 @@ func TestBootstrapMaskingPolicyTable(t *testing.T) {
 	checkTiDBMaskingPolicyTableSchema(t, tk)
 }
 
+func TestBootstrapOperateViewPrivilege(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	checkOperateViewPrivilegeBootstrapSchema(t, testkit.NewTestKit(t, store))
+}
+
+func checkOperateViewPrivilegeBootstrapSchema(t *testing.T, tk *testkit.TestKit) {
+	tk.MustQuery("SELECT column_name FROM information_schema.columns WHERE table_schema='mysql' AND table_name='user' AND column_name='Operate_view_priv'").
+		Check(testkit.Rows("Operate_view_priv"))
+	tk.MustQuery("SELECT column_name FROM information_schema.columns WHERE table_schema='mysql' AND table_name='db' AND column_name='Operate_view_priv'").
+		Check(testkit.Rows("Operate_view_priv"))
+	tk.MustQuery("SELECT LOCATE('Operate View', column_type) > 0 FROM information_schema.columns WHERE table_schema='mysql' AND table_name='tables_priv' AND column_name='Table_priv'").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT Operate_view_priv FROM mysql.user WHERE User='root' AND Host='%'").
+		Check(testkit.Rows("Y"))
+}
+
+func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(t, store)
+	checkMaterializedViewBootstrapSchema(t, tk)
+}
+
+func checkMaterializedViewBootstrapSchema(t *testing.T, tk *testkit.TestKit) {
+	tables := []string{
+		"tidb_mview_refresh_info",
+		"tidb_mlog_purge_info",
+		"tidb_mview_refresh_hist",
+		"tidb_mview_refresh_alert",
+		"tidb_mlog_purge_hist",
+	}
+	for _, tableName := range tables {
+		tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema='mysql' AND table_name=?", tableName).
+			Check(testkit.Rows(tableName))
+	}
+
+	columnNames := []struct {
+		table string
+		cols  []string
+	}{
+		{
+			table: "tidb_mview_refresh_info",
+			cols:  []string{"MVIEW_ID", "LAST_SUCCESS_READ_TSO", "LAST_SUCCESS_REFRESH_END_UNIX_SECONDS", "NEXT_REFRESH_UNIX_SECONDS"},
+		},
+		{
+			table: "tidb_mlog_purge_info",
+			cols:  []string{"MLOG_ID", "NEXT_PURGE_UNIX_SECONDS", "LAST_PURGED_TSO"},
+		},
+		{
+			table: "tidb_mview_refresh_hist",
+			cols: []string{
+				"REFRESH_JOB_ID", "MVIEW_ID", "MVIEW_SCHEMA", "MVIEW_NAME", "REFRESH_METHOD",
+				"REFRESH_START_TIME", "REFRESH_END_TIME", "REFRESH_DURATION_SEC", "REFRESH_SCHEDULE_DURATION_SEC",
+				"REFRESH_STATUS", "REFRESH_ROWS", "REFRESH_READ_TSO", "REFRESH_COMMIT_TSO", "REFRESH_FAILED_REASON",
+				"CANCEL_REQUEST_TIME", "CANCEL_REQUESTED_BY", "LAST_HEARTBEAT_TIME",
+			},
+		},
+		{
+			table: "tidb_mview_refresh_alert",
+			cols:  []string{"MVIEW_ID", "MVIEW_SCHEMA", "MVIEW_NAME", "ALERT_LEVEL", "REFRESH_FAILED", "LAST_SUCCESS_SNAPSHOT_TIME", "UPDATE_TIME"},
+		},
+		{
+			table: "tidb_mlog_purge_hist",
+			cols: []string{
+				"PURGE_JOB_ID", "MLOG_ID", "BASE_TABLE_SCHEMA", "BASE_TABLE_NAME", "PURGE_METHOD",
+				"PURGE_START_TIME", "PURGE_END_TIME", "PURGE_DURATION_SEC", "PURGE_ROWS", "PURGE_STATUS",
+				"PURGE_CUTOFF_TSO", "PURGE_FAILED_REASON", "CANCEL_REQUEST_TIME", "CANCEL_REQUESTED_BY", "LAST_HEARTBEAT_TIME",
+			},
+		},
+	}
+	for _, table := range columnNames {
+		tk.MustQuery("SELECT column_name FROM information_schema.columns WHERE table_schema='mysql' AND table_name=? ORDER BY ordinal_position", table.table).
+			Check(testkit.Rows(table.cols...))
+	}
+
+	indexNames := []struct {
+		table   string
+		indexes []string
+	}{
+		{
+			table:   "tidb_mview_refresh_info",
+			indexes: []string{"PRIMARY"},
+		},
+		{
+			table:   "tidb_mlog_purge_info",
+			indexes: []string{"PRIMARY"},
+		},
+		{
+			table: "tidb_mview_refresh_hist",
+			indexes: []string{
+				"PRIMARY", "idx_mview_name_commit_tso", "idx_mview_name_start_time", "idx_mview_start_time",
+				"idx_mview_status_start_time", "idx_refresh_duration_sec", "idx_refresh_schedule_duration_sec",
+				"idx_refresh_start_time", "idx_refresh_status_start_time",
+			},
+		},
+		{
+			table:   "tidb_mview_refresh_alert",
+			indexes: []string{"PRIMARY"},
+		},
+		{
+			table: "tidb_mlog_purge_hist",
+			indexes: []string{
+				"PRIMARY", "idx_mlog_start_time", "idx_mlog_status_start_time", "idx_purge_duration_sec",
+				"idx_purge_start_time", "idx_purge_status_start_time", "idx_table_name_start_time",
+			},
+		},
+	}
+	for _, table := range indexNames {
+		tk.MustQuery("SELECT DISTINCT index_name FROM information_schema.statistics WHERE table_schema='mysql' AND table_name=? ORDER BY index_name", table.table).
+			Check(testkit.Rows(table.indexes...))
+	}
+}
+
 func TestANSISQLMode(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -638,11 +756,16 @@ func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
 	}
 }
 
-func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
+func TestTiDBOptRangeLimitsWhenUpgrading(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
+	t.Run("max size", testTiDBOptRangeMaxSizeWhenUpgrading)
+	t.Run("max count", testTiDBOptRangeMaxCountWhenUpgrading)
+}
+
+func testTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -698,6 +821,43 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	row = chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, "0", row.GetString(0))
+}
+
+func testTiDBOptRangeMaxCountWhenUpgrading(t *testing.T) {
+	for _, tc := range []struct {
+		name, persisted, want string
+	}{{"missing", "", "1000"}, {"disabled", "0", "0"}, {"custom", "2000", "2000"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			se := session.CreateSessionAndSetID(t, store)
+			previousVersion := session.CurrentBootstrapVersion - 1
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			require.NoError(t, m.FinishBootstrap(previousVersion))
+			require.NoError(t, txn.Commit(context.Background()))
+			session.RevertVersionAndVariables(t, se, int(previousVersion))
+			if tc.persisted == "" {
+				session.MustExec(t, se, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBOptRangeMaxCount))
+			} else {
+				session.MustExec(t, se, fmt.Sprintf("set global tidb_opt_range_max_count=%s", tc.persisted))
+			}
+			session.MustExec(t, se, "commit")
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			dom.Close()
+
+			upgradedDomain, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer upgradedDomain.Close()
+			upgradedSession := session.CreateSessionAndSetID(t, store)
+			rows := session.MustExecToRecodeSet(t, upgradedSession, fmt.Sprintf("select variable_value from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBOptRangeMaxCount))
+			chunk := rows.NewChunk(nil)
+			require.NoError(t, rows.Next(context.Background(), chunk))
+			require.Equal(t, 1, chunk.NumRows())
+			require.Equal(t, tc.want, chunk.GetRow(0).GetString(0))
+		})
+	}
 }
 
 func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {

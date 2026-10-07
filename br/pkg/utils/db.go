@@ -113,6 +113,8 @@ func GetGcRatio(ctx sqlexec.RestrictedSQLExecutor) (string, error) {
 const (
 	DefaultGcRatioVal  = "1.1"
 	DisabledGcRatioVal = "-1.0"
+
+	RocksDBMaxBackgroundJobsForRestore = "1"
 )
 
 func SetGcRatio(ctx sqlexec.RestrictedSQLExecutor, ratio string) error {
@@ -126,6 +128,38 @@ func SetGcRatio(ctx sqlexec.RestrictedSQLExecutor, ratio string) error {
 		return errors.Annotatef(err, "failed to set config `gc.ratio-threshold`=%s", ratio)
 	}
 	log.Warn("set config tikv gc.ratio-threshold", zap.String("ratio", ratio))
+	return nil
+}
+
+func GetRocksDBMaxBackgroundJobs(ctx sqlexec.RestrictedSQLExecutor) (string, error) {
+	valStr := "show config where name = 'rocksdb.max-background-jobs' and type = 'tikv'"
+	rows, fields, errSQL := ctx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR),
+		nil,
+		valStr,
+	)
+	if errSQL != nil {
+		return "", errSQL
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+
+	d := rows[0].GetDatum(3, &fields[3].Column.FieldType)
+	return d.ToString()
+}
+
+func SetRocksDBMaxBackgroundJobs(ctx sqlexec.RestrictedSQLExecutor, jobs string) error {
+	_, _, err := ctx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR),
+		nil,
+		"set config tikv `rocksdb.max-background-jobs`=%?",
+		jobs,
+	)
+	if err != nil {
+		return errors.Annotatef(err, "failed to set config `rocksdb.max-background-jobs`=%s", jobs)
+	}
+	log.Warn("set config tikv rocksdb.max-background-jobs", zap.String("jobs", jobs))
 	return nil
 }
 

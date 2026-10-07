@@ -19,10 +19,23 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIsUnsupportedBroadcastQueryErr(t *testing.T) {
+	// An old peer rejects the BroadcastQuery executor during a rolling upgrade;
+	// the message is produced by PBPlanBuilder.pbToPhysicalPlan.
+	require.True(t, isUnsupportedBroadcastQueryErr(errors.New("other error: this exec type 17 doesn't support yet")))
+	require.True(t, isUnsupportedBroadcastQueryErr(errors.Trace(errors.New("this exec type 17 doesn't support yet"))))
+
+	// Unrelated errors must still propagate and fail analyze.
+	require.False(t, isUnsupportedBroadcastQueryErr(nil))
+	require.False(t, isUnsupportedBroadcastQueryErr(errors.New("context canceled")))
+	require.False(t, isUnsupportedBroadcastQueryErr(errors.New("region unavailable")))
+}
 
 // https://github.com/pingcap/tidb/issues/45690
 func TestGetAnalyzePanicErr(t *testing.T) {

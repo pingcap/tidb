@@ -440,8 +440,8 @@ SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1
 ALTER USER testuser1 ATTRIBUTE '{"comment": null}';
 SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
 
-## Non-root users could access COMMENT or ATTRIBUTE of all users via the view,
-## but not via the mysql.user table.
+## Users without elevated privileges can only see their own row in information_schema.user_attributes.
+## (MySQL 8.0.22+), and cannot read mysql.user directly.
 connect (conn1, localhost, testuser1,,);
 SELECT user, host, attribute FROM information_schema.user_attributes where user in ('testuser', 'testuser1', 'testuser2') ORDER BY user;
 -- error 1142

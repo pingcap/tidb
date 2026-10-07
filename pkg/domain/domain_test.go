@@ -27,7 +27,9 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -35,17 +37,64 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
+
+type fakeExternalWorkloadManager struct {
+	role         config.ExternalWorkloadRole
+	updatedValue *bool
+}
+
+func (m *fakeExternalWorkloadManager) Close() error { return nil }
+func (m *fakeExternalWorkloadManager) Role() config.ExternalWorkloadRole {
+	return m.role
+}
+func (*fakeExternalWorkloadManager) Meta() *keyspacepb.KeyspaceMeta { return nil }
+func (*fakeExternalWorkloadManager) InitializeGCV2(context.Context, time.Duration) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) AbortGCV2(context.Context) error { return nil }
+func (*fakeExternalWorkloadManager) RegisterGCV2(context.Context, uint64, time.Duration) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RecycleGCV2(context.Context, uint64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.Duration) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RegisterTTLTableInfo(context.Context, int64, bool) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) DeleteTTLTableInfo(context.Context, int64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RecycleTTLTask(context.Context, uint64) error {
+	return nil
+}
+func (m *fakeExternalWorkloadManager) UpdateTTLJobEnable(_ context.Context, ttlJobEnable bool) error {
+	m.updatedValue = &ttlJobEnable
+	return nil
+}
+func (*fakeExternalWorkloadManager) RegisterAutoAnalyze(context.Context, uint64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RecycleAutoAnalyze(context.Context, uint64) error {
+	return nil
+}
 
 func TestInfo(t *testing.T) {
 	t.Skip("TestInfo will hang currently, it should be fixed later")
@@ -216,6 +265,44 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	require.True(t, isClose)
 }
 
+func TestUpdateExternalWorkloadTTLJobEnableOnlyFromMaster(t *testing.T) {
+	dom := NewMockDomain()
+	master := &fakeExternalWorkloadManager{role: config.RoleMaster}
+	dom.SetExternalWorkloadManager(master)
+	require.NoError(t, dom.updateExternalWorkloadTTLJobEnable(context.Background(), false))
+	require.NotNil(t, master.updatedValue)
+	require.False(t, *master.updatedValue)
+
+	ttlWorker := &fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker}
+	dom.SetExternalWorkloadManager(ttlWorker)
+	require.NoError(t, dom.updateExternalWorkloadTTLJobEnable(context.Background(), true))
+	require.Nil(t, ttlWorker.updatedValue)
+}
+
+func TestShouldStartTTLJobManagerWithExternalWorkloadRole(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	dom := NewMockDomain()
+	require.True(t, dom.shouldStartTTLJobManager())
+
+	dom.SetExternalWorkloadManager(&fakeExternalWorkloadManager{role: config.RoleMaster})
+	require.False(t, dom.shouldStartTTLJobManager())
+
+	dom.SetExternalWorkloadManager(&fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker})
+	require.True(t, dom.shouldStartTTLJobManager())
+
+	dom.SetExternalWorkloadManager(nil)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.ExternalWorkload.Enable = true
+		conf.ExternalWorkload.Role = config.RoleMaster
+	})
+	require.False(t, dom.shouldStartTTLJobManager())
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.ExternalWorkload.Role = config.RoleTTLTaskWorker
+	})
+	require.False(t, dom.shouldStartTTLJobManager())
+}
+
 // ETCD use ip:port as unix socket address, however this address is invalid on windows.
 // We have to skip some of the test in such case.
 // https://github.com/etcd-io/etcd/blob/f0faa5501d936cd8c9f561bb9d1baca70eb67ab1/pkg/types/urls.go#L42
@@ -232,6 +319,74 @@ func mockFactory() (pools.Resource, error) {
 	return nil, errors.New("mock factory should not be called")
 }
 
+type stmtSummarySysVarContext struct {
+	*mock.Context
+	rows []chunk.Row
+}
+
+func (c *stmtSummarySysVarContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return c
+}
+
+func (c *stmtSummarySysVarContext) ExecRestrictedSQL(context.Context, []sqlexec.OptionFuncAlias, string, ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	return c.rows, nil, nil
+}
+
+// Regression coverage for issue #69913's repeated sysvar-cache rebuild path.
+func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
+	require.False(t, config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+
+	ctx := &stmtSummarySysVarContext{
+		Context: mock.NewContext(),
+		rows: []chunk.Row{
+			chunk.MutRowFromValues(vardef.TiDBStmtSummaryInternalQuery, vardef.Off).ToRow(),
+			// This lightweight Domain does not start DDL, so keep the MDL callback
+			// from calling its DDL-owned hook while rebuilding unrelated sysvars.
+			chunk.MutRowFromValues(vardef.TiDBEnableMDL, variable.BoolToOnOff(vardef.IsMDLEnabled())).ToRow(),
+		},
+	}
+
+	originalInternalEnabled := stmtsummaryv2.EnabledInternal()
+	t.Cleanup(func() {
+		require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(originalInternalEnabled))
+	})
+	require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(false))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+
+	stmtSummarySysVar := variable.GetSysVar(vardef.TiDBStmtSummaryInternalQuery)
+	require.NotNil(t, stmtSummarySysVar)
+	wrappedStmtSummarySysVar := *stmtSummarySysVar
+	originalSetGlobal := wrappedStmtSummarySysVar.SetGlobal
+	appliedCount := 0
+	wrappedStmtSummarySysVar.SetGlobal = func(ctx context.Context, vars *variable.SessionVars, val string) error {
+		require.Equal(t, vardef.Off, val)
+		appliedCount++
+		return originalSetGlobal(ctx, vars, val)
+	}
+	variable.RegisterSysVar(&wrappedStmtSummarySysVar)
+	t.Cleanup(func() {
+		variable.RegisterSysVar(stmtSummarySysVar)
+	})
+
+	require.NoError(t, dom.LoadSysVarCacheLoop(ctx))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+	require.Equal(t, 1, appliedCount)
+
+	// The persisted and local values both remain OFF. A second rebuild must still
+	// invoke the callback, which runs the internal-summary cleanup path again.
+	require.NoError(t, dom.rebuildSysVarCache(ctx))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+	require.Equal(t, 2, appliedCount)
+}
+
 func sysMockFactory(*Domain) (pools.Resource, error) {
 	return nil, nil
 }
@@ -242,6 +397,10 @@ type mockEtcdBackend struct {
 }
 
 func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
+func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
 

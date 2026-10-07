@@ -896,6 +896,30 @@ func TestTiDBClusterLog(t *testing.T) {
 			expected: [][]string{},
 		},
 		{
+			// ILIKE is pushed down as a case-insensitive prefilter, so an uppercase
+			// pattern still matches a lowercase message through the remote search.
+			// This also covers the retriever guard: a query whose only message
+			// filter is ILIKE must still produce a pattern, otherwise the scan is
+			// rejected with "denied to scan full logs".
+			conditions: []string{
+				"time>='2019/08/26 06:22:17.011'",
+				"time<='2019/08/26 06:22:17.011'",
+				"message ilike '%FOO%'",
+			},
+			expected: [][]string{
+				{"2019/08/26 06:22:17.011", "pd", "CRITICAL", "[test log message pd 5, foo]"},
+			},
+		},
+		{
+			// The prefilter plus the retained scalar recheck must not over-match.
+			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
+				"message ilike '%NoSuchMessage%'",
+			},
+			expected: [][]string{},
+		},
+		{
 			conditions: []string{
 				"time>='2019/08/26 06:18:13.011'",
 				"time<='2019/08/26 06:28:19.011'",

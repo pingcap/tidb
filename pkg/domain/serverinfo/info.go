@@ -135,6 +135,18 @@ func (info *ServerInfo) Marshal() ([]byte, error) {
 	return infoBuf, nil
 }
 
+// String implements fmt.Stringer.
+func (info *ServerInfo) String() string {
+	if info == nil {
+		return "<nil>"
+	}
+	infoBuf, err := info.Marshal()
+	if err != nil {
+		return "<failed to marshal server info: " + err.Error() + ">"
+	}
+	return string(infoBuf)
+}
+
 // Unmarshal `ServerInfo` from bytes.
 func (info *ServerInfo) Unmarshal(v []byte) error {
 	if err := json.Unmarshal(v, info); err != nil {

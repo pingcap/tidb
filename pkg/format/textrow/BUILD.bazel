@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "textrow",
+    srcs = [
+        "result_encoder.go",
+        "textrow.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/format/textrow",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/hack",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "textrow_test",
+    timeout = "short",
+    srcs = [
+        "result_encoder_test.go",
+        "textrow_test.go",
+    ],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        ":textrow",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/context",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -15,14 +15,20 @@
 package tests
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -30,6 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
+	clientutil "github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/opt"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 func TestStmtSummaryIndexAdvisor(t *testing.T) {
@@ -266,6 +275,92 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
 }
 
+func TestStmtSummaryRUVersion(t *testing.T) {
+	defer config.RestoreFunc()()
+	setupStmtSummary()
+	defer closeStmtSummary()
+	originalCollectExecutionInfo := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
+	defer config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(originalCollectExecutionInfo)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec("create table stmt_summary_ru_version (id int primary key, v int)")
+	tk.MustExec("insert into stmt_summary_ru_version values (1, 10), (2, 20), (3, 30)")
+
+	for _, version := range []rmclient.RUVersion{rmclient.RUVersionV1, rmclient.RUVersionV2} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			baseProvider, ok := infosync.NewMockResourceManagerClient(1).(rmclient.ResourceGroupProvider)
+			require.True(t, ok)
+			provider := &stmtSummaryRUVersionProvider{ResourceGroupProvider: baseProvider, version: version}
+			controller, err := rmclient.NewResourceGroupController(context.Background(), 1, provider, nil, 1)
+			require.NoError(t, err)
+			originalController := dom.ResourceGroupsController()
+			dom.SetResourceGroupsController(controller)
+			t.Cleanup(func() { dom.SetResourceGroupsController(originalController) })
+			require.Equal(t, version, dom.GetRUVersion())
+
+			for _, tc := range []struct {
+				name  string
+				sql   string
+				write bool
+			}{
+				{"read", "select * from stmt_summary_ru_version order by id", false},
+				{"write", "update stmt_summary_ru_version set v = v + 1 where id = 1", true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					// Keep each digest at one execution and avoid mixing RU versions.
+					tk.MustExec("set global tidb_enable_stmt_summary=0")
+					tk.MustExec("set global tidb_enable_stmt_summary=1")
+					ruDetails := clientutil.NewRUDetailsWith(11, 7, 20*time.Millisecond)
+					ctx := context.WithValue(context.Background(), clientutil.RUDetailsCtxKey, ruDetails)
+					if tc.write {
+						tk.MustExecWithContext(ctx, tc.sql)
+					} else {
+						tk.MustQueryWithContext(ctx, tc.sql)
+					}
+					_, digest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+					// Read the finalized total before the assertion query replaces LastQueryInfo.
+					totalRUV2 := tk.Session().GetSessionVars().LastQueryInfo.RUV2Consumption
+					require.Positive(t, totalRUV2)
+					wantRead, wantWrite := ruDetails.RRU(), ruDetails.WRU()
+					require.GreaterOrEqual(t, wantRead, float64(11))
+					require.GreaterOrEqual(t, wantWrite, float64(7))
+					require.NotEqual(t, wantRead, totalRUV2)
+					require.NotEqual(t, wantWrite, totalRUV2)
+					if version == rmclient.RUVersionV2 {
+						wantRead, wantWrite = totalRUV2, 0
+						if tc.write {
+							wantRead, wantWrite = 0, totalRUV2
+						}
+					}
+
+					rows := tk.MustQuery("select exec_count, avg_request_unit_read, max_request_unit_read, "+
+						"avg_request_unit_write, max_request_unit_write, avg_queued_rc_time, max_queued_rc_time "+
+						"from information_schema.statements_summary where digest = ?", digest.String()).Rows()
+					require.Len(t, rows, 1)
+					require.Equal(t, "1", fmt.Sprint(rows[0][0]))
+					waitNanos := float64(ruDetails.RUWaitDuration().Nanoseconds())
+					for i, want := range []float64{wantRead, wantRead, wantWrite, wantWrite, waitNanos, waitNanos} {
+						got, err := strconv.ParseFloat(fmt.Sprint(rows[0][i+1]), 64)
+						require.NoError(t, err)
+						require.InDelta(t, want, got, 1e-9)
+					}
+				})
+			}
+		})
+	}
+}
+
+type stmtSummaryRUVersionProvider struct {
+	rmclient.ResourceGroupProvider
+	version rmclient.RUVersion
+}
+
+func (p *stmtSummaryRUVersionProvider) Get(context.Context, []byte, ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
+	config := fmt.Sprintf(`{"ru-version-policy":{"default":%d}}`, p.version)
+	return &meta_storagepb.GetResponse{Kvs: []*meta_storagepb.KeyValue{{Value: []byte(config)}}}, nil
+}
+
 func TestStmtSummaryTablePrivilege(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()
@@ -485,6 +580,69 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 			// digest evicted
 			"<nil>",
 		))
+}
+
+func TestStmtSummaryHistoryOpenEndedTimeRange(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+
+	dir := t.TempDir()
+	filename := filepath.Join(dir, "tidb-statements.log")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filename
+		conf.Instance.StmtSummaryEnablePersistent = true
+	})
+	require.NoError(t, stmtsummaryv2.Setup(&stmtsummaryv2.Config{Filename: filename}))
+	defer stmtsummaryv2.Close()
+
+	intervals := []struct {
+		begin  time.Time
+		end    time.Time
+		digest string
+	}{
+		{
+			begin:  time.Date(2022, 12, 27, 10, 0, 0, 0, time.Local),
+			end:    time.Date(2022, 12, 27, 10, 10, 0, 0, time.Local),
+			digest: "history_early",
+		},
+		{
+			begin:  time.Date(2022, 12, 27, 14, 0, 0, 0, time.Local),
+			end:    time.Date(2022, 12, 27, 14, 10, 0, 0, time.Local),
+			digest: "history_middle",
+		},
+		{
+			begin:  time.Date(2022, 12, 27, 18, 0, 0, 0, time.Local),
+			end:    time.Date(2022, 12, 27, 18, 10, 0, 0, time.Local),
+			digest: "history_late",
+		},
+	}
+	for _, interval := range intervals {
+		path := filepath.Join(dir, fmt.Sprintf("tidb-statements-%s.log", interval.end.Format("2006-01-02T15-04-05.000")))
+		content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":%q,\"exec_count\":1}\n", interval.begin.Unix(), interval.end.Unix(), interval.digest)
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec("set time_zone = 'SYSTEM'")
+
+	tk.MustQuery(`select digest, date_format(summary_begin_time, '%Y-%m-%d %H:%i:%s')
+		from information_schema.statements_summary_history
+		where summary_end_time >= '2022-12-27 12:00:00'
+			and digest in ('history_early', 'history_middle', 'history_late')
+		order by summary_begin_time`).Check(testkit.Rows(
+		"history_middle 2022-12-27 14:00:00",
+		"history_late 2022-12-27 18:00:00",
+	))
+
+	tk.MustQuery(`select digest, date_format(summary_begin_time, '%Y-%m-%d %H:%i:%s')
+		from information_schema.statements_summary_history
+		where summary_begin_time <= '2022-12-27 16:00:00'
+			and digest in ('history_early', 'history_middle', 'history_late')
+		order by summary_begin_time`).Check(testkit.Rows(
+		"history_early 2022-12-27 10:00:00",
+		"history_middle 2022-12-27 14:00:00",
+	))
 }
 
 func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {

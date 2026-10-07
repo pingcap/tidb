@@ -414,6 +414,65 @@ func TestBatchCreateTable(t *testing.T) {
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = d.BatchCreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.WithOnExist(ddl.OnExistError))
 	require.NoError(t, err)
+
+	t.Run("batch create ttl tables registers external workload", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
+		tk, store := createTTLExternalWorkloadTestKit(t, mgr)
+		d := domain.GetDomain(tk.Session()).DDLExecutor()
+		infos := make([]*model.TableInfo, 0, 2)
+		for _, name := range []string{"ttl_batch_1", "ttl_batch_2"} {
+			info, err := testTableInfo(store, name, 2)
+			require.NoError(t, err)
+			info.Columns[0].FieldType = *types.NewFieldType(mysql.TypeDatetime)
+			info.TTLInfo = &model.TTLInfo{
+				ColumnName:       info.Columns[0].Name,
+				IntervalExprStr:  "1",
+				IntervalTimeUnit: int(ast.TimeUnitDay),
+				Enable:           true,
+				JobInterval:      model.DefaultTTLJobInterval,
+			}
+			infos = append(infos, info)
+		}
+
+		tk.Session().SetValue(sessionctx.QueryString, "skip")
+		err := d.BatchCreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), infos, ddl.WithOnExist(ddl.OnExistError), ddl.WithIDAllocated(true))
+		require.NoError(t, err)
+		require.Equal(t, []int64{infos[0].ID, infos[1].ID}, mgr.registeredTTLTables())
+	})
+
+	t.Run("batch create ttl tables unregisters previous external registrations on failure", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
+		tk, store := createTTLExternalWorkloadTestKit(t, mgr)
+		d := domain.GetDomain(tk.Session()).DDLExecutor()
+		infos := make([]*model.TableInfo, 0, 2)
+		for _, name := range []string{"ttl_batch_fail_1", "ttl_batch_fail_2"} {
+			info, err := testTableInfo(store, name, 2)
+			require.NoError(t, err)
+			info.Columns[0].FieldType = *types.NewFieldType(mysql.TypeDatetime)
+			info.TTLInfo = &model.TTLInfo{
+				ColumnName:       info.Columns[0].Name,
+				IntervalExprStr:  "1",
+				IntervalTimeUnit: int(ast.TimeUnitDay),
+				Enable:           true,
+				JobInterval:      model.DefaultTTLJobInterval,
+			}
+			infos = append(infos, info)
+		}
+		mgr.registerErrFn = func(tableID int64) error {
+			if tableID == infos[1].ID {
+				return context.DeadlineExceeded
+			}
+			return nil
+		}
+
+		tk.Session().SetValue(sessionctx.QueryString, "skip")
+		err := d.BatchCreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), infos, ddl.WithOnExist(ddl.OnExistError), ddl.WithIDAllocated(true))
+		require.ErrorContains(t, err, context.DeadlineExceeded.Error())
+		require.Equal(t, []int64{infos[0].ID}, mgr.registeredTTLTables())
+		require.Equal(t, []int64{infos[0].ID}, mgr.deletedTTLTables())
+		tk.MustQuery("show tables like 'ttl_batch_fail_1'").Check(testkit.Rows())
+		tk.MustQuery("show tables like 'ttl_batch_fail_2'").Check(testkit.Rows())
+	})
 }
 
 // port from mysql
@@ -901,6 +960,10 @@ func TestCreateTableWithBR(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/handleAutoIncID", func() {
 		count++
 	})
+	preSplitCount := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(string) {
+		preSplitCount++
+	})
 
 	tblInfo := &model.TableInfo{
 		ID:   42043,
@@ -914,8 +977,10 @@ func TestCreateTableWithBR(t *testing.T) {
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			},
 		},
-		State:     model.StatePublic,
-		AutoIncID: 1000,
+		State:           model.StatePublic,
+		AutoIncID:       1000,
+		ShardRowIDBits:  2,
+		PreSplitRegions: 2,
 	}
 
 	involvingRef := []model.InvolvingSchemaInfo{{
@@ -934,6 +999,20 @@ func TestCreateTableWithBR(t *testing.T) {
 
 	// For BR execution, rebase should be called twice. And this won't affect the rebase result.
 	require.Equal(t, 2, count)
+	require.Zero(t, preSplitCount)
 	rs := tk.MustQuery("show table test.t1 next_row_id").Rows()
 	require.Equal(t, "1000", rs[0][3])
+
+	preSplitCount = 0
+	batchTableInfos := make([]*model.TableInfo, 2)
+	for i := range batchTableInfos {
+		batchTableInfos[i] = tblInfo.Clone()
+		batchTableInfos[i].ID = int64(42044 + i)
+		batchTableInfos[i].Name = ast.NewCIStr(fmt.Sprintf("batch_t%d", i))
+	}
+	se.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, dom.DDLExecutor().BatchCreateTableWithInfo(
+		se, ast.NewCIStr("test"), batchTableInfos,
+		ddl.WithOnExist(ddl.OnExistError), ddl.WithIDAllocated(true)))
+	require.Zero(t, preSplitCount)
 }

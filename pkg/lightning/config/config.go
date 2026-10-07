@@ -112,7 +112,7 @@ const (
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs", "azure", "azblob"}
+	supportedStorageTypes = []string{"file", "local", "s3", "oss", "noop", "gcs", "gs", "azure", "azblob"}
 
 	defaultFilter = []string{
 		"*.*",
@@ -1117,6 +1117,15 @@ type TikvImporter struct {
 	ParallelImport    bool   `toml:"parallel-import" json:"parallel-import"`
 	KeyspaceName      string `toml:"keyspace-name" json:"keyspace-name"`
 	AddIndexBySQL     bool   `toml:"add-index-by-sql" json:"add-index-by-sql"`
+
+	// StripS3ExternalIDForImportSQL strips explicit S3 external ID from
+	// generated IMPORT INTO SQL resource parameters while keeping the original
+	// source path unchanged for Lightning storage access. This compatibility flag
+	// is only for callers that need to work with older IMPORT INTO planners that
+	// reject explicit S3 external ID.
+	// Deprecated: remove this flag after downstream callers no longer need to
+	// keep compatibility with those older planners.
+	StripS3ExternalIDForImportSQL bool `toml:"-" json:"-"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`

@@ -321,7 +321,15 @@ func TestShow(t *testing.T) {
 	require.Len(t, row, 5)
 	require.NotEqual(t, "0", row[1].(string))
 
-	tk.MustQuery("SHOW PRIVILEGES")
+	rows = tk.MustQuery("SHOW PRIVILEGES").Rows()
+	foundOperateView := false
+	for _, r := range rows {
+		if len(r) >= 2 && r[0] == "Operate view" && r[1] == "Tables" {
+			foundOperateView = true
+			break
+		}
+	}
+	require.True(t, foundOperateView)
 
 	// Test show create database
 	testSQL = `create database show_test_DB`
@@ -742,6 +750,8 @@ func TestUnparallelHashAggClose(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/unparallelHashAggError"))
 	}()
 	ctx := context.Background()
+	_, err := tk.Session().Execute(ctx, "set tidb_executor_concurrency=1;")
+	require.NoError(t, err)
 	rss, err := tk.Session().Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	require.NoError(t, err)
 	rs := rss[0]

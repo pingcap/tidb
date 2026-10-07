@@ -245,6 +245,10 @@ func (c *Context) GetTableCtx() tblctx.MutateContext {
 func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	vars := c.GetSessionVars()
 	sc := vars.StmtCtx
+	var queryCopStoreLimiter *kv.QueryCopStoreLimiter
+	if vars.QueryCopStoreLimit > 0 {
+		queryCopStoreLimiter = kv.NewQueryCopStoreLimiter(vars.QueryCopStoreLimit)
+	}
 
 	return &distsqlctx.DistSQLContext{
 		WarnHandler:                          sc.WarnHandler,
@@ -255,7 +259,6 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		OriginalSQL:                          sc.OriginalSQL,
 		KVVars:                               vars.KVVars,
 		KvExecCounter:                        sc.KvExecCounter,
-		RUV2Metrics:                          vars.RUV2Metrics,
 		SessionMemTracker:                    vars.MemTracker,
 		Location:                             sc.TimeZone(),
 		RuntimeStatsColl:                     sc.RuntimeStatsColl,
@@ -270,6 +273,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
 		TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
+		QueryCopStoreLimiter:                 queryCopStoreLimiter,
 		ResourceGroupName:                    sc.ResourceGroupName,
 		ExecDetails:                          &sc.SyncExecDetails,
 	}

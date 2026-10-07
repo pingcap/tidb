@@ -104,7 +104,7 @@ var (
 	ErrTableIsChecksuming   = errors.Normalize("table '%s' is checksuming", errors.RFCCodeText("Lightning:Restore:ErrTableIsChecksuming"))
 	ErrResolveDuplicateRows = errors.Normalize("resolve duplicate rows error on table '%s'", errors.RFCCodeText("Lightning:Restore:ErrResolveDuplicateRows"))
 	// ErrFoundDuplicateKeys shoud be replaced with ErrFoundDataConflictRecords and ErrFoundIndexConflictRecords (TODO)
-	ErrFoundDuplicateKeys        = errors.Normalize("found duplicate key '%s', value '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundDuplicateKey"))
+	ErrFoundDuplicateKeys        = errors.Normalize("found duplicate key '%x', value '%x'", errors.RFCCodeText("Lightning:Restore:ErrFoundDuplicateKey"))
 	ErrAddIndexFailed            = errors.Normalize("add index on table %s failed", errors.RFCCodeText("Lightning:Restore:ErrAddIndexFailed"))
 	ErrDropIndexFailed           = errors.Normalize("drop index %s on table %s failed", errors.RFCCodeText("Lightning:Restore:ErrDropIndexFailed"))
 	ErrFoundDataConflictRecords  = errors.Normalize("found data conflict records in table %s, primary key is '%s', row data is '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundDataConflictRecords"))

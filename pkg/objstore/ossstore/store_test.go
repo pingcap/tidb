@@ -15,12 +15,14 @@
 package ossstore
 
 import (
+	stdctx "context"
 	"fmt"
 	"io"
 	"path"
 	"testing"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -30,6 +32,26 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
+
+func TestURI(t *testing.T) {
+	for _, tc := range []struct {
+		prefix string
+		uri    string
+	}{
+		{"", "oss://bucket/"},
+		{"data", "oss://bucket/data/"},
+		{"data/", "oss://bucket/data/"},
+		{"data/nested%2E", "oss://bucket/data/nested%2E/"},
+	} {
+		t.Run(tc.prefix, func(t *testing.T) {
+			store := &OSSStore{Storage: newOSSStorageForTest(nil, &backuppb.S3{
+				Bucket: "bucket",
+				Prefix: tc.prefix,
+			}, nil)}
+			require.Equal(t, tc.uri, store.URI())
+		})
+	}
+}
 
 func TestStore(t *testing.T) {
 	// example: acs:ram::00000000000000:role
@@ -353,4 +375,56 @@ func TestCanUseInternalEndpoint(t *testing.T) {
 	require.False(t, canUseInternalEndpoint("", "cn-hangzhou"))
 	require.False(t, canUseInternalEndpoint("cn-beijing", "cn-hangzhou"))
 	require.True(t, canUseInternalEndpoint("cn-hangzhou", "cn-hangzhou"))
+}
+
+func TestSendCredentialsIsSupported(t *testing.T) {
+	ctx, cancel := context.Background().WithCancel()
+	cancel()
+	backend := &backuppb.S3{
+		Bucket:          "bucket",
+		Endpoint:        "https://oss-cn-hangzhou.aliyuncs.com",
+		AccessKey:       "access-key",
+		SecretAccessKey: "secret-key",
+		SessionToken:    "session-token",
+	}
+	_, err := NewOSSStorage(ctx, backend, &storeapi.Options{SendCredentials: true})
+	require.ErrorContains(t, err, "context canceled")
+	require.Equal(t, "access-key", backend.AccessKey)
+	require.Equal(t, "secret-key", backend.SecretAccessKey)
+	require.Equal(t, "session-token", backend.SessionToken)
+}
+
+func TestSetBackendCredentials(t *testing.T) {
+	providerCalls := 0
+	provider := credentials.CredentialsProviderFunc(func(stdctx.Context) (credentials.Credentials, error) {
+		providerCalls++
+		return credentials.Credentials{
+			AccessKeyID:     "current-access-key",
+			AccessKeySecret: "current-secret-key",
+			SecurityToken:   "current-session-token",
+		}, nil
+	})
+	backend := &backuppb.S3{}
+	require.NoError(t, setBackendCredentials(context.Background(), backend, provider, true))
+	require.Equal(t, "current-access-key", backend.AccessKey)
+	require.Equal(t, "current-secret-key", backend.SecretAccessKey)
+	require.Equal(t, "current-session-token", backend.SessionToken)
+	require.Equal(t, 1, providerCalls)
+
+	require.NoError(t, setBackendCredentials(context.Background(), backend, provider, false))
+	require.Empty(t, backend.AccessKey)
+	require.Empty(t, backend.SecretAccessKey)
+	require.Empty(t, backend.SessionToken)
+	require.Equal(t, 1, providerCalls)
+
+	backend.AccessKey = "existing-access-key"
+	backend.SecretAccessKey = "existing-secret-key"
+	backend.SessionToken = "existing-session-token"
+	errorProvider := credentials.CredentialsProviderFunc(func(stdctx.Context) (credentials.Credentials, error) {
+		return credentials.Credentials{}, fmt.Errorf("credentials unavailable")
+	})
+	require.ErrorContains(t, setBackendCredentials(context.Background(), backend, errorProvider, true), "credentials unavailable")
+	require.Equal(t, "existing-access-key", backend.AccessKey)
+	require.Equal(t, "existing-secret-key", backend.SecretAccessKey)
+	require.Equal(t, "existing-session-token", backend.SessionToken)
 }

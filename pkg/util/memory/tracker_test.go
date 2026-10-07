@@ -588,7 +588,6 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, globalArbitrator.metrics.pools.small.Load() == 0)
 		require.True(t, globalArbitrator.metrics.pools.intoBig.Load() == 0)
 		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 0)
-		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 0)
 	}()
 
 	newRootTracker := func(uid uint64) (t *Tracker) {
@@ -626,6 +625,14 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			require.Equal(t, *m, src)
 		}
 		{
+			backupPath := r.filePath + ".backup"
+			require.NoError(t, os.Rename(r.filePath, backupPath))
+			m, err := r.Load()
+			require.NoError(t, err)
+			require.Nil(t, m)
+			require.NoError(t, os.Rename(backupPath, r.filePath))
+		}
+		{
 			f, err := os.OpenFile(r.filePath, os.O_WRONLY, 0666)
 			require.NoError(t, err)
 			_, err = f.Write([]byte("??????"))
@@ -636,6 +643,16 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			m, err := r.Load()
 			require.Error(t, err)
 			require.True(t, m == nil)
+		}
+		{
+			failureRecorder := newMemStateRecorder(t.TempDir())
+			require.NoError(t, os.Mkdir(failureRecorder.filePath, 0750))
+			require.Error(t, failureRecorder.Store(&src))
+			entries, err := os.ReadDir(failureRecorder.baseDir)
+			require.NoError(t, err)
+			for _, entry := range entries {
+				require.False(t, strings.HasPrefix(entry.Name(), ".mem-state.") && strings.HasSuffix(entry.Name(), ".tmp"))
+			}
 		}
 	}
 	{ // test implicitly start global mem arbitrator
@@ -678,28 +695,28 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		m := GlobalMemArbitrator()
 		// init mem arbitrator for the session tracker
 		require.True(t,
-			t1.InitMemArbitrator(m, t0.Killer, ("test sql 1"), ArbitrationPriorityHigh, false, 1+byteSizeKB, true))
+			t1.InitMemArbitrator(m, t0.Killer, buildDigestIDForTest("test sql 1"), ArbitrationPriorityHigh, false, 1+byteSizeKB, true))
 		require.True(t, t1.MemArbitrator != nil)
 		require.True(t, t1.MemArbitrator.MemArbitrator == m)
 		require.True(t, t1.MemArbitrator.budget.useBig.Load())
 
-		expectCap := int64(1+byteSizeKB) * 1053 / 1000
-		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).entry.pool.Capacity() == expectCap)
-		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).entry.pool.Allocated() == expectCap)
+		expectCap := int64(1+byteSizeKB) * 1115 / 1000
+		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).pool.Capacity() == expectCap)
+		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).pool.Allocated() == expectCap)
 		require.True(t, t1.MemArbitrator.bigBudgetCap() == expectCap)
 		require.True(t, t1.MemArbitrator.bigBudgetUsed() == 0)
-		require.True(t, t1.MemArbitrator.bigBudgetGrowThreshold() == expectCap*95/100)
+		require.True(t, t1.MemArbitrator.bigBudgetGrowThreshold() == expectCap*90/100)
 		require.True(t, m.Allocated() == expectCap)
 		oriExecMetrics := m.ExecMetrics()
 		require.True(t, oriExecMetrics.Task.Succ == 1)
 		require.True(t, t1.bytesConsumed == 0)
 
 		t2.Consume(byteSizeKB)
-		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).entry.pool.Capacity() == expectCap)
-		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).entry.pool.Allocated() == expectCap)
+		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).pool.Capacity() == expectCap)
+		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).pool.Allocated() == expectCap)
 		require.True(t, t1.MemArbitrator.bigBudgetCap() == expectCap)
 		require.True(t, t1.MemArbitrator.bigBudgetUsed() == byteSizeKB)
-		require.True(t, t1.MemArbitrator.bigBudgetGrowThreshold() == expectCap*95/100)
+		require.True(t, t1.MemArbitrator.bigBudgetGrowThreshold() == expectCap*90/100)
 		require.Equal(t, m.ExecMetrics(), oriExecMetrics)
 		require.True(t, t1.bytesConsumed == byteSizeKB)
 
@@ -711,7 +728,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		expectMetrics := oriExecMetrics
 		expectMetrics.Task.Succ++
 		require.True(t, m.execMetrics == expectMetrics)
-		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).entry.pool.Capacity() == expectCap)
+		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).pool.Capacity() == expectCap)
 
 		t2.Release(byteSizeKB)
 		t2.Release(byteSizeMB)
@@ -748,29 +765,31 @@ func TestGlobalMemArbitrator(t *testing.T) {
 
 		require.True(t, t1.MemArbitration() > 0)
 		require.True(t, globalArbitrator.metrics.pools.big.Load() == 1)
-		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 1)
 		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 1)
 		t1.Detach() // stmt detach
 		require.True(t, globalArbitrator.metrics.pools.big.Load() == 0)
-		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 1)
 		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 0)
+		digestID := buildDigestIDForTest("test sql 1")
+		_, profileFound := m.GetDigestProfileCache(digestID, m.approxUnixTimeSec())
+		require.False(t, profileFound) // canceled statements must not populate the profile cache
 		t2.Detach()
 
 		InitTracker(t1, 1, -1, &actionWithPriority{}) // reuse the stmt tracker
 		t1.AttachTo(t0)
 		require.True(t,
-			t1.InitMemArbitrator(m, t0.Killer, "test sql 1", ArbitrationPriorityHigh, false, 0, false))
+			t1.InitMemArbitrator(m, t0.Killer, digestID, ArbitrationPriorityHigh, false, 0, false))
 		require.True(t, globalArbitrator.metrics.pools.big.Load() == 0)
 		require.True(t, globalArbitrator.metrics.pools.small.Load() == 1)
-		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 1)
 		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 0)
 
 		t1.Consume(m.poolAllocStats.PoolAllocUnit)
 		require.True(t, globalArbitrator.metrics.pools.big.Load() == 1)
-		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 0)
 		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 0)
 
 		t1.Detach() // stmt detach
+		profile, profileFound := m.GetDigestProfileCache(digestID, m.approxUnixTimeSec())
+		require.True(t, profileFound)
+		require.Equal(t, t1.MaxConsumed(), profile)
 		require.True(t, RemovePoolFromGlobalMemArbitrator(t1.MemArbitrator.uid))
 		require.False(t, m.RemoveRootPoolByID(t1.MemArbitrator.uid))
 		require.False(t, RemovePoolFromGlobalMemArbitrator(0))
@@ -778,10 +797,10 @@ func TestGlobalMemArbitrator(t *testing.T) {
 
 		tx := newRootTrackerWithStmt(720)
 		require.True(t,
-			tx.InitMemArbitrator(m, tx.Killer, "test sql x", ArbitrationPriorityHigh, false, 0, false))
+			tx.InitMemArbitrator(m, tx.Killer, buildDigestIDForTest("test sql x"), ArbitrationPriorityHigh, false, 0, false))
 		require.False(t, tx.MemArbitrator.useBigBudget())
 		require.True(t, tx.MemArbitrator.reserveSize == 0)
-		require.True(t, tx.MemArbitrator.prevMaxMem == 0)
+		require.True(t, tx.MemArbitrator.preMaxMem == 0)
 		require.True(t, m.awaitFreePoolUsed() == memPoolQuotaUsage{})
 		require.True(t, m.awaitFreePoolCap() == 0)
 		tx.Consume(13)
@@ -793,21 +812,20 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, m.awaitFreePoolUsed() == memPoolQuotaUsage{30, 30})
 		require.True(t, m.awaitFreePoolCap() != 0)
 		tx.Detach()
-		require.True(t, m.digestProfileCache.num.Load() == 2)
+		require.Equal(t, int64(1), m.digestProfileCache.num.Load()) // small statements are not cached
 		require.True(t, tx.MemArbitrator.smallBudgetUsed() == 0)
 		require.True(t, m.awaitFreePoolUsed() == memPoolQuotaUsage{})
 		require.True(t, m.awaitFreePoolCap() != 0)
 		m.shrinkAwaitFreePool(0, defAwaitFreePoolShrinkDurMilli+nowUnixMilli())
 		require.True(t, m.awaitFreePoolCap() == 0)
 		require.False(t, RemovePoolFromGlobalMemArbitrator(tx.MemArbitrator.uid)) // only small budget pool will be used
-		oriMaxMem := tx.MaxConsumed()
 
 		tx = newRootTrackerWithStmt(721)
 		require.True(t,
-			tx.InitMemArbitrator(m, tx.Killer, "test sql x", ArbitrationPriorityHigh, false, 0, false))
+			tx.InitMemArbitrator(m, tx.Killer, buildDigestIDForTest("test sql x"), ArbitrationPriorityHigh, false, 0, false))
 		require.False(t, tx.MemArbitrator.useBigBudget())
 		require.True(t, tx.MemArbitrator.reserveSize == 0)
-		require.True(t, tx.MemArbitrator.prevMaxMem == oriMaxMem)
+		require.Zero(t, tx.MemArbitrator.preMaxMem)
 		tx.Consume(7)
 		require.True(t, tx.MemArbitrator.smallBudgetUsed() == 7)
 		tx.Consume(newLimit/1000 + 1)
@@ -819,10 +837,10 @@ func TestGlobalMemArbitrator(t *testing.T) {
 
 		tx = newRootTrackerWithStmt(722)
 		require.True(t,
-			tx.InitMemArbitrator(m, tx.Killer, "test sql 1", ArbitrationPriorityHigh, false, 0, false))
+			tx.InitMemArbitrator(m, tx.Killer, buildDigestIDForTest("test sql 1"), ArbitrationPriorityHigh, false, 0, false))
 		require.True(t, tx.MemArbitrator.useBigBudget())
 		require.True(t, tx.MemArbitrator.reserveSize == 0)
-		require.Equal(t, t1.MaxConsumed(), tx.MemArbitrator.prevMaxMem)
+		require.Equal(t, profile, tx.MemArbitrator.preMaxMem)
 		tx.Detach()
 		require.True(t, RemovePoolFromGlobalMemArbitrator(tx.MemArbitrator.uid))
 		require.True(t, m.digestProfileCache.num.Load() == 2)
@@ -853,7 +871,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			trackers[i] = newRootTrackerWithStmt(uid)
 			wg.Go(func() {
 				require.True(t,
-					trackers[i].InitMemArbitrator(m, trackers[i].Killer, "?", ArbitrationPriority(int(ArbitrationPriorityLow)+i), false, newLimit, false))
+					trackers[i].InitMemArbitrator(m, trackers[i].Killer, buildDigestIDForTest("?"), ArbitrationPriority(int(ArbitrationPriorityLow)+i), false, newLimit, false))
 				trackers[i].Detach()
 			})
 		}
@@ -863,7 +881,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		execMetrics := m.ExecMetrics()
 		require.Equal(t, NumByPattern{1, 1, 1, 0}, m.TaskNumByPattern())
 		require.True(t, m.TaskNum() == 3)
-		require.Equal(t, m.WaitingAllocSize(), newLimit*1053/1000*3)
+		require.Equal(t, m.WaitingAllocSize(), newLimit*1115/1000*3)
 
 		m.restartForTest()
 		wg.Wait()
@@ -882,7 +900,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			uid := uint64(i + 1)
 			trackers[i] = newRootTrackerWithStmt(uid)
 			require.True(t,
-				trackers[i].InitMemArbitrator(m, trackers[i].Killer, "?", ArbitrationPriority(int(ArbitrationPriorityLow)+i), false, 1, false))
+				trackers[i].InitMemArbitrator(m, trackers[i].Killer, buildDigestIDForTest("?"), ArbitrationPriority(int(ArbitrationPriorityLow)+i), false, 1, false))
 		}
 		execMetrics = m.ExecMetrics()
 		for p := range maxArbitrationPriority {
@@ -953,9 +971,9 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		t1 := newRootTrackerWithStmt(13)
 		t2 := newRootTrackerWithStmt(17)
 		require.True(t,
-			t2.InitMemArbitrator(GlobalMemArbitrator(), t2.Killer, "?", ArbitrationPriorityMedium, false, m.limit()/2, false))
+			t2.InitMemArbitrator(GlobalMemArbitrator(), t2.Killer, buildDigestIDForTest("?"), ArbitrationPriorityMedium, false, m.limit()/2, false))
 		require.True(t,
-			t1.InitMemArbitrator(GlobalMemArbitrator(), t1.Killer, "?", ArbitrationPriorityMedium, false, 1, false))
+			t1.InitMemArbitrator(GlobalMemArbitrator(), t1.Killer, buildDigestIDForTest("?"), ArbitrationPriorityMedium, false, 1, false))
 		wg := sync.WaitGroup{}
 		wg.Go(func() {
 			defer func() {
@@ -985,15 +1003,17 @@ func TestGlobalMemArbitrator(t *testing.T) {
 
 		m.restartForTest()
 		require.True(t,
-			t1.InitMemArbitrator(m, t1.Killer, "?", ArbitrationPriorityMedium, false, 0, false))
+			t1.InitMemArbitrator(m, t1.Killer, buildDigestIDForTest("?"), ArbitrationPriorityMedium, false, 0, false))
 		require.True(t,
-			t2.InitMemArbitrator(m, t2.Killer, "?", ArbitrationPriorityLow, false, 0, false))
+			t2.InitMemArbitrator(m, t2.Killer, buildDigestIDForTest("?"), ArbitrationPriorityLow, false, 0, false))
 		t1.Consume(m.limit() / 4)
 		t2.Consume(m.limit() / 4)
 		m.stop()
 		m.resetExecMetricsForTest()
 
-		require.True(t, m.allocated() == m.limit()/2)
+		require.Equal(t,
+			t1.MemArbitrator.bigBudgetCap()+t2.MemArbitrator.bigBudgetCap(),
+			m.allocated())
 		var mockRuntimeMemStats memStats
 		m.actions.UpdateRuntimeMemStats = func() {
 			m.setRuntimeMemStats(mockRuntimeMemStats)
@@ -1004,7 +1024,8 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			TotalFree:  0,
 			MemOffHeap: 0,
 		}
-		m.HandleRuntimeStats(mockRuntimeMemStats)
+		expectedMagnif := min(calcRatio(mockRuntimeMemStats.HeapAlloc, m.allocated())+100, defMaxMagnif)
+		m.setRuntimeMemStats(mockRuntimeMemStats)
 		m.runOneRound()
 
 		{
@@ -1045,7 +1066,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		m.runOneRound()
 
 		memState, _ := m.heapController.memStateRecorder.Load()
-		require.True(t, memState.Magnif == 2100)
+		require.Equal(t, expectedMagnif, memState.Magnif)
 	}
 	{
 		CleanupGlobalMemArbitratorForTest()
@@ -1058,11 +1079,10 @@ func TestGlobalMemArbitrator(t *testing.T) {
 
 		t1 := newRootTrackerWithStmt(29)
 		require.True(t,
-			t1.InitMemArbitrator(m, t1.Killer, "", ArbitrationPriorityMedium, false, 0, true))
+			t1.InitMemArbitrator(m, t1.Killer, InvalidDigestID, ArbitrationPriorityMedium, false, 0, true))
 		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 1)
-		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 0)
 
-		t1.MemArbitrator.prevMaxMem = 1 // mock set prev max mem to trigger reserve big budget
+		t1.MemArbitrator.preMaxMem = 1 // mock set prev max mem to trigger reserve big budget
 		require.True(t, t1.MemArbitrator.state.Load() == memArbitratorStateSmallBudget)
 		t1.Consume(1e5)
 		require.True(t, t1.bytesConsumed == 1e5)
@@ -1080,41 +1100,44 @@ func TestGlobalMemArbitrator(t *testing.T) {
 				require.True(t, t1.MemArbitrator != nil)
 				require.False(t, t1.DetachMemArbitrator(true))
 			})
-			for t1.MemArbitrator.state.Load() != memArbitratorStateDown {
+			// Detach removes the tracker from its parent before waiting for the
+			// ongoing small-to-big budget transition to finish.
+			for t1.getParent() != nil {
 				runtime.Gosched()
 			}
+			require.Equal(t, memArbitratorStateIntoBigBudget, t1.MemArbitrator.state.Load())
+			mockDebugInject = nil
 		}
 		t1.Consume(1e8)
 		wg.Wait()
-		mockDebugInject = nil
+		require.Equal(t, memArbitratorStateDown, t1.MemArbitrator.state.Load())
 		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 0)
-		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 1)
 
-		// all budget released
+		// all allocated pool resources released
 		require.True(t, globalArbitrator.metrics.pools.big.Load() == 0)
 		require.True(t, globalArbitrator.metrics.pools.intoBig.Load() == 0)
 		require.True(t, m.awaitFreePoolUsed().quota == 0)
 		require.True(t, t1.MemArbitrator.useBigBudget())
 		require.True(t, t1.MemArbitrator.smallBudgetUsed() == 0)
 		require.True(t, t1.MemArbitrator.bigBudget().Pool.allocated() == 0)
-		used, growThreshold, capacity := t1.MemArbitrator.bigBudgetUsed(), t1.MemArbitrator.bigBudgetGrowThreshold(), t1.MemArbitrator.bigBudgetCap()
-		require.True(t, used == 0)
+		usedAfterDetach := t1.MemArbitrator.bigBudgetUsed()
+		growThreshold, capacity := t1.MemArbitrator.bigBudgetGrowThreshold(), t1.MemArbitrator.bigBudgetCap()
 		require.True(t, growThreshold == 0)
 		require.True(t, capacity == 0)
 
 		t1.Consume(1e8)
 
 		// can not use big budget after detach
+		require.Equal(t, usedAfterDetach, t1.MemArbitrator.bigBudgetUsed())
 		require.True(t, t1.MemArbitrator.bigBudgetGrowThreshold() == 0)
 		require.True(t, t1.MemArbitrator.bigBudgetCap() == 0)
 		require.True(t, t1.MemArbitrator.bigBudget().Pool.allocated() == 0)
 		RemovePoolFromGlobalMemArbitrator(t1.SessionID.Load())
-		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 0)
 
 		m.SetLimit(4e9)
 		t2 := newRootTrackerWithStmt(31)
 		require.True(t,
-			t2.InitMemArbitrator(m, t2.Killer, "", ArbitrationPriorityMedium, false, 0, false))
+			t2.InitMemArbitrator(m, t2.Killer, InvalidDigestID, ArbitrationPriorityMedium, false, 0, false))
 		require.True(t, globalArbitrator.metrics.pools.small.Load() == 1)
 		require.True(t, t2.MemArbitrator.smallBudget().getLastUsedTimeSec() == 0)
 		ok, _ := m.allocateFromArbitrator(m.available())
@@ -1127,21 +1150,64 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, globalArbitrator.metrics.pools.small.Load() == 0)
 		require.True(t, globalArbitrator.metrics.pools.big.Load() == 1)
 		t2.Detach()
+		require.Equal(t, int64(0), m.digestProfileCache.num.Load())
 		RemovePoolFromGlobalMemArbitrator(t2.SessionID.Load())
 
 		t3 := newRootTrackerWithStmt(37)
 		t0 := t3.getParent()
 		require.True(t,
-			t3.InitMemArbitrator(m, t3.Killer, "", ArbitrationPriorityMedium, false, 0, false))
+			t3.InitMemArbitrator(m, t3.Killer, InvalidDigestID, ArbitrationPriorityMedium, false, 0, false))
 		t3.Detach()
 		require.True(t, t3.MemArbitrator.state.Load() == memArbitratorStateDown)
-		t3.Consume(1677) // mock reuse the tracker
-		require.True(t, m.awaitFreePoolUsed().quota == 1677)
+		reusedMem := m.poolAllocStats.SmallPoolLimit + 1
+		require.NotPanics(t, func() {
+			t3.Consume(reusedMem) // mock reuse the tracker
+		})
+		require.Equal(t, reusedMem, t3.BytesConsumed())
+		require.Equal(t, memArbitratorStateDown, t3.MemArbitrator.state.Load())
+		require.Equal(t, int64(0), t3.MemArbitrator.smallBudgetUsed())
+		require.Equal(t, int64(0), m.awaitFreePoolUsed().quota)
+		require.Nil(t, m.FindRootPool(t3.SessionID.Load()))
 		InitTracker(t3, 1, -1, &actionWithPriority{})
 		t3.AttachTo(t0)
 		require.True(t,
-			t3.InitMemArbitrator(m, t3.Killer, "", ArbitrationPriorityMedium, false, 0, false))
-		require.True(t, m.awaitFreePoolUsed().quota == 0) // reset previous mem-arbitrator
+			t3.InitMemArbitrator(m, t3.Killer, InvalidDigestID, ArbitrationPriorityMedium, false, 0, false))
+		require.Equal(t, int64(0), m.awaitFreePoolUsed().quota)
 		t3.Detach()
+
+		// Simulate a Consume that passes the state check before detach, but
+		// updates the small budget after the mem-arbitrator is down.
+		t.Cleanup(func() {
+			mockConsumeAfterStateCheckInject = nil
+		})
+		for i, delta := range []int64{1, -1} {
+			tracker := newRootTrackerWithStmt(uint64(41 + i))
+			require.True(t,
+				tracker.InitMemArbitrator(m, tracker.Killer, InvalidDigestID, ArbitrationPriorityMedium, false, 0, false))
+			consumeAfterStateCheck := make(chan struct{})
+			resumeConsume := make(chan struct{})
+			consumeDone := make(chan struct{})
+			mockConsumeAfterStateCheckInject = func(arbitrator *memArbitrator) {
+				if arbitrator != tracker.MemArbitrator {
+					return
+				}
+				close(consumeAfterStateCheck)
+				<-resumeConsume
+			}
+			go func() {
+				tracker.Consume(delta)
+				close(consumeDone)
+			}()
+			<-consumeAfterStateCheck
+			tracker.Detach()
+			close(resumeConsume)
+			<-consumeDone
+			mockConsumeAfterStateCheckInject = nil
+
+			require.Equal(t, memArbitratorStateDown, tracker.MemArbitrator.state.Load())
+			require.Equal(t, int64(0), tracker.MemArbitrator.smallBudgetUsed())
+			require.Equal(t, memPoolQuotaUsage{}, m.awaitFreePoolUsed())
+			require.Nil(t, m.FindRootPool(tracker.SessionID.Load()))
+		}
 	}
 }

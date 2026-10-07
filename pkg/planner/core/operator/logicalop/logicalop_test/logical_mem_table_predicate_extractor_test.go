@@ -45,6 +45,12 @@ import (
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool) {
+	memTable, ok, _ := getLogicalMemTableWithRemained(t, dom, se, parser, sql)
+	return memTable, ok
+}
+
+func getLogicalMemTableWithRemained(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool, []expression.Expression) {
+	se.GetSessionVars().PlanColumnID.Store(0)
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -59,14 +65,18 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session,
 
 	// Obtain the leaf plan
 	leafPlan := logicalPlan
+	var remained []expression.Expression
 	for len(leafPlan.Children()) > 0 {
+		if selection, ok := leafPlan.(*logicalop.LogicalSelection); ok {
+			remained = append(remained, selection.Conditions...)
+		}
 		leafPlan = leafPlan.Children()[0]
 	}
 	switch lg := leafPlan.(type) {
 	case *logicalop.LogicalMemTable:
-		return lg, true
+		return lg, true, remained
 	case *logicalop.LogicalTableDual:
-		return nil, false
+		return nil, false, remained
 	}
 	panic("unreachable")
 }
@@ -252,6 +262,54 @@ func timestamp(t *testing.T, s string) int64 {
 	tt, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
 	require.NoError(t, err)
 	return tt.UnixMilli()
+}
+
+func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.Local
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
+
+	minTime, err := types.MinDatetime.GoTime(time.UTC)
+	require.NoError(t, err)
+	maxTime, err := types.MaxDatetime.GoTime(time.UTC)
+	require.NoError(t, err)
+	startTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.Local)
+	endTime := time.Date(2020, 1, 2, 0, 0, 0, 0, time.Local)
+	cases := []struct {
+		sql   string
+		start time.Time
+		end   time.Time
+	}{
+		{
+			sql:   "select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'",
+			start: startTime,
+			end:   maxTime,
+		},
+		{
+			sql:   "select * from information_schema.statements_summary where summary_begin_time <= '2020-01-02 00:00:00'",
+			start: minTime,
+			end:   endTime,
+		},
+	}
+
+	p := parser.New()
+	for _, ca := range cases {
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, p, ca.sql)
+		require.True(t, ok, ca.sql)
+		extractor, ok := logicalMemTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+		require.True(t, ok, ca.sql)
+		require.NotNil(t, extractor.CoarseTimeRange, ca.sql)
+		require.Equal(t, ca.start, extractor.CoarseTimeRange.StartTime, ca.sql)
+		require.Equal(t, ca.end, extractor.CoarseTimeRange.EndTime, ca.sql)
+	}
+
+	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery("explain select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'").MultiCheckContain([]string{
+		"end_time: 9999-12-31 23:59:59.999999",
+	})
 }
 
 func TestClusterLogTableExtractor(t *testing.T) {
@@ -539,6 +597,41 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			level:     set.NewStringSet("debug", "error"),
+		},
+		{
+			// ILIKE is case-insensitive while the pattern is matched
+			// case-sensitively by the remote log search, so it is pushed down as a
+			// case-insensitive group -- an "ERROR" line still matches '%error%'.
+			// The predicate stays for a scalar recheck (see the executor test in
+			// TestClusterLogTableIlike), and a pattern is still produced so the
+			// retriever does not reject the scan as a full-log scan.
+			sql:       "select * from information_schema.cluster_log where message ilike '%error%'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*error.*$)"},
+		},
+		{
+			// Same for an ILIKE carrying a non-default ESCAPE ('#%' is a literal '%').
+			sql:       "select * from information_schema.cluster_log where message ilike '%error#%%' escape '#'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*error%.*$)"},
+		},
+		{
+			// In a DNF the scoped (?i:...) keeps the case-insensitive branch from
+			// leaking case folding onto the case-sensitive one across the '|'.
+			sql:       "select * from information_schema.cluster_log where (message ilike '%pd%' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*pd.*$)|^.*tikv.*$"},
+		},
+		{
+			// A case-sensitive LIKE still pushes down, honouring a custom ESCAPE
+			// so the pattern matches the predicate ('#%' is a literal '%').
+			sql:       "select * from information_schema.cluster_log where message like '%a#%b%' escape '#'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"^.*a%b.*$"},
 		},
 	}
 	for _, ca := range cases {
@@ -1640,6 +1733,7 @@ func TestColumns(t *testing.T) {
 		tableSchemaPattern []string
 		tableNamePattern   []string
 		skipRequest        bool
+		remained           string
 	}{
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
@@ -1677,27 +1771,41 @@ func TestColumns(t *testing.T) {
 		{
 			sql:              `select * from information_schema.COLUMNS where table_name like 'T%';`,
 			tableNamePattern: []string{"t%"},
+			remained:         "[like(Column#3, T%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'T%';`,
 			columnNamePattern: []string{"t%"},
+			remained:          "[like(Column#4, T%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'i%';`,
 			columnNamePattern: []string{"i%"},
+			remained:          "[like(Column#4, i%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' or column_name like "def%";`,
 			columnNamePattern: []string{},
+			remained:          "[or(like(Column#4, abc%, 92), like(Column#4, def%, 92))]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' and column_name like "%def";`,
 			columnNamePattern: []string{"abc%", "%def"},
+			remained:          "[like(Column#4, abc%, 92) like(Column#4, %def, 92)]",
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name ilike 'T%';`,
+			columnNamePattern: []string{"t%"},
 		},
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained == "" {
+			require.Empty(t, remained, ca.sql)
+		} else {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		}
 		if ok {
 			require.NotNil(t, logicalMemTable.Extractor)
 
@@ -1795,6 +1903,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		prepared string
 		userVars []any
 		params   []any
+		filter   bool
 		checker  func(extractor base.MemTablePredicateExtractor)
 	}{
 		{
@@ -1834,6 +1943,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.COLUMNS where table_name like ?",
 			userVars: []any{`"a%"`},
 			params:   []any{"a%"},
+			filter:   true,
 			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.InfoSchemaColumnsExtractor)
 				require.EqualValues(t, []string{"a%"}, rse.LikePatterns["table_name"])
@@ -1875,7 +1985,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*physicalop.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*physicalop.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*physicalop.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 
@@ -1893,7 +2009,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(execStmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*physicalop.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*physicalop.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*physicalop.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 }
@@ -1908,7 +2030,31 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		skipRequest   bool
 		colPredicates map[string]set.StringSet
 		dual          bool
+		likePatterns  []string
+		remained      string
 	}{
+		{
+			sql:           `select * from information_schema.tables where table_name like 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[like(Column#3, T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name like 't%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[like(Column#3, t%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name collate utf8mb4_bin like 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			remained:      "[like(cast(Column#3, varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name ilike 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+		},
 		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
 			skipRequest: false,
@@ -2134,7 +2280,12 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained != "" {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		} else if ca.likePatterns != nil {
+			require.Empty(t, remained, ca.sql)
+		}
 		if ca.dual {
 			require.False(t, ok, ca.sql)
 		} else {
@@ -2146,6 +2297,7 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			require.True(t, ok)
 			require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
 			require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
+			require.Equal(t, ca.likePatterns, ex.GetBase().LikePatterns["table_name"], ca.sql)
 		}
 	}
 }

@@ -14,6 +14,7 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -515,4 +516,13 @@ func TestParseHint(t *testing.T) {
 		}
 		require.Equalf(t, tc.output, output, "input = %s,\n... output = %q", tc.input, output)
 	}
+}
+
+func TestMaxOptimizerHintDepth(t *testing.T) {
+	input := "/*+LEADING(" + strings.Repeat("(", 10000) + "t" + strings.Repeat(")", 10000) + ")*/"
+	mode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	require.NoError(t, err)
+	_, errs := parser.ParseHint(input, mode, parser.Pos{Line: 1})
+	require.NotEmpty(t, errs)
+	require.Contains(t, errs[0].Error(), "parentheses nesting depth exceeds maximum 10000")
 }

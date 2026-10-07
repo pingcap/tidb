@@ -35,6 +35,7 @@ func (c *CheckpointAdvancer) OnStart(ctx context.Context) {
 func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 	metrics.AdvancerOwner.Set(1.0)
 	c.SpawnSubscriptionHandler(ctx)
+	c.spawnLogBackupConfigUpdater(ctx)
 	go func() {
 		<-ctx.Done()
 		c.OnStop()
@@ -49,6 +50,10 @@ func (c *CheckpointAdvancer) Name() string {
 func (c *CheckpointAdvancer) OnStop() {
 	metrics.AdvancerOwner.Set(0.0)
 	metrics.LastCheckpoint.Reset()
+	metrics.ExternalStorageCheckpoint.Reset()
+	c.taskMu.Lock()
+	c.closeGlobalCheckpointStorage()
+	c.taskMu.Unlock()
 	c.stopSubscriber()
 }
 

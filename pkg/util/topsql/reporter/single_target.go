@@ -21,7 +21,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	"github.com/pingcap/tipb/go-tipb"
@@ -208,23 +210,40 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 4)
+	recoverSendPanic := func(r any) {
+		if r != nil {
+			errCh <- util.GetRecoverError(r)
+		}
+	}
 	wg.Add(4)
 
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchSQLMeta(ctx, task.data.SQLMetas)
+		util.WithRecovery(func() {
+			failpoint.Inject("mockSingleTargetSendPanic", nil)
+			errCh <- ds.sendBatchSQLMeta(ctx, task.data.SQLMetas)
+		}, recoverSendPanic)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchPlanMeta(ctx, task.data.PlanMetas)
+		util.WithRecovery(func() {
+			failpoint.Inject("mockSingleTargetSendPanic", nil)
+			errCh <- ds.sendBatchPlanMeta(ctx, task.data.PlanMetas)
+		}, recoverSendPanic)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchTopSQLRecord(ctx, task.data.DataRecords)
+		util.WithRecovery(func() {
+			failpoint.Inject("mockSingleTargetSendPanic", nil)
+			errCh <- ds.sendBatchTopSQLRecord(ctx, task.data.DataRecords)
+		}, recoverSendPanic)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchTopRURecord(ctx, task.data.RURecords)
+		util.WithRecovery(func() {
+			failpoint.Inject("mockSingleTargetSendPanic", nil)
+			errCh <- ds.sendBatchTopRURecord(ctx, task.data.RURecords)
+		}, recoverSendPanic)
 	}()
 	wg.Wait()
 	close(errCh)

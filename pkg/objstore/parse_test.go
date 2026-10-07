@@ -51,9 +51,12 @@ func TestCreateStorage(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "hdfs://127.0.0.1:1231/backup", s.GetHdfs().GetRemote())
 
-	_, err = ParseBackend("s3:///bucket/more/prefix/", &BackendOptions{})
+	_, err = ParseBackend("s3:///bucket/more/prefix/?access-key=secret-id&secret-access-key=secret-key&session-token=secret-token", &BackendOptions{})
 	require.Error(t, err)
-	require.Regexp(t, `please specify the bucket for s3 in s3:///bucket/more/prefix/.*`, err.Error())
+	require.Contains(t, err.Error(), "please specify the bucket for s3 in s3:///bucket/more/prefix/?access-key=xxxxxx&secret-access-key=xxxxxx&session-token=xxxxxx")
+	require.NotContains(t, err.Error(), "secret-id")
+	require.NotContains(t, err.Error(), "secret-key")
+	require.NotContains(t, err.Error(), "secret-token")
 
 	s3opt := &BackendOptions{
 		S3: s3like.S3BackendOptions{
@@ -210,16 +213,42 @@ func TestFormatBackendURL(t *testing.T) {
 	})
 	require.Equal(t, "noop:///", backendURL.String())
 
-	backendURL = FormatBackendURL(&backuppb.StorageBackend{
-		Backend: &backuppb.StorageBackend_S3{
-			S3: &backuppb.S3{
-				Bucket:   "bucket",
-				Prefix:   "/some prefix/",
-				Endpoint: "https://s3.example.com/",
-			},
-		},
-	})
-	require.Equal(t, "s3://bucket/some%20prefix/", backendURL.String())
+	for _, tc := range []struct {
+		name           string
+		provider       string
+		scheme         string
+		parsedProvider string
+	}{
+		{name: "s3", scheme: "s3"},
+		{name: "s3-compatible", provider: "aws", scheme: "s3"},
+		{name: "unknown-provider", provider: "unknown", scheme: "s3"},
+		{name: "oss", provider: s3like.OSSProvider, scheme: "oss", parsedProvider: s3like.OSSProvider},
+		{name: "ks3", provider: s3like.KS3SDKProvider, scheme: "ks3", parsedProvider: s3like.KS3SDKProvider},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backendURL := FormatBackendURL(&backuppb.StorageBackend{
+				Backend: &backuppb.StorageBackend_S3{
+					S3: &backuppb.S3{
+						Bucket:          "bucket",
+						Prefix:          "/some prefix/",
+						Endpoint:        "https://s3.example.com/",
+						Provider:        tc.provider,
+						AccessKey:       "secret-id",
+						SecretAccessKey: "secret-key",
+						SessionToken:    "secret-token",
+					},
+				},
+			})
+			require.Equal(t, tc.scheme+"://bucket/some%20prefix/", backendURL.String())
+
+			backend, err := ParseBackend(backendURL.String(), nil)
+			require.NoError(t, err)
+			require.NotNil(t, backend.GetS3())
+			require.Equal(t, "bucket", backend.GetS3().Bucket)
+			require.Equal(t, "some prefix", backend.GetS3().Prefix)
+			require.Equal(t, tc.parsedProvider, backend.GetS3().Provider)
+		})
+	}
 
 	backendURL = FormatBackendURL(&backuppb.StorageBackend{
 		Backend: &backuppb.StorageBackend_Gcs{

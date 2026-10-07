@@ -55,10 +55,10 @@ func GetCommonStepExecutor(ctrl *gomock.Controller, step proto.Step, runSubtaskF
 	return executor
 }
 
-// GetCommonCleanUpRoutine returns a common cleanup routine.
-func GetCommonCleanUpRoutine(ctrl *gomock.Controller) scheduler.CleanUpRoutine {
-	r := mock.NewMockCleanUpRoutine(ctrl)
-	r.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+// GetCommonCleaner returns a common cleaner.
+func GetCommonCleaner(ctrl *gomock.Controller) scheduler.Cleaner {
+	r := mock.NewMockCleaner(ctrl)
+	r.EXPECT().Clean(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return r
 }
 
@@ -67,15 +67,15 @@ func RegisterExampleTask(
 	t testing.TB,
 	schedulerExt scheduler.Extension,
 	executorExt taskexecutor.Extension,
-	mockCleanup scheduler.CleanUpRoutine,
+	cleaner scheduler.Cleaner,
 ) {
-	registerTaskType(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanup)
+	registerTaskType(t, proto.TaskTypeExample, schedulerExt, executorExt, cleaner)
 }
 
-func registerTaskType(t testing.TB, taskType proto.TaskType, schedulerExt scheduler.Extension, executorExt taskexecutor.Extension, mockCleanup scheduler.CleanUpRoutine) {
+func registerTaskType(t testing.TB, taskType proto.TaskType, schedulerExt scheduler.Extension, executorExt taskexecutor.Extension, cleaner scheduler.Cleaner) {
 	t.Cleanup(func() {
 		scheduler.ClearSchedulerFactory()
-		scheduler.ClearSchedulerCleanUpFactory()
+		scheduler.ClearCleanerFactory()
 		taskexecutor.ClearTaskExecutors()
 	})
 	scheduler.RegisterSchedulerFactory(taskType,
@@ -86,8 +86,8 @@ func registerTaskType(t testing.TB, taskType proto.TaskType, schedulerExt schedu
 		},
 	)
 
-	scheduler.RegisterSchedulerCleanUpFactory(taskType, func() scheduler.CleanUpRoutine {
-		return mockCleanup
+	scheduler.RegisterCleanerFactory(taskType, func() scheduler.Cleaner {
+		return cleaner
 	})
 
 	taskexecutor.RegisterTaskType(taskType,
@@ -108,7 +108,7 @@ func RegisterTaskTypeForRollback(t testing.TB, ctrl *gomock.Controller, schedule
 	executorExt := GetCommonTaskExecutorExt(ctrl, func(task *proto.Task) (execute.StepExecutor, error) {
 		return GetCommonStepExecutor(ctrl, task.Step, subtaskRunFn), nil
 	})
-	RegisterExampleTask(t, schedulerExt, executorExt, GetCommonCleanUpRoutine(ctrl))
+	RegisterExampleTask(t, schedulerExt, executorExt, GetCommonCleaner(ctrl))
 }
 
 // SubmitAndWaitTask schedule one task.

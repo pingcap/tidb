@@ -254,9 +254,6 @@ type LogicalPlan interface {
 	// GetBaseLogicalPlan return the baseLogicalPlan inside each logical plan.
 	GetBaseLogicalPlan() LogicalPlan
 
-	// ConvertOuterToInnerJoin converts outer joins if the matching rows are filtered.
-	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
-
 	// SetPlanIDsHash set sub operator tree's ids hash64
 	SetPlanIDsHash(uint64)
 
@@ -302,7 +299,7 @@ func GetGEAndLogicalOp[T LogicalPlan](super LogicalPlan) (ge GroupExpression, lo
 	return ge, logicalOp
 }
 
-// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
+// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin, AntiJoin.
 type JoinType int
 
 const (
@@ -320,6 +317,8 @@ const (
 	LeftOuterSemiJoin
 	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
 	AntiLeftOuterSemiJoin
+	// FullOuterJoin means full outer join.
+	FullOuterJoin
 )
 
 // NOTE: keep JoinType value unchanged, because they are used in conflict_detector.go
@@ -330,12 +329,13 @@ func init() {
 		SemiJoin == 3 &&
 		AntiSemiJoin == 4 &&
 		LeftOuterSemiJoin == 5 &&
-		AntiLeftOuterSemiJoin == 6)
+		AntiLeftOuterSemiJoin == 6 &&
+		FullOuterJoin == 7)
 }
 
 // IsOuterJoin returns if this joiner is an outer joiner
 func (tp JoinType) IsOuterJoin() bool {
-	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+	return tp == LeftOuterJoin || tp == RightOuterJoin || tp == FullOuterJoin ||
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
 }
 
@@ -358,6 +358,8 @@ func (tp JoinType) String() string {
 		return "left outer join"
 	case RightOuterJoin:
 		return "right outer join"
+	case FullOuterJoin:
+		return "full outer join"
 	case SemiJoin:
 		return "semi join"
 	case AntiSemiJoin:

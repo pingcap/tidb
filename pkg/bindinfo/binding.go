@@ -142,7 +142,7 @@ func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 func MatchSQLBindingWithCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
 	sessionVars := sctx.GetSessionVars()
 	useBinding := sessionVars.UsePlanBaselines
-	if !useBinding || stmtNode == nil {
+	if !useBinding || !mayHaveSQLBinding(stmtNode) {
 		return
 	}
 	// When the domain is initializing, the bind will be nil.
@@ -151,7 +151,11 @@ func MatchSQLBindingWithCache(sctx sessionctx.Context, stmtNode ast.StmtNode, in
 	}
 	cache := getMatchSQLBindingCache(sessionVars, stmtNode)
 	if intest.InTest {
-		binding, matched, scope = matchSQLBindingCore(sctx, sessionVars, stmtNode, nil)
+		// Prepared statements may cache binding info before AST rewrites.
+		if cache != nil && info == nil {
+			return cache.binding, cache.matched, cache.scope
+		}
+		binding, matched, scope = matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
 		assertMatchSQLBinding(cache, matched, binding, scope)
 		return
 	}
@@ -159,6 +163,27 @@ func MatchSQLBindingWithCache(sctx sessionctx.Context, stmtNode ast.StmtNode, in
 		return cache.binding, cache.matched, cache.scope
 	}
 	return matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
+}
+
+func mayHaveSQLBinding(stmtNode ast.StmtNode) bool {
+	if stmtNode == nil {
+		return false
+	}
+	switch stmt := stmtNode.(type) {
+	case *ast.InsertStmt:
+		// REPLACE uses InsertStmt with IsReplace set. SQL bindings currently only
+		// support INSERT/REPLACE ... SELECT, not VALUES/SET forms.
+		return stmt.Select != nil
+	case *ast.ExplainStmt:
+		if stmt.Stmt == nil {
+			// EXPLAIN forms such as EXPLAIN <plan_digest> have no underlying statement.
+			// Keep the old behavior and do not use this as an early-negative filter.
+			return true
+		}
+		return mayHaveSQLBinding(stmt.Stmt)
+	default:
+		return true
+	}
 }
 
 func getMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.StmtNode) (cache *BindingCacheItem) {
@@ -325,7 +350,7 @@ func CollectTableNames(in ast.Node) []*ast.TableName {
 		collector.tableNames = nil
 		tableNameCollectorPool.Put(collector)
 	}()
-	in.Accept(collector)
+	ast.Walk(in, collector)
 	return collector.tableNames
 }
 
@@ -345,18 +370,18 @@ func newCollectTableName() *tableNameCollector {
 	}
 }
 
-// Enter implements Visitor interface.
-func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements InPlaceVisitor interface.
+func (c *tableNameCollector) Enter(in ast.Node) (skipChildren bool) {
 	if node, ok := in.(*ast.TableName); ok {
 		c.tableNames = append(c.tableNames, node)
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+// Leave implements InPlaceVisitor interface.
+func (*tableNameCollector) Leave(ast.Node) bool {
+	return true
 }
 
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
@@ -543,23 +568,23 @@ type paramChecker struct {
 	hasParam bool
 }
 
-func (e *paramChecker) Enter(in ast.Node) (ast.Node, bool) {
+func (e *paramChecker) Enter(in ast.Node) bool {
 	if _, ok := in.(*driver.ParamMarkerExpr); ok {
 		e.hasParam = true
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-func (*paramChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (*paramChecker) Leave(ast.Node) bool {
+	return true
 }
 
 // hasParam checks whether the statement contains any parameters.
 // For example, `create binding using select * from t where a=?` contains a parameter '?'.
 func hasParam(stmt ast.Node) bool {
 	p := new(paramChecker)
-	stmt.Accept(p)
+	ast.Walk(stmt, p)
 	return p.hasParam
 }
 

@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,15 +34,21 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -52,21 +59,29 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
+	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
+	"github.com/prometheus/client_golang/prometheus"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestMatchIdentityWithVariantsStarter(t *testing.T) {
@@ -960,12 +975,18 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	// /status HTTP endpoint
 	server.health.Store(true)
 	defer server.Close()
+	conn, peerConn := net.Pipe()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+		require.NoError(t, peerConn.Close())
+	})
 
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
 		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		bufReadConn:  serverutil.NewBufferedReadConn(conn),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		alloc:        arena.NewAllocator(512),
@@ -973,6 +994,10 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		capability:   capability,
 	}
 	cc.SetCtx(tc)
+	originalEnableConnectionEventLog := vardef.EnableConnectionEventLog.Swap(true)
+	t.Cleanup(func() {
+		vardef.EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
+	})
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
 		err := cc.dispatch(context.Background(), inBytes)
@@ -1103,6 +1128,130 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
 	require.NoError(t, err)
+}
+
+func TestConnDMLExecutionTimeout(t *testing.T) {
+	const dmlTimeout = 500
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	setup := testkit.NewTestKit(t, store)
+	setup.MustExec("use test")
+	setup.MustExec("create table dml_timeout (id int primary key)")
+
+	srv := CreateMockServer(t, store)
+	defer srv.Close()
+	go dom.ExpensiveQueryHandle().SetSessionManager(srv).Run()
+
+	runBlockedRPC := func(
+		t *testing.T,
+		conn MockConn,
+		sql string,
+		target tikvrpc.CmdType,
+		rpcResultAfterTimeout func(*tikvrpc.Response, error) (*tikvrpc.Response, error),
+	) error {
+		t.Helper()
+		require.NoError(t, failpoint.Enable("tikvclient/onRPCFinishedHook", "return"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("tikvclient/onRPCFinishedHook"))
+		}()
+
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var enteredOnce, releaseOnce sync.Once
+		releaseHook := func() {
+			releaseOnce.Do(func() { close(release) })
+		}
+		defer releaseHook()
+
+		hook := func(req *tikvrpc.Request, resp *tikvrpc.Response, rpcErr error) (*tikvrpc.Response, error) {
+			if req.Type != target {
+				return resp, rpcErr
+			}
+			// Block the primary commit response to exercise classic 2PC outcome handling.
+			if target == tikvrpc.CmdCommit && req.Commit().GetCommitRole() != kvrpcpb.CommitRole_Primary {
+				return resp, rpcErr
+			}
+			enteredOnce.Do(func() { close(entered) })
+			<-release
+			return rpcResultAfterTimeout(resp, rpcErr)
+		}
+		ctx, cancel := context.WithCancel(context.WithValue(context.Background(), "onRPCFinishedHook", hook))
+		defer cancel()
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- conn.Dispatch(ctx, append([]byte{mysql.ComQuery}, sql...))
+		}()
+
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s RPC was not reached", target)
+		}
+		require.Eventually(t, func() bool {
+			pi := conn.Context().ShowProcess()
+			return pi != nil && pi.MaxExecutionTime == dmlTimeout &&
+				conn.Context().GetSessionVars().SQLKiller.GetKillSignal() == sqlkiller.MaxExecTimeExceeded
+		}, 5*time.Second, 10*time.Millisecond)
+
+		// killQuery sets the SQLKiller signal before canceling the dispatch context.
+		// Cancel the parent explicitly so the hook result is observed with a canceled
+		// request context even if the test sees the signal in that narrow interval.
+		cancel()
+		releaseHook()
+		select {
+		case err := <-errCh:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("statement did not return after releasing the RPC hook")
+		}
+		return nil
+	}
+	returnCanceled := func(*tikvrpc.Response, error) (*tikvrpc.Response, error) {
+		return nil, context.Canceled
+	}
+	returnOriginal := func(resp *tikvrpc.Response, rpcErr error) (*tikvrpc.Response, error) {
+		return resp, rpcErr
+	}
+
+	configureConn := func(t *testing.T) (MockConn, *testkit.TestKit) {
+		t.Helper()
+		conn := CreateMockConn(t, srv)
+		tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_1pc = OFF")
+		tk.MustExec("set tidb_enable_async_commit = OFF")
+		tk.MustExec("set tidb_dml_max_execution_time = 500")
+		return conn, tk
+	}
+
+	t.Run("explicit commit", func(t *testing.T) {
+		conn, tk := configureConn(t)
+		defer conn.Close()
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into dml_timeout values (2)")
+		err := runBlockedRPC(t, conn, "commit", tikvrpc.CmdPrewrite, returnCanceled)
+		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
+		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
+	})
+
+	t.Run("autocommit commit succeeds after timeout", func(t *testing.T) {
+		conn, _ := configureConn(t)
+		defer conn.Close()
+		err := runBlockedRPC(t, conn, "insert into dml_timeout values (4)", tikvrpc.CmdCommit, returnOriginal)
+		require.NoError(t, err)
+		setup.MustQuery("select id from dml_timeout where id = 4").Check(testkit.Rows("4"))
+		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
+	})
+
+	t.Run("explicit commit result undetermined after timeout", func(t *testing.T) {
+		conn, tk := configureConn(t)
+		defer conn.Close()
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into dml_timeout values (5)")
+		err := runBlockedRPC(t, conn, "commit", tikvrpc.CmdCommit, returnCanceled)
+		require.True(t, terror.ErrResultUndetermined.Equal(err), "%v", err)
+		setup.MustQuery("select id from dml_timeout where id = 5").Check(testkit.Rows("5"))
+	})
 }
 
 func TestShutDown(t *testing.T) {
@@ -1302,6 +1451,52 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	require.Equal(t, 6, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
+
+	t.Run("scalar followed by a prebuilt PointGet", func(t *testing.T) {
+		tk.MustExec("insert into prefetch values (1, 1, 10), (2, 2, 20)")
+		tk.MustExec("begin optimistic")
+		defer tk.MustExec("rollback")
+		tk.MustQuery("select c from prefetch where a = 1 and b = 1").Check(testkit.Rows("10"))
+		var response bytes.Buffer
+		cc.pkt = internal.NewPacketIOForTest(bufio.NewWriter(&response))
+		var registrySizes, scalarTreeCounts []int
+		tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+			vars := tk.Session().GetSessionVars()
+			plan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+			require.True(t, ok)
+			prebuilt, ok := tk.Session().Value(plannercore.PointPlanKey).(plannercore.PointPlanVal)
+			require.True(t, ok, "handleQuery must supply the prefetched plan entry")
+			if len(registrySizes) == 0 {
+				require.Nil(t, prebuilt.Plan)
+			} else {
+				require.IsType(t, &physicalop.PointGetPlan{}, plan)
+				require.Same(t, prebuilt.Plan, plan, "the second statement must use the prebuilt plan")
+			}
+			registrySizes = append(registrySizes, len(vars.MapScalarSubQ))
+			scalarTreeCounts = append(scalarTreeCounts, len(plannercore.FlattenPhysicalPlan(plan, true).ScalarSubQueries))
+		})
+		defer tk.Session().ClearValue(breakpoint.NotifyBreakPointFuncKey)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+		err := cc.handleQuery(ctx, "select (select sum(c) from prefetch);select c from prefetch where a = 2 and b = 2;")
+		require.NoError(t, err)
+		t.Logf("multi-statement registry sizes=%v flattened scalar trees=%v", registrySizes, scalarTreeCounts)
+
+		// Each one-column result has a header, column definition, EOF, row and EOF.
+		packets := internal.NewPacketIO(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: response}))
+		for _, expected := range []string{"30", "20"} {
+			for range 3 {
+				_, err = packets.ReadPacket()
+				require.NoError(t, err)
+			}
+			row, err := packets.ReadPacket()
+			require.NoError(t, err)
+			require.Equal(t, append([]byte{byte(len(expected))}, expected...), row)
+			_, err = packets.ReadPacket()
+			require.NoError(t, err)
+		}
+		require.Equal(t, []int{1, 0}, scalarTreeCounts)
+		require.Equal(t, []int{1, 0}, registrySizes)
+	})
 }
 
 func TestPrefetchBatchPointGet(t *testing.T) {
@@ -1922,6 +2117,56 @@ func TestChangeUserAuth(t *testing.T) {
 	err = cc.handleChangeUser(ctx, data)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/ChangeUserAuthSwitch"))
 	require.EqualError(t, err, t.Name())
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+}
+
+func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		peerHost:     "localhost",
+		collation:    mysql.DefaultCollationID,
+		capability:   mysql.ClientProtocol41,
+		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		server:       srv,
+		user:         "root",
+		dbname:       "old_db",
+	}
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.SetCtx(tc)
+
+	data := []byte{}
+	data = append(data, "missing_user"...)
+	data = append(data, 0)
+	data = append(data, 0)
+	data = append(data, "new_db"...)
+	data = append(data, 0)
+	data = append(data, 0, 0)
+	err = cc.handleChangeUser(context.Background(), data)
+	require.Error(t, err)
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "old_db", cc.dbname)
+	require.Equal(t, "root", cc.ctx.GetSessionVars().User.Username)
 }
 
 func TestAuthPlugin2(t *testing.T) {
@@ -2550,6 +2795,441 @@ func TestConnAddMetrics(t *testing.T) {
 	// ok
 	cc.addQueryMetrics(mysql.ComStmtExecute, time.Now(), nil)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("StmtExecute", "OK", "test_rg2")), 1.0)
+}
+
+func TestConnIACacheMetrics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	cc := &clientConn{}
+	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	vars := tk.Session().GetSessionVars()
+	vars.StmtCtx.StmtType = "Select"
+	dbNames := metricsutil.GetDBNames(vars)
+	require.Len(t, dbNames, 1)
+	hits := metrics.IACacheHitCount.WithLabelValues("Select", dbNames[0])
+	misses := metrics.IARemoteReadSegmentCount.WithLabelValues("Select", dbNames[0])
+
+	for _, tt := range []struct {
+		name string
+		scan *tikvutil.ScanDetail
+	}{
+		{"cache only", &tikvutil.ScanDetail{IaCacheHitCount: 7}},
+		{"remote only", &tikvutil.ScanDetail{IaRemoteReadSegmentCount: 3}},
+		{"mixed", &tikvutil.ScanDetail{IaCacheHitCount: 5, IaRemoteReadSegmentCount: 2}},
+		{"zero", &tikvutil.ScanDetail{}},
+		{"no scan details", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			vars.StmtCtx.SyncExecDetails.Reset()
+			vars.StmtCtx.MergeScanDetail(tt.scan)
+			hitsBefore, missesBefore := promtestutils.ToFloat64(hits), promtestutils.ToFloat64(misses)
+			cc.addQueryMetrics(mysql.ComQuery, time.Now(), nil)
+			var wantHits, wantMisses float64
+			if tt.scan != nil {
+				wantHits = float64(tt.scan.IaCacheHitCount)
+				wantMisses = float64(tt.scan.IaRemoteReadSegmentCount)
+			}
+			require.Equal(t, wantHits, promtestutils.ToFloat64(hits)-hitsBefore)
+			require.Equal(t, wantMisses, promtestutils.ToFloat64(misses)-missesBefore)
+		})
+	}
+	count, err := promtestutils.GatherAndCount(prometheus.DefaultGatherer, "tidb_server_ia_cache_hit_count")
+	require.NoError(t, err)
+	require.Positive(t, count)
+}
+
+func TestStatementDurationMetrics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table statement_duration (id int primary key, v int)")
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+	}
+	tc := &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
+	cc.SetCtx(tc)
+	vars := tk.Session().GetSessionVars()
+	// Isolate observations from bootstrap and background internal SQL without resetting global metrics.
+	tk.MustExec("create resource group statement_duration_test RU_PER_SEC = UNLIMITED")
+	tk.MustExec("set resource group statement_duration_test")
+	tc.SetClientCapability(vars.ClientCapability | mysql.ClientMultiStatements)
+	ctx := context.Background()
+	readHistogram := func(observer prometheus.Observer) *dto.Metric {
+		metric, ok := observer.(prometheus.Metric)
+		require.True(t, ok)
+		value := &dto.Metric{}
+		require.NoError(t, metric.Write(value))
+		return value
+	}
+	statementMetric := func(sqlType string) *dto.Metric {
+		return readHistogram(metrics.QueryDurationHistogram.WithLabelValues(sqlType, "", vars.ResourceGroupName))
+	}
+
+	t.Run("multi statement timing", func(t *testing.T) {
+		insertBefore := statementMetric("Insert").GetHistogram()
+		updateBefore := statementMetric("Update").GetHistogram()
+		var statementTypes []string
+		tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+			statementTypes = append(statementTypes, vars.StmtCtx.StmtType)
+			if vars.StmtCtx.StmtType == "Insert" {
+				// Simulate a slow INSERT and parsing without sleeping. The UPDATE must get its own clock.
+				vars.StartTime = vars.StartTime.Add(-time.Hour)
+				vars.DurationParse = time.Minute
+			}
+		})
+		t.Cleanup(func() { tk.Session().ClearValue(breakpoint.NotifyBreakPointFuncKey) })
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+		start := time.Now()
+		err := cc.handleQuery(ctx, "insert into statement_duration values (1, 0); update statement_duration set v = v + 1 where id = 1")
+		require.NoError(t, err)
+		elapsed := time.Since(start).Seconds()
+		require.Equal(t, []string{"Insert", "Update"}, statementTypes)
+		insert := statementMetric("Insert").GetHistogram()
+		update := statementMetric("Update").GetHistogram()
+		require.Equal(t, insertBefore.GetSampleCount()+1, insert.GetSampleCount())
+		require.Equal(t, updateBefore.GetSampleCount()+1, update.GetSampleCount())
+		require.GreaterOrEqual(t, insert.GetSampleSum()-insertBefore.GetSampleSum(), (time.Hour + time.Minute).Seconds())
+		for i, bucket := range insert.GetBucket() {
+			if bucket.GetUpperBound() < (time.Hour + time.Minute).Seconds() {
+				require.Equal(t, insertBefore.GetBucket()[i].GetCumulativeCount(), bucket.GetCumulativeCount())
+			}
+		}
+		// Bound by the measured whole command, not a fixed latency ceiling that flakes on slow CI.
+		require.LessOrEqual(t, update.GetSampleSum()-updateBefore.GetSampleSum(), elapsed)
+
+		// The server histogram still measures one whole command, labeled as MultiStmt.
+		dbNames := metricsutil.GetDBNames(vars)
+		require.Len(t, dbNames, 1)
+		query := metrics.CommandDurationHistogram.WithLabelValues("MultiStmt", dbNames[0], vars.ResourceGroupName)
+		lastStmtQuery := metrics.CommandDurationHistogram.WithLabelValues("Update", dbNames[0], vars.ResourceGroupName)
+		lastStmtQueryBefore := readHistogram(lastStmtQuery).GetHistogram().GetSampleCount()
+		queryBefore := readHistogram(query).GetHistogram()
+		cc.addQueryMetrics(mysql.ComQuery, start, nil)
+		queryAfter := readHistogram(query).GetHistogram()
+		require.Equal(t, queryBefore.GetSampleCount()+1, queryAfter.GetSampleCount())
+		require.Equal(t, lastStmtQueryBefore, readHistogram(lastStmtQuery).GetHistogram().GetSampleCount())
+		require.GreaterOrEqual(t, queryAfter.GetSampleSum()-queryBefore.GetSampleSum(), elapsed)
+		require.LessOrEqual(t, queryAfter.GetSampleSum()-queryBefore.GetSampleSum(), time.Since(start).Seconds())
+		require.Equal(t, update.GetSampleCount(), statementMetric("Update").GetHistogram().GetSampleCount())
+
+		labels := map[string]string{}
+		for _, label := range statementMetric("Insert").GetLabel() {
+			labels[label.GetName()] = label.GetValue()
+		}
+		require.Equal(t, map[string]string{"sql_type": "Insert", "db": "", "resource_group": vars.ResourceGroupName}, labels)
+		buckets := prometheus.ExponentialBuckets(0.0005, 2, 29)
+		require.Len(t, insert.GetBucket(), len(buckets))
+		for i, upperBound := range buckets {
+			require.Equal(t, upperBound, insert.GetBucket()[i].GetUpperBound())
+		}
+		require.Positive(t, promtestutils.CollectAndCount(metrics.QueryDurationHistogram, "tidb_server_handle_query_duration_seconds"))
+		require.Positive(t, promtestutils.CollectAndCount(metrics.CommandDurationHistogram, "tidb_server_handle_command_duration_seconds"))
+	})
+
+	t.Run("database labels", func(t *testing.T) {
+		restoreConfig := config.RestoreFunc()
+		t.Cleanup(restoreConfig)
+		config.UpdateGlobal(func(conf *config.Config) { conf.Status.RecordDBLabel = true })
+		tk.MustExec("create database statement_duration_other")
+		tk.MustExec("create table statement_duration_other.t (id int primary key)")
+		t.Cleanup(func() { tk.MustExec("drop database statement_duration_other") })
+		byDB := func(db string) *dto.Histogram {
+			return readHistogram(metrics.QueryDurationHistogram.WithLabelValues("Select", db, vars.ResourceGroupName)).GetHistogram()
+		}
+		testBefore, otherBefore := byDB("test"), byDB("statement_duration_other")
+		emptyBefore := byDB("").GetSampleCount()
+		start := time.Now()
+		require.NoError(t, cc.handleQuery(ctx, "select * from test.statement_duration; select * from statement_duration_other.t"))
+		require.Equal(t, testBefore.GetSampleCount()+1, byDB("test").GetSampleCount())
+		require.Equal(t, otherBefore.GetSampleCount()+1, byDB("statement_duration_other").GetSampleCount())
+		// Keep the command's original last-statement DB labeling; statements use their own DBs.
+		command := metrics.CommandDurationHistogram.WithLabelValues("MultiStmt", "statement_duration_other", vars.ResourceGroupName)
+		commandBefore := readHistogram(command).GetHistogram().GetSampleCount()
+		cc.addQueryMetrics(mysql.ComQuery, start, nil)
+		require.Equal(t, commandBefore+1, readHistogram(command).GetHistogram().GetSampleCount())
+
+		testBefore, otherBefore = byDB("test"), byDB("statement_duration_other")
+		require.NoError(t, cc.handleQuery(ctx, "select a.id from test.statement_duration a join test.statement_duration b on a.id = b.id join statement_duration_other.t c on a.id = c.id"))
+		testAfter, otherAfter := byDB("test"), byDB("statement_duration_other")
+		// A cross-DB statement is observed once per distinct DB, even with multiple tables in one DB.
+		require.Equal(t, testBefore.GetSampleCount()+1, testAfter.GetSampleCount())
+		require.Equal(t, otherBefore.GetSampleCount()+1, otherAfter.GetSampleCount())
+		require.InDelta(t, testAfter.GetSampleSum()-testBefore.GetSampleSum(), otherAfter.GetSampleSum()-otherBefore.GetSampleSum(), 1e-9)
+		require.Equal(t, emptyBefore, byDB("").GetSampleCount())
+
+		// A statement without table references falls back to the current database.
+		require.NoError(t, cc.handleQuery(ctx, "select 1"))
+		require.Equal(t, testAfter.GetSampleCount()+1, byDB("test").GetSampleCount())
+		require.Equal(t, otherAfter.GetSampleCount(), byDB("statement_duration_other").GetSampleCount())
+	})
+
+	t.Run("command label boundaries", func(t *testing.T) {
+		checkCommand := func(cmd byte, err error, label string) {
+			dbNames := metricsutil.GetDBNames(vars)
+			require.Len(t, dbNames, 1)
+			multi := metrics.CommandDurationHistogram.WithLabelValues("MultiStmt", dbNames[0], vars.ResourceGroupName)
+			single := metrics.CommandDurationHistogram.WithLabelValues("Select", dbNames[0], vars.ResourceGroupName)
+			multiBefore := readHistogram(multi).GetHistogram().GetSampleCount()
+			singleBefore := readHistogram(single).GetHistogram().GetSampleCount()
+			cc.addQueryMetrics(cmd, time.Now(), err)
+			if label == "MultiStmt" {
+				multiBefore++
+			} else {
+				singleBefore++
+			}
+			require.Equal(t, multiBefore, readHistogram(multi).GetHistogram().GetSampleCount())
+			require.Equal(t, singleBefore, readHistogram(single).GetHistogram().GetSampleCount())
+		}
+		for _, tt := range []struct {
+			sql     string
+			label   string
+			wantErr bool
+		}{
+			{"select 1; select 2", "MultiStmt", false},
+			{"select * from statement_duration_missing; select 2", "MultiStmt", true},
+			{"select 1", "Select", false},
+			{"select 'a;b';", "Select", false},
+			{"", "Select", false},
+			{"select from", "Select", true},
+		} {
+			// Every case follows a multi-statement request to catch stale session state.
+			require.NoError(t, cc.handleQuery(ctx, "select 1; select 2"))
+			err := cc.handleQuery(ctx, tt.sql)
+			require.Equal(t, tt.wantErr, err != nil, tt.sql)
+			checkCommand(mysql.ComQuery, err, tt.label)
+		}
+
+		require.NoError(t, cc.handleQuery(ctx, "select 1; select 2"))
+		checkCommand(mysql.ComPing, nil, "Select")
+		stmt, _, _, err := tc.Prepare("select 1")
+		require.NoError(t, err)
+		defer func() { require.NoError(t, stmt.Close()) }()
+		rs, err := stmt.Execute(ctx, nil)
+		require.NoError(t, err)
+		rs.Close()
+		checkCommand(mysql.ComStmtExecute, nil, "Select")
+
+		capability, mode := vars.ClientCapability, vars.MultiStatementMode
+		t.Cleanup(func() {
+			tc.SetClientCapability(capability)
+			vars.MultiStatementMode = mode
+		})
+		tc.SetClientCapability(capability &^ mysql.ClientMultiStatements)
+		vars.MultiStatementMode = variable.OffInt
+		err = cc.handleQuery(ctx, "select 1; select 2")
+		require.Error(t, err)
+		checkCommand(mysql.ComQuery, err, "MultiStmt")
+	})
+
+	t.Run("prepared execute and resultset close", func(t *testing.T) {
+		before := statementMetric("Select").GetHistogram().GetSampleCount()
+		stmt, _, _, err := tc.Prepare("select v from statement_duration where id = 1")
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, stmt.Close()) })
+		require.Equal(t, before, statementMetric("Select").GetHistogram().GetSampleCount())
+		for i := uint64(0); i < 2; i++ {
+			rs, err := stmt.Execute(ctx, nil)
+			require.NoError(t, err)
+			require.NotNil(t, rs)
+			require.Equal(t, before+i, statementMetric("Select").GetHistogram().GetSampleCount())
+			rs.Close()
+			require.Equal(t, before+i+1, statementMetric("Select").GetHistogram().GetSampleCount())
+			rs.Close()
+			require.Equal(t, before+i+1, statementMetric("Select").GetHistogram().GetSampleCount())
+		}
+	})
+
+	t.Run("text prepare and execute", func(t *testing.T) {
+		prepareBefore := statementMetric("Prepare").GetHistogram().GetSampleCount()
+		selectBefore := statementMetric("Select").GetHistogram().GetSampleCount()
+		require.NoError(t, cc.handleQuery(ctx, "prepare duration_stmt from 'select 1'; execute duration_stmt; deallocate prepare duration_stmt"))
+		require.Equal(t, prepareBefore+1, statementMetric("Prepare").GetHistogram().GetSampleCount())
+		require.Equal(t, selectBefore+1, statementMetric("Select").GetHistogram().GetSampleCount())
+	})
+
+	t.Run("parse and compile errors", func(t *testing.T) {
+		before := statementMetric("Select").GetHistogram().GetSampleCount()
+		require.Error(t, cc.handleQuery(ctx, "select from"))
+		require.Error(t, cc.handleQuery(ctx, "select * from statement_duration_missing"))
+		require.Equal(t, before, statementMetric("Select").GetHistogram().GetSampleCount())
+	})
+
+	for _, withParseError := range []bool{false, true} {
+		name := "compile error then binary execute"
+		if withParseError {
+			name = "compile error then parse error then binary execute"
+		}
+		t.Run(name, func(t *testing.T) {
+			// Prepare first: preparing after the error could hide stale parse timing.
+			stmt, _, _, err := tc.Prepare("select 1")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, stmt.Close()) })
+			t.Cleanup(func() { vars.DurationParse = 0 })
+			before := statementMetric("Select").GetHistogram()
+			stmts, err := tk.Session().Parse(ctx, "select * from test.statement_duration_missing")
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			// Deterministically model an expensive successful parse followed by an early
+			// compile error, which does not reach FinishExecuteStmt.
+			vars.DurationParse = time.Hour
+			rs, err := tk.Session().ExecuteStmt(ctx, stmts[0])
+			require.EqualError(t, err, "[schema:1146]Table 'test.statement_duration_missing' doesn't exist")
+			require.Nil(t, rs)
+			if withParseError {
+				_, err = tk.Session().Parse(ctx, "select from")
+				require.Error(t, err)
+				// Keep going on failure so the same red run also exposes the metric leak.
+				if vars.DurationParse != 0 {
+					t.Errorf("Parse error retained stale DurationParse: %s", vars.DurationParse)
+				}
+			}
+			require.Equal(t, before.GetSampleCount(), statementMetric("Select").GetHistogram().GetSampleCount())
+			require.Equal(t, before.GetSampleSum(), statementMetric("Select").GetHistogram().GetSampleSum())
+
+			start := time.Now()
+			preparedRS, err := stmt.Execute(ctx, nil)
+			require.NoError(t, err)
+			require.NotNil(t, preparedRS)
+			t.Cleanup(func() { preparedRS.Close() })
+			// Check before Close resets timing: binary execution has no parse cost.
+			if vars.DurationParse != 0 {
+				t.Errorf("binary execution inherited stale DurationParse: %s", vars.DurationParse)
+			}
+			require.Equal(t, before.GetSampleCount(), statementMetric("Select").GetHistogram().GetSampleCount())
+			preparedRS.Close()
+			elapsed := time.Since(start).Seconds()
+			after := statementMetric("Select").GetHistogram()
+			require.Equal(t, before.GetSampleCount()+1, after.GetSampleCount())
+			require.Zero(t, vars.DurationParse)
+			// Use the whole measured execution interval rather than a fixed CI latency limit.
+			require.LessOrEqual(t, after.GetSampleSum()-before.GetSampleSum(), elapsed)
+		})
+	}
+
+	t.Run("binary protocol execute after compile error", func(t *testing.T) {
+		stmt, _, _, err := tc.Prepare("select 1")
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, stmt.Close()) })
+		t.Cleanup(func() { vars.DurationParse = 0 })
+		stmts, err := tk.Session().Parse(ctx, "select * from test.statement_duration_missing")
+		require.NoError(t, err)
+		// Model an expensive parse without sleeping; compilation fails before statement cleanup.
+		vars.DurationParse = time.Hour
+		rs, err := tk.Session().ExecuteStmt(ctx, stmts[0])
+		require.EqualError(t, err, "[schema:1146]Table 'test.statement_duration_missing' doesn't exist")
+		require.Nil(t, rs)
+		before := statementMetric("Select").GetHistogram()
+		data := make([]byte, 9)
+		binary.LittleEndian.PutUint32(data, uint32(stmt.ID()))
+		data[5] = 1 // iteration count; no parameters and no cursor
+		start := time.Now()
+		require.NoError(t, cc.handleStmtExecute(ctx, data))
+		after := statementMetric("Select").GetHistogram()
+		require.Equal(t, before.GetSampleCount()+1, after.GetSampleCount())
+		require.LessOrEqual(t, after.GetSampleSum()-before.GetSampleSum(), time.Since(start).Seconds())
+	})
+
+	t.Run("execution error", func(t *testing.T) {
+		require.NoError(t, cc.handleQuery(ctx, "insert into statement_duration values (2, 0)"))
+		before := statementMetric("Insert").GetHistogram().GetSampleCount()
+		require.Error(t, cc.handleQuery(ctx, "insert into statement_duration values (2, 2)"))
+		require.Equal(t, before+1, statementMetric("Insert").GetHistogram().GetSampleCount())
+	})
+
+	t.Run("nested restricted SQL", func(t *testing.T) {
+		showBefore := statementMetric("Show").GetHistogram()
+		selectBefore := statementMetric("Select").GetHistogram()
+		internalBefore := statementMetric(metrics.LblInternal).GetHistogram()
+		command := metrics.CommandDurationHistogram.WithLabelValues(metrics.LblInternal, "", vars.ResourceGroupName)
+		commandBefore := readHistogram(command).GetHistogram().GetSampleCount()
+
+		var outerStartTime time.Time
+		tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+			if !vars.InRestrictedSQL && vars.StmtCtx.StmtType == "Show" {
+				// Simulate outer execution and parsing before the nested SQL, without sleeping.
+				vars.StartTime = vars.StartTime.Add(-time.Hour)
+				vars.DurationParse = time.Minute
+				outerStartTime = vars.StartTime
+			}
+		})
+		t.Cleanup(func() { tk.Session().ClearValue(breakpoint.NotifyBreakPointFuncKey) })
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+
+		// SHOW TABLE STATUS runs restricted SQL on the current session. Its inner
+		// result set must remain internal, without hiding or resetting the outer statement.
+		start := time.Now()
+		require.NoError(t, cc.handleQuery(ctx, "show table status from test"))
+		elapsed := time.Since(start).Seconds()
+		require.False(t, outerStartTime.IsZero())
+		show := statementMetric("Show").GetHistogram()
+		require.Equal(t, showBefore.GetSampleCount()+1, show.GetSampleCount())
+		require.GreaterOrEqual(t, show.GetSampleSum()-showBefore.GetSampleSum(), (time.Hour + time.Minute).Seconds())
+		for i, bucket := range show.GetBucket() {
+			if bucket.GetUpperBound() < (time.Hour + time.Minute).Seconds() {
+				require.Equal(t, showBefore.GetBucket()[i].GetCumulativeCount(), bucket.GetCumulativeCount())
+			}
+		}
+		require.Equal(t, outerStartTime, vars.StartTime)
+		require.Zero(t, vars.DurationParse)
+		require.Equal(t, selectBefore.GetSampleCount(), statementMetric("Select").GetHistogram().GetSampleCount())
+		internal := statementMetric(metrics.LblInternal).GetHistogram()
+		require.Equal(t, internalBefore.GetSampleCount()+1, internal.GetSampleCount())
+		require.LessOrEqual(t, internal.GetSampleSum()-internalBefore.GetSampleSum(), elapsed)
+		require.Equal(t, commandBefore+1, readHistogram(command).GetHistogram().GetSampleCount())
+		require.False(t, vars.InRestrictedSQL)
+		require.False(t, vars.StmtCtx.InRestrictedSQL)
+		require.Equal(t, "Show", vars.StmtCtx.StmtType)
+
+		// The next user statement must not inherit the outer statement's synthetic timing.
+		start = time.Now()
+		require.NoError(t, cc.handleQuery(ctx, "select 1"))
+		elapsed = time.Since(start).Seconds()
+		selectAfter := statementMetric("Select").GetHistogram()
+		require.Equal(t, selectBefore.GetSampleCount()+1, selectAfter.GetSampleCount())
+		require.LessOrEqual(t, selectAfter.GetSampleSum()-selectBefore.GetSampleSum(), elapsed)
+	})
+
+	t.Run("internal result set close", func(t *testing.T) {
+		before := statementMetric("Select").GetHistogram().GetSampleCount()
+		internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+		rs, err := tk.Session().ExecuteInternal(internalCtx, "select 1")
+		require.NoError(t, err)
+		require.NotNil(t, rs)
+		require.False(t, vars.InRestrictedSQL)
+		require.True(t, vars.StmtCtx.InRestrictedSQL)
+		require.NoError(t, rs.Next(internalCtx, rs.NewChunk(nil)))
+		require.NoError(t, rs.Close())
+		// The restored session flag must not turn an internal statement into a user sample.
+		require.Equal(t, before, statementMetric("Select").GetHistogram().GetSampleCount())
+	})
+
+	t.Run("restricted helper retains internal sample", func(t *testing.T) {
+		internalBefore := statementMetric(metrics.LblInternal).GetHistogram()
+		command := metrics.CommandDurationHistogram.WithLabelValues(metrics.LblInternal, "", vars.ResourceGroupName)
+		commandBefore := readHistogram(command).GetHistogram()
+		selectBefore := statementMetric("Select").GetHistogram().GetSampleCount()
+		internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+		_, _, err := tk.Session().GetRestrictedSQLExecutor().ExecRestrictedSQL(internalCtx, nil, "select /*+ RESOURCE_GROUP(statement_duration_test) */ 1")
+		require.NoError(t, err)
+		internalAfter := statementMetric(metrics.LblInternal).GetHistogram()
+		commandAfter := readHistogram(command).GetHistogram()
+		require.Equal(t, internalBefore.GetSampleCount()+1, internalAfter.GetSampleCount())
+		require.Equal(t, commandBefore.GetSampleCount()+1, commandAfter.GetSampleCount())
+		require.InDelta(t, internalAfter.GetSampleSum()-internalBefore.GetSampleSum(), commandAfter.GetSampleSum()-commandBefore.GetSampleSum(), 1e-9)
+		require.Equal(t, selectBefore, statementMetric("Select").GetHistogram().GetSampleCount())
+	})
+
+	t.Run("restricted SQL", func(t *testing.T) {
+		before := statementMetric("Select").GetHistogram().GetSampleCount()
+		vars.InRestrictedSQL = true
+		t.Cleanup(func() { vars.InRestrictedSQL = false })
+		internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+		require.NoError(t, cc.handleQuery(internalCtx, "select v from statement_duration where id = 1"))
+		require.Equal(t, before, statementMetric("Select").GetHistogram().GetSampleCount())
+	})
 }
 
 func TestIssue54335(t *testing.T) {

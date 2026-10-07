@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "csvfile",
+    srcs = [
+        "csv.go",
+        "csvfile.go",
+        "writer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dumpformat/csvfile",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/dumpformat"],
+)
+
+go_test(
+    name = "csvfile_test",
+    timeout = "short",
+    srcs = ["csv_test.go"],
+    embed = [":csvfile"],
+    flaky = True,
+    shard_count = 11,
+    deps = [
+        "//pkg/dumpformat",
+        "@com_github_stretchr_testify//require",
+    ],
+)

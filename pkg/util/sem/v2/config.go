@@ -53,6 +53,11 @@ type Config struct {
 
 	// RestrictedSQL contains restricted SQL statements and rules
 	RestrictedSQL SQLRestriction `json:"restricted_sql"`
+
+	// RestrictedHints is the list of optimizer hints stripped from queries and
+	// bindings with a warning. A hint that overrides a system variable (see
+	// hintGuardVars) is only stripped while that variable is hidden or read-only.
+	RestrictedHints []string `json:"restricted_hints,omitempty"`
 }
 
 // TableRestriction defines the configuration for a restricted table

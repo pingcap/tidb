@@ -480,16 +480,6 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
-func (p *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	proj := p.Self().(*LogicalProjection)
-	canBePushed, _ := breakDownPredicates(proj, predicates)
-	child := proj.Children()[0]
-	child = child.ConvertOuterToInnerJoin(canBePushed)
-	proj.SetChildren(child)
-	return proj
-}
-
 // *************************** end implementation of logicalPlan interface ***************************
 
 // GetUsedCols extracts all of the Columns used by proj.

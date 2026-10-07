@@ -20,6 +20,7 @@ go_library(
         "//pkg/planner/core/operator/physicalop",
         "//pkg/sessionctx",
         "//pkg/util/chunk",
+        "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",
     ],
 )
