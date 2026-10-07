@@ -808,3 +808,32 @@ fn dropped_binding_tombstones_are_swept_after_ten_leases() {
         "the aged tombstone is physically gone"
     );
 }
+
+#[test]
+fn cte_scope_batch_pinning_respects_definition_order_and_query_boundaries() {
+    let cases = [
+        ("WITH t AS (SELECT a FROM t) SELECT a FROM t", vec![vec!["test", "t"], vec!["t"]]),
+        ("WITH c AS (SELECT a FROM t), t AS (SELECT 2 AS a) SELECT a FROM c", vec![vec!["test", "t"], vec!["c"]]),
+        ("SELECT * FROM (WITH t AS (SELECT 1 AS a) SELECT a FROM t) d JOIN t ON TRUE", vec![vec!["t"], vec!["test", "t"]]),
+        ("WITH RECURSIVE t AS (SELECT 1 AS a UNION ALL SELECT a+1 FROM t WHERE a<2) SELECT a FROM t", vec![vec!["t"], vec!["t"]]),
+        ("WITH t AS (SELECT 1 AS a), u AS (SELECT a FROM t) SELECT a FROM u", vec![vec!["t"], vec!["u"]]),
+        ("WITH t AS (SELECT 1 AS a) SELECT a FROM test.t", vec![vec!["test", "t"]]),
+    ];
+    for (sql, expected) in cases {
+        let mut session = Session::new();
+        let mut stmt = session.parse_statement(sql).unwrap();
+        crate::binding::pin_current_database(&mut stmt, "test").unwrap();
+        let actual = crate::binding::collect_table_names(&stmt);
+        let expected: Vec<(String, String)> = expected
+            .into_iter()
+            .map(|p| {
+                if p.len() == 2 {
+                    (p[0].into(), p[1].into())
+                } else {
+                    (String::new(), p[0].into())
+                }
+            })
+            .collect();
+        assert_eq!(actual, expected, "{sql}");
+    }
+}

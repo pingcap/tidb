@@ -1,0 +1,196 @@
+{
+  "date": "2026-10-07",
+  "base": "e0f28ca86256ee2f68b97422eaccf984c19ecd7a",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_head": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "findings": [
+    "A01",
+    "S03",
+    "O18"
+  ],
+  "scope": "Existing-owner CTE scope maintenance across read privilege admission, prepared AST database pinning and statement-summary table attribution. No complete Go package acceptance.",
+  "repairs": [
+    "Nested CTE declarations cannot suppress SELECT privilege requirements on outer physical tables.",
+    "Nonrecursive self references and references to later CTE names retain physical-table admission.",
+    "Recursive self and preceding definitions retain query-local visibility; explicit schema qualification stays physical.",
+    "Both SQL and binary prepared AST callers use scoped database pinning; the exercised SQL PREPARE retains its original database after USE.",
+    "Statement-summary table attribution consumes the corrected physical source visits."
+  ],
+  "removed": [
+    "Statement-global CTE-name collector and privilege exclusion filter.",
+    "Unused unfiltered table-reference/alias collector and its type alias.",
+    "PREPARE/binding pinning preliminary full-tree scan and clone."
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29,
+    "other_unresolved_not_freshly_reproduced": 53
+  },
+  "validation": {
+    "baseline_rust_failed": 6,
+    "grouped_rust_passed": 101,
+    "baseline_wire_failed": 5,
+    "baseline_wire_controls_passed": 3,
+    "final_wire_passed": 8,
+    "server_clean_shutdown": true
+  },
+  "environment": "Source /workspace/.cloud-setup/env.sh and export CARGO_BUILD_JOBS=1 in each shell. Wire additionally uses PYTHONPATH=/workspace/.cloud-setup/python; env.sh supplies RUST_MIN_STACK=33554432.",
+  "commands": [
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked -p tidb-session --lib -- cte_scope_batch_ --test-threads=1",
+      "result": "exit101; six failed before production edits",
+      "log": "/workspace/.cloud-setup/cte-scope-batch/before.log",
+      "sha256": "afb059e819c8d7ac66e4d8b74f6819700d1e88073e08e357fedf2736217e87ea"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked -p tidb-session --lib -- tests_grants::table_scope:: tests_prepared_statements:: tests_binding:: tests_observation_batch:: --test-threads=1",
+      "result": "exit0; 101 passed",
+      "log": "/workspace/.cloud-setup/cte-scope-batch/after.log",
+      "sha256": "2f50b3ea1e1c8d0680ba41beffb094c0518f28c1bfca1b8a0f72329107e1b12b"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo check --locked --all-targets -p tidb-session -p tidb-server",
+      "result": "exit0",
+      "log": "/workspace/.cloud-setup/cte-scope-batch/check.log",
+      "sha256": "e463cf51490fe819a3b504041dcd6501d304b71c0e6c118afd4526334f11eda2"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "make lint",
+      "result": "exit0",
+      "log": "/workspace/.cloud-setup/cte-scope-batch/lint.log",
+      "sha256": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo build --locked -p tidb-server",
+      "result": "exit0",
+      "log": "/workspace/.cloud-setup/cte-scope-batch/build.log",
+      "sha256": "43bf91cf83760279e32f15336ca41cfc4412200ec003d4fbc2deb44e3f12bd39"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/cte-scope-batch/wire.py before",
+      "result": "exit1; five expected baseline assertion failures, three controls pass",
+      "log": "/workspace/.cloud-setup/cte-scope-batch/before-wire.json",
+      "sha256": "0ace669e64e6d7ebc995421ed44886a1ba75c336adf42ee82294c22f2e1b8786"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/cte-scope-batch/wire.py after",
+      "result": "exit0; eight pass",
+      "log": "/workspace/.cloud-setup/cte-scope-batch/after-wire.json",
+      "sha256": "4d71326218bf9938e1c27c8f2bf798e7fc431e50a2ba04c034387442261368c3"
+    }
+  ],
+  "wire_cases": [
+    {
+      "name": "nested CTE cannot hide SELECT privilege",
+      "before_pass": false,
+      "after_pass": true
+    },
+    {
+      "name": "nonrecursive self requires SELECT privilege",
+      "before_pass": false,
+      "after_pass": true
+    },
+    {
+      "name": "forward name requires SELECT privilege",
+      "before_pass": false,
+      "after_pass": true
+    },
+    {
+      "name": "PREPARE retains original database",
+      "before_pass": false,
+      "after_pass": true
+    },
+    {
+      "name": "summary retains physical table",
+      "before_pass": false,
+      "after_pass": true
+    },
+    {
+      "name": "authorized nonrecursive self",
+      "before_pass": true,
+      "after_pass": true
+    },
+    {
+      "name": "preceding CTE visible",
+      "before_pass": true,
+      "after_pass": true
+    },
+    {
+      "name": "recursive self visible",
+      "before_pass": true,
+      "after_pass": true
+    }
+  ],
+  "go_evidence": {
+    "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+    "basis": "Live Go source and existing TestPreprocessCTE fixtures; Go suite not executed",
+    "files": [
+      {
+        "path": "pkg/planner/core/preprocess.go",
+        "sha256": "d06df0725ad616e2aa5d0afdac55f8f5f125baf3c25ea1abd2e784dff21bba99"
+      },
+      {
+        "path": "pkg/planner/core/preprocess_test.go",
+        "sha256": "76fab3b0baf5cf43dba7c41447bb6151569afd53ba06d9123b080fbf8cfaf467"
+      },
+      {
+        "path": "pkg/planner/core/logical_plan_builder.go",
+        "sha256": "01e352e46d091aeb174ce7c71143d23aa92f4b9d0c41d691aaba1cb8baaef131"
+      },
+      {
+        "path": "pkg/parser/ast/dml.go",
+        "sha256": "6a384638300d45d02735fa1e085df86abd37664e40221657651a86bea8b488ed"
+      },
+      {
+        "path": "pkg/bindinfo/binding.go",
+        "sha256": "98502b5a1d0064d33bc56586724bf20352934da79daf2bab9750b418f179f00c"
+      }
+    ]
+  },
+  "sources": [
+    {
+      "path": "rust/crates/tidb-session/src/binding.rs",
+      "sha256": "68a031c33aa3256f555f957e33cbb87e357b8a49de14ee79fe825cca4bcd9e9d"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/table_privilege.rs",
+      "sha256": "0e3ec69b456f5be55aec327d4096224c473621a6194bbb96ae01501ec5118b5d"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_binding.rs",
+      "sha256": "aadfee49d50558fb9c8dac3c4315401267048d663d69c6a506ed2acd5e240940"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_grants/table_scope.rs",
+      "sha256": "c5f97a78c8bf424f179cf10b05573d8a32e564a19b25b682b55a451925da0675"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_prepared_statements.rs",
+      "sha256": "307040f09e6b300f9c3f2bd291d15a819720c8a6841dfb89ee641f244cde11ed"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_observation_batch.rs",
+      "sha256": "be0dcc3ce33a4d5ad52701f880b791a880afd108e6db8769fa94549ea3e2d51d"
+    }
+  ],
+  "self_review": "Checked both CteScope callers, recursive/preceding/qualified controls, raw binding-name separation, prepared caller coverage, statement-summary propagation, generated source and dependency nonchanges, register counts and diff whitespace.",
+  "limitations": [
+    "All three parent findings remain partial: complete planner-owned visit ordering, migration certificates/tokens/state and broader observation metadata/fanout are not accepted.",
+    "Fresh Go master source and TestPreprocessCTE fixtures were inspected; full Go suites were not run.",
+    "No live multi-node TiKV, binary-wire prepare migration, performance or complete package acceptance claimed.",
+    "No Go source/build metadata or dependencies changed; Bazel regeneration is not applicable.",
+    "Initial wire launch omitted the installed Python module path and failed before server startup; the corrected command above is the verified reusable invocation.",
+    "Test execution artifact retirement retained sources/logs/compiler caches; details are in the external retirement receipt.",
+    "Actual precommit-hook, immediately pre-push locked build, remote verification, recovery bundle and Cloud draft evidence are recorded in the external final-handoff.json after this commit; saving is not Publish or fresh restoration."
+  ]
+}

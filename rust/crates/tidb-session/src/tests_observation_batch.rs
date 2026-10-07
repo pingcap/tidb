@@ -842,3 +842,22 @@ fn observation_plan_batch_disabled_set_skips_begin_but_dml_does_not() {
         assert!(data.values().all(|item| item.duration_count == 0));
     }
 }
+
+#[test]
+fn cte_scope_batch_summary_attributes_real_table_shadowed_in_sibling() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    session.run("CREATE TABLE cte_observation (a INT)").unwrap();
+    let sql = "SELECT t.a FROM cte_observation t JOIN (WITH cte_observation AS (SELECT 1 AS a) SELECT a FROM cte_observation) d ON TRUE";
+    session.run(sql).unwrap();
+    let (_, digest) = normalize_statement_digest(sql);
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|r| r.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    assert_eq!(record.table_names, "test.cte_observation");
+}

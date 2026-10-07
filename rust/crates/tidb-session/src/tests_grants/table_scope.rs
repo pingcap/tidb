@@ -535,3 +535,38 @@ fn dml_owner_unqualified_delete_needs_only_delete_privilege() {
         table_denied("DELETE", "t")
     );
 }
+
+// Go preprocessWith exposes only preceding CTEs (and a recursive self),
+// restoring visibility when a nested query exits.
+#[test]
+fn cte_scope_batch_nested_name_cannot_hide_outer_privilege() {
+    let (_, _boot, mut bob) = scoped();
+    assert_eq!(
+        denied(
+            &mut bob,
+            "SELECT t.a FROM t JOIN (WITH t AS (SELECT 1 AS a) SELECT a FROM t) d ON t.a=d.a"
+        ),
+        table_denied("SELECT", "t")
+    );
+}
+
+#[test]
+fn cte_scope_batch_nonrecursive_self_reads_base_table() {
+    let (_, mut boot, mut bob) = scoped();
+    let sql = "WITH t AS (SELECT a FROM t) SELECT a FROM t";
+    assert_eq!(denied(&mut bob, sql), table_denied("SELECT", "t"));
+    boot.run("GRANT SELECT ON test.t TO 'bob'@'%'").unwrap();
+    assert_eq!(row_text(bob.run(sql)), [["1"]]);
+}
+
+#[test]
+fn cte_scope_batch_later_name_cannot_hide_earlier_source() {
+    let (_, _boot, mut bob) = scoped();
+    assert_eq!(
+        denied(
+            &mut bob,
+            "WITH c AS (SELECT a FROM t), t AS (SELECT 2 AS a) SELECT a FROM c"
+        ),
+        table_denied("SELECT", "t")
+    );
+}

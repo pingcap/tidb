@@ -186,15 +186,8 @@ fn split_path<'a>(path: &'a [String], current_db: &'a str) -> Option<(String, St
 /// sources Go's `buildDataSource` visits, and therefore the tables it
 /// demands `SELECT` on.
 fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)> {
-    // A CTE is referenced through the table grammar but resolves to its own
-    // query, so it is not a data source and Go demands nothing on it.
-    let (refs, ctes) = crate::binding::collect_table_refs_and_cte_names(stmt);
-    refs.iter()
-        .map(|(path, _)| path)
-        .filter(|path| {
-            !matches!(path.as_slice(), [name]
-                if ctes.iter().any(|cte| cte.eq_ignore_ascii_case(name)))
-        })
+    crate::binding::collect_physical_table_refs(stmt)
+        .iter()
         .filter_map(|path| split_path(path, current_db))
         .collect()
 }

@@ -279,3 +279,8 @@ O18/O11/N03 share the completed SQL producer and process lifecycle in [the obser
 ## Observed-plan batch, 2026-10-04
 
 O11/O18/N03 advance together through shared plan samples, binary prepared/Global-switch policy, runtime TopSQL admission and SET labels. See [receipt](observation-plan-batch-validation.json) and [living plan](../../observation-plan-batch-execplan.md). Counts remain 86 tracked, 29 repaired and 57 unresolved (35 open, 22 partial). These three roots remain partial; the other 54 unresolved roots were not freshly revalidated. No pushes.
+
+
+## Shared CTE scope maintenance, 2026-10-07
+
+The [plan](../../cte-scope-batch-execplan.md) and [receipt](cte-scope-batch-validation.json) connect A01/S03/O18 through one query-local visibility state. Remove global-name suppression and the redundant PREPARE scan after both callers migrate. Six Rust baseline failures and five live failures establish the defects; broader parent obligations remain partial. Counts stay86 tracked/30 repaired/56 unresolved. This is existing-owner maintenance, not complete Go package acceptance.

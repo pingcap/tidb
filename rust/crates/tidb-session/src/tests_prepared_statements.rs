@@ -816,3 +816,16 @@ fn a_group_by_field_keeps_its_written_alias_in_the_header() {
         )
     );
 }
+
+#[test]
+fn cte_scope_batch_prepare_pins_base_table_despite_nested_cte() {
+    let mut session = Session::new();
+    for sql in ["CREATE TABLE t (a INT)", "INSERT INTO t VALUES (1)",
+        "CREATE DATABASE cte_other", "CREATE TABLE cte_other.t (a INT)",
+        "INSERT INTO cte_other.t VALUES (2)",
+        "PREPARE cte_p FROM 'SELECT t.a FROM t JOIN (WITH t AS (SELECT 1 AS a) SELECT a FROM t) d ON TRUE'",
+        "USE cte_other"] {
+        session.run(sql).unwrap();
+    }
+    assert_eq!(row_text(session.run("EXECUTE cte_p")), [["1"]]);
+}

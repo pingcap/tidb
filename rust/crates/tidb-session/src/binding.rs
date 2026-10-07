@@ -188,71 +188,77 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
     }
 }
 
-/// One `TableRef` as written: its name path and its alias, if any.
-pub(crate) type TableRefName = (Vec<String>, Option<String>);
-
-/// Every `TableRef` in traversal order, keeping the name path and alias AS
-/// WRITTEN.
-///
-/// [`collect_table_names`] lowercases and drops the alias because Go's
-/// binding matcher compares `.L` names; the privilege collector
-/// ([`crate::table_privilege`]) needs the written spelling for the error
-/// message and the alias to place a multi-table `UPDATE`/`DELETE` target, so
-/// it reads the same nodes through this.
-pub(crate) fn collect_table_refs(stmt: &Stmt) -> Vec<(Vec<String>, Option<String>)> {
-    struct Collector {
-        refs: Vec<(Vec<String>, Option<String>)>,
-    }
-    impl Visitor for Collector {
-        fn enter(&mut self, node: &mut dyn Any) -> bool {
-            if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
-                self.refs
-                    .push((table_ref.name.clone(), table_ref.alias.clone()));
-            }
-            false
-        }
-
-        fn leave(&mut self, _node: &mut dyn Any) -> bool {
-            true
-        }
-    }
-    let mut stmt = stmt.clone();
-    let mut collector = Collector { refs: Vec::new() };
-    stmt.accept(&mut collector);
-    collector.refs
+/// Query-local CTE visibility shared by physical-table admission and PREPARE
+/// database pinning. Go's preprocessWith publishes ordinary names after their
+/// definition, recursive names before it, and restores the enclosing scope.
+#[derive(Default)]
+struct CteScope {
+    visible: Vec<String>,
+    offsets: Vec<usize>,
+    recursive: Vec<bool>,
 }
 
-/// [`collect_table_refs`] and the CTE-name scan in ONE traversal. The
-/// visitor API walks a mutable tree, so a read-only collector has to copy
-/// the statement first; the privilege check needs both lists for every
-/// statement and must not pay that copy twice.
-pub(crate) fn collect_table_refs_and_cte_names(stmt: &Stmt) -> (Vec<TableRefName>, Vec<String>) {
+impl CteScope {
+    fn enter(&mut self, node: &mut dyn Any) {
+        if node.is::<tidb_ast::SelectStmt>() || node.is::<tidb_ast::SetOprStmt>() {
+            self.offsets.push(self.visible.len());
+        } else if let Some(with) = node.downcast_mut::<tidb_ast::WithClause>() {
+            self.recursive.push(with.recursive);
+        } else if let Some(cte) = node.downcast_mut::<tidb_ast::Cte>() {
+            self.offsets.push(self.visible.len());
+            if self.recursive.last().copied().unwrap_or(false) {
+                self.visible.push(go_to_lower(cte.name.clone()));
+            }
+        }
+    }
+
+    fn leave(&mut self, node: &mut dyn Any) {
+        if node.is::<tidb_ast::SelectStmt>() || node.is::<tidb_ast::SetOprStmt>() {
+            self.visible
+                .truncate(self.offsets.pop().expect("query scope entered"));
+        } else if node.is::<tidb_ast::WithClause>() {
+            self.recursive.pop();
+        } else if let Some(cte) = node.downcast_mut::<tidb_ast::Cte>() {
+            self.visible
+                .truncate(self.offsets.pop().expect("CTE scope entered"));
+            self.visible.push(go_to_lower(cte.name.clone()));
+        }
+    }
+
+    fn contains(&self, path: &[String]) -> bool {
+        matches!(path, [name] if self.visible.contains(&go_to_lower(name.clone())))
+    }
+}
+
+/// Physical read sources in traversal order. Qualified names always name a
+/// table, even when a visible CTE has the same name. Binding matching keeps its
+/// separate, deliberately unfiltered syntactic table-name collection.
+pub(crate) fn collect_physical_table_refs(stmt: &Stmt) -> Vec<Vec<String>> {
+    #[derive(Default)]
     struct Collector {
-        refs: Vec<TableRefName>,
-        ctes: Vec<String>,
+        refs: Vec<Vec<String>>,
+        scope: CteScope,
     }
     impl Visitor for Collector {
         fn enter(&mut self, node: &mut dyn Any) -> bool {
+            self.scope.enter(node);
             if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
-                self.refs
-                    .push((table_ref.name.clone(), table_ref.alias.clone()));
-            } else if let Some(cte) = node.downcast_mut::<tidb_ast::Cte>() {
-                self.ctes.push(cte.name.clone());
+                if !self.scope.contains(&table_ref.name) {
+                    self.refs.push(table_ref.name.clone());
+                }
             }
             false
         }
 
-        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+        fn leave(&mut self, node: &mut dyn Any) -> bool {
+            self.scope.leave(node);
             true
         }
     }
     let mut stmt = stmt.clone();
-    let mut collector = Collector {
-        refs: Vec::new(),
-        ctes: Vec::new(),
-    };
+    let mut collector = Collector::default();
     stmt.accept(&mut collector);
-    (collector.refs, collector.ctes)
+    collector.refs
 }
 
 /// Go `preprocessor.handleTableName` (`pkg/planner/core/preprocess.go:1758`):
@@ -264,7 +270,7 @@ pub(crate) fn collect_table_refs_and_cte_names(stmt: &Stmt) -> (Vec<TableRefName
 pub(crate) fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<(), DriverError> {
     struct Pinner<'a> {
         current_db: &'a str,
-        ctes: Vec<String>,
+        scope: CteScope,
         unresolved: bool,
     }
     impl Pinner<'_> {
@@ -281,10 +287,9 @@ pub(crate) fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<
     }
     impl Visitor for Pinner<'_> {
         fn enter(&mut self, node: &mut dyn Any) -> bool {
+            self.scope.enter(node);
             if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
-                let names_cte = matches!(table_ref.name.as_slice(), [name]
-                    if self.ctes.iter().any(|cte| cte.eq_ignore_ascii_case(name)));
-                if !names_cte {
+                if !self.scope.contains(&table_ref.name) {
                     self.pin(&mut table_ref.name);
                 }
             } else if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
@@ -315,16 +320,14 @@ pub(crate) fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<
             false
         }
 
-        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+        fn leave(&mut self, node: &mut dyn Any) -> bool {
+            self.scope.leave(node);
             true
         }
     }
-    // The CTE names come from their own pass: a `WITH` body may reference a
-    // CTE the traversal has not entered yet.
-    let (_, ctes) = collect_table_refs_and_cte_names(stmt);
     let mut pinner = Pinner {
         current_db,
-        ctes,
+        scope: CteScope::default(),
         unresolved: false,
     };
     stmt.accept(&mut pinner);
