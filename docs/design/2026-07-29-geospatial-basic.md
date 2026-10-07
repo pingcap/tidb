@@ -419,17 +419,17 @@ GeometryCollection.
 
 ### Geometry engine
 
-Pure Go, no cgo, so the stack builds with `CGO_ENABLED=0` and needs no libgeos in the
-Bazel/CI sandbox; the only Bazel work is adding `DEPS.bzl` proxy-fetch entries.
+Results are bit-identical across builds, components and CPU architectures, regardless of
+the `CGO_ENABLED` setting.
 
 - `github.com/peterstace/simplefeatures`: OGC/DE-9IM model, WKT/WKB/GeoJSON I/O, and the
   planar predicates and measurement SRID 0 uses. Validated byte-identical to MySQL in the
   PoC.
-- Andoyer for 4326, in-tree or as a new Go library: no Go library implements Andoyer or
-  geodesic topology, and the libraries that do are C++ (Boost.Geometry, which MySQL runs,
-  and GeographicLib's `Intersect`). Ellipsoidal distance and length, which the proof of
-  concept already carries, plus the inverse problem with azimuths and a crossing test over
-  it for the predicates.
+- Andoyer for 4326: no Go library implements Andoyer or geodesic topology, and the
+  libraries that do are C++ (Boost.Geometry, which MySQL runs, and GeographicLib's
+  `Intersect`). Ellipsoidal distance and length, which the proof of concept already
+  carries, plus the inverse problem with azimuths and a crossing test over it for the
+  predicates.
 
 The processing tail may need GEOS-equivalent algorithms; it is deferred with the rest of
 the tail.
@@ -664,8 +664,13 @@ Risks:
 - **Same answer on every node:** arm64 fuses multiply-adds where amd64 does not, including
   inside Go's `math.Sin` and `math.Atan`, so the same Andoyer code gives different last bits
   (measured over 100,000 distances). A 4326 predicate near an edge can flip on that bit, so
-  a mixed-architecture cluster could answer one query two ways. Mitigated by fusion-free
-  trigonometry of our own, which a later TiKV evaluator ports as is.
+  a mixed-architecture cluster could answer one query two ways. `simplefeatures` fuses too:
+  on arm64, 6% of 100,000 planar point distances differ from amd64 by one ULP. Mitigated by
+  three rules, `simplefeatures` included: only the IEEE 754 basic operations (`+ - * /` and
+  square root), which give the same bits on every CPU, so the trigonometry is our own; no
+  fused products; and the same operations in the same order in every component. A check
+  that rejects fused instructions in an arm64 build of the geometry code enforces the
+  second.
 - **MySQL spatial schemas may not migrate:** a MySQL spatial table usually has a spatial
   index, which MySQL creates even for a plain `KEY` on a geometry column, and
   `pt POINT AS (ST_SRID(Point(lng, lat), 4326)) STORED` is the usual way to index
@@ -706,9 +711,8 @@ Risks:
   defers the choice without a migration.
 - **Matching MySQL's stored bytes.** Rejected as a non-goal: I/O compatibility is a boundary
   conversion, and MySQL does the same internally.
-- **cgo/libgeos (go-geos).** Rejected for v1: it gives OGC-correct geometry but needs
-  `libgeos` in the Bazel/CI sandbox, while pure-Go `simplefeatures` needs nothing there and
-  is MySQL byte-identical in the PoC. Revisit for the processing tail.
+- **GEOS (go-geos).** Rejected for v1: TiDB would not build with `CGO_ENABLED=0`, and
+  `simplefeatures` is MySQL byte-identical in the PoC. Revisit for the processing tail.
 - **The full [#38916](https://github.com/pingcap/tidb/pull/38916) surface at once.** Rejected as too large to review and
   land.
 - **Geometry as a generic BLOB with application-side functions.** The status quo; loses
@@ -746,8 +750,7 @@ Risks:
 
 ## Unresolved Questions
 
-- **Where the Andoyer code lives:** in-tree, or a separate Go library that a later TiKV
-  evaluator can port as is ([Geometry engine](#geometry-engine)).
+None.
 
 ## Future extensions
 
