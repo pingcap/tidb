@@ -797,7 +797,7 @@ func tryLateMaterialization(logic base.LogicalPlan, plan base.PhysicalPlan, cost
 	warns := slices.Clone(sessVars.StmtCtx.GetWarnings())
 	planID, planColumnID := sessVars.PlanID.Load(), sessVars.PlanColumnID.Load()
 	newLogic := logic
-	var swapped []*lateMaterializeRegion
+	swapped := make([]*lateMaterializeRegion, 0, len(tasks))
 	restore := func() (base.LogicalPlan, base.PhysicalPlan, float64) {
 		for _, r := range swapped {
 			r.parent.SetChild(r.childIdx, r.root)
