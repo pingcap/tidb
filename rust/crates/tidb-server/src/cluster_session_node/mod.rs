@@ -6298,7 +6298,7 @@ impl ClusterServerSession {
                 }
             }
             StoredStateChange::Schema => {
-                self.session.validate_temporary_ddl_preprocess(stmt).map_err(map_error)?;
+                self.session.validate_ddl_preprocess(stmt).map_err(map_error)?;
                 if self.session.is_local_temporary_ddl_parsed(stmt) {
                     return Ok(StatementRoute::LocalTemporaryDdl);
                 }

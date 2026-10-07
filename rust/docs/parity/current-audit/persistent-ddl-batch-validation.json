@@ -1,0 +1,85 @@
+{
+  "date": "2026-10-07",
+  "baseline": {
+    "head": "7742e4db58cebddced9b17761176271542615712",
+    "command": "cargo test --locked -p tidb-session --lib -- persistent_ddl_ --test-threads=1",
+    "observed": "0 passed,11 failed",
+    "accepted_defect_regressions": 10,
+    "corrected_expectation": "CREATE LIKE must reject a local source during preprocessing (8006), even with a hidden durable source; corrected test retained as control. No LIKE defect repair claimed.",
+    "setup_failure": "Local TRUNCATE baseline case fails while creating its local parent shadow because durable child validation incorrectly runs; post-fix case validates both creation and truncation."
+  },
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_unchanged": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "findings": [
+    "D01",
+    "E02",
+    "D11"
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "scope": "Existing shared Session catalog selection and DDL caller repair, not complete Go package acceptance",
+  "go_sources": [
+    "pkg/executor/ddl.go::DDLExec.Next/executeTruncateTable/executeRenameTable",
+    "pkg/ddl/executor.go::CreateTable/dropTableObject/TruncateTable",
+    "pkg/ddl/create_table.go::checkTableForeignKeyValid",
+    "pkg/planner/core/preprocess.go::checkCreateTableGrammar/checkAlterTableGrammar/checkUnsupportedTableOptions"
+  ],
+  "production": [
+    "tidb-session/src/txn.rs::with_catalog_scope",
+    "tidb-session/src/dispatch.rs durable DDL callers",
+    "tidb-session/src/identity.rs::validate_ddl_preprocess",
+    "tidb-server/src/cluster_session_node/mod.rs shared preprocessor consumer",
+    "tidb-executor/src/ddl.rs local-parent admission"
+  ],
+  "neighbor_failure": "First grouped run:200 pass,2 fail (incorrect LIKE expectation plus existing ALTER UNION diagnostic expecting8232 but receiving8200). Shared option preprocessing repairs the latter.",
+  "validation": {
+    "grouped_tests": {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_temporary_tables tests_foreign_key tests_core::ddl tests_sequence tests_view --test-threads=1",
+      "passed": 202,
+      "failed": 0,
+      "ignored": 0
+    },
+    "lint": "PASS: make lint",
+    "all_targets": "PASS: cargo check --locked --all-targets -p tidb-session -p tidb-server -p tidb-executor",
+    "locked_build": "PASS: cargo build --locked -p tidb-server",
+    "live_mysql": {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/persistent-ddl-batch/wire.py",
+      "passed": 51,
+      "failed": 0,
+      "server_exit": 0,
+      "scope": "Real server over MySQL with unistore; inherited39 DROP/view checks plus12 scope/diagnostic/transaction controls",
+      "baseline": "No separate live baseline for this batch; fail-before evidence is the grouped Rust regressions."
+    },
+    "publication": "Actual hook and fresh locked build required; external final-handoff.json records final results."
+  },
+  "removed": "The temporary-only preprocessor API is replaced by validate_ddl_preprocess and all four callers migrate. Durable DDL no longer inherits unconditional local-overlay lookup. No useful tests removed.",
+  "limitations": [
+    "No complete-package acceptance or broad finding closure",
+    "Other53 unresolved findings retain carried evidence, not fresh reproduction",
+    "No full Go suites, multi-node TiKV, durable recovery or performance verification",
+    "CREATE/ALTER VIEW target/body scope and local table survival after DROP DATABASE remain separate gaps",
+    "Cluster sequence mode remains guarded; embedded sequence tests do not authorize enabling it"
+  ],
+  "external_artifacts": "/workspace/.cloud-setup/persistent-ddl-batch",
+  "recovered_issues": [
+    "Initial test-file append used the wrong relative directory; corrected before test compilation. Actual baseline ran11 cases, not zero.",
+    "Initial option-validator root path did not compile; corrected to tidb_executor::ddl::validate_table_options and reran successfully."
+  ],
+  "logs": {
+    "before.log": "81685f7906aad8ccfd4bb9a8d04579e068ba367f1cdcbffb3b3b6bac5143cc25",
+    "after.log": "5be9d03b0e82b45efe997349a0bf666c5e8c25463de16b91843da6a27f375cfb",
+    "after-option-compile.log": "d2bc1355a0736cbea075d542446ce4e67d7e6970c94fd5dc0e465ccf886367a6",
+    "after-final.log": "f7168e5995d7e6ee18f0900132ed427118a517346b32584583269c00d58874dd",
+    "check.log": "5f3e0ceba09a13908b042b1e3b6d0f1ad4442a2e63896e9c2d4b04665c0cc528",
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "build.log": "880ad52493af57675629c2841618a5276eea33ff55fda8aefdfb4c776a562fcb",
+    "wire.json": "6c61faa8a153c61458d07d14581be3039c1c7febdf07e167a01fc92533d9b100",
+    "wire.py": "44fdb7b33d737a532c0ba5f11a071c2fc5a039b216e86f4ab9c0234bc4c2e6ec",
+    "register-check.json": "69c47165ad115574b7697d1c89c84aed58648603b22dcbd00a235567622cc4d5"
+  }
+}

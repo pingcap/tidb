@@ -928,6 +928,24 @@ impl Session {
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
+        self.with_catalog_scope(true, body)
+    }
+
+    /// Go's durable DDL executor uses the shared infoschema, without local
+    /// temporary names. Global temporary row storage remains session-owned.
+    pub(crate) fn with_persistent_catalog_mut<T>(
+        &mut self,
+        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        self.with_catalog_scope(false, body)
+    }
+
+    /// Select the name scope while retaining the shared storage overlay lifecycle.
+    pub(crate) fn with_catalog_scope<T>(
+        &mut self,
+        include_local: bool,
+        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
         // A session that already owns temporary state always takes the full
         // attach/detach path. This is the uncommon branch.
         //
@@ -938,7 +956,9 @@ impl Session {
         // case. `run_discovering_temporary_overlay` also captures a LOCAL or
         // GLOBAL table created by this very statement, closing the gap where
         // the old early return left the first temporary table shared.
-        if self.local_temporary_tables.is_empty() && self.global_temporary_data.is_empty() {
+        if (!include_local || self.local_temporary_tables.is_empty())
+            && self.global_temporary_data.is_empty()
+        {
             let (value, discovered) = if let Some((_, read)) = &mut self.statement_snapshot {
                 run_discovering_temporary_overlay(&mut read.catalog, body)
             } else {
@@ -954,7 +974,11 @@ impl Session {
                 }
             };
             if let Some(discovered) = discovered {
-                self.local_temporary_tables = discovered.local;
+                if include_local {
+                    self.local_temporary_tables = discovered.local;
+                } else {
+                    debug_assert!(discovered.local.is_empty());
+                }
                 self.global_temporary_data = discovered.global;
             }
             return value;
@@ -968,7 +992,11 @@ impl Session {
         // one door every statement reaches the catalog through, rather than
         // in each statement arm.
         let mut overlay = TemporaryTableOverlay {
-            local: std::mem::take(&mut self.local_temporary_tables),
+            local: if include_local {
+                std::mem::take(&mut self.local_temporary_tables)
+            } else {
+                Vec::new()
+            },
             global: std::mem::take(&mut self.global_temporary_data),
         };
         let value = if let Some((_, read)) = &mut self.statement_snapshot {
@@ -985,7 +1013,11 @@ impl Session {
                 }
             }
         };
-        self.local_temporary_tables = std::mem::take(&mut overlay.local);
+        if include_local {
+            self.local_temporary_tables = std::mem::take(&mut overlay.local);
+        } else {
+            debug_assert!(overlay.local.is_empty());
+        }
         self.global_temporary_data = std::mem::take(&mut overlay.global);
         value
     }

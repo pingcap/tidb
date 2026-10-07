@@ -994,3 +994,160 @@ fn local_create_like_and_truncate_share_global_identity_owner() {
         vec![vec!["99"]]
     );
 }
+
+// Go pkg/executor/ddl.go separates local resolution from ddl.Executor's
+// persistent infoCache.GetLatest target and foreign-key lookup.
+#[test]
+fn persistent_ddl_create_keeps_local_rows() {
+    let mut s = temporary_session();
+    s.run("create temporary table shadow(a int)").unwrap();
+    s.run("insert into shadow values(7)").unwrap();
+    s.run("create table shadow(b int)").unwrap();
+    assert_eq!(row_text(s.run("select a from shadow")), vec![vec!["7"]]);
+    s.run("drop temporary table shadow").unwrap();
+    s.run("insert into shadow values(9)").unwrap();
+    assert_eq!(row_text(s.run("select b from shadow")), vec![vec!["9"]]);
+}
+
+#[test]
+fn persistent_ddl_like_retains_local_source_preprocessing() {
+    let mut s = temporary_session();
+    s.run("create table source(persistent_col int)").unwrap();
+    s.run("create temporary table source(local_col int)")
+        .unwrap();
+    assert_eq!(refusal(&mut s, "create table copied like source").0, 8006);
+    s.run("drop temporary table source").unwrap();
+    s.run("create table copied like source").unwrap();
+    assert!(show_create(&mut s, "copied").contains("persistent_col"));
+    s.run("create temporary table source(local_col int)")
+        .unwrap();
+    assert!(show_create(&mut s, "source").contains("local_col"));
+}
+
+#[test]
+fn persistent_ddl_fk_parent_ignores_local_shadow() {
+    let mut s = temporary_session();
+    s.run("create table parent(id int primary key)").unwrap();
+    s.run("create temporary table parent(local_col int)")
+        .unwrap();
+    s.run("create table child(id int, foreign key(id) references parent(id))")
+        .unwrap();
+    assert!(show_create(&mut s, "child").contains("REFERENCES `parent`"));
+    assert!(show_create(&mut s, "parent").contains("local_col"));
+}
+
+#[test]
+fn persistent_ddl_drop_sees_hidden_fk_children() {
+    let mut s = temporary_session();
+    s.run("create table parent(id int primary key)").unwrap();
+    s.run("create table child(id int, foreign key(id) references parent(id))")
+        .unwrap();
+    s.run("create temporary table child(a int)").unwrap();
+    s.run("create table sibling(a int)").unwrap();
+    assert_eq!(refusal(&mut s, "drop table sibling,parent").0, 3730);
+    s.run("select * from sibling").unwrap();
+    s.run("set foreign_key_checks=0").unwrap();
+    s.run("drop table sibling,parent").unwrap();
+    s.run("select a from child").unwrap();
+}
+
+#[test]
+fn persistent_ddl_truncate_sees_hidden_fk_children() {
+    let mut s = temporary_session();
+    s.run("create table parent(id int primary key)").unwrap();
+    s.run("insert into parent values(1)").unwrap();
+    s.run("create table child(id int, foreign key(id) references parent(id))")
+        .unwrap();
+    s.run("create temporary table child(a int)").unwrap();
+    assert_eq!(refusal(&mut s, "truncate table parent").0, 1701);
+    assert_eq!(row_text(s.run("select id from parent")), vec![vec!["1"]]);
+    s.run("set foreign_key_checks=0").unwrap();
+    s.run("truncate table parent").unwrap();
+    assert!(row_text(s.run("select id from parent")).is_empty());
+    s.run("select a from child").unwrap();
+}
+
+#[test]
+fn persistent_ddl_rename_destination_ignores_local_shadow() {
+    let mut s = temporary_session();
+    s.run("create table source(id int)").unwrap();
+    s.run("insert into source values(9)").unwrap();
+    s.run("create temporary table destination(a int)").unwrap();
+    s.run("insert into destination values(7)").unwrap();
+    s.run("rename table source to destination").unwrap();
+    assert_eq!(
+        row_text(s.run("select a from destination")),
+        vec![vec!["7"]]
+    );
+    s.run("drop temporary table destination").unwrap();
+    assert_eq!(
+        row_text(s.run("select id from destination")),
+        vec![vec!["9"]]
+    );
+}
+
+#[test]
+fn persistent_ddl_drop_view_preserves_local_shadow() {
+    let mut s = temporary_session();
+    s.run("create view shadow as select 1 as a").unwrap();
+    s.run("create temporary table shadow(a int)").unwrap();
+    s.run("insert into shadow values(7)").unwrap();
+    s.run("drop view shadow").unwrap();
+    assert_eq!(row_text(s.run("select a from shadow")), vec![vec!["7"]]);
+    s.run("drop temporary table shadow").unwrap();
+    assert_eq!(refusal(&mut s, "select * from shadow").0, 1146);
+}
+
+#[test]
+fn persistent_ddl_sequence_lifecycle_preserves_local_shadow() {
+    let mut s = temporary_session();
+    s.run("create temporary table shadow(a int)").unwrap();
+    s.run("insert into shadow values(7)").unwrap();
+    s.run("create sequence shadow").unwrap();
+    s.run("alter sequence shadow restart with 20").unwrap();
+    s.run("drop sequence shadow").unwrap();
+    assert_eq!(row_text(s.run("select a from shadow")), vec![vec!["7"]]);
+    s.run("drop temporary table shadow").unwrap();
+    assert_eq!(refusal(&mut s, "select * from shadow").0, 1146);
+}
+
+#[test]
+fn persistent_ddl_drop_index_sees_hidden_fk_children() {
+    let mut s = temporary_session();
+    s.run("create table parent(id int, unique key target(id))")
+        .unwrap();
+    s.run("create table child(id int, foreign key(id) references parent(id))")
+        .unwrap();
+    s.run("create temporary table child(a int)").unwrap();
+    assert_eq!(refusal(&mut s, "drop index target on parent").0, 1553);
+    assert!(show_create(&mut s, "parent").contains("`target`"));
+}
+
+#[test]
+fn persistent_ddl_drop_database_sees_hidden_external_children() {
+    let mut s = temporary_session();
+    s.run("create database parent_db").unwrap();
+    s.run("create table parent_db.parent(id int primary key)")
+        .unwrap();
+    s.run("create table child(id int, foreign key(id) references parent_db.parent(id))")
+        .unwrap();
+    s.run("create temporary table child(a int)").unwrap();
+    assert_eq!(refusal(&mut s, "drop database parent_db").0, 3730);
+    s.run("select * from parent_db.parent").unwrap();
+    s.run("select a from child").unwrap();
+}
+
+#[test]
+fn persistent_ddl_local_truncate_does_not_check_persistent_references() {
+    let mut s = temporary_session();
+    s.run("create table parent(id int primary key)").unwrap();
+    s.run("insert into parent values(9)").unwrap();
+    s.run("create table child(id int, foreign key(id) references parent(id))")
+        .unwrap();
+    s.run("create temporary table parent(a int)").unwrap();
+    s.run("insert into parent values(7)").unwrap();
+    s.run("truncate table parent").unwrap();
+    assert!(row_text(s.run("select a from parent")).is_empty());
+    s.run("drop temporary table parent").unwrap();
+    assert_eq!(row_text(s.run("select id from parent")), vec![vec!["9"]]);
+}

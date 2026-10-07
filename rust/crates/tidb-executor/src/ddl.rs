@@ -336,17 +336,17 @@ pub mod table_partition_list;
 pub mod table_partition_range;
 
 pub use alter_table::{
-    PreparedColumnDefault, SettledColumnDefault, check_column_default_value,
-    check_multi_schema_names, normalize_column_default, prepare_column_default, run_alter_table_in,
-    settle_column_default, validate_column_default,
+    check_column_default_value, check_multi_schema_names, normalize_column_default,
+    prepare_column_default, run_alter_table_in, settle_column_default, validate_column_default,
+    PreparedColumnDefault, SettledColumnDefault,
 };
 pub use placement_policy::{
     run_alter_placement_policy, run_create_placement_policy, run_drop_placement_policy,
 };
 pub use table_partition::{
-    StoredPartitionDefinition, StoredPartitionMetadata, append_partition_defs,
-    build_partition_metadata, escape_partition_name, linear_partitioning_warning,
-    partition_placement_text, partition_spec_from_metadata,
+    append_partition_defs, build_partition_metadata, escape_partition_name,
+    linear_partitioning_warning, partition_placement_text, partition_spec_from_metadata,
+    StoredPartitionDefinition, StoredPartitionMetadata,
 };
 
 use column_types::{database_charset_of, field_type_of, table_charset_of, NOT_NULL_FLAG};
@@ -1982,33 +1982,36 @@ pub fn run_create_table_in(
     // The child is already published in this catalog image, while this parent
     // is still in-flight, so validate against `table` before registration and
     // leave the catalog untouched on failure.
-    for (child_database, child_name) in catalog.table_paths() {
-        let Some(crate::TableEntry::Kv(child)) = catalog.get_in(&child_database, &child_name)
-        else {
-            continue;
-        };
-        if child.foreign_keys().is_empty() {
-            continue;
-        }
-        let child_columns: Vec<table_constraints::FkColumn> = child
-            .columns
-            .iter()
-            .map(|column| table_constraints::FkColumn {
-                name: column.name.clone(),
-                generated_stored: column.generated.as_ref().map(|generated| generated.stored),
-                field_type: column.field_type.clone(),
-            })
-            .collect();
-        for foreign_key in child.foreign_keys() {
-            if foreign_key.ref_schema.eq_ignore_ascii_case(&database)
-                && foreign_key.ref_table.eq_ignore_ascii_case(name)
-            {
-                table_constraints::validate_foreign_key_parent(
-                    foreign_key,
-                    &child_columns,
-                    child.partition().is_some(),
-                    &table,
-                )?;
+    // Local creation never submits a durable parent or repairs orphan FKs.
+    if temporary != tidb_model::TempTableType::LOCAL {
+        for (child_database, child_name) in catalog.table_paths() {
+            let Some(crate::TableEntry::Kv(child)) = catalog.get_in(&child_database, &child_name)
+            else {
+                continue;
+            };
+            if child.foreign_keys().is_empty() {
+                continue;
+            }
+            let child_columns: Vec<table_constraints::FkColumn> = child
+                .columns
+                .iter()
+                .map(|column| table_constraints::FkColumn {
+                    name: column.name.clone(),
+                    generated_stored: column.generated.as_ref().map(|generated| generated.stored),
+                    field_type: column.field_type.clone(),
+                })
+                .collect();
+            for foreign_key in child.foreign_keys() {
+                if foreign_key.ref_schema.eq_ignore_ascii_case(&database)
+                    && foreign_key.ref_table.eq_ignore_ascii_case(name)
+                {
+                    table_constraints::validate_foreign_key_parent(
+                        foreign_key,
+                        &child_columns,
+                        child.partition().is_some(),
+                        &table,
+                    )?;
+                }
             }
         }
     }

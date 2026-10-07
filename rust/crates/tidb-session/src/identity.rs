@@ -333,7 +333,7 @@ impl Session {
         &self,
         stmt: &tidb_ast::Stmt,
     ) -> Result<(), DriverError> {
-        self.validate_temporary_ddl_preprocess(stmt)?;
+        self.validate_ddl_preprocess(stmt)?;
         if self.privilege_context().is_none() && self.statement_observation.is_none() {
             return Ok(());
         }
@@ -346,7 +346,7 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         preparing: bool,
     ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
-        self.validate_temporary_ddl_preprocess(stmt)?;
+        self.validate_ddl_preprocess(stmt)?;
         crate::table_privilege::required_table_privileges(stmt, &self.current_db, |dml| {
             let mut ctx = self.statement_context_for_stmt(stmt, false);
             if preparing {
@@ -383,10 +383,7 @@ impl Session {
     }
 
     /// Preprocessor errors precede both grant checking and implicit commits.
-    pub fn validate_temporary_ddl_preprocess(
-        &self,
-        stmt: &tidb_ast::Stmt,
-    ) -> Result<(), DriverError> {
+    pub fn validate_ddl_preprocess(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
         // Go checkCreateTableGrammar resolves LIKE through the session
         // infoschema and rejects temporary sources before privilege checking.
         // A cluster lowerer must never clone the permanent table hidden by a
@@ -399,6 +396,17 @@ impl Session {
                     .is_some_and(|name| self.is_local_temporary_table_path(name))
                 {
                     return Err(DriverError::OptOnTemporaryTable("create table like"));
+                }
+            }
+        }
+        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+            // Go checkAlterTableGrammar rejects these options before grants
+            // and the DDL implicit commit, using the CREATE option owner.
+            if let tidb_ast::DdlStmt::AlterTable(alter) = ddl.as_ref() {
+                for action in &alter.actions {
+                    if let tidb_ast::AlterTableAction::SetTableOptions { options } = action {
+                        tidb_executor::ddl::validate_table_options(options)?;
+                    }
                 }
             }
         }

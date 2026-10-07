@@ -4,7 +4,7 @@ Latest cleanup: [opt-in cluster diagnostic](smoke-target-cleanup-validation.json
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [DROP completion](drop-completion-batch-validation.json). D01/E02/I04/O18 share ordered target completion, persistent FK preflight, object admission, per-target schema publication and view replacement identities. Sixteen of 28 baseline live checks failed; 182 selected Rust cases and 39 real MySQL checks pass after repair, including the retained 60-vector Go view-parser test. Counts remain 86 tracked / 30 repaired / 56 unresolved (27 open, 29 partial). These are existing-owner repairs; complete durable DDL and package obligations remain open. Other 52 unresolved roots retain carried evidence.
+Latest connected repair: [persistent DDL catalog selection](persistent-ddl-batch-validation.json). D01/E02/D11 share explicit durable-target and FK visibility while local CREATE/DROP/TRUNCATE retain session ownership. The grouped baseline reports11 failures; ten expose defects and one LIKE expectation is corrected against Go preprocessing. 202 Rust tests and51 live MySQL checks pass, with all-target checks, lint and locked build; the receipt retains exact limits. Counts remain86 tracked/30 repaired/56 unresolved.
 
 ## Work from these owners
 

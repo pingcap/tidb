@@ -388,9 +388,9 @@ impl Session {
         stmt: &Stmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
         self.validate_snapshot_statement(stmt)?;
-        self.validate_temporary_ddl_preprocess(stmt)?;
+        self.validate_ddl_preprocess(stmt)?;
         if matches!(stmt, Stmt::Ddl(_)) && !self.ddl_preserves_transaction(stmt) {
-// Go commits the open transaction before ordinary DDL
+            // Go commits the open transaction before ordinary DDL
             // (`session.ExecuteStmt`, which calls `sessiontxn`'s
             // `OnStmtStart` -> `checkBeforeNewTxn` for a DDL node). LOCAL
             // CREATE and local-only DROP are exceptions: `DDLExec.Next`
@@ -474,7 +474,7 @@ impl Session {
                     }
                     let foreign_key_checks = self.foreign_key_checks();
                     if foreign_key_checks {
-                        if let Some(error) = self.with_catalog_mut(|catalog| {
+                        if let Some(error) = self.with_persistent_catalog_mut(|catalog| {
                             Ok(tidb_executor::find_database_referred(catalog, name))
                         })? {
                             return Err(error);
@@ -2826,15 +2826,16 @@ impl Session {
             Stmt::Ddl(ddl) => match &**ddl {
                 DdlStmt::RenameTable(_) => {
                     let current_db = self.current_db.clone();
-                    self.with_catalog_mut(|catalog| {
+                    self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_rename_table_in(sql, catalog, &current_db, sql_mode)?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
-                DdlStmt::TruncateTable(_) => {
+                DdlStmt::TruncateTable(name) => {
+                    let local = self.is_local_temporary_table_path(name);
                     let current_db = self.current_db.clone();
-                    let foreign_key_checks = self.foreign_key_checks();
-                    self.with_catalog_mut(|catalog| {
+                    let foreign_key_checks = !local && self.foreign_key_checks();
+                    self.with_catalog_scope(local, |catalog| {
                         tidb_executor::run_truncate_table_in_with_foreign_key_checks(
                             sql,
                             catalog,
@@ -2855,7 +2856,7 @@ impl Session {
                     // under `sql_mode = ''`, exactly as the INSERT of such a
                     // row does.
                     let ctx = self.statement_context(true);
-                    let result = self.with_catalog_mut(|catalog| {
+                    let result = self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_create_index_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
                     });
@@ -2892,7 +2893,7 @@ impl Session {
                     // it needs the session's `@@time_zone` for the same reason
                     // writing the entry did.
                     let ctx = self.statement_context(true);
-                    let result = self.with_catalog_mut(|catalog| {
+                    let result = self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_drop_index_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
                     });
@@ -2914,7 +2915,7 @@ impl Session {
                     let current_db = self.current_db.clone();
                     // `ADD INDEX` backfills, so the same write level applies.
                     let ctx = self.statement_context(true).with_ddl_query(sql);
-                    let result = self.with_catalog_mut(|catalog| {
+                    let result = self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_alter_table_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
                     });
@@ -2941,14 +2942,25 @@ impl Session {
                 DdlStmt::DropTable(drop) => {
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = self.foreign_key_checks();
-                    let missing = self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_table_stmt_in(
-                            drop,
-                            catalog,
-                            &current_db,
-                            foreign_key_checks,
-                        )
-                    })?;
+                    let missing = if drop.temporary == tidb_ast::DropTemporary::Local {
+                        self.with_catalog_mut(|catalog| {
+                            tidb_executor::run_drop_table_stmt_in(drop, catalog, &current_db, false)
+                        })?
+                    } else {
+                        let (persistent, local) = self.split_local_temporary_drop(drop);
+                        let missing = self.with_persistent_catalog_mut(|catalog| {
+                            tidb_executor::run_drop_table_stmt_in(
+                                &persistent,
+                                catalog,
+                                &current_db,
+                                foreign_key_checks,
+                            )
+                        })?;
+                        // Go completes the local leg only after every durable
+                        // target succeeds, including missing-name aggregation.
+                        self.drop_local_temporary_targets(local)?;
+                        missing
+                    };
                     // `IF EXISTS` does not silence the missing names, it
                     // demotes them: Go files one `Note 1051` per name it could
                     // not drop. Captured from `gorun`,
@@ -2984,7 +2996,8 @@ impl Session {
                     } else {
                         tidb_executor::check_constraint_count(create)
                     };
-                    let done = self.with_catalog_mut(|catalog| {
+                    let local = create.temporary == tidb_ast::CreateTableTemporary::Local;
+                    let done = self.with_catalog_scope(local, |catalog| {
                         Ok(StmtOutput::Done(tidb_executor::run_create_table_in(
                             sql,
                             catalog,
@@ -3047,7 +3060,7 @@ impl Session {
                 DdlStmt::CreateSequence(create) => {
                     let current_db = self.current_db.clone();
                     let create = create.clone();
-                    self.with_catalog_mut(|catalog| {
+                    self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_create_sequence_in(&create, catalog, &current_db)?;
                         Ok(StmtOutput::Affected(0))
                     })
@@ -3055,7 +3068,7 @@ impl Session {
                 DdlStmt::AlterSequence(alter) => {
                     let current_db = self.current_db.clone();
                     let alter = alter.clone();
-                    self.with_catalog_mut(|catalog| {
+                    self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_alter_sequence_in(&alter, catalog, &current_db)?;
                         Ok(StmtOutput::Affected(0))
                     })
@@ -3063,7 +3076,7 @@ impl Session {
                 DdlStmt::DropSequence(drop) => {
                     let current_db = self.current_db.clone();
                     let drop = drop.clone();
-                    self.with_catalog_mut(|catalog| {
+                    self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_drop_sequence_in(&drop, catalog, &current_db)?;
                         Ok(StmtOutput::Affected(0))
                     })
@@ -3102,7 +3115,7 @@ impl Session {
                 DdlStmt::DropView { if_exists, names } => {
                     let current_db = self.current_db.clone();
                     let (if_exists, names) = (*if_exists, names.clone());
-                    let missing = self.with_catalog_mut(|catalog| {
+                    let missing = self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_drop_view_in(if_exists, &names, catalog, &current_db)
                     })?;
                     // Same demotion as `DROP TABLE IF EXISTS`, same code:

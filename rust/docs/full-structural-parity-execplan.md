@@ -2701,3 +2701,9 @@ production dependency set. Validate Cargo metadata/artifact reports, argument
 errors, shell syntax, source identity, lint and mandatory hook/pre-push builds.
 The [receipt](parity/current-audit/smoke-target-cleanup-validation.json) records
 outcomes. Live TiKV/release execution and finding acceptance remain unverified.
+
+
+## Persistent DDL catalog selection (2026-10-07)
+
+
+The [living batch plan](persistent-ddl-batch-execplan.md) and [receipt](parity/current-audit/persistent-ddl-batch-validation.json) connect D01/E02/D11. The grouped baseline reports11 failures across hidden persistent targets, FK children and local-parent creation; one LIKE expectation was incorrect and is retained as a Go refusal control. Share the existing catalog/storage lifecycle with an explicit local-name scope, migrate admitted durable operations together and retain local-only behavior. Broader durable DDL, distributed FK and package obligations remain unresolved; counts remain56. Final gates are recorded in the receipt and external handoff.
