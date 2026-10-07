@@ -661,16 +661,15 @@ Risks:
   its predicate results means building the inverse problem with azimuths and a crossing test
   over it. Mitigated by the operand restriction, which keeps v1 to the closed-form half, and
   by the regression test that pins where the 4326 edge sits.
-- **Same answer on every node:** arm64 fuses multiply-adds where amd64 does not, including
-  inside Go's `math.Sin` and `math.Atan`, so the same Andoyer code gives different last bits
-  (measured over 100,000 distances). A 4326 predicate near an edge can flip on that bit, so
-  a mixed-architecture cluster could answer one query two ways. `simplefeatures` fuses too:
-  on arm64, 6% of 100,000 planar point distances differ from amd64 by one ULP. Mitigated by
-  three rules, `simplefeatures` included: only the IEEE 754 basic operations (`+ - * /` and
+- **Same answer on every node:** Go fuses multiply-adds on some CPUs and builds but not
+  others, including inside its `math.Sin` and `math.Atan`, so the same Andoyer code gives
+  different last bits (measured over 100,000 distances). A 4326 predicate near an edge can
+  flip on that bit, so two nodes could answer one query two ways. `simplefeatures` fuses
+  too, changing the last bit of 6% of 100,000 planar point distances. Mitigated by three
+  rules, `simplefeatures` included: only the IEEE 754 basic operations (`+ - * /` and
   square root), which give the same bits on every CPU, so the trigonometry is our own; no
-  fused products; and the same operations in the same order in every component. A check
-  that rejects fused instructions in an arm64 build of the geometry code enforces the
-  second.
+  fused products; and the same operations in the same order in every component. A build
+  check that rejects fused instructions in the geometry code enforces the second.
 - **MySQL spatial schemas may not migrate:** a MySQL spatial table usually has a spatial
   index, which MySQL creates even for a plain `KEY` on a geometry column, and
   `pt POINT AS (ST_SRID(Point(lng, lat), 4326)) STORED` is the usual way to index
