@@ -22,7 +22,7 @@
 //! [`prepare_drop_column`], the three column changes, including the read-time
 //! `OriginDefaultValue` fill that gives already-written rows a new column's
 //! DEFAULT without rewriting their bytes; constraint admission/application
-//! in `constraint_changes`; [`set_table_options_action`] for
+//! in `constraint_changes`; [`prepare_table_options`] for
 //! the table-level options an ALTER may set; and the two helpers
 //! [`normalize_column_default`] and [`existing_table_charset`] that the
 //! column actions share. Each doc comment records the captured TiDB error
@@ -154,10 +154,11 @@ enum PreparedAlterChange<'a> {
     Column(PreparedColumnChange),
     Constraint(PreparedConstraintChange),
     Index(PreparedIndexChange<'a>),
+    Metadata(Vec<PreparedMetadataChange>),
 }
 
 struct PreparedAlterAction<'a> {
-    change: Result<Option<PreparedAlterChange<'a>>, DriverError>,
+    change: Option<PreparedAlterChange<'a>>,
     warnings: Vec<(crate::WarnLevel, u16, String)>,
 }
 
@@ -193,11 +194,7 @@ fn reject_multi_schema_same_column_or_index(
     let mut alter_indexes = Vec::new();
 
     for (action, prepared) in actions.iter().zip(changes) {
-        match prepared
-            .change
-            .as_ref()
-            .expect("admission errors checked before conflicts")
-        {
+        match prepared.change.as_ref() {
             Some(PreparedAlterChange::Index(change)) => match change {
                 PreparedIndexChange::Add { name, definition } => {
                     add_indexes.push(name.clone());
@@ -269,7 +266,7 @@ fn reject_multi_schema_same_column_or_index(
                     }
                 }
             }
-            None => {}
+            Some(PreparedAlterChange::Metadata(_)) | None => {}
         }
         if matches!(action, tidb_ast::AlterTableAction::DropPrimaryKey(_)) {
             drop_indexes.push("PRIMARY".to_owned());
@@ -323,7 +320,7 @@ fn check_prepared_column_count(
     let mut added = 0;
     let mut dropped = 0;
     for prepared in changes {
-        match prepared.change.as_ref().expect("admission succeeded") {
+        match prepared.change.as_ref() {
             Some(PreparedAlterChange::Column(PreparedColumnChange::Add { .. })) => added += 1,
             Some(PreparedAlterChange::Column(PreparedColumnChange::Drop { .. })) => dropped += 1,
             _ => {}
@@ -481,13 +478,21 @@ fn run_alter_table_in_inner(
         }
     }
     let preparation_ctx = ctx.with_isolated_warnings();
-    let mut admission_failed = false;
-    let mut changes = Vec::with_capacity(actions.len());
+    let mut charset_handled = false;
+    let mut changes: Vec<PreparedAlterAction<'_>> = Vec::with_capacity(actions.len());
     for action in actions.iter() {
-        let change = if admission_failed {
-            // Go stops building jobs at the first admission error. The
-            // traversal below delivers that error after any earlier action.
-            Ok(None)
+        let change = if is_metadata_change(action) {
+            prepare_metadata_change(
+                action,
+                catalog,
+                &database,
+                &name,
+                current_db,
+                &preparation_ctx,
+                actions.len() > 1,
+                &mut charset_handled,
+            )
+            .map(|changes| Some(PreparedAlterChange::Metadata(changes)))
         } else if constraint_changes::is_constraint_change(action) {
             constraint_changes::prepare(
                 action,
@@ -512,95 +517,60 @@ fn run_alter_table_in_inner(
             column_changes::prepare(action, catalog, &database, &name, &preparation_ctx)
                 .map(|change| change.map(PreparedAlterChange::Column))
         };
-        admission_failed |= change.is_err();
-        changes.push(PreparedAlterAction {
-            change,
-            warnings: preparation_ctx.take_local_warnings(),
-        });
+        let warnings = preparation_ctx.take_local_warnings();
+        let change = match change {
+            Ok(change) => change,
+            Err(error) => {
+                for prepared in &mut changes {
+                    prepared.publish_warnings(ctx);
+                }
+                for (level, code, message) in warnings {
+                    ctx.append_leveled(level, code, &message);
+                }
+                return Err(error);
+            }
+        };
+        changes.push(PreparedAlterAction { change, warnings });
     }
-    if !admission_failed {
-        // Go emits admission notes before combination checks or execution.
-        for prepared in &mut changes {
-            prepared.publish_warnings(ctx);
-        }
-        if actions.len() > 1 {
-            reject_multi_schema_same_column_or_index(&actions, &changes)?;
-            check_prepared_column_count(&changes, catalog, &database, &name)?;
-        }
-        reject_drop_index_used_by_added_foreign_key(catalog, &database, &name, &actions)?;
-    }
-    for (action, mut prepared) in actions.iter().zip(changes) {
+    // Admission, including its ordered notes, completes before conflict
+    // checks and execution. No earlier job can hide a later admission error.
+    for prepared in &mut changes {
         prepared.publish_warnings(ctx);
-        if index_changes::is_index_change(action)
-            || column_changes::is_column_change(action)
-            || constraint_changes::is_constraint_change(action)
-        {
-            if let Some(change) = prepared.change? {
-                if !admission_failed {
-                    match change {
-                        PreparedAlterChange::Constraint(change) => {
-                            change.execute(catalog, &database, &name, ctx)?
-                        }
-                        PreparedAlterChange::Index(change) => {
-                            change.execute(catalog, &database, &name, ctx)?
-                        }
-                        PreparedAlterChange::Column(change) => {
-                            change.execute(catalog, &database, &name, ctx, allocators)?
-                        }
+    }
+    if actions.len() > 1 {
+        reject_multi_schema_same_column_or_index(&actions, &changes)?;
+        check_prepared_column_count(&changes, catalog, &database, &name)?;
+    }
+    reject_drop_index_used_by_added_foreign_key(catalog, &database, &name, &actions)?;
+    for (action, prepared) in actions.iter().zip(changes) {
+        if let Some(change) = prepared.change {
+            match change {
+                PreparedAlterChange::Constraint(change) => {
+                    change.execute(catalog, &database, &name, ctx)?
+                }
+                PreparedAlterChange::Index(change) => {
+                    change.execute(catalog, &database, &name, ctx)?
+                }
+                PreparedAlterChange::Column(change) => {
+                    change.execute(catalog, &database, &name, ctx, allocators)?
+                }
+                PreparedAlterChange::Metadata(changes) => {
+                    for change in changes {
+                        change.execute(catalog, &database, &name, allocators)?;
                     }
                 }
             }
             continue;
         }
+        if index_changes::is_index_change(action)
+            || column_changes::is_column_change(action)
+            || constraint_changes::is_constraint_change(action)
+        {
+            continue;
+        }
         match action {
             tidb_ast::AlterTableAction::Cache(mode) => {
                 super::table_cache::alter_cache_action(catalog, &database, &name, *mode)?
-            }
-            // Go `AlterTableRemoveTTL` (`pkg/ddl/executor.go:3905`): clears the
-            // table's TTL config; a table without one is a no-op.
-            tidb_ast::AlterTableAction::RemoveTtl(_) => {
-                if let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(&database, &name) {
-                    std::sync::Arc::make_mut(table).set_ttl_info(None);
-                }
-            }
-            // `ALTER TABLE x RENAME TO y` is the same operation as
-            // `RENAME TABLE x TO y`.
-            tidb_ast::AlterTableAction::RenameTable { new_name } => {
-                let (to_db, to_name) = crate::driver::split_table_path_pub(new_name, current_db)?;
-                let (to_db, to_name) = (to_db.to_owned(), to_name.to_owned());
-                // Go checks the destination SCHEMA before the destination
-                // table, and reports a missing one as 1025 with the source
-                // left in place.
-                if !catalog.has_database(&to_db) {
-                    return Err(DriverError::Schema(
-                        crate::SchemaErrorKind::RenameTargetDatabaseMissing {
-                            from: format!("{database}.{name}"),
-                            to: format!("{to_db}.{to_name}"),
-                            database: to_db,
-                        },
-                    ));
-                }
-                if catalog.table_in(&to_db, &to_name).is_some() {
-                    return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
-                        format!("{to_db}.{to_name}"),
-                    )));
-                }
-                crate::foreign_key::rewrite_table_references(
-                    catalog, &database, &name, &to_db, &to_name,
-                );
-                catalog.rename_table(&database, &name, &to_db, &to_name);
-            }
-            tidb_ast::AlterTableAction::SetTableOptions { options } => {
-                set_table_options_action(catalog, &database, &name, options, ctx, allocators)?;
-            }
-            tidb_ast::AlterTableAction::ConvertCharacterSet { charset, collation } => {
-                convert_table_charset_action(
-                    catalog,
-                    &database,
-                    &name,
-                    charset.as_deref(),
-                    collation.as_deref(),
-                )?
             }
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Truncate {
                 all,
@@ -624,34 +594,6 @@ fn run_alter_table_in_inner(
                 definitions,
                 ..
             }) => reorganize_partition_action(catalog, &database, &name, names, definitions, ctx)?,
-            // Go removes LOCK specs before dispatch and treats ENABLE/DISABLE
-            // KEYS as MyISAM-only compatibility syntax with no TiDB action.
-            tidb_ast::AlterTableAction::Lock(_) | tidb_ast::AlterTableAction::SetKeysEnabled(_) => {
-            }
-            tidb_ast::AlterTableAction::WithValidation => ctx
-                .append_warning_parts(8200, "ALTER TABLE WITH VALIDATION is currently unsupported"),
-            tidb_ast::AlterTableAction::WithoutValidation => ctx.append_warning_parts(
-                8200,
-                "ALTER TABLE WITHOUT VALIDATION is currently unsupported",
-            ),
-            tidb_ast::AlterTableAction::OrderByColumns { .. } => {
-                // Go's OrderByColumns does not inspect the requested order.
-                // Its warning condition is exactly GetPkColInfo() != nil,
-                // which means any column carrying the primary-key flag.
-                let has_primary_key = matches!(
-                    catalog.table_in(&database, &name),
-                    Some(crate::TableEntry::Kv(table))
-                        if table.columns.iter().any(|column| column.field_type.has_flag(PRI_KEY_FLAG))
-                );
-                if has_primary_key {
-                    ctx.append_warning_parts(
-                        1105,
-                        &format!(
-                            "ORDER BY ignored as there is a user-defined clustered index in the table '{name}'"
-                        ),
-                    );
-                }
-            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE action is not supported yet",
@@ -1401,105 +1343,240 @@ fn reject_drop_index_used_by_added_foreign_key(
     Ok(())
 }
 
-/// One `ALTER TABLE ... <table options>`.
-///
-/// `AUTO_INCREMENT=` raises the allocator's next value, while TiDB's
-/// `FORCE AUTO_INCREMENT=` replaces it even when that moves it down. Any
-/// other option is refused rather than silently accepted.
-fn set_table_options_action(
-    catalog: &mut Catalog,
+/// Values owned by the admitted metadata job, never a whole table snapshot:
+/// applying one job must retain sibling column/index changes.
+enum PreparedMetadataChange {
+    Comment(String),
+    Charset {
+        target: TableCharset,
+        overwrite_columns: bool,
+    },
+    Rebase(PreparedAllocatorRebase),
+    AutoIdCache(u64),
+    Ttl(Option<tidb_model::TTLInfo>),
+    Placement(Option<tidb_model::PolicyRefInfo>),
+    Rename {
+        database: String,
+        name: String,
+    },
+}
+
+impl PreparedMetadataChange {
+    fn execute(
+        self,
+        catalog: &mut Catalog,
+        database: &str,
+        name: &str,
+        allocators: &mut PreparedAllocatorChanges,
+    ) -> Result<(), DriverError> {
+        match self {
+            Self::Rebase(rebase) => allocators.rebases.push(rebase),
+            Self::Rename {
+                database: to_db,
+                name: to_name,
+            } => {
+                crate::foreign_key::rewrite_table_references(
+                    catalog, database, name, &to_db, &to_name,
+                );
+                catalog.rename_table(database, name, &to_db, &to_name);
+            }
+            change => {
+                let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name)
+                else {
+                    return Err(DriverError::unsupported(
+                        "ALTER TABLE needs a storage-backed table",
+                    ));
+                };
+                let table = std::sync::Arc::make_mut(table);
+                match change {
+                    Self::Comment(comment) => table.set_comment(comment),
+                    Self::Charset {
+                        target,
+                        overwrite_columns,
+                    } => {
+                        table.set_charset(target);
+                        if overwrite_columns {
+                            for column in table.columns_mut() {
+                                if column.field_type.is_character_string() {
+                                    column.field_type.set_charset_name(target.charset.name());
+                                    column.field_type.set_collation(target.collation);
+                                }
+                            }
+                        }
+                    }
+                    Self::AutoIdCache(cache) => table
+                        .set_auto_id_cache(cache)
+                        .map_err(DriverError::unsupported)?,
+                    Self::Ttl(info) => table.set_ttl_info(info),
+                    Self::Placement(policy) => table.set_placement_policy(policy),
+                    Self::Rebase(_) | Self::Rename { .. } => unreachable!("handled above"),
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_metadata_change(action: &tidb_ast::AlterTableAction) -> bool {
+    matches!(
+        action,
+        tidb_ast::AlterTableAction::SetTableOptions { .. }
+            | tidb_ast::AlterTableAction::ConvertCharacterSet { .. }
+            | tidb_ast::AlterTableAction::RenameTable { .. }
+            | tidb_ast::AlterTableAction::RemoveTtl(_)
+            | tidb_ast::AlterTableAction::SetKeysEnabled(_)
+            | tidb_ast::AlterTableAction::WithValidation
+            | tidb_ast::AlterTableAction::WithoutValidation
+            | tidb_ast::AlterTableAction::OrderByColumns { .. }
+    )
+}
+
+fn reject_metadata_multi_job(multi_schema: bool, job: &str) -> Result<(), DriverError> {
+    if multi_schema {
+        return Err(DriverError::DdlCoded {
+            errno: 8200,
+            message: format!("Unsupported multi schema change for {job}"),
+        });
+    }
+    Ok(())
+}
+
+fn prepare_metadata_change(
+    action: &tidb_ast::AlterTableAction,
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    multi_schema: bool,
+    charset_handled: &mut bool,
+) -> Result<Vec<PreparedMetadataChange>, DriverError> {
+    let table = column_changes::table_of(catalog, database, name)?;
+    match action {
+        tidb_ast::AlterTableAction::SetTableOptions { options } => prepare_table_options(
+            catalog,
+            database,
+            name,
+            options,
+            ctx,
+            multi_schema,
+            charset_handled,
+        ),
+        tidb_ast::AlterTableAction::ConvertCharacterSet { charset, collation } => {
+            if *charset_handled {
+                return Ok(Vec::new());
+            }
+            let target =
+                prepare_convert_table_charset(table, charset.as_deref(), collation.as_deref())?;
+            *charset_handled = true;
+            Ok(vec![PreparedMetadataChange::Charset {
+                target,
+                overwrite_columns: true,
+            }])
+        }
+        tidb_ast::AlterTableAction::RemoveTtl(_) => {
+            if table.ttl_info().is_none() {
+                return Ok(Vec::new());
+            }
+            reject_metadata_multi_job(multi_schema, "alter table no_ttl")?;
+            Ok(vec![PreparedMetadataChange::Ttl(None)])
+        }
+        tidb_ast::AlterTableAction::RenameTable { new_name } => {
+            let (to_db, to_name) = crate::driver::split_table_path_pub(new_name, current_db)?;
+            // ExtractTblInfos returns without submitting a job for this case.
+            if database.go_to_lower() == to_db.go_to_lower()
+                && name.go_to_lower() == to_name.go_to_lower()
+            {
+                return Ok(Vec::new());
+            }
+            if !catalog.has_database(to_db) {
+                return Err(DriverError::Schema(
+                    crate::SchemaErrorKind::RenameTargetDatabaseMissing {
+                        from: format!("{database}.{name}"),
+                        to: format!("{to_db}.{to_name}"),
+                        database: to_db.to_owned(),
+                    },
+                ));
+            }
+            if catalog.table_in(to_db, to_name).is_some() {
+                return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
+                    format!("{to_db}.{to_name}"),
+                )));
+            }
+            reject_metadata_multi_job(multi_schema, "rename table")?;
+            Ok(vec![PreparedMetadataChange::Rename {
+                database: to_db.to_owned(),
+                name: to_name.to_owned(),
+            }])
+        }
+        tidb_ast::AlterTableAction::SetKeysEnabled(_) => Ok(Vec::new()),
+        tidb_ast::AlterTableAction::WithValidation
+        | tidb_ast::AlterTableAction::WithoutValidation => {
+            let validation = if matches!(action, tidb_ast::AlterTableAction::WithValidation) {
+                "WITH"
+            } else {
+                "WITHOUT"
+            };
+            ctx.append_warning_parts(
+                8200,
+                &format!("ALTER TABLE {validation} VALIDATION is currently unsupported"),
+            );
+            Ok(Vec::new())
+        }
+        tidb_ast::AlterTableAction::OrderByColumns { .. } => {
+            if table
+                .columns
+                .iter()
+                .any(|column| column.field_type.has_flag(PRI_KEY_FLAG))
+            {
+                ctx.append_warning_parts(1105, &format!("ORDER BY ignored as there is a user-defined clustered index in the table '{name}'"));
+            }
+            Ok(Vec::new())
+        }
+        _ => unreachable!("metadata action selected"),
+    }
+}
+
+/// Go AlterTable builds each option's job against the original table. The
+/// compression precheck precedes every option; charset and TTL are grouped
+/// when their first option is visited, while placement follows the loop.
+fn prepare_table_options(
+    catalog: &Catalog,
     database: &str,
     name: &str,
     options: &[tidb_ast::TableOption],
     ctx: &crate::StmtContext,
-    allocators: &mut PreparedAllocatorChanges,
-) -> Result<(), DriverError> {
-    super::validate_table_options(options)?;
-    let current_charset = match catalog.table_in(database, name) {
-        Some(crate::TableEntry::Kv(table)) => table.charset(),
-        _ => {
-            return Err(DriverError::unsupported(
-                "ALTER TABLE needs a storage-backed table",
-            ))
-        }
+    multi_schema: bool,
+    charset_handled: &mut bool,
+) -> Result<Vec<PreparedMetadataChange>, DriverError> {
+    let unsupported = || DriverError::DdlCoded {
+        errno: 8200,
+        message: "This type of ALTER TABLE is currently unsupported".to_owned(),
     };
-    let mut pending_charset = None;
-    if options.iter().any(|option| {
-        matches!(
-            option,
-            tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_)
-        )
-    }) {
-        let target = alter_table_charset_pair(options, current_charset)?;
-        // Go's ordinary ALTER TABLE CHARSET path only supports the utf8mb4
-        // table default in this executor tier. `utf8` and `gbk` are parsed,
-        // then refused with ErrUnsupportedDDLOperation (8200).
-        if matches!(target.charset, Charset::Utf8 | Charset::Gbk) {
-            return Err(DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
-                message: "unsupported alter table charset operation".to_owned(),
-            });
-        }
-        pending_charset = Some(target);
+    if options.iter().any(|option| matches!(option, tidb_ast::TableOption::Compression(value) if !value.eq_ignore_ascii_case("none"))) {
+        return Err(unsupported());
     }
-    // `Some(None)` records Go's `PLACEMENT POLICY=default` reset, while
-    // `Some(Some(name))` records a policy to resolve after the mutable table
-    // borrow is released. `None` means this ALTER has no placement option.
-    let mut pending_placement: Option<Option<String>> = None;
-    // Go `executor.go:1934-1952`: TTL options in an ALTER reach
-    // `AlterTableTTLInfoOrEnable` as ONE group, so they are pre-scanned here
-    // and applied after the per-option loop.
-    let pending_ttl = options.iter().any(|option| {
-        matches!(
-            option,
-            tidb_ast::TableOption::Ttl { .. }
-                | tidb_ast::TableOption::TtlEnable(_)
-                | tidb_ast::TableOption::TtlJobInterval(_)
-        )
-    });
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE needs a storage-backed table",
-        ));
-    };
-    let table = std::sync::Arc::make_mut(table);
+    let table = column_changes::table_of(catalog, database, name)?;
+    let mut changes = Vec::new();
+    let mut ttl_handled = false;
+    let mut placement = None;
     for option in options {
         match option {
-            tidb_ast::TableOption::AutoIncrement(value) => {
-                let seed = value.parse::<u64>().map_err(|_| {
+            tidb_ast::TableOption::AutoIncrement(value)
+            | tidb_ast::TableOption::ForceAutoIncrement(value) => {
+                let next = value.parse::<u64>().map_err(|_| {
                     DriverError::unsupported("AUTO_INCREMENT= needs an integer value")
                 })? as i64;
-                if table.auto_increment_offset().is_none() {
-                    return Err(DriverError::unsupported(
-                        "ALTER TABLE ... AUTO_INCREMENT needs an AUTO_INCREMENT column",
-                    ));
-                }
+                // Go RebaseAutoID also admits tables without an explicit
+                // AUTO_INCREMENT column; the shared row-ID allocator owns
+                // the heap handle when SepAutoInc is false.
+                let force = matches!(option, tidb_ast::TableOption::ForceAutoIncrement(_));
                 let rebase = table
-                    .prepare_rebase_auto_increment(seed, false)
+                    .prepare_rebase_auto_increment(next, force)
                     .map_err(auto_increment_rebase_error)?;
-                allocators
-                    .rebases
-                    .push(PreparedAllocatorRebase::Increment(rebase));
-            }
-            tidb_ast::TableOption::Comment(comment) => {
-                table.set_comment(super::normalize_table_comment(comment, name, ctx)?);
-            }
-            tidb_ast::TableOption::Compression(value) => {
-                // Go `handleTableOptions` stores the string verbatim; ALTER
-                // reaches the same loop (`create_table.go:964-965`).
-                table.set_compression(value.clone());
-            }
-            tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_) => {}
-            tidb_ast::TableOption::ForceAutoIncrement(value) => {
-                let next = value.parse::<u64>().map_err(|_| {
-                    DriverError::unsupported("FORCE AUTO_INCREMENT needs an integer value")
-                })? as i64;
-                let rebase = table
-                    .prepare_rebase_auto_increment(next, true)
-                    .map_err(auto_increment_rebase_error)?;
-                allocators
-                    .rebases
-                    .push(PreparedAllocatorRebase::Increment(rebase));
+                changes.push(PreparedMetadataChange::Rebase(
+                    PreparedAllocatorRebase::Increment(rebase),
+                ));
             }
             tidb_ast::TableOption::AutoRandomBase(value)
             | tidb_ast::TableOption::ForceAutoRandomBase(value) => {
@@ -1507,22 +1584,20 @@ fn set_table_options_action(
                     DriverError::unsupported("AUTO_RANDOM_BASE needs an integer value")
                 })? as i64;
                 let force = matches!(option, tidb_ast::TableOption::ForceAutoRandomBase(_));
-                let previous = table.next_auto_random();
                 let rebase = table
                     .prepare_rebase_auto_random(next, force)
                     .map_err(super::auto_random::rebase_error)?;
-                allocators
-                    .rebases
-                    .push(PreparedAllocatorRebase::Random(rebase));
-                if !force && previous.is_some_and(|current| (next as u64) < current) {
-                    ctx.append_warning_parts(
-                        1105,
-                        &format!(
-                            "Can't reset AUTO_INCREMENT to {next} without FORCE option, using {} instead",
-                            previous.expect("checked above")
-                        ),
-                    );
+                if !force
+                    && table
+                        .next_auto_random()
+                        .is_some_and(|current| (next as u64) < current)
+                {
+                    ctx.append_warning_parts(1105, &format!("Can't reset AUTO_INCREMENT to {next} without FORCE option, using {} instead", table.next_auto_random().expect("checked above")));
                 }
+                reject_metadata_multi_job(multi_schema, "rebase auto_random ID")?;
+                changes.push(PreparedMetadataChange::Rebase(
+                    PreparedAllocatorRebase::Random(rebase),
+                ));
             }
             tidb_ast::TableOption::AutoIdCache(value) => {
                 let cache = value.parse::<u64>().map_err(|_| {
@@ -1534,86 +1609,97 @@ fn set_table_options_action(
                     ));
                 }
                 table
-                    .set_auto_id_cache(cache)
+                    .validate_auto_id_cache(cache)
                     .map_err(DriverError::unsupported)?;
+                reject_metadata_multi_job(multi_schema, "modify auto id cache")?;
+                changes.push(PreparedMetadataChange::AutoIdCache(cache));
             }
-            // Go `AlterTable`'s `ast.TableOptionPlacementPolicy` arm
-            // (`ddl/executor.go:1927`) builds a `PolicyRefInfo` from the
-            // written name; the policy must exist, or the statement is
-            // `ErrPlacementPolicyNotExists` (8239).
-            //
-            // The reference is stamped with the policy's ID as well as its
-            // name, for the same reason CREATE stamps it: placement bundles
-            // resolve a reference by id, so a name-only one would record a
-            // policy that never reaches the scheduler.
-            tidb_ast::TableOption::PlacementPolicy(policy_name) => {
-                // The catalog is borrowed mutably through `table`, so the
-                // lookup is deferred to after this loop rather than fought
-                // with here.
-                pending_placement = Some(if policy_name.eq_ignore_ascii_case("default") {
-                    None
-                } else {
-                    Some(policy_name.clone())
-                });
+            tidb_ast::TableOption::Comment(comment) => {
+                changes.push(PreparedMetadataChange::Comment(
+                    super::normalize_table_comment(comment, name, ctx)?,
+                ))
+            }
+            tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_) => {
+                if !*charset_handled {
+                    let target = alter_table_charset_pair(options, table.charset())?;
+                    // Preserve the existing supported conversion boundary.
+                    if matches!(target.charset, Charset::Utf8 | Charset::Gbk)
+                        && target.charset != table.charset().charset
+                    {
+                        return Err(DriverError::DdlCoded {
+                            errno: 8200,
+                            message: "unsupported alter table charset operation".to_owned(),
+                        });
+                    }
+                    changes.push(PreparedMetadataChange::Charset {
+                        target,
+                        overwrite_columns: false,
+                    });
+                    *charset_handled = true;
+                }
             }
             tidb_ast::TableOption::Ttl { .. }
             | tidb_ast::TableOption::TtlEnable(_)
             | tidb_ast::TableOption::TtlJobInterval(_) => {
-                // Consumed by the group apply after this loop.
+                if !ttl_handled {
+                    let info = prepare_ttl_info_or_enable(catalog, database, name, options)?;
+                    reject_metadata_multi_job(multi_schema, "alter table ttl")?;
+                    changes.push(PreparedMetadataChange::Ttl(info));
+                    ttl_handled = true;
+                }
             }
-            _ => {
-                return Err(DriverError::unsupported(
-                    "this ALTER TABLE table option is not supported yet",
-                ));
-            }
+            tidb_ast::TableOption::PlacementPolicy(policy) => placement = Some(policy),
+            tidb_ast::TableOption::Engine(_)
+            | tidb_ast::TableOption::RowFormat(_)
+            | tidb_ast::TableOption::Compression(_) => {}
+            _ => return Err(unsupported()),
         }
     }
-    if let Some(charset) = pending_charset {
-        table.set_charset(charset);
-    }
-    if pending_ttl {
-        alter_ttl_info_or_enable(catalog, database, name, options)?;
-    }
-    if let Some(policy_name) = pending_placement {
-        let reference = match policy_name {
-            None => None,
-            Some(policy_name) => {
-                let Some(policy) = catalog.policy(&policy_name) else {
-                    return Err(DriverError::PlacementPolicyNotExists(policy_name));
-                };
-                Some(tidb_model::PolicyRefInfo {
-                    id: policy.id,
-                    name: tidb_ast::CiString::new(policy_name),
-                })
-            }
+    if let Some(policy) = placement {
+        let reference = if policy.eq_ignore_ascii_case("default") {
+            None
+        } else {
+            let found = catalog
+                .policy(policy)
+                .ok_or_else(|| DriverError::PlacementPolicyNotExists(policy.clone()))?;
+            Some(tidb_model::PolicyRefInfo {
+                id: found.id,
+                name: tidb_ast::CiString::new(policy.clone()),
+            })
         };
-        let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
-            unreachable!("the table was resolved above")
-        };
-        std::sync::Arc::make_mut(table).set_placement_policy(reference);
+        reject_metadata_multi_job(multi_schema, "alter table placement")?;
+        changes.push(PreparedMetadataChange::Placement(reference));
     }
-    Ok(())
+    Ok(changes)
 }
 
 fn alter_table_charset_pair(
     options: &[tidb_ast::TableOption],
     fallback: TableCharset,
 ) -> Result<TableCharset, DriverError> {
-    let mut charset = None;
+    let mut charset: Option<Charset> = None;
     let mut collation = None;
     for option in options {
         match option {
             tidb_ast::TableOption::CharacterSet(name) => {
-                if charset.is_some() {
-                    return Err(DriverError::DdlCoded {
-                        errno: tidb_error::tidb::errcode::ErrConflictingDeclarations,
-                        message: "Conflicting declarations for CHARACTER SET".to_owned(),
-                    });
-                }
-                charset = Some(Charset::from_name(name).ok_or(DriverError::DdlCoded {
+                let value = Charset::from_name(name).ok_or(DriverError::DdlCoded {
                     errno: tidb_error::tidb::errcode::ErrUnknownCharacterSet,
                     message: format!("Unknown character set: '{name}'"),
-                })?);
+                })?;
+                if let Some(previous) = charset {
+                    if previous != value {
+                        return Err(DriverError::DdlCoded {
+                            errno: tidb_error::tidb::errcode::ErrConflictingDeclarations,
+                            message: format!(
+                                "Conflicting declarations: 'CHARACTER SET {}' and 'CHARACTER SET {}'",
+                                previous.name(),
+                                value.name()
+                            ),
+                        });
+                    }
+                }
+                charset = Some(value);
+                collation.get_or_insert(value.default_collation());
             }
             tidb_ast::TableOption::Collate(name) => {
                 let value = Collation::from_name(name).ok_or(DriverError::DdlCoded {
@@ -1632,21 +1718,10 @@ fn alter_table_charset_pair(
                         });
                     }
                 }
+                charset.get_or_insert(value.charset());
                 collation = Some(value);
             }
             _ => {}
-        }
-    }
-    if let (Some(charset), Some(collation)) = (charset, collation) {
-        if collation.charset() != charset {
-            return Err(DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrCollationCharsetMismatch,
-                message: format!(
-                    "Collation '{}' is not valid for CHARACTER SET '{}'",
-                    collation.name(),
-                    charset.name()
-                ),
-            });
         }
     }
     Ok(TableCharset {
@@ -1656,21 +1731,12 @@ fn alter_table_charset_pair(
     })
 }
 
-fn convert_table_charset_action(
-    catalog: &mut Catalog,
-    database: &str,
-    name: &str,
+fn prepare_convert_table_charset(
+    table: &crate::KvTable,
     charset: Option<&str>,
     collation: Option<&str>,
-) -> Result<(), DriverError> {
-    let current = match catalog.table_in(database, name) {
-        Some(crate::TableEntry::Kv(table)) => table.charset(),
-        _ => {
-            return Err(DriverError::unsupported(
-                "ALTER TABLE needs a storage-backed table",
-            ))
-        }
-    };
+) -> Result<TableCharset, DriverError> {
+    let current = table.charset();
     let options = [
         charset.map(|name| tidb_ast::TableOption::CharacterSet(name.to_owned())),
         collation.map(|name| tidb_ast::TableOption::Collate(name.to_owned())),
@@ -1683,12 +1749,6 @@ fn convert_table_charset_action(
             message: "unsupported alter table charset operation".to_owned(),
         });
     }
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE needs a storage-backed table",
-        ));
-    };
-    let table = std::sync::Arc::make_mut(table);
     for column in table.columns() {
         if !column.field_type.is_character_string() {
             continue;
@@ -1705,14 +1765,7 @@ fn convert_table_charset_action(
             });
         }
     }
-    table.set_charset(target);
-    for column in table.columns_mut() {
-        if column.field_type.is_character_string() {
-            column.field_type.set_charset_name(target.charset.name());
-            column.field_type.set_collation(target.collation);
-        }
-    }
-    Ok(())
+    Ok(target)
 }
 
 /// Go `checkColumnDefaultValue` (`pkg/ddl/add_column.go:1212`), the BLOB /
@@ -3636,26 +3689,24 @@ pub(super) fn prepare_drop_column(
 /// CREATE and inherits the existing `TTL_ENABLE`/`TTL_JOB_INTERVAL` unless
 /// this ALTER also carries them; the enable/interval-only forms need an
 /// existing config (`ErrSetTTLOptionForNonTTLTable`, 8150).
-fn alter_ttl_info_or_enable(
-    catalog: &mut Catalog,
+fn prepare_ttl_info_or_enable(
+    catalog: &Catalog,
     database: &str,
     name: &str,
     options: &[tidb_ast::TableOption],
-) -> Result<(), DriverError> {
-    // The FK referral scan needs the catalog immutably, so it runs BEFORE the
-    // table is resolved mutably.
+) -> Result<Option<tidb_model::TTLInfo>, DriverError> {
+    // Resolve referrals and column names from the original statement image.
     let wants_full_definition = options
         .iter()
         .any(|option| matches!(option, tidb_ast::TableOption::Ttl { .. }));
     if wants_full_definition && crate::foreign_key::is_table_referred(catalog, database, name) {
         return Err(DriverError::TtlReferencedByForeignKey);
     }
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
-    let table = std::sync::Arc::make_mut(table);
     let info = super::ttl_info_from_options(options)?;
     let mut explicit_enable: Option<bool> = None;
     let mut explicit_interval: Option<String> = None;
@@ -3682,8 +3733,7 @@ fn alter_ttl_info_or_enable(
                 built.job_interval = current.job_interval.clone();
             }
         }
-        table.set_ttl_info(Some(built));
-        return Ok(());
+        return Ok(Some(built));
     }
 
     let Some(current) = table.ttl_info() else {
@@ -3698,7 +3748,7 @@ fn alter_ttl_info_or_enable(
                 "TTL_JOB_INTERVAL".to_owned(),
             ));
         }
-        return Ok(());
+        return Ok(None);
     };
     let mut updated = current.clone();
     if let Some(enabled) = explicit_enable {
@@ -3707,8 +3757,7 @@ fn alter_ttl_info_or_enable(
     if let Some(interval) = explicit_interval {
         updated.job_interval = interval;
     }
-    table.set_ttl_info(Some(updated));
-    Ok(())
+    Ok(Some(updated))
 }
 
 /// Go `checkTTLInfoValid` -> `checkTTLInfoColumnType` (`pkg/ddl/ttl.go

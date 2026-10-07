@@ -1123,7 +1123,7 @@ fn multi_schema_change_failed_alter_keeps_auto_increment_rebases() {
 }
 
 #[test]
-fn multi_schema_change_failed_alter_keeps_auto_random_rebases() {
+fn multi_schema_change_refuses_auto_random_rebases_without_consuming_ids() {
     for sql in [
         "alter table t auto_random_base=1000000, add column v int",
         "alter table t force auto_random_base=1000000, add column v int",
@@ -1131,7 +1131,7 @@ fn multi_schema_change_failed_alter_keeps_auto_random_rebases() {
         assert_failed_alter_keeps_allocators(
             "create table t (id bigint auto_random(3) primary key, v int)",
             sql,
-            1060,
+            8200,
         );
     }
 }
@@ -1173,7 +1173,7 @@ fn multi_schema_change_failed_alter_keeps_rebases_after_invalid_force_base() {
 }
 
 #[test]
-fn multi_schema_change_checks_random_layout_before_forced_rebase() {
+fn multi_schema_change_refuses_random_job_before_layout_execution() {
     let mut catalog = Catalog::default();
     run_create_table_on(
         "create table t (id bigint auto_random(3) primary key, v int)",
@@ -1187,18 +1187,19 @@ fn multi_schema_change_checks_random_layout_before_forced_rebase() {
         .rebase_auto_random(1_i64 << 50)
         .unwrap();
     let original = catalog.clone();
-    // Go visits the layout's revertible capacity check before applying the
-    // non-revertible FORCE job, even when FORCE was written first.
+    let ids = allocator_state(&catalog);
+    // Go refuses the AUTO_RANDOM job before either the counter or layout changes.
     let error = alter(
         &mut catalog,
         "alter table t force auto_random_base=1000000, modify id bigint auto_random(15)",
     )
     .unwrap_err();
-    assert!(
-        matches!(error, crate::DriverError::InvalidAutoRandom(_)),
-        "{error:?}"
+    assert_eq!(code_of(&error), 8200);
+    assert_eq!(
+        message_of(&error),
+        "Unsupported multi schema change for rebase auto_random ID"
     );
-    assert_eq!(allocator_state(&catalog).0[0].1, (1_i64 << 50) + 1);
+    assert_eq!(allocator_state(&catalog), ids);
     assert_unchanged_table(&catalog, &original, "t");
 }
 
@@ -1207,8 +1208,6 @@ fn multi_schema_change_executes_prepared_rebases_on_success() {
     for sql in [
         "alter table t auto_increment=1000000, add column c int default 3",
         "alter table t force auto_increment=1000000, add column c int default 3",
-        "alter table t auto_id_cache=100, auto_increment=1000000, add column c int default 3",
-        "alter table t auto_increment=1000000, auto_id_cache=100, add column c int default 3",
     ] {
         let mut catalog = Catalog::default();
         run_create_table_on(
@@ -1232,11 +1231,7 @@ fn multi_schema_change_executes_prepared_rebases_on_success() {
             &mut catalog,
         )
         .unwrap();
-        alter(
-            &mut catalog,
-            &format!("alter table t {option}, add column c int"),
-        )
-        .unwrap();
+        alter(&mut catalog, &format!("alter table t {option}")).unwrap();
         assert_eq!(allocator_state(&catalog).0[0].1, 1000000);
     }
 }
@@ -1520,15 +1515,33 @@ fn multi_schema_change_prepared_columns_resolve_current_positions() {
 #[test]
 fn multi_schema_change_prepared_random_column_tracks_current_offset() {
     for (definition, sql, expected) in [
-        ("create table t (id bigint auto_random(3) primary key, v int)", "alter table t add column c int default 7 first", 1),
-        ("create table t (id bigint auto_random(3) primary key, v int)", "alter table t modify column id bigint auto_random(4) after v", 1),
-        ("create table t (c int, id bigint auto_random(3) primary key, v int)", "alter table t drop column c", 0),
-        ("create table t (id bigint auto_random(3) primary key, v int)", "alter table t add column c int default 7 first, modify column id bigint auto_random(4)", 1),
+        (
+            "create table t (id bigint auto_random(3) primary key, v int)",
+            "alter table t add column c int default 7 first",
+            1,
+        ),
+        (
+            "create table t (id bigint auto_random(3) primary key, v int)",
+            "alter table t modify column id bigint auto_random(4) after v",
+            1,
+        ),
+        (
+            "create table t (c int, id bigint auto_random(3) primary key, v int)",
+            "alter table t drop column c",
+            0,
+        ),
+        (
+            "create table t (id bigint auto_random(3) primary key, v int)",
+            "alter table t add column c int default 7 first, modify column id bigint auto_random(4)",
+            1,
+        ),
     ] {
         let mut catalog = Catalog::default();
         run_create_table_on(definition, &mut catalog).unwrap();
         alter(&mut catalog, sql).unwrap();
-        let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else { panic!("table missing"); };
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+            panic!("table missing");
+        };
         assert_eq!(table.auto_random().unwrap().offset, expected, "{sql}");
         run_insert_on("insert into t(v) values (5)", &mut catalog, &ctx()).unwrap();
         assert_eq!(text_rows(&catalog, "select v from t"), vec![["5"]]);
@@ -1585,4 +1598,165 @@ fn multi_schema_change_preparation_publishes_notes_before_execution() {
     let notes = context.take_warnings();
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].1, 1060);
+}
+
+/// Go admits metadata jobs before any sibling index backfill scans rows.
+#[test]
+fn multi_schema_change_metadata_admission_precedes_backfill() {
+    for (tail, code) in [
+        ("rename to occupied", 1050),
+        ("charset=utf8 collate=latin1_bin", 1253),
+        ("ttl = missing + interval 1 day", 1054),
+        ("auto_id_cache=1", 1105),
+        ("compression='lz4'", 8200),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (id int, v int)", &mut catalog).unwrap();
+        run_create_table_on("create table occupied (id int)", &mut catalog).unwrap();
+        run_insert_on("insert into t values (1,2),(2,2)", &mut catalog, &ctx()).unwrap();
+        let original = catalog.clone();
+        let sql = format!("alter table t add unique index idx_v(v), {tail}");
+        let error = alter(&mut catalog, &sql).unwrap_err();
+        assert_eq!(code_of(&error), code, "{sql}: {error:?}");
+        assert_unchanged_table(&catalog, &original, "t");
+    }
+}
+
+#[test]
+fn multi_schema_change_metadata_jobs_follow_go_allowlist() {
+    for (spec, job) in [
+        ("rename to moved", "rename table"),
+        ("auto_id_cache=100", "modify auto id cache"),
+        ("ttl = created + interval 1 day", "alter table ttl"),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (id int, created timestamp)", &mut catalog).unwrap();
+        let original = catalog.clone();
+        let error = alter(
+            &mut catalog,
+            &format!("alter table t {spec}, add column c int"),
+        )
+        .unwrap_err();
+        assert_eq!(code_of(&error), 8200, "{error:?}");
+        assert_eq!(
+            message_of(&error),
+            format!("Unsupported multi schema change for {job}")
+        );
+        assert_unchanged_table(&catalog, &original, "t");
+    }
+}
+
+#[test]
+fn multi_schema_change_metadata_noops_do_not_create_jobs() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (id int)", &mut catalog).unwrap();
+    alter(&mut catalog, "alter table t remove ttl, rename to t, engine=innodb, row_format=compact, compression='none', add column c int").unwrap();
+    assert_eq!(column_order(&catalog, "t"), vec!["id", "c"]);
+}
+
+#[test]
+fn multi_schema_change_charset_options_share_go_resolution() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (id int) charset=utf8mb4", &mut catalog).unwrap();
+    alter(
+        &mut catalog,
+        "alter table t charset=utf8mb4 charset=utf8mb4 collate=utf8mb4_bin, add column c int",
+    )
+    .unwrap();
+    assert_eq!(column_order(&catalog, "t"), vec!["id", "c"]);
+    let error = alter(
+        &mut catalog,
+        "alter table t collate=utf8_bin charset=utf8mb4",
+    )
+    .unwrap_err();
+    assert_eq!(code_of(&error), 1302);
+}
+
+#[test]
+fn multi_schema_change_compression_checks_before_other_options() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (id int)", &mut catalog).unwrap();
+    let error = alter(
+        &mut catalog,
+        "alter table t auto_id_cache=1 compression='lz4'",
+    )
+    .unwrap_err();
+    assert_eq!(code_of(&error), 8200);
+    assert_eq!(
+        message_of(&error),
+        "This type of ALTER TABLE is currently unsupported"
+    );
+}
+
+#[test]
+fn multi_schema_change_metadata_uses_original_columns_and_publishes_notes() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (id int, v int)", &mut catalog).unwrap();
+    let error = alter(
+        &mut catalog,
+        "alter table t add column created timestamp, ttl=created + interval 1 day",
+    )
+    .unwrap_err();
+    assert_eq!(code_of(&error), 1054);
+    assert_eq!(column_order(&catalog, "t"), vec!["id", "v"]);
+    run_insert_on("insert into t values (1,2),(2,2)", &mut catalog, &ctx()).unwrap();
+    let session = ctx();
+    let error = alter_on(
+        &mut catalog,
+        &session,
+        "alter table t add unique index idx_v(v), with validation",
+    )
+    .unwrap_err();
+    assert_eq!(code_of(&error), 1062);
+    let warnings = session.take_local_warnings();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].1, 8200);
+}
+
+#[test]
+fn multi_schema_change_metadata_single_jobs_and_siblings_keep_values() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (id int, created timestamp)", &mut catalog).unwrap();
+    alter(&mut catalog, "alter table t ttl=created + interval 1 day").unwrap();
+    let original = catalog.clone();
+    let error = alter(&mut catalog, "alter table t remove ttl, add column c int").unwrap_err();
+    assert_eq!(
+        message_of(&error),
+        "Unsupported multi schema change for alter table no_ttl"
+    );
+    assert_unchanged_table(&catalog, &original, "t");
+    alter(&mut catalog, "alter table t remove ttl").unwrap();
+    alter(&mut catalog, "alter table t auto_id_cache=100").unwrap();
+    alter(
+        &mut catalog,
+        "alter table t comment='kept', add column c int default 3",
+    )
+    .unwrap();
+    alter(&mut catalog, "alter table t rename to moved").unwrap();
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "moved") else {
+        panic!("missing renamed table")
+    };
+    assert_eq!(table.auto_id_cache(), 100);
+    assert!(table.ttl_info().is_none());
+    assert_eq!(table.comment(), "kept");
+    assert_eq!(column_order(&catalog, "moved"), vec!["id", "created", "c"]);
+}
+
+#[test]
+fn multi_schema_change_rebase_uses_heap_allocator_without_auto_column() {
+    for option in ["auto_increment=1000000", "force auto_increment=1000000"] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (v int)", &mut catalog).unwrap();
+        run_insert_on("insert into t values (1)", &mut catalog, &ctx()).unwrap();
+        alter(
+            &mut catalog,
+            &format!("alter table t {option}, add column c int default 3"),
+        )
+        .unwrap();
+        run_insert_on("insert into t(v) values (2)", &mut catalog, &ctx()).unwrap();
+        assert_eq!(
+            text_rows(&catalog, "select _tidb_rowid,v,c from t where v=2"),
+            vec![["1000000", "2", "3"]]
+        );
+    }
 }

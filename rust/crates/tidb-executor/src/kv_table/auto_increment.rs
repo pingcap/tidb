@@ -226,12 +226,7 @@ impl KvTable {
     /// Rebuilds the allocator after `ALTER TABLE ... AUTO_ID_CACHE=n` while
     /// retaining the counter's global high-water mark.
     pub fn set_auto_id_cache(&mut self, cache: u64) -> Result<(), &'static str> {
-        let single_point = cache == 1;
-        if single_point != self.auto_id.is_single_point() {
-            return Err(
-                "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different",
-            );
-        }
+        self.validate_auto_id_cache(cache)?;
         let step = if cache == 0 {
             auto_id::DEFAULT_AUTO_ID_STEP
         } else {
@@ -245,7 +240,17 @@ impl KvTable {
         Ok(())
     }
 
-    /// Go's `AUTO_INCREMENT=n` table option: the first id the table hands out.
+    /// Validate admission without replacing allocators or consuming their ranges.
+    pub(crate) fn validate_auto_id_cache(&self, cache: u64) -> Result<(), &'static str> {
+        if (cache == 1) != self.auto_id.is_single_point() {
+            return Err(
+                "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different",
+            );
+        }
+        Ok(())
+    }
+
+/// Go's `AUTO_INCREMENT=n` table option: the first id the table hands out.
     ///
     /// Go seeds the allocator so the next id is `n`, so `AUTO_INCREMENT=100`
     /// at CREATE makes the first row land on 100. On an existing table

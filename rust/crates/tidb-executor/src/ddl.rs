@@ -544,7 +544,7 @@ pub(crate) fn column_comment_option(options: &[tidb_ast::ColumnOption]) -> Optio
     })
 }
 
-/// The final `COMPRESSION=` option a CREATE or ALTER TABLE applies, stored
+/// The final `COMPRESSION=` option a CREATE TABLE applies, stored
 /// verbatim (Go `handleTableOptions`, `create_table.go:964-965`; the loop
 /// overwrites so the last option wins).
 pub(crate) fn table_compression_option(options: &[tidb_ast::TableOption]) -> Option<String> {

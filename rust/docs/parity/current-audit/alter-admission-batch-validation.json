@@ -1,0 +1,126 @@
+{
+  "date": "2026-10-07",
+  "baseline": "766ad3f88368c4b516d41ba4f9967c25a6fcda9e",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_unchanged": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "scope": "B04 D11 connected original-schema metadata/allocator/charset/compatibility admission; no complete Go package acceptance",
+  "sources": [
+    {
+      "path": "pkg/ddl/executor.go",
+      "sha256": "da64dbe0b8c84efa64b61326c899cdc45a50272c823f7ebf7cea4eb888b02d3d",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/ddl/multi_schema_change.go",
+      "sha256": "64b0b1b27ec3076ea70285d0203a6cd1ab73e51ee7eb90aa4d1c4b32b03d07f0",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/ddl/ttl.go",
+      "sha256": "9763c26f20243e171b8fc7980d466d3ccce4b2a8f2de7978385851594ebe3797",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/meta/model/job.go",
+      "sha256": "90777f283ee9253ad94941e44358b561b55da7a830572eec3da0ab9c60070918",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/util/dbterror/ddl_terror.go",
+      "sha256": "c0dc36abcec685bb39aa175e31bde68be53dbbb59a33aea6f7958dd4aea495a3",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/ddl/table.go",
+      "sha256": "1655ef217accefec0e16993cade87d2dcc90f18408f4bdd12cbcf40b1afc2b16",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/meta/autoid/autoid.go",
+      "sha256": "74a8b43a65ddf4882535157b527aa880983229d42486e7f138298f87e3fde533",
+      "matches_fetched_blob": true
+    }
+  ],
+  "changes": [
+    "Table options, charset conversion, rename and TTL removal produce typed metadata changes from the original statement image; application preserves sibling changes.",
+    "All prepared errors and ordered warnings precede combination checks and row/index work; compatibility warnings use the same preparation phase.",
+    "Go multi-schema admission refuses rename, AUTO_ID_CACHE, AUTO_RANDOM rebase, TTL and placement jobs after individual validation; same-name rename and absent-TTL removal create no jobs.",
+    "ALTER compression validates before all options, accepts NONE as a no-op, retires arbitrary stored compression; ENGINE/ROW_FORMAT remain Go no-ops.",
+    "Charset resolution accepts repeated matching declarations, infers charset from COLLATE, preserves order-sensitive conflict identity and shares once-per-statement handling.",
+    "Ordinary and FORCE AUTO_INCREMENT retain heap row-ID allocator ownership without requiring an explicit auto column. Allocator rebases remain deferred; cache validation shares a read-only helper instead of changing the allocator during admission.",
+    "Removed late metadata/compatibility dispatcher, duplicate late TTL/charset mutation and stale multi-action cache/random success assertions. Single-job and counter-preservation obligations retained."
+  ],
+  "baseline_results": {
+    "rust": {
+      "passed": 91,
+      "failed": 7,
+      "valid_behavior_failures": 5,
+      "invalid_new_fixture_failures": 2,
+      "log": "/workspace/.cloud-setup/alter-admission-batch/before.log"
+    },
+    "explanation": "Two initial cases used a reserved index name and REMOVE TTL after a comma; corrected before final checks. First final iteration passed96/failed2: unknown charset is parser-rejected here, so use accepted charset/collation mismatch; allocator invariant now compares captured pre-statement state rather than assuming a layout operation consumed one ID. Initial shell cwd setup failed before edits, its unintended Cargo run was canceled. These are not counted as repaired production failures."
+  },
+  "validation": {
+    "profile": "Ready",
+    "executor_unit": {
+      "passed": 101,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/alter-admission-batch/tests.log"
+    },
+    "executor_integration": {
+      "passed": 57,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/alter-admission-batch/integration.log"
+    },
+    "distinct_rust_tests": 158,
+    "commands": [
+      "cd /workspace/tidb/rust && cargo test --locked -p tidb-executor --lib -- multi_schema_change ddl:: --test-threads=1",
+      "cd /workspace/tidb/rust && cargo test --locked -p tidb-executor --test all -- db_integration_ddl_types_source ddl_ttl_info_options_source table_options_source table_lifecycle_job_source placement_policy_ddl_source --test-threads=1",
+      "cd /workspace/tidb/rust && cargo check --locked --all-targets -p tidb-executor -p tidb-session -p tidb-server",
+      "cd /workspace/tidb && make lint",
+      "cd /workspace/tidb/rust && cargo build --locked -p tidb-server"
+    ],
+    "environment": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1",
+    "all_target_check": "passed",
+    "lint": "passed",
+    "locked_server_build": "passed",
+    "real_mysql": "Twelve discovery probes reached existing cluster-lowering/parser refusals. They do not validate the repaired local executor, even where an error code coincides. See wire-before.json; no wire parity pass claimed."
+  },
+  "validated_source": [
+    {
+      "path": "rust/crates/tidb-executor/src/ddl.rs",
+      "sha256": "7f04fe5582c574f187c73e35f0e2cf978f5ebdc93c289e965c097d6419b4c31d"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/ddl/alter_table.rs",
+      "sha256": "183b1c3a360041f80646512e2d8e26cd463ac0c445ceb3f72a827c637a78cfa7"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/kv_table/auto_increment.rs",
+      "sha256": "76c61fc3d63600abaa1a9ec06b5d325807a8f79a87b52670346f29bf645a5da6"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs",
+      "sha256": "0c9b82fd51d563fe7705711d16553e755a6c759686013b3236ce51b2aefad2a5"
+    }
+  ],
+  "pre_review_validation": "100 unit +57 integration cases and all required gates passed before review found a new FORCE restriction. Removed the explicit-auto-column guard to follow Go RebaseAutoID and Allocators.Get; added ordinary/FORCE heap controls and reran affected checks. Earlier logs retained as *-pre-review.log.",
+  "self_review": "Original schema, warning order, no-job cases, allocator side effects, and sibling mutation preservation checked against seven fetched Go blobs. No native/generated/dependency changes. Existing charset conversion restrictions and cluster-lowering limits remain.",
+  "remaining": [
+    "Cluster DDL lowering/composition for these options; persisted worker/recovery phases and multi-node publication",
+    "Partition/cache-action admission and schema-wide CHECK-name timing",
+    "Complete charset/collation conversion and configured default-collation behavior",
+    "Full Go suites, live multi-node TiKV, performance and complete package acceptance unverified"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "review_scope": "D11 residuals rechecked; other55 findings retain carried evidence, not a fresh census.",
+  "publication": "Actual hook, fresh prepush locked build, verified normal push and cloud draft checkpoint are recorded separately in /workspace/.cloud-setup/alter-admission-batch/final-handoff.json after commit."
+}

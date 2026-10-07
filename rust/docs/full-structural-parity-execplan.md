@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [shared common-handle readers](common-reader-batch-execplan.md). Latest cleanup: [unused DDL leaf retirement](parity/current-audit/unused-carrier-cleanup-validation.json).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [ALTER metadata admission](alter-admission-batch-execplan.md); previous [shared common-handle readers](common-reader-batch-execplan.md). Latest cleanup: [unused DDL leaf retirement](parity/current-audit/unused-carrier-cleanup-validation.json).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 

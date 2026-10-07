@@ -199,10 +199,10 @@
       "id": "D11",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "**Partially repaired:** local ALTER stages publication and defers shared auto-ID effects. All existing column spellings and ordinary/unique index actions now prepare against the original schema, then share admitted conflict inputs and ordered diagnostics before row/index execution. Column positions and AUTO_RANDOM metadata retain their identities through sibling changes; retained MaxColumnID/MaxIndexID prevent ID reuse. Foreign-key ADD/DROP and CHECK now share original-schema preparation. Implicit FK indexes enter ordinary admission/conflict/backfill; anonymous FK names are resolved once, and admission failures precede row checks/ID consumption. CHECK metadata uses Go CREATE/ALTER diagnostics and name scopes across local/persisted callers; unsupported multi-schema CHECK jobs are refused, including grouped cluster CHECK. Table-option/partition/table-rename admission, schema-wide CHECK duplicate-name owner timing, and complete durable execution/recovery remain unresolved. Single/grouped cluster DROP COLUMN now schedules deletion of every implicitly removed index range before atomic metadata publication; index-work errors retain SQL identity. Complete durable multi-schema ownership remains open.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/ddl/alter_table.rs::PreparedAlterAction`, `ddl/column_changes.rs::PreparedColumnChange`, `ddl/index_changes.rs::PreparedIndexChange`; `kv_table.rs` identity and offset ownership; [column preparation receipt](alter-column-preparation-repair.md); prior [index receipt](alter-index-preparation-repair.md) and [allocator receipt](alter-allocator-repair.md); `ddl/constraint_changes.rs`, `ddl/check_constraint.rs::CheckConstraintBuildMode`, `tidb-exec/src/{cluster_ddl,table_info_build}.rs`; [constraint validation](constraint-admission-batch-validation.json); `cluster_ddl.rs::IndexBackfillOperation`, `plan_removed_column_indexes`, `kv_table.rs::drop_index`, `stmt_context.rs::for_reorg`, `real_tikv_ddl.rs::IndexBackfiller`; [index lifecycle validation](index-lifecycle-batch-validation.json)",
+      "finding": "**Partially repaired:** local ALTER stages publication and defers shared auto-ID effects. All existing column spellings and ordinary/unique index actions now prepare against the original schema, then share admitted conflict inputs and ordered diagnostics before row/index execution. Column positions and AUTO_RANDOM metadata retain their identities through sibling changes; retained MaxColumnID/MaxIndexID prevent ID reuse. Foreign-key ADD/DROP and CHECK now share original-schema preparation. Implicit FK indexes enter ordinary admission/conflict/backfill; anonymous FK names are resolved once, and admission failures precede row checks/ID consumption. CHECK metadata uses Go CREATE/ALTER diagnostics and name scopes across local/persisted callers; unsupported multi-schema CHECK jobs are refused, including grouped cluster CHECK. Table-option, charset, table-rename, TTL-removal and compatibility admission now share original-schema preparation and ordered warnings. Typed metadata changes preserve sibling changes; Go multi-schema job refusals, no-job no-ops and COMPRESSION=NONE policy replace late mutation and unsupported acceptance. Partition/cache-action admission, cluster lowering for these options, schema-wide CHECK duplicate-name owner timing, and complete durable execution/recovery remain unresolved. Single/grouped cluster DROP COLUMN now schedules deletion of every implicitly removed index range before atomic metadata publication; index-work errors retain SQL identity. Complete durable multi-schema ownership remains open.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/ddl/alter_table.rs::PreparedAlterAction`, `ddl/column_changes.rs::PreparedColumnChange`, `ddl/index_changes.rs::PreparedIndexChange`; `kv_table.rs` identity and offset ownership; [column preparation receipt](alter-column-preparation-repair.md); prior [index receipt](alter-index-preparation-repair.md) and [allocator receipt](alter-allocator-repair.md); `ddl/constraint_changes.rs`, `ddl/check_constraint.rs::CheckConstraintBuildMode`, `tidb-exec/src/{cluster_ddl,table_info_build}.rs`; [constraint validation](constraint-admission-batch-validation.json); `cluster_ddl.rs::IndexBackfillOperation`, `plan_removed_column_indexes`, `kv_table.rs::drop_index`, `stmt_context.rs::for_reorg`, `real_tikv_ddl.rs::IndexBackfiller`; [index lifecycle validation](index-lifecycle-batch-validation.json); `ddl/alter_table.rs::PreparedMetadataChange`, `kv_table/auto_increment.rs::validate_auto_id_cache`; [metadata admission validation](alter-admission-batch-validation.json)",
       "go_owner": "`pkg/ddl/executor.go` column/index admission, `multi_schema_change.go::fillMultiSchemaInfo`/`checkMultiSchemaInfo`, `column.go::LocateOffsetToMove` and default/column worker phases; `modify_column.go::getModifiableColumnJob` includes the read-only NULL precheck. In-process maintenance is not complete DDL package acceptance.",
-      "review_basis": "Cloud index lifecycle batch from114910a005 against freshGo7a3dacb52e. Seven original failing assertions precede107 Rust passes and6 wire passes. See index-lifecycle-batch-validation.json. No parent closure or complete package acceptance."
+      "review_basis": "Cloud metadata admission batch from766ad3f against Go7a3. Five valid baseline failures; final158 Rust passes. Real MySQL probes expose retained cluster-lowering refusals, not repaired wire behavior. See alter-admission-batch-validation.json; parent remains partial."
     },
     {
       "id": "C01",
@@ -793,13 +793,12 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-07",
-    "receipt": "common-reader-batch-validation.json",
+    "receipt": "alter-admission-batch-validation.json",
     "findings": [
-      "N03",
-      "O13"
+      "D11"
     ],
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
-    "scope": "B05/B09 shared common-handle request, row/chunk association and ordered partition merge; no complete package acceptance"
+    "scope": "B04 D11 connected original-schema metadata/allocator/charset/compatibility admission; no complete Go package acceptance"
   },
   "latest_test_cleanup": {
     "receipt": "unused-carrier-cleanup-validation.json",
@@ -1759,6 +1758,17 @@
       ],
       "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
       "scope": "B05/B09 shared common-handle request, row/chunk association and ordered partition merge; no complete package acceptance"
+    },
+    {
+      "date": "2026-10-07",
+      "receipt": "alter-admission-batch-validation.json",
+      "findings": [
+        "D11"
+      ],
+      "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+      "scope": "B04 D11 connected original-schema metadata/allocator/charset/compatibility admission; no complete Go package acceptance",
+      "integration_start": "766ad3f88368c4b516d41ba4f9967c25a6fcda9e",
+      "statuses_unchanged": true
     }
   ],
   "execution_batches": {
