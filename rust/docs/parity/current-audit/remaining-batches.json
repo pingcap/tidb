@@ -10,7 +10,7 @@
     "partial": 29
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "K03/X01 numeric-production owners were rechecked and maintained together; the other54 unresolved roots retain carried evidence. No complete package acceptance.",
+  "evidence_limit": "A01/D01/D11/O18 DDL admission and observation were maintained together; other52 unresolved roots retain carried evidence. No complete package acceptance.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -541,23 +541,26 @@
   ],
   "latest_evidence": {
     "date": "2026-10-07",
-    "receipt": "numeric-production-batch-validation.json",
+    "receipt": "ddl-visit-batch-validation.json",
     "findings": [
-      "K03",
-      "X01"
+      "A01",
+      "D01",
+      "D11",
+      "O18"
     ],
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
-    "scope": "Shared numeric sources/decimal production and SQL/protobuf literal admission; existing-owner maintenance, no complete package acceptance."
+    "scope": "Shared DDL admission, persistent/local routing, temporary-table policy and observation visits; existing-owner maintenance, no complete package acceptance."
   },
   "latest_source_maintenance": {
-    "date": "2026-10-06",
-    "receipt": "pd-bootstrap-policy-batch-validation.json",
+    "date": "2026-10-07",
+    "receipt": "ddl-visit-batch-validation.json",
     "findings": [
-      "P03",
-      "P06",
-      "N03"
+      "A01",
+      "D01",
+      "D11",
+      "O18"
     ],
-    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
-    "scope": "B01/B05: P03/P06/N03 lazy discovery connections, accepted membership, endpoint options and forced PD timestamp provider"
+    "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+    "scope": "Shared DDL admission, persistent/local routing, temporary-table policy and observation visits; existing-owner maintenance, no complete package acceptance."
   }
 }

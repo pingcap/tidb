@@ -19,9 +19,18 @@
 //! SQL spelling alone cannot identify the owner of an unqualified column.
 //! Other statement collectors still use the AST and remain a parity boundary.
 
-use tidb_ast::{DdlStmt, DmlStmt, Stmt};
+use tidb_ast::{AlterPartitionAction, AlterTableAction, DdlStmt, DmlStmt, Stmt, TableConstraint};
 
 use crate::privilege::GlobalPriv;
+
+/// Go VisitInfo4PrivCheck keeps observation visits while adapting admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TemporaryPrivilege {
+    SkipLocal,
+    Check,
+    CreateLocal,
+    Skip,
+}
 
 /// One `visitInfo` entry: a privilege demanded on one table.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +51,10 @@ pub(crate) struct TablePrivilegeRequest {
     /// table-scoped 1142 form. `CREATE/DROP DATABASE` carry a schema name but
     /// no table, and their planner visitInfo attaches exactly that error.
     pub(crate) database_named_in_error: bool,
+    /// Adapt admission without discarding original observation table names.
+    pub(crate) temporary_privilege: TemporaryPrivilege,
+    /// Go authErr can name a different command/table than the checked visit.
+    pub(crate) table_error_override: Option<(&'static str, String)>,
 }
 
 impl TablePrivilegeRequest {
@@ -52,6 +65,8 @@ impl TablePrivilegeRequest {
             privilege,
             table_named_in_error: true,
             database_named_in_error: false,
+            table_error_override: None,
+            temporary_privilege: TemporaryPrivilege::Check,
         }
     }
 
@@ -307,6 +322,44 @@ pub(crate) fn required_table_privileges(
         Stmt::Ddl(ddl) => requests.extend(ddl_table_privileges(ddl, current_db)),
         Stmt::Admin(_) | Stmt::Session(_) => {}
     }
+    // Preserve original table visits for observation, but retain Go's
+    // statement-specific temporary-table policy for each execution's grants.
+    // Exempt only operations whose execution resolves the session overlay.
+    // Other cluster DDL still lacks Go's complete local-target splitting.
+    if matches!(stmt, Stmt::Query(_) | Stmt::Dml(_)) {
+        for request in &mut requests {
+            request.temporary_privilege = TemporaryPrivilege::SkipLocal;
+        }
+    }
+    if let Stmt::Ddl(ddl) = stmt {
+        match ddl.as_ref() {
+            DdlStmt::CreateTable(create) => {
+                for request in &mut requests {
+                    if request.privilege == GlobalPriv::Create {
+                        request.temporary_privilege =
+                            if create.temporary == tidb_ast::CreateTableTemporary::Local {
+                                request.table_error_override = None;
+                                request.database_named_in_error = true;
+                                TemporaryPrivilege::CreateLocal
+                            } else {
+                                TemporaryPrivilege::Check
+                            };
+                    }
+                }
+            }
+            DdlStmt::TruncateTable(_) => {
+                for request in &mut requests {
+                    request.temporary_privilege = TemporaryPrivilege::SkipLocal;
+                }
+            }
+            DdlStmt::DropTable(drop) if drop.temporary == tidb_ast::DropTemporary::Local => {
+                for request in &mut requests {
+                    request.temporary_privilege = TemporaryPrivilege::Skip;
+                }
+            }
+            _ => {}
+        }
+    }
     Ok(requests)
 }
 
@@ -319,6 +372,22 @@ fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRe
             .map(|(schema, table)| vec![TablePrivilegeRequest::new(&schema, &table, privilege)])
             .unwrap_or_default()
     };
+    let references = |path: &[String], owner: &[String]| {
+        // Go's preprocessor defaults an unqualified FK reference to the
+        // child table's schema, which need not be the current database.
+        let Some((schema, _)) = split_path(owner, current_db) else {
+            return Vec::new();
+        };
+        split_path(path, &schema)
+            .map(|(schema, table)| {
+                vec![TablePrivilegeRequest::new(
+                    &schema,
+                    &table,
+                    GlobalPriv::References,
+                )]
+            })
+            .unwrap_or_default()
+    };
     match ddl {
         // `planbuilder.go` around line 5392 / 5508: database DDL attaches
         // ErrDBaccessDenied (1044), with the schema name as the scope.
@@ -329,7 +398,33 @@ fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRe
             vec![TablePrivilegeRequest::database(name, GlobalPriv::Drop)]
         }
         // `planbuilder.go` around line 5428.
-        DdlStmt::CreateTable(create) => one(&create.name, GlobalPriv::Create),
+        DdlStmt::CreateTable(create) => {
+            let mut visits = Vec::new();
+            for constraint in &create.table_constraints {
+                if let TableConstraint::ForeignKey(fk) = constraint {
+                    if let Some(table) = &fk.reference.table {
+                        visits.extend(references(table, &create.name));
+                    }
+                }
+            }
+            let mut target = one(&create.name, GlobalPriv::Create);
+            // buildDDL retains the final REFERENCES authErr for the CREATE
+            // visit too. The checked scope still belongs to the new table.
+            if let Some(last) = visits.last() {
+                for request in &mut target {
+                    request.table_error_override = Some(("REFERENCES", last.table.clone()));
+                }
+            }
+            visits.extend(target);
+            if let Some(source) = &create.like_table {
+                let mut source = one(source, GlobalPriv::Select);
+                for request in &mut source {
+                    request.table_error_override = Some(("CREATE", request.table.clone()));
+                }
+                visits.extend(source);
+            }
+            visits
+        }
         // Around line 5528. Go appends one entry per named table.
         DdlStmt::DropTable(drop) => drop
             .names
@@ -337,7 +432,81 @@ fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRe
             .flat_map(|name| one(name, GlobalPriv::Drop))
             .collect(),
         // Around line 5321.
-        DdlStmt::AlterTable(alter) => one(&alter.name, GlobalPriv::Alter),
+        DdlStmt::AlterTable(alter) => {
+            let mut visits = one(&alter.name, GlobalPriv::Alter);
+            for action in &alter.actions {
+                match action {
+                    AlterTableAction::RenameTable { new_name } => {
+                        visits.extend(one(&alter.name, GlobalPriv::Drop));
+                        visits.extend(one(new_name, GlobalPriv::Create));
+                        visits.extend(one(new_name, GlobalPriv::Insert));
+                    }
+                    AlterTableAction::Partition(AlterPartitionAction::Exchange {
+                        table, ..
+                    }) => {
+                        // EXCHANGE mutates both tables; Go preserves this order.
+                        visits.extend(one(&alter.name, GlobalPriv::Drop));
+                        visits.extend(one(table, GlobalPriv::Create));
+                        visits.extend(one(table, GlobalPriv::Insert));
+                        visits.extend(one(&alter.name, GlobalPriv::Insert));
+                        visits.extend(one(&alter.name, GlobalPriv::Create));
+                        visits.extend(one(table, GlobalPriv::Alter));
+                        visits.extend(one(table, GlobalPriv::Drop));
+                    }
+                    AlterTableAction::Partition(
+                        AlterPartitionAction::Drop { .. } | AlterPartitionAction::Truncate { .. },
+                    ) => {
+                        visits.extend(one(&alter.name, GlobalPriv::Drop));
+                    }
+                    AlterTableAction::AddForeignKey(fk) => {
+                        if let Some(table) = &fk.reference.table {
+                            visits.extend(references(table, &alter.name));
+                        }
+                    }
+                    AlterTableAction::AddColumns { constraints, .. } => {
+                        for constraint in constraints {
+                            if let TableConstraint::ForeignKey(fk) = constraint {
+                                if let Some(table) = &fk.reference.table {
+                                    visits.extend(references(table, &alter.name));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            visits
+        }
+        DdlStmt::RenameTable(rename) => {
+            let mut visits = Vec::new();
+            for (old, new) in &rename.pairs {
+                visits.extend(one(old, GlobalPriv::Alter));
+                visits.extend(one(old, GlobalPriv::Drop));
+                visits.extend(one(new, GlobalPriv::Create));
+                visits.extend(one(new, GlobalPriv::Insert));
+            }
+            visits
+        }
+        DdlStmt::TruncateTable(name) => one(name, GlobalPriv::Drop),
+        DdlStmt::AlterSequence(alter) => one(&alter.name, GlobalPriv::Alter),
+        DdlStmt::DropSequence(drop) => drop
+            .names
+            .iter()
+            .flat_map(|name| one(name, GlobalPriv::Drop))
+            .collect(),
+        DdlStmt::DropView { names, .. } => names
+            .iter()
+            .flat_map(|name| one(name, GlobalPriv::Drop))
+            .collect(),
+        DdlStmt::AlterDatabase { name, .. } => {
+            let database = name.as_deref().unwrap_or(current_db);
+            // Name resolution owns ErrNoDB before privilege checking.
+            if database.is_empty() {
+                Vec::new()
+            } else {
+                vec![TablePrivilegeRequest::database(database, GlobalPriv::Alter)]
+            }
+        }
         // Around line 5404 / 5520: an index is an `ALTER`-class change that
         // Go demands `IndexPriv` for.
         DdlStmt::CreateIndex(create) => one(&create.table, GlobalPriv::Index),

@@ -41,6 +41,8 @@ in time. This revision is a plan; it closes no production finding.
 
 ## Progress
 
+- [x] (2026-10-07, DDL admission batch) Shared A01/D01/D11/O18 routing and visits repair destructive DDL, source REFERENCES/SELECT, both rename forms, partition actions and summary attribution; local-temporary exemptions preserve original visits. Six baseline Rust failures and three live routing regressions precede 204 grouped Rust passes and 36 live SQL checks. See parity/current-audit/ddl-visit-batch-validation.json; broad packages remain unaccepted.
+
 - [x] (2026-10-07, numeric production batch) Share decimal fitting, retain MyDecimal source diagnostics and Go ENUM/SET float conversion, preserve invalid numeric NULL/error pairs and bypass fitting for SQL/protobuf binary literals. Four baseline Rust failures and60/120 Go mismatches precede101 Rust passes,120 matching comparisons and22 SQL checks. K03/X01 remain partial; see `parity/current-audit/numeric-production-batch-validation.json`.
 
 - [x] (2026-10-07, ordinal owner batch) Migrate YEAR/ENUM/SET/BIT source diagnostics and every table caller together; remove event reconstruction, ODKU warning rewrites and duplicate value formatting. Five Rust baseline regressions, six baseline SQL failures and one intermediate ODKU formatter failure establish the defects. K03 remains partial; see `parity/current-audit/ordinal-owner-batch-validation.json` for final grouped evidence and limits.

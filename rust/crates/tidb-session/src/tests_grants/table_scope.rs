@@ -570,3 +570,205 @@ fn cte_scope_batch_later_name_cannot_hide_earlier_source() {
         table_denied("SELECT", "t")
     );
 }
+
+#[test]
+fn ddl_visit_batch_destructive_and_sequence_privileges() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("CREATE SEQUENCE seq_visit").unwrap();
+    for (sql, verb, table) in [
+        ("TRUNCATE TABLE t", "DROP", "t"),
+        ("RENAME TABLE t TO renamed_visit", "ALTER", "t"),
+        (
+            "ALTER SEQUENCE seq_visit INCREMENT BY 2",
+            "ALTER",
+            "seq_visit",
+        ),
+        ("DROP SEQUENCE seq_visit", "DROP", "seq_visit"),
+    ] {
+        assert_eq!(denied(&mut bob, sql), table_denied(verb, table), "{sql}");
+    }
+    assert_eq!(row_text(boot.run("SELECT b FROM t")), vec![vec!["10"]]);
+    boot.run("GRANT ALTER, DROP, CREATE, INSERT ON test.* TO 'bob'@'%'")
+        .unwrap();
+    bob.run("ALTER SEQUENCE seq_visit INCREMENT BY 2").unwrap();
+    bob.run("DROP SEQUENCE seq_visit").unwrap();
+    bob.run("TRUNCATE TABLE t").unwrap();
+    bob.run("RENAME TABLE t TO renamed_visit").unwrap();
+    assert!(row_text(boot.run("SELECT * FROM renamed_visit")).is_empty());
+}
+
+#[test]
+fn ddl_visit_batch_rename_checks_each_grant_before_mutation() {
+    for sql in [
+        "RENAME TABLE t TO renamed_visit",
+        "ALTER TABLE t RENAME TO renamed_visit",
+    ] {
+        let (_, mut boot, mut bob) = scoped();
+        for (verb, table) in [
+            ("ALTER", "t"),
+            ("DROP", "t"),
+            ("CREATE", "renamed_visit"),
+            ("INSERT", "renamed_visit"),
+        ] {
+            assert_eq!(denied(&mut bob, sql), table_denied(verb, table), "{sql}");
+            assert_eq!(row_text(boot.run("SELECT b FROM t")), vec![vec!["10"]]);
+            boot.run(&format!("GRANT {verb} ON test.* TO 'bob'@'%'"))
+                .unwrap();
+        }
+        bob.run(sql).unwrap();
+        assert_eq!(
+            row_text(boot.run("SELECT b FROM renamed_visit")),
+            vec![vec!["10"]]
+        );
+    }
+}
+
+#[test]
+fn ddl_visit_batch_like_and_foreign_key_sources() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("GRANT CREATE, ALTER ON test.* TO 'bob'@'%'")
+        .unwrap();
+    assert_eq!(
+        denied(&mut bob, "CREATE TABLE copied_visit LIKE t"),
+        table_denied("CREATE", "t")
+    );
+    boot.run("GRANT SELECT ON test.t TO 'bob'@'%'").unwrap();
+    bob.run("CREATE TABLE copied_visit LIKE t").unwrap();
+    for sql in [
+        "CREATE TABLE child_visit (a INT, FOREIGN KEY(a) REFERENCES t(a))",
+        "ALTER TABLE u ADD CONSTRAINT fk_visit FOREIGN KEY(a) REFERENCES t(a)",
+    ] {
+        assert_eq!(denied(&mut bob, sql), table_denied("REFERENCES", "t"));
+    }
+    boot.run("GRANT REFERENCES ON test.t TO 'bob'@'%'").unwrap();
+    bob.run("CREATE TABLE child_visit (a INT, FOREIGN KEY(a) REFERENCES t(a))")
+        .unwrap();
+    bob.run("ALTER TABLE u ADD CONSTRAINT fk_visit FOREIGN KEY(a) REFERENCES t(a)")
+        .unwrap();
+}
+
+#[test]
+fn ddl_visit_batch_database_alter_requires_schema_privilege() {
+    let (_, mut boot, mut bob) = scoped();
+    for sql in [
+        "ALTER DATABASE test CHARACTER SET utf8mb4",
+        "ALTER DATABASE CHARACTER SET utf8mb4",
+    ] {
+        assert_eq!(
+            denied(&mut bob, sql),
+            (
+                1044,
+                "Access denied for user 'bob'@'%' to database 'test'".into()
+            )
+        );
+    }
+    boot.run("GRANT ALTER ON test.* TO 'bob'@'%'").unwrap();
+    // Admission succeeds; the separate ALTER DATABASE executor remains unsupported.
+    assert_eq!(
+        denied(&mut bob, "ALTER DATABASE CHARACTER SET utf8mb4").0,
+        1105
+    );
+}
+
+#[test]
+fn ddl_visit_batch_partition_and_fk_visits_follow_go_order() {
+    use privilege::GlobalPriv::{Alter, Create, Drop, Insert, References};
+    let session = Session::new();
+    let cases = [
+        (
+            "ALTER TABLE test.t EXCHANGE PARTITION p0 WITH TABLE other.u",
+            vec![
+                ("test", "t", Alter),
+                ("test", "t", Drop),
+                ("other", "u", Create),
+                ("other", "u", Insert),
+                ("test", "t", Insert),
+                ("test", "t", Create),
+                ("other", "u", Alter),
+                ("other", "u", Drop),
+            ],
+        ),
+        (
+            "ALTER TABLE t DROP PARTITION p0",
+            vec![("test", "t", Alter), ("test", "t", Drop)],
+        ),
+        (
+            "ALTER TABLE t TRUNCATE PARTITION p0",
+            vec![("test", "t", Alter), ("test", "t", Drop)],
+        ),
+        (
+            "ALTER TABLE u ADD COLUMN c INT, ADD CONSTRAINT f FOREIGN KEY(a) REFERENCES other.t(a)",
+            vec![("test", "u", Alter), ("other", "t", References)],
+        ),
+        (
+            "CREATE TABLE u (a INT, FOREIGN KEY(a) REFERENCES other.t(a))",
+            vec![("other", "t", References), ("test", "u", Create)],
+        ),
+    ];
+    let cases = cases.into_iter().chain([
+        (
+            "CREATE TABLE other.u (a INT, FOREIGN KEY(a) REFERENCES t(a))",
+            vec![("other", "t", References), ("other", "u", Create)],
+        ),
+        (
+            "ALTER TABLE other.u ADD CONSTRAINT f FOREIGN KEY(a) REFERENCES t(a)",
+            vec![("other", "u", Alter), ("other", "t", References)],
+        ),
+    ]);
+    for (sql, expected) in cases {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let actual = session.collect_table_privileges(&stmt, false).unwrap();
+        assert_eq!(
+            actual
+                .iter()
+                .map(|r| (r.database.as_str(), r.table.as_str(), r.privilege))
+                .collect::<Vec<_>>(),
+            expected,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn ddl_visit_batch_local_temporary_admission_keeps_source_visits() {
+    let (_, mut boot, mut bob) = scoped();
+    bob.run("CREATE TEMPORARY TABLE tmp_visit (a INT)").unwrap();
+    bob.run("INSERT INTO tmp_visit VALUES (1)").unwrap();
+    bob.run("TRUNCATE TABLE tmp_visit").unwrap();
+    assert!(row_text(bob.run("SELECT * FROM tmp_visit")).is_empty());
+    // CREATE checks the database even when an existing temporary name shadows
+    // a permanent one; a temporary LIKE source needs no SELECT privilege.
+    assert_eq!(
+        denied(&mut bob, "CREATE TABLE tmp_visit (a INT)"),
+        table_denied("CREATE", "tmp_visit")
+    );
+    boot.run("GRANT CREATE ON test.* TO 'bob'@'%'").unwrap();
+    assert!(matches!(
+        bob.run("CREATE TABLE tmp_copy_visit LIKE tmp_visit"),
+        Err(DriverError::OptOnTemporaryTable(operation)) if operation == "create table like"
+    ));
+    bob.run("DROP TEMPORARY TABLE tmp_visit").unwrap();
+}
+
+#[test]
+fn ddl_visit_batch_denial_keeps_transaction_and_grouped_schema() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("GRANT SELECT, INSERT, ALTER ON test.* TO 'bob'@'%'")
+        .unwrap();
+    bob.run("BEGIN").unwrap();
+    bob.run("INSERT INTO t VALUES (2,20)").unwrap();
+    assert_eq!(
+        denied(&mut bob, "TRUNCATE TABLE t"),
+        table_denied("DROP", "t")
+    );
+    bob.run("ROLLBACK").unwrap();
+    assert_eq!(row_text(boot.run("SELECT b FROM t")), vec![vec!["10"]]);
+    assert_eq!(
+        denied(
+            &mut bob,
+            "ALTER TABLE u ADD COLUMN pending INT, ADD CONSTRAINT f FOREIGN KEY(a) REFERENCES t(a)"
+        ),
+        table_denied("REFERENCES", "t")
+    );
+    assert!(!show_create(&mut boot, "u").contains("pending"));
+}

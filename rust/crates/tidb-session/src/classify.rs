@@ -398,6 +398,39 @@ impl Session {
         )
     }
 
+    /// Whether DDL targets metadata owned only by this session. TRUNCATE
+    /// resolves its one table; mixed DROP keeps its separate splitting rules.
+    pub fn is_local_temporary_ddl_parsed(&self, stmt: &Stmt) -> bool {
+        if Self::is_local_temporary_create_parsed(stmt) {
+            return true;
+        }
+        let Stmt::Ddl(ddl) = stmt else {
+            return false;
+        };
+        let tidb_ast::DdlStmt::TruncateTable(name) = ddl.as_ref() else {
+            return false;
+        };
+        self.is_local_temporary_table_path(name)
+    }
+
+    pub(crate) fn is_local_temporary_table_path(&self, name: &[String]) -> bool {
+        let (database, table) = match name {
+            [table] => (self.current_db.as_str(), table.as_str()),
+            [database, table] => (database.as_str(), table.as_str()),
+            _ => return false,
+        };
+        self.is_local_temporary_table(database, table)
+    }
+
+    pub(crate) fn is_local_temporary_table(&self, database: &str, table: &str) -> bool {
+        let database = tidb_util::stringutil::go_to_lower(database);
+        let table = tidb_util::stringutil::go_to_lower(table);
+        self.local_temporary_tables.iter().any(|(db, name, _)| {
+            tidb_util::stringutil::go_to_lower(db) == database
+                && tidb_util::stringutil::go_to_lower(name) == table
+        })
+    }
+
     /// Which persistent state `sql` would change: the stored schema (Go's
     /// `ast.DDLNode`), the stored accounts (the privilege and role statements
     /// TiDB's parser builds as administrative rather than DDL, plus `SET
@@ -440,45 +473,14 @@ impl Session {
             {
                 StoredStateChange::Accounts
             }
-            Stmt::Ddl(ddl)
-                if matches!(
-                    ddl.as_ref(),
-                    tidb_ast::DdlStmt::AlterInstance(_)
-                        | tidb_ast::DdlStmt::CreateSequence(_)
-                        | tidb_ast::DdlStmt::DropSequence(_)
-                        | tidb_ast::DdlStmt::AlterSequence(_)
-                ) =>
-            {
-                // ALTER INSTANCE changes process TLS state. A sequence lives
-                // in the session's own catalog
-                // (`run_create_sequence_in`/`run_drop_sequence_in`): its
-                // allocators are that catalog's Arc handles, and the builtins
-                // resolve through the statement's catalog snapshot. No
-                // separate cluster meta exists to publish, so there is
-                // nothing to route — the statement runs where it stands.
+            // Only ALTER INSTANCE changes process state. Sequence and
+            // partition DDL change persistent schema and must reach the same
+            // cluster authority as every other schema change.
+            Stmt::Ddl(ddl) if matches!(ddl.as_ref(), tidb_ast::DdlStmt::AlterInstance(_)) => {
                 StoredStateChange::None
             }
             Stmt::Ddl(ddl)
-                if matches!(
-                    ddl.as_ref(),
-                    tidb_ast::DdlStmt::AlterTable(alter)
-                        if alter.actions.iter().all(|action| matches!(
-                            action,
-                            tidb_ast::AlterTableAction::Partition(_)
-                        ))
-                ) =>
-            {
-                // The partition DDL statements run against the session's own
-                // catalog: the partition actions (REORGANIZE/COALESCE/ADD/
-                // DROP) execute locally and the fork's own metrics tables
-                // play no part. Routing them to the cluster schema change
-                // lowered them to the run-this-on-a-TiDB-server refusal
-                // (oracle m24: REORGANIZE PARTITION answers (ok) with the
-                // statistics-outdated warning, COALESCE PARTITION on a
-                // RANGE table errors 1509).
-                StoredStateChange::None
-            }
-            Stmt::Ddl(ddl) if matches!(ddl.as_ref(), tidb_ast::DdlStmt::DropTable(drop)
+                if matches!(ddl.as_ref(), tidb_ast::DdlStmt::DropTable(drop)
                 if matches!(drop.temporary, tidb_ast::DropTemporary::Local)) =>
             {
                 // DROP TEMPORARY TABLE (LOCAL) targets the session's own

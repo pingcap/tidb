@@ -1,0 +1,124 @@
+{
+  "date": "2026-10-07",
+  "scope": "Shared DDL admission, persistent/local routing, temporary-table policy and observation visits; existing-owner maintenance, no complete package acceptance.",
+  "integration_start": "0a44d34fd0cc1b2208b3cf8d599fd08c1cd6083d",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_head": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "native_changed": false,
+  "findings": [
+    "A01",
+    "D01",
+    "D11",
+    "O18"
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "statuses_changed": false,
+  "other_unresolved_roots_freshly_reviewed": false,
+  "repairs": [
+    "Shared DDL visits now require DROP for TRUNCATE, ordered source ALTER/DROP and destination CREATE/INSERT for both rename spellings, ALTER/DROP for sequences and database-scoped ALTER admission.",
+    "CREATE LIKE checks source SELECT with Go CREATE denial text; CREATE/ALTER foreign keys check REFERENCES in source order, retaining Go authErr independently of the checked privilege.",
+    "Partition DROP/TRUNCATE require DROP; EXCHANGE checks all eight ordered source/destination privileges. Grouped ALTER fails before schema mutation and denied DDL preserves the open transaction.",
+    "Go temporary-table admission policy adapts privileges at execution without dropping raw observation visits: local CREATE checks database CREATE TEMPORARY TABLES, queries/DML and local TRUNCATE are exempt where execution resolves the session overlay, DROP SEQUENCE/VIEW keep normal checks.",
+    "Persistent sequence/partition exceptions are removed; supported partition operations survive cluster schema refresh, sequence creation refuses a missing durable owner, and local TRUNCATE uses its session owner with Go implicit-commit behavior.",
+    "FK default schemas follow the child table; temporary LIKE sources are refused before privilege checks and Go case folding selects local temporary targets.",
+    "Existing local, prepared and cluster admission callers reuse the same collector; completed LIKE, RENAME and TRUNCATE summaries retain real source/destination tables."
+  ],
+  "removals": [
+    "Single CREATE/ALTER privilege shortcuts replaced by typed action/source visits",
+    "Stale sequence/partition session-local routing exceptions and their misleading comments",
+    "Repeated cluster/local DDL parsing; original parsed statement is shared with execution"
+  ],
+  "tests_removed": 0,
+  "wire_regressions": {
+    "first_run_failed": 4,
+    "routing_probe_failed": 3,
+    "shadow_probe_failed": 1,
+    "confirmed_live_regressions": 5,
+    "details": "Initial wire exposed missing cluster ALTER-FK admission and unsupported cluster sequence lifecycle. Follow-up reproduced local-temporary TRUNCATE lookup failure, partition ADD metadata loss after schema refresh, and false sequence CREATE success. The unsafe routing exceptions are removed; sequence and ALTER-FK durable owners remain unsupported. The first run included three unsupported positive expectations; only its missing admission is counted as a repaired wire regression. Shadow-source CREATE LIKE supplied one further real failure.",
+    "final_checks": 36
+  },
+  "rust_tests": {
+    "baseline_failed": 6,
+    "intermediate_passed": 165,
+    "intermediate_failed": 1,
+    "intermediate_failure": "Wrong expectation: Go rejects CREATE LIKE from local temporary sources; corrected test only.",
+    "final_passed": 204,
+    "final_failed": 0,
+    "ignored": 0,
+    "new_methods": 8
+  },
+  "wire": {
+    "checks": 36,
+    "failed": 0,
+    "store": "unistore",
+    "owned_server_joined": true
+  },
+  "go_evidence": [
+    "pkg/planner/core/planbuilder.go::buildDDL",
+    "pkg/planner/core/optimizer.go::CheckPrivilege and VisitInfo4PrivCheck",
+    "pkg/ddl/tests/serial/serial_test.go local temporary LIKE refusal"
+  ],
+  "validation": {
+    "commands": [
+      "cargo test --locked -p tidb-session --lib ddl_visit_batch -- --test-threads=1 (baseline failures)",
+      "cargo test --locked -p tidb-session --lib -- tests_grants tests_observation_batch tests_sequence tests_temporary_tables --test-threads=1",
+      "cargo check --locked --all-targets -p tidb-session -p tidb-server",
+      "make lint",
+      "cargo build --locked -p tidb-server",
+      "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/ddl-visit-batch/wire.py"
+    ],
+    "cargo_cwd": "/workspace/tidb/rust",
+    "activation": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1",
+    "scoped_format_and_diff_check": "passed"
+  },
+  "not_verified": [
+    "Complete upstream Go packages/tests",
+    "Full Go suite or independent Go runtime oracle for this batch",
+    "Live multi-node TiKV and mixed-version DDL recovery",
+    "TLS policy, performance or benchmarks",
+    "ALTER DATABASE and cluster ALTER-FK/sequence durable executors remain unsupported",
+    "Full local-target splitting for other cluster DDL, including mixed DROP, remains unaccepted",
+    "Other53 unresolved roots not freshly reproduced"
+  ],
+  "publication": "Actual hook and fresh locked build/normal push/remote SHA are required and recorded in external final-handoff.json; this receipt precedes the commit.",
+  "external_evidence": "/workspace/.cloud-setup/ddl-visit-batch",
+  "source_identities": {
+    "rust/crates/tidb-session/src/classify.rs": "4506d3895e99f0afa39dc6828737d0f179275c89359b87f2b350b4cc7c126698",
+    "rust/crates/tidb-session/src/identity.rs": "a1b86d3f2b061a1c9c3cac231c091e2a26785ae6f4cae8174356d8318b286c6b",
+    "rust/crates/tidb-session/src/table_privilege.rs": "d5488d77b5be8174b655136e436bf8a89f0467aa6472350fd7e6b3094b557997",
+    "rust/crates/tidb-session/src/tests_grants/table_scope.rs": "b82b8d5ada7482be0b1f08391d15ef28817a4b535d61894b52740ca2fdb8d92b",
+    "rust/crates/tidb-session/src/tests_observation_batch.rs": "7f0a467a076fde45109be2fb01d36cfff3468e8a51d073382907c4b8e58f1a66",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs": "0e3a8a8eec64f0d247f5f7663d81ab2e64bbbc45c6986e80c55504da4654f85a"
+  },
+  "go_source_identities": {
+    "pkg/planner/core/planbuilder.go": "dfe3898638fab653ee37716c5c5e1528c475d1ec73d4b325efde5c61e7507e17",
+    "pkg/planner/core/optimizer.go": "aca019d1b4a13b4a5decacfaa203feeea89b08e292cf1c662aefd3cb470fd60b",
+    "pkg/planner/core/preprocess.go": "d06df0725ad616e2aa5d0afdac55f8f5f125baf3c25ea1abd2e784dff21bba99",
+    "pkg/executor/ddl.go": "03e0494943e159d3a1d154020e5fa63f97d6cf999fe05eb8decda67467a24bba",
+    "pkg/ddl/tests/serial/serial_test.go": "248c3b28a9df954132b2d951b315f5d7c7c9b069d65e0a58c5afdc92cb7ff4ff"
+  },
+  "log_sha256": {
+    "before-tests.log": "e3af81963172029db2672806c37a93d301db677b161479dc59add4b554fe63b5",
+    "after-tests.log": "1982da49e0615b1ec4c4ccae894a69956ae58df35bc45a281cae03505bc8eef0",
+    "final-tests.log": "19386fa8ee39770ba23e3e3f47ca48a5c9717150507b0bb0f6a708505f618c01",
+    "all-targets.log": "b136339e93bd3d398c4b8adc807bcb9f1d4d23682c6760c2f3c61f91d8b238d0",
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "server-build.log": "fe4078ec4ea2b1941572f2737467e27566ba0d85409c50fcbe7dd334cac3c00e",
+    "wire.json": "9b641b214dd782750500f56fabbfe960e07bd3097acfdcb0f14a36ae722168c5",
+    "wire-before-cluster-followup.json": "e19ad2d6e9e46f98faf4374972285e63710868bda1419877958ef651cb439542",
+    "wire-before-routing-removal.json": "6df52bb6ab66a1f1a93b12d043418fdba886953e38bace88d42ea65396aaccbd",
+    "wire-before-shadow-guard.json": "f0c5d832f06c6f3f1d522d52bea6c610026cbfc11a80e2b9cac970257b5536d7",
+    "wire.py": "729e470b0c867b587d0a53df4195546e564f14cb2a5ddc7081ba931cd41461e8"
+  },
+  "resource_recovery": {
+    "failure": "The locked package build exhausted disk linking cluster-session-smoke, with collect2 reporting signal7/Bus error.",
+    "resolution": "Recorded and removed the incomplete owned link output and an inactive older smoke executable; preserved compiler/dependency caches; the full locked package build then passed.",
+    "publication_space_policy": "Retire both completed inactive server and smoke executable aliases before a fresh package rebuild; the two outputs total about835MB."
+  }
+}

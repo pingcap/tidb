@@ -861,3 +861,38 @@ fn cte_scope_batch_summary_attributes_real_table_shadowed_in_sibling() {
         .unwrap();
     assert_eq!(record.table_names, "test.cte_observation");
 }
+
+#[test]
+fn ddl_visit_batch_summary_keeps_both_rename_tables_and_like_source() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    session
+        .run("CREATE TABLE ddl_visit_source (a INT)")
+        .unwrap();
+    for (sql, expected) in [
+        (
+            "CREATE TABLE ddl_visit_copy LIKE ddl_visit_source",
+            "test.ddl_visit_copy,test.ddl_visit_source",
+        ),
+        (
+            "RENAME TABLE ddl_visit_copy TO ddl_visit_destination",
+            "test.ddl_visit_copy,test.ddl_visit_destination",
+        ),
+        (
+            "TRUNCATE TABLE ddl_visit_destination",
+            "test.ddl_visit_destination",
+        ),
+    ] {
+        session.run(sql).unwrap();
+        let (_, digest) = normalize_statement_digest(sql);
+        let records =
+            tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+        let record = records
+            .iter()
+            .find(|r| r.lock().unwrap().digest == digest.as_str())
+            .unwrap()
+            .lock()
+            .unwrap();
+        assert_eq!(record.table_names, expected, "{sql}");
+    }
+}

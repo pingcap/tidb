@@ -345,6 +345,21 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         preparing: bool,
     ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
+        // Go checkCreateTableGrammar resolves LIKE through the session
+        // infoschema and rejects temporary sources before privilege checking.
+        // A cluster lowerer must never clone the permanent table hidden by a
+        // local temporary source with the same name.
+        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+            if let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() {
+                if create
+                    .like_table
+                    .as_ref()
+                    .is_some_and(|name| self.is_local_temporary_table_path(name))
+                {
+                    return Err(DriverError::OptOnTemporaryTable("create table like"));
+                }
+            }
+        }
         crate::table_privilege::required_table_privileges(stmt, &self.current_db, |dml| {
             let mut ctx = self.statement_context_for_stmt(stmt, false);
             if preparing {
@@ -396,8 +411,23 @@ impl Session {
             // Go answers a virtual schema from fixed rules before it reads a
             // single grant, so `SELECT ... FROM information_schema.*` needs
             // nothing and a write there is refused whatever is granted.
-            let granted =
-                self.has_scoped_privilege(&request.database, &request.table, request.privilege);
+            use crate::table_privilege::TemporaryPrivilege;
+            let granted = match request.temporary_privilege {
+                TemporaryPrivilege::Skip => true,
+                TemporaryPrivilege::SkipLocal
+                    if self.is_local_temporary_table(&request.database, &request.table) =>
+                {
+                    true
+                }
+                TemporaryPrivilege::CreateLocal => self.has_scoped_privilege(
+                    &request.database,
+                    "",
+                    privilege::GlobalPriv::CreateTemporaryTables,
+                ),
+                _ => {
+                    self.has_scoped_privilege(&request.database, &request.table, request.privilege)
+                }
+            };
             if granted {
                 continue;
             }
@@ -411,10 +441,18 @@ impl Session {
                 DriverError::TableAccessDenied {
                     // Go's `authErr` spells the verb as the uppercase
                     // command name and the table as `tableInfo.Name.L`.
-                    privilege: request.privilege.print_name(),
+                    privilege: request
+                        .table_error_override
+                        .as_ref()
+                        .map_or(request.privilege.print_name(), |(command, _)| *command),
                     user,
                     host,
-                    table: go_to_lower(request.table.clone()),
+                    table: go_to_lower(
+                        request
+                            .table_error_override
+                            .as_ref()
+                            .map_or(request.table.as_str(), |(_, table)| table.as_str()),
+                    ),
                 }
             } else {
                 DriverError::PrivilegeCheckFail(request.privilege.check_fail_name().to_owned())

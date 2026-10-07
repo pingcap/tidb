@@ -6230,7 +6230,7 @@ impl ClusterServerSession {
                 }
             }
             StoredStateChange::Schema => {
-                if Session::is_local_temporary_create_parsed(stmt) {
+                if self.session.is_local_temporary_ddl_parsed(stmt) {
                     return Ok(StatementRoute::LocalTemporaryDdl);
                 }
                 // Go refuses three statement shapes with their OWN errors
@@ -6317,12 +6317,20 @@ impl ClusterServerSession {
                         self.session.drain_context_warnings(&context);
                         Ok(StatementRoute::Ddl(statement))
                     }
-                    Ok(None) => Err(SqlQueryError::unknown(
-                        "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
-                         CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, placement policy \
-                         changes, index changes, and single-action ALTER INDEX changes only; \
-                         run this statement on a TiDB server",
-                    )),
+                    Ok(None) => {
+                        // A missing cluster executor must not bypass Go's
+                        // shared DDL privilege admission. Keep the capability
+                        // refusal for callers that hold the required grants.
+                        self.session
+                            .require_statement_table_privileges(stmt)
+                            .map_err(map_error)?;
+                        Err(SqlQueryError::unknown(
+                            "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
+                             CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, placement policy \
+                             changes, index changes, and single-action ALTER INDEX changes only; \
+                             run this statement on a TiDB server",
+                        ))
+                    }
                     // The refusal carries Go's own errno where it has one
                     // (`Unsupported ...` is 8200), so a client can tell a
                     // shape this server will not do from an internal failure.
@@ -7060,19 +7068,18 @@ impl ClusterServerSession {
 
     fn run_ddl(
         &mut self,
-        sql: &str,
+        parsed: &tidb_ast::Stmt,
         statement: &DdlStatement,
     ) -> Result<WriteOutcome, SqlQueryError> {
         // Go plans and checks DDL privileges before its implicit-commit
         // executor boundary. Do the same while this connection's transaction
         // is still intact: a denial must neither publish staged writes nor
         // reach the cluster catalog authority.
-        let parsed = self.session.parse_statement(sql).map_err(map_error)?;
         self.session
-            .validate_snapshot_statement(&parsed)
+            .validate_snapshot_statement(parsed)
             .map_err(map_error)?;
         self.session
-            .require_statement_table_privileges(&parsed)
+            .require_statement_table_privileges(parsed)
             .map_err(map_error)?;
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
@@ -7129,11 +7136,25 @@ impl ClusterServerSession {
 
     /// Executes DDL whose metadata belongs to this connection rather than to
     /// the cluster catalog.
-    fn run_local_temporary_ddl(&mut self, sql: &str) -> Result<WriteOutcome, SqlQueryError> {
-        let parsed = self.session.parse_statement(sql).map_err(map_error)?;
+    fn run_local_temporary_ddl(
+        &mut self,
+        sql: &str,
+        parsed: &tidb_ast::Stmt,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        // Go returns before NewTxnInStmt only for local CREATE, not TRUNCATE.
+        // Check before committing the cluster transaction; Session::run then
+        // owns the session-local table operation and observation.
         self.session
-            .require_statement_table_privileges(&parsed)
+            .validate_snapshot_statement(parsed)
             .map_err(map_error)?;
+        self.session
+            .require_statement_table_privileges(parsed)
+            .map_err(map_error)?;
+        if !Session::is_local_temporary_create_parsed(parsed)
+            && (self.explicit.is_some() || self.session.in_transaction())
+        {
+            self.control_transaction("COMMIT")?;
+        }
         match self.session.run(sql).map_err(map_error)? {
             tidb_session::StmtResult::Affected(affected_rows) => Ok(WriteOutcome {
                 affected_rows,
@@ -7405,12 +7426,12 @@ impl QuerySession for ClusterServerSession {
         match self.schema_route(stmt)? {
             StatementRoute::Ddl(statement) => {
                 return self
-                    .observe_routed_write(sql, stmt, |node| node.run_ddl(sql, &statement))
+                    .observe_routed_write(sql, stmt, |node| node.run_ddl(stmt, &statement))
                     .map(Some)
             }
             StatementRoute::LocalTemporaryDdl => {
                 return self
-                    .observe_routed_write(sql, stmt, |node| node.run_local_temporary_ddl(sql))
+                    .observe_routed_write(sql, stmt, |node| node.run_local_temporary_ddl(sql, stmt))
                     .map(Some);
             }
             StatementRoute::Accounts => {
@@ -7927,13 +7948,13 @@ impl QuerySession for ClusterServerSession {
         // statement runs exactly once either way.
         match self.schema_route(stmt)? {
             StatementRoute::Ddl(statement) => {
-                self.observe_routed_write(sql, stmt, |node| node.run_ddl(sql, &statement))?;
+                self.observe_routed_write(sql, stmt, |node| node.run_ddl(stmt, &statement))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
             }
             StatementRoute::LocalTemporaryDdl => {
-                self.observe_routed_write(sql, stmt, |node| node.run_local_temporary_ddl(sql))?;
+                self.observe_routed_write(sql, stmt, |node| node.run_local_temporary_ddl(sql, stmt))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));

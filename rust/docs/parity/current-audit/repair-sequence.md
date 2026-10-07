@@ -2,7 +2,7 @@
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
 
-Current numeric-production segment: [K03/X01 repair receipt](numeric-production-batch-validation.json). Source conversion, common decimal fitting and both literal-cast consumers were repaired together; parent packages remain unaccepted.
+Current DDL-admission segment: [A01/D01/D11/O18 repair receipt](ddl-visit-batch-validation.json). Privilege order, temporary-table adaptation and observation share one collector; parent packages remain unaccepted.
 
 ## Current structural execution queue
 

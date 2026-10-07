@@ -2,7 +2,7 @@
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
 
-Latest connected maintenance spans B02/K03 and B07/X01: [numeric production](numeric-production-batch-validation.json). Parent statuses remain partial; the other 54 unresolved roots retain carried evidence.
+Latest connected maintenance spans B02/A01, B04/D01/D11 and B09/O18: [shared DDL visits](ddl-visit-batch-validation.json). Parent statuses remain open/partial; the other 52 unresolved roots retain carried evidence.
 
 A batch groups a shared production lifecycle. Complete Go packages remain the atomic acceptance unit, including original tests, support, generated/platform/build variants and fixtures. Broad shared packages such as Domain, planner and executor retain one inventory and receipt across contributing batches. Dependencies below are integration gates; they do not prevent implementing independent prerequisite packages.
 
