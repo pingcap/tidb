@@ -413,3 +413,87 @@ fn clamping_a_system_variable_warns_1292_with_the_original_value() {
         );
     }
 }
+
+// Go fillMultiSchemaInfo refuses CHECK jobs after metadata admission and
+// before row validation, including enforcement no-ops. LOCK is filtered out.
+#[test]
+fn alter_check_jobs_reject_multi_schema_combinations_before_rows() {
+    let mut session = Session::new();
+    session
+        .run("set global tidb_enable_check_constraint=on")
+        .unwrap();
+    session
+        .run("create table mc (a int, constraint ck check(a>0) not enforced)")
+        .unwrap();
+    session.run("insert into mc values(-1)").unwrap();
+    for (sql, action) in [
+        (
+            "add constraint added check(a>0), add column b int",
+            "add check constraint",
+        ),
+        (
+            "alter constraint ck enforced, add column b int",
+            "alter check constraint",
+        ),
+        (
+            "alter constraint ck not enforced, add column b int",
+            "alter check constraint",
+        ),
+        (
+            "drop constraint ck, add column b int",
+            "drop check constraint",
+        ),
+    ] {
+        let error = session
+            .run(&format!("alter table mc {sql}"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(
+            (error.code, error.message),
+            (
+                8200,
+                format!("Unsupported multi schema change for {action}")
+            ),
+            "{sql}"
+        );
+    }
+    session
+        .run("alter table mc drop constraint ck, lock=none")
+        .unwrap();
+}
+
+#[test]
+fn alter_check_admission_uses_original_schema_before_combination_checks() {
+    let mut session = Session::new();
+    session
+        .run("set global tidb_enable_check_constraint=on")
+        .unwrap();
+    session.run("create table mc (a int)").unwrap();
+    let error = session
+        .run("alter table mc add column b int, add constraint cb check(b>0)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1054);
+    let error = session
+        .run("alter table mc drop constraint missing, drop column absent")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 3940);
+}
+
+#[test]
+fn alter_check_name_scope_excludes_existing_indexes() {
+    let mut session = Session::new();
+    session
+        .run("set global tidb_enable_check_constraint=on")
+        .unwrap();
+    session.run("create table mc(a int,index ia(a))").unwrap();
+    session
+        .run("alter table mc add constraint ia check(a>0)")
+        .unwrap();
+    let error = session
+        .run("insert into mc values(-1)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 3819);
+}

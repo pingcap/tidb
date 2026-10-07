@@ -3082,6 +3082,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                     definition: (**definition).clone(),
                     in_column: None,
                 }],
+                tidb_executor::ddl::check_constraint::CheckConstraintBuildMode::Alter,
                 &context.0,
             )
             .map_err(DdlPlanError::Admission)?;
@@ -9310,16 +9311,27 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         definition,
                         context,
                     } => {
-                        let prior_len = info.constraints.len();
+                        // Go admits the CHECK against original metadata before
+                        // fillMultiSchemaInfo rejects its unsupported job kind.
+                        let mut candidate = stored.clone_like_go();
+                        let prior_len = candidate.constraints.len();
                         crate::table_info_build::append_check_constraints(
-                            &mut info,
+                            &mut candidate,
                             &[tidb_executor::ddl::check_constraint::CheckConstraintInput {
                                 definition: (**definition).clone(),
                                 in_column: None,
                             }],
+                            tidb_executor::ddl::check_constraint::CheckConstraintBuildMode::Alter,
                             &context.0,
                         )
                         .map_err(DdlPlanError::Admission)?;
+                        if actions.len() > 1 {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                8200,
+                                "Unsupported multi schema change for add check constraint",
+                            )));
+                        }
+                        info = candidate;
                         let added = info
                             .constraints
                             .iter_deref()

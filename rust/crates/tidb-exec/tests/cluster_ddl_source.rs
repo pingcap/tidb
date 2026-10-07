@@ -2359,11 +2359,12 @@ fn completed_check_schema_stays_active_until_schema_sync() {
     assert!(!store
         .pairs
         .contains_key(&key::ddl_job_history_kv_key(job_id)));
-    assert!(DdlHistoryTable::locate(&catalog)
-        .unwrap()
-        .load(&mut store)
-        .unwrap()
-        .is_empty());
+    // The completed CREATE remains in history while this CHECK still waits
+    // for schema synchronization; only the CHECK must be absent.
+    let history = DdlHistoryTable::locate(&catalog).unwrap().load(&mut store).unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].type_, ActionType::ACTION_CREATE_TABLE);
+    assert_ne!(history[0].id, job_id);
 }
 
 #[test]
@@ -2551,11 +2552,12 @@ fn check_job_submission_precedes_every_schema_transition() {
     );
     let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
     let history_jobs = history.load(&mut store).expect("SQL history scans");
-    assert_eq!(history_jobs.len(), 1);
-    assert_eq!(history_jobs[0].id, job_id);
-    assert_eq!(history_jobs[0].state, JobState::SYNCED);
+    assert_eq!(history_jobs.len(), 2, "both CREATE and CHECK retain history");
+    assert_eq!(history_jobs.iter().filter(|job| job.type_ == ActionType::ACTION_CREATE_TABLE).count(), 1);
+    let finished = history_jobs.iter().find(|job| job.id == job_id).expect("CHECK history exists");
+    assert_eq!(finished.state, JobState::SYNCED);
     assert_eq!(
-        history_jobs[0]
+        finished
             .binlog_info
             .as_ref()
             .expect("history keeps BinlogInfo")
@@ -6766,7 +6768,7 @@ fn inline_add_column_check_matches_gos_discard_and_off_warning() {
 }
 
 #[test]
-fn grouped_add_columns_splits_table_check_into_one_multi_schema_change() {
+fn grouped_add_columns_admits_check_against_original_schema_then_refuses_job() {
     let mut store = bootstrapped();
     let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
     let lower = |sql: &str, context: &tidb_executor::StmtContext| {
@@ -6793,35 +6795,31 @@ fn grouped_add_columns_splits_table_check_into_one_multi_schema_change() {
     };
     assert!(matches!(actions[0], AlterColumnAction::Add { .. }));
     assert!(matches!(actions[1], AlterColumnAction::AddCheck { .. }));
-    let grouped = plan_ddl(&mut store, &grouped, 1_301).expect("grouped ADD plans");
-    let DdlPlan::Write(grouped) = grouped else {
-        panic!("grouped ADD writes metadata")
+    // Go CreateCheckConstraint resolves the original table, then
+    // fillMultiSchemaInfo refuses supported expressions as unsupported jobs.
+    let error = plan_ddl(&mut store, &grouped, 1_301).unwrap_err();
+    let DdlPlanError::Admission(error) = error else {
+        panic!("{error:?}")
     };
-    assert_eq!(
-        grouped.diff.action_type,
-        tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE
+    assert_eq!(error.code, 1054);
+    let grouped = lower(
+        "ALTER TABLE ck_grouped ADD COLUMN (b INT, CONSTRAINT c_grouped CHECK(a > 0))",
+        &context,
     );
-    let validation = grouped
-        .check_constraint_validation
-        .as_ref()
-        .expect("an enforced grouped CHECK validates existing rows");
-    assert_eq!(validation.constraint_name, "c_grouped");
-    let changed: tidb_model::TableInfo =
-        serde_json::from_slice(stored_value(&grouped, &key::table_kv_key(112, table_id)))
-            .expect("grouped candidate decodes");
-    assert_eq!(changed.columns.len(), 2);
-    assert_eq!(changed.constraints.len(), 1);
+    let error = plan_ddl(&mut store, &grouped, 1_301).unwrap_err();
+    let DdlPlanError::Admission(error) = error else {
+        panic!("{error:?}")
+    };
+    assert_eq!(error.code, 8200);
     assert_eq!(
-        changed
-            .constraints
-            .iter_deref()
-            .next()
-            .unwrap()
-            .read()
-            .name
-            .original(),
-        "c_grouped"
+        error.reason,
+        "Unsupported multi schema change for add check constraint"
     );
+    let unchanged: tidb_model::TableInfo =
+        serde_json::from_slice(store.pairs.get(&key::table_kv_key(112, table_id)).unwrap())
+            .unwrap();
+    assert_eq!(unchanged.columns.len(), 1);
+    assert_eq!(unchanged.constraints.len(), 0);
 
     let off = tidb_executor::StmtContext::for_query();
     let grouped_off = lower(
@@ -9458,4 +9456,38 @@ fn json_result_batch_cluster_hidden_columns_use_the_shared_type_owner() {
         tidb_datatype::FieldTypeCode::VarString
     );
     assert_eq!(column.field_type.flen(), 10);
+}
+
+#[test]
+fn check_job_admission_uses_alter_column_errors_and_constraint_name_scope() {
+    let mut store = bootstrapped();
+    let create = plan(
+        &mut store,
+        "CREATE TABLE check_admission (a INT, INDEX ia(a))",
+        3_001,
+    );
+    apply(&mut store, &create);
+    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let lower = |sql: &str| {
+        lower_ddl_with_context(&tidb_parser::parse(sql).unwrap(), "u6", &context)
+            .unwrap()
+            .unwrap()
+    };
+    let missing = lower("ALTER TABLE check_admission ADD CONSTRAINT cb CHECK(b>0)");
+    let error =
+        prepare_check_constraint_job_submission(&mut store, &missing, 3_002, false, 0).unwrap_err();
+    let DdlPlanError::Admission(error) = error else {
+        panic!("{error:?}")
+    };
+    assert_eq!(error.code, 1054);
+    let shares_index_name = lower("ALTER TABLE check_admission ADD CONSTRAINT ia CHECK(a>0)");
+    assert!(prepare_check_constraint_job_submission(
+        &mut store,
+        &shares_index_name,
+        3_002,
+        false,
+        0
+    )
+    .unwrap()
+    .is_some());
 }

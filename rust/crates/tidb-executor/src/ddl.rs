@@ -321,6 +321,7 @@ pub mod check_constraint;
 mod column_changes;
 pub mod column_field_type;
 mod column_types;
+mod constraint_changes;
 mod generated_modify;
 mod index_changes;
 pub mod index_prefix;
@@ -1840,6 +1841,7 @@ pub fn run_create_table_in(
             &checks,
             &mut max_constraint_id,
             tidb_model::SchemaState::PUBLIC,
+            check_constraint::CheckConstraintBuildMode::Create,
             ctx,
         )
         .map_err(|error| DriverError::DdlCoded {

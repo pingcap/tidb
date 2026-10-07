@@ -50,7 +50,7 @@ pub(super) fn is_index_change(action: &AlterTableAction) -> bool {
     )
 }
 
-fn add_spec<'a>(
+pub(super) fn add_spec<'a>(
     name: &'a str,
     definition: &'a IndexConstraintDefinition,
 ) -> indexes::IndexSpec<'a> {

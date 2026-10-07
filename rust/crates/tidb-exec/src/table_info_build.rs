@@ -532,7 +532,12 @@ pub fn build_table_info_in_schema(
     // inside the constraint loop, before `BuildTableInfo` appends the check
     // constraints that read `tbInfo.ForeignKeys`.
     crate::foreign_key_build::build_fk_infos(create, schema, &mut table)?;
-    append_check_constraints(&mut table, &check_constraints, context)?;
+    append_check_constraints(
+        &mut table,
+        &check_constraints,
+        tidb_executor::ddl::check_constraint::CheckConstraintBuildMode::Create,
+        context,
+    )?;
     table.temp_table_type = temporary;
     let handle_offsets = if table.pk_is_handle {
         table
@@ -653,11 +658,13 @@ pub fn build_table_info_in_schema(
 pub(crate) fn append_check_constraints(
     table: &mut TableInfo,
     checks: &[tidb_executor::ddl::check_constraint::CheckConstraintInput],
+    mode: tidb_executor::ddl::check_constraint::CheckConstraintBuildMode,
     context: &tidb_executor::StmtContext,
 ) -> Refusal<()> {
     let names = table
         .indices
         .iter_deref()
+        .filter(|_| mode == tidb_executor::ddl::check_constraint::CheckConstraintBuildMode::Create)
         .map(|index| index.read().name.lowercase().to_owned())
         .chain(
             table
@@ -695,6 +702,7 @@ pub(crate) fn append_check_constraints(
         checks,
         &mut table.max_constraint_id,
         SchemaState::PUBLIC,
+        mode,
         context,
     )
     .map_err(|error| DdlAdmissionError::with_code(error.code, error.message))?;

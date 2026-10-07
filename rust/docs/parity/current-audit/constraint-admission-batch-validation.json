@@ -1,0 +1,256 @@
+{
+  "baseline": {
+    "tidb": "64a1784320da8ee7887bcda356ff8b4e70b8cfb7",
+    "native": "8b752f9638ad157931725b66ffdc57e0465432a9",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+  },
+  "scope": "B04 constraint admission, implicit-index backfill and persisted CHECK metadata; maintain D11/D02/D01 without accepting full packages",
+  "source_inputs": {
+    "pkg/ddl/executor.go": "da64dbe0b8c84efa64b61326c899cdc45a50272c823f7ebf7cea4eb888b02d3d",
+    "pkg/ddl/multi_schema_change.go": "64b0b1b27ec3076ea70285d0203a6cd1ab73e51ee7eb90aa4d1c4b32b03d07f0",
+    "pkg/ddl/foreign_key.go": "89a40b8fb3d403c1f50de80db8af17b4a45dd439dabedd649c8c6b1e3be98afd",
+    "pkg/ddl/constraint.go": "f09d085a8b80d9a0cba8d2abc307ccfafdca733ba9bd46d377541fc054dd66b3"
+  },
+  "confirmed_before": {
+    "rust_failed": 7,
+    "rust_log": "/workspace/.cloud-setup/constraint-admission-batch/before.log",
+    "rust_log_sha256": "2051449d18c2a88fb0cbf3ebcd546b68cf02c1a8db3e96206db4efbc0b729d72",
+    "wire": {
+      "checks": [
+        {
+          "sql": "alter table mc add constraint cb check(b>0)",
+          "expected_error": 1054,
+          "actual_error": 3820,
+          "message": "Check constraint 'cb' refers to non-existing column 'b'.",
+          "passed": false
+        },
+        {
+          "sql": "alter table mc add constraint ia check(a>0)",
+          "expected_error": null,
+          "actual_error": 3822,
+          "message": "Duplicate check constraint name 'ia'.",
+          "passed": false
+        }
+      ],
+      "passed": 0
+    },
+    "notes": "An initial helper used the wrong cwd and did not edit files. Two baseline invocations shared the log; counts are seven distinct failing new tests, not the sum of repeated executions. The additional CHECK/index name-scope regression is proved by the baseline wire probe."
+  },
+  "wire_routing_limit": {
+    "checks": [
+      {
+        "sql": "alter table ac add column b int, add constraint fk foreign key(b) references ap(id)",
+        "expected_error": 1072,
+        "actual_error": 1105,
+        "message": "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, placement policy changes, index changes, and single-action ALTER INDEX changes only; run this statement on a TiDB server",
+        "passed": false
+      }
+    ],
+    "passed": 0
+  },
+  "repairs": [
+    "FK ADD/DROP metadata admission uses original schema and precedes row checks/ID consumption; anonymous names are assigned once from original MaxForeignKeyID.",
+    "Implicit FK indexes use normal index admission, participate in shared name/column conflicts, retain independent original-schema coverage decisions and backfill existing rows with the ALTER context. The metadata-only manual path is removed.",
+    "CHECK jobs resolve original metadata before Go multi-schema refusal, including enforcement no-ops; LOCK specifications are filtered. Single-operation and disabled CHECK behavior remain covered.",
+    "CREATE/ALTER CHECK build modes share expression/metadata code but preserve distinct missing-column diagnostics and name scopes across local and persisted submission callers.",
+    "Grouped cluster CHECK uses original metadata and refuses unsupported jobs. The stale success test is replaced with Go-coded refusal and unchanged-schema assertions. Two stale history assertions now retain the completed CREATE record and address CHECK by job ID before/after schema synchronization."
+  ],
+  "validation": {
+    "environment": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1",
+    "commands": [
+      {
+        "command": "cargo test --locked -p tidb-session --lib -- tests_foreign_key:: tests_check_constraints:: tests_alter_column:: tests_expression_indexes:: tests_index_key_length:: --test-threads=1",
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/constraint-admission-batch/after.log",
+        "sha256": "569fd4a1f4ffb4aa60bc326dcbedd752d4001d70bc00a5cba80b27be895b63db"
+      },
+      {
+        "command": "cargo test --locked -p tidb-exec --test all -- cluster_ddl_source::check_job_ cluster_ddl_source::completed_check_schema_ cluster_ddl_source::grouped_add_columns_ cluster_ddl_source::enabled_create_check_constraints_ cluster_ddl_source::persisted_drop_and_alter_check_jobs_ cluster_ddl_source::persisted_add_check_rolls_ --test-threads=1",
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/constraint-admission-batch/cluster-tests.log",
+        "sha256": "b2d39fcb4d7efc088d9134f4fb74942531769cb57d0df32a08fb3c63b2923367"
+      },
+      {
+        "command": "cargo check --locked --all-targets -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server",
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/constraint-admission-batch/check.log",
+        "sha256": "48e2537600dd940362e7203ddd6ce129e26968643f281d4f5e273b3993756e13"
+      },
+      {
+        "command": "make lint",
+        "cwd": "/workspace/tidb",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/constraint-admission-batch/lint.log",
+        "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+      },
+      {
+        "command": "cargo build --locked -p tidb-server",
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/constraint-admission-batch/server-build.log",
+        "sha256": "31b0c3eb1bd2b31b25e79deedda5a908d3d621b040621dda6026699053ff8de1"
+      },
+      {
+        "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/constraint-admission-batch/wire.py",
+        "cwd": "/workspace/tidb",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/constraint-admission-batch/wire-command.log",
+        "sha256": "99712c83f8636ec31f8a35abcf560e255fa7cd55bccc7d0b61512fdbebfb1ffe"
+      }
+    ],
+    "session_passed": 149,
+    "cluster_passed": 8,
+    "new_test_functions": 9,
+    "updated_stale_test_functions": 3,
+    "wire": {
+      "checks": [
+        {
+          "sql": "alter table mc add constraint cb check(b>0)",
+          "expected_error": 1054,
+          "actual_error": 1054,
+          "message": "Unknown column 'b' in 'check constraint cb expression'",
+          "passed": true
+        },
+        {
+          "sql": "insert into mc values(-1)",
+          "expected_error": 3819,
+          "actual_error": 3819,
+          "message": "Check constraint 'ia' is violated.",
+          "passed": true
+        },
+        {
+          "sql": "select a from mc",
+          "expected": [
+            [
+              -1
+            ]
+          ],
+          "actual": [
+            [
+              -1
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "sql": "alter table mc alter constraint ia enforced",
+          "expected_error": 3819,
+          "actual_error": 3819,
+          "message": "Check constraint 'ia' is violated.",
+          "passed": true
+        },
+        {
+          "sql": "select a from mc order by a",
+          "expected": [
+            [
+              -2
+            ],
+            [
+              -1
+            ]
+          ],
+          "actual": [
+            [
+              -2
+            ],
+            [
+              -1
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "sql": "alter table mc drop constraint absent",
+          "expected_error": 3940,
+          "actual_error": 3940,
+          "message": "Constraint 'absent' does not exist.",
+          "passed": true
+        },
+        {
+          "sql": "alter table mc add column (b int,constraint cb check(b>0))",
+          "expected_error": 1054,
+          "actual_error": 1054,
+          "message": "Unknown column 'b' in 'check constraint cb expression'",
+          "passed": true
+        },
+        {
+          "sql": "alter table mc add column (b int,constraint cb check(a>0))",
+          "expected_error": 8200,
+          "actual_error": 8200,
+          "message": "Unsupported multi schema change for add check constraint",
+          "passed": true
+        },
+        {
+          "sql": "select count(*) from information_schema.columns where table_schema='batch' and table_name='mc'",
+          "expected": [
+            [
+              1
+            ]
+          ],
+          "actual": [
+            [
+              1
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "sql": "show warnings",
+          "expected": [
+            [
+              "Warning",
+              1105,
+              "tidb_enable_check_constraint is off"
+            ]
+          ],
+          "actual": [
+            [
+              "Warning",
+              1105,
+              "tidb_enable_check_constraint is off"
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "sql": "select a,b from mc order by a",
+          "expected": [
+            [
+              -2,
+              null
+            ],
+            [
+              -1,
+              null
+            ]
+          ],
+          "actual": [
+            [
+              -2,
+              null
+            ],
+            [
+              -1,
+              null
+            ]
+          ],
+          "passed": true
+        }
+      ],
+      "passed": 11
+    }
+  },
+  "intermediate": "First implementation passed126/127 selected session tests; the remaining CHECK error exposed CREATE-vs-ALTER admission reuse. Corrected the shared builder and every local/cluster caller, including a second wire-reproduced index-name collision. The consolidated cluster target is --test all (the initial standalone target matched no target). A known historical history-count failure was a stale fixture assumption: completed CREATE already owns one history record. Repaired it and its before-sync counterpart while requiring preserved CREATE history and CHECK job identity. A test field-name compile error was corrected. No behavioral assertion was weakened.",
+  "limits": [
+    "D01 remains open: general SQL DDL still lacks complete persisted scheduling/recovery. Existing CHECK submission admission is repaired, not the general owner.",
+    "D02 remains open: the implicit local FK index now backfills through the ordinary owner; cluster whole-table backfill, durable schema phases/reorg and persisted evaluation context remain unresolved.",
+    "D11 remains partial: table-option/partition/table-rename admission, schema-wide CHECK duplicate-name owner timing, and full durable execution/recovery remain unresolved.",
+    "Other53 findings retain carried evidence, not a fresh whole-register review. Counts remain86 tracked/30 repaired/56 unresolved (27open,29partial).",
+    "The first live FK multi-clause ALTER probe returned the server routing refusal1105 before the repaired local owner. FK fixes are proved in-process; no live FK route acceptance is claimed. Eleven live CHECK assertions cover the supported persisted/grouped paths.",
+    "No full Go suites, live multi-node TiKV, crash-recovery deployment or performance benchmarks run. Native client unchanged.",
+    "Actual precommit hook and fresh locked prepush build are required; publication results live in external final-handoff.json after commit."
+  ]
+}

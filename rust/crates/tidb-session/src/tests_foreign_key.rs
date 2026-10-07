@@ -2461,3 +2461,102 @@ fn shared_write_fk_rejection_skips_unrelated_null_warning() {
         );
     }
 }
+
+// Go CreateForeignKey collects original-schema jobs before owner row checks.
+#[test]
+fn alter_foreign_key_original_schema_admission() {
+    for (sql, expected) in [
+        (
+            "add column b int, add constraint fk foreign key(b) references ap(id)",
+            1072,
+        ),
+        (
+            "rename column a to b, add constraint fk foreign key(b) references ap(id)",
+            1072,
+        ),
+        (
+            "add constraint fk foreign key(a) references ap(id), drop foreign key fk",
+            1091,
+        ),
+        (
+            "add index fk(id), add constraint fk foreign key(a) references ap(id)",
+            8200,
+        ),
+        (
+            "modify column a bigint, add constraint fk foreign key(a) references ap(id)",
+            8200,
+        ),
+    ] {
+        let mut session = Session::new();
+        session.run("create table ap (id int primary key)").unwrap();
+        session.run("create table ac (id int, a int)").unwrap();
+        assert_eq!(
+            code(&mut session, &format!("alter table ac {sql}")),
+            Some(expected),
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn alter_foreign_key_admission_precedes_existing_row_checks() {
+    let mut session = Session::new();
+    session.run("create table ap (id int primary key)").unwrap();
+    session.run("create table ac (a int, index ia(a))").unwrap();
+    session.run("insert into ac values(42)").unwrap();
+    assert_eq!(code(&mut session, "alter table ac add constraint fk foreign key(a) references ap(id), drop column missing"), Some(1091));
+    session.run("delete from ac").unwrap();
+    session
+        .run("alter table ac add foreign key(a) references ap(id)")
+        .unwrap();
+    let ddl = rows(&mut session, "show create table ac");
+    assert!(ddl[0][1].contains("CONSTRAINT `fk_1`"), "{ddl:?}");
+    assert_eq!(code(&mut session, "alter table ac drop foreign key fk_1, add constraint fk_1 foreign key(a) references ap(id)"), Some(1826));
+}
+
+#[test]
+fn alter_foreign_key_implicit_index_uses_shared_admission() {
+    let mut session = Session::new();
+    session.run("create table ap (id int primary key)").unwrap();
+    session
+        .run("create table ac (a int, b int, index fk(b))")
+        .unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "alter table ac add constraint fk foreign key(a) references ap(id)"
+        ),
+        Some(1061)
+    );
+}
+
+#[test]
+fn alter_foreign_key_implicit_indexes_are_prepared_independently() {
+    let mut session = Session::new();
+    session.run("create table ap (id int primary key)").unwrap();
+    session.run("create table ac (a int)").unwrap();
+    session.run("alter table ac add foreign key(a) references ap(id), add foreign key(a) references ap(id)").unwrap();
+    let ddl = rows(&mut session, "show create table ac");
+    for name in ["fk_1", "fk_2"] {
+        assert!(
+            ddl[0][1].contains(&format!("KEY `{name}` (`a`)")),
+            "{ddl:?}"
+        );
+    }
+}
+
+#[test]
+fn alter_foreign_key_implicit_index_backfills_existing_rows() {
+    let mut session = Session::new();
+    session.run("create table ap (id int primary key)").unwrap();
+    session.run("create table ac (a int)").unwrap();
+    session.run("insert into ap values(7)").unwrap();
+    session.run("insert into ac values(7)").unwrap();
+    session
+        .run("alter table ac add constraint fk foreign key(a) references ap(id)")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "select a from ac force index(fk) where a=7"),
+        vec![vec!["7"]]
+    );
+}

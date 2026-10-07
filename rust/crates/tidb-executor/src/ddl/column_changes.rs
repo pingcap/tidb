@@ -283,7 +283,7 @@ impl PreparedColumnChange {
                             &ctx.session_zone(),
                             ctx.like_default_escape(),
                         )
-                        .map_err(alter_table::check_constraint_table_error)?;
+                        .map_err(super::constraint_changes::check_constraint_table_error)?;
                 }
             }
             Self::Modify {

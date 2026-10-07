@@ -1817,6 +1817,12 @@ impl KvTable {
         self.max_foreign_key_id = self.max_foreign_key_id.max(staged.max_foreign_key_id);
     }
 
+    /// Go TableInfo.MaxForeignKeyID, used to name all anonymous ALTER jobs
+    /// before any of them consumes an identifier in the owner.
+    pub(crate) fn max_foreign_key_id(&self) -> i64 {
+        self.max_foreign_key_id
+    }
+
     /// The name Go gives the NEXT unnamed constraint on this table:
     /// `fk_{MaxForeignKeyID+1}`.
     #[must_use]

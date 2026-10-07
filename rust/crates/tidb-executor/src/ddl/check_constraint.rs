@@ -118,6 +118,16 @@ pub fn create_inputs(create: &tidb_ast::CreateTableStmt) -> Vec<CheckConstraintI
     checks
 }
 
+/// Go uses different name scopes and missing-column diagnostics for CREATE
+/// and ALTER CHECK admission, while sharing expression and metadata validation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CheckConstraintBuildMode {
+    /// CREATE TABLE also reserves ordinary index names.
+    Create,
+    /// ALTER CHECK resolves only existing CHECK names and reports ErrBadField.
+    Alter,
+}
+
 /// Builds Go `ConstraintInfo` values and advances `max_constraint_id` once
 /// for each result.
 #[allow(clippy::too_many_arguments)]
@@ -129,6 +139,7 @@ pub fn build_constraint_infos(
     checks: &[CheckConstraintInput],
     max_constraint_id: &mut i64,
     state: SchemaState,
+    mode: CheckConstraintBuildMode,
     context: &StmtContext,
 ) -> Result<Vec<ConstraintInfo>, CheckConstraintError> {
     if checks.is_empty() {
@@ -207,13 +218,13 @@ pub fn build_constraint_infos(
             Ok(built) => built,
             Err(error) => {
                 if let Some(missing) = resolver.missing_name() {
-                    return Err(unknown_column(&name, &missing));
+                    return Err(unknown_column(&name, &missing, mode));
                 }
                 return Err(CheckConstraintError::new(1105, format!("{error:?}")));
             }
         };
         if let Some(missing) = resolver.missing_name() {
-            return Err(unknown_column(&name, &missing));
+            return Err(unknown_column(&name, &missing, mode));
         }
         let dependencies = resolver.dependency_names();
         if let Some(column_name) = &check.in_column {
@@ -293,7 +304,20 @@ pub fn build_constraint_infos(
     Ok(infos)
 }
 
-fn unknown_column(name: &str, missing: &str) -> CheckConstraintError {
+fn unknown_column(
+    name: &str,
+    missing: &str,
+    mode: CheckConstraintBuildMode,
+) -> CheckConstraintError {
+    if mode == CheckConstraintBuildMode::Alter {
+        return CheckConstraintError::new(
+            1054,
+            format!(
+                "Unknown column '{}' in 'check constraint {name} expression'",
+                missing.go_to_lower()
+            ),
+        );
+    }
     CheckConstraintError::new(
         tidb_error::tidb::errcode::ErrTableCheckConstraintReferUnknown,
         format!("Check constraint '{name}' refers to non-existing column '{missing}'."),

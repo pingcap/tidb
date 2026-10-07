@@ -55,6 +55,8 @@ Integration dependencies: B01, B04.
 
 ## B04: Durable DDL and placement recovery
 
+Current maintenance: [constraint admission/index backfill](constraint-admission-batch-validation.json) connects local and persisted CHECK metadata, original-schema FK admission and ordinary implicit-index backfill. D01/D02 remain open and D11 partial; this is not durable DDL package acceptance.
+
 Source owners: pkg/ddl, ddl/jobsubmit and complete reorganization owners; domain/infosync, domain/affinity and GC consumers.
 
 Completion: Submit, schedule, execute, recover and wait on the same persisted job and schema lifecycle. Placement and delete ranges follow durable phases. Keep materialized-view/import seeds disabled until complete owners pass. B08 is required only for source modes that use DXF.

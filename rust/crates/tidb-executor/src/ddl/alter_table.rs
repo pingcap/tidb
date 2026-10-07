@@ -21,9 +21,8 @@
 //! [`prepare_add_column`], [`prepare_modify_column`] and
 //! [`prepare_drop_column`], the three column changes, including the read-time
 //! `OriginDefaultValue` fill that gives already-written rows a new column's
-//! DEFAULT without rewriting their bytes; [`add_foreign_key_action`] and
-//! [`drop_foreign_key_action`], which let a constraint be declared and
-//! withdrawn after the table exists; [`set_table_options_action`] for
+//! DEFAULT without rewriting their bytes; constraint admission/application
+//! in `constraint_changes`; [`set_table_options_action`] for
 //! the table-level options an ALTER may set; and the two helpers
 //! [`normalize_column_default`] and [`existing_table_charset`] that the
 //! column actions share. Each doc comment records the captured TiDB error
@@ -38,10 +37,10 @@ use std::collections::HashSet;
 
 use super::column_changes::{self, PreparedColumnChange};
 use super::column_types::{field_type_of, NOT_NULL_FLAG};
+use super::constraint_changes::{self, PreparedConstraintChange};
 use super::index_changes::{self, PreparedIndexChange};
 use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset};
-use crate::kv_table::KvForeignKey;
 use crate::partition_routing::{PartitionDef, PartitionKind, RangeBound};
 use tidb_datatype::{Charset, Collation, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_hack::GoToLower;
@@ -153,6 +152,7 @@ pub fn run_alter_table_in(
 
 enum PreparedAlterChange<'a> {
     Column(PreparedColumnChange),
+    Constraint(PreparedConstraintChange),
     Index(PreparedIndexChange<'a>),
 }
 
@@ -257,6 +257,16 @@ fn reject_multi_schema_same_column_or_index(
                 }
                 if let Some(tidb_ast::ColumnPosition::After(name)) = position {
                     position_columns.push(name.clone());
+                }
+            }
+            Some(PreparedAlterChange::Constraint(change)) => {
+                if let Some(index) = change.implicit_index() {
+                    add_indexes.push(index.name.clone().expect("implicit index is named"));
+                    for part in &index.parts {
+                        if let tidb_ast::IndexPart::Column { name, .. } = part {
+                            relative_columns.push(name.clone());
+                        }
+                    }
                 }
             }
             None => {}
@@ -458,7 +468,18 @@ fn run_alter_table_in_inner(
     super::refuse_temporary_table_alter_options(catalog, &database, &name, &alter.actions)?;
     super::table_cache::guard_alter_actions(catalog, &database, &name, &alter.actions)?;
 
-    let actions = resolve_grouped_actions(&alter.actions);
+    let mut actions = resolve_grouped_actions(&alter.actions).into_owned();
+    // Go getValidAlterTableSpecs filters LOCK before counting specifications.
+    actions.retain(|action| !matches!(action, tidb_ast::AlterTableAction::Lock(_)));
+    let mut next_fk_id = column_changes::table_of(catalog, &database, &name)?.max_foreign_key_id();
+    for action in &mut actions {
+        if let tidb_ast::AlterTableAction::AddForeignKey(definition) = action {
+            if definition.name.as_ref().is_none_or(String::is_empty) {
+                next_fk_id += 1;
+                definition.name = Some(format!("fk_{next_fk_id}"));
+            }
+        }
+    }
     let preparation_ctx = ctx.with_isolated_warnings();
     let mut admission_failed = false;
     let mut changes = Vec::with_capacity(actions.len());
@@ -467,6 +488,16 @@ fn run_alter_table_in_inner(
             // Go stops building jobs at the first admission error. The
             // traversal below delivers that error after any earlier action.
             Ok(None)
+        } else if constraint_changes::is_constraint_change(action) {
+            constraint_changes::prepare(
+                action,
+                catalog,
+                &database,
+                &name,
+                &preparation_ctx,
+                actions.len() > 1,
+            )
+            .map(|change| change.map(PreparedAlterChange::Constraint))
         } else if index_changes::is_index_change(action) {
             index_changes::prepare(
                 action,
@@ -500,10 +531,16 @@ fn run_alter_table_in_inner(
     }
     for (action, mut prepared) in actions.iter().zip(changes) {
         prepared.publish_warnings(ctx);
-        if index_changes::is_index_change(action) || column_changes::is_column_change(action) {
+        if index_changes::is_index_change(action)
+            || column_changes::is_column_change(action)
+            || constraint_changes::is_constraint_change(action)
+        {
             if let Some(change) = prepared.change? {
                 if !admission_failed {
                     match change {
+                        PreparedAlterChange::Constraint(change) => {
+                            change.execute(catalog, &database, &name, ctx)?
+                        }
                         PreparedAlterChange::Index(change) => {
                             change.execute(catalog, &database, &name, ctx)?
                         }
@@ -553,12 +590,6 @@ fn run_alter_table_in_inner(
                 );
                 catalog.rename_table(&database, &name, &to_db, &to_name);
             }
-            tidb_ast::AlterTableAction::AddForeignKey(definition) => {
-                add_foreign_key_action(catalog, &database, &name, definition, ctx)?;
-            }
-            tidb_ast::AlterTableAction::DropForeignKey(drop) => {
-                drop_foreign_key_action(catalog, &database, &name, &drop.name)?;
-            }
             tidb_ast::AlterTableAction::SetTableOptions { options } => {
                 set_table_options_action(catalog, &database, &name, options, ctx, allocators)?;
             }
@@ -592,38 +623,7 @@ fn run_alter_table_in_inner(
                 names,
                 definitions,
                 ..
-            }) => {
-                reorganize_partition_action(catalog, &database, &name, names, definitions, ctx)?
-            }
-            tidb_ast::AlterTableAction::AddCheck(definition) => {
-                if ctx.enable_check_constraint() {
-                    add_check_constraint_action(
-                        catalog,
-                        &database,
-                        &name,
-                        super::check_constraint::CheckConstraintInput {
-                            definition: definition.clone(),
-                            in_column: None,
-                        },
-                        ctx,
-                    )?;
-                }
-            }
-            tidb_ast::AlterTableAction::AlterCheck(alter) => {
-                if ctx.enable_check_constraint() {
-                    alter_check_constraint_action(
-                        catalog,
-                        &database,
-                        &name,
-                        &alter.name,
-                        alter.enforced,
-                        ctx,
-                    )?;
-                }
-            }
-            tidb_ast::AlterTableAction::DropCheck(drop) => {
-                drop_check_constraint_action(catalog, &database, &name, &drop.name, ctx)?;
-            }
+            }) => reorganize_partition_action(catalog, &database, &name, names, definitions, ctx)?,
             // Go removes LOCK specs before dispatch and treats ENABLE/DISABLE
             // KEYS as MyISAM-only compatibility syntax with no TiDB action.
             tidb_ast::AlterTableAction::Lock(_) | tidb_ast::AlterTableAction::SetKeysEnabled(_) => {
@@ -660,209 +660,6 @@ fn run_alter_table_in_inner(
         }
     }
     Ok(())
-}
-
-fn check_constraint_columns(table: &crate::KvTable) -> Vec<tidb_model::ColumnInfo> {
-    table
-        .visible_columns()
-        .iter()
-        .enumerate()
-        .map(|(offset, column)| {
-            let mut info =
-                tidb_model::ColumnInfo::new(column.id, &column.name, column.field_type.clone());
-            info.offset = offset as i64;
-            info.version = column.column_info_version;
-            info
-        })
-        .collect()
-}
-
-fn check_constraint_foreign_keys(
-    table: &crate::KvTable,
-) -> Vec<super::check_constraint::CheckConstraintForeignKey> {
-    table
-        .foreign_keys()
-        .iter()
-        .map(
-            |foreign_key| super::check_constraint::CheckConstraintForeignKey {
-                columns: foreign_key.cols.clone(),
-                has_referential_action: foreign_key.on_delete != crate::FkAction::NoOption
-                    || foreign_key.on_update != crate::FkAction::NoOption,
-            },
-        )
-        .collect()
-}
-
-fn check_table_clone(
-    catalog: &Catalog,
-    database: &str,
-    table_name: &str,
-) -> Result<crate::KvTable, DriverError> {
-    match catalog.table_in(database, table_name) {
-        Some(crate::TableEntry::Kv(table)) => Ok((**table).clone()),
-        _ => Err(DriverError::unsupported(
-            "CHECK constraints need a storage-backed table",
-        )),
-    }
-}
-
-fn install_check_constraint_infos(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    mut table: crate::KvTable,
-    infos: Vec<tidb_model::table::ConstraintInfo>,
-    validate_rows: bool,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    table
-        .set_check_constraint_infos(infos, &ctx.session_zone(), ctx.like_default_escape())
-        .map_err(check_constraint_table_error)?;
-    if validate_rows {
-        let mut cursor = table
-            .row_cursor_with_context(&crate::RowDecodeContext::for_write(ctx))
-            .map_err(check_constraint_table_error)?;
-        while let Some((_, row)) = cursor.next_row().map_err(check_constraint_table_error)? {
-            table
-                .validate_check_constraints(&row, ctx)
-                .map_err(check_constraint_table_error)?;
-        }
-    }
-    match catalog.table_mut_in(database, table_name) {
-        Some(crate::TableEntry::Kv(stored)) => {
-            *stored = std::sync::Arc::new(table);
-            Ok(())
-        }
-        _ => Err(DriverError::unsupported(
-            "CHECK constraints need a storage-backed table",
-        )),
-    }
-}
-
-pub(super) fn check_constraint_table_error(error: crate::kv_table::KvTableError) -> DriverError {
-    match error {
-        crate::kv_table::KvTableError::CheckConstraintViolated(name) => {
-            DriverError::CheckConstraintViolated(name)
-        }
-        error => DriverError::DdlCoded {
-            errno: 1105,
-            message: format!("{error:?}"),
-        },
-    }
-}
-
-fn add_check_constraint_action(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    input: super::check_constraint::CheckConstraintInput,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let table = check_table_clone(catalog, database, table_name)?;
-    let columns = check_constraint_columns(&table);
-    let foreign_keys = check_constraint_foreign_keys(&table);
-    let mut max_constraint_id = table.max_constraint_id();
-    let names = table
-        .indexes()
-        .iter()
-        .map(|index| index.name.clone())
-        .chain(
-            table
-                .check_constraint_infos()
-                .iter()
-                .map(|info| info.name.original().to_owned()),
-        )
-        .collect::<Vec<_>>();
-    let built = super::check_constraint::build_constraint_infos(
-        &tidb_ast::CiString::new(table_name),
-        &columns,
-        names,
-        &foreign_keys,
-        std::slice::from_ref(&input),
-        &mut max_constraint_id,
-        tidb_model::SchemaState::PUBLIC,
-        ctx,
-    )
-    .map_err(|error| DriverError::DdlCoded {
-        errno: error.code,
-        message: error.message,
-    })?;
-    let added = built
-        .first()
-        .expect("one CHECK input builds one metadata record");
-    if super::check_constraint_name_exists_in_schema(
-        catalog,
-        database,
-        Some(table_name),
-        added.name.original(),
-    ) {
-        return Err(DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrCheckConstraintDupName,
-            message: format!(
-                "Duplicate check constraint name '{}'.",
-                added.name.original()
-            ),
-        });
-    }
-    let validate_rows = added.enforced;
-    let mut infos = table.check_constraint_infos().to_vec();
-    infos.extend(built);
-    install_check_constraint_infos(
-        catalog,
-        database,
-        table_name,
-        table,
-        infos,
-        validate_rows,
-        ctx,
-    )
-}
-
-fn drop_check_constraint_action(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    constraint_name: &str,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let table = check_table_clone(catalog, database, table_name)?;
-    let mut infos = table.check_constraint_infos().to_vec();
-    let Some(offset) = infos
-        .iter()
-        .position(|info| info.name.original().eq_ignore_ascii_case(constraint_name))
-    else {
-        return Err(DriverError::CheckConstraintNotExists(
-            constraint_name.to_owned(),
-        ));
-    };
-    infos.remove(offset);
-    install_check_constraint_infos(catalog, database, table_name, table, infos, false, ctx)
-}
-
-fn alter_check_constraint_action(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    constraint_name: &str,
-    enforced: bool,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let table = check_table_clone(catalog, database, table_name)?;
-    let mut infos = table.check_constraint_infos().to_vec();
-    let Some(info) = infos
-        .iter_mut()
-        .find(|info| info.name.original().eq_ignore_ascii_case(constraint_name))
-    else {
-        return Err(DriverError::CheckConstraintNotExists(
-            constraint_name.to_owned(),
-        ));
-    };
-    if info.enforced == enforced {
-        return Ok(());
-    }
-    info.enforced = enforced;
-    info.state = tidb_model::SchemaState::PUBLIC;
-    install_check_constraint_infos(catalog, database, table_name, table, infos, enforced, ctx)
 }
 
 fn truncate_partition_action(
@@ -1542,161 +1339,6 @@ fn add_partition_action(
     Ok(())
 }
 
-/// One `ALTER TABLE ... ADD [CONSTRAINT name] FOREIGN KEY ...`.
-///
-/// Go `executor.CreateForeignKey` (`pkg/ddl/executor.go`) plus the job it
-/// submits (`onCreateForeignKey`, `pkg/ddl/foreign_key.go`), in the order Go
-/// performs them:
-///
-/// 1. An unnamed constraint is `fk_{MaxForeignKeyID+1}`, and a name the table
-///    already declares is 1826 (`checkFKDupName`). That check runs before any
-///    reference is resolved, so it fires with `foreign_key_checks` at 0 too.
-/// 2. The constraint is built by the SAME [`build_foreign_key`] a
-///    `CREATE TABLE` uses, so the DDL-time rules -- 3733 for a virtual
-///    generated column on either side, 3104 for an action that would write a
-///    stored one, the parent lookup behind `foreign_key_checks` -- hold
-///    identically whichever statement declared it.
-/// 3. An existing parent must have a covering index (or a clustered handle
-///    primary key for the single-column case), and same-column self-reference
-///    is rejected with Go's 1215. These owner checks run before metadata is
-///    staged.
-/// 4. A constraint whose referencing columns no index covers gets one, named
-///    after the constraint, exactly as `CREATE TABLE` does. Go creates it
-///    here as a real `createIndex` before the job is submitted, which is why
-///    the missing-index error inside `checkAddForeignKeyValidInOwner` is not
-///    reachable from this path.
-/// 5. The rows the table ALREADY holds are checked against the new
-///    constraint, and an orphan is 1452 -- see
-///    [`crate::foreign_key::require_existing_rows`]. `foreign_key_checks = 0`
-///    skips this and only this step, which is how a constraint can be
-///    declared over data that does not satisfy it.
-fn add_foreign_key_action(
-    catalog: &mut Catalog,
-    database: &str,
-    name: &str,
-    definition: &tidb_ast::ForeignKeyConstraintDefinition,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, name) else {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
-        ));
-    };
-    let fk_name = definition
-        .name
-        .clone()
-        .unwrap_or_else(|| table.next_foreign_key_name());
-    if table
-        .foreign_keys()
-        .iter()
-        .any(|key| key.name.eq_ignore_ascii_case(&fk_name))
-    {
-        return Err(DriverError::FkDupName(fk_name));
-    }
-    let columns: Vec<super::table_constraints::FkColumn> = table
-        .columns
-        .iter()
-        .map(|column| super::table_constraints::FkColumn {
-            name: column.name.clone(),
-            generated_stored: column.generated.as_ref().map(|generated| generated.stored),
-            field_type: column.field_type.clone(),
-        })
-        .collect();
-    let clustered: Vec<usize> = match table.pk_handle_offset() {
-        Some(offset) => vec![offset],
-        None => table.common_handle_offsets().to_vec(),
-    };
-    let foreign_key = super::table_constraints::build_foreign_key(
-        definition,
-        fk_name,
-        &columns,
-        Some(table),
-        catalog,
-        database,
-        ctx.foreign_key_checks(),
-        table.partition().is_some(),
-    )?;
-    validate_alter_foreign_key_parent(catalog, database, name, &foreign_key)?;
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
-        ));
-    };
-    let table = std::sync::Arc::make_mut(table);
-    // Consumed before the rows are read, and NOT given back when they reject
-    // the constraint -- see [`crate::kv_table::KvTable::allocate_foreign_key_id`].
-    table.allocate_foreign_key_id();
-    if ctx.foreign_key_checks() {
-        // Go runs this check inside the job, after the constraint and its
-        // index are staged, and ROLLS BOTH BACK when it fails: captured, a
-        // rejected `ADD FOREIGN KEY` leaves neither the constraint nor the
-        // index it would have created. Checking first reaches that state
-        // without staging anything to undo.
-        crate::foreign_key::require_existing_rows(
-            catalog,
-            database,
-            name,
-            &foreign_key,
-            &ctx.session_zone(),
-        )?;
-    }
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
-        ));
-    };
-    let table = std::sync::Arc::make_mut(table);
-    // Go `CreateForeignKey`'s `createIndex` arm: an existing key whose columns
-    // START with the referencing ones already serves the constraint, the
-    // clustered handle included; otherwise TiDB adds one named after the
-    // constraint. The index a DROPPED constraint left behind counts, which is
-    // why re-adding a constraint over the same columns adds no second key.
-    // Go `IsIndexPrefixCovered`: a key part that stores only a PREFIX of its
-    // column cannot answer the constraint's lookup, so it earns no exemption.
-    let fk_offsets = table.foreign_key_offsets(&foreign_key).unwrap_or_default();
-    let covered = |offsets: &[usize]| offsets.starts_with(&fk_offsets[..]);
-    let column_flens: Vec<i64> = table
-        .columns
-        .iter()
-        .map(|column| column.field_type.flen())
-        .collect();
-    let covered_index = |index: &super::KvIndex| {
-        covered(&index.column_offsets)
-            && table.partial_index_safe_for_columns(index, &fk_offsets)
-            && fk_offsets.iter().enumerate().all(|(position, at)| {
-                let length = index.prefix_length(position);
-                length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
-                    || column_flens.get(*at).is_some_and(|flen| length >= *flen)
-            })
-    };
-    if !covered(&clustered) && !table.indexes().iter().any(covered_index) {
-        let id = table.next_index_id();
-        table.add_index(
-            super::KvIndex {
-                id,
-                name: foreign_key.name.clone(),
-                comment: String::new(),
-                unique: false,
-                column_offsets: fk_offsets.clone(),
-                prefix_lengths: vec![
-                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                    fk_offsets.len()
-                ],
-                visible: true,
-                // A foreign key's auto-created index is local to the table it
-                // constrains; Go's `FKInfo` carries no `GLOBAL` to record.
-                global: false,
-                global_index_version: 0,
-                clustered_primary: false,
-            },
-            false,
-        );
-    }
-    table.add_foreign_key(foreign_key);
-    catalog.mark_has_foreign_keys();
-    Ok(())
-}
-
 /// Go's multi-action ALTER validator evaluates a dropped index against an FK
 /// added by the same statement before either action is committed. If the
 /// existing index is the key the new constraint would rely on, dropping it is
@@ -1755,109 +1397,6 @@ fn reject_drop_index_used_by_added_foreign_key(
                 ));
             }
         }
-    }
-    Ok(())
-}
-
-/// Go `checkTableForeignKeyValid`'s owner-side self-reference and parent-index
-/// checks (`pkg/ddl/foreign_key.go:186-211, 290-297`). CREATE TABLE has its own
-/// historical path; this helper is deliberately called only for ALTER ADD.
-fn validate_alter_foreign_key_parent(
-    catalog: &Catalog,
-    database: &str,
-    child_table: &str,
-    foreign_key: &KvForeignKey,
-) -> Result<(), DriverError> {
-    let self_reference = foreign_key.ref_schema.eq_ignore_ascii_case(database)
-        && foreign_key.ref_table.eq_ignore_ascii_case(child_table)
-        && foreign_key.cols.len() == foreign_key.ref_cols.len()
-        && foreign_key
-            .cols
-            .iter()
-            .zip(&foreign_key.ref_cols)
-            .all(|(child, parent)| child.eq_ignore_ascii_case(parent));
-    if self_reference {
-        return Err(DriverError::DdlCoded {
-            errno: 1215,
-            message: "Cannot add foreign key constraint".to_owned(),
-        });
-    }
-
-    // With checks off Go permits an as-yet-missing parent. There is no parent
-    // index to validate in that deferred case; when the parent exists, its
-    // covering-index rule still applies just as in Go's checkTableForeignKey.
-    let Some(crate::TableEntry::Kv(parent)) =
-        catalog.get_in(&foreign_key.ref_schema, &foreign_key.ref_table)
-    else {
-        return Ok(());
-    };
-    let Some(ref_offsets) = foreign_key
-        .ref_cols
-        .iter()
-        .map(|column| {
-            parent
-                .columns
-                .iter()
-                .position(|candidate| candidate.name.eq_ignore_ascii_case(column))
-        })
-        .collect::<Option<Vec<_>>>()
-    else {
-        return Ok(());
-    };
-    let clustered = parent
-        .pk_handle_offset()
-        .map(|offset| vec![offset])
-        .unwrap_or_else(|| parent.common_handle_offsets().to_vec());
-    let clustered_cover = ref_offsets.len() == 1 && ref_offsets == clustered;
-    let column_flens: Vec<i64> = parent
-        .columns
-        .iter()
-        .map(|column| column.field_type.flen())
-        .collect();
-    let index_cover = parent.indexes().iter().any(|index| {
-        index.column_offsets.starts_with(&ref_offsets)
-            && ref_offsets.iter().enumerate().all(|(position, offset)| {
-                let length = index.prefix_length(position);
-                length == super::index_prefix::UNSPECIFIED_LENGTH
-                    || column_flens
-                        .get(*offset)
-                        .is_some_and(|flen| length >= *flen)
-            })
-    });
-    if !clustered_cover && !index_cover {
-        return Err(DriverError::DdlCoded {
-            errno: 1822,
-            message: format!(
-                "Failed to add the foreign key constraint. Missing index for constraint '{}' in the referenced table '{}'",
-                foreign_key.name, foreign_key.ref_table
-            ),
-        });
-    }
-    Ok(())
-}
-
-/// One `ALTER TABLE ... DROP FOREIGN KEY name`.
-///
-/// Go `executor.DropForeignKey` looks the name up and raises
-/// `infoschema.ErrForeignKeyNotExists` -- which is `ErrCantDropFieldOrKey`,
-/// 1091 with the "check that column/key exists" message -- when the table
-/// declares no such constraint. The index the constraint relied on is NOT
-/// dropped with it (Go `dropForeignKey` touches only `TableInfo.ForeignKeys`),
-/// so `SHOW CREATE TABLE` keeps printing the auto-created key afterwards and
-/// a later `ADD FOREIGN KEY` over the same columns reuses it.
-fn drop_foreign_key_action(
-    catalog: &mut Catalog,
-    database: &str,
-    name: &str,
-    fk_name: &str,
-) -> Result<(), DriverError> {
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE ... DROP FOREIGN KEY needs a storage-backed table",
-        ));
-    };
-    if !std::sync::Arc::make_mut(table).drop_foreign_key(fk_name) {
-        return Err(DriverError::UnknownColumnInAlter(fk_name.to_owned()));
     }
     Ok(())
 }
