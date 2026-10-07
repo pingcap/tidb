@@ -1,0 +1,192 @@
+{
+  "date": "2026-10-07",
+  "baseline": {
+    "tidb": "08a31d9e2beb5f32b7b7107a5072fa73e1285ed1",
+    "session": {
+      "passed": 0,
+      "failed": 3,
+      "ignored": 0
+    },
+    "metadata": {
+      "passed": 0,
+      "failed": 4,
+      "ignored": 0
+    },
+    "wire": {
+      "passed": 9,
+      "failed": 9,
+      "server_exit": 0,
+      "binary_sha256": "a833a442c9106809e89bd07c63d2440e3330fc5cd9fde3fef92fa23fd72c6fd1",
+      "failures": [
+        {
+          "name": "missing schema occupied destination",
+          "error": [
+            1049,
+            "Unknown database 'absent'"
+          ]
+        },
+        {
+          "name": "missing source schema",
+          "error": [
+            1049,
+            "Unknown database 'absent'"
+          ]
+        },
+        {
+          "name": "missing destination schema",
+          "error": [
+            1049,
+            "Unknown database 'absent'"
+          ]
+        },
+        {
+          "name": "alter missing destination schema",
+          "error": [
+            1049,
+            "Unknown database 'absent'"
+          ]
+        },
+        {
+          "name": "view cannot move schemas",
+          "error": null
+        },
+        {
+          "name": "refused view remains readable",
+          "error": [
+            1146,
+            "Table 'rename_batch.v' doesn't exist"
+          ]
+        },
+        {
+          "name": "rename target identifier limit",
+          "error": null
+        },
+        {
+          "name": "alter target identifier limit",
+          "error": null
+        },
+        {
+          "name": "missing parent still rejected",
+          "error": null
+        }
+      ]
+    }
+  },
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_unchanged": "aa2c60f37481c2fe7f03997535d4f238ed485956",
+  "findings": [
+    "D01",
+    "D11",
+    "E02",
+    "I04"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "scope": "Existing rename admission, direct metadata transaction, FK retention and peer schema publication; no complete durable DDL or package acceptance",
+  "go_sources": [
+    "pkg/ddl/executor.go::ExtractTblInfos/checkTooLongTable",
+    "pkg/ddl/table.go::adjustForeignKeyChildTableInfoAfterRenameTable/onRenameTables",
+    "pkg/ddl/schema_version.go::SetSchemaDiffForRenameTables/SetSchemaDiffForMultiInfos",
+    "pkg/infoschema/builder.go::applyAffectedOpts"
+  ],
+  "production": [
+    "tidb-executor/src/ddl/table_lifecycle.rs::RenameAdmission/check_rename/rename_changes_fk_reference",
+    "tidb-executor/src/ddl/alter_table.rs::prepare_metadata_change",
+    "tidb-executor/src/foreign_key.rs::rewrite_table_references",
+    "tidb-exec/src/cluster_ddl.rs::plan_rename_tables"
+  ],
+  "removed": [
+    "Duplicated RENAME/ALTER source/destination admission branches after migration to shared policy",
+    "Stale direct multi-target DROP note assertions in cluster_ddl_alter_source; the removed atomic planner is not a valid execution owner. Retain single-target error assertions and the passing SQL if_exists_demotes_the_error_it_swallowed_to_a_note suite plus drop-completion live receipt."
+  ],
+  "validation": {
+    "session": {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_core::ddl:: tests_foreign_key:: tests_temporary_tables:: tests_views:: --test-threads=1",
+      "passed": 199,
+      "failed": 0,
+      "ignored": 0
+    },
+    "metadata": {
+      "command": "cargo test --locked -p tidb-exec --test all -- cluster_ddl_alter_source:: catalog_reload_source:: rename --test-threads=1",
+      "passed": 58,
+      "failed": 0,
+      "ignored": 0
+    },
+    "initial_metadata": {
+      "passed": 57,
+      "failed": 1,
+      "ignored": 0
+    },
+    "all_targets": "PASS: cargo check --locked --all-targets -p tidb-executor -p tidb-session -p tidb-exec -p tidb-server",
+    "lint": "PASS: make lint",
+    "locked_build": "PASS: cargo build --locked -p tidb-server",
+    "wire": {
+      "passed": 18,
+      "failed": 0,
+      "server_exit": 0,
+      "binary_sha256": "baacb9127f5411477a1aa68bb62c329a3b78dcdb451e1b06dfd2d8b6690c52f2",
+      "failures": []
+    },
+    "wire_command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/rename-owner-batch/wire.py",
+    "publication": "Actual hooks/pre-commit locked build and fresh prepush locked build required; final normal push, SHA, bundle and draft outcomes are recorded in external final-handoff.json",
+    "distinct_rust_passes": 257
+  },
+  "validation_notes": [
+    "Seven new regressions fail before production changes; three additional source-policy/self-reference/cross-schema controls pass after repair without an independent baseline run",
+    "Initial metadata group57passed/1failed on a pre-existing stale DROP test block; corrected by retiring only obsolete private-planner assertions, not weakening SQL behavior. A first cleanup command used the wrong cwd and left files unchanged; its unchanged rerun is retained separately. Final metadata pass follows the successful cleanup."
+  ],
+  "limitations": [
+    "All four parent statuses unchanged; other52 unresolved roots retain carried evidence",
+    "Ordinary SQL still uses direct metadata transactions; persisted rename helper/recovery, metadata locks and masking/placement effects remain incomplete",
+    "Process-wide tidb_enable_foreign_key consumption and complete FK/job/package obligations remain open; supported default-enabled behavior is validated",
+    "No full Go suites, live multi-node TiKV, crash-recovery, performance or fresh-task restoration validation"
+  ],
+  "external_logs": "/workspace/.cloud-setup/rename-owner-batch",
+  "artifacts": {
+    "session-before.log": {
+      "sha256": "0e5f5bbc25586444022fb011fd529ba8d6c1854c171de5225bd8fc39eb2fd871",
+      "bytes": 97292
+    },
+    "metadata-before.log": {
+      "sha256": "2726d4a52b570a4677e081be66c30a936b8692b290bd650298a6e8fc77277666",
+      "bytes": 96217
+    },
+    "wire-before.json": {
+      "sha256": "2ef9ef4291160f729d9b9278d0ed3a043a6d6bab0cf3b911f2da92fbdcb97ffa",
+      "bytes": 3858
+    },
+    "session-after.log": {
+      "sha256": "85555ec8299adecc6ace6cbba902bc615a489afff36da2d57b9a4b443937cebc",
+      "bytes": 110510
+    },
+    "metadata-after-initial.log": {
+      "sha256": "36a128762539cf14ecf0fba166744b29cb051f4e2d249582ef687cfdb35bcc5a",
+      "bytes": 91738
+    },
+    "metadata-final.log": {
+      "sha256": "9a41d7979a4887b9cb618be0edeafbc3b3a63003768ed7c9650edab6810c2dd3",
+      "bytes": 91177
+    },
+    "all-targets.log": {
+      "sha256": "4203fd4d25b28c181afe170ce78a8049078aae49ca525a088526b7e9bf26df10",
+      "bytes": 125885
+    },
+    "lint.log": {
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+      "bytes": 2164
+    },
+    "server-build.log": {
+      "sha256": "2a834ee1bd154963b4a61d0d156d97259b27984ccdc0aedb2100969421cc31f7",
+      "bytes": 104393
+    },
+    "wire.json": {
+      "sha256": "f42384057b10c09b7bebf554afc3e941fc8439ae3e06f85daa286645be264c8a",
+      "bytes": 4552
+    }
+  }
+}

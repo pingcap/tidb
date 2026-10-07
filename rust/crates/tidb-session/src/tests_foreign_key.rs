@@ -2739,3 +2739,24 @@ fn fk_access_batch_read_errors_are_not_success_or_ignored_violations() {
         vec![vec!["10", "1"]]
     );
 }
+
+#[test]
+fn rename_owner_batch_schema_only_move_keeps_source_fk_policy() {
+    let mut session = Session::new();
+    session.run("CREATE DATABASE destination").unwrap();
+    session
+        .run("CREATE TABLE parent (id INT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("CREATE TABLE child (id INT, FOREIGN KEY fk(id) REFERENCES parent(id))")
+        .unwrap();
+    let before = rows(&mut session, "SHOW CREATE TABLE child");
+    session
+        .run("RENAME TABLE parent TO destination.parent")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SHOW CREATE TABLE child"),
+        before,
+        "Go skips FK adjustment when the table name is unchanged"
+    );
+}

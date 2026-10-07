@@ -807,6 +807,9 @@ pub(crate) fn rewrite_table_references(
     to_database: &str,
     to_table: &str,
 ) {
+    if !crate::ddl::rename_changes_fk_reference(from_table, to_table) {
+        return;
+    }
     let tables: Vec<(String, String)> = catalog
         .database_names()
         .into_iter()

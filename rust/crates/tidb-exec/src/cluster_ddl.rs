@@ -9843,6 +9843,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 plan_rename_tables(
                     &catalog,
                     std::slice::from_ref(&pair),
+                    *is_alter,
                     start_ts,
                     &mut writes,
                     &mut diff,
@@ -9850,7 +9851,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             }
         }
         DdlStatement::RenameTables { pairs } => {
-            plan_rename_tables(&catalog, pairs, start_ts, &mut writes, &mut diff)?;
+            plan_rename_tables(&catalog, pairs, false, start_ts, &mut writes, &mut diff)?;
         }
         DdlStatement::CreateIndex {
             schema,
@@ -10937,6 +10938,7 @@ struct RenamePairResult {
 fn plan_rename_tables(
     catalog: &ClusterCatalog,
     pairs: &[RenameTablePair],
+    is_alter: bool,
     start_ts: u64,
     writes: &mut Vec<BufferMutation>,
     diff: &mut SchemaDiff,
@@ -10947,8 +10949,24 @@ fn plan_rename_tables(
         .map(|database| (database.info.name.lowercase().to_owned(), database.info.id))
         .collect::<BTreeMap<_, _>>();
     let mut namespace = BTreeMap::new();
+    let mut table_locations = BTreeMap::new();
+    let mut referred = BTreeMap::<String, Vec<(i64, String)>>::new();
     for database in &catalog.databases {
         for table in &database.tables {
+            table_locations.insert(
+                table.id,
+                table_name_key(database.info.name.lowercase(), table.name.lowercase()),
+            );
+            for fk in table.foreign_keys.iter_deref() {
+                let fk = fk.read();
+                referred
+                    .entry(table_name_key(
+                        fk.ref_schema.lowercase(),
+                        fk.ref_table.lowercase(),
+                    ))
+                    .or_default()
+                    .push((table.id, fk.name.lowercase().to_owned()));
+            }
             namespace.insert(
                 table_name_key(database.info.name.lowercase(), table.name.lowercase()),
                 RenameState {
@@ -10960,36 +10978,43 @@ fn plan_rename_tables(
         }
     }
 
-    let mut changed = BTreeMap::new();
+    let mut changed = std::collections::BTreeSet::new();
     let mut results = Vec::with_capacity(pairs.len());
     for pair in pairs {
         let from_schema = pair.from_schema.go_to_lower();
         let to_schema = pair.to_schema.go_to_lower();
-        if !database_ids.contains_key(&from_schema) {
-            return Err(DdlPlanError::UnknownDatabase(pair.from_schema.clone()));
-        }
-        // go checks the DESTINATION before the source: a rename whose target
-        // name is taken reports 1050 even when the source is also missing
-        // (oracle m13: `RENAME TABLE h1 TO h2` over a missing h1 and an
-        // existing h2 errors `Table 'fdq.h2' already exists`).
-        let Some(&new_schema_id) = database_ids.get(&to_schema) else {
-            return Err(DdlPlanError::UnknownDatabase(pair.to_schema.clone()));
-        };
-        let to_key = table_name_key(&to_schema, &pair.to_table.go_to_lower());
-        if namespace.contains_key(&to_key) {
-            return Err(DdlPlanError::TableExists {
-                schema: pair.to_schema.clone(),
-                table: pair.to_table.clone(),
-            });
-        }
         let from_key = table_name_key(&from_schema, &pair.from_table.go_to_lower());
-        let Some(state) = namespace.get(&from_key) else {
-            return Err(DdlPlanError::TableNotExists {
-                schema: pair.from_schema.clone(),
-                table: pair.from_table.clone(),
-            });
-        };
-
+        let to_key = table_name_key(&to_schema, &pair.to_table.go_to_lower());
+        let original = catalog.find_table(&from_schema, &pair.from_table);
+        tidb_executor::ddl::check_rename(tidb_executor::ddl::RenameAdmission {
+            source: (&pair.from_schema, &pair.from_table),
+            target: (&pair.to_schema, &pair.to_table),
+            source_exists: namespace.contains_key(&from_key),
+            target_schema_exists: database_ids.contains_key(&to_schema),
+            target_exists: namespace.contains_key(&to_key),
+            source_is_view: original.is_some_and(|(_, table)| table.view.is_some()),
+            is_alter,
+        })
+        .map_err(|error| match error {
+            tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::UnknownTable(_)) => {
+                DdlPlanError::TableNotExists {
+                    schema: pair.from_schema.clone(),
+                    table: pair.from_table.clone(),
+                }
+            }
+            tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::TableExists(_)) => {
+                DdlPlanError::TableExists {
+                    schema: pair.to_schema.clone(),
+                    table: pair.to_table.clone(),
+                }
+            }
+            other => {
+                let error = other.to_mysql_error();
+                DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+            }
+        })?;
+        let new_schema_id = database_ids[&to_schema];
+        let state = namespace.get(&from_key).expect("admitted source");
         let mut state = state.clone();
         namespace.remove(&from_key);
         let old_schema_id = state.current_schema_id;
@@ -11007,11 +11032,45 @@ fn plan_rename_tables(
             old_schema_id,
             new_schema_id,
         });
-        changed.insert(table_id, state.clone());
+        changed.insert(table_id);
+        table_locations.insert(table_id, to_key.clone());
         namespace.insert(to_key, state);
+        if tidb_executor::ddl::rename_changes_fk_reference(&pair.from_table, &pair.to_table) {
+            // Go consults the original InfoSchema's referred-key directory,
+            // then edits retained child metadata by identity in this transaction.
+            if let Some(children) = referred.get(&from_key) {
+                let schema_name = &catalog
+                    .databases
+                    .iter()
+                    .find(|database| database.info.id == new_schema_id)
+                    .expect("admitted schema")
+                    .info
+                    .name;
+                for (child_id, fk_name) in children {
+                    let location = table_locations
+                        .get(child_id)
+                        .expect("retained child identity");
+                    let child = namespace
+                        .get_mut(location)
+                        .expect("retained child metadata");
+                    for fk in child.table.foreign_keys.iter_deref() {
+                        let mut fk = fk.write();
+                        if fk.name.lowercase() == fk_name {
+                            fk.ref_schema = schema_name.clone();
+                            fk.ref_table = CiString::new(pair.to_table.clone());
+                            changed.insert(*child_id);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    for state in changed.values() {
+    for state in namespace
+        .values()
+        .filter(|state| changed.contains(&state.table.id))
+    {
         let table_id = state.table.id;
         if state.original_schema_id != state.current_schema_id {
             writes.push(BufferMutation::delete(key::table_kv_key(
@@ -11035,27 +11094,41 @@ fn plan_rename_tables(
         diff.schema_id = first.new_schema_id;
         diff.table_id = first.table_id;
         diff.old_schema_id = first.old_schema_id;
-        return Ok(());
+    } else {
+        // This direct transaction publishes only once. Go's first rename
+        // phase carries the original schema so peers retire the old entry;
+        // its later completion-only diff cannot replace that first publication.
+        // Remaining pairs retain their written order in affected options.
+        diff.action_type = ActionType::ACTION_RENAME_TABLES;
+        diff.schema_id = first.new_schema_id;
+        diff.table_id = first.table_id;
+        diff.old_schema_id = first.old_schema_id;
+        diff.affected_options = results[1..]
+            .iter()
+            .map(|result| AffectedOption {
+                schema_id: result.new_schema_id,
+                table_id: result.table_id,
+                old_table_id: result.table_id,
+                old_schema_id: result.old_schema_id,
+            })
+            .collect::<Vec<_>>()
+            .into();
     }
-
-    // Go's RenameTables completion has already moved every table before it
-    // writes the diff, so `OldSchemaIDForSchemaDiff` is the new schema for
-    // each pair. The first pair lives in the diff header; the remaining pairs
-    // are the affected options in source order.
-    diff.action_type = ActionType::ACTION_RENAME_TABLES;
-    diff.schema_id = first.new_schema_id;
-    diff.table_id = first.table_id;
-    diff.old_schema_id = first.new_schema_id;
-    diff.affected_options = results[1..]
-        .iter()
-        .map(|result| AffectedOption {
-            schema_id: result.new_schema_id,
-            table_id: result.table_id,
-            old_table_id: result.table_id,
-            old_schema_id: result.new_schema_id,
-        })
-        .collect::<Vec<_>>()
-        .into();
+    // Go SetSchemaDiffForMultiInfos deduplicates moved tables, then publishes
+    // other loaded FK children at their current schema and unchanged ID.
+    let moved: std::collections::BTreeSet<_> =
+        results.iter().map(|result| result.table_id).collect();
+    for state in namespace
+        .values()
+        .filter(|state| changed.contains(&state.table.id) && !moved.contains(&state.table.id))
+    {
+        diff.affected_options.push_go(AffectedOption {
+            schema_id: state.current_schema_id,
+            old_schema_id: state.current_schema_id,
+            table_id: state.table.id,
+            old_table_id: state.table.id,
+        });
+    }
     Ok(())
 }
 

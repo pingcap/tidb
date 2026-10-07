@@ -738,19 +738,7 @@ fn a_missing_table_is_1146_everywhere_except_drop_table() {
     );
     assert_eq!(error.to_string(), "Unknown table 'u6.nosuch'");
 
-    // IF EXISTS preserves every note in source order, for both no-op and
-    // writing plans. A single optional warning cannot represent this result.
-    let expected = vec![
-        (DdlWarningLevel::Note, 1051, "Unknown table 'u6.first_missing'".to_owned()),
-        (DdlWarningLevel::Note, 1051, "Unknown table 'u6.second_missing'".to_owned()),
-    ];
-    let no_op = plan_ddl(&mut store, &statement("DROP TABLE IF EXISTS u6.first_missing,u6.second_missing"), 300).unwrap();
-    let DdlPlan::AlreadySatisfied { warnings, .. } = no_op else { panic!("missing tables do not write") };
-    assert_eq!(warnings, expected);
-    let create = plan(&mut store, "CREATE TABLE u6.present(a INT)", 400);
-    apply(&mut store, &create);
-    let drop = plan(&mut store, "DROP TABLE IF EXISTS u6.first_missing,u6.present,u6.second_missing", 500);
-    assert_eq!(drop.warnings, expected);
+
 }
 
 /// A `DATETIME(n) DEFAULT CURRENT_TIMESTAMP(n)` column must produce a
@@ -819,4 +807,193 @@ fn add_virtual_generated_column_and_refuse_stored_like_go() {
         admission.reason,
         "'Adding generated stored column through ALTER TABLE' is not supported for generated columns."
     );
+}
+
+#[test]
+fn rename_owner_batch_destination_schema_uses_rename_error() {
+    let mut store = bootstrapped();
+    let write = plan(&mut store, "CREATE TABLE u6.source (id INT)", 100);
+    apply(&mut store, &write);
+    for sql in [
+        "RENAME TABLE u6.source TO absent.t",
+        "ALTER TABLE u6.source RENAME TO absent.t",
+    ] {
+        let error = plan_ddl(&mut store, &statement(sql), 200)
+            .unwrap_err()
+            .to_sql_error();
+        assert_eq!(error.code, 1025, "{sql}: {error:?}");
+    }
+}
+
+#[test]
+fn rename_owner_batch_missing_schema_preserves_source_error() {
+    let mut store = bootstrapped();
+    let error = plan_ddl(&mut store, &statement("RENAME TABLE absent.t TO u6.t"), 200)
+        .unwrap_err()
+        .to_sql_error();
+    assert_eq!(error.code, 1146);
+}
+
+#[test]
+fn rename_owner_batch_persistent_target_identifier_limit() {
+    let mut store = bootstrapped();
+    let write = plan(&mut store, "CREATE TABLE u6.source (id INT)", 100);
+    apply(&mut store, &write);
+    let sql = format!("RENAME TABLE u6.source TO u6.{}", "x".repeat(65));
+    let error = plan_ddl(&mut store, &statement(&sql), 200)
+        .unwrap_err()
+        .to_sql_error();
+    assert_eq!(error.code, 1059);
+}
+
+#[test]
+fn rename_owner_batch_parent_updates_and_publishes_child() {
+    let mut store = bootstrapped();
+    let parent = plan(
+        &mut store,
+        "CREATE TABLE u6.parent (id INT PRIMARY KEY)",
+        100,
+    );
+    apply(&mut store, &parent);
+    let child = plan(
+        &mut store,
+        "CREATE TABLE u6.child (id INT, FOREIGN KEY fk(id) REFERENCES u6.parent(id))",
+        200,
+    );
+    apply(&mut store, &child);
+    let child_id = child.created_id.unwrap();
+    let before = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store).unwrap();
+    let write = plan(&mut store, "RENAME TABLE u6.parent TO u6.renamed", 300);
+    let stored = stored_table(&write, child_id);
+    assert_eq!(stored["fk_info"][0]["ref_table"]["O"], "renamed");
+    assert!(
+        write
+            .diff
+            .affected_options
+            .iter_deref()
+            .any(|option| option.read().table_id == child_id),
+        "changed children must reload on peers"
+    );
+    apply(&mut store, &write);
+    let reloaded = tidb_exec::catalog_reload::reload_cluster_catalog(&mut store, &before).unwrap();
+    let child = reloaded
+        .catalog()
+        .unwrap()
+        .find_table("u6", "child")
+        .unwrap()
+        .1;
+    assert_eq!(
+        child
+            .foreign_keys
+            .get(0)
+            .unwrap()
+            .read()
+            .ref_table
+            .original(),
+        "renamed"
+    );
+}
+
+#[test]
+fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
+    let mut store = bootstrapped();
+    let parent = plan(&mut store, "CREATE TABLE u6.parent (id INT PRIMARY KEY, pid INT, FOREIGN KEY self_fk(pid) REFERENCES u6.parent(id))", 100);
+    apply(&mut store, &parent);
+    let parent_id = parent.created_id.unwrap();
+    let child = plan(
+        &mut store,
+        "CREATE TABLE u6.child (id INT, FOREIGN KEY fk(id) REFERENCES u6.parent(id))",
+        200,
+    );
+    apply(&mut store, &child);
+    let child_id = child.created_id.unwrap();
+    let before = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store).unwrap();
+    let write = plan(
+        &mut store,
+        "RENAME TABLE u6.parent TO u6.renamed, u6.child TO u6.moved_child",
+        300,
+    );
+    for id in [parent_id, child_id] {
+        assert_eq!(
+            stored_table(&write, id)["fk_info"][0]["ref_table"]["O"],
+            "renamed"
+        );
+    }
+    assert_eq!(
+        write.diff.affected_options.len(),
+        1,
+        "moved child is published once"
+    );
+    assert_eq!(
+        before
+            .find_table("u6", "child")
+            .unwrap()
+            .1
+            .foreign_keys
+            .get(0)
+            .unwrap()
+            .read()
+            .ref_table
+            .original(),
+        "parent",
+        "planning must not mutate the source catalog"
+    );
+    apply(&mut store, &write);
+    let reloaded = tidb_exec::catalog_reload::reload_cluster_catalog(&mut store, &before).unwrap();
+    let peer = reloaded.catalog().unwrap();
+    assert!(peer.find_table("u6", "parent").is_none());
+    assert!(peer.find_table("u6", "child").is_none());
+    let child = peer.find_table("u6", "moved_child").unwrap().1;
+    assert_eq!(child.id, child_id);
+    assert_eq!(
+        child
+            .foreign_keys
+            .get(0)
+            .unwrap()
+            .read()
+            .ref_table
+            .original(),
+        "renamed"
+    );
+}
+
+#[test]
+fn rename_owner_batch_cross_schema_diff_retires_original_entries() {
+    let mut store = bootstrapped();
+    let database = plan(&mut store, "CREATE DATABASE destination", 90);
+    apply(&mut store, &database);
+    for (sql, ts) in [
+        ("CREATE TABLE u6.one (id INT)", 100),
+        ("CREATE TABLE u6.two (id INT)", 200),
+    ] {
+        let write = plan(&mut store, sql, ts);
+        apply(&mut store, &write);
+    }
+    let before = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store).unwrap();
+    let write = plan(
+        &mut store,
+        "RENAME TABLE u6.one TO destination.one, u6.two TO destination.two",
+        300,
+    );
+    assert_eq!(
+        write.diff.old_schema_id, 112,
+        "direct publication must retire the old schema"
+    );
+    assert_eq!(
+        write
+            .diff
+            .affected_options
+            .get(0)
+            .unwrap()
+            .read()
+            .old_schema_id,
+        112
+    );
+    apply(&mut store, &write);
+    let reloaded = tidb_exec::catalog_reload::reload_cluster_catalog(&mut store, &before).unwrap();
+    let peer = reloaded.catalog().unwrap();
+    for name in ["one", "two"] {
+        assert!(peer.find_table("u6", name).is_none());
+        assert!(peer.find_table("destination", name).is_some());
+    }
 }

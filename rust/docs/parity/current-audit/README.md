@@ -4,16 +4,16 @@ Latest cleanup: [opt-in cluster diagnostic](smoke-target-cleanup-validation.json
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [shared TSO collection and live policy](tso-collection-batch-validation.json). B01/P06 and B05/N03 now share the native adaptive collector, 20,000-request bound, buffer/completion lifecycle and live maximum wait from SQL publication through PD options. The private adapter vector/drain/completion loop is removed. Three baseline regressions fail; exact final gates are in the receipt. Counts remain 86 tracked / 30 repaired / 56 unresolved (27 open, 29 partial). RPC concurrency, readiness/prewarm, independent worker ownership and complete-package obligations remain open; other 54 roots retain carried evidence.
+Latest connected repair: [rename admission and publication](rename-owner-batch-validation.json). D01/D11/E02/I04 share ordered RENAME/ALTER admission, FK metadata retention and peer catalog publication. Remove private source/destination checks and use original schema IDs for the direct multi-table transition. Seven Rust regressions and nine of18 live assertions fail on the baseline; exact final gates are in the receipt. Counts remain86 tracked/30 repaired/56 unresolved (27open,29partial). Complete durable DDL and package ownership remain open; other52 roots retain carried evidence.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../tso-collection-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../rename-owner-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](tso-collection-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](rename-owner-batch-validation.json): exact source/log identities and verification limits.
 
-Current Go comparison: `7a3dacb52efe58d28db360ae8639d8838c376544`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `aa2c60f37481c2fe7f03997535d4f238ed485956`; maintained sync applied all four patches and regenerated protobuf sources. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
+Current Go comparison: `7a3dacb52efe58d28db360ae8639d8838c376544`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master remains `aa2c60f37481c2fe7f03997535d4f238ed485956`; maintained sync is unchanged in this batch. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
 A complete upstream package, including original tests, generated/platform/build inputs and fixtures, is the minimum acceptance unit. Search hits, a passing subset and retired Rust-only adapter tests do not discharge those obligations. The complete inventories are snapshots, not proof that every semantic mismatch is known.
 
@@ -30,6 +30,8 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 Earlier implementation: [shared read consistency](read-consistency-batch-validation.json). Prior partition reorganization safety remains in place until its durable owner exists.
 
 ## Historical evidence
+
+- [TSO collection and live policy](tso-collection-batch-validation.json)
 
 - [view admission and publication](view-owner-batch-validation.json)
 

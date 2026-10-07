@@ -110,6 +110,86 @@ pub fn check_drop_table_references(
     crate::foreign_key::check_drop_tables(catalog, names)
 }
 
+/// Facts selected from the original catalog and the ordered rename overlay.
+/// The source view flag comes from the original name, as Go ExtractTblInfos does.
+pub struct RenameAdmission<'a> {
+    /// Source database and table, preserving the submitting identifiers.
+    pub source: (&'a str, &'a str),
+    /// Destination database and table.
+    pub target: (&'a str, &'a str),
+    /// Source presence after earlier pairs in this statement.
+    pub source_exists: bool,
+    /// Destination database presence.
+    pub target_schema_exists: bool,
+    /// Destination presence after earlier pairs in this statement.
+    pub target_exists: bool,
+    /// Whether the original source name resolves to a view.
+    pub source_is_view: bool,
+    /// ALTER permits an identity rename and keeps missing-source precedence.
+    pub is_alter: bool,
+}
+
+/// Go ExtractTblInfos admission in source order. False means ALTER's no-job
+/// identity case; callers retain their existing staging and publication owner.
+pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, DriverError> {
+    let RenameAdmission {
+        source: (from_db, from_name),
+        target: (to_db, to_name),
+        source_exists,
+        target_schema_exists,
+        target_exists,
+        source_is_view,
+        is_alter,
+    } = admission;
+    let occupied = || {
+        DriverError::Schema(crate::SchemaErrorKind::TableExists(format!(
+            "{to_db}.{to_name}"
+        )))
+    };
+    if !source_exists {
+        if !is_alter && target_exists {
+            return Err(occupied());
+        }
+        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+            format!("{from_db}.{from_name}"),
+        )));
+    }
+    if is_alter
+        && from_db.go_to_lower() == to_db.go_to_lower()
+        && from_name.go_to_lower() == to_name.go_to_lower()
+    {
+        return Ok(false);
+    }
+    if source_is_view && from_db != to_db {
+        return Err(DriverError::DdlCoded {
+            errno: 1450,
+            message: format!("Changing schema from '{from_db}' to '{to_db}' is not allowed."),
+        });
+    }
+    if !target_schema_exists {
+        return Err(DriverError::Schema(
+            crate::SchemaErrorKind::RenameTargetDatabaseMissing {
+                from: format!("{from_db}.{from_name}"),
+                to: format!("{to_db}.{to_name}"),
+                database: to_db.to_owned(),
+            },
+        ));
+    }
+    if target_exists {
+        return Err(occupied());
+    }
+    if to_name.go_to_lower().chars().count() > 64 {
+        return Err(DriverError::TooLongIdent(to_name.to_owned()));
+    }
+    Ok(true)
+}
+
+/// Go's FK rename helper does no reference adjustment for an unchanged table
+/// name, including a schema-only move. Keep this independent of SQL FK checks.
+pub fn rename_changes_fk_reference(from_table: &str, to_table: &str) -> bool {
+    from_table.go_to_lower() != to_table.go_to_lower()
+}
+
 /// Runs a `RENAME TABLE`, validating each pair in written order and then
 /// moving them all or none.
 ///
@@ -172,10 +252,16 @@ pub fn run_rename_table_in(
         let (to_db, to_name) = (to_db.go_to_lower(), to_name.go_to_lower());
 
         super::refuse_local_temporary_table_ddl(catalog, &from_db, &from_name, "RENAME TABLE")?;
-        if !staged_table_exists(catalog, &staged, &from_db, &from_name) {
-            return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
-                format!("{from_db}.{from_name}"),
-            )));
+        if !check_rename(RenameAdmission {
+            source: (&from_db, &from_name),
+            target: (&to_db, &to_name),
+            source_exists: staged_table_exists(catalog, &staged, &from_db, &from_name),
+            target_schema_exists: catalog.has_database(&to_db),
+            target_exists: staged_table_exists(catalog, &staged, &to_db, &to_name),
+            source_is_view: catalog.is_view_in(&from_db, &from_name),
+            is_alter: matches!(&**ddl, DdlStmt::AlterTable(_)),
+        })? {
+            continue;
         }
         let source_cached = staged
             .iter()
@@ -190,22 +276,6 @@ pub fn run_rename_table_in(
                 },
                 |rename| rename.source_cached,
             );
-        // Go checks the destination SCHEMA before the destination table, and
-        // reports a missing one as 1025 rather than moving anything.
-        if !catalog.has_database(&to_db) {
-            return Err(DriverError::Schema(
-                crate::SchemaErrorKind::RenameTargetDatabaseMissing {
-                    from: format!("{from_db}.{from_name}"),
-                    to: format!("{to_db}.{to_name}"),
-                    database: to_db,
-                },
-            ));
-        }
-        if staged_table_exists(catalog, &staged, &to_db, &to_name) {
-            return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
-                format!("{to_db}.{to_name}"),
-            )));
-        }
         if source_cached {
             return Err(DriverError::OperationOnCachedTable(cache_operation));
         }

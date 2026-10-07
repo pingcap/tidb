@@ -10,7 +10,7 @@
     "partial": 29
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "P06/N03 existing TSO collection and live runtime-policy owners maintained together; other54 roots retain carried evidence; no complete package acceptance.",
+  "evidence_limit": "D01/D11/E02/I04 existing rename admission, FK metadata and schema publication maintained together; other52 roots retain carried evidence; no complete package acceptance.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -565,12 +565,14 @@
   },
   "latest_repair": {
     "date": "2026-10-07",
-    "receipt": "tso-collection-batch-validation.json",
+    "receipt": "rename-owner-batch-validation.json",
     "findings": [
-      "P06",
-      "N03"
+      "D01",
+      "D11",
+      "E02",
+      "I04"
     ],
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
-    "scope": "Shared native adaptive TSO collection, live wait propagation and adapter duplicate-loop removal; existing-owner repair, not complete-package acceptance."
+    "scope": "Shared rename admission, retained FK metadata and peer schema publication; existing direct-owner maintenance, not complete durable DDL/package acceptance."
   }
 }

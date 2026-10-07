@@ -2233,3 +2233,56 @@ fn index_comments_and_visibility_share_metadata() {
     assert_eq!(shown[0][13], "NO");
     assert_eq!(shown[1][13], "YES");
 }
+
+// Go ExtractTblInfos: source/destination precedence is shared with ALTER,
+// while RENAME's missing-source branch still checks the destination first.
+#[test]
+fn rename_owner_batch_missing_source_prefers_existing_destination() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE taken (id INT)").unwrap();
+    for sql in [
+        "RENAME TABLE missing TO taken",
+        "RENAME TABLE absent_db.missing TO test.taken",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1050, "{sql}: {error:?}");
+    }
+    assert_eq!(
+        session
+            .run("ALTER TABLE missing RENAME TO taken")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1146
+    );
+}
+
+#[test]
+fn rename_owner_batch_view_cannot_change_schema() {
+    let mut session = Session::new();
+    session.run("CREATE DATABASE other").unwrap();
+    session.run("CREATE VIEW v AS SELECT 1 AS n").unwrap();
+    let error = session
+        .run("RENAME TABLE v TO other.v")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1450);
+    assert_eq!(
+        session.run("SELECT n FROM v").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(1)]])
+    );
+}
+
+#[test]
+fn rename_owner_batch_target_identifier_limit() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE original (id INT)").unwrap();
+    for sql in [
+        format!("RENAME TABLE original TO {}", "x".repeat(65)),
+        format!("ALTER TABLE original RENAME TO {}", "x".repeat(65)),
+    ] {
+        let error = session.run(&sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1059, "{sql}: {error:?}");
+    }
+    session.run("INSERT INTO original VALUES (1)").unwrap();
+}

@@ -1419,25 +1419,16 @@ fn prepare_metadata_change(
         }
         tidb_ast::AlterTableAction::RenameTable { new_name } => {
             let (to_db, to_name) = crate::driver::split_table_path_pub(new_name, current_db)?;
-            // ExtractTblInfos returns without submitting a job for this case.
-            if database.go_to_lower() == to_db.go_to_lower()
-                && name.go_to_lower() == to_name.go_to_lower()
-            {
+            if !super::check_rename(super::RenameAdmission {
+                source: (database, name),
+                target: (to_db, to_name),
+                source_exists: true,
+                target_schema_exists: catalog.has_database(to_db),
+                target_exists: catalog.table_in(to_db, to_name).is_some(),
+                source_is_view: false,
+                is_alter: true,
+            })? {
                 return Ok(Vec::new());
-            }
-            if !catalog.has_database(to_db) {
-                return Err(DriverError::Schema(
-                    crate::SchemaErrorKind::RenameTargetDatabaseMissing {
-                        from: format!("{database}.{name}"),
-                        to: format!("{to_db}.{to_name}"),
-                        database: to_db.to_owned(),
-                    },
-                ));
-            }
-            if catalog.table_in(to_db, to_name).is_some() {
-                return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
-                    format!("{to_db}.{to_name}"),
-                )));
             }
             reject_metadata_multi_job(multi_schema, "rename table")?;
             Ok(vec![PreparedMetadataChange::Rename {
