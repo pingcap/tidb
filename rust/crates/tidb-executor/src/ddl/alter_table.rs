@@ -2462,7 +2462,7 @@ fn existing_table_charset(catalog: &Catalog, database: &str, table_name: &str) -
 /// 5. `{ENUM, SET, BIT} -> TIME (DURATION)`.
 ///
 /// Everything else this function is asked about is accepted HERE -- the
-/// per-row `convert_to` gate in `KvTable::modify_column` still gets the last
+/// per-row `convert_to` gate in `KvTable::modify_column_with_context` still gets the last
 /// word for any row that will not fit the new type.
 fn check_type_change_supported(origin: &FieldType, to: &FieldType) -> Result<(), DriverError> {
     let (from_code, to_code) = (origin.code(), to.code());
@@ -3055,7 +3055,7 @@ pub(super) fn prepare_modify_column(
     // calls `types.CheckModifyTypeCompatible`, which for a type-changing
     // MODIFY calls `checkTypeChangeSupported` (`pkg/types/field_type.go:1569`)
     // BEFORE any row is read. That location is what makes the refusal fire on
-    // an EMPTY table: the per-row `convert_to` gate in `KvTable::modify_column`
+    // an EMPTY table: the per-row `convert_to` gate in `KvTable::modify_column_with_context`
     // below never runs when there are zero rows, so without this table-level
     // check every one of Go's five outright refusals would be silently
     // accepted on an empty table.
@@ -3230,7 +3230,7 @@ pub(super) fn prepare_modify_column(
     // Go `checkIndexInModifiableColumns` (`pkg/ddl/modify_column.go`): every
     // key part over this column is re-validated against the NEW type, under
     // the length that key part will survive with -- which is Go's
-    // `UpdateIndexCol` rule, applied by `KvTable::modify_column` itself.
+    // `UpdateIndexCol` rule, applied by `KvTable::modify_column_with_context` itself.
     //
     // This subsumes the `ErrBlobKeyWithoutLength` refusal it replaces: a key
     // part with no surviving prefix over a new BLOB/TEXT column is exactly

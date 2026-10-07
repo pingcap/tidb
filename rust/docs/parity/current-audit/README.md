@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [obsolete reader APIs and duplicated setup](reader-api-cleanup-validation.json). Remove 15 obsolete APIs and three superseded plans; tests and the remaining index-join caller use the live routed/mapped owners. Three partition queries share one fixture, and sorted integer-response coverage joins the projection matrix. All behavioral assertions remain; 221 selected tests, affected all-target checks and lint pass. Finding dispositions stay unchanged.
+Latest cleanup: [obsolete mutation APIs](mutation-api-cleanup-validation.json). Remove five legacy entry points and three private forwarding layers after caller migration. Update/delete use the existing statement context directly; two tests retain every behavioral assertion on live APIs. Stale storage backend guidance is replaced. Finding dispositions stay unchanged.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 

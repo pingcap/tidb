@@ -802,8 +802,8 @@
     "scope": "B05 N03 / B09 O13 connected partitioned ordinary lookup, index-join and index-merge table readers; existing-owner maintenance, no complete package acceptance"
   },
   "latest_test_cleanup": {
-    "receipt": "reader-api-cleanup-validation.json",
-    "scope": "Remove 15 obsolete reader APIs, merge duplicated test setup without losing assertions, and retire three superseded plans. Runtime behavior and all findings unchanged.",
+    "receipt": "mutation-api-cleanup-validation.json",
+    "scope": "Remove five obsolete table mutation APIs and three private forwarding layers; migrate two tests to live statement-context APIs with every assertion retained. Replace stale storage backend guidance. Finding dispositions unchanged.",
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
   },
   "test_cleanup_history": [
@@ -1193,6 +1193,11 @@
     {
       "receipt": "reader-api-cleanup-validation.json",
       "scope": "Remove 15 obsolete reader APIs, merge duplicated test setup without losing assertions, and retire three superseded plans. Runtime behavior and all findings unchanged.",
+      "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
+    },
+    {
+      "receipt": "mutation-api-cleanup-validation.json",
+      "scope": "Remove five obsolete table mutation APIs and three private forwarding layers; migrate two tests to live statement-context APIs with every assertion retained. Replace stale storage backend guidance. Finding dispositions unchanged.",
       "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
     }
   ],

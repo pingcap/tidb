@@ -452,7 +452,7 @@ fn modify_column_rechecks_the_full_affected_index_key_length() {
 /// from `CheckModifyTypeCompatible` at `:1515-1518`): five type-pair MODIFYs
 /// Go refuses OUTRIGHT, at statement-build time, before any row is read. The
 /// bug this closes: the only gate this tier had before was the per-row
-/// `convert_to` call in `KvTable::modify_column`, which never runs on zero
+/// `convert_to` call in `KvTable::modify_column_with_context`, which never runs on zero
 /// rows -- so on an EMPTY table every one of these five refusals used to be
 /// silently ACCEPTED. Each rule below is pinned three ways: refused on an
 /// EMPTY table (the proof the check moved earlier, not just "still errors

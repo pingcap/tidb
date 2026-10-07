@@ -17,7 +17,7 @@
 //! rewrite (Go pkg/ddl/modify_column.go:840 `checkNullValue` /
 //! `pkg/ddl/column.go` `updateColumnWorker` semantics transcreated in
 //! `ddl/alter_table.rs::modify_column_action` and
-//! `kv_table::KvTable::modify_column`). Contracts requiring the online-DDL
+//! `kv_table::KvTable::modify_column_with_context`). Contracts requiring the online-DDL
 //! job machinery (reorg state machine, failpoint hooks, and region splits)
 //! remain unimplemented and are not represented as Rust tests.
 //!

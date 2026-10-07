@@ -12,93 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The storage backend seam: the key/value surface a [`KvTable`] needs, as a
-//! trait object, so the same table code runs over the in-process store today
-//! and over a TiKV-backed transaction later.
+//! The key/value interface used by [`KvTable`](crate::kv_table::KvTable).
 //!
-//! [`KvTable`]: crate::kv_table::KvTable
+//! [`TableStorage`] erases the associated iterator and error types of Go's
+//! `kv.Retriever`/`kv.Mutator` counterparts so table metadata and executors do
+//! not need a backend type parameter. Table operations own row encoding,
+//! index maintenance and constraint policy; storage owns byte-level access.
 //!
-//! # Why a seam and not the `tidb-txnkv` traits directly
+//! [`MemTableStorage`] holds the in-process image. Clones share an immutable
+//! image until a write detaches it. [`ClusterTableStorage`](crate::cluster_storage::ClusterTableStorage)
+//! uses the session's snapshot and staged transaction buffer; it is already
+//! wired through the cluster catalog. Statement rollback, request policy and
+//! retryable failures remain backend responsibilities.
 //!
-//! `tidb-txnkv` already spells the source contracts: `kv.Retriever`
-//! ([`Retriever`]), `kv.Mutator` ([`Mutator`]) and `kv.Iterator`
-//! ([`KvIterator`]). They are the right shape, but `Retriever::Iterator` is an
-//! associated type and `Getter::Error` is an associated type, so a value held
-//! behind them must be a *generic parameter*. Making `KvTable` generic would
-//! push a type parameter through the catalog, the session, and every planner
-//! and executor site that names a table -- a change with no behavioural
-//! content. [`TableStorage`] is therefore the same four operations with the
-//! associated types erased: one concrete error, one boxed iterator. Every
-//! method maps 1:1 onto the source trait it comes from (see the table below),
-//! so the real backend implements it by forwarding.
-//!
-//! | [`TableStorage`] | `tidb-txnkv` source | Go |
-//! | --- | --- | --- |
-//! | [`get`](TableStorage::get) | [`Getter::get`] | `kv.Retriever.Get` |
-//! | [`set`](TableStorage::set) | [`Mutator::set`] | `kv.Mutator.Set` |
-//! | [`delete`](TableStorage::delete) | [`Mutator::delete`] | `kv.Mutator.Delete` |
-//! | [`iter`](TableStorage::iter) | [`Retriever::iter`] | `kv.Retriever.Iter` |
-//! | [`iter_reverse`](TableStorage::iter_reverse) | [`Retriever::iter_reverse`] | `kv.Retriever.IterReverse` |
-//!
-//! [`get`](TableStorage::get) returns the value bytes rather than the source
-//! `ValueEntry`, whose `commit_ts` this tier always reports as `0` and no
-//! caller reads; a real backend that needs the timestamp widens the return
-//! type without touching the call sites' `Ok(value)` arm shape.
-//!
-//! The remaining three methods are not source KV operations and are the
-//! seam's honest divergences:
-//!
-//! * [`key_count`](TableStorage::key_count) backs `KvTable::len`, which this
-//!   tier answers from the store's key count. TiKV has no exact count; a real
-//!   backend either scans or reports an approximation.
-//! * [`clear`](TableStorage::clear) backs `TRUNCATE`, which TiKV performs as
-//!   an unsafe-destroy-range / new-table-id operation, not as "empty the
-//!   container".
-//! * [`clone_box`](TableStorage::clone_box) exists because `KvTable` is
-//!   `Clone` (the catalog hands out copies). Cloning an in-process store
-//!   retains an immutable map image, detached on the next write; a real backend
-//!   clones a handle to the session snapshot and staged buffer. Reads therefore
-//!   retain storage without copying table metadata or in-process row bytes.
-//!
-//! # What is threaded, and what is still concrete
-//!
-//! Every byte-level read and write in this tier is inside
-//! [`KvTable`], and all of them now go through [`TableStorage`]: the point
-//! reads (`read_row`, `row_exists`, `lookup_unique`, the unique-index probes
-//! in `row_conflicts`/`write_index_entries`),
-//! the two range scans (`scan_rows_with_handles`, `scan_index_range`), and the
-//! writes (`insert_row`, `update_row`, `delete_row`, `create_index`,
-//! `drop_index`, `modify_column`, `truncate`). The read path and the write
-//! path are both complete; nothing is half-threaded.
-//!
-//! The driver never touches keys or bytes -- it calls the row-level table API
-//! (`insert_row`/`update_row`/`delete_row`/`scan_rows_with_handles`/
-//! `get_row_by_handle`/`lookup_unique`/`scan_index_range`, plus `truncate`
-//! from DDL), which is the counterpart of Go's `table.Table`, so a backend
-//! swap is invisible to it.
-//!
-//! What stays concrete is *which* backend a table gets: `KvTable::new`
-//! installs [`MemTableStorage`], and each table owns its own instance rather
-//! than sharing one storage handle. `KvTable::with_storage` is the seam for
-//! that choice; the two construction sites (`crate::driver` and `crate::ddl`)
-//! are the only places a real tier has to change.
-//!
-//! # What a TiKV-backed implementation still needs
-//!
-//! Nothing in this module reaches for it, and this round deliberately does not
-//! wire it. What it will need, on top of implementing the four KV methods:
-//!
-//! * A per-statement transaction context. The methods here take `&mut self`
-//!   and commit nothing; a real backend stages mutations in the transaction's
-//!   `MemBuffer` and commits at statement/transaction end, so the seam's
-//!   owner must hold the `Transaction`, not the table.
-//! * A TSO for the read snapshot: `get`/`iter` must read at the statement's
-//!   `start_ts` rather than "latest write wins", which is what the in-process
-//!   store does.
-//! * Region errors, lock conflicts and stale-region retries surfaced as a
-//!   *retryable* failure -- [`StorageError::Retryable`] is the slot reserved
-//!   for that; the in-process store never produces it.
-//! * Backoff/deadline plumbing, which has no counterpart here.
+//! `key_count`, `clear` and `clone_box` support local table ownership and are
+//! not additional Go KV operations. Their backend implementations define
+//! their behavior; callers must not infer an exact TiKV row count or a
+//! distributed TRUNCATE operation from the in-process implementation.
 
 use std::collections::HashMap;
 use std::fmt;

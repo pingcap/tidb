@@ -1,0 +1,95 @@
+{
+  "baseline": "59761a474ef04280ac0f8d8fb56fe67318941051",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "sources": [
+    {
+      "path": "pkg/table/tables/tables.go",
+      "sha256": "d0b6204e9cade9e9cf5af83b64e682d8e49b4c90ed61b37e460acdb19b1fd46e",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/delete.go",
+      "sha256": "e25ea1aa01293b942e5e87c7dbadf30b32c14999f3930661f2fa9836d02e6283",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/update.go",
+      "sha256": "e4b3b1ca4669032a647d6fc0c1def39c583e097d671ea4ea95be59499512bb10",
+      "matches_fetched_blob": true
+    }
+  ],
+  "scope": "Remove obsolete table mutation APIs and missing-context branches after production caller migration. Keep meaningful tests on the live owners. No complete package or new finding acceptance.",
+  "removed_public_apis": [
+    "KvTable::modify_column",
+    "KvTable::update_row",
+    "KvTable::update_row_with_old",
+    "KvTable::delete_row",
+    "KvTable::delete_row_with_old"
+  ],
+  "removed_private_forwarding_layers": [
+    "KvTable::update_row_in",
+    "KvTable::delete_row_in",
+    "KvTable::delete_row_with_old_in"
+  ],
+  "caller_review": {
+    "unused_before_removal": [
+      "modify_column",
+      "delete_row",
+      "delete_row_with_old"
+    ],
+    "test_only_before_removal": [
+      "update_row",
+      "update_row_with_old"
+    ],
+    "remaining_production_mutation_callers": "driver/dml/update_record.rs, driver/dml/delete_record.rs and foreign_key.rs already use StmtContext APIs. All former production calls selected Some(ctx).",
+    "retained_live_legacy_read_apis": [
+      "get_row_by_handle",
+      "scan_rows",
+      "scan_rows_with_handles"
+    ]
+  },
+  "changes": [
+    "Direct statement ownership of mutation flags, staged writes and statistics; delete-with-old routes the retained row once instead of twice.",
+    "Two existing CHECK/index tests use the live DML APIs; every behavioral assertion retained. No tests or harnesses added.",
+    "Replace obsolete storage module future-work narrative with current memory/cluster backend ownership. Correct references to the removed DDL wrapper."
+  ],
+  "validation": {
+    "status": "passed",
+    "commands": [
+      {
+        "command": "cargo test --locked -p tidb-executor --lib -- kv_table::tests:: cluster_storage::tests:: foreign_key modify_column delete update --test-threads=1",
+        "cwd": "/workspace/tidb/rust",
+        "log": "/workspace/.cloud-setup/mutation-cleanup-batch/tests.log",
+        "sha256": "eca8abca13c4a74a4da813360e84ef7426f08f67a8793dc9cb080301351968c8",
+        "status": "passed",
+        "passed": 84,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 1471
+      },
+      {
+        "command": "make lint",
+        "cwd": "/workspace/tidb",
+        "log": "/workspace/.cloud-setup/mutation-cleanup-batch/lint.log",
+        "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+        "status": "passed"
+      },
+      {
+        "command": "cargo check --locked --all-targets -p tidb-executor -p tidb-session -p tidb-server",
+        "cwd": "/workspace/tidb/rust",
+        "log": "/workspace/.cloud-setup/mutation-cleanup-batch/check.log",
+        "sha256": "59b56ee3bd05fdde2e3eaec72071e4863c39f560721525e0e81933376cce8bae",
+        "status": "passed"
+      }
+    ],
+    "not_run": [
+      "Full Go suites",
+      "Live multi-node TiKV or repeated wire suite",
+      "Compile-time or runtime benchmark comparison; no measured speedup claim"
+    ],
+    "publication": "Actual locked-build hook, fresh pre-push build and remote SHA are recorded after the commit in /workspace/.cloud-setup/mutation-cleanup-batch/final-handoff.json.",
+    "git_diff_check": "passed"
+  },
+  "finding_dispositions_changed": false,
+  "go_package_accepted": false
+}

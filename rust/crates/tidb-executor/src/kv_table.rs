@@ -2806,27 +2806,6 @@ impl KvTable {
         )
     }
 
-    /// Legacy zone-only column rewrite retained for unmigrated callers. Row
-    /// decoding uses the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
-    pub fn modify_column(
-        &mut self,
-        offset: usize,
-        new_column: KvColumn,
-        new_position: Option<usize>,
-        zone: &SessionTimeZone,
-    ) -> Result<(), KvTableError> {
-        // No statement context, so no statement clock: the NULL substitution
-        // below needs one and this caller cannot supply it.
-        self.modify_column_in(
-            offset,
-            new_column,
-            new_position,
-            zone,
-            &RowDecodeContext::legacy_default(zone),
-            None,
-        )
-    }
-
     fn modify_column_in(
         &mut self,
         offset: usize,
@@ -3697,17 +3676,12 @@ impl KvTable {
         row: &[Datum],
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
-        self.update_row_in(
-            handle,
-            None,
-            row,
-            ctx,
-            &RowDecodeContext::for_write(ctx),
-            Some(ctx),
-        )
+        self.update_row_with_old_context(handle, None, row, ctx)
     }
 
-    /// [`Self::update_row_with_old`] with Go transaction-delta collection.
+    /// Replaces a row using the selected old row when available, avoiding a
+    /// second point read. The statement owns decoding, transaction policy,
+    /// staged writes and table statistics, as Go's table mutation context does.
     pub fn update_row_with_old_context(
         &mut self,
         handle: &TableHandle,
@@ -3715,66 +3689,7 @@ impl KvTable {
         row: &[Datum],
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
-        self.update_row_in(
-            handle,
-            old_row,
-            row,
-            ctx,
-            &RowDecodeContext::for_write(ctx),
-            Some(ctx),
-        )
-    }
-
-    /// Replaces a row when the caller already holds the selected row. Passing
-    /// it avoids a second point read to discover the old record key and is
-    /// equivalent to Go's update executor retaining its input chunk.
-    pub fn update_row_with_old(
-        &mut self,
-        handle: &TableHandle,
-        old_row: Option<&[Datum]>,
-        row: &[Datum],
-        ctx: &impl tidb_expr::Columns,
-    ) -> Result<(), KvTableError> {
-        let zone = ctx.time_zone();
-        self.update_row_in(
-            handle,
-            old_row,
-            row,
-            ctx,
-            &RowDecodeContext::legacy_default(&zone),
-            None,
-        )
-    }
-
-    /// Legacy row update retained for unmigrated DML/FK callers. Reading the
-    /// old row uses the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
-    pub fn update_row(
-        &mut self,
-        handle: &TableHandle,
-        row: &[Datum],
-        ctx: &impl tidb_expr::Columns,
-    ) -> Result<(), KvTableError> {
-        let zone = ctx.time_zone();
-        self.update_row_in(
-            handle,
-            None,
-            row,
-            ctx,
-            &RowDecodeContext::legacy_default(&zone),
-            None,
-        )
-    }
-
-    fn update_row_in(
-        &mut self,
-        handle: &TableHandle,
-        old_row: Option<&[Datum]>,
-        row: &[Datum],
-        ctx: &impl tidb_expr::Columns,
-        decode_context: &RowDecodeContext,
-        stats_ctx: Option<&crate::StmtContext>,
-    ) -> Result<(), KvTableError> {
-        let zone = ctx.time_zone();
+        let zone = ctx.session_zone();
         // The shared update owner has already completed generated values.
         self.validate_check_constraints(row, ctx)?;
         // Go `updateRecord`: assigning to the AUTO_INCREMENT column REBASES the
@@ -3844,7 +3759,7 @@ impl KvTable {
             // Go partitionedTableUpdateRecord removes then AddRecords a heap
             // row crossing partitions, allocating a fresh hidden row ID.
             let shard = if self.shard_row_id_bits > 0 {
-                stats_ctx.map_or(0, |ctx| ctx.next_row_id_shard(1) as i64)
+                ctx.next_row_id_shard(1) as i64
             } else {
                 0
             };
@@ -3854,12 +3769,11 @@ impl KvTable {
             new_physical_id,
             &new_handle.record_handle(),
         ));
-        let pessimistic = stats_ctx.is_some_and(crate::StmtContext::pessimistic_transaction);
-        let check_in_prewrite =
-            stats_ctx.is_some_and(crate::StmtContext::pessimistic_check_in_prewrite);
+        let pessimistic = ctx.pessimistic_transaction();
+        let check_in_prewrite = ctx.pessimistic_check_in_prewrite();
         // Go optimizeDupKeyCheckForUpdate keeps optimistic UPDATE and IGNORE
         // eager; pessimistic writes use the selected lock/prewrite boundary.
-        let lazy_dup_check = pessimistic && !stats_ctx.is_some_and(crate::StmtContext::ignore_err);
+        let lazy_dup_check = pessimistic && !ctx.ignore_err();
         let set_presume = if old_key.as_ref() != Some(&destination_key) {
             let duplicate_value = if clustered {
                 clustered_key_text(self, row)
@@ -3889,7 +3803,7 @@ impl KvTable {
             let old = match old_row {
                 Some(old) => Some(old),
                 None => {
-                    owned_old = self.read_row(handle, decode_context)?;
+                    owned_old = self.read_row(handle, &RowDecodeContext::for_write(ctx))?;
                     owned_old.as_deref()
                 }
             };
@@ -3982,20 +3896,12 @@ impl KvTable {
             tidb_txnkv::AssertionOp::AssertExist
         };
         if let Some(old_key) = old_key.filter(|old_key| *old_key != key) {
-            if let Some(stats_ctx) = stats_ctx {
-                stats_ctx
-                    .staged_writes()
-                    .note(self.table_id, old_key.as_bytes());
-            }
+            ctx.staged_writes().note(self.table_id, old_key.as_bytes());
             self.store
                 .delete_with_assertion(old_key, tidb_txnkv::AssertionOp::AssertExist)
                 .map_err(KvTableError::from)?;
         }
-        if let Some(stats_ctx) = stats_ctx {
-            stats_ctx
-                .staged_writes()
-                .note(self.table_id, key.as_bytes());
-        }
+        ctx.staged_writes().note(self.table_id, key.as_bytes());
         self.store
             .set_with_constraint_check(
                 key,
@@ -4004,121 +3910,61 @@ impl KvTable {
                 set_presume && pessimistic && check_in_prewrite,
             )
             .map_err(KvTableError::from)?;
-        if let Some(stats_ctx) = stats_ctx {
-            if old_physical_id == new_physical_id {
-                stats_ctx.update_table_delta(old_physical_id, 0, 1);
-            } else {
-                stats_ctx.update_table_delta(old_physical_id, -1, 1);
-                stats_ctx.update_table_delta(new_physical_id, 1, 1);
-            }
+        if old_physical_id == new_physical_id {
+            ctx.update_table_delta(old_physical_id, 0, 1);
+        } else {
+            ctx.update_table_delta(old_physical_id, -1, 1);
+            ctx.update_table_delta(new_physical_id, 1, 1);
         }
         Ok(())
     }
 
-    /// Removes the row stored under `handle`.
+    /// Removes the row stored under `handle` using the statement's write policy.
     pub fn delete_row_with_context(
         &mut self,
         handle: &TableHandle,
         ctx: &crate::StmtContext,
-    ) -> Result<(), KvTableError> {
-        let zone = ctx.session_zone();
-        self.delete_row_in(handle, &zone, &RowDecodeContext::for_write(ctx), Some(ctx))
-    }
-
-    /// Legacy zone-only row delete retained for unmigrated DML/FK callers.
-    /// Reading the old row uses the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
-    pub fn delete_row(
-        &mut self,
-        handle: &TableHandle,
-        zone: &SessionTimeZone,
-    ) -> Result<(), KvTableError> {
-        self.delete_row_in(handle, zone, &RowDecodeContext::legacy_default(zone), None)
-    }
-
-    /// [`KvTable::delete_row`] for a row THIS STATEMENT already fetched.
-    ///
-    /// Go `RemoveRecord` derives the record key from the row's own handle and
-    /// removes index entries from the in-memory old row (`tables.DeleteRecord`)
-    /// -- it never re-reads storage for either. The storage-backed form above
-    /// reads because it was called WITHOUT the old row; the DELETE executor
-    /// that just fetched its victims hands them here so one row costs one
-    /// read.
-    pub fn delete_row_with_old(
-        &mut self,
-        handle: &TableHandle,
-        old_row: &[Datum],
-        ctx: &impl tidb_expr::Columns,
-    ) -> Result<(), KvTableError> {
-        self.delete_row_with_old_in(handle, old_row, ctx, None)
-    }
-
-    fn delete_row_with_old_in(
-        &mut self,
-        handle: &TableHandle,
-        old_row: &[Datum],
-        ctx: &impl tidb_expr::Columns,
-        stats_ctx: Option<&crate::StmtContext>,
-    ) -> Result<(), KvTableError> {
-        let zone = ctx.time_zone();
-        let old_physical_id = self.record_physical_id(old_row, ctx)?;
-        let key = Key::from_bytes(encode_row_key_with_handle(
-            old_physical_id,
-            &handle.record_handle(),
-        ));
-        if !self.indexes.is_empty() {
-            self.delete_index_entries(old_row, handle, old_physical_id, &zone)?;
-        }
-        if let Some(stats_ctx) = stats_ctx {
-            stats_ctx
-                .staged_writes()
-                .note(self.table_id, key.as_bytes());
-        }
-        self.store
-            .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
-            .map_err(KvTableError::from)?;
-        Ok(())
-    }
-
-    /// [`Self::delete_row_with_old`] with Go transaction-delta collection.
-    pub fn delete_row_with_old_context(
-        &mut self,
-        handle: &TableHandle,
-        old_row: &[Datum],
-        ctx: &crate::StmtContext,
-    ) -> Result<(), KvTableError> {
-        let physical_id = self.record_physical_id(old_row, ctx)?;
-        self.delete_row_with_old_in(handle, old_row, ctx, Some(ctx))?;
-        ctx.update_table_delta(physical_id, -1, 1);
-        Ok(())
-    }
-
-    fn delete_row_in(
-        &mut self,
-        handle: &TableHandle,
-        zone: &SessionTimeZone,
-        decode_context: &RowDecodeContext,
-        stats_ctx: Option<&crate::StmtContext>,
     ) -> Result<(), KvTableError> {
         let Some(key) = self.stored_record_key(handle)? else {
             return Ok(());
         };
         let physical_id = tidb_codec::decode_table_id(key.as_bytes());
         if !self.indexes.is_empty() {
-            if let Some(row) = self.read_row(handle, decode_context)? {
-                self.delete_index_entries(&row, handle, physical_id, zone)?;
+            if let Some(row) = self.read_row(handle, &RowDecodeContext::for_write(ctx))? {
+                self.delete_index_entries(&row, handle, physical_id, &ctx.session_zone())?;
             }
         }
-        if let Some(stats_ctx) = stats_ctx {
-            stats_ctx
-                .staged_writes()
-                .note(self.table_id, key.as_bytes());
-        }
+        ctx.staged_writes().note(self.table_id, key.as_bytes());
         self.store
             .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
             .map_err(KvTableError::from)?;
-        if let Some(stats_ctx) = stats_ctx {
-            stats_ctx.update_table_delta(physical_id, -1, 1);
+        ctx.update_table_delta(physical_id, -1, 1);
+        Ok(())
+    }
+
+    /// Removes a row already fetched by this statement. Go `RemoveRecord`
+    /// derives its record key and index entries from the retained input row;
+    /// no second storage read is needed.
+    pub fn delete_row_with_old_context(
+        &mut self,
+        handle: &TableHandle,
+        old_row: &[Datum],
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
+        let zone = ctx.session_zone();
+        let physical_id = self.record_physical_id(old_row, ctx)?;
+        let key = Key::from_bytes(encode_row_key_with_handle(
+            physical_id,
+            &handle.record_handle(),
+        ));
+        if !self.indexes.is_empty() {
+            self.delete_index_entries(old_row, handle, physical_id, &zone)?;
         }
+        ctx.staged_writes().note(self.table_id, key.as_bytes());
+        self.store
+            .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
+            .map_err(KvTableError::from)?;
+        ctx.update_table_delta(physical_id, -1, 1);
         Ok(())
     }
 }
@@ -4266,10 +4112,10 @@ mod tests {
             Err(KvTableError::CheckConstraintViolated(name)) if name == "positive_a"
         ));
         assert!(matches!(
-            table.update_row(
+            table.update_row_with_context(
                 &handle,
                 &[Datum::Int(-1), Datum::Null],
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::for_dml(false, false, false),
             ),
             Err(KvTableError::CheckConstraintViolated(name)) if name == "positive_a"
         ));
@@ -4650,11 +4496,11 @@ mod tests {
         // Update a NON-indexed column only: the index entry must survive
         // byte-identical.
         table
-            .update_row_with_old(
+            .update_row_with_old_context(
                 &handle,
                 Some(&[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(10)]),
                 &[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(11)],
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::for_dml(false, false, false),
             )
             .unwrap();
         let after_untouched = table.index_entries_for_check(1).unwrap();
@@ -4666,11 +4512,11 @@ mod tests {
 
         // Update the INDEXED column: the entry moves to the new key.
         table
-            .update_row_with_old(
+            .update_row_with_old_context(
                 &handle,
                 Some(&[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(11)]),
                 &[Datum::Int(1), Datum::Bytes(b"s9".to_vec()), Datum::Int(11)],
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::for_dml(false, false, false),
             )
             .unwrap();
         let after_touched = table.index_entries_for_check(1).unwrap();
