@@ -256,6 +256,8 @@ pub enum ClusterDdlError {
     /// The index entries for the rows the table already holds could not be
     /// built, so the change was abandoned before anything was published.
     Backfill(String),
+    /// An index value failed evaluation or violated a SQL constraint.
+    IndexBackfill(LockSqlError),
     /// The change needs an index backfill and this path has no backfiller.
     ///
     /// Publishing the meta half alone would create an index that exists and is
@@ -310,7 +312,9 @@ impl fmt::Display for ClusterDdlError {
                 "this path cannot perform an index change: it would publish an index \
                  that exists but holds no entry for any row the table already has"
             ),
-            Self::ExchangeValidation(error) => formatter.write_str(&error.message),
+            Self::IndexBackfill(error) | Self::ExchangeValidation(error) => {
+                formatter.write_str(&error.message)
+            }
             Self::ExchangeValidationUnavailable => write!(
                 formatter,
                 "this path cannot validate EXCHANGE PARTITION rows before publishing the ID swap"
@@ -340,6 +344,7 @@ impl std::error::Error for ClusterDdlError {
             | Self::NotCommitted(_)
             | Self::Undetermined(_)
             | Self::Backfill(_)
+            | Self::IndexBackfill(_)
             | Self::BackfillUnavailable
             | Self::ExchangeValidation(_)
             | Self::ExchangeValidationUnavailable
@@ -614,7 +619,7 @@ pub trait IndexBackfiller {
         plan: &IndexBackfill,
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
-    ) -> Result<(), String>;
+    ) -> Result<(), LockSqlError>;
 }
 
 /// Executes Go's `checkExchangePartitionRecordValidation` from the DDL
@@ -1402,7 +1407,7 @@ fn commit_cluster_ddl_with_backfill_once<
                     for backfill in &write.backfill {
                         backfiller
                             .stage(backfill, Arc::clone(&handle), &buffer)
-                            .map_err(ClusterDdlError::Backfill)?;
+                            .map_err(ClusterDdlError::IndexBackfill)?;
                     }
                     if let Some(validation) = &write.exchange_partition_validation {
                         exchange_validator

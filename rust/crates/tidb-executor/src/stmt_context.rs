@@ -486,6 +486,8 @@ pub struct StmtContextData {
     date_modes: crate::zero_date::DateModes,
     /// Session charset-validation bits, captured once for this statement.
     string_type_flags: tidb_datatype::ConversionFlags,
+    /// DDL workers use reorganization flags independently of statement class.
+    reorg: bool,
     current_db: Option<String>,
     version: Option<String>,
     current_user: Option<String>,
@@ -1950,6 +1952,7 @@ impl StmtContext {
             ignore_err,
             date_modes: crate::zero_date::DateModes::default(),
             string_type_flags: tidb_datatype::ConversionFlags::default(),
+            reorg: false,
             current_db: None,
             version: None,
             current_user: None,
@@ -3686,6 +3689,36 @@ impl StmtContext {
             .with_ignore_zero_date_err(!self.date_modes.no_zero_date || !self.strict)
     }
 
+    /// Go `newReorgExprCtxWithReorgMeta`: row evaluation during index creation
+    /// resolves errors from SQLMode, not SELECT/DDL admission error levels.
+    #[must_use]
+    pub fn for_reorg(&self) -> Self {
+        let mut context = self.clone();
+        context.reorg = true;
+        let mode = tidb_mysql::SqlMode(self.ddl_sql_mode);
+        let strict = mode.has_strict_mode();
+        context.strict = strict;
+        context.strict_sql_mode = strict;
+        context.ignore_err = false;
+        context.truncate = if strict {
+            ErrorLevel::Error
+        } else {
+            ErrorLevel::Warn
+        };
+        context.bad_null = context.truncate;
+        context.division_by_zero = if !mode.has_error_for_division_by_zero_mode() {
+            ErrorLevel::Ignore
+        } else {
+            context.truncate
+        };
+        context.date_modes = crate::zero_date::DateModes {
+            no_zero_date: mode.has_no_zero_date_mode(),
+            no_zero_in_date: mode.has_no_zero_in_date_mode(),
+            allow_invalid_dates: mode.has_allow_invalid_dates_mode(),
+        };
+        context
+    }
+
     /// Go `ddl.reorgTypeFlagsWithSQLMode`: the type flags used while a DDL
     /// reorg decodes old rows and materializes their origin defaults.
     ///
@@ -4529,6 +4562,9 @@ impl Columns for StmtContext {
     }
 
     fn type_flags(&self) -> tidb_datatype::ConversionFlags {
+        if self.reorg {
+            return self.reorg_default_conversion_flags();
+        }
         // ResetContextOfStmt starts from DefaultStmtFlags, independently of
         // strict SQL mode. The column-write helper's strict-zero base is not
         // the expression context's base.

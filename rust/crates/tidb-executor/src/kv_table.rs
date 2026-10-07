@@ -728,9 +728,7 @@ impl PointRowDecoder {
                             table.common_handle_prefix_lengths.get(*position).copied()
                                 == Some(crate::ddl::index_prefix::UNSPECIFIED_LENGTH)
                         })
-                        .filter_map(|(index, _)| {
-                            common.encoded_column(index).map(<[u8]>::to_vec)
-                        })
+                        .filter_map(|(index, _)| common.encoded_column(index).map(<[u8]>::to_vec))
                         .collect();
                     tidb_codec::Handle::Common(parts)
                 }
@@ -825,7 +823,11 @@ impl PointRead<'_> {
         let record = if self.table.read_partitions.is_none() && self.table.partition.is_none() {
             read_stored_record_one(self.store.as_mut(), self.table.table_id, handle)?
         } else {
-            read_stored_record(self.store.as_mut(), self.table.record_physical_ids(), handle)?
+            read_stored_record(
+                self.store.as_mut(),
+                self.table.record_physical_ids(),
+                handle,
+            )?
         };
         let Some((_, entry)) = record else {
             return Ok(None);
@@ -839,7 +841,10 @@ fn read_stored_record_one(
     physical_id: i64,
     handle: &TableHandle,
 ) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
-    let key = Key::from_bytes(encode_row_key_with_handle(physical_id, &handle.record_handle()));
+    let key = Key::from_bytes(encode_row_key_with_handle(
+        physical_id,
+        &handle.record_handle(),
+    ));
     match store.get(&key) {
         Ok(entry) => Ok(Some((key, entry))),
         Err(StorageError::NotFound) => Ok(None),
@@ -2508,17 +2513,6 @@ impl KvTable {
         self.create_index_in(index, ctx, &RowDecodeContext::for_ddl(ctx))
     }
 
-    /// Legacy index backfill retained for unmigrated server callers. Row
-    /// decoding uses the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
-    pub fn create_index(
-        &mut self,
-        index: KvIndex,
-        ctx: &impl tidb_expr::Columns,
-    ) -> Result<(), KvTableError> {
-        let zone = ctx.time_zone();
-        self.create_index_in(index, ctx, &RowDecodeContext::legacy_default(&zone))
-    }
-
     fn create_index_in(
         &mut self,
         index: KvIndex,
@@ -2585,29 +2579,10 @@ impl KvTable {
         Ok(())
     }
 
-    /// Drops an index and every entry it owns, reporting whether it existed.
-    pub fn drop_index_with_context(
-        &mut self,
-        name: &str,
-        ctx: &crate::StmtContext,
-    ) -> Result<bool, KvTableError> {
-        let zone = ctx.session_zone();
-        let decode_context = RowDecodeContext::for_ddl(ctx);
-        self.drop_index_in(name, &zone, &decode_context)
-    }
-
-    /// Legacy zone-only index removal retained for unmigrated server callers.
-    /// Row decoding uses the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
-    pub fn drop_index(&mut self, name: &str, zone: &SessionTimeZone) -> Result<bool, KvTableError> {
-        self.drop_index_in(name, zone, &RowDecodeContext::legacy_default(zone))
-    }
-
-    fn drop_index_in(
-        &mut self,
-        name: &str,
-        zone: &SessionTimeZone,
-        decode_context: &RowDecodeContext,
-    ) -> Result<bool, KvTableError> {
+    /// Removes the index's physical key ranges without evaluating rows. Go's
+    /// delete-range worker has the same key ownership; this existing direct
+    /// DDL path stages deletion in its transaction, pending durable GC jobs.
+    pub fn drop_index(&mut self, name: &str) -> Result<bool, KvTableError> {
         let Some(position) = self
             .indexes
             .iter()
@@ -2615,19 +2590,41 @@ impl KvTable {
         else {
             return Ok(false);
         };
-        let index = self.indexes_mut().remove(position);
-        let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
-        for (handle, row) in &rows {
-            if !self.index_condition_holds(&index, row, zone)? {
-                continue;
+        let index = &self.indexes[position];
+        let index_id = index.id;
+        // DDL owns all physical partitions, even on a read-restricted view.
+        let physical_ids = if index.global {
+            vec![self.table_id]
+        } else {
+            self.partition
+                .as_ref()
+                .map_or_else(|| vec![self.table_id], |p| p.physical_ids())
+        };
+        let original =
+            (!self.store.has_external_statement_rollback()).then(|| self.store.clone_box());
+        let result = (|| -> Result<(), KvTableError> {
+            for physical_id in physical_ids {
+                let (low, high) = crate::admin_check::index_key_bounds(physical_id, index_id);
+                let mut iterator = self
+                    .store
+                    .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))?;
+                while iterator.valid() {
+                    let key = iterator.key().clone();
+                    iterator.next()?;
+                    self.store.delete(key)?;
+                }
+                iterator.close();
             }
-            let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
-            let (key, _) = self.index_key(&index, row, handle, physical_id, zone)?;
-            self.store
-                .delete(Key::from_bytes(key))
-                .map_err(KvTableError::from)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            if let Some(original) = original {
+                self.store = original;
+            }
+            return Err(error);
         }
-        self.remove_partial_index_condition(index.id);
+        self.indexes_mut().remove(position);
+        self.remove_partial_index_condition(index_id);
         Ok(true)
     }
 
@@ -4471,6 +4468,111 @@ mod tests {
                     .collect::<Vec<_>>();
                 assert_eq!(actual, expected, "condition {condition}");
             }
+        }
+    }
+
+    /// Go delete-range cleanup uses key ownership, even if the base row is
+    /// absent or its generated value can no longer be evaluated.
+    #[test]
+    fn drop_index_removes_orphan_entries_without_decoding_rows() {
+        let mut table = KvTable::new(42, Vec::new());
+        table.add_index(
+            KvIndex {
+                id: 1,
+                name: "retired".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![],
+                prefix_lengths: vec![],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        let retired = Key::from_bytes(tidb_codec::table_key::encode_index_seek_key(
+            42, 1, b"orphan",
+        ));
+        let retained = Key::from_bytes(tidb_codec::table_key::encode_index_seek_key(
+            42,
+            2,
+            b"neighbor",
+        ));
+        table.store.set(retired.clone(), vec![1]).unwrap();
+        table.store.set(retained.clone(), vec![2]).unwrap();
+        assert!(table.drop_index("retired").unwrap());
+        assert!(matches!(
+            table.store.get(&retired),
+            Err(StorageError::NotFound)
+        ));
+        assert_eq!(table.store.get(&retained).unwrap(), vec![2]);
+    }
+
+    #[test]
+    fn drop_index_covers_all_partition_ranges_and_global_ownership() {
+        use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
+        for global in [false, true] {
+            let mut table = KvTable::new(42, Vec::new());
+            table.partition = Some(Box::new(PartitionSpec {
+                kind: PartitionKind::Hash,
+                expr_text: "0".to_owned(),
+                expr: Expression::Constant(tidb_expr::constant::Constant::default()),
+                dependencies: vec![],
+                definitions: vec![
+                    PartitionDef {
+                        id: 43,
+                        ..Default::default()
+                    },
+                    PartitionDef {
+                        id: 44,
+                        ..Default::default()
+                    },
+                ],
+                overlapping_dropping_partition_indices: vec![],
+                is_empty_columns: false,
+            }));
+            table.restrict_read_to_partitions(&[43]);
+            table.add_index(
+                KvIndex {
+                    id: 1,
+                    name: "retired".to_owned(),
+                    comment: String::new(),
+                    unique: false,
+                    column_offsets: vec![],
+                    prefix_lengths: vec![],
+                    visible: true,
+                    global,
+                    global_index_version: 0,
+                    clustered_primary: false,
+                },
+                false,
+            );
+            let keys: Vec<_> = [42, 43, 44, 45]
+                .into_iter()
+                .map(|id| {
+                    Key::from_bytes(tidb_codec::table_key::encode_index_seek_key(
+                        id, 1, b"orphan",
+                    ))
+                })
+                .collect();
+            for key in &keys {
+                table.store.set(key.clone(), vec![1]).unwrap();
+            }
+            assert!(table.drop_index("retired").unwrap());
+            for (id, key) in [42, 43, 44, 45].into_iter().zip(&keys) {
+                let removed = if global {
+                    id == 42
+                } else {
+                    id == 43 || id == 44
+                };
+                assert_eq!(
+                    matches!(table.store.get(key), Err(StorageError::NotFound)),
+                    removed,
+                    "global={global}, table={id}"
+                );
+            }
+            assert!(!table.drop_index("retired").unwrap());
         }
     }
 

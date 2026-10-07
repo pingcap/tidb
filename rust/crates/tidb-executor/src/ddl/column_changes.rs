@@ -263,11 +263,9 @@ impl PreparedColumnChange {
                     .map(|index| index.name.clone())
                     .collect();
                 for index in covering {
-                    table
-                        .drop_index_with_context(&index, ctx)
-                        .map_err(|error| {
-                            DriverError::Parse(format!("index drop failed: {error:?}"))
-                        })?;
+                    table.drop_index(&index).map_err(|error| {
+                        DriverError::Parse(format!("index drop failed: {error:?}"))
+                    })?;
                 }
                 table.drop_column(at);
                 if !invalid_constraint_ids.is_empty() {

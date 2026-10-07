@@ -2689,3 +2689,9 @@ The [batch plan](dml-identity-batch-execplan.md) and [receipt](parity/current-au
 
 
 The [connected plan](shared-dml-contract-batch-execplan.md) and [receipt](parity/current-audit/shared-dml-contract-batch-validation.json) maintain E02/E03/K03 together. Ten original regressions and 209 retained passes cover SQL-visible heap handles versus writable hidden tails, Go’s partitioned-heap UPDATE exception, and shared IGNORE FK checks before bad-NULL substitution. The old claim that enabled ordinary heap-handle assignment must move the row is corrected by current Go’s writable ranges. Earlier UPDATE partition dismissal is superseded; DELETE remains separate. Broader streaming, indexed FK/physical cascades, conversions and complete packages remain unaccepted; counts are unchanged. Final publication and Cloud checkpoint evidence is external to the committed receipt.
+
+
+## Index lifecycle continuation — 2026-10-07
+
+
+Latest connected repair: [index evaluation and removal](parity/current-audit/index-lifecycle-batch-validation.json). Seven baseline assertions failed (five wire, two Rust); 107 selected Rust tests and 6 real MySQL assertions pass after repair. Index creation preserves SQL mode/timezone and typed errors; removal uses physical ranges, including implicit indexes removed with columns. D02 stays open; K03/D11 stay partial for broader durable/package obligations. Counts remain86 tracked/30 repaired/56 unresolved (27open,29partial). The [plan](index-lifecycle-batch-execplan.md) records connected production migration and rollback coverage. Shared statement/table owners replace default contexts, string error flattening and row-based index deletion.

@@ -7162,8 +7162,10 @@ fn global_index_statistics_match_go() {
         &mut session,
         "INSERT INTO global_index_stats(a,b) VALUES (4,4),(16,16)",
     );
-    let mut unordered = displayed(rows(&mut session,
-        "SELECT b,c FROM global_index_stats USE INDEX(idx) WHERE b < 17"));
+    let mut unordered = displayed(rows(
+        &mut session,
+        "SELECT b,c FROM global_index_stats USE INDEX(idx) WHERE b < 17",
+    ));
     unordered.sort_unstable();
     assert_eq!(unordered,
         [["1", "0"], ["15", "0"], ["16", "0"], ["2", "0"], ["3", "0"], ["4", "0"]]);
@@ -9677,7 +9679,10 @@ fn cluster_create_table_foreign_key_resolves_parent_like_go() {
     let code = |s: &mut crate::cluster_session_node::ClusterServerSession, sql: &str| {
         s.execute_write(sql).err().map(|error| error.code)
     };
-    rows(&mut s, "CREATE TABLE test.fk_p (id INT PRIMARY KEY, u INT, KEY iu(u))");
+    rows(
+        &mut s,
+        "CREATE TABLE test.fk_p (id INT PRIMARY KEY, u INT, KEY iu(u))",
+    );
     assert_eq!(
         code(&mut s, "CREATE TABLE test.fk_c (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES fk_p(id) ON DELETE CASCADE)"),
         None
@@ -9719,8 +9724,14 @@ fn cluster_create_table_foreign_key_resolves_parent_like_go() {
 #[test]
 fn pushed_conditional_signatures_evaluate_in_the_coprocessor_like_go() {
     let (stack, _users) = cop_backed_stack();
-    let mut s = stack.factory.open_session(session_context(902)).expect("session");
-    rows(&mut s, "CREATE TABLE test.pc (id INT PRIMARY KEY, a INT, b INT, d DATETIME, j JSON)");
+    let mut s = stack
+        .factory
+        .open_session(session_context(902))
+        .expect("session");
+    rows(
+        &mut s,
+        "CREATE TABLE test.pc (id INT PRIMARY KEY, a INT, b INT, d DATETIME, j JSON)",
+    );
     s.execute_write(
         "INSERT INTO test.pc VALUES (1, 1, NULL, '2024-01-02 03:04:05', '\"x\"'), \
          (2, 5, 7, NULL, NULL), (3, NULL, 2, '2020-05-06 00:00:00', '\"yy\"')",
@@ -10750,4 +10761,93 @@ fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
     assert!(session.explicit.is_none());
     assert!(session.buffer.is_empty());
     assert!(rows(&mut session, "SELECT * FROM t").is_empty());
+}
+
+/// Go reorg.go derives expression error levels and location from ReorgMeta.
+/// Exercise every SQL producer through the same real storage/backfiller.
+#[test]
+fn index_lifecycle_uses_reorg_sql_mode_and_preserves_failed_metadata() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(812)).unwrap();
+    for (i, ddl) in [
+        "CREATE INDEX ig ON test.reorg0(g)",
+        "ALTER TABLE test.reorg1 ADD INDEX ig(g)",
+        "ALTER TABLE test.reorg2 ADD INDEX ig(g), ADD COLUMN c INT",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        rows(&mut session, "SET sql_mode = ''");
+        rows(
+            &mut session,
+            &format!("CREATE TABLE test.reorg{i}(a INT,g INT AS (10 DIV a) VIRTUAL)"),
+        );
+        rows(
+            &mut session,
+            &format!("INSERT INTO test.reorg{i}(a) VALUES(0)"),
+        );
+        rows(
+            &mut session,
+            "SET sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO'",
+        );
+        let error = session
+            .execute_write(ddl)
+            .expect_err("strict reorg rejects zero divisor");
+        assert_eq!(error.code, 1365, "{ddl}: {error:?}");
+        assert!(rows(&mut session, &format!("SHOW INDEX FROM test.reorg{i}")).is_empty());
+        assert_eq!(
+            rows(&mut session, &format!("SHOW COLUMNS FROM test.reorg{i}")).len(),
+            2
+        );
+        rows(&mut session, "SET sql_mode = ''");
+        rows(&mut session, ddl);
+        assert!(!rows(&mut session, &format!("SHOW INDEX FROM test.reorg{i}")).is_empty());
+        rows(
+            &mut session,
+            "SET sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO'",
+        );
+        rows(&mut session, &format!("DROP INDEX ig ON test.reorg{i}"));
+    }
+}
+
+#[test]
+fn index_lifecycle_duplicate_backfill_preserves_sql_error_and_rolls_back() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(814)).unwrap();
+    rows(&mut session, "CREATE TABLE test.reorg_dup(a INT)");
+    rows(&mut session, "INSERT INTO test.reorg_dup VALUES(1),(1)");
+    let error = session
+        .execute_write("CREATE UNIQUE INDEX ia ON test.reorg_dup(a)")
+        .unwrap_err();
+    assert_eq!(error.code, 1062);
+    assert_eq!(error.state, *b"23000");
+    assert_eq!(error.message, "Duplicate entry '1' for key 'reorg_dup.ia'");
+    assert!(rows(&mut session, "SHOW INDEX FROM test.reorg_dup").is_empty());
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM test.reorg_dup")),
+        [["2"]]
+    );
+}
+
+#[test]
+fn index_lifecycle_backfill_uses_the_submitting_time_zone() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(813)).unwrap();
+    rows(&mut session, "SET time_zone = '+08:00'");
+    rows(
+        &mut session,
+        "CREATE TABLE test.reorg_tz(ts TIMESTAMP,g INT AS (HOUR(ts)) VIRTUAL)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.reorg_tz(ts) VALUES('2020-01-02 08:00:00')",
+    );
+    rows(&mut session, "CREATE INDEX ig ON test.reorg_tz(g)");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT g FROM test.reorg_tz FORCE INDEX(ig) WHERE g=8"
+        )),
+        [["8"]]
+    );
 }

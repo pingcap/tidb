@@ -229,7 +229,7 @@ impl PreparedIndexChange<'_> {
                 )
             }
             Self::Drop { id, .. } => {
-                indexes::drop_prepared_index(catalog, database, table_name, id, ctx)
+                indexes::drop_prepared_index(catalog, database, table_name, id)
             }
             Self::Visibility { name, visible } => {
                 super::alter_metadata::alter_index_visibility_action(

@@ -55,6 +55,8 @@ Integration dependencies: B01, B04.
 
 ## B04: Durable DDL and placement recovery
 
+Current index lifecycle maintenance connects B02 K03 with B04 D02/D11: submitting evaluation policy, typed errors, physical-range deletion and implicit column-index cleanup. See [validation](index-lifecycle-batch-validation.json). Durable workers/recovery and parent dispositions remain unchanged.
+
 Current maintenance: [constraint admission/index backfill](constraint-admission-batch-validation.json) connects local and persisted CHECK metadata, original-schema FK admission and ordinary implicit-index backfill. D01/D02 remain open and D11 partial; this is not durable DDL package acceptance.
 
 Source owners: pkg/ddl, ddl/jobsubmit and complete reorganization owners; domain/infosync, domain/affinity and GC consumers.

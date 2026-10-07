@@ -8301,7 +8301,7 @@ mod tests {
         );
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
-            .create_index(
+            .create_index_with_context(
                 crate::kv_table::KvIndex {
                     id: 1,
                     name: "PRIMARY".to_owned(),
@@ -8314,7 +8314,7 @@ mod tests {
                     global_index_version: 0,
                     clustered_primary: false,
                 },
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::default(),
             )
             .unwrap();
         for o_id in 1..=100 {
@@ -8365,7 +8365,7 @@ mod tests {
         );
         table.set_common_handle_offsets(vec![0, 1, 2, 3]);
         table
-            .create_index(
+            .create_index_with_context(
                 crate::kv_table::KvIndex {
                     id: 1,
                     name: "PRIMARY".to_owned(),
@@ -8378,7 +8378,7 @@ mod tests {
                     global_index_version: 0,
                     clustered_primary: false,
                 },
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::default(),
             )
             .unwrap();
         for d_id in 1..=2 {

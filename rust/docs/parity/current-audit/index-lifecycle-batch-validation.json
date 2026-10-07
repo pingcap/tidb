@@ -1,0 +1,497 @@
+{
+  "baseline": {
+    "tidb": "114910a005ae5ec3431c1885bd447c672ddcc492",
+    "native": "8b752f9638ad157931725b66ffdc57e0465432a9",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+  },
+  "comparison_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "go_refresh": {
+    "previous_comparison": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "previous_stamp": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "current": "7a3dacb52efe58d28db360ae8639d8838c376544",
+    "refreshed_files": [
+      "pkg/planner/core/exhaust_physical_plans.go",
+      "tests/integrationtest/r/planner/core/indexjoin.result",
+      "tests/integrationtest/t/planner/core/indexjoin.test"
+    ],
+    "removed": [
+      "pkg/parser/cloudhintprobe/main.go",
+      "pkg/parser/cloudhintprobe"
+    ],
+    "ddl_sources_and_module_pins_changed": false,
+    "method": "streamed complete git archive; compare/update every entry and remove entries absent from archive"
+  },
+  "scope": "B02/B04 existing index lifecycle: D02/K03/D11; no complete package acceptance",
+  "source_inputs": {
+    "pkg/ddl/reorg.go": "ba2175d4adaa058c8a46f6eee6f01f89f3199530ce381278c408c3dd6c661349",
+    "pkg/ddl/index.go": "6af0c10f8ec1fb74ce1dd55e2d899b53171e488503958cab15fc406c22ba4fba",
+    "pkg/ddl/delete_range.go": "0c9113e8cbc264d2c99ca9cb6617d6d631759130263b3400fda4fc1cf45db738",
+    "pkg/ddl/column.go": "6d22e32650b5dd4d4238f14fd2694fdba68d19094e152cad96111f0848e8e684"
+  },
+  "confirmed_before": {
+    "wire": [
+      {
+        "sql": "CREATE INDEX ig ON t0(g)",
+        "expected": 1365,
+        "actual": 0,
+        "message": "",
+        "passed": false
+      },
+      {
+        "sql": "ALTER TABLE t1 ADD INDEX ig(g)",
+        "expected": 1365,
+        "actual": 0,
+        "message": "",
+        "passed": false
+      },
+      {
+        "sql": "ALTER TABLE t2 ADD INDEX ig(g), ADD COLUMN c INT",
+        "expected": 1365,
+        "actual": 0,
+        "message": "",
+        "passed": false
+      },
+      {
+        "sql": "DROP INDEX ig ON td",
+        "expected": 0,
+        "actual": 0,
+        "message": "",
+        "passed": true
+      },
+      {
+        "sql": "CREATE UNIQUE INDEX ia ON dup(a)",
+        "expected": 1062,
+        "actual": 1105,
+        "message": "the index entries for the rows this table already holds could not be built, so nothing was published: Duplicate entry '1' for key 'dup.ia'",
+        "passed": false
+      },
+      {
+        "sql": "SELECT g FROM tz FORCE INDEX(ig) WHERE g=8",
+        "actual": [],
+        "expected": [
+          [
+            8
+          ]
+        ],
+        "passed": false
+      }
+    ],
+    "storage": [
+      {
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0
+      }
+    ],
+    "catalog": [
+      {
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0
+      }
+    ],
+    "distinct_failing_assertions": 7
+  },
+  "gates": [
+    {
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "--all-targets",
+        "-p",
+        "tidb-executor",
+        "-p",
+        "tidb-exec",
+        "-p",
+        "tidb-session",
+        "-p",
+        "tidb-server"
+      ],
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/index-lifecycle-batch/check-accepted.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "tidb-server"
+      ],
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/index-lifecycle-batch/server-build.log"
+    }
+  ],
+  "after": {
+    "rust": [
+      {
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 91,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "rust_passed": 107,
+    "wire": [
+      {
+        "sql": "CREATE INDEX ig ON t0(g)",
+        "expected": 1365,
+        "actual": 1365,
+        "message": "Division by 0",
+        "passed": true
+      },
+      {
+        "sql": "ALTER TABLE t1 ADD INDEX ig(g)",
+        "expected": 1365,
+        "actual": 1365,
+        "message": "Division by 0",
+        "passed": true
+      },
+      {
+        "sql": "ALTER TABLE t2 ADD INDEX ig(g), ADD COLUMN c INT",
+        "expected": 1365,
+        "actual": 1365,
+        "message": "Division by 0",
+        "passed": true
+      },
+      {
+        "sql": "DROP INDEX ig ON td",
+        "expected": 0,
+        "actual": 0,
+        "message": "",
+        "passed": true
+      },
+      {
+        "sql": "CREATE UNIQUE INDEX ia ON dup(a)",
+        "expected": 1062,
+        "actual": 1062,
+        "message": "Duplicate entry '1' for key 'dup.ia'",
+        "passed": true
+      },
+      {
+        "sql": "SELECT g FROM tz FORCE INDEX(ig) WHERE g=8",
+        "actual": [
+          [
+            8
+          ]
+        ],
+        "expected": [
+          [
+            8
+          ]
+        ],
+        "passed": true
+      }
+    ],
+    "commands": [
+      {
+        "name": "tests",
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "--no-fail-fast",
+          "-p",
+          "tidb-executor",
+          "-p",
+          "tidb-session",
+          "-p",
+          "tidb-server",
+          "--lib",
+          "--",
+          "index_lifecycle_",
+          "kv_table::tests::drop_index",
+          "stmt_context::tests::reorg_",
+          "access_path::tests::a_common_handle_",
+          "tests_expression_indexes::",
+          "tests_generated_columns::",
+          "tests_alter_column::",
+          "tests_zero_date::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "catalog-tests",
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "tidb-exec",
+          "--test",
+          "all",
+          "--",
+          "cluster_ddl_source::alter_table_index_actions",
+          "cluster_ddl_source::create_index",
+          "cluster_ddl_source::index_backfill",
+          "cluster_ddl_source::drop_index",
+          "cluster_ddl_source::drop_column",
+          "cluster_ddl_source::a_column_and_index_bundle",
+          "cluster_ddl_source::grouped_drop_columns",
+          "--test-threads=1"
+        ],
+        "exit_code": 0
+      }
+    ]
+  },
+  "intermediate_results": [
+    "The initial all-target check caught and corrected Box<PartitionSpec> construction in the new range test.",
+    "The first grouped Rust run passed five executor tests and two server tests, but duplicate index error mapping still returned1105; moved the existing local index error converter into one shared public owner and reran. Session tests had not run because Cargo stopped after the server failure.",
+    "The first catalog test retry failed during linking with a bus error when disk became full; no behavioral result. Archived verified pre-edit binaries, retired duplicate setup extractions and invalidated compiled libraries for touched crates, preserving current dependencies and source."
+  ],
+  "repairs": [
+    "Capture submitting SQL mode/timezone in every standalone, single ALTER, grouped ALTER and grouped column/index add producer; retain shared index pointer identity and planned collation.",
+    "Shared RowDecodeContext resolves Go reorg expression error levels/type flags from captured SQL mode, with timezone retained.",
+    "IndexBackfiller preserves typed table errors through DDL rollback and SQL delivery, including1062/23000 and1365.",
+    "Index removal deletes owned physical ranges, including orphan entries, partition-local ranges and global logical-table ranges; no expression recomputation or read-partition narrowing. Metadata removal follows successful storage work; in-process storage retains rollback.",
+    "Single/grouped DROP COLUMN schedules implicit index-key removal in the same transaction."
+  ],
+  "retired": [
+    "KvTable legacy generic create_index adapter",
+    "KvTable zone-only removal and drop_index_with_context adapter",
+    "row-reconstruction index-deletion loop",
+    "default-context cluster backfill",
+    "string-only backfill error flattening"
+  ],
+  "limits": [
+    "Index work is still one transaction; durable online DDL phases, persisted reorg context, resumable jobs and asynchronous safe-point-gated delete-range collection remain open.",
+    "No complete Go package acceptance, full Go suite, live multi-node TiKV or performance benchmark. Other53 unresolved roots retain prior evidence.",
+    "Native repository unchanged. Cloud publication/fresh-task restoration are not established by draft saving."
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "logs": {
+    "storage-before.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/storage-before.log",
+      "sha256": "7dc339ca22c50545bb0fa110edfcc063bf533482c06f7662098f2a44b1ae0839"
+    },
+    "catalog-before.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/catalog-before.log",
+      "sha256": "ab857980beff1b04fa59061838d2d7146e426e7973058fd0c89cf1843a48d002"
+    },
+    "wire-before.json": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/wire-before.json",
+      "sha256": "9f7c8a3bedeb91682c3f2d3821a4f6466fb274c39cf264582027ded87eff5a0b"
+    },
+    "check.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/check.log",
+      "sha256": "e80f73ee80f7583e9b37719890c1c9b02e30669f2976740ded357f46cced8b02"
+    },
+    "check-final.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/check-final.log",
+      "sha256": "f01dd299b29a01848013023c4d1b9089ff168bdf839fd2169e3f25f055ab8dff"
+    },
+    "check-accepted.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/check-accepted.log",
+      "sha256": "92b591727aa0b421ad690596698ae3e6f387ddbaf33bea57c8a65e838f92dde3"
+    },
+    "tests.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/tests.log",
+      "sha256": "c39fac9f86af6238e0288cb0259aaf58536a05f93cf23da1a29df7fe66161b09"
+    },
+    "catalog-tests.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/catalog-tests.log",
+      "sha256": "559b274df7da20f10f9b6309f7c8c7dfd29d59ec1910492dcc4fc8b200f4ccdd"
+    },
+    "lint.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/lint.log",
+      "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef"
+    },
+    "server-build.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/server-build.log",
+      "sha256": "3a299ac5dc14e8cc51c13c97ff7c99f6d074567be9e13a5d5415e8819f747b8d"
+    },
+    "wire.json": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/wire.json",
+      "sha256": "56b9af067717d8c39b2e85ccff436f359b8935b4a7537e3f9668efa1a53c8f08"
+    },
+    "tests-intermediate.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/tests-intermediate.log",
+      "sha256": "ba71b8faeddc3a6f8124d1df48ddcaf8e62fa21c07c897290f17ab74320e11b0"
+    },
+    "catalog-link-failure.log": {
+      "path": "/workspace/.cloud-setup/index-lifecycle-batch/catalog-link-failure.log",
+      "sha256": "66c29fd94314dc7eac0be80758995d505283a6aebe3b7145d321a1bb770feba1"
+    }
+  },
+  "setup_cleanup": [
+    {
+      "tree": "/workspace/.cloud-setup/account-batch3/google-api-source",
+      "archive": "/workspace/.cloud-setup/account-batch3/google-api-source.zip",
+      "archive_sha256": "85e6b88da10e806e547bced946503d6492c9a128de194d3eecfd13deee28d58e",
+      "verified_files": 1352,
+      "reclaimed_bytes": 341010384,
+      "method": "every extracted file SHA256 matched retained archive; exact inventory match"
+    },
+    {
+      "tree": "/workspace/.cloud-setup/account-batch3/lint-sources/aliyun-alibaba-cloud-sdk-go",
+      "archive": "/workspace/.cloud-setup/account-batch3/aliyun-alibaba-cloud-sdk-go.zip",
+      "archive_sha256": "108ba57097123d965ae02d516f662bc6a46c39792ade2e38ad6357bac492f08e",
+      "verified_files": 26987,
+      "reclaimed_bytes": 69040017,
+      "method": "every extracted file SHA256 matched retained archive; exact inventory match"
+    },
+    {
+      "tree": "/workspace/.cloud-setup/account-batch3/lint-sources/pierrec-lz4",
+      "archive": "/workspace/.cloud-setup/account-batch3/pierrec-lz4.zip",
+      "archive_sha256": "22990d3479244ae3350f99ba7b87c5a7bcc1cbfe53c00b5a76889b44a816b495",
+      "verified_files": 207,
+      "reclaimed_bytes": 90772488,
+      "method": "every extracted file SHA256 matched retained archive; exact inventory match"
+    },
+    {
+      "tree": "/workspace/.cloud-setup/account-batch3/lint-sources/klauspost-compress",
+      "archive": "/workspace/.cloud-setup/account-batch3/klauspost-compress.zip",
+      "archive_sha256": "74e87c390c5552f5f5dd9856f2f739f6351ed75a728ab518b629f6f874c5ae24",
+      "verified_files": 448,
+      "reclaimed_bytes": 46212987,
+      "method": "every extracted file SHA256 matched retained archive; exact inventory match"
+    }
+  ],
+  "retired_stale_owning_libraries": [
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-executor/f2e02bb6bec94488/out/libtidb_executor-f2e02bb6bec94488.rlib",
+      "bytes": 144980714,
+      "sha256": "8a0e2ca3576997cb0e8b0bc055362f2b92e027a81601b7ffc1f73f0a0ee3333e",
+      "reason": "owning source crate changed in this batch; pre-edit compiled output is stale"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-executor/f2e02bb6bec94488/out/libtidb_executor-f2e02bb6bec94488.rmeta",
+      "bytes": 13431877,
+      "sha256": "9f449100310c21e2b40feb270d95ca8d3a7307023a9343dfeeed8a581ffb3fcf",
+      "reason": "owning source crate changed in this batch; pre-edit compiled output is stale"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-exec/defc799a1beec8c7/out/libtidb_exec-defc799a1beec8c7.rlib",
+      "bytes": 70617746,
+      "sha256": "416d1cce8a450a8c9704cd636e528cea1de5e46c8574d69e804243d386aa6b92",
+      "reason": "owning source crate changed in this batch; pre-edit compiled output is stale"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-exec/defc799a1beec8c7/out/libtidb_exec-defc799a1beec8c7.rmeta",
+      "bytes": 8542633,
+      "sha256": "3c685b7e7d0e31d9cc9a356a43ceeddbc476fd6135ddd6580fe6be52438aebac",
+      "reason": "owning source crate changed in this batch; pre-edit compiled output is stale"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/dd62e317550a40c1/out/libtidb_server-dd62e317550a40c1.rlib",
+      "bytes": 175687092,
+      "sha256": "6bd2bfac57a6ba8a70943443649c4d93f4a667769a90c333380aab4f4a7dd4e7",
+      "reason": "owning source crate changed in this batch; pre-edit compiled output is stale",
+      "retired_identical_top_level_alias": "/workspace/tidb/rust/target/debug/libtidb_server.rlib"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/dd62e317550a40c1/out/libtidb_server-dd62e317550a40c1.rmeta",
+      "bytes": 5778895,
+      "sha256": "c8fe696ae2b3ff63c6d84cc9994bf3fe0c10444de7f7681a58ba13dc0937f210",
+      "reason": "owning source crate changed in this batch; pre-edit compiled output is stale"
+    }
+  ],
+  "baseline_binary_retirement": [
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-executor/5de42d9d66be6928/out/tidb_executor-5de42d9d66be6928",
+      "archive": "/workspace/.cloud-setup/index-lifecycle-batch/tidb_executor-5de42d9d66be6928.baseline.gz",
+      "sha256": "0a9dc686c54677125eb7577f764f5fde355b3bc75bcd73e8dc20a0448e65e8b9",
+      "bytes": 248993248,
+      "archive_bytes": 60628032,
+      "reason": "pre-edit executable for changed source; retained verified gzip copy",
+      "archive_sha256": "c8f0c400d084f6b441d1ff2cc2a2e3a0567878883d4cf853162d69701966939b",
+      "archive_retired_after_validation": true,
+      "retirement_reason": "107 current Rust tests, six wire assertions and locked production build passed; preserve current binaries and receipts instead of superseded binaries"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-exec/370612cc3e852cab/out/all-370612cc3e852cab",
+      "archive": "/workspace/.cloud-setup/index-lifecycle-batch/all-370612cc3e852cab.baseline.gz",
+      "sha256": "18b9d83fe11f35038b87b08a2129c325b7e4b136d212eaa453830783790ac994",
+      "bytes": 346206312,
+      "archive_bytes": 79212636,
+      "reason": "pre-edit executable for changed source; retained verified gzip copy",
+      "archive_sha256": "ac7b259c8e8a8125ed047c26e8e56a538a3371cfcba3c15455b3604e791927fa",
+      "archive_retired_after_validation": true,
+      "retirement_reason": "107 current Rust tests, six wire assertions and locked production build passed; preserve current binaries and receipts instead of superseded binaries"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/29d0021090ddb30a/out/tidb_session-29d0021090ddb30a",
+      "archive": "/workspace/.cloud-setup/index-lifecycle-batch/tidb_session-29d0021090ddb30a.baseline.gz",
+      "sha256": "effb7c3a97b2535066a24fff726e7373f72f9a53931a5f5c7c944031dfbe40cb",
+      "bytes": 278529672,
+      "archive_bytes": 67745466,
+      "reason": "pre-edit executable for changed source; retained verified gzip copy",
+      "archive_sha256": "e0f8b641aa4082c6850fc99e2ed318e456b39e483a759f84457fe1bce7ef943e",
+      "archive_retired_after_validation": true,
+      "retirement_reason": "107 current Rust tests, six wire assertions and locked production build passed; preserve current binaries and receipts instead of superseded binaries"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-executor/92d43e6f3fcab433/out/all-92d43e6f3fcab433",
+      "alias": null,
+      "archive": "/workspace/.cloud-setup/index-lifecycle-batch/all-92d43e6f3fcab433.baseline.gz",
+      "sha256": "fa3295197d9ea373729cd8094a4deb976a82bcd5aa95421ea1b1ee8427456ec8",
+      "bytes": 216109544,
+      "archive_bytes": 52849994,
+      "reason": "superseded pre-edit executable; retained verified gzip copy",
+      "archive_sha256": "75687bf2b4e047e83f6349f9b97e1cb8760d5f702a18c273736145d7e53991f4",
+      "archive_retired_after_validation": true,
+      "retirement_reason": "107 current Rust tests, six wire assertions and locked production build passed; preserve current binaries and receipts instead of superseded binaries"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-exec/0fe9fe5d9cc863a2/out/tidb_exec-0fe9fe5d9cc863a2",
+      "alias": null,
+      "archive": "/workspace/.cloud-setup/index-lifecycle-batch/tidb_exec-0fe9fe5d9cc863a2.baseline.gz",
+      "sha256": "397cb98a2cf49f9a1719357f458202f5fb58e193adfc4c0ced96e12893dc9e06",
+      "bytes": 247689968,
+      "archive_bytes": 55682495,
+      "reason": "superseded pre-edit executable; retained verified gzip copy",
+      "archive_sha256": "5d1b11b9489b4a83f4739c076d52ccda4f3c45c26eb77edf85e2cd748e4a2285",
+      "archive_retired_after_validation": true,
+      "retirement_reason": "107 current Rust tests, six wire assertions and locked production build passed; preserve current binaries and receipts instead of superseded binaries"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/d200bba76bbd63c1/out/all-d200bba76bbd63c1",
+      "alias": null,
+      "archive": "/workspace/.cloud-setup/index-lifecycle-batch/all-d200bba76bbd63c1.baseline.gz",
+      "sha256": "971e6c6beebf35bf05b5b66d772f54a679699fcc7af2634daedbe39d49869dca",
+      "bytes": 255064064,
+      "archive_bytes": 60905837,
+      "reason": "superseded pre-edit executable; retained verified gzip copy",
+      "archive_sha256": "aa896e384cc20abb793ac70255c16678d71b5a2d794e9d2c37e5c21e70e4fc9c",
+      "archive_retired_after_validation": true,
+      "retirement_reason": "107 current Rust tests, six wire assertions and locked production build passed; preserve current binaries and receipts instead of superseded binaries"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/42e66d3893eadbd5/out/cluster_session_smoke",
+      "alias": "/workspace/tidb/rust/target/debug/cluster-session-smoke",
+      "archive": "/workspace/.cloud-setup/index-lifecycle-batch/cluster_session_smoke.baseline.gz",
+      "sha256": "db93f4757d67b71a27e101b1d1ebc9d1316e3a34eedc1e76d7659edfcc586fa7",
+      "bytes": 382487176,
+      "archive_bytes": 86322802,
+      "reason": "superseded pre-edit executable; retained verified gzip copy",
+      "archive_sha256": "94e8cbcd88de7168c663460c581940500b11fa7e53f4a98a4a69b03dc0662e2b",
+      "archive_retired_after_validation": true,
+      "retirement_reason": "107 current Rust tests, six wire assertions and locked production build passed; preserve current binaries and receipts instead of superseded binaries"
+    }
+  ],
+  "publication": "Actual precommit hook, fresh prepush locked build and remote SHA verification must be recorded externally after the committed receipt; do not infer success from this field."
+}

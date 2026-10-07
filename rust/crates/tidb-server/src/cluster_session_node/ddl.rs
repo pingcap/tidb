@@ -32,7 +32,7 @@ use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer,
 use tidb_exec::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
 use tidb_exec::cluster_ddl::{
     CheckConstraintValidation, DdlPlanError, DdlStatement, ExchangePartitionValidation,
-    IndexBackfill,
+    IndexBackfill, IndexBackfillOperation,
 };
 use tidb_exec::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
 use tidb_exec::ddl_job_table::DdlJobTable;
@@ -2227,7 +2227,7 @@ where
 
 /// The index backfill, performed by the very code an `INSERT` uses.
 ///
-/// `KvTable::create_index` is Go's reorg step expressed at this tier: it walks
+/// `KvTable::create_index_with_context` expresses Go's reorg step: it walks
 /// the table's rows, computes each entry from the row, and refuses a UNIQUE
 /// index whose existing rows already collide -- leaving the table without the
 /// index, which is what TiDB answers too. Nothing about it is
@@ -2244,44 +2244,37 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         plan: &IndexBackfill,
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
-    ) -> Result<(), String> {
+    ) -> Result<(), LockSqlError> {
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
         // Built from the table as it was BEFORE the change, which is the shape
         // its stored rows have -- and, for a DROP, the state in which the
         // index being removed is still one of the table's own.
         //
         // With NO auto-increment counter, because a backfill allocates no id:
-        // `create_index`/`drop_index` scan the rows that exist and write or
-        // delete the index entries those rows produce, and neither reads the
-        // allocator. Naming that absence is what keeps it honest -- the plan
+        // Creation evaluates existing rows; removal deletes existing index
+        // keys. Neither operation reads the allocator. Naming that absence is what keeps it honest -- the plan
         // carries no database id, so the alternative would be inventing one
         // and handing over a counter starting at zero, which against shared
         // cluster storage re-issues ids the table already holds.
-        let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)?
+        let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)
+            .map_err(exchange_validation_internal)?
             .with_new_collation_mode(plan.use_new_collation);
         let index = {
             let index = plan.index.read();
-            kv_index(&index, &table.columns)?
+            kv_index(&index, &table.columns).map_err(exchange_validation_internal)?
         };
         let name = index.name.clone();
-        if plan.add {
-            // This cluster DDL plan carries no session context, so its
-            // backfill uses the DDL statement defaults while still
-            // recomputing every generated column through RowDecoder.
-            table
-                .create_index_with_context(index, &StmtContext::default())
-                .map_err(backfill_failure)?;
-        } else if !table
-            .drop_index(&name, &StmtContext::default().session_zone())
-            .map_err(backfill_failure)?
-        {
-            // The plan found the index on the stored table, so the loader
-            // dropping it can only mean the two disagree about what the table
-            // has -- which must not end as a silent no-op.
-            return Err(format!(
-                "index {name} is on the stored table but not on the table this node built \
-                 from it, so its entries cannot be removed"
-            ));
+        match &plan.operation {
+            IndexBackfillOperation::Add(context) => table
+                .create_index_with_context(index, &context.0)
+                .map_err(backfill_failure)?,
+            IndexBackfillOperation::Drop => {
+                if !table.drop_index(&name).map_err(backfill_failure)? {
+                    return Err(exchange_validation_internal(format!(
+                        "index {name} is absent from the stored table"
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -2406,18 +2399,12 @@ fn exchange_validation_table_error(error: tidb_executor::kv_table::KvTableError)
     }
 }
 
-/// Renders a failed walk in the words the failure has, not as a Debug dump.
-///
-/// The one a user actually meets is the duplicate: `CREATE UNIQUE INDEX` over
-/// rows that already collide is Go's 1062 naming `table.index`, and the
-/// statement leaves the table WITHOUT the index -- which is exactly what
-/// happens here, because the whole change is one transaction that does not
-/// commit.
-fn backfill_failure(error: tidb_executor::kv_table::KvTableError) -> String {
-    match error {
-        tidb_executor::kv_table::KvTableError::DuplicateEntry { value, key } => {
-            format!("Duplicate entry '{value}' for key '{key}'")
-        }
-        other => format!("{other:?}"),
+/// Preserve the shared table/expression error identity through DDL rollback.
+fn backfill_failure(error: tidb_executor::kv_table::KvTableError) -> LockSqlError {
+    let error = tidb_executor::ddl::index_backfill_error(error).to_mysql_error();
+    LockSqlError {
+        code: error.code,
+        state: error.state,
+        message: error.message,
     }
 }

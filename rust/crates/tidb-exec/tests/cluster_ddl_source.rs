@@ -32,8 +32,8 @@ use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_ddl, plan_ddl_with_collation,
     plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
     prepare_check_constraint_job_submission, prepare_materialized_view_job_submission,
-    AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate, PersistedDdlJobFailure,
-    PersistedDdlJobPlan, PersistedDdlJobStep,
+    AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, IndexBackfillOperation, MdlInfoUpdate,
+    PersistedDdlJobFailure, PersistedDdlJobPlan, PersistedDdlJobStep,
 };
 
 use tidb_exec::cluster_ddl::DdlJobSchemaState;
@@ -4549,7 +4549,7 @@ fn alter_table_index_actions_share_the_catalog_backfill_path() {
     );
     assert_eq!(added.diff.action_type.0, 7, "ActionAddIndex");
     let backfill = added.backfill.first().expect("the index owes entries");
-    assert!(backfill.add);
+    assert!(matches!(backfill.operation, IndexBackfillOperation::Add(_)));
     assert!(backfill.index.read().unique);
     assert_eq!(
         stored_table(&added, table_id)["index_info"][0]["idx_name"]["O"],
@@ -4563,7 +4563,14 @@ fn alter_table_index_actions_share_the_catalog_backfill_path() {
         470_000_001,
     );
     assert_eq!(dropped.diff.action_type.0, 8, "ActionDropIndex");
-    assert!(!dropped.backfill.first().expect("entries are removed").add);
+    assert!(matches!(
+        dropped
+            .backfill
+            .first()
+            .expect("entries are removed")
+            .operation,
+        IndexBackfillOperation::Drop
+    ));
 
     // Go merges multiple add-index sub-jobs. Both entry walks remain ordered
     // in the one catalog transaction.
@@ -5368,7 +5375,7 @@ fn create_index_stores_the_index_and_owes_a_backfill() {
     // wrong answer this whole path exists to avoid, which is why the publisher
     // that cannot perform it refuses outright rather than writing the meta half.
     let backfill = write.backfill.first().expect("entries are owed");
-    assert!(backfill.add);
+    assert!(matches!(backfill.operation, IndexBackfillOperation::Add(_)));
     {
         let index = backfill.index.read();
         assert_eq!(index.id, 1);
@@ -5521,7 +5528,7 @@ fn drop_index_removes_it_and_owes_the_entry_removal() {
     // `ActionDropIndex`.
     assert_eq!(write.diff.action_type.0, 8);
     let backfill = write.backfill.first().expect("entries are owed");
-    assert!(!backfill.add);
+    assert!(matches!(backfill.operation, IndexBackfillOperation::Drop));
     {
         let index = backfill.index.read();
         assert_eq!(index.name.original(), "vi");
@@ -5790,6 +5797,11 @@ fn drop_column_shifts_offsets_and_takes_its_single_column_index() {
 
     // The single-column index on `a` goes with `a`.
     let write = plan(&mut store, "ALTER TABLE u6.t DROP COLUMN a", 300);
+    assert_eq!(
+        write.backfill.len(),
+        1,
+        "column removal must delete its index keys"
+    );
     apply(&mut store, &write);
     let stored: serde_json::Value =
         serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
@@ -5927,7 +5939,7 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
         tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE
     );
     let backfill = write.backfill.first().expect("the index change backfills");
-    assert!(backfill.add);
+    assert!(matches!(backfill.operation, IndexBackfillOperation::Add(_)));
     assert_eq!(backfill.index.read().name.original(), "idx_c");
     assert_eq!(
         backfill
@@ -5956,7 +5968,7 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
     );
     apply(&mut store, &write);
     let backfill = write.backfill.first().expect("the removal walks");
-    assert!(!backfill.add);
+    assert!(matches!(backfill.operation, IndexBackfillOperation::Drop));
     assert!(
         backfill
             .table
@@ -9490,4 +9502,30 @@ fn check_job_admission_uses_alter_column_errors_and_constraint_name_scope() {
     )
     .unwrap()
     .is_some());
+}
+
+#[test]
+fn grouped_drop_columns_remove_every_owned_index_range() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t(id INT PRIMARY KEY, a INT, b INT, KEY ia(a), KEY ib(b))",
+        100,
+    );
+    apply(&mut store, &write);
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t DROP COLUMN a, DROP COLUMN b",
+        200,
+    );
+    assert_eq!(write.backfill.len(), 2);
+    for (work, name) in write.backfill.iter().zip(["ia", "ib"]) {
+        assert!(matches!(work.operation, IndexBackfillOperation::Drop));
+        assert_eq!(work.index.read().name.original(), name);
+        assert!(work
+            .table
+            .indices
+            .iter_deref()
+            .any(|idx| idx.read().id == work.index.read().id));
+    }
 }

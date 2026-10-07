@@ -126,10 +126,10 @@ impl RowDecodeContext {
         }
     }
 
-    /// A DDL reorg/backfill context. It uses the same CREATE/ALTER type flags
-    /// that validated the default the schema change is now reading.
+    /// A DDL reorganization context with Go reorg flags and error levels.
     #[must_use]
     pub fn for_ddl(ctx: &crate::StmtContext) -> Self {
+        let ctx = ctx.for_reorg();
         Self {
             type_flags: ctx.reorg_default_conversion_flags(),
             zone: ctx.session_zone(),

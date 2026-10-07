@@ -196,6 +196,8 @@ pub enum AlterColumnAction {
         index: Box<IndexInfo>,
         /// Whether Go's AUTO pre-split marker was present on this sub-action.
         auto_pre_split: bool,
+        /// SQL mode and location captured for existing-row evaluation.
+        context: DdlStatementContext,
     },
     /// `DROP INDEX`/`DROP KEY`.
     DropIndex {
@@ -613,6 +615,8 @@ pub enum DdlStatement {
         /// Explicit `split_opt` boundaries are represented by the caller's
         /// separate manual path and take precedence over this marker.
         auto_pre_split: bool,
+        /// SQL mode and location captured for existing-row evaluation.
+        context: DdlStatementContext,
     },
     /// `DROP INDEX name ON [schema.]table`.
     DropIndex {
@@ -1048,7 +1052,9 @@ pub fn lower_ddl_with_context(
                 if_exists: *if_exists,
             }))
         }
-        DdlStmt::CreateIndex(create) => lower_create_index(create, default_schema, false).map(Some),
+        DdlStmt::CreateIndex(create) => {
+            lower_create_index(create, default_schema, false, context).map(Some)
+        }
         DdlStmt::DropIndex(drop) => lower_drop_index(drop, default_schema).map(Some),
         DdlStmt::CreatePlacementPolicy(create) => {
             // Go checks the pairing before building the settings, so a
@@ -1370,16 +1376,18 @@ fn lower_alter_table_catalog(
                 tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
                     // The standalone lowering owns the validation; reuse it
                     // whole so the bundled and single spellings cannot drift.
-                    match lower_alter_add_index(alter, index, default_schema)? {
+                    match lower_alter_add_index(alter, index, default_schema, context)? {
                         DdlStatement::CreateIndex {
                             if_not_exists,
                             index,
                             auto_pre_split,
+                            context,
                             ..
                         } => actions.push(AlterColumnAction::AddIndex {
                             if_not_exists,
                             index,
                             auto_pre_split,
+                            context,
                         }),
                         other => {
                             unreachable!(
@@ -1504,7 +1512,7 @@ fn lower_alter_table_catalog(
 
     match action {
         tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
-            lower_alter_add_index(alter, index, default_schema).map(Some)
+            lower_alter_add_index(alter, index, default_schema, context).map(Some)
         }
         tidb_ast::AlterTableAction::DropIndex { if_exists, name } => lower_drop_index(
             &DropIndexStmt {
@@ -1871,16 +1879,18 @@ fn lower_alter_table_catalog(
                         }
                     }
                     tidb_ast::TableConstraint::Index(index) => {
-                        match lower_alter_add_index(alter, index, default_schema)? {
+                        match lower_alter_add_index(alter, index, default_schema, context)? {
                             DdlStatement::CreateIndex {
                                 if_not_exists,
                                 index,
                                 auto_pre_split,
+                                context,
                                 ..
                             } => actions.push(AlterColumnAction::AddIndex {
                                 if_not_exists,
                                 index,
                                 auto_pre_split,
+                                context,
                             }),
                             other => unreachable!(
                                 "lower_alter_add_index lowers to CreateIndex, got {other:?}"
@@ -2104,6 +2114,7 @@ fn lower_alter_add_index(
     alter: &AlterTableStmt,
     index: &IndexConstraintDefinition,
     default_schema: &str,
+    context: &tidb_executor::StmtContext,
 ) -> Result<DdlStatement, DdlAdmissionError> {
     // go's `ADD PRIMARY KEY` is a unique index named PRIMARY whose columns
     // gain NOT NULL+PRI — the same shape a CREATE TABLE PK carries
@@ -2173,6 +2184,7 @@ fn lower_alter_add_index(
         },
         default_schema,
         primary,
+        context,
     )
 }
 
@@ -2588,6 +2600,7 @@ fn lower_create_index(
     create: &CreateIndexStmt,
     default_schema: &str,
     primary: bool,
+    context: &tidb_executor::StmtContext,
 ) -> Result<DdlStatement, DdlAdmissionError> {
     // go's `ADD PRIMARY KEY` lowers through the CreateIndex statement with
     // `primary = true`; the caller decides, since the AST's own
@@ -2641,6 +2654,7 @@ fn lower_create_index(
         schema,
         table,
         if_not_exists: create.if_not_exists,
+        context: DdlStatementContext(context.clone()),
         auto_pre_split: create.options.auto_pre_split && create.options.pre_split_regions.is_none(),
         index: Box::new(IndexInfo {
             // The publishing transaction allocates it from the table's own
@@ -6651,9 +6665,42 @@ pub struct IndexBackfill {
     /// re-read a process global after the metadata half has already chosen
     /// the key/value format.
     pub use_new_collation: bool,
-    /// Whether the entries are being written (`CREATE INDEX`) or removed
-    /// (`DROP INDEX`).
-    pub add: bool,
+    /// The operation; only creation evaluates rows.
+    pub operation: IndexBackfillOperation,
+}
+
+/// Existing-row evaluation belongs only to index creation. Removal uses the
+/// physical index range, independent of row expressions and SQL mode.
+#[derive(Clone, Debug)]
+pub enum IndexBackfillOperation {
+    /// Build entries under the submitting statement's captured policy.
+    Add(DdlStatementContext),
+    /// Remove every key owned by the index.
+    Drop,
+}
+
+/// Column removal owns the implicit deletion of its single-column indexes.
+fn plan_removed_column_indexes(
+    before: &TableInfo,
+    after: &TableInfo,
+    use_new_collation: bool,
+    backfill: &mut Vec<IndexBackfill>,
+) {
+    for index in before.indices.iter_handles().flatten() {
+        let id = index.read().id;
+        if !after
+            .indices
+            .iter_deref()
+            .any(|candidate| candidate.read().id == id)
+        {
+            backfill.push(IndexBackfill {
+                table: Box::new(before.clone_like_go()),
+                index: index.clone(),
+                use_new_collation,
+                operation: IndexBackfillOperation::Drop,
+            });
+        }
+    }
 }
 
 /// The candidate table shape whose enforced CHECK must hold for every
@@ -7347,7 +7394,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 table: Box::new(stored.clone_like_go()),
                 index: GoShared::new(dropped),
                 use_new_collation,
-                add: false,
+                operation: IndexBackfillOperation::Drop,
             });
             diff.action_type = ActionType::ACTION_DROP_PRIMARY_KEY;
             diff.schema_id = db_id;
@@ -8865,6 +8912,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 }
                 AlterColumnOutcome::Applied => {}
             }
+            plan_removed_column_indexes(stored, &info, use_new_collation, &mut backfill);
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -9204,12 +9252,22 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         outcome
                     }
                     AlterColumnAction::Drop { if_exists, column } => {
-                        apply_drop_column(&mut info, schema, table, column, *if_exists)?
+                        let before = info.clone_like_go();
+                        let outcome =
+                            apply_drop_column(&mut info, schema, table, column, *if_exists)?;
+                        plan_removed_column_indexes(
+                            &before,
+                            &info,
+                            use_new_collation,
+                            &mut backfill,
+                        );
+                        outcome
                     }
                     AlterColumnAction::AddIndex {
                         if_not_exists,
                         index,
                         auto_pre_split: action_auto_pre_split,
+                        context,
                     } => {
                         auto_pre_split |= *action_auto_pre_split;
                         if let Some(existing) = find_index(&info, index.name.original()) {
@@ -9256,7 +9314,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                             table: backfill_table,
                             index: added.clone(),
                             use_new_collation,
-                            add: true,
+                            operation: IndexBackfillOperation::Add(context.clone()),
                         });
                         if add_index_count > 1 {
                             merged_added_indexes.push(added.read().clone_like_go());
@@ -9302,7 +9360,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                             table: backfill_table,
                             index: GoShared::new(dropped),
                             use_new_collation,
-                            add: false,
+                            operation: IndexBackfillOperation::Drop,
                         });
                         applied += 1;
                         continue;
@@ -9693,6 +9751,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             if_not_exists,
             index,
             auto_pre_split: requested_auto_pre_split,
+            context,
         } => {
             auto_pre_split = *requested_auto_pre_split;
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
@@ -9855,7 +9914,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 table: Box::new(stored.clone_like_go()),
                 index: added.clone(),
                 use_new_collation,
-                add: true,
+                operation: IndexBackfillOperation::Add(context.clone()),
             });
             diff.action_type = ActionType::ACTION_ADD_INDEX;
             diff.schema_id = db_id;
@@ -9991,7 +10050,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 table: Box::new(stored.clone_like_go()),
                 index: GoShared::new(dropped),
                 use_new_collation,
-                add: false,
+                operation: IndexBackfillOperation::Drop,
             });
             diff.action_type = ActionType::ACTION_DROP_INDEX;
             diff.schema_id = db_id;

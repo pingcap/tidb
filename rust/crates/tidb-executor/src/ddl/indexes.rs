@@ -650,26 +650,7 @@ pub(crate) fn add_index_to_table(
     }
     let result = table
         .create_index_with_context(built, ctx)
-        .map_err(|e| match e {
-            crate::kv_table::KvTableError::Storage(error) => error.into(),
-            crate::kv_table::KvTableError::ColumnCast(error) => {
-                DriverError::Exec(crate::ExecError::Mysql(error))
-            }
-            crate::kv_table::KvTableError::DuplicateKeyName(name) => {
-                DriverError::DuplicateKeyName(name)
-            }
-            // The backfill computes each entry's value from the row, so a
-            // generated column that cannot be evaluated fails the DDL with
-            // its own code -- Go answers 1365 for
-            // `ALTER TABLE t ADD INDEX ((100/a))` over a row with `a = 0`.
-            crate::kv_table::KvTableError::Generation {
-                eval: Some(eval), ..
-            } => DriverError::Exec(crate::ExecError::Eval(eval)),
-            crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
-                DriverError::DuplicateEntry { value, key }
-            }
-            other => DriverError::Parse(format!("index creation failed: {other:?}")),
-        });
+        .map_err(index_backfill_error);
     // A failed `CREATE INDEX` must leave no trace. The hidden columns have to
     // be in place BEFORE the index is built (its entries are computed from
     // the materialized row), so a failure takes them back off rather than
@@ -683,6 +664,30 @@ pub(crate) fn add_index_to_table(
     result
 }
 
+/// Preserve the source SQL diagnostic for local and cluster index backfill.
+pub fn index_backfill_error(error: crate::kv_table::KvTableError) -> DriverError {
+    match error {
+        crate::kv_table::KvTableError::Storage(error) => error.into(),
+        crate::kv_table::KvTableError::ColumnCast(error) => {
+            DriverError::Exec(crate::ExecError::Mysql(error))
+        }
+        crate::kv_table::KvTableError::DuplicateKeyName(name) => {
+            DriverError::DuplicateKeyName(name)
+        }
+        // The backfill computes each entry's value from the row, so a
+        // generated column that cannot be evaluated fails the DDL with
+        // its own code -- Go answers 1365 for
+        // `ALTER TABLE t ADD INDEX ((100/a))` over a row with `a = 0`.
+        crate::kv_table::KvTableError::Generation {
+            eval: Some(eval), ..
+        } => DriverError::Exec(crate::ExecError::Eval(eval)),
+        crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
+            DriverError::DuplicateEntry { value, key }
+        }
+        other => DriverError::Parse(format!("index creation failed: {other:?}")),
+    }
+}
+
 /// Runs a `DROP INDEX`.
 ///
 /// Captured from TiDB: dropping one that does not exist is 1091 with its own
@@ -693,9 +698,8 @@ pub fn run_drop_index_in(
     current_db: &str,
     // The session's own statement context: this entry RE-PARSES text the
     // session already parsed, so without it a double-quoted name would mean
-    // one thing to the session and another here -- and dropping an index
-    // over a `TIMESTAMP` column has to REBUILD each entry's key to delete
-    // it, which is encoded in the session's `time_zone`.
+    // one thing to the session and another here. Key-range deletion itself
+    // does not evaluate rows or depend on the session time zone.
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let stmt = ctx.parse(sql)?;
@@ -738,7 +742,7 @@ pub(crate) fn drop_index_from_table(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     match prepare_drop_index(catalog, database, table_name, index_name, if_exists)? {
-        IndexAdmission::Change(id) => drop_prepared_index(catalog, database, table_name, id, ctx)?,
+        IndexAdmission::Change(id) => drop_prepared_index(catalog, database, table_name, id)?,
         IndexAdmission::Note(note) => ctx.append_suppressed(&note),
     }
     Ok(())
@@ -776,7 +780,6 @@ pub(super) fn drop_prepared_index(
     database: &str,
     table_name: &str,
     index_id: i64,
-    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
@@ -816,7 +819,7 @@ pub(super) fn drop_prepared_index(
         })
         .unwrap_or_default();
     let dropped = table
-        .drop_index_with_context(&index_name, ctx)
+        .drop_index(&index_name)
         .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
     debug_assert!(dropped, "prepared index identity was resolved above");
     for offset in hidden {
