@@ -2,7 +2,7 @@
 
 Latest behavioral repair: [DML writable rows and explicit handles](dml-identity-batch-validation.json). E02/E03/K03 share complete preimages and candidate identity across INSERT, joined writes, duplicate resolution, indexes and FK callbacks. 286 Rust cases and 20 TCP assertions pass. Counts remain 86 tracked /30 repaired /56 unresolved (27 open,29 partial); no complete package acceptance.
 
-Latest cleanup: [benchmark owners and retired-gap guidance](retired-gap-cleanup-validation.json). Remove 14 redundant registrations, two private key helpers, 19 stale comment blocks and the superseded unit-test-infrastructure plan. Preserve distinct vectors and outstanding Go obligations; production code and finding dispositions are unchanged.
+Latest cleanup: [unused DDL leaf retirement](unused-carrier-cleanup-validation.json). Remove two modules with no external callers, their 20 private tests and a stale completed plan. Live SQL/DDL behavior and finding dispositions remain unchanged; archived Go contracts remain unaccepted.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

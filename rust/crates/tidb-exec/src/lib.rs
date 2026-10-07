@@ -95,7 +95,6 @@ pub mod runtime_stats;
 pub mod schema_validator;
 pub mod session_commit_protocol;
 pub mod stats_watch;
-pub mod storage_class;
 pub mod system_row_write;
 pub(crate) mod table_write_policy;
 pub mod table_info_build;

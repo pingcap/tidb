@@ -803,8 +803,8 @@
     "scope": "B02 E02/E03/K03: complete joined writable rows, hidden generation, explicit handle candidate and duplicate consumers"
   },
   "latest_test_cleanup": {
-    "receipt": "retired-gap-cleanup-validation.json",
-    "scope": "Remove 14 redundant test registrations, two private key helpers, 19 stale comment blocks and the obsolete unit-test-infrastructure plan. Distinct vectors migrate to current owners; production behavior and findings unchanged.",
+    "receipt": "unused-carrier-cleanup-validation.json",
+    "scope": "Retire unreferenced storage-class and materialized-view helper modules with 20 private tests and a stale completed plan. Live DDL, metadata and all existing findings unchanged; removed Go contracts remain unaccepted.",
     "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
   },
   "test_cleanup_history": [
@@ -1184,6 +1184,11 @@
     {
       "receipt": "retired-gap-cleanup-validation.json",
       "scope": "Remove 14 redundant test registrations, two private key helpers, 19 stale comment blocks and the obsolete unit-test-infrastructure plan. Distinct vectors migrate to current owners; production behavior and findings unchanged.",
+      "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+    },
+    {
+      "receipt": "unused-carrier-cleanup-validation.json",
+      "scope": "Retire unreferenced storage-class and materialized-view helper modules with 20 private tests and a stale completed plan. Live DDL, metadata and all existing findings unchanged; removed Go contracts remain unaccepted.",
       "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
     }
   ],

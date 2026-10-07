@@ -325,7 +325,6 @@ mod generated_modify;
 mod index_changes;
 pub mod index_prefix;
 mod indexes;
-pub mod mview_helpers;
 pub mod mview_schedule_expr;
 pub mod placement_policy;
 mod table_cache;

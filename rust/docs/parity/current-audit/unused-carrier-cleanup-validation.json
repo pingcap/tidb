@@ -1,0 +1,180 @@
+{
+  "baseline": "40e6598856a1290c01c0f44eec7481f4e2f7a5a6",
+  "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+  "scope": "Retire two disconnected DDL leaf implementations and their private tests. Existing SQL admission, metadata, job processing, schedule/build seeds, parser and model owners remain byte-identical. No Go behavior implemented or accepted.",
+  "removed": [
+    {
+      "path": "rust/crates/tidb-exec/src/storage_class.rs",
+      "sha256": "ebd8ad7a2136481554838f27a03aa5106c3a2b68ef6b824d9246f60dc0609946",
+      "lines": 1779,
+      "public_functions": [
+        "build_storage_class_settings_from_json",
+        "get_engine_attribute_from_storage_class_table_options",
+        "check_storage_class_conflict_in_alter_table_specs",
+        "get_simple_table_storage_class_for_show_create",
+        "build_storage_class_for_table",
+        "build_storage_class_for_partitions"
+      ],
+      "external_symbol_references": {
+        "build_storage_class_settings_from_json": [],
+        "get_engine_attribute_from_storage_class_table_options": [],
+        "check_storage_class_conflict_in_alter_table_specs": [],
+        "get_simple_table_storage_class_for_show_create": [],
+        "build_storage_class_for_table": [],
+        "build_storage_class_for_partitions": []
+      },
+      "retired_private_tests": [
+        "build_storage_class_settings_from_json_cases",
+        "build_storage_class_for_table_cases",
+        "build_storage_class_for_partitions_cases",
+        "storage_class_string_cases",
+        "get_engine_attribute_from_storage_class_table_options_cases",
+        "check_storage_class_conflict_in_alter_table_specs_cases",
+        "get_simple_table_storage_class_for_show_create_cases",
+        "is_part_expr_unsigned_reads_the_partition_columns_flag"
+      ],
+      "archive": "https://github.com/pingcap/tidb/blob/40e6598856a1290c01c0f44eec7481f4e2f7a5a6/rust/crates/tidb-exec/src/storage_class.rs"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/ddl/mview_helpers.rs",
+      "sha256": "b11646739d993cbe25342d583f7949fbfffc7c1fa50522e4265f67744ffdcff6",
+      "lines": 378,
+      "public_functions": [
+        "build_m_view_import_into_options",
+        "check_m_view_readable",
+        "check_m_view_updatable",
+        "build_create_materialized_view_insert_sql",
+        "build_create_materialized_view_import_sql",
+        "build_create_materialized_view_build_rows_check_sql",
+        "build_m_log_purge_meta"
+      ],
+      "external_symbol_references": {
+        "build_m_view_import_into_options": [],
+        "check_m_view_readable": [],
+        "check_m_view_updatable": [],
+        "build_create_materialized_view_insert_sql": [],
+        "build_create_materialized_view_import_sql": [],
+        "build_create_materialized_view_build_rows_check_sql": [],
+        "build_m_log_purge_meta": []
+      },
+      "retired_private_tests": [
+        "import_into_options_match_gos_order_and_escaping",
+        "insert_sql_matches_gos_replace_into_shape",
+        "import_sql_matches_gos_import_into_shape",
+        "missing_sql_content_refuses",
+        "build_rows_check_sql_matches_go",
+        "purge_meta_validation_matches_go",
+        "readable_refuses_building_state",
+        "readable_allows_ready_state",
+        "readable_bypasses_with_maintenance_session",
+        "maintenance_bypass_requires_restricted_sql",
+        "updatable_refuses_mv_tables",
+        "updatable_allows_non_mv_tables"
+      ],
+      "archive": "https://github.com/pingcap/tidb/blob/40e6598856a1290c01c0f44eec7481f4e2f7a5a6/rust/crates/tidb-executor/src/ddl/mview_helpers.rs"
+    },
+    {
+      "path": "rust/docs/obsolete-tooling-removal-execplan.md",
+      "lines": 55,
+      "sha256": "3aacc62e66924640f81f8259afcd5c55f996d78fe6704dae210178ccefc5c33d",
+      "archive": "https://github.com/pingcap/tidb/blob/40e6598856a1290c01c0f44eec7481f4e2f7a5a6/rust/docs/obsolete-tooling-removal-execplan.md"
+    }
+  ],
+  "retired_private_tests": 20,
+  "removed_public_functions": 13,
+  "surviving_rust_diff": "Only the two module declarations are removed; every other retained Rust executable source and test file is unchanged.",
+  "caller_scan": "All tracked rust/**/*.rs and Cargo manifests outside the two deleted modules, including difftests and vendored sources; no exported function references. No initializer/registration/FFI side effects in either module.",
+  "remaining_go_storage_class_tests": {
+    "pkg/ddl/storage_class_test.go": [
+      "TestBuildStorageClassSettingsFromJSON",
+      "TestBuildStorageClassForTable",
+      "TestBuildStorageClassForPartitions",
+      "TestStorageClassPartitionScopesUseNormalizedValues",
+      "TestStorageClassPartitionScopesRejectInvalidLessThanValue",
+      "TestStorageClassString",
+      "TestGetEngineAttributeFromStorageClassTableOptions",
+      "TestCheckStorageClassConflictInAlterTableSpecs",
+      "TestGetSimpleTableStorageClassForShowCreate",
+      "TestStorageClassTransitionHistoryInsertionRetry",
+      "TestStorageClassTransitionHistorySecondInsertionRetry",
+      "TestStorageClassTransitionHistoryInsertionCancellation",
+      "TestStorageClassTransitionUsesSystemTableState"
+    ],
+    "pkg/ddl/storage_class_partition_test.go": [
+      "TestStorageClassAddPartitionUsesCheckedDefinitions",
+      "TestStorageClassReorganizePartitionUsesCheckedDefinitions",
+      "TestStorageClassRemovePartitioningIgnoresPartitionScopes"
+    ],
+    "pkg/ddl/storage_class_transition_test.go": [
+      "TestBuildStorageClassTransitionOperations",
+      "TestStorageClassTransitionTracksPartitionedTableParent",
+      "TestChangedStorageClassPhysicalIDs",
+      "TestAddCurrentStorageClassTransitionTargetsSkipsRemovedTargets",
+      "TestStorageClassTransitionCompletesOnOneFullObservation",
+      "TestStorageClassTransitionCacheKeepsLastObservation",
+      "TestStorageClassTransitionStatusesUseCurrentNames",
+      "TestValidateStorageClassTransitionTargets",
+      "TestStorageClassTransitionTargetsExist"
+    ]
+  },
+  "remaining_go_contracts": [
+    "pkg/ddl/storage_class.go: validation/options/assignment belong to the complete DDL owner. The old model had no SQL caller and predated current transition/history/partition tests. Existing ignored STORAGE_CLASS ALTER behavior is not repaired here.",
+    "pkg/ddl/materialized_view.go and mview_worker.go: import options, build SQL, purge validation and durable maintenance/reorg lifecycle remain incomplete.",
+    "pkg/planner/core/util.go: materialized-view readable/updatable and restricted-maintenance policy must be integrated with live planner/session ownership, not private standalone helpers."
+  ],
+  "retained_boundaries": [
+    "tidb-exec/src/cluster_ddl.rs and all its materialized-view admission/persisted-job tests",
+    "tidb-exec/src/mview_build_engine.rs and mview_schedule_derive.rs: existing persisted seed callers prevent unreviewed deletion; D09 remains explicitly unaccepted",
+    "tidb-executor/src/ddl/mview_schedule_expr.rs: canonical schedule-expression validation and current callers",
+    "tidb-model/src/engine_attribute.rs and tests_pkg_meta_model_materialized_view.rs: metadata contracts retained",
+    "Go package inventory, dated receipts and candidate snapshots retain their original provenance; baseline Git archives preserve every deleted test vector"
+  ],
+  "retired_plan_reason": "Completed obsolete-tooling-removal task; its receipt remains. Retired plan still claimed no push authorization and old refs/tooling boundaries. No incoming reference requires migration.",
+  "finding_dispositions_changed": false,
+  "go_package_accepted": false,
+  "validation": {
+    "status": "passed scoped validation; publication gates recorded externally",
+    "environment": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1",
+    "commands": [
+      {
+        "command": "cargo test --locked -p tidb-executor -p tidb-model --lib -- ddl::mview_schedule_expr:: engine_attribute materialized_view --test-threads=1",
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/unused-carrier-cleanup/unit-tests.log",
+        "sha256": "eb27cb27549d63e8b6371347c3a563652e6f8d560d94f4325e514edfe2398a02",
+        "passed": 28
+      },
+      {
+        "command": "cargo test --locked -p tidb-exec --test all -- materialized_view ignored_table_option --test-threads=1",
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/unused-carrier-cleanup/ddl-tests.log",
+        "sha256": "426a703b6ad74124bdfbf418ba3cd9701e5d21974ff4766170d9d05d0e833bcb",
+        "passed": 13
+      },
+      {
+        "command": "cargo check --locked --all-targets -p tidb-exec -p tidb-executor -p tidb-server",
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/unused-carrier-cleanup/check.log",
+        "sha256": "55c98f09b00c4568f49438026ee67eb5097fdc6f33117ce3e1c77819d5681c6c"
+      },
+      {
+        "command": "make lint",
+        "cwd": "/workspace/tidb",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/unused-carrier-cleanup/lint.log",
+        "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef"
+      }
+    ],
+    "tests_passed": 41,
+    "filter_limits": "ignored_table_option matched zero tests; the 13 integration cases are materialized_view matches. No storage-option coverage claimed from that filter.",
+    "source_comparison": "Every retained Rust source/test body byte-identical to baseline except the two removed module declarations. Finding register differences limited to cleanup metadata. git diff --check passed.",
+    "not_run": [
+      "Full Go suites",
+      "Live multi-node TiKV",
+      "Performance measurements"
+    ],
+    "publication_receipt": "/workspace/.cloud-setup/unused-carrier-cleanup/final-handoff.json"
+  }
+}
