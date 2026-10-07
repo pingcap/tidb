@@ -57,6 +57,8 @@ struct PdServer {
     required_keyspace: Arc<AtomicUsize>,
     keyspace_loads: Arc<AtomicUsize>,
     reply: Reply,
+    tso_failure: Arc<std::sync::Mutex<Option<tonic::Code>>>,
+    cluster_info_failure: Arc<std::sync::atomic::AtomicBool>,
     received: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
 }
@@ -335,6 +337,9 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
         let service = self.clone();
         Box::pin(async move {
             let active = ActiveStream(service.dropped.clone());
+            if let Some(code) = *service.tso_failure.lock().unwrap() {
+                return Err(tonic::Status::new(code, "injected TSO connection failure"));
+            }
             let mut requests = request.into_inner();
             // A server is allowed to wait for the first request before returning headers.
             let first = requests.message().await?;
@@ -501,6 +506,8 @@ impl Server {
             required_keyspace: Arc::new(AtomicUsize::new(0)),
             keyspace_loads: Arc::new(AtomicUsize::new(0)),
             reply,
+            tso_failure: Arc::default(),
+            cluster_info_failure: Arc::default(),
             received: Arc::new(AtomicUsize::new(0)),
             dropped: Arc::new(AtomicUsize::new(0)),
         };
@@ -899,7 +906,9 @@ async fn source_connectionctx_failed_metadata_refresh_preserves_live_stream() {
     let server = Server::start(Reply::Timestamp).await;
     let mut cluster = server.cluster(Duration::from_secs(1)).await;
     let first = cluster.get_timestamp().await.unwrap();
-    *server.service.leader_urls.write().unwrap() = vec!["http://127.0.0.1:0".to_owned()];
+    // Fail the membership observation itself. An accepted new leader is not a
+    // failed observation merely because its timestamp connection is unavailable.
+    server.service.member_failures.store(100, Ordering::SeqCst);
     assert!(Connection::new(Arc::new(SecurityManager::default()))
         .reconnect(&mut cluster, Duration::from_secs(1))
         .await
@@ -1539,7 +1548,13 @@ impl tonic::server::UnaryService<pdpb::GetClusterInfoRequest> for PdServer {
     type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
     fn call(&mut self, _: tonic::Request<pdpb::GetClusterInfoRequest>) -> Self::Future {
         let response = self.cluster_info.read().unwrap().clone();
+        let failure = self.cluster_info_failure.load(Ordering::SeqCst);
         Box::pin(async move {
+            if failure {
+                return Err(tonic::Status::unavailable(
+                    "PD mode observation unavailable",
+                ));
+            }
             response
                 .map(tonic::Response::new)
                 .ok_or_else(|| tonic::Status::unimplemented("old PD"))
@@ -2290,7 +2305,15 @@ async fn availability_pair_with_proxy(
     enabled: bool,
     proxy: bool,
 ) -> (Server, Server, Arc<RetryClient>) {
-    let leader = Server::start(Reply::Timestamp).await;
+    availability_pair_with_reply(enabled, proxy, Reply::Timestamp).await
+}
+
+async fn availability_pair_with_reply(
+    enabled: bool,
+    proxy: bool,
+    reply: Reply,
+) -> (Server, Server, Arc<RetryClient>) {
+    let leader = Server::start(reply).await;
     let follower = Server::start(Reply::Timestamp).await;
     if proxy {
         leader.service.health_status.store(2, Ordering::SeqCst);
@@ -2805,4 +2828,122 @@ async fn bootstrap_policy_batch_dial_options_apply_once_in_order() {
         .all(|agent| agent.starts_with("policy-2")));
     assert_eq!(pd.service.connections.load(Ordering::SeqCst), 1);
     cluster.start_close().await;
+}
+
+#[tokio::test]
+async fn tso_failure_batch_forwards_after_network_failures_and_recovers() {
+    let (leader, follower, client) = availability_pair_with_forwarding(true).await;
+    leader.service.health_status.store(2, Ordering::SeqCst);
+    *leader.service.tso_failure.lock().unwrap() = Some(tonic::Code::Unavailable);
+    for _ in 0..6 {
+        assert!(client.tso_for_test().await.get_timestamp().await.is_err());
+        client.reconnect_for_test().await.unwrap();
+    }
+    let oracle = client.tso_for_test().await;
+    assert!(
+        oracle.clone().get_timestamp().await.is_ok(),
+        "six network failures must admit a healthy backup"
+    );
+    let routes = follower.service.wire_routes.lock().unwrap().clone();
+    assert!(routes.iter().any(|(path, host, _)| path == "/pdpb.PD/Tso"
+        && host.as_deref() == Some(leader.service.endpoint.as_str())));
+    client.reconnect_for_test().await.unwrap();
+    assert!(oracle.clone().get_timestamp().await.is_ok());
+    assert_eq!(
+        follower
+            .service
+            .wire_routes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(path, _, _)| path == "/pdpb.PD/Tso")
+            .count(),
+        1,
+        "healthy fallback stream is retained"
+    );
+    *leader.service.tso_failure.lock().unwrap() = None;
+    leader.service.health_status.store(1, Ordering::SeqCst);
+    client.reconnect_for_test().await.unwrap();
+    assert!(oracle.clone().get_timestamp().await.is_ok());
+    wait_for_proxy_drop(&follower).await;
+    assert_eq!(leader.service.received.load(Ordering::SeqCst), 1);
+    client.close().await;
+    assert!(oracle.inner.routes.as_ref().unwrap().borrow().is_empty());
+}
+
+#[tokio::test]
+async fn tso_failure_batch_error_codes_and_disabled_policy() {
+    for (enabled, code, forwards) in [
+        (true, tonic::Code::Cancelled, true),
+        (true, tonic::Code::DeadlineExceeded, true),
+        (true, tonic::Code::PermissionDenied, false),
+        (false, tonic::Code::Unavailable, false),
+    ] {
+        let (leader, follower, client) = availability_pair_with_forwarding(enabled).await;
+        leader.service.health_status.store(2, Ordering::SeqCst);
+        *leader.service.tso_failure.lock().unwrap() = Some(code);
+        for _ in 0..6 {
+            assert!(client.tso_for_test().await.get_timestamp().await.is_err());
+            client.reconnect_for_test().await.unwrap();
+        }
+        assert_eq!(
+            client.tso_for_test().await.get_timestamp().await.is_ok(),
+            forwards,
+            "{enabled} {code:?}"
+        );
+        assert_eq!(
+            follower.service.received.load(Ordering::SeqCst) > 0,
+            forwards
+        );
+        client.close().await;
+    }
+}
+
+#[tokio::test]
+async fn tso_failure_batch_retains_provider_when_mode_observation_fails() {
+    let (leader, follower, client) = availability_pair_with_forwarding(true).await;
+    leader
+        .service
+        .cluster_info_failure
+        .store(true, Ordering::SeqCst);
+    leader.service.health_status.store(2, Ordering::SeqCst);
+    *leader.service.tso_failure.lock().unwrap() = Some(tonic::Code::Unavailable);
+    for _ in 0..6 {
+        assert!(client.tso_for_test().await.get_timestamp().await.is_err());
+        client
+            .reconnect_for_test()
+            .await
+            .expect("failed mode observation must preserve accepted provider");
+    }
+    assert!(client.tso_for_test().await.get_timestamp().await.is_ok());
+    assert_eq!(follower.service.received.load(Ordering::SeqCst), 1);
+    leader.service.health_stall.store(true, Ordering::SeqCst);
+    let checks = leader.service.health_requests.load(Ordering::SeqCst);
+    let probe = tokio::spawn({
+        let client = client.clone();
+        async move { client.reconnect_for_test().await }
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while leader.service.health_requests.load(Ordering::SeqCst) == checks {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), client.close())
+        .await
+        .unwrap();
+    let _ = probe.await;
+}
+
+#[tokio::test]
+async fn tso_failure_batch_established_eof_does_not_enable_forwarding() {
+    let (leader, follower, client) = availability_pair_with_reply(true, false, Reply::End).await;
+    leader.service.health_status.store(2, Ordering::SeqCst);
+    for _ in 0..8 {
+        assert!(client.tso_for_test().await.get_timestamp().await.is_err());
+        client.reconnect_for_test().await.unwrap();
+    }
+    assert_eq!(follower.service.received.load(Ordering::SeqCst), 0);
+    client.close().await;
 }

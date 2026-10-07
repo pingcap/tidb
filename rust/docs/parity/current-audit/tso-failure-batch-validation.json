@@ -1,0 +1,94 @@
+{
+  "date": "2026-10-07",
+  "scope": "B01/B05: P03/P06/N03 shared timestamp construction-failure feedback, automatic backup routing, recovery and accepted-provider retention",
+  "baseline": {
+    "tidb": "a0e053e2e05dbe41e7d90f993bdd34a18264df54",
+    "native": "081145e6ab6215650336c941a9f65ef27c90b552",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861",
+    "pd": "v0.0.0-20260805103528-afa43111d149",
+    "native_published": "8b752f9638ad157931725b66ffdc57e0465432a9"
+  },
+  "reproduced_before": {
+    "original_behavioral_failures": 3,
+    "native": 2,
+    "adapter": 1,
+    "logs": [
+      "native-before.log",
+      "adapter-before-behavior-final.log"
+    ],
+    "fixture_compile_failures": "Initial adapter API-name mistakes were corrected before measuring behavioral failures; their logs are retained."
+  },
+  "review_corrections": [
+    {
+      "problem": "The initial feedback placement counted established response errors as construction failures.",
+      "evidence": "response-before.log fails on the intermediate implementation; the negative guard now passes. This is a correction caught during this batch, not an original-baseline failure.",
+      "repair": "Move construction success/error feedback into shared TsoStream.open_and_request, before reading the first response; remove duplicate caller feedback. Failed fallback streams retire their selected backup."
+    },
+    {
+      "problem": "An old failed-metadata fixture advertised an accepted new leader rather than failing membership.",
+      "repair": "Fail GetMembers itself and retain every live-stream reuse assertion. Native broad run initially had 280 passes and that one stale-stimulus failure; the corrected final suite passes."
+    }
+  ],
+  "repairs": [
+    "Both clients consume one native failure-window and route identity owner; only enabled forwarding admits a healthy backup after six eligible construction errors. Unavailable, DeadlineExceeded and server Canceled count; mixed windows, PermissionDenied, caller timeout/cancellation and retired routes cannot authorize forwarding.",
+    "Explicit follower proxy remains independent of ordinary forwarding. Healthy fallback streams retain physical endpoint and logical-primary metadata; recovery and accepted membership retire obsolete routes.",
+    "Unavailable/DeadlineExceeded GetClusterInfo observations retain the previously accepted provider instead of blocking timestamp fallback. Initial discovery still needs valid evidence; keyspace changes clear the accepted route.",
+    "Native and adapter wire consumers share construction-phase feedback; response-body errors and EOF do not enable connection fallback. Existing joined discovery and request cancellation own shutdown."
+  ],
+  "source_owners": [
+    "PD clients/tso/client.go: tryConnectToTSO, backupClientConn, checkLeader, tryConnectToTSOWithProxy",
+    "PD clients/tso/stream.go: stream builders versus Recv",
+    "PD servicediscovery/service_discovery.go: checkServiceModeChanged, updateMember",
+    "PD errs/errs.go: IsNetworkError; constants/constants.go: MaxRetryTimes"
+  ],
+  "rust_owners": [
+    "native src/pd/service_discovery.rs: TsoForwarding, TsoDiscovery, TsoStream",
+    "native src/pd/timestamp.rs and cluster.rs",
+    "rust/crates/tidb-pd-client/src/client/failover.rs, client/worker.rs, tso.rs"
+  ],
+  "validation": [
+    {
+      "command": "cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib -- pd:: region_cache::test:: common::security::tests:: --test-threads=1",
+      "passed": 282,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/tso-failure-batch/native-phase-final.log",
+      "sha256": "07a308e42985fdab94d676c4b5210eace8e4a1fbf02e199ffff2e6e333494bb4"
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-pd-client --lib --test all --no-fail-fast -- tso_source:: pd_client_source:: client::worker_lifecycle_tests:: security::tests:: tls_handshake_source:: etcd::tests:: --test-threads=1",
+      "passed": 88,
+      "failed": 0,
+      "ignored": 1,
+      "log": "/workspace/.cloud-setup/tso-failure-batch/adapter-phase-final.log",
+      "sha256": "3e97352880d761dbc74bdfccdfd8d7dcfdcf1fbf22f7771dc0e68dbfc0568020"
+    },
+    {
+      "command": "cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked --all-targets",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/tso-failure-batch/native-phase-check.log"
+    },
+    {
+      "command": "cd rust && cargo check --locked --all-targets -p tidb-pd-client -p tidb-txnkv -p tidb-exec -p tidb-server",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/tso-failure-batch/adapter-phase-check.log"
+    },
+    {
+      "command": "make lint",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/tso-failure-batch/lint.log"
+    }
+  ],
+  "distinct_selected_tests": 370,
+  "ignored": 1,
+  "native_sync": "Maintained sync-tikv-client-rs.sh, all four patches and protobuf regeneration; no vendor hand editing. Final sync.log and sync-phase.log retained.",
+  "finding_statuses": "P03/P06/N03 remain partial; 86 tracked,30 repaired,56 unresolved (27 open,29 partial). The other 53 roots retain prior evidence.",
+  "limits": [
+    "Existing-owner maintenance, not acceptance of complete PD root/discovery/TSO/grpcutil packages.",
+    "The tonic response-header establishment boundary is not complete Go HTTP/2 stream-construction/readiness parity; demand/prewarm and idle recovery choreography remain open.",
+    "Recovery uses existing joined discovery maintenance; exact Go one-second recovery scheduling is not newly accepted.",
+    "Accepted-provider reuse added here covers Unavailable/DeadlineExceeded mode-probe errors; other observation errors and full service-mode/router options remain open.",
+    "No full Go suite, live multi-node TiKV/TLS topology, platform matrix or performance acceptance. The existing opt-in real-PD watch test remains ignored."
+  ],
+  "publication": "Actual TiDB precommit hook and a fresh locked tidb-server build immediately before each normal push remain mandatory. final-handoff.json records resulting SHAs and Cloud draft verification."
+}

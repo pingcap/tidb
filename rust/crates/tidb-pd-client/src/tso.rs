@@ -207,6 +207,7 @@ impl RetainedTsoStream {
         runtime: &tokio::runtime::Runtime,
         channel: Channel,
         route: TsoRoute,
+        forwarding: &tikv_client::pd_service_discovery::TsoForwarding,
         cluster_id: u64,
         deadline: Instant,
         shutdown: &watch::Receiver<bool>,
@@ -227,7 +228,7 @@ impl RetainedTsoStream {
                 () = shutdown_requested(&mut cancellation) => None,
                 () = route_retired(&mut routes, &route) => Some(Ok(Err(tonic::Status::cancelled("TSO route retired")))),
                 response = tokio::time::timeout(timeout, async {
-                TsoStream::open_and_request(route.clone(), channel, request).await
+                TsoStream::open_and_request(route.clone(), channel, request, forwarding).await
                 }) => Some(response),
             }
         });

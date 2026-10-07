@@ -174,3 +174,8 @@ B01 discovery/stream ownership and B05 process policy advance P03/P06/N03 togeth
 ## PD bootstrap and provider checkpoint — 2026-10-06
 
 P03/P06/N03 now share nonblocking configured connections, accepted member publication and forced-PD timestamp provider selection. Eight regressions failed before repair; 364 selected tests, affected all-target checks and lint pass. The separate TSO primary may be unreachable while an explicitly enabled healthy proxy serves requests. Automatic network-failure forwarding and full-package obligations remain open. See [validation](pd-bootstrap-policy-batch-validation.json).
+
+
+## TSO failure/recovery checkpoint — 2026-10-07
+
+P03/P06/N03 now share construction-failure feedback, automatic healthy-backup routing, recovery and accepted-provider retention. Response-phase errors remain distinct from construction failures. See [validation](tso-failure-batch-validation.json); stream-readiness/prewarm, exact idle timing and complete packages remain open. No batch assignment or finding disposition changes.

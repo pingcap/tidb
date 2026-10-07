@@ -42,6 +42,7 @@ struct State {
     user_agents: Vec<String>,
     forwarding: Vec<Option<String>>,
     cluster_info: Option<pdpb::GetClusterInfoResponse>,
+    cluster_info_failure: bool,
     discovery_delay: Duration,
     discovery_requests: usize,
     micro_requests: Vec<tsopb::TsoRequest>,
@@ -59,6 +60,7 @@ struct State {
     /// Sticky failure used once the scripted replies run out, so a mock PD can
     /// fail every batch it is asked for instead of closing its stream.
     auto_status: Option<(tonic::Code, &'static str)>,
+    stream_status: Option<(tonic::Code, &'static str)>,
 }
 
 impl State {
@@ -99,6 +101,9 @@ impl Pd for MockPd {
             let mut state = self.state.lock().unwrap();
             state.peers.extend(request.remote_addr());
             state.discovery_requests += 1;
+            if state.cluster_info_failure {
+                return Err(tonic::Status::unavailable("mode observation failed"));
+            }
             state.user_agents.push(
                 request
                     .metadata()
@@ -132,6 +137,9 @@ impl Pd for MockPd {
                 .map(|v| v.to_str().unwrap().to_owned()),
         );
         self.state.lock().unwrap().stream_opens += 1;
+        if let Some((code, message)) = self.state.lock().unwrap().stream_status {
+            return Err(tonic::Status::new(code, message));
+        }
         let state = Arc::clone(&self.state);
         let mut requests = request.into_inner();
         let (responses, response_rx) = tokio::sync::mpsc::channel(1);
@@ -313,6 +321,7 @@ impl Server {
             user_agents: Vec::new(),
             forwarding: Vec::new(),
             cluster_info: None,
+            cluster_info_failure: false,
             discovery_delay: Duration::ZERO,
             discovery_requests: 0,
             micro_requests: Vec::new(),
@@ -323,6 +332,7 @@ impl Server {
             auto_batch_physical: None,
             auto_batch_suffix_bits: 0,
             auto_status: None,
+            stream_status: None,
         }));
         let service = MockPd {
             state: Arc::clone(&state),
@@ -1140,5 +1150,97 @@ fn bootstrap_policy_batch_member_url_follows_configured_scheme() {
     });
     let client = PdClient::connect(&pd.address, Duration::from_millis(150)).unwrap();
     assert!(client.get_timestamp().unwrap() > 0);
+    client.shutdown().unwrap();
+}
+
+fn tso_failure_pair(setup_failure: bool) -> (Server, Server, PdClient) {
+    let leader = Server::start_auto_batching();
+    let follower = Server::start_auto_batching();
+    let members = vec![
+        pdpb::Member {
+            member_id: 1,
+            client_urls: vec![leader.address.clone()],
+            ..Default::default()
+        },
+        pdpb::Member {
+            member_id: 2,
+            client_urls: vec![follower.address.clone()],
+            ..Default::default()
+        },
+    ];
+    let membership = pdpb::GetMembersResponse {
+        header: Some(header()),
+        leader: Some(members[0].clone()),
+        members,
+        ..Default::default()
+    };
+    leader.state.lock().unwrap().members = Some(membership.clone());
+    follower.state.lock().unwrap().members = Some(membership);
+    leader.state.lock().unwrap().health_status = 2;
+    if setup_failure {
+        leader.state.lock().unwrap().stream_status =
+            Some((tonic::Code::Unavailable, "primary unavailable"));
+    } else {
+        leader.state.lock().unwrap().auto_status =
+            Some((tonic::Code::Unavailable, "response unavailable"));
+    }
+    let mut options = tikv_client::pd_options::Options::new();
+    options.timeout = Duration::from_secs(8);
+    options.enable_forwarding = true;
+    let client = PdClient::connect_seeds_with_options(
+        &[leader.address.clone()],
+        Arc::new(tidb_pd_client::ClusterSecurity::default()),
+        options,
+    )
+    .unwrap();
+    (leader, follower, client)
+}
+
+#[test]
+fn tso_failure_batch_automatic_forwarding_and_recovery() {
+    let (leader, follower, client) = tso_failure_pair(true);
+    client
+        .get_timestamp()
+        .expect("automatic forwarding must use a healthy backup");
+    assert_eq!(
+        follower.state.lock().unwrap().forwarding,
+        vec![Some(leader.address.clone())]
+    );
+    client.get_timestamp().unwrap();
+    assert_eq!(follower.state.lock().unwrap().stream_opens, 1);
+    {
+        let mut state = leader.state.lock().unwrap();
+        state.cluster_info_failure = true;
+        state.stream_status = None;
+        state.auto_batch_physical = Some(10_000);
+        state.health_status = 1;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while leader.state.lock().unwrap().requests.len() <= 6 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "recovery must return to the primary"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        client.get_timestamp().unwrap();
+    }
+    assert!(leader
+        .state
+        .lock()
+        .unwrap()
+        .forwarding
+        .iter()
+        .all(Option::is_none));
+    client.shutdown().unwrap();
+}
+
+#[test]
+fn tso_failure_batch_response_error_does_not_enable_forwarding() {
+    let (_leader, follower, client) = tso_failure_pair(false);
+    assert!(
+        client.get_timestamp().is_err(),
+        "an established response error cannot enable connection fallback"
+    );
+    assert_eq!(follower.state.lock().unwrap().stream_opens, 0);
     client.shutdown().unwrap();
 }

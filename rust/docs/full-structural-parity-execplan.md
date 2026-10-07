@@ -2671,3 +2671,8 @@ with the maintained codec patch and protobuf regeneration. P03/P06/T02 remain
 partial for their retained broader obligations; no complete package acceptance.
 
 The [duplicate-test cleanup](duplicate-test-cleanup-execplan.md) removes repeated behavioral cases across seven crates. Its [mapping and validation receipt](parity/current-audit/duplicate-test-cleanup-validation.json) identifies each retained owner; no root or complete package is newly accepted.
+
+
+## TSO failure/recovery continuation — 2026-10-07
+
+The connected B01/B05 P03/P06/N03 maintenance batch uses one native feedback and routing owner across both clients. Native 8b752f9638ad157931725b66ffdc57e0465432a9 is synchronized through all maintained patches and protobuf regeneration. Three original failures precede 370 selected passes; an intermediate response-phase classification error was caught and corrected. Both registers remain 30 repaired/56 unresolved; see parity/current-audit/tso-failure-batch-validation.json and tso-failure-batch-execplan.md for exact gates, source boundary and remaining timing/readiness obligations. Actual hook, fresh locked prepush builds and remote verification remain publication gates.

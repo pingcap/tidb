@@ -641,7 +641,13 @@ impl Cluster {
             .is_some_and(|connection| self.route == route && !connection.ctx.is_cancelled());
         let mut rejected = None;
         if !reuse {
-            let candidate = tso_connection(self.id, route.clone(), routes.clone(), timeout)?;
+            let candidate = tso_connection(
+                self.id,
+                route.clone(),
+                routes.clone(),
+                discovery.forwarding(),
+                timeout,
+            )?;
             // Go's dispatcher releases canceled contexts before reconnecting.
             // A canceled same-URL entry must not reject its replacement.
             self.tso.release(&url);
@@ -704,10 +710,11 @@ fn tso_connection(
     cluster_id: u64,
     route: TsoRoute,
     routes: Vec<(TsoRoute, Channel)>,
+    forwarding: super::service_discovery::TsoForwarding,
     timeout: Duration,
 ) -> Result<Arc<ConnectionCtx<TimestampOracle>>> {
     let url = route.endpoint.clone();
-    let oracle = TimestampOracle::discovered(cluster_id, routes, timeout)?;
+    let oracle = TimestampOracle::discovered(cluster_id, routes, forwarding, timeout)?;
     let ctx = oracle.cancellation();
     let cancel = ctx.clone();
     Ok(Arc::new(ConnectionCtx::new(
@@ -816,7 +823,10 @@ impl Connection {
             .stream_routes(&discovery, &route, &members, timeout)
             .await?;
         let tso = Manager::new();
-        tso.store(&tso_connection(id, route.clone(), routes, timeout)?, false);
+        tso.store(
+            &tso_connection(id, route.clone(), routes, discovery.forwarding(), timeout)?,
+            false,
+        );
         let cluster = Cluster {
             connection: self.clone(),
             region_service: Arc::default(),
@@ -912,6 +922,7 @@ impl Connection {
                 route,
                 &urls,
                 self.options.get_enable_tso_follower_proxy(),
+                self.options.enable_forwarding,
                 timeout,
                 |url| {
                     let connection = self.clone();

@@ -54,18 +54,25 @@ pub(crate) struct TimestampOracle {
 enum Transport {
     #[cfg(test)]
     Pd(PdClient<Channel>),
-    Discovered(tokio::sync::watch::Receiver<Vec<(super::service_discovery::TsoRoute, Channel)>>),
+    Discovered(
+        tokio::sync::watch::Receiver<Vec<(super::service_discovery::TsoRoute, Channel)>>,
+        super::service_discovery::TsoForwarding,
+    ),
 }
 
 impl TimestampOracle {
     pub(crate) fn discovered(
         cluster_id: u64,
         routes: Vec<(super::service_discovery::TsoRoute, Channel)>,
+        forwarding: super::service_discovery::TsoForwarding,
         timeout: Duration,
     ) -> Result<Self> {
         let (sender, receiver) = tokio::sync::watch::channel(routes);
-        let mut oracle =
-            Self::with_transport(cluster_id, Transport::Discovered(receiver), timeout)?;
+        let mut oracle = Self::with_transport(
+            cluster_id,
+            Transport::Discovered(receiver, forwarding),
+            timeout,
+        )?;
         Arc::get_mut(&mut oracle.inner).unwrap().routes = Some(sender);
         Ok(oracle)
     }
@@ -184,8 +191,8 @@ async fn run_tso(
                     }
                     Err(super::errs::ERR_CLIENT_TSO_STREAM_CLOSED.error().with_stack().into())
                 }
-                Transport::Discovered(routes) => {
-                    run_discovered(request_stream, routes, pending_requests.clone()).await
+                Transport::Discovered(routes, forwarding) => {
+                    run_discovered(request_stream, routes, pending_requests.clone(), forwarding).await
                 }
             }
         } => result,
@@ -200,6 +207,7 @@ async fn run_discovered(
     requests: impl Stream<Item = TsoRequest>,
     mut routes: tokio::sync::watch::Receiver<Vec<(super::service_discovery::TsoRoute, Channel)>>,
     pending: Arc<Mutex<VecDeque<RequestGroup>>>,
+    forwarding: super::service_discovery::TsoForwarding,
 ) -> Result<()> {
     use super::service_discovery::{pick_stream_route, TsoStream};
     let mut streams = std::collections::HashMap::<String, TsoStream>::new();
@@ -232,7 +240,8 @@ async fn run_discovered(
                 stream.request(request).await
             } else {
                 let (stream, response) =
-                    TsoStream::open_and_request(route.clone(), channel, request).await?;
+                    TsoStream::open_and_request(route.clone(), channel, request, &forwarding)
+                        .await?;
                 streams.insert(endpoint.clone(), stream);
                 Ok(response)
             }

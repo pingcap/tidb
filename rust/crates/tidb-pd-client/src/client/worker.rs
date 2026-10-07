@@ -566,6 +566,7 @@ pub(super) fn get_timestamps_with_retry(
                     runtime,
                     channel,
                     route,
+                    &clients.tso_forwarding,
                     snapshot.members.cluster_id,
                     deadline,
                     control.shutdown,
@@ -790,7 +791,7 @@ async fn refresh_tso(
             message: error.message().to_owned(),
         })?;
     let routes = discovery
-        .stream_routes(&route, members, proxy, timeout, |endpoint| {
+        .stream_routes(&route, members, proxy, clients.options.enable_forwarding, timeout, |endpoint| {
             let channel = clients.channel(&endpoint);
             async move { channel.map_err(|error| tonic::Status::unavailable(error.to_string())) }
         })
