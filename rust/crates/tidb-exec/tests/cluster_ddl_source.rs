@@ -6225,6 +6225,8 @@ fn a_create_view_publishes_a_view_table_info() {
             .any(|m| m.kind() == BufferMutationOp::Delete),
         "the old view's key is deleted"
     );
+    assert_eq!(replace.diff.old_table_id, write.diff.table_id);
+    assert_ne!(replace.diff.table_id, replace.diff.old_table_id);
     apply(&mut store, &replace);
 
     // DROP VIEW deletes it under ACTION_DROP_VIEW; a base table under the
@@ -6258,7 +6260,7 @@ fn a_create_view_publishes_a_view_table_info() {
         106,
     )
     .expect_err("a base table refuses DROP VIEW even under IF EXISTS");
-    assert!(format!("{wrong:?}").contains("not a VIEW"), "{wrong:?}");
+    assert_eq!(wrong.to_sql_error().code, 1347);
 
     let missing = plan_ddl(
         &mut store,
@@ -6269,10 +6271,9 @@ fn a_create_view_publishes_a_view_table_info() {
         107,
     )
     .expect_err("a missing view without IF EXISTS refuses");
-    assert!(
-        format!("{missing:?}").contains("Unknown table"),
-        "{missing:?}"
-    );
+    let missing = missing.to_sql_error();
+    assert_eq!(missing.code, 1051);
+    assert_eq!(missing.message, "Unknown table 'u6.gone'");
 }
 
 #[test]

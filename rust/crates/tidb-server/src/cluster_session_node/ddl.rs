@@ -2149,6 +2149,60 @@ where
     P: StorePdCapability,
 {
     fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
+        let drop_list = match statement {
+            DdlStatement::DropTables { names, if_exists } => Some((names, *if_exists, false)),
+            DdlStatement::DropView { names, if_exists } if names.len() != 1 => {
+                Some((names, *if_exists, true))
+            }
+            _ => None,
+        };
+        if let Some((names, if_exists, view)) = drop_list {
+            use tidb_executor::ddl::{drop_objects, DropObjectsError};
+            let mut last = ClusterDdlReport::AlreadySatisfied {
+                detail: "no existing DROP targets".into(),
+                warnings: Vec::new(),
+            };
+            let missing = drop_objects(names, if_exists, |schema, name| {
+                let target = if view {
+                    DdlStatement::DropView {
+                        names: vec![(schema.to_owned(), name.to_owned())],
+                        if_exists: false,
+                    }
+                } else {
+                    DdlStatement::DropTable {
+                        schema: schema.to_owned(),
+                        table: name.to_owned(),
+                        if_exists: false,
+                    }
+                };
+                match self.execute(&target) {
+                    Ok(report) => {
+                        last = report;
+                        Ok(true)
+                    }
+                    Err(error) if error.code == 1051 => Ok(false),
+                    Err(error) => Err(error),
+                }
+            })
+            .map_err(|error| match error {
+                DropObjectsError::Target(error) => error,
+                DropObjectsError::Missing(names) => SqlQueryError::new(
+                    1051,
+                    *b"42S02",
+                    format!("Unknown table '{}'", names.join(",")),
+                ),
+            })?;
+            let (ClusterDdlReport::Applied { warnings, .. }
+            | ClusterDdlReport::AlreadySatisfied { warnings, .. }) = &mut last;
+            warnings.extend(missing.into_iter().map(|name| {
+                (
+                    tidb_exec::real_tikv_ddl::DdlWarningLevel::Note,
+                    1051,
+                    format!("Unknown table '{name}'"),
+                )
+            }));
+            return Ok(last);
+        }
         if matches!(
             statement,
             DdlStatement::AddCheckConstraint { .. }

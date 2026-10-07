@@ -31,6 +31,85 @@
 use super::{Catalog, DdlStmt, DriverError, Stmt};
 use tidb_hack::GoToLower;
 
+/// The object kind relevant to Go's DROP TABLE / DROP VIEW admission.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DropObjectKind {
+    Table,
+    View,
+    Other,
+}
+
+/// Classic Go `dropTableObject` admission, after resolving an existing object.
+/// A non-table target of DROP TABLE is collected as missing; a wrong VIEW
+/// target is an immediate error. Protected objects precede either distinction.
+pub fn check_drop_object(
+    schema: &str,
+    name: &str,
+    expected: DropObjectKind,
+    actual: DropObjectKind,
+    cached: bool,
+) -> Result<bool, DriverError> {
+    let schema_key = schema.go_to_lower();
+    let name_key = name.go_to_lower();
+    if schema_key == "workload_schema"
+        || (schema_key == "mysql"
+            && matches!(
+                name_key.as_str(),
+                "tidb" | "gc_delete_range" | "gc_delete_range_done"
+            ))
+    {
+        return Err(DriverError::Mysql(crate::MysqlError::new(
+            tidb_error::tidb::errcode::ErrForbiddenDDL,
+            format!("Drop tidb system table '{schema_key}.{name_key}' is forbidden"),
+        )));
+    }
+    match expected {
+        DropObjectKind::View if actual != DropObjectKind::View => {
+            Err(DriverError::Schema(crate::SchemaErrorKind::WrongObject {
+                name: format!("{schema}.{name}"),
+                expected: "VIEW",
+            }))
+        }
+        DropObjectKind::Table if actual != DropObjectKind::Table => Ok(false),
+        DropObjectKind::Table if cached => Err(DriverError::OperationOnCachedTable("Drop Table")),
+        _ => Ok(true),
+    }
+}
+
+/// A target error interrupts immediately; absent names are reported only after
+/// all independently completed targets. Keep each caller's typed error intact.
+pub enum DropObjectsError<E> {
+    Target(E),
+    Missing(Vec<String>),
+}
+
+/// Go `dropTableObject`'s ordered completion and deferred missing-name policy.
+/// The callback must publish one target before returning true.
+pub fn drop_objects<E>(
+    names: &[(String, String)],
+    if_exists: bool,
+    mut drop_one: impl FnMut(&str, &str) -> Result<bool, E>,
+) -> Result<Vec<String>, DropObjectsError<E>> {
+    let mut missing = Vec::new();
+    for (schema, name) in names {
+        if !drop_one(schema, name).map_err(DropObjectsError::Target)? {
+            missing.push(format!("{schema}.{name}"));
+        }
+    }
+    if !if_exists && !missing.is_empty() {
+        return Err(DropObjectsError::Missing(missing));
+    }
+    Ok(missing)
+}
+
+/// Shared FK preflight over the original persistent target set.
+pub fn check_drop_table_references(
+    catalog: &Catalog,
+    names: &[(String, String)],
+) -> Result<(), DriverError> {
+    crate::foreign_key::check_drop_tables(catalog, names)
+}
+
 /// Runs a `RENAME TABLE`, validating each pair in written order and then
 /// moving them all or none.
 ///
@@ -324,18 +403,18 @@ pub fn run_drop_table_stmt_in(
     current_db: &str,
     foreign_key_checks: bool,
 ) -> Result<Vec<String>, DriverError> {
-// The kind of table each written name currently resolves to, resolved
+    // The kind of table each written name currently resolves to, resolved
     // ONCE so the two temporary arms below and the ordinary drop all judge
     // the same catalog state.
     // `None` is "no such object"; a view or a sequence answers
     // `TempTableType::NONE`, because Go's `TableByName` finds those too and
     // judges them by the `TempTableType` their `TableInfo` carries.
-    let kind_of = |catalog: &Catalog, database: &str, name: &str| {        match catalog.table_in(database, name) {
+    let kind_of =
+        |catalog: &Catalog, database: &str, name: &str| match catalog.table_in(database, name) {
             Some(crate::TableEntry::Kv(table)) => Some(table.temp_table_type()),
             Some(_) => Some(tidb_model::TempTableType::NONE),
             None => None,
-        }
-    };
+        };
 
     let (persistent, local) = split_drop_table_targets(drop, |path| {
         crate::driver::split_table_path_pub(path, current_db).is_ok_and(|(db, table)| {
@@ -391,7 +470,7 @@ pub fn run_drop_table_stmt_in(
     // Local targets have no durable FK/index owner. Execute the persistent
     // operation first; an error must leave every local target intact.
     let drop = &persistent;
-    // Go `checkDropTableHasForeignKeyReferredInOwner` runs over the WHOLE
+    // Go `dropTableObject` checks references across the WHOLE
     // statement before anything is dropped, so a parent and its child dropped
     // together succeed regardless of the order they are listed in, while a
     // parent alone fails without dropping any of the named tables.
@@ -404,40 +483,37 @@ pub fn run_drop_table_stmt_in(
         crate::foreign_key::check_drop_tables(catalog, &dropping)?;
     }
 
-    // Go validates every named object before submitting the DROP job, so a
-    // cached table anywhere in the list prevents every drop in the statement.
-    for path in &drop.names {
-        let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
-        if matches!(
-            catalog.table_in(database, name),
-            Some(crate::TableEntry::Kv(table)) if table.is_cache_table()
-        ) {
-            return Err(DriverError::OperationOnCachedTable("Drop Table"));
+    let names = drop
+        .names
+        .iter()
+        .map(|path| {
+            crate::driver::split_table_path_pub(path, current_db)
+                .map(|(schema, name)| (schema.to_owned(), name.to_owned()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let missing = drop_objects(&names, drop.if_exists, |schema, name| {
+        let Some(entry) = catalog.table_in(schema, name) else {
+            return Ok(false);
+        };
+        let actual = if entry.is_view() {
+            DropObjectKind::View
+        } else if entry.is_sequence() {
+            DropObjectKind::Other
+        } else {
+            DropObjectKind::Table
+        };
+        let cached = matches!(entry, crate::TableEntry::Kv(table) if table.is_cache_table());
+        if !check_drop_object(schema, name, DropObjectKind::Table, actual, cached)? {
+            return Ok(false);
         }
-    }
-
-    let mut missing = Vec::new();
-    for path in &drop.names {
-        let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
-        let (database, name) = (database.to_owned(), name.to_owned());
-        // A view is not a table: `DROP TABLE v` reports the name as unknown
-        // rather than dropping the view (Go's own captured behaviour).
-        let dropped =
-            !catalog.is_view_in(&database, &name) && catalog.drop_table_in(&database, &name);
-        if !dropped {
-            missing.push(format!("{database}.{name}"));
+        Ok(catalog.drop_table_in(schema, name))
+    })
+    .map_err(|error| match error {
+        DropObjectsError::Target(error) => error,
+        DropObjectsError::Missing(names) => {
+            DriverError::Schema(crate::SchemaErrorKind::BadTable(names.join(",")))
         }
-    }
-    if !drop.if_exists && !missing.is_empty() {
-        // Go accumulates the names it could not drop and reports them as ONE
-        // `ErrBadTable` after the drops it did perform, so the message holds
-        // the whole list: `drop table nosuchA, nosuchB` is captured from
-        // `gorun` as `Unknown table 'test.nosuchA,test.nosuchB'`, not as the
-        // first name alone.
-        return Err(DriverError::Schema(crate::SchemaErrorKind::BadTable(
-            missing.join(","),
-        )));
-    }
+    })?;
     drop_local_table_targets(&local, catalog, current_db)?;
     Ok(missing)
 }

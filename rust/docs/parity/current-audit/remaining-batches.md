@@ -2,7 +2,7 @@
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
 
-Latest connected repair: [temporary DDL ownership](temporary-ddl-batch-validation.json). A01/D01/D11/O18 share resolved local targets, DROP splitting, transaction policy and original observation visits. Seventeen baseline live assertions and a later identity-collision assertion failed; 196 selected Rust cases and 51 live SQL checks pass. Parent dispositions remain open/partial: 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other52 roots retain carried evidence; no complete package acceptance.
+Latest connected repair: [DROP completion](drop-completion-batch-validation.json). D01/E02/I04/O18 share ordered target completion, persistent FK preflight, object admission, per-target schema publication and view replacement identities. Sixteen of 28 baseline live checks failed; 182 selected Rust cases and 39 real MySQL checks pass after repair, including the retained 60-vector Go view-parser test. Counts remain 86 tracked / 30 repaired / 56 unresolved (27 open, 29 partial). These are existing-owner repairs; complete durable DDL and package obligations remain open. Other 52 unresolved roots retain carried evidence.
 
 A batch groups a shared production lifecycle. Complete Go packages remain the atomic acceptance unit, including original tests, support, generated/platform/build variants and fixtures. Broad shared packages such as Domain, planner and executor retain one inventory and receipt across contributing batches. Dependencies below are integration gates; they do not prevent implementing independent prerequisite packages.
 

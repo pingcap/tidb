@@ -254,31 +254,32 @@ pub fn run_drop_view_in(
     catalog: &mut Catalog,
     current_db: &str,
 ) -> Result<Vec<String>, DriverError> {
-    let mut missing = Vec::new();
-    for path in names {
-        let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
-        let (database, name) = (database.to_owned(), name.to_owned());
-        match catalog.table_in(&database, &name) {
-            // Go raises ErrWrongObject immediately, even under IF EXISTS: the
-            // name exists, it is simply the other kind of object.
-            Some(entry) if !entry.is_view() => {
-                return Err(DriverError::Schema(SchemaErrorKind::WrongObject {
-                    name: format!("{database}.{name}"),
-                    expected: "VIEW",
-                }))
-            }
-            Some(_) => {
-                catalog.drop_table_in(&database, &name);
-            }
-            None => missing.push(format!("{database}.{name}")),
+    use crate::ddl::{check_drop_object, drop_objects, DropObjectKind, DropObjectsError};
+    let names = names
+        .iter()
+        .map(|path| {
+            crate::driver::split_table_path_pub(path, current_db)
+                .map(|(schema, name)| (schema.to_owned(), name.to_owned()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    drop_objects(&names, if_exists, |schema, name| {
+        let Some(entry) = catalog.table_in(schema, name) else {
+            return Ok(false);
+        };
+        let actual = if entry.is_view() {
+            DropObjectKind::View
+        } else {
+            DropObjectKind::Other
+        };
+        check_drop_object(schema, name, DropObjectKind::View, actual, false)?;
+        Ok(catalog.drop_table_in(schema, name))
+    })
+    .map_err(|error| match error {
+        DropObjectsError::Target(error) => error,
+        DropObjectsError::Missing(names) => {
+            DriverError::Schema(SchemaErrorKind::BadTable(names.join(",")))
         }
-    }
-    if !if_exists && !missing.is_empty() {
-        return Err(DriverError::Schema(SchemaErrorKind::BadTable(
-            missing.join(","),
-        )));
-    }
-    Ok(missing)
+    })
 }
 
 /// One `FROM` table of a view body, after qualification.

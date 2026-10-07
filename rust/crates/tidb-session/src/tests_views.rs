@@ -969,14 +969,19 @@ fn a_view_body_may_contain_a_derived_table() {
     assert!(session.run("SELECT t.a FROM (SELECT a FROM t) x").is_err());
 }
 
-/// `WITH CHECK OPTION`: stored and reported, never printed, and never
+/// `WITH LOCAL|CASCADED CHECK OPTION`: stored and reported, never printed, and never
 /// reached -- writes through a view are refused before it would apply.
 #[test]
 fn a_view_check_option_is_stored_and_reported() {
     let mut session = view_session();
-    session
-        .run("CREATE VIEW vc AS SELECT a, b FROM t WHERE b > 10 WITH CHECK OPTION")
-        .unwrap();
+    assert_eq!(
+        session
+            .run("CREATE VIEW vc AS SELECT a, b FROM t WHERE b > 10 WITH CHECK OPTION")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1064
+    );
     session
         .run("CREATE VIEW vcl AS SELECT a, b FROM t WHERE b > 10 WITH LOCAL CHECK OPTION")
         .unwrap();
@@ -986,7 +991,7 @@ fn a_view_check_option_is_stored_and_reported() {
 
     // Captured: SHOW CREATE VIEW prints no check option at all, whichever
     // form was written.
-    for view in ["vc", "vcl", "vcc"] {
+    for view in ["vcl", "vcc"] {
         let (_, rows) = query_text(&mut session, &format!("SHOW CREATE VIEW {view}"));
         assert_eq!(
             rows[0][1],
@@ -1003,14 +1008,13 @@ fn a_view_check_option_is_stored_and_reported() {
     let (_, rows) = query_text(
         &mut session,
         "SELECT table_name, check_option, is_updatable FROM information_schema.views \
-             WHERE table_schema = 'test' AND table_name IN ('v', 'vc', 'vcl', 'vcc') \
+             WHERE table_schema = 'test' AND table_name IN ('v', 'vcl', 'vcc') \
              ORDER BY table_name",
     );
     assert_eq!(
         rows,
         [
             ["v", "CASCADED", "NO"],
-            ["vc", "CASCADED", "NO"],
             ["vcc", "CASCADED", "NO"],
             ["vcl", "LOCAL", "NO"],
         ]
@@ -1018,8 +1022,8 @@ fn a_view_check_option_is_stored_and_reported() {
 
     // The check would apply to a write, and a write never gets that far.
     assert!(matches!(
-        session.run("INSERT INTO vc VALUES (4, 5)"),
-        Err(DriverError::InsertIntoViewUnsupported(ref name)) if name == "vc"
+        session.run("INSERT INTO vcl VALUES (4, 5)"),
+        Err(DriverError::InsertIntoViewUnsupported(ref name)) if name == "vcl"
     ));
 }
 
@@ -1255,4 +1259,120 @@ fn create_view_plans_its_body_without_running_it() {
     let (columns, rows) = query_text(&mut session, "select n from vseq");
     assert_eq!(columns, ["n"]);
     assert_eq!(rows, [["2"]]);
+}
+
+/// Go dropTableObject completes admitted targets in order, preserving earlier
+/// effects when a later object's kind, cache state or system guard refuses.
+#[test]
+fn drop_object_guards_preserve_ordered_completion() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE first_t(a INT)").unwrap();
+    session.run("CREATE TABLE cached_t(a INT)").unwrap();
+    session.run("ALTER TABLE cached_t CACHE").unwrap();
+    assert_eq!(
+        session
+            .run("DROP TABLE first_t,cached_t")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        8242
+    );
+    assert_eq!(
+        session
+            .run("SELECT * FROM first_t")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1146
+    );
+    session.run("SELECT * FROM cached_t").unwrap();
+    session.run("CREATE VIEW first_v AS SELECT 1 AS a").unwrap();
+    assert_eq!(
+        session
+            .run("DROP VIEW first_v,cached_t")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1347
+    );
+    assert_eq!(
+        session
+            .run("SELECT * FROM first_v")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1146
+    );
+}
+
+#[test]
+fn drop_table_keeps_sequence_and_protected_system_objects() {
+    let mut session = Session::new();
+    session
+        .run("CREATE SEQUENCE seq_keep START WITH 17")
+        .unwrap();
+    assert_eq!(
+        session
+            .run("DROP TABLE seq_keep")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1051
+    );
+    assert_eq!(
+        row_text(session.run("SELECT NEXTVAL(seq_keep)")),
+        vec![vec!["17"]]
+    );
+    session
+        .run("CREATE TABLE IF NOT EXISTS mysql.tidb(a INT)")
+        .unwrap();
+    session.run("CREATE TABLE earlier(a INT)").unwrap();
+    assert_eq!(
+        session
+            .run("DROP TABLE earlier,mysql.tidb")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        8267
+    );
+    assert_eq!(
+        session
+            .run("SELECT * FROM earlier")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1146
+    );
+    session.run("SELECT * FROM mysql.tidb").unwrap();
+}
+
+#[test]
+fn drop_missing_names_are_deferred_and_duplicates_observe_completion() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE once_t(a INT)").unwrap();
+    let error = session
+        .run("DROP TABLE absent,once_t,once_t")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1051);
+    assert_eq!(error.message, "Unknown table 'test.absent,test.once_t'");
+    assert_eq!(
+        session
+            .run("SELECT * FROM once_t")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1146
+    );
+    session.run("CREATE VIEW once_v AS SELECT 1 AS a").unwrap();
+    session
+        .run("DROP VIEW IF EXISTS once_v,once_v,absent")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![
+            vec!["Note", "1051", "Unknown table 'test.once_v'"],
+            vec!["Note", "1051", "Unknown table 'test.absent'"],
+        ]
+    );
 }

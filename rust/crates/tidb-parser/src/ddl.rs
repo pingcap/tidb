@@ -869,25 +869,31 @@ impl Parser {
                     .to_vec(),
             );
         }
-        // go's view grammar has NO `WITH [LOCAL|CASCADED] CHECK OPTION`
-        // tail: the yacc errors at the CHECK token, anchoring the 1064 there
-        // (`near "CHECK OPTION"`, column 45 on the captured statement).
-        if self.is_kw("WITH") {
+        // Go's ViewCheckOption requires an explicit LOCAL or CASCADED.
+        // A bare WITH CHECK OPTION remains a syntax error at CHECK.
+        let check_option = if self.is_kw("WITH") {
             self.bump();
-            if self.is_kw("LOCAL") {
+            let option = if self.is_kw("LOCAL") {
                 self.bump();
+                ViewCheckOption::LOCAL
             } else if self.is_kw("CASCADED") {
                 self.bump();
-            }
-            return Err(self.err_here(""));
-        }
+                ViewCheckOption::CASCADED
+            } else {
+                return Err(self.err_here(""));
+            };
+            self.expect_kw("CHECK")?;
+            self.expect_kw("OPTION")?;
+            option
+        } else {
+            ViewCheckOption::CASCADED
+        };
         // go's view grammar has no trailing `SQL SECURITY ...` either: the
         // yacc errors at the SQL token (`near "SQL SECURITY INVOKER"`,
         // column 40 on the captured statement).
         if self.is_kw("SQL") {
             return Err(self.err_here(""));
         }
-        let check_option = ViewCheckOption::CASCADED;
         Ok(CreateViewStmt {
             or_replace,
             algorithm,

@@ -529,7 +529,6 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// The table name as written.
         table: String,
     },
-    /// `DROP TABLE [IF EXISTS] [schema.]table`.
     /// `CREATE [OR REPLACE] VIEW [schema.]name AS ...`, carrying the
     /// fully built `TableInfo` — columns resolved and view metadata
     /// captured at the ROUTE, against the resolving node's own catalog,
@@ -552,6 +551,7 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// Whether missing views demote to notes rather than the error.
         if_exists: bool,
     },
+    /// `DROP TABLE [IF EXISTS] [schema.]table`.
     DropTable {
         /// The resolved database name.
         schema: String,
@@ -560,9 +560,8 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// Whether a missing table is a no-op rather than an error.
         if_exists: bool,
     },
-    /// `DROP TABLE a, b, ...` — go lowers the whole list into ONE job
-    /// (mysql-compatibility: the existing tables go, the missing ones are
-    /// reported per table).
+    /// Ordered DROP targets. The DDL execution owner publishes each target
+    /// independently and defers missing-name completion until the list ends.
     DropTables {
         /// Each `(schema, name)` in written order.
         names: Vec<(String, String)>,
@@ -2925,18 +2924,15 @@ fn lower_drop_table(
     drop: &DropTableStmt,
     default_schema: &str,
 ) -> Result<DdlStatement, DdlAdmissionError> {
-    // go answers `DROP TEMPORARY TABLE` with an ordinary OK (the session's
-    // temp table, or nothing, goes); the temporary spelling does not change
-    // the lowered job.
+    // The session owner has already handled local temporary targets and
+    // validated temporary spelling. Only persistent targets reach this route.
     let mut names = Vec::with_capacity(drop.names.len());
     for name in &drop.names {
         names.push(split_name(name, default_schema, "table")?);
     }
     let [name] = drop.names.as_slice() else {
-        // go lowers the whole list into one job: the existing tables are
-        // dropped and each missing one is reported (`ErrBadTable` 1051,
-        // comma-joined when it is an error, one note per table with
-        // `IF EXISTS`).
+        // The execution owner submits targets individually and defers the
+        // combined missing-name error or ordered notes until completion.
         return Ok(DdlStatement::DropTables {
             names,
             if_exists: drop.if_exists,
@@ -8201,12 +8197,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 });
             }
             let db_id = database.info.id;
-            // Go `onCreateView` under OR REPLACE drops whatever object held
-            // the name — table or view alike — and deletes its auto-id
-            // accessors, then creates the view under a FRESH table id
-            // (`DropTableOrView` + `createTableOrViewWithCheck`).
+            // Go SetSchemaDiffForCreateView carries both identities for a
+            // replacement, so schema consumers retire the previous view.
             if let Some(old_id) = existing {
                 writes.push(BufferMutation::delete(key::table_kv_key(db_id, old_id))?);
+                diff.old_table_id = old_id;
             }
             let table_id = global_ids.allocate(1)?[0];
             created_id = Some(table_id);
@@ -8224,58 +8219,29 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.table_id = table_id;
         }
         DdlStatement::DropView { names, if_exists } => {
-            // Go's executor files one `Note 1051` per missing name under
-            // IF EXISTS and one ErrBadTable naming every missing view
-            // without it; a name held by a base table is ErrWrongObject
-            // immediately, even under IF EXISTS.
-            let mut missing = Vec::new();
-            let mut dropped_any = false;
-            for (schema, name) in names {
-                let Some(database) = find_database(&catalog, schema) else {
-                    missing.push(format!("{schema}.{name}"));
-                    continue;
-                };
-                let Some(table) = find_table(database, name) else {
-                    missing.push(format!("{schema}.{name}"));
-                    continue;
-                };
-                if table.view.is_none() {
-                    return Err(DdlPlanError::Unsupported(format!(
-                        "'{schema}.{name}' is a base table, not a VIEW (Go ErrWrongObject)"
-                    )));
-                }
-                writes.push(BufferMutation::delete(key::table_kv_key(
-                    database.info.id,
-                    table.id,
-                ))?);
-                diff.action_type = ActionType::ACTION_DROP_VIEW;
-                diff.schema_id = database.info.id;
-                diff.table_id = table.id;
-                dropped_any = true;
-            }
-            if !missing.is_empty() && !if_exists {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    1051,
-                    format!("Unknown table '{}'", missing.join(",")),
-                )));
-            }
-            // go files one `Note | 1051` per missing view under IF EXISTS —
-            // alongside the drops when the list mixes existing and missing
-            // names.
-            let notes = missing
-                .iter()
-                .map(|name| {
-                    let (schema, view) = name.rsplit_once('.').unwrap_or(("", name.as_str()));
-                    missing_table_note(schema, view)
-                })
-                .collect::<Vec<_>>();
-            if !dropped_any {
-                return Ok(already_with_warnings(
-                    format!("no named view exists: {}", missing.join(",")),
-                    notes,
+            let [(schema, name)] = names.as_slice() else {
+                return Err(DdlPlanError::Unsupported(
+                    "multi-target DROP VIEW must use the ordered DDL completion owner".into(),
                 ));
-            }
-            warnings.extend(notes);
+            };
+            let stored = find_database(&catalog, schema)
+                .and_then(|db| find_table(db, name).map(|table| (db.info.id, table)));
+            let Some((db_id, table)) = stored else {
+                if *if_exists {
+                    return Ok(already_with_warnings(
+                        format!("view `{schema}`.`{name}` does not exist"),
+                        vec![missing_table_note(schema, name)],
+                    ));
+                }
+                return Err(DdlPlanError::UnknownTables(vec![format!(
+                    "{schema}.{name}"
+                )]));
+            };
+            check_cluster_drop_object(schema, name, table, true)?;
+            writes.push(BufferMutation::delete(key::table_kv_key(db_id, table.id))?);
+            diff.action_type = ActionType::ACTION_DROP_VIEW;
+            diff.schema_id = db_id;
+            diff.table_id = table.id;
         }
         DdlStatement::RebaseAutoRandom {
             schema,
@@ -9755,7 +9721,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         vec![missing_table_note(schema, table)],
                     ));
                 }
-                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+                return Err(DdlPlanError::UnknownTables(vec![format!(
+                    "{schema}.{table}"
+                )]));
             };
             let Some(stored) = find_table(database, table) else {
                 if *if_exists {
@@ -9769,6 +9737,17 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     table: table.clone(),
                 });
             };
+            if !check_cluster_drop_object(schema, table, stored, false)? {
+                if *if_exists {
+                    return Ok(already_with_warnings(
+                        format!("table `{schema}`.`{table}` does not exist"),
+                        vec![missing_table_note(schema, table)],
+                    ));
+                }
+                return Err(DdlPlanError::UnknownTables(vec![format!(
+                    "{schema}.{table}"
+                )]));
+            }
             let db_id = database.info.id;
             let table_id = stored.id;
             writes.push(BufferMutation::delete(key::table_kv_key(db_id, table_id))?);
@@ -9812,82 +9791,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 warnings,
             ));
         }
-        DdlStatement::DropTables { names, if_exists } => {
-            // go builds ONE job for the whole list and answers mysql-style:
-            // every EXISTING table goes, and the missing ones are reported —
-            // `Unknown table 'a,b'` (1051) as an error without `IF EXISTS`,
-            // one `Note | 1051` per table with it.
-            let mut existing: Vec<(String, i64, i64, tidb_model::TableInfo)> = Vec::new();
-            let mut missing: Vec<String> = Vec::new();
-            for (schema, table) in names {
-                match find_database(&catalog, schema).and_then(|db| {
-                    find_table(db, table).map(|stored| (db.info.id, stored.clone_like_go()))
-                }) {
-                    Some((db_id, stored)) => {
-                        existing.push((schema.clone(), db_id, stored.id, stored))
-                    }
-                    None => missing.push(format!("{schema}.{table}")),
-                }
-            }
-            if !missing.is_empty() && !*if_exists {
-                return Err(DdlPlanError::UnknownTables(missing));
-            }
-            let notes = missing
-                .iter()
-                .map(|name| {
-                    let (schema, table) = name.rsplit_once('.').unwrap_or(("", name.as_str()));
-                    missing_table_note(schema, table)
-                })
-                .collect::<Vec<_>>();
-            if existing.is_empty() {
-                return Ok(already_with_warnings(
-                    format!("{} listed tables do not exist", missing.len()),
-                    notes,
-                ));
-            }
-            for (ordinal, (schema, db_id, table_id, stored)) in existing.iter().enumerate() {
-                writes.push(BufferMutation::delete(key::table_kv_key(
-                    *db_id, *table_id,
-                ))?);
-                for allocator in [
-                    key::auto_table_id_kv_key(*db_id, *table_id),
-                    key::auto_increment_id_kv_key(*db_id, *table_id),
-                    key::auto_random_table_id_kv_key(*db_id, *table_id),
-                ] {
-                    if snapshot.get(&allocator)?.is_some() {
-                        writes.push(BufferMutation::delete(allocator)?);
-                    }
-                }
-                if ordinal == 0 {
-                    diff.action_type = ActionType::ACTION_DROP_TABLE;
-                    diff.schema_id = *db_id;
-                    diff.table_id = *table_id;
-                } else {
-                    let mut options: Vec<AffectedOption> = diff
-                        .affected_options
-                        .iter_deref()
-                        .map(|option| option.read().clone())
-                        .collect();
-                    options.push(AffectedOption {
-                        schema_id: *db_id,
-                        table_id: *table_id,
-                        old_table_id: *table_id,
-                        old_schema_id: *db_id,
-                        ..AffectedOption::default()
-                    });
-                    diff.affected_options = options.into();
-                }
-                if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
-                    // Each event needs a DISTINCT (job, sub-job) pair: the
-                    // notifier table keys its rows by both, so two events
-                    // sharing the -1 placeholder collide on the index.
-                    schema_change_events.push((
-                        ordinal as i64,
-                        SchemaChangeEvent::drop_table(stored.clone()),
-                    ));
-                }
-            }
-            warnings.extend(notes);
+        DdlStatement::DropTables { .. } => {
+            return Err(DdlPlanError::Unsupported(
+                "multi-target DROP must use the ordered DDL completion owner".into(),
+            ));
         }
         DdlStatement::RenameTable {
             is_alter,
@@ -13244,4 +13151,36 @@ mod global_index_version_tests {
         );
         tidb_model::index::set_global_index_v1_supported(previous);
     }
+}
+
+/// Both SQL catalog tiers use the same classic DROP object contract.
+fn check_cluster_drop_object(
+    schema: &str,
+    name: &str,
+    table: &TableInfo,
+    view: bool,
+) -> Result<bool, DdlPlanError> {
+    use tidb_executor::ddl::{check_drop_object, DropObjectKind};
+    let actual = if table.is_base_table() {
+        DropObjectKind::Table
+    } else if table.view.is_some() {
+        DropObjectKind::View
+    } else {
+        DropObjectKind::Other
+    };
+    check_drop_object(
+        schema,
+        name,
+        if view {
+            DropObjectKind::View
+        } else {
+            DropObjectKind::Table
+        },
+        actual,
+        table.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE,
+    )
+    .map_err(|error| {
+        let error = error.to_mysql_error();
+        DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+    })
 }

@@ -2715,3 +2715,8 @@ Latest connected repair: [index evaluation and removal](parity/current-audit/ind
 ## Temporary DDL ownership checkpoint — 2026-10-07
 
 The [batch plan](temporary-ddl-batch-execplan.md) and [receipt](parity/current-audit/temporary-ddl-batch-validation.json) repair shared target resolution, grants, DROP completion and transaction boundaries across both session wrappers. 196 selected Rust cases and 51 live checks pass after17 baseline live failures. A01/D01/D11/O18 remain open/partial for their broader package boundaries; no complete package acceptance or performance claim.
+
+## DROP completion checkpoint — 2026-10-07
+
+
+Latest connected repair: [DROP completion](drop-completion-batch-validation.json). D01/E02/I04/O18 share ordered target completion, persistent FK preflight, object admission, per-target schema publication and view replacement identities. Sixteen of 28 baseline live checks failed; 182 selected Rust cases and 39 real MySQL checks pass after repair, including the retained 60-vector Go view-parser test. Counts remain 86 tracked / 30 repaired / 56 unresolved (27 open, 29 partial). These are existing-owner repairs; complete durable DDL and package obligations remain open. Other 52 unresolved roots retain carried evidence. See [the batch ExecPlan](drop-completion-batch-execplan.md) and its durable receipt. The direct transaction owner is still not complete durable DDL.

@@ -457,6 +457,21 @@ impl Session {
                 || self.split_local_temporary_drop(drop).0.names.is_empty()))
     }
 
+    /// Go checks references across the complete persistent DROP set before
+    /// submitting any target. This runs after the DDL implicit commit.
+    pub fn validate_persistent_drop_references(
+        &mut self,
+        names: &[(String, String)],
+    ) -> Result<(), DriverError> {
+        if self.foreign_key_checks() {
+            // DDL uses the latest persistent schema, not the session's local
+            // overlay: a temporary child must not hide a referencing FK.
+            let catalog = self.lock_catalog()?;
+            tidb_executor::ddl::check_drop_table_references(&catalog, names)?;
+        }
+        Ok(())
+    }
+
     /// Complete only the already-resolved local leg of a successful cluster DROP.
     /// This does not start another statement or replace its warnings/attribution.
     pub fn drop_local_temporary_targets(

@@ -1,0 +1,682 @@
+{
+  "date": "2026-10-07",
+  "scope": "Ordered DROP completion, FK preflight, shared object guards, per-target schema publication, view replacement identity and CHECK OPTION admission; existing-owner maintenance.",
+  "integration_start": "19d977345bbb6566b0fa76f50fac61736c4c3209",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_head": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "findings": [
+    "D01",
+    "E02",
+    "I04",
+    "O18"
+  ],
+  "statuses_unchanged": true,
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "repairs": [
+    " Ordered DROP now completes and publishes each persistent table/view before moving to the next target, defers missing names, and preserves earlier completion after later errors. Shared embedded/cluster guards preserve views/sequences on DROP TABLE, raise Go 1347 on wrong DROP VIEW objects, protect classic system tables and reject cached-table DROP at its turn. The incorrect atomic multi-target planner and duplicated missing-name loops are removed. View parsing now accepts explicit LOCAL/CASCADED CHECK OPTION and rejects the stale bare-form success expectation, following Go parser.y. Complete durable job, delete-range, recovery, NextGen reserved-object and remaining mode/materialized-view admission obligations remain unresolved.",
+    " Cluster DROP now checks references across the entire original persistent target list before any mutation. It uses the latest persistent catalog so a local temporary child cannot hide a referencing FK, and honors the live foreign_key_checks switch. This is SQL preflight, not the durable owner recheck or distributed FK lifecycle.",
+    " CREATE OR REPLACE VIEW now carries the old table ID through schema publication, retiring the replaced catalog entry. Multi-target DROP now publishes one schema difference per completed object through the existing shared DDL authority. Both originating and peer sessions remove every dropped view, including completion before a later error. Complete versioned/lazy schema lifecycle remains unaccepted.",
+    " Ordered DROP target completion remains inside one routed SQL observation. Live failed mixed DROP retains all original local/persistent/missing targets, one execution and one error in statements_summary. Internal target publication does not emit replacement SQL observations. Complete planner/runtime metadata remains unresolved."
+  ],
+  "removals": [
+    "Atomic multi-target DROP metadata planner",
+    "Duplicated embedded table/view missing-name loops",
+    "False parser CHECK OPTION prohibition",
+    "Stale bare WITH CHECK OPTION success expectation; replaced with Go 1064 rejection",
+    "Two DDL tests of private debug text; replaced with actual SQL code/message checks"
+  ],
+  "baseline": {
+    "checks": 28,
+    "failed": 16,
+    "failures": [
+      {
+        "name": "table prior target stays dropped after error",
+        "sql": "SELECT * FROM t",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "view prior target stays dropped after error",
+        "sql": "SELECT * FROM t",
+        "rows": [
+          [
+            1
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "DROP TABLE refuses a view",
+        "sql": "DROP TABLE v",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "view survives wrong table command",
+        "sql": "SELECT a FROM v",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.v' doesn't exist"
+        ],
+        "passed": false
+      },
+      {
+        "name": "DROP VIEW refuses a base table",
+        "sql": "DROP VIEW base",
+        "rows": null,
+        "error": [
+          1105,
+          "'drop_batch.base' is a base table, not a VIEW (Go ErrWrongObject)"
+        ],
+        "passed": false
+      },
+      {
+        "name": "later wrong object preserves prior view completion",
+        "sql": "DROP VIEW v,base",
+        "rows": null,
+        "error": [
+          1105,
+          "'drop_batch.base' is a base table, not a VIEW (Go ErrWrongObject)"
+        ],
+        "passed": false
+      },
+      {
+        "name": "prior view remains dropped after wrong-object error",
+        "sql": "SELECT * FROM v",
+        "rows": [
+          [
+            7
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "duplicate target becomes missing after first completion",
+        "sql": "DROP TABLE dupe,dupe",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "IF EXISTS reports each missing target in order",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Note",
+            1051,
+            "Unknown table 'drop_batch.absent'"
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "mixed DROP retains completed persistent change",
+        "sql": "SELECT * FROM mixed",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "foreign key preflight covers the entire list",
+        "sql": "DROP TABLE sibling,parent",
+        "rows": [],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "FK preflight leaves earlier sibling intact",
+        "sql": "SELECT * FROM sibling",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.sibling' doesn't exist"
+        ],
+        "passed": false
+      },
+      {
+        "name": "missing database uses DROP error",
+        "sql": "DROP TABLE no_schema.missing",
+        "rows": null,
+        "error": [
+          1049,
+          "Unknown database 'no_schema'"
+        ],
+        "passed": false
+      },
+      {
+        "name": "first dropped view leaves local schema",
+        "sql": "SELECT * FROM first_v",
+        "rows": [
+          [
+            1
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "first dropped view leaves peer schema",
+        "sql": "SELECT * FROM first_v",
+        "rows": [
+          [
+            1
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "system table protected after preceding completion",
+        "sql": "DROP TABLE protected_first,mysql.tidb",
+        "rows": [],
+        "error": null,
+        "passed": false
+      }
+    ]
+  },
+  "replacement_before": {
+    "binary_sha256": "d0642a1a250ab6ba4adc0fd2b0dc3883741cf69d14c7ec86e5c55eae4ac53120",
+    "checks": [
+      {
+        "name": "table missing target aggregate",
+        "sql": "DROP table t,absent",
+        "rows": null,
+        "error": [
+          1051,
+          "Unknown table 'drop_batch.absent'"
+        ],
+        "passed": true
+      },
+      {
+        "name": "table prior target stays dropped after error",
+        "sql": "SELECT * FROM t",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.t' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "view missing target aggregate",
+        "sql": "DROP view t,absent",
+        "rows": null,
+        "error": [
+          1051,
+          "Unknown table 'drop_batch.absent'"
+        ],
+        "passed": true
+      },
+      {
+        "name": "view prior target stays dropped after error",
+        "sql": "SELECT * FROM t",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.t' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "DROP TABLE refuses a view",
+        "sql": "DROP TABLE v",
+        "rows": null,
+        "error": [
+          1051,
+          "Unknown table 'drop_batch.v'"
+        ],
+        "passed": true
+      },
+      {
+        "name": "view survives wrong table command",
+        "sql": "SELECT a FROM v",
+        "rows": [
+          [
+            7
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "DROP VIEW refuses a base table",
+        "sql": "DROP VIEW base",
+        "rows": null,
+        "error": [
+          1347,
+          "'drop_batch.base' is not VIEW"
+        ],
+        "passed": true
+      },
+      {
+        "name": "base survives wrong view command",
+        "sql": "SELECT a FROM base",
+        "rows": [
+          [
+            7
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "later wrong object preserves prior view completion",
+        "sql": "DROP VIEW v,base",
+        "rows": null,
+        "error": [
+          1347,
+          "'drop_batch.base' is not VIEW"
+        ],
+        "passed": true
+      },
+      {
+        "name": "prior view remains dropped after wrong-object error",
+        "sql": "SELECT * FROM v",
+        "rows": [
+          [
+            7
+          ]
+        ],
+        "error": null,
+        "passed": false
+      },
+      {
+        "name": "duplicate target becomes missing after first completion",
+        "sql": "DROP TABLE dupe,dupe",
+        "rows": null,
+        "error": [
+          1051,
+          "Unknown table 'drop_batch.dupe'"
+        ],
+        "passed": true
+      },
+      {
+        "name": "duplicate target first completion persists",
+        "sql": "SELECT * FROM dupe",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.dupe' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "IF EXISTS completes table before missing notes",
+        "sql": "DROP TABLE IF EXISTS notes,notes,absent",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "IF EXISTS reports each missing target in order",
+        "sql": "SHOW WARNINGS",
+        "rows": [
+          [
+            "Note",
+            1051,
+            "Unknown table 'drop_batch.notes'"
+          ],
+          [
+            "Note",
+            1051,
+            "Unknown table 'drop_batch.absent'"
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "mixed DROP reports persistent miss",
+        "sql": "DROP TABLE local_mixed,mixed,absent",
+        "rows": null,
+        "error": [
+          1051,
+          "Unknown table 'drop_batch.absent'"
+        ],
+        "passed": true
+      },
+      {
+        "name": "mixed DROP keeps local after persistent error",
+        "sql": "SELECT a FROM local_mixed",
+        "rows": [
+          [
+            8
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "mixed DROP retains completed persistent change",
+        "sql": "SELECT * FROM mixed",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.mixed' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "foreign key preflight covers the entire list",
+        "sql": "DROP TABLE sibling,parent",
+        "rows": null,
+        "error": [
+          3730,
+          "Cannot drop table 'parent' referenced by a foreign key constraint 'fk_parent' on table 'child'."
+        ],
+        "passed": true
+      },
+      {
+        "name": "FK preflight leaves earlier sibling intact",
+        "sql": "SELECT * FROM sibling",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "FK preflight leaves parent intact",
+        "sql": "SELECT * FROM parent",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "local child cannot hide persistent foreign key",
+        "sql": "DROP TABLE sibling,parent",
+        "rows": null,
+        "error": [
+          3730,
+          "Cannot drop table 'parent' referenced by a foreign key constraint 'fk_parent' on table 'child'."
+        ],
+        "passed": true
+      },
+      {
+        "name": "shadowed-child refusal preserves earlier target",
+        "sql": "SELECT * FROM sibling",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "disabled foreign key checks admit referenced parent DROP",
+        "sql": "DROP TABLE parent",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "disabled FK DROP publishes removal",
+        "sql": "SELECT * FROM parent",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.parent' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "complete target set permits parent-first FK DROP",
+        "sql": "DROP TABLE together_parent,together_child",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "parent-first set drops child too",
+        "sql": "SELECT * FROM together_child",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.together_child' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "missing database uses DROP error",
+        "sql": "DROP TABLE no_schema.missing",
+        "rows": null,
+        "error": [
+          1051,
+          "Unknown table 'no_schema.missing'"
+        ],
+        "passed": true
+      },
+      {
+        "name": "multi-view DROP succeeds",
+        "sql": "DROP VIEW first_v,last_v",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "first dropped view leaves local schema",
+        "sql": "SELECT * FROM first_v",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.first_v' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "first dropped view leaves peer schema",
+        "sql": "SELECT * FROM first_v",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.first_v' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "last dropped view leaves peer schema",
+        "sql": "SELECT * FROM last_v",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.last_v' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "LOCAL view check option parses",
+        "sql": "CREATE VIEW opt_local AS SELECT a FROM base WITH LOCAL CHECK OPTION",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "CASCADED view check option parses",
+        "sql": "CREATE VIEW opt_cascaded AS SELECT a FROM base WITH CASCADED CHECK OPTION",
+        "rows": [],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "bare view check option remains invalid",
+        "sql": "CREATE VIEW opt_bare AS SELECT a FROM base WITH CHECK OPTION",
+        "rows": null,
+        "error": [
+          1064,
+          "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 53 near \"CHECK OPTION\" "
+        ],
+        "passed": true
+      },
+      {
+        "name": "view check option metadata survives publication",
+        "sql": "SELECT TABLE_NAME,CHECK_OPTION FROM information_schema.views WHERE TABLE_SCHEMA='drop_batch' AND TABLE_NAME LIKE 'opt_%' ORDER BY TABLE_NAME",
+        "rows": [
+          [
+            "opt_cascaded",
+            "CASCADED"
+          ],
+          [
+            "opt_local",
+            "LOCAL"
+          ]
+        ],
+        "error": null,
+        "passed": true
+      },
+      {
+        "name": "failed split DROP is observed once with original targets",
+        "rows": [
+          [
+            "drop_batch.local_mixed,drop_batch.mixed,drop_batch.absent",
+            1,
+            1
+          ]
+        ],
+        "passed": true
+      },
+      {
+        "name": "system table protected after preceding completion",
+        "sql": "DROP TABLE protected_first,mysql.tidb",
+        "rows": null,
+        "error": [
+          8267,
+          "Drop tidb system table 'mysql.tidb' is forbidden"
+        ],
+        "passed": true
+      },
+      {
+        "name": "system refusal preserves preceding completion",
+        "sql": "SELECT * FROM protected_first",
+        "rows": null,
+        "error": [
+          1146,
+          "Table 'drop_batch.protected_first' doesn't exist"
+        ],
+        "passed": true
+      },
+      {
+        "name": "protected system metadata survives",
+        "sql": "SELECT COUNT(*)>=0 FROM mysql.tidb",
+        "rows": [
+          [
+            1
+          ]
+        ],
+        "error": null,
+        "passed": true
+      }
+    ],
+    "exit": 0
+  },
+  "parser_before": {
+    "passed": 5,
+    "failed": 1,
+    "failing_case": "tests::view_source::test_view"
+  },
+  "intermediate_diagnostics": [
+    "First live baseline stopped on unsupported ALTER TABLE CACHE; complete corrected baseline is used above",
+    "Initial grouped run: 174 passed, 1 failed on stale bare CHECK OPTION fixture",
+    "Persistent catalog guard binding briefly failed compilation; corrected before final validation",
+    "Focused DDL test revealed a stale internal-debug assertion; replaced with SQL error checks",
+    "A scoped formatting splice left an extra closing delimiter; corrected before final compilation"
+  ],
+  "rust_tests": {
+    "session": {
+      "passed": 175,
+      "failed": 0,
+      "ignored": 0
+    },
+    "parser": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    "ddl": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "wire": {
+    "checks": 39,
+    "failed": 0,
+    "exit": 0,
+    "store": "unistore",
+    "owned_server_joined": true,
+    "binary_sha256": "f3f97a3a26a34f1c873705d216b471b296db480286b88b13bd8f4827129e75d7"
+  },
+  "validation": {
+    "activation": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1",
+    "cargo_cwd": "/workspace/tidb/rust",
+    "commands": [
+      "cargo test --locked -p tidb-session --lib -- tests_views tests_foreign_key tests_temporary_tables tests_observation_batch --test-threads=1",
+      "cargo test --locked -p tidb-parser --lib view_source -- --test-threads=1",
+      "cargo test --locked -p tidb-exec --test all cluster_ddl_source::a_create_view_publishes_a_view_table_info -- --exact --test-threads=1",
+      "cargo check --locked --all-targets -p tidb-parser -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server",
+      "make lint (repository root)",
+      "cargo build --locked -p tidb-server",
+      "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/drop-completion-batch/wire.py"
+    ],
+    "diff_check": "passed"
+  },
+  "go_source_identities": {
+    "pkg/ddl/executor.go": "da64dbe0b8c84efa64b61326c899cdc45a50272c823f7ebf7cea4eb888b02d3d",
+    "pkg/ddl/schema_version.go": "77d299b2c19c7742cb2c10f804694a13fdd228b67ad8b4219afbc481fe256cb4",
+    "pkg/executor/ddl.go": "03e0494943e159d3a1d154020e5fa63f97d6cf999fe05eb8decda67467a24bba",
+    "pkg/parser/parser.y": "a05a5f3719fc58f9fbc01eb412121f3fc5bfbcea170d282bd33afe2c3f40e390",
+    "pkg/parser/parser_test.go": "e2a3b979a831969bf8889aa8024a204276a2166b79ce3a2f755ed4fd52d4ec2f",
+    "pkg/planner/core/optimizer.go": "aca019d1b4a13b4a5decacfaa203feeea89b08e292cf1c662aefd3cb470fd60b"
+  },
+  "source_identities": {
+    "rust/crates/tidb-exec/src/cluster_ddl.rs": "56bf18e467c3341ede3c23abed7885e4d2c79c5e051486cc37fdbb009707ccaa",
+    "rust/crates/tidb-exec/tests/cluster_ddl_source.rs": "09ce687442a15d8ff5d74a3782169deaf6d79bab5c499acb2ad5983fd22e3cb7",
+    "rust/crates/tidb-executor/src/ddl.rs": "26c84531b8740724eab4dfdf1039990cb4eeff259ea93ea54841bd7c90212995",
+    "rust/crates/tidb-executor/src/ddl/table_lifecycle.rs": "3e928c99cca2455153824c876b10e2589f519a665427087c78120001478ca2ee",
+    "rust/crates/tidb-executor/src/view.rs": "e36887efccaeb5e439a36ba37f03eabba0e7528fbc5bbe5ce30f3a3451dca383",
+    "rust/crates/tidb-parser/src/ddl.rs": "50b6c4290106df22be01ec3205b613c4c71cfe89642151d1f3af4d8b60c6467a",
+    "rust/crates/tidb-server/src/cluster_session_node/ddl.rs": "26697510b63c685e0ee6702eca4c9357a119a9145fd9e616b85fbeba0cdd6ab9",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs": "18195df285100d2d6a57fcc1b0c86379af5746f98806bc2f4b73053b7e41460e",
+    "rust/crates/tidb-session/src/classify.rs": "9a422918f236169c7a2d6d5993a04625c0f4ef45b1fd2b25a02ccfb9844e19da",
+    "rust/crates/tidb-session/src/tests_views.rs": "105dfb9c6f96da5af39227a947fe691c84283c8a6993c5bd11cdf3ea6a8b0099"
+  },
+  "log_sha256": {
+    "lint.log": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4",
+    "replacement-before-all-targets.log": "faa996d0e4d0baf01a6530d235f4ecb4d808ff09446cb7c7ce2a7b9136e57fbe",
+    "tests-after.log": "b35149493a6eb5f7adc37e8cd4223a584f653cb26e6bc0ec328e4b058d3191d5",
+    "wire-run.log": "3e731e463d6db0bf16c79475962a9aacf8d5a46cfb2e62990a090e58807ed758",
+    "ddl-tests.log": "a918cc6ed45ff711ef15559f7db7b4347811e9bee026fe4635f34b896444ddb8",
+    "baseline-wire.log": "198b9cf3c4368fd02026bdc581111407df1dd7d9f6191ea4ca0ab59932ecfafc",
+    "parser-before.log": "658be3ed1e631328af986743624c7eb506f11f4de1bcf7bd7128aa596aff155a",
+    "replacement-before-wire-run.log": "3bb6caaeabe1f655334bb80b3fed73e4669726479c4a1392c04ef28dc45cc980",
+    "tests.log": "b02e8291a10ffe714f12599653e01f10f18f019df77299108bf18b108b7616ad",
+    "all-targets.log": "47e85c4cf96303fac38cb97129ae09fdab345fdf7bbb97df965d732a86349369",
+    "server-build.log": "5f90fc695536fe33525d4cdfbfbaf52fd0393983bcc8e8800edd9111118bd302",
+    "tests-compile-diagnostic.log": "040b7a0e25fda20df5069a50c3db4531833885b15c4b5e4b6f6dab77495fe22d",
+    "wire-server.log": "b435fda50ec453deb58e92efe340ee3dce1664a96b8e2e8df1a30a29dfb4c106",
+    "before-wire.log": "470cb773425c306c03f84596931e08f6b7f31c86284ee71564bcd88fef139811",
+    "replacement-before-server-build.log": "f215a1d0f202233d550b54e125ce221132ee4cca61120e068399867b9bb3eb90",
+    "ddl-stale-debug-assertion.log": "857fc60562cddea3e94d720e9bf9e02ba1ee4fba6c8896bb36592158702fa1bb",
+    "parser-after.log": "53baf0cb0125d63aa030f7dd16992653dc4ff8787018e1d50fe8f8c955f68059",
+    "replacement-before-wire-server.log": "6161a8a8800891a05e4ffa8632e59c7a3696990d2e9e312ff7aaaf5299911228",
+    "format-diagnostic.log": "c2138fc842d24f030f384f6eef1e672856fe9dd632b393548a52c7b1296e8027"
+  },
+  "tests_removed": 0,
+  "stale_expectations_replaced": 3,
+  "not_verified": [
+    "Complete upstream package/test obligations and independent Go runtime oracle",
+    "Live multi-node TiKV, crash recovery, durable DDL owner rechecks, delete-range and GC composition",
+    "NextGen reserved-object and full table-mode/materialized-view DROP admission",
+    "Embedded DROP VIEW/SEQUENCE persistent targeting when hidden by local temporary objects",
+    "Performance benchmarks",
+    "Other 52 unresolved roots not freshly reproduced"
+  ],
+  "publication": "Actual hook, fresh pre-push locked build and normal push/remote SHA are recorded in external final-handoff.json after commit.",
+  "external_evidence": "/workspace/.cloud-setup/drop-completion-batch"
+}

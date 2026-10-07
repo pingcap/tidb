@@ -358,8 +358,10 @@ use table_constraints::{
 
 use indexes::{index_part_names, is_visible};
 pub use table_lifecycle::{
-    run_drop_table_in, run_drop_table_stmt_in, run_rename_table_in, run_truncate_table_in,
-    run_truncate_table_in_with_foreign_key_checks, split_drop_table_targets,
+    check_drop_object, check_drop_table_references, drop_objects, run_drop_table_in,
+    run_drop_table_stmt_in, run_rename_table_in, run_truncate_table_in,
+    run_truncate_table_in_with_foreign_key_checks, split_drop_table_targets, DropObjectKind,
+    DropObjectsError,
 };
 
 use crate::driver::{Catalog, DriverError};
