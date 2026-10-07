@@ -83,9 +83,13 @@ type lateMaterializeTarget struct {
 // and column-only projections over DataSources, optionally topped by a Limit
 // or TopN.
 type lateMaterializeRegion struct {
-	root    base.LogicalPlan
-	isLimit bool // root is a Limit or TopN
-	byItems []*util.ByItems
+	root base.LogicalPlan
+	// parent and childIdx locate the root in the plan; parent is nil when the
+	// root is the plan's root.
+	parent   base.LogicalPlan
+	childIdx int
+	isLimit  bool // root is a Limit or TopN
+	byItems  []*util.ByItems
 	// nodes holds the joins and projections below the root, plus the root when
 	// it is one of them, in post order.
 	nodes   []base.LogicalPlan
@@ -127,17 +131,18 @@ func isLateMaterializeInterior(p base.LogicalPlan) bool {
 // findLateMaterializeRegions collects the regions in the plan. A Limit or TopN
 // always starts a region; a join, selection or column-only projection starts
 // one when its parent is neither.
-func findLateMaterializeRegions(p, parent base.LogicalPlan, regions *[]*lateMaterializeRegion) {
+func findLateMaterializeRegions(p, parent base.LogicalPlan, childIdx int, regions *[]*lateMaterializeRegion) {
 	isRoot := isLateMaterializeLimitRoot(p) ||
 		(isLateMaterializeInterior(p) && (parent == nil ||
 			(!isLateMaterializeInterior(parent) && !isLateMaterializeLimitRoot(parent))))
 	if isRoot {
 		if r := buildLateMaterializeRegion(p); r != nil {
+			r.parent, r.childIdx = parent, childIdx
 			*regions = append(*regions, r)
 		}
 	}
-	for _, child := range p.Children() {
-		findLateMaterializeRegions(child, p, regions)
+	for i, child := range p.Children() {
+		findLateMaterializeRegions(child, p, i, regions)
 	}
 }
 
@@ -227,12 +232,10 @@ func collectLateMaterializeTree(p base.LogicalPlan, nullable bool, belowUsed map
 		default:
 			return false
 		}
-		conds := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.NAEQConditions)+
+		// NAEQConditions only exist on null-aware anti joins, which are rejected above.
+		conds := make([]expression.Expression, 0, len(x.EqualConditions)+
 			len(x.LeftConditions)+len(x.RightConditions)+len(x.OtherConditions))
 		for _, cond := range x.EqualConditions {
-			conds = append(conds, cond)
-		}
-		for _, cond := range x.NAEQConditions {
 			conds = append(conds, cond)
 		}
 		conds = append(conds, x.LeftConditions...)
@@ -431,8 +434,9 @@ func lateMaterializeHandleInfo(ds *logicalop.DataSource, handle *expression.Colu
 }
 
 // rewriteLateMaterializeRegion splits the region's targets and joins them back
-// above the region root. It returns false if the rewritten region cannot be
-// wired up; the logical plan is then left partly rewritten and must not be used.
+// above the region root. It edits the region in place, so it is applied to a
+// clone. It returns false if the rewritten region cannot be wired up; the clone
+// is then discarded.
 func rewriteLateMaterializeRegion(r *lateMaterializeRegion) (base.LogicalPlan, bool) {
 	root := r.root
 	sctx := root.SCtx()
@@ -530,20 +534,42 @@ func rewriteLateMaterializeRegion(r *lateMaterializeRegion) (base.LogicalPlan, b
 	return proj, true
 }
 
-// applyLateMaterializeRegions rewrites every region that has targets.
-func applyLateMaterializeRegions(p base.LogicalPlan, regions map[base.LogicalPlan]*lateMaterializeRegion) (base.LogicalPlan, bool) {
-	for i, child := range p.Children() {
-		newChild, ok := applyLateMaterializeRegions(child, regions)
-		if !ok {
-			return nil, false
-		}
-		p.SetChild(i, newChild)
-	}
-	r, ok := regions[p]
+// rewriteLateMaterializeClone rewrites a clone of the region, so the original
+// subtree stays untouched for the original plan. chosen holds the positions of
+// the targets to split. It returns false if the region cannot be cloned or the
+// clone does not match the original.
+func rewriteLateMaterializeClone(r *lateMaterializeRegion, chosen []int) (base.LogicalPlan, bool) {
+	root, ok := cloneLogicalSubtree(r.root)
 	if !ok {
-		return p, true
+		return nil, false
 	}
-	return rewriteLateMaterializeRegion(r)
+	clone := buildLateMaterializeRegion(root)
+	if clone == nil || len(clone.targets) != len(r.targets) {
+		return nil, false
+	}
+	targets := make([]*lateMaterializeTarget, 0, len(chosen))
+	for _, i := range chosen {
+		relinkLateMaterializeAccessPaths(r.targets[i].ds, clone.targets[i].ds)
+		targets = append(targets, clone.targets[i])
+	}
+	clone.targets = targets
+	return rewriteLateMaterializeRegion(clone)
+}
+
+// relinkLateMaterializeAccessPaths makes the clone's PossibleAccessPaths point
+// at its own AllPossibleAccessPaths, as they do in the original. Cloning copies
+// the two lists separately; the split DataSource's paths are derived again, and
+// derivation updates AllPossibleAccessPaths while physical optimization reads
+// PossibleAccessPaths. Paths that are not in AllPossibleAccessPaths, such as
+// index merge paths, are dropped; derivation generates them again.
+func relinkLateMaterializeAccessPaths(orig, clone *logicalop.DataSource) {
+	paths := make([]*util.AccessPath, 0, len(orig.PossibleAccessPaths))
+	for _, path := range orig.PossibleAccessPaths {
+		if i := slices.Index(orig.AllPossibleAccessPaths, path); i >= 0 {
+			paths = append(paths, clone.AllPossibleAccessPaths[i])
+		}
+	}
+	clone.PossibleAccessPaths = paths
 }
 
 // lateMaterializeReaderPath returns the path from the plan root to the root
@@ -742,36 +768,56 @@ func tryLateMaterialization(logic base.LogicalPlan, plan base.PhysicalPlan, cost
 		return logic, plan, cost
 	}
 	var regions []*lateMaterializeRegion
-	findLateMaterializeRegions(logic, nil, &regions)
-	byRoot := make(map[base.LogicalPlan]*lateMaterializeRegion, len(regions))
+	findLateMaterializeRegions(logic, nil, 0, &regions)
+	type rewriteTask struct {
+		region *lateMaterializeRegion
+		chosen []int
+	}
+	var tasks []rewriteTask
 	for _, r := range regions {
-		r.targets = slices.DeleteFunc(r.targets, func(t *lateMaterializeTarget) bool {
-			return !worthLateMaterializing(plan, t)
-		})
-		if len(r.targets) > 0 {
-			byRoot[r.root] = r
+		var chosen []int
+		for i, t := range r.targets {
+			if worthLateMaterializing(plan, t) {
+				chosen = append(chosen, i)
+			}
+		}
+		if len(chosen) > 0 {
+			tasks = append(tasks, rewriteTask{region: r, chosen: chosen})
 		}
 	}
-	if len(byRoot) == 0 {
+	if len(tasks) == 0 {
 		return logic, plan, cost
 	}
 
-	// When the original plan wins, put back the warnings and the plan and column
-	// ID counters, so trying the alternative leaves no trace in EXPLAIN output.
+	// Each region is rewritten as a clone and swapped in at its parent, so the
+	// original plan's subtrees are never edited. When the original plan wins,
+	// the subtrees are swapped back and the warnings and the plan and column ID
+	// counters are restored, so trying the alternative leaves no trace in
+	// EXPLAIN output.
 	warns := slices.Clone(sessVars.StmtCtx.GetWarnings())
 	planID, planColumnID := sessVars.PlanID.Load(), sessVars.PlanColumnID.Load()
+	newLogic := logic
+	var swapped []*lateMaterializeRegion
 	restore := func() (base.LogicalPlan, base.PhysicalPlan, float64) {
+		for _, r := range swapped {
+			r.parent.SetChild(r.childIdx, r.root)
+		}
 		sessVars.StmtCtx.SetWarnings(warns)
 		sessVars.PlanID.Store(planID)
 		sessVars.PlanColumnID.Store(planColumnID)
 		return logic, plan, cost
 	}
-	// The rewrite edits the logical plan in place. The original physical plan
-	// does not share any of the edited state: schemas, column lists and
-	// projection expressions are replaced, not modified.
-	newLogic, ok := applyLateMaterializeRegions(logic, byRoot)
-	if !ok {
-		return restore()
+	for _, task := range tasks {
+		rewritten, ok := rewriteLateMaterializeClone(task.region, task.chosen)
+		if !ok {
+			return restore()
+		}
+		if task.region.parent == nil {
+			newLogic = rewritten
+			continue
+		}
+		task.region.parent.SetChild(task.region.childIdx, rewritten)
+		swapped = append(swapped, task.region)
 	}
 	resetLogicalTaskMaps(newLogic)
 	sessVars.StmtCtx.SetWarnings(slices.Clone(warns[:min(warnStart, len(warns))]))

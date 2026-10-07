@@ -40,7 +40,12 @@ func prepareLateMaterializationTables(tk *testkit.TestKit) {
 	tk.MustExec("insert into h " + gen + "select i, i * 7, concat('h', i) from s where i % 3 <> 0")
 	tk.MustExec("insert into m (k, v, pad) " + gen + "select i % 1000, i, concat('m', i) from s")
 	tk.MustExec("insert into r " + gen + "select i, i * 11, concat('r', i) from s")
-	tk.MustExec("analyze table o, u, h, m, r")
+	// A clustered composite primary key (common handle) and a partitioned table.
+	tk.MustExec("create table cp (a int, b int, pad varchar(64), primary key (a, b) clustered, key ib(b))")
+	tk.MustExec("create table pt (id int primary key, c int, pad varchar(64), key ic(c)) partition by hash(id) partitions 4")
+	tk.MustExec("insert into cp " + gen + "select i, i, concat('cp', i) from s")
+	tk.MustExec("insert into pt " + gen + "select i, i div 2, concat('pt', i) from s")
+	tk.MustExec("analyze table o, u, h, m, r, cp, pt")
 }
 
 func setLateMaterialization(tk *testkit.TestKit, enabled bool) {
@@ -97,6 +102,19 @@ func TestLateMaterializationResults(t *testing.T) {
 		"select concat(o.pad, '-', u.pad), u.v + 1 from o join u on o.id = u.k order by o.c, o.id limit 10 offset %d",
 		// The paged join as a derived table under an aggregation.
 		"select count(*), max(x.p) from (select o.pad p from o join u on o.id = u.k order by o.c, o.id limit 25 offset %d) x",
+		// A WHERE condition on the null-supplying side that is not null-rejecting
+		// stays in a Selection above the join; its columns are not deferred.
+		"select o.pad, u.pad from o left join u on o.id = u.k where u.pad is null or u.v > 5 order by o.c, o.id limit 10 offset %d",
+		// Table aliases.
+		"select x.pad, y.pad from o as x join u as y on x.id = y.k order by x.c, x.id limit 10 offset %d",
+		// An index hint limits the access paths of the fetched table too.
+		"select /*+ USE_INDEX(o, idx_c) */ o.pad, u.pad from o join u on o.id = u.k order by o.c, o.id limit 10 offset %d",
+		// A semi join or a computed projection inside the region keeps the plan as is.
+		"select o.pad, u.pad from o join u on o.id = u.k where exists (select 1 from h where h.id = o.id) order by o.c, o.id limit 10 offset %d",
+		"select t.x, u.pad from (select o.id, o.c * 2 x from o) t join u on t.id = u.k order by t.x, t.id limit 10 offset %d",
+		// Common handle and partitioned tables are not deferred; the other table can be.
+		"select cp.pad, u.pad from cp join u on cp.b = u.k order by cp.b, cp.a limit 10 offset %d",
+		"select pt.pad, u.pad from pt join u on pt.id = u.k order by pt.c, pt.id limit 10 offset %d",
 		// Without OFFSET: o is read through idx_d_c and u's filter discards most of its rows.
 		"select o.pad, u.pad from o join u on o.c = u.k where o.d = 3 and u.v < 300 order by o.c, o.id limit %d",
 	}
@@ -106,6 +124,10 @@ func TestLateMaterializationResults(t *testing.T) {
 		"select o.pad, u.pad from o join u on o.id = u.k where u.v < 300 order by o.id",
 		"select o.pad, u.pad, h.pad from o join u on o.id = u.k join h on u.id = h.id where h.v < 700 order by o.id",
 		"select count(*), max(o.pad), max(u.pad) from o join u on o.id = u.k where u.v < 300",
+		// An expression over output-only columns above the region.
+		"select concat(o.pad, u.pad) from o join u on o.c = u.k where o.d = 3 and u.v < 300",
+		// o is read by a batch point get, which already reads only the matching rows.
+		"select o.pad, u.pad from o join u on o.id = u.k where o.id in (1, 2, 3, 500)",
 	}
 	queries := make([]string, 0, len(paged)*6+len(unpaged))
 	for _, q := range paged {
