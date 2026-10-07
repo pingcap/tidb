@@ -27,6 +27,8 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 
 **Publication authorized by the user on 2026-10-05.** Preserve destinations `pingcap/tidb hparser-integration` and `ngaut/client-rust master`. The prior diagnostic was `remote: Permission to pingcap/tidb.git denied to ngaut.` (HTTP 403): GitHub App installation `90274244` excluded TiDB despite account admin/push permission. The user corrected its selected-repository grant. Normal managed Cloud pushes subsequently succeeded for TiDB `11dbe67777` and native `bb8206e7d080`, with remote SHAs verified. This blocker is cleared; every future push still requires its fresh locked build and remote verification. Never extract credentials or force-push.
 
+Latest implementation: [partition lock identity and reorganization safety](partition-lock-batch-validation.json). The removed local REORGANIZE shortcut is a safety repair; durable partition reorganization remains unresolved.
+
 ## Historical evidence
 
 - [runtime settings batch](runtime-settings-batch-validation.json)

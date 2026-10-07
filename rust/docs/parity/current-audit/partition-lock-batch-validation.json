@@ -1,0 +1,167 @@
+{
+  "baseline": "3b7b000bad672056a0eef3c9b88c4f56a54b65f4",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_client_unchanged": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "scope": "E03/N03/D11 connected partition locking and deletion of unsafe metadata-only reorganization; existing-owner maintenance, no complete package acceptance.",
+  "sources": [
+    {
+      "path": "pkg/planner/core/planbuilder.go",
+      "sha256": "dfe3898638fab653ee37716c5c5e1528c475d1ec73d4b325efde5c61e7507e17",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/planner/core/logical_plan_builder.go",
+      "sha256": "01e352e46d091aeb174ce7c71143d23aa92f4b9d0c41d691aaba1cb8baaef131",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/planner/core/operator/logicalop/logical_lock.go",
+      "sha256": "6921cf5bdcc6954a07451c2635c69b59d0a801c3f63bb27509ed73cf33aaf2d7",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/union_scan_test.go",
+      "sha256": "545bd493b67630ba95364072de84919b21029ebad06ba4fcfff11256127e959b",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/distsql.go",
+      "sha256": "eb7759a9a04bb67259380a36ee54fb065c6de21075ba287dd29dc213ab0235c7",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/executor/table_reader.go",
+      "sha256": "e9ef4388a5651f8e4780f34bdff3fad6427f99a2a1fb0f60dab9220b29d1009b",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/ddl/partition.go",
+      "sha256": "08edda35e3c95e10786df77b4d9550692a0235d133aa66dec78a8bfff77a5aed",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/planner/cardinality/selectivity.go",
+      "sha256": "b544e397eb2216a57a927d04692123e803cb9d1f3b52746e3ef7b5387a961e37",
+      "matches_fetched_blob": true
+    },
+    {
+      "path": "pkg/planner/core/casetest/plancache/plan_cache_partition_test.go",
+      "sha256": "c1a9d6d390bcdcbf07f5efe20bd86f548e525b3ba3d9736bac31e6af561820e8",
+      "matches_fetched_blob": true
+    }
+  ],
+  "changes": [
+    "Datasource physical-ID schema, table columns and output names feed the existing LogicalLock map, pruning and physical index resolution, following Go buildSelectLock/addExtraPhysTblIDColumn4DS.",
+    "Local and remote table scans retain physical identity from record keys. Local index covering/lookup readers expose existing routes. Removed project_physical_table_id and its single-partition constant restriction.",
+    "Locking SELECT, single-table UPDATE and DELETE share this handoff. Missing-identity and outer-join null-row safety remain; prepared reads retain exact selected keys.",
+    "Removed reorganize_partition_action and its sole local ALTER caller. REORGANIZE now shares the pre-mutation durable-owner admission gate with repartition; no new data-reorganization implementation is claimed.",
+    "Retained and strengthened the unsupported partition-management regression after it exposed real row disappearance. Removed stale fallback-selectivity numbers from the residual plan-shape assertion; operator, ordinary point estimates and result-row assertions remain."
+  ],
+  "before": {
+    "locking": {
+      "path": "/workspace/.cloud-setup/partition-lock-batch/before.log",
+      "sha256": "86d7ef9356599b17ab98f0ea504a0d1a17a1a04ecacc09f6909c5af7f5046707",
+      "passed": 0,
+      "failed": 3,
+      "diagnostic": "SelectLock requires its physical partition ID"
+    },
+    "reorganization": {
+      "path": "/workspace/.cloud-setup/partition-lock-batch/grouped-final.log",
+      "sha256": "1ef742ee5f3c6940f73702065664d15fb6e001f289a09fddb07377a78aad1ec5",
+      "diagnostic": "The stronger two-row probe returned [] after accepted REORGANIZE; this disproved the initial stale-test hypothesis."
+    },
+    "wire": {
+      "path": "/workspace/.cloud-setup/partition-lock-batch/before-safety-wire.json",
+      "sha256": "de4d096c888e05c179ff6f94877e47e406f765e4ff3e0b42611817da244d98b2",
+      "passed": 2,
+      "total": 21,
+      "diagnostic": "18 locking cases refused missing physical identity; REORGANIZE accepted then returned no rows. Two prepared controls already returned expected rows."
+    }
+  },
+  "validation": {
+    "rust": {
+      "path": "/workspace/.cloud-setup/partition-lock-batch/grouped-ready.log",
+      "sha256": "689d3c2fb364263ddadf65dac7dda95ae1fea9369a1d9d406d090b95cf28e58f",
+      "command": "cargo test --locked -p tidb-planner -p tidb-executor -p tidb-session --lib -- tests_partition:: tests_multi_table_dml:: select_lock:: physical_builder::tests:: partition_reader common_reader reader_task_ kv_table::table_scan::remote_cursor_tests:: logical::operator_tests::lock --test-threads=1",
+      "passed": 220,
+      "failed": 0,
+      "ignored": 0,
+      "by_crate": {
+        "tidb-executor": 70,
+        "tidb-planner": 2,
+        "tidb-session": 148
+      }
+    },
+    "all_targets": {
+      "path": "/workspace/.cloud-setup/partition-lock-batch/check.log",
+      "sha256": "8533575b4873d0b375794fdbbcfc09cb0a7332e5d1a72890070a6ad443a66c70",
+      "command": "cargo check --locked --all-targets -p tidb-planner -p tidb-executor -p tidb-session -p tidb-server",
+      "exit_code": 0
+    },
+    "lint": {
+      "path": "/workspace/.cloud-setup/partition-lock-batch/lint-ready.log",
+      "sha256": "614fa8c8e4b42d39d9cde8cad5993c319195d3278961a86d2e15326315886a54",
+      "command": "make lint",
+      "exit_code": 0
+    },
+    "locked_build": {
+      "path": "/workspace/.cloud-setup/partition-lock-batch/build.log",
+      "sha256": "d2c20afeaf710115e079c24d44a22b75e66320054ae15a7fd865bb1c6c2c60ad",
+      "command": "cargo build --locked -p tidb-server",
+      "exit_code": 0
+    },
+    "wire": {
+      "path": "/workspace/.cloud-setup/partition-lock-batch/after-wire.json",
+      "sha256": "083b3bd803677aae7cf50b26cb56c56b00d046190121a7a2afff898ef1a6555c",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/partition-lock-batch/wire.py after",
+      "passed": 21,
+      "total": 21,
+      "server_exit": 0,
+      "cases": [
+        "static_table",
+        "static_covering",
+        "static_lookup",
+        "static_update",
+        "static_delete",
+        "static_dirty",
+        "static_prepared",
+        "static_outer",
+        "static_heap",
+        "static_common",
+        "dynamic_table",
+        "dynamic_covering",
+        "dynamic_lookup",
+        "dynamic_update",
+        "dynamic_delete",
+        "dynamic_dirty",
+        "dynamic_prepared",
+        "dynamic_outer",
+        "dynamic_heap",
+        "dynamic_common",
+        "reorganization_admission_preserves_rows"
+      ],
+      "binary_sha256": "b9a9e92c35114c2d9ea215ca31433eae4010a390d8421c4c4559f54e27a5cf61"
+    },
+    "self_review": "Only five source/test files changed. Removed helpers have no remaining source callers. Both finding registers agree and no disposition/count changed."
+  },
+  "publication": "Actual executable hooks/pre-commit must pass its locked server build; repeat the locked build immediately before normal push and verify remote SHA. Final gate results belong in /workspace/.cloud-setup/partition-lock-batch/final-handoff.json.",
+  "disposition": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29,
+    "updated_partial": [
+      "E03",
+      "N03",
+      "D11"
+    ],
+    "other_roots": "53 retain carried evidence; not comprehensively re-audited this batch."
+  },
+  "limits": [
+    "No complete Go package acceptance or full Go suite run.",
+    "No live multi-node TiKV, cross-session lock blocking, crash recovery or measured performance claim.",
+    "Durable partition reorganization remains unresolved; the synchronous local owner now refuses instead of losing read visibility.",
+    "New physical-ID output uses the existing keyed row path; zero-copy chunk optimization for that synthetic column is not claimed."
+  ]
+}

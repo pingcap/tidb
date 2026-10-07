@@ -119,16 +119,19 @@ pub fn run_alter_table_in(
             "only ALTER TABLE is supported here",
         ));
     };
-    // Online repartition requires Go's durable reorganization owner. Refuse
+    // Repartition and REORGANIZE require Go's durable reorganization owner. Refuse
     // before applying any action while that owner is unavailable.
     if alter.actions.iter().any(|action| {
         matches!(
             action,
-            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Repartition(_))
+            tidb_ast::AlterTableAction::Partition(
+                tidb_ast::AlterPartitionAction::Repartition(_)
+                    | tidb_ast::AlterPartitionAction::Reorganize { .. }
+            )
         )
     }) {
         return Err(DriverError::unsupported(
-            "ALTER TABLE ... PARTITION BY requires durable partition reorganization",
+            "ALTER TABLE partition reorganization requires its durable DDL owner",
         ));
     }
     // Go owns rollback for the entire multi-schema job. In this synchronous
@@ -624,11 +627,6 @@ fn run_alter_table_in_inner(
                 count,
                 ..
             }) => coalesce_partition_action(catalog, &database, &name, *count, ctx)?,
-            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Reorganize {
-                names,
-                definitions,
-                ..
-            }) => reorganize_partition_action(catalog, &database, &name, names, definitions, ctx)?,
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE action is not supported yet",
@@ -745,103 +743,6 @@ fn add_hash_partitions_action(
     std::sync::Arc::make_mut(table)
         .rehash_hash_partitions(&new_ids, ctx)
         .map_err(|error| crate::driver::kv_read_error("add partition", error))
-}
-
-fn reorganize_partition_action(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    names: &[String],
-    definitions: &[tidb_ast::PartitionDefinition],
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let new_ids: Vec<i64> = (0..definitions.len())
-        .map(|_| catalog.allocate_table_id())
-        .collect();
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE ... REORGANIZE PARTITION needs a storage-backed table",
-        ));
-    };
-    let Some(partition) = std::sync::Arc::make_mut(table).partition_mut() else {
-        return Err(DriverError::PartitionManagementOnNonpartitioned);
-    };
-    let mut start = None;
-    let mut end = 0usize;
-    for (index, definition) in partition.definitions.iter().enumerate() {
-        if names
-            .iter()
-            .any(|name| super::table_partition::partition_names_equal(&definition.name, name))
-        {
-            if start.is_none() {
-                start = Some(index);
-            }
-            end = index + 1;
-        }
-    }
-    let Some(start) = start else {
-        return Err(DriverError::unsupported(
-            "REORGANIZE PARTITION names no such partition".to_owned(),
-        ));
-    };
-    let mut replaced: Vec<crate::partition_routing::PartitionDef> = Vec::new();
-    for (index, definition) in partition.definitions.iter().enumerate() {
-        if index < start {
-            replaced.push(definition.clone());
-        }
-    }
-    // The bound TEXT is what `PartitionDef.less_than` stores and what SHOW
-    // CREATE TABLE prints; the routing layer re-folds it against the column
-    // types on load (`partition_spec_from_metadata`). Range columns bounds
-    // may be any expression whose folded value the routing can compare, so
-    // the acceptance here mirrors the CREATE path: integer literals, quoted
-    // string/DATE literals and MAXVALUE.
-    for (index, definition) in definitions.iter().enumerate() {
-        let mut bounds = Vec::new();
-        if let tidb_ast::PartitionDefinitionClause::LessThan(values) = &definition.clause {
-            for value in values {
-                match value {
-                    tidb_ast::PartitionValue::Expr(expression) => {
-                        bounds.push(
-                            expression.restore_with_flags(
-                                super::table_partition::partition_restore_flags(),
-                            ),
-                        );
-                    }
-                    tidb_ast::PartitionValue::MaxValue => {
-                        bounds.push("MAXVALUE".to_owned());
-                    }
-                    tidb_ast::PartitionValue::Default => {
-                        return Err(DriverError::PartitionColumnValueWrongType);
-                    }
-                    tidb_ast::PartitionValue::Tuple(_) => {
-                        return Err(DriverError::unsupported(
-                            "REORGANIZE PARTITION tuple bounds are not supported on this node",
-                        ))
-                    }
-                }
-            }
-        }
-        replaced.push(crate::partition_routing::PartitionDef {
-            id: new_ids[index],
-            name: definition.name.clone(),
-            less_than: bounds,
-            in_values: Vec::new(),
-            comment: String::new(),
-            ..Default::default()
-        });
-    }
-    for (index, definition) in partition.definitions.iter().enumerate() {
-        if index >= end {
-            replaced.push(definition.clone());
-        }
-    }
-    partition.definitions = replaced;
-    ctx.append_warning_parts(
-        1105,
-        "The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now",
-    );
-    Ok(())
 }
 
 fn coalesce_partition_action(

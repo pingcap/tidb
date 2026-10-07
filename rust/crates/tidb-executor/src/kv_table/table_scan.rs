@@ -4028,6 +4028,8 @@ pub struct TableScanExec {
     /// no MVCC version, so every row reports the zero version, matching
     /// `TableSampleExec`'s `SampleOutputColumn::ExtraCommitTs`.
     extra_commit_ts_slot: Option<usize>,
+    /// Synthetic partition ID from the current record key.
+    physical_table_id_slot: Option<usize>,
 }
 
 /// A partial `SUM` in progress.
@@ -4163,6 +4165,7 @@ impl TableScanExec {
             statement,
             extra_handle_slot: None,
             extra_commit_ts_slot: None,
+            physical_table_id_slot: None,
         }
     }
 
@@ -4216,11 +4219,18 @@ impl TableScanExec {
     /// Preserve the retained physical scan's column identities, including
     /// synthetic handles appended by the scan configuration above.
     pub(crate) fn with_physical_schema(mut self, mut schema: Schema) -> Result<Self, ExecError> {
-        if schema.columns.len() != self.meta.schema().columns.len() {
+        let physical_slot = schema
+            .columns
+            .iter()
+            .position(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
+        if schema.columns.len()
+            != self.meta.schema().columns.len() + usize::from(physical_slot.is_some())
+        {
             return Err(ExecError::internal(
                 "physical scan output width differs from its configured columns",
             ));
         }
+        self.physical_table_id_slot = physical_slot;
         for (index, column) in schema.columns.iter_mut().enumerate() {
             column.index = index as i64;
         }
@@ -4252,27 +4262,29 @@ impl TableScanExec {
     /// this way -- those rows are already emitted -- so it stays an error.
     fn next_source_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
         let commit_ts_slot = self.extra_commit_ts_slot;
+        let physical_slot = self.physical_table_id_slot;
         if let Some(remote) = self.remote.as_mut() {
-            let next = if self.extra_handle_slot.is_some() {
+            let next = if self.extra_handle_slot.is_some() || physical_slot.is_some() {
                 remote.next_keyed_row().and_then(|entry| {
-                    entry
-                        .map(
-                            |(key, row)| match tidb_codec::table_key::decode_row_key(&key) {
-                                Ok(RecordHandle::Int(handle)) => {
-                                    Ok((row, Some(TableHandle::Int(handle))))
-                                }
-                                other => Err(KvTableError::Decode(format!(
+                    entry.map(|(key, row)| {
+                        let handle = if self.extra_handle_slot.is_some() {
+                            match tidb_codec::table_key::decode_row_key(&key) {
+                                Ok(RecordHandle::Int(handle)) => Some(TableHandle::Int(handle)),
+                                other => return Err(KvTableError::Decode(format!(
                                     "remote extra handle is not an integer record key: {other:?}"
                                 ))),
-                            },
-                        )
-                        .transpose()
+                            }
+                        } else {
+                            None
+                        };
+                        Ok((row, handle, decode_table_id(&key)))
+                    }).transpose()
                 })
             } else {
-                remote.next_row().map(|row| row.map(|row| (row, None)))
+                remote.next_row().map(|row| row.map(|row| (row, None, 0)))
             };
             match next {
-                Ok(Some((row, handle))) => {
+                Ok(Some((row, handle, physical_id))) => {
                     let row = match &self.remote_materialization {
                         Some(projection) => projection.project_row(row).map_err(ExecError::from)?,
                         None => row,
@@ -4281,7 +4293,11 @@ impl TableScanExec {
                         (Some(slot), Some(handle)) => insert_extra_handle(row, slot, &handle),
                         _ => row,
                     };
-                    return Ok(Some(insert_extra_commit_ts(row, commit_ts_slot)));
+                    let mut row = insert_extra_commit_ts(row, commit_ts_slot);
+                    if let Some(slot) = physical_slot {
+                        row.insert(slot, Datum::Int(physical_id));
+                    }
+                    return Ok(Some(row));
                 }
                 Ok(None) => {
                     self.remote = None;
@@ -4307,31 +4323,27 @@ impl TableScanExec {
                 }
             }
         }
-        let next = match (self.remote.as_mut(), self.cursor.as_mut()) {
-            (Some(remote), _) => remote.next_row(),
-            (None, Some(cursor)) => cursor.next_row().map(|row| {
-                row.map(|(handle, projected)| {
+        let next = match self.cursor.as_mut() {
+            Some(cursor) => cursor.next_physical_row().map(|row| {
+                row.map(|(physical_id, handle, projected)| {
                     let row = match self.extra_handle_slot {
-                        // Go's extra handle column IS the record handle, so the
-                        // value the cursor already carries beside the row is the
-                        // one `_tidb_rowid` reports.
                         Some(slot) => insert_extra_handle(projected, slot, &handle),
                         None => projected,
                     };
-                    insert_extra_commit_ts(row, commit_ts_slot)
+                    let mut row = insert_extra_commit_ts(row, commit_ts_slot);
+                    if let Some(slot) = physical_slot {
+                        row.insert(slot, Datum::Int(physical_id));
+                    }
+                    row
                 })
             }),
-            (None, None) => return Ok(None),
+            None => return Ok(None),
         }
         .map_err(ExecError::from)?;
-        match next {
-            Some(row) => Ok(Some(insert_extra_commit_ts(row, commit_ts_slot))),
-            None => {
-                self.remote = None;
-                self.cursor = None;
-                Ok(None)
-            }
+        if next.is_none() {
+            self.cursor = None;
         }
+        Ok(next)
     }
 
     fn build_local_partial_rows(
@@ -4844,7 +4856,8 @@ impl Executor for TableScanExec {
                 // Go plans UnionScan (which needs the handle) only over a dirty
                 // table; `_tidb_rowid` in the schema is the other handle reader.
                 self.table.has_dirty_content(&self.statement.staged_writes)
-                    || self.extra_handle_slot.is_some(),
+                    || self.extra_handle_slot.is_some()
+                    || self.physical_table_id_slot.is_some(),
                 &self.decode_context,
                 &self.statement,
                 self.read_engine,
@@ -4938,6 +4951,7 @@ impl Executor for TableScanExec {
         if (self.filter.is_none() || remote_filter_complete)
             && self.remote_materialization.is_none()
             && self.extra_handle_slot.is_none()
+            && self.physical_table_id_slot.is_none()
         {
             if let Some(remote) = self.remote.as_mut() {
                 let target = self.limit.map_or(cap, |limit| {
@@ -5245,7 +5259,8 @@ impl crate::table_access::TableAccess for TableScanExec {
         // family while the table is clean: no UnionScan row needs a handle
         // reconstructed from the narrowed response. Local fallback applies
         // the same projection after the optional scan filter.
-        if !self.filter_fully_described()
+        if self.physical_table_id_slot.is_some()
+            || !self.filter_fully_described()
             || self.table.has_dirty_content(&self.statement.staged_writes)
             || self.has_virtual_projection()
             || self.partial_aggregate.is_some()

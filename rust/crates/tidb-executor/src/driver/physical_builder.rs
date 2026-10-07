@@ -772,7 +772,6 @@ fn build_table_scan(
     let logical_table_id = table.table_id;
     let index_id = super::index_usage_reporter::cluster_index_id(&table);
     let stats = catalog.table_statistics(table.stats_physical_id());
-    let physical_ids = table.record_physical_ids();
     let column_count = table.logical_data_source_column_count();
     let partition_ids = scan
         .dynamic_partition_access
@@ -866,15 +865,7 @@ fn build_table_scan(
         source.accept_scan_estimate(rows);
     }
     let output = plan_schema(plan)?;
-    let stored_output = Schema::new(
-        output
-            .columns
-            .iter()
-            .filter(|column| column.id != tidb_model::column::EXTRA_PHYS_TBL_ID)
-            .cloned()
-            .collect(),
-    );
-    let source = source.with_physical_schema(stored_output)?;
+    let source = source.with_physical_schema(output)?;
     let source = Box::new(CopIndexUsageExec::new(
         Box::new(source),
         logical_table_id,
@@ -882,62 +873,7 @@ fn build_table_scan(
         ctx.index_usage_collector().cloned(),
         index_id,
     ));
-    project_physical_table_id(source, output, &physical_ids, plan, ctx)
-}
-
-/// Go's per-partition result carries a synthetic physical-table ID, not a
-/// stored SQL column. A worker narrowed to one physical table can emit it as
-/// a constant while retaining the planner's exact output schema.
-fn project_physical_table_id(
-    source: Box<dyn Executor>,
-    output: Schema,
-    physical_ids: &[i64],
-    plan: &PhysicalPlan,
-    ctx: &crate::StmtContext,
-) -> Result<Box<dyn Executor>, DriverError> {
-    if !output
-        .columns
-        .iter()
-        .any(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
-    {
-        return Ok(source);
-    }
-    let [physical_id] = physical_ids else {
-        return Err(DriverError::unsupported(
-            "a physical-table ID output requires a partition-specific scan",
-        ));
-    };
-    let mut source_slot = 0;
-    let mut expressions = Vec::with_capacity(output.len());
-    for column in &output.columns {
-        if column.id == tidb_model::column::EXTRA_PHYS_TBL_ID {
-            expressions.push(Expression::Constant(tidb_expr::constant::Constant::new(
-                tidb_datatype::Datum::Int(*physical_id),
-                FieldType::new(FieldTypeCode::LongLong),
-            )));
-        } else {
-            let mut input = source
-                .schema()
-                .columns
-                .get(source_slot)
-                .cloned()
-                .ok_or_else(|| DriverError::unsupported("physical scan lost an output column"))?;
-            input.index = source_slot as i64;
-            expressions.push(Expression::Column(input));
-            source_slot += 1;
-        }
-    }
-    if source_slot != source.schema().len() {
-        return Err(DriverError::unsupported(
-            "physical scan output width differs from its schema",
-        ));
-    }
-    Ok(Box::new(ProjectionExec::new(
-        meta(ctx, plan, output),
-        expressions,
-        source,
-        ctx.clone(),
-    )))
+    Ok(source)
 }
 
 fn build_table_sample(
@@ -1863,13 +1799,8 @@ fn reader_output_offsets(
     let mut extra_handle_slot = None;
     for (slot, output) in schema.columns.iter().enumerate() {
         if output.id == tidb_model::column::EXTRA_PHYS_TBL_ID {
-            if table
-                .indexes()
-                .iter()
-                .any(|index| index.id == scan.index_id && index.global)
-            {
-                source_columns.push(output.clone());
-            }
+            // Both local and global index cursors retain the record's route.
+            source_columns.push(output.clone());
             continue;
         }
         if Some(slot) == extra_handle {
@@ -2049,7 +1980,6 @@ fn build_index_reader(
         .transpose()?;
     let logical_table_id = table.table_id;
     let stats = catalog.table_statistics(table.stats_physical_id());
-    let physical_ids = table.record_physical_ids();
     let mut source = IndexRangeSourceExec::new_with_statement(
         meta(ctx, plan, source_schema),
         std::sync::Arc::unwrap_or_clone(table),
@@ -2142,11 +2072,6 @@ fn build_index_reader(
     // by `compareExec.compare`. This tier folds that merge into the source;
     // arming it here keeps every other read untouched.
     source.enable_dirty_union_scan_merge();
-    let emits_physical_id = source
-        .schema()
-        .columns
-        .iter()
-        .any(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
     let source = Box::new(CopIndexUsageExec::new(
         Box::new(source),
         logical_table_id,
@@ -2154,11 +2079,7 @@ fn build_index_reader(
         ctx.index_usage_collector().cloned(),
         Some(scan.index_id),
     ));
-    if emits_physical_id {
-        Ok(source)
-    } else {
-        project_physical_table_id(source, schema, &physical_ids, plan, ctx)
-    }
+    Ok(source)
 }
 
 fn join_kind(join_type: LogicalJoinType) -> Result<JoinKind, DriverError> {

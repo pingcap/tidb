@@ -83,12 +83,6 @@
 //! * `privilege.GetPrivilegeManager` and every `visitInfo` line in
 //!   `BuildDataSourceFromView`. 6a DROPPED `visitInfo`; the `SecurityDefiner`
 //!   and `ErrViewNoExplain` arms are its only readers here.
-//! * `addExtraPhysTblIDColumn4DS` / `setExtraPhysTblIDColsOnDataSource`
-//!   (`planbuilder.go:1633`). The extra `pid` column is appended to a
-//!   `DataSource`'s schema for a PARTITIONED table under a lock; `b.partitionedTable`
-//!   is a 6a-dropped field with no producer, so
-//!   [`PlanBuilder::build_select_lock`] leaves `tbl_id_to_phys_tbl_id_col`
-//!   empty and names the symbol.
 //! * `aliasChecker` (`preprocess.go:2357`). Its whole body is the DELETE
 //!   statement's `IsAlias` tagging — `getTableRefsAlias` writes
 //!   `table.IsAlias = true` back into the AST for `DELETE t FROM t AS ...`.
@@ -1801,6 +1795,69 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         Ok(LogicalPlan::Projection(projection))
     }
 
+    /// Go setExtraPhysTblIDColsOnDataSource/addExtraPhysTblIDColumn4DS.
+    /// The synthetic value belongs to the record reader, not to SQL data.
+    fn set_extra_phys_tbl_id_cols(
+        &mut self,
+        plan: &mut LogicalPlan,
+        columns: &mut BTreeMap<i64, Column>,
+    ) {
+        if let LogicalPlan::DataSource(source) = plan {
+            if source.partition_definition_ids.is_empty() {
+                return;
+            }
+            if let Some(column) = source
+                .table_columns
+                .iter()
+                .rev()
+                .find(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
+            {
+                columns.insert(source.table_id, column.clone());
+                return;
+            }
+            let mut column = Column::new(
+                self.column_ids.alloc(),
+                FieldType::new(FieldTypeCode::LongLong),
+            );
+            column.id = tidb_model::column::EXTRA_PHYS_TBL_ID;
+            column.orig_name = format!(
+                "{}.{}.{}",
+                source.db_name, source.table_name, EXTRA_PHYS_TBL_ID_NAME
+            );
+            let name = self.table_field_name(
+                &source.db_name,
+                &source.table_name,
+                source
+                    .table_as_name
+                    .as_deref()
+                    .unwrap_or(&source.table_name),
+                EXTRA_PHYS_TBL_ID_NAME,
+                false,
+                false,
+            );
+            source
+                .columns
+                .push(crate::logical::data_source::DataSourceColumn {
+                    id: column.id,
+                    name: EXTRA_PHYS_TBL_ID_NAME.to_owned(),
+                    is_primary_key: false,
+                    is_not_null: false,
+                });
+            let mut schema = source.base.base.schema().cloned().unwrap_or_default();
+            schema.append([column.clone()]);
+            source.base.base.set_schema(Some(schema));
+            let mut names = source.base.base.output_names().to_vec();
+            names.push(name);
+            source.base.base.set_output_names(names);
+            source.table_columns.push(column.clone());
+            columns.insert(source.table_id, column);
+        } else {
+            for child in plan.base_mut().children_mut() {
+                self.set_extra_phys_tbl_id_cols(child, columns);
+            }
+        }
+    }
+
     /// Go `buildSelectLock(src, lock)` (`planbuilder.go:1610`).
     ///
     /// Go's `TblID2Handle` is `map[int64][]util.HandleCols`; 6a's
@@ -1809,15 +1866,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// resolved back against the child's schema by unique id. Losing an
     /// identity is a planning error, never permission to omit a row lock.
     ///
-    /// boundary: `setExtraPhysTblIDColsOnDataSource` /
-    /// `addExtraPhysTblIDColumn4DS`; see this module's boundaries.
-    ///
     /// # Errors
     ///
     /// An empty `handleHelper` stack, where Go panics.
     pub fn build_select_lock(
         &mut self,
-        src: LogicalPlan,
+        mut src: LogicalPlan,
         lock_type: SelectLockType,
         wait_sec: u64,
     ) -> Result<LogicalPlan, PlanError> {
@@ -1847,7 +1901,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 tbl_id_to_handle_cols.insert(*table_id, columns);
             }
         }
+        let mut physical_columns = BTreeMap::new();
+        self.set_extra_phys_tbl_id_cols(&mut src, &mut physical_columns);
         let mut lock = LogicalLock::new(self.base(LogicalLock::TYPE), lock_type);
+        lock.tbl_id_to_phys_tbl_id_col = physical_columns;
         lock.wait_sec = wait_sec;
         lock.tbl_id_to_handle_cols = tbl_id_to_handle_cols;
         lock.base.set_children(vec![src]);

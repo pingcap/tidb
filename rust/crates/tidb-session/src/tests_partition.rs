@@ -2283,15 +2283,17 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
     // planner still chooses the batch point get, with the residual as a
     // ROOT Selection inside every branch. Go starts at PartitionUnion;
     // redundant projection elimination leaves the same root here.
+    // This case checks retained operators and residual evaluation. Statistics
+    // selectivity has its own owner tests; a fixed fallback factor is not
+    // the contract once analyzed TopN values can evaluate the LIKE filter.
     let residual = crate::tests_support::row_text(
         session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2) AND a LIKE '%a%'"),
     );
-    let shape: Vec<(String, String, String, String)> = residual
+    let shape: Vec<(String, String, String)> = residual
         .iter()
         .map(|row| {
             (
                 without_plan_id(&row[0].trim_start_matches([' ', '│', '├', '└', '─'])),
-                row[1].clone(),
                 row[3].clone(),
                 row[4].clone(),
             )
@@ -2302,31 +2304,26 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
         vec![
             (
                 "PartitionUnion".to_owned(),
-                "2.60".to_owned(),
                 String::new(),
                 String::new()
             ),
             (
                 "Selection".to_owned(),
-                "1.60".to_owned(),
                 String::new(),
                 "like(test.t.a, \"%a%\", 92)".to_owned()
             ),
             (
                 "Batch_Point_Get".to_owned(),
-                "2.00".to_owned(),
                 "table:t, partition:p1, index:PRIMARY(b)".to_owned(),
                 "keep order:false, desc:false".to_owned()
             ),
             (
                 "Selection".to_owned(),
-                "1.00".to_owned(),
                 String::new(),
                 "like(test.t.a, \"%a%\", 92)".to_owned()
             ),
             (
                 "Batch_Point_Get".to_owned(),
-                "1.00".to_owned(),
                 "table:t, partition:p2, index:PRIMARY(b)".to_owned(),
                 "keep order:false, desc:false".to_owned()
             ),
@@ -3607,43 +3604,26 @@ fn truncate_empties_a_partitioned_table() {
     );
 }
 
-/// Every partition-management statement Go serves that this node does not
-/// must be REFUSED, never accepted and ignored.
-///
-/// The distinction is the whole point. A refused `REORGANIZE PARTITION` is a
-/// feature gap the user can see and work around; an accepted-and-ignored one
-/// reports success and leaves the table partitioned the old way, so the next
-/// statement operates on partitions the user believes are gone.
+/// Go onReorganizePartition must move data before publishing new physical
+/// IDs. The local owner must refuse until it can execute that durable job.
 #[test]
 fn unserved_partition_management_is_refused_not_ignored() {
     let mut session = Session::new();
-    session
-        .run(
-            "CREATE TABLE pm (a INT) PARTITION BY RANGE (a) \
-              (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
-        )
-        .expect("range table");
-    session
-        .run("CREATE TABLE pmh (a INT) PARTITION BY HASH (a) PARTITIONS 4")
-        .expect("hash table");
-    session
-        .run("CREATE TABLE plain (a INT)")
-        .expect("plain table");
-
-    let unserved = [
-        "ALTER TABLE pm REORGANIZE PARTITION p0, p1 INTO \
-         (PARTITION q0 VALUES LESS THAN (20))",
+    session.run("CREATE TABLE pm (a INT) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN(10), PARTITION p1 VALUES LESS THAN(20))").unwrap();
+    session.run("INSERT INTO pm VALUES(1),(11)").unwrap();
+    session.run("CREATE TABLE plain (a INT)").unwrap();
+    let original = show_create(&mut session, "pm");
+    for sql in [
+        "ALTER TABLE pm REORGANIZE PARTITION p0, p1 INTO (PARTITION q0 VALUES LESS THAN(20))",
+        "ALTER TABLE pm ADD COLUMN b INT, REORGANIZE PARTITION p0, p1 INTO (PARTITION q0 VALUES LESS THAN(20))",
         "ALTER TABLE pm EXCHANGE PARTITION p0 WITH TABLE plain",
-        "ALTER TABLE plain PARTITION BY HASH (a) PARTITIONS 2",
-    ];
-    for sql in unserved {
-        match session.run(sql) {
-            Err(_) => {}
-            Ok(outcome) => panic!(
-                "{sql} was ACCEPTED ({outcome:?}); an unserved partition change \
-                 must be refused, or it reports success and changes nothing"
-            ),
-        }
+        "ALTER TABLE plain PARTITION BY HASH(a) PARTITIONS 2",
+    ] {
+        assert!(session.run(sql).is_err(), "unsupported action accepted: {sql}");
+        assert_eq!(show_create(&mut session, "pm"), original);
+        assert_eq!(tests_support::row_text(session.run("SELECT a FROM pm ORDER BY a")), [["1"], ["11"]]);
+        assert_eq!(tests_support::row_text(session.run("SELECT a FROM pm PARTITION(p0)")), [["1"]]);
+        assert_eq!(tests_support::row_text(session.run("SELECT a FROM pm PARTITION(p1)")), [["11"]]);
     }
 }
 
@@ -4618,4 +4598,141 @@ fn a_common_handle_partitioned_lookup_limit_keeps_the_flavour_prefix() {
         vec!["a", "b", "c", "d", "f"],
         "plain: p2's INDEX-order prefix -- a=44 belongs to f"
     );
+}
+
+// Go buildSelectLock/addExtraPhysTblIDColumn4DS: record identity is
+// (physical partition, handle), shared by locking reads and DML.
+fn partition_lock_batch_session(mode: &str) -> Session {
+    let mut session = Session::new();
+    session
+        .run(&format!("SET tidb_partition_prune_mode='{mode}'"))
+        .unwrap();
+    session.run("CREATE TABLE lock_route (id INT PRIMARY KEY, v INT, c INT, KEY iv(v)) PARTITION BY RANGE(id) (PARTITION p0 VALUES LESS THAN(10), PARTITION p1 VALUES LESS THAN(20))").unwrap();
+    session
+        .run("INSERT INTO lock_route VALUES (1,11,7),(11,111,8)")
+        .unwrap();
+    session.run("BEGIN PESSIMISTIC").unwrap();
+    session.set_selected_lock_keys(Some(tidb_executor::select_lock::SelectedLockKeys::default()));
+    session
+}
+
+#[test]
+fn partition_lock_batch_select() {
+    for mode in ["static", "dynamic"] {
+        let mut session = partition_lock_batch_session(mode);
+        let expected_keys = session
+            .with_catalog_mut(|catalog| {
+                let Some(tidb_executor::TableEntry::Kv(table)) =
+                    catalog.table_mut_in("test", "lock_route")
+                else {
+                    panic!("partitioned table");
+                };
+                let definitions = &table.partition().unwrap().definitions;
+                Ok(vec![
+                    tidb_codec::table_key::encode_row_key_with_handle(
+                        definitions[0].id,
+                        &tidb_codec::table_key::RecordHandle::Int(1),
+                    ),
+                    tidb_codec::table_key::encode_row_key_with_handle(
+                        definitions[1].id,
+                        &tidb_codec::table_key::RecordHandle::Int(11),
+                    ),
+                ])
+            })
+            .unwrap();
+        for (column, expected) in [("v", [["11"], ["111"]]), ("c", [["7"], ["8"]])] {
+            for access in ["IGNORE INDEX(iv)", "FORCE INDEX(iv)"] {
+                assert_eq!(
+                    tests_support::row_text(session.run(&format!(
+                        "SELECT {column} FROM lock_route {access} WHERE v>0 ORDER BY id FOR UPDATE"
+                    ))),
+                    expected
+                );
+                assert_eq!(
+                    session.take_selected_lock_keys(),
+                    expected_keys,
+                    "{mode} {access} {column}"
+                );
+            }
+        }
+        session.run("PREPARE lock_stmt FROM 'SELECT c FROM lock_route WHERE v > ? ORDER BY id FOR UPDATE'").unwrap();
+        for bound in [0, 100, 0] {
+            session.run(&format!("SET @bound={bound}")).unwrap();
+            let expected = if bound == 100 {
+                vec![vec!["8"]]
+            } else {
+                vec![vec!["7"], vec!["8"]]
+            };
+            assert_eq!(
+                tests_support::row_text(session.run("EXECUTE lock_stmt USING @bound")),
+                expected
+            );
+            assert_eq!(
+                session.take_selected_lock_keys(),
+                if bound == 100 {
+                    expected_keys[1..].to_vec()
+                } else {
+                    expected_keys.clone()
+                }
+            );
+        }
+        session.run("ROLLBACK").unwrap();
+    }
+}
+
+#[test]
+fn partition_lock_batch_update() {
+    for mode in ["static", "dynamic"] {
+        let mut session = partition_lock_batch_session(mode);
+        session
+            .run("UPDATE lock_route SET v=v+1 WHERE v>0")
+            .unwrap();
+        assert_eq!(
+            tests_support::row_text(session.run("SELECT v FROM lock_route ORDER BY id")),
+            [["12"], ["112"]]
+        );
+        session.run("ROLLBACK").unwrap();
+        assert_eq!(
+            tests_support::row_text(session.run("SELECT v FROM lock_route ORDER BY id")),
+            [["11"], ["111"]]
+        );
+    }
+}
+
+#[test]
+fn partition_lock_batch_delete() {
+    for mode in ["static", "dynamic"] {
+        let mut session = partition_lock_batch_session(mode);
+        session
+            .run("DELETE FROM lock_route PARTITION(p1) WHERE v>0")
+            .unwrap();
+        assert_eq!(
+            tests_support::row_text(session.run("SELECT v FROM lock_route ORDER BY id")),
+            [["11"]]
+        );
+        session.run("ROLLBACK").unwrap();
+        assert_eq!(
+            tests_support::row_text(session.run("SELECT v FROM lock_route ORDER BY id")),
+            [["11"], ["111"]]
+        );
+    }
+}
+
+#[test]
+fn partition_lock_batch_outer_join() {
+    // Go executor/union_scan_test.go::TestIssue28073: null-extended
+    // partition rows must not create a physical-zero record lock.
+    for mode in ["static", "dynamic"] {
+        let mut session = partition_lock_batch_session(mode);
+        session
+            .run("CREATE TABLE lock_peer (id INT PRIMARY KEY)")
+            .unwrap();
+        session.run("INSERT INTO lock_peer VALUES (1),(5)").unwrap();
+        session.run("BEGIN PESSIMISTIC").unwrap();
+        assert_eq!(tests_support::row_text(session.run("SELECT l.id, r.c FROM lock_peer l LEFT JOIN lock_route r ON l.id=r.id ORDER BY l.id FOR UPDATE")), [["1", "7"], ["5", "NULL"]]);
+        let keys = session.take_selected_lock_keys();
+        assert_eq!(keys.len(), 3);
+        assert!(keys.iter().all(|key| tidb_codec::decode_table_id(key) != 0));
+        session.run("ROLLBACK").unwrap();
+    }
 }
