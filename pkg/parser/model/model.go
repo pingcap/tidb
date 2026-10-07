@@ -206,6 +206,10 @@ func (t IndexType) String() string {
 		return "HYPO"
 	case IndexTypeHNSW:
 		return "HNSW"
+	case IndexTypeHybrid:
+		return "HYBRID"
+	case IndexTypeFulltext:
+		return "FULLTEXT"
 	default:
 		return ""
 	}
@@ -219,6 +223,10 @@ const (
 	IndexTypeRtree
 	IndexTypeHypo
 	IndexTypeHNSW
+	IndexTypeHybrid
+	// Match the FULLTEXT type in release-fts-202602's TiCI table-info contract
+	// without renumbering existing v8.5 index types.
+	IndexTypeFulltext IndexType = 8
 )
 
 // ReferOptionType is the type for refer options.

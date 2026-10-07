@@ -65,7 +65,7 @@ func testReadAndCompare(
 	kvIdx := 0
 
 	for {
-		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, _, err := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, _, _, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
 		curEnd := dbkv.Key(endKeyOfGroup).Clone()
 		if len(endKeyOfGroup) == 0 {

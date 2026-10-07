@@ -36,10 +36,11 @@ import (
 // All the field should be serializable.
 type TaskMeta struct {
 	// IMPORT INTO job id, see mysql.tidb_import_jobs.
-	JobID  int64
-	Plan   importer.Plan
-	Stmt   string
-	Result Result
+	JobID            int64
+	Plan             importer.Plan
+	Stmt             string
+	Result           Result
+	TiCIIndexSummary *importer.TiCIIndexSummary `json:"tici-index-summary,omitempty"`
 	// eligible instances to run this task, we run on all instances if it's empty.
 	// we only need this when run IMPORT INTO without distributed option now, i.e.
 	// running on the instance that initiate the IMPORT INTO.
@@ -195,6 +196,8 @@ type PostProcessStepMeta struct {
 	TooManyConflictsFromIndex bool `json:"too-many-conflicts-from-index,omitempty"`
 	// MaxIDs of max all max-ids of subtasks in import step.
 	MaxIDs map[autoid.AllocatorType]int64
+	// TiCIIndexSummary records TiCI readiness warnings generated during post process.
+	TiCIIndexSummary *importer.TiCIIndexSummary `json:"tici-index-summary,omitempty"`
 }
 
 // SharedVars is the shared variables of all minimal tasks in a subtask.

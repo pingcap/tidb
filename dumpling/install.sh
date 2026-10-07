@@ -9,12 +9,10 @@ wget https://download.pingcap.com/tidb-toolkit-$TOOLS_TAG-linux-amd64.tar.gz -O 
 tar -xzvf tools.tar.gz
 mv tidb-toolkit-$TOOLS_TAG-linux-amd64/bin/* bin/
 
-# download minio
-wget https://dl.min.io/server/minio/release/linux-amd64/minio -O bin/minio
-chmod a+x bin/minio
-
-wget https://dl.minio.io/client/mc/release/linux-amd64/mc -O bin/mc
-chmod a+x bin/mc
+# MinIO community binaries are no longer published at dl.min.io (HTTP 410).
+# Build pinned upstream releases without changing TiDB's module dependencies.
+GOBIN="$(pwd)/bin" go install github.com/minio/minio@RELEASE.2025-10-15T17-29-55Z
+GOBIN="$(pwd)/bin" go install github.com/minio/mc@RELEASE.2025-08-13T08-35-41Z
 
 go get github.com/ma6174/snappy@15869b0666f67839ecf86cd29ef1452ddcd79cb8
 go install github.com/ma6174/snappy@15869b0666f67839ecf86cd29ef1452ddcd79cb8

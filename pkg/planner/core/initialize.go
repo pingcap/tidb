@@ -250,6 +250,17 @@ func (p PhysicalUnionScan) Init(ctx base.PlanContext, stats *property.StatsInfo,
 	return &p
 }
 
+func (p *PhysicalIndexLookUpReader) adjustReadReqType(_ base.PlanContext) {
+	if p.IndexStoreType == kv.TiFlash {
+		_, ok := p.indexPlan.(*PhysicalExchangeSender)
+		if ok {
+			p.ReadReqType = MPP
+			return
+		}
+		p.ReadReqType = BatchCop
+	}
+}
+
 // Init initializes PhysicalIndexLookUpReader.
 func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, indexLookUpPushDownBy util.IndexLookUpPushDownByType) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
@@ -259,6 +270,8 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, indexL
 	p.TablePlans = flattenListPushDownPlan(p.tablePlan)
 	p.IndexPlans, p.IndexPlansUnNatureOrders = flattenTreePushDownPlan(p.indexPlan)
 	setTableScanToTableRowIDScan(p.tablePlan)
+	p.IndexStoreType = p.IndexPlans[0].(*PhysicalIndexScan).StoreType
+	p.adjustReadReqType(ctx)
 	return &p
 }
 

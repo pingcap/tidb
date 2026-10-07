@@ -71,7 +71,7 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 	case kv.TiDB:
 		ret = scalarExprSupportedByTiDB(ctx, sf)
 	case kv.UnSpecified:
-		ret = scalarExprSupportedByTiDB(ctx, sf) || scalarExprSupportedByTiKV(ctx, sf) || scalarExprSupportedByFlash(ctx, sf)
+		ret = scalarExprSupportedByTiDB(ctx, sf) || scalarExprSupportedByTiKV(ctx, sf) || scalarExprSupportedByFlash(ctx, sf) || scalarExprSupportedByTiCI(ctx, sf)
 	}
 
 	if ret {
@@ -413,10 +413,24 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		return true
 	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
 		return true
+	case ast.FTSMatchWord:
+		return true
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}
 	return false
+}
+
+func scalarExprSupportedByTiCI(_ EvalContext, function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.FTSMysqlMatchAgainst:
+		_, local := FTSMysqlMatchAgainstLocalEvalInfo(function)
+		return !local
+	case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
+		return true
+	default:
+		return false
+	}
 }
 
 func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {

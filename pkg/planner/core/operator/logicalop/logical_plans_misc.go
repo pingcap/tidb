@@ -168,7 +168,11 @@ func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			// since CanPushToCopImpl is only used in physical enumeration of physical plan phase.
 			// we definitely here should use the specific PossibleAccessPaths for each DS alternative.
 			for _, path := range c.PossibleAccessPaths {
-				if path.StoreType == storeTp {
+				// TiCI FTS paths keep their index store type but can provide
+				// TiFlash MPP tasks. The physical conversion rejects non-covering
+				// paths, which still require a root-side table lookup.
+				if path.StoreType == storeTp || (storeTp == kv.TiFlash &&
+					path.Index != nil && path.Index.IsTiCIIndex() && path.FtsQueryInfo != nil) {
 					validDs = true
 				}
 				if len(path.PartialIndexPaths) > 0 && path.IndexMergeIsIntersection {

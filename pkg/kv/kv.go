@@ -403,6 +403,8 @@ const (
 	TiFlash
 	// TiDB means the type of a store is TiDB.
 	TiDB
+	// TiCI means the type of store engine is TiCI, the search engine.
+	TiCI
 	// UnSpecified means the store type is unknown
 	UnSpecified = 255
 )
@@ -415,6 +417,8 @@ func (t StoreType) Name() string {
 		return "tidb"
 	} else if t == TiKV {
 		return "tikv"
+	} else if t == TiCI {
+		return "tici"
 	}
 	return "unspecified"
 }
@@ -581,6 +585,10 @@ type Request struct {
 	// KeyRanges makes sure that the request is sent first by partition then by region.
 	// When the table is small, it's possible that multiple partitions are in the same region.
 	KeyRanges *KeyRanges
+	// HandleVersionMap stores per-range read_ts for TiCI versioned lookup.
+	// The map key is the range's StartKey (record key) converted to string.
+	// When non-nil, the request is sent using `CmdVersionedCop` with `versioned_ranges`.
+	HandleVersionMap map[string]uint64
 
 	// For PartitionTableScan used by tiflash.
 	PartitionIDAndRanges []PartitionIDAndRanges
@@ -658,6 +666,13 @@ type Request struct {
 	ConnID uint64
 	// ConnAlias stores the session connection alias.
 	ConnAlias string
+	// FullText
+	FullText     bool
+	FullTextInfo struct {
+		TableID    int64
+		IndexID    int64
+		ExecutorID string
+	}
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

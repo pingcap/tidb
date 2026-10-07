@@ -21,8 +21,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	ast "github.com/pingcap/tidb/pkg/parser/types"
+	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -67,13 +68,19 @@ func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client k
 
 // PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
-	client kv.Client
-	ctx    EvalContext
+	client     kv.Client
+	ctx        EvalContext
+	isTiCIExpr bool
 }
 
 // NewPBConverter creates a PbConverter.
 func NewPBConverter(client kv.Client, ctx EvalContext) PbConverter {
 	return PbConverter{client: client, ctx: ctx}
+}
+
+// NewPBConverterForTiCI creates a PbConverter for TiCI usage.
+func NewPBConverterForTiCI(client kv.Client, ctx EvalContext) PbConverter {
+	return PbConverter{client: client, ctx: ctx, isTiCIExpr: true}
 }
 
 // ExprToPB converts Expression to TiPB.
@@ -219,7 +226,7 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 	if checkType {
 		switch column.GetType(pc.ctx).GetType() {
 		case mysql.TypeBit:
-			if !IsPushDownEnabled(ast.TypeStr(mysql.TypeBit), kv.TiKV) {
+			if !IsPushDownEnabled(parsertypes.TypeStr(mysql.TypeBit), kv.TiKV) {
 				return nil
 			}
 		case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
@@ -231,7 +238,7 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 		}
 	}
 
-	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
+	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) && !pc.isTiCIExpr {
 		return &tipb.Expr{
 			Tp:        tipb.ExprType_ColumnRef,
 			Val:       codec.EncodeInt(nil, int64(column.Index)),
@@ -245,8 +252,10 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 	}
 
 	return &tipb.Expr{
-		Tp:  tipb.ExprType_ColumnRef,
-		Val: codec.EncodeInt(nil, id)}
+		Tp:        tipb.ExprType_ColumnRef,
+		Val:       codec.EncodeInt(nil, id),
+		FieldType: ToPBFieldType(column.RetType),
+	}
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
@@ -262,6 +271,12 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	// Check whether this function can be pushed.
 	if !canFuncBePushed(pc.ctx, expr, kv.UnSpecified) {
 		return nil
+	}
+
+	// TiDB's FTS functions return float value for potential BM25 score cases.
+	// So there'll be a IS TRUE wrapped to convert the float to boolean.
+	if pc.isTiCIExpr && expr.FuncName.L == ast.IsTruthWithNull {
+		return pc.ExprToPB(expr.GetArgs()[0])
 	}
 
 	// Check whether all of its parameters can be pushed.

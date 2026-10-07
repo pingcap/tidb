@@ -172,6 +172,8 @@ func (r *RangeSplitter) Close() error {
 // and region split keys. `endKeyOfGroup` represents the end key of the group,
 // but it will be nil when the group is the last one. `dataFiles` and `statFiles`
 // are all the files that have overlapping key ranges in this group.
+// `groupSize` and `groupKeyCnt` are the exact size and key count tracked by the
+// splitter for the returned group.
 // `interiorRangeJobKeys` are the interior boundary keys of the range jobs, the
 // range can be constructed with start/end key at caller.
 // `interiorRegionSplitKeys` are the split keys that will be used later to split
@@ -180,6 +182,8 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 	endKeyOfGroup []byte,
 	dataFiles []string,
 	statFiles []string,
+	groupSize uint64,
+	groupKeyCnt uint64,
 	interiorRangeJobKeys [][]byte,
 	interiorRegionSplitKeys [][]byte,
 	err error,
@@ -187,12 +191,13 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 	var (
 		exhaustedDataFiles, exhaustedStatFiles []string
 		retDataFiles, retStatFiles             []string
+		retGroupSize, retGroupKeyCnt           int64
 		returnAfterNextProp                    = false
 	)
 
 	for r.propIter.Next() {
 		if err = r.propIter.Error(); err != nil {
-			return nil, nil, nil, nil, nil, err
+			return nil, nil, nil, 0, 0, nil, nil, err
 		}
 		prop := r.propIter.prop()
 		r.curGroupSize += int64(prop.size)
@@ -237,7 +242,14 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 				delete(r.activeStatFiles, p)
 			}
 			exhaustedStatFiles = exhaustedStatFiles[:0]
-			return prop.firstKey, retDataFiles, retStatFiles, r.takeRangeJobKeys(), r.takeRegionSplitKeys(), nil
+			return prop.firstKey,
+				retDataFiles,
+				retStatFiles,
+				uint64(retGroupSize),
+				uint64(retGroupKeyCnt),
+				r.takeRangeJobKeys(),
+				r.takeRegionSplitKeys(),
+				nil
 		}
 		if r.recordRangeJobAfterNextProp {
 			r.rangeJobKeys = append(r.rangeJobKeys, slices.Clone(prop.firstKey))
@@ -265,6 +277,8 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 
 		if r.curGroupSize >= r.rangesGroupSize || r.curGroupKeyCnt >= r.rangesGroupKeys {
 			retDataFiles, retStatFiles = r.cloneActiveFiles()
+			retGroupSize = r.curGroupSize
+			retGroupKeyCnt = r.curGroupKeyCnt
 
 			r.curGroupSize = 0
 			r.curGroupKeyCnt = 0
@@ -272,10 +286,34 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		}
 	}
 
+	if returnAfterNextProp {
+		r.activeDataFiles = make(map[string][2]int)
+		r.activeStatFiles = make(map[string][2]int)
+		return nil,
+			retDataFiles,
+			retStatFiles,
+			uint64(retGroupSize),
+			uint64(retGroupKeyCnt),
+			r.takeRangeJobKeys(),
+			r.takeRegionSplitKeys(),
+			r.propIter.Error()
+	}
+
 	retDataFiles, retStatFiles = r.cloneActiveFiles()
+	retGroupSize = r.curGroupSize
+	retGroupKeyCnt = r.curGroupKeyCnt
 	r.activeDataFiles = make(map[string][2]int)
 	r.activeStatFiles = make(map[string][2]int)
-	return nil, retDataFiles, retStatFiles, r.takeRangeJobKeys(), r.takeRegionSplitKeys(), r.propIter.Error()
+	r.curGroupSize = 0
+	r.curGroupKeyCnt = 0
+	return nil,
+		retDataFiles,
+		retStatFiles,
+		uint64(retGroupSize),
+		uint64(retGroupKeyCnt),
+		r.takeRangeJobKeys(),
+		r.takeRegionSplitKeys(),
+		r.propIter.Error()
 }
 
 func (r *RangeSplitter) cloneActiveFiles() (data []string, stat []string) {

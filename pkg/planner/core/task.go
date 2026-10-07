@@ -83,18 +83,24 @@ func (t *CopTask) finishIndexPlan() {
 }
 
 func (t *CopTask) getStoreType() kv.StoreType {
-	if t.tablePlan == nil {
+	p := t.indexPlan
+	if t.tablePlan != nil && (t.indexPlanFinished || p == nil) {
+		p = t.tablePlan
+	}
+	if p == nil {
 		return kv.TiKV
 	}
-	tp := t.tablePlan
-	for len(tp.Children()) > 0 {
-		if len(tp.Children()) > 1 {
+	for len(p.Children()) > 0 {
+		if len(p.Children()) > 1 {
 			return kv.TiFlash
 		}
-		tp = tp.Children()[0]
+		p = p.Children()[0]
 	}
-	if ts, ok := tp.(*PhysicalTableScan); ok {
-		return ts.StoreType
+	switch x := p.(type) {
+	case *PhysicalTableScan:
+		return x.StoreType
+	case *PhysicalIndexScan:
+		return x.StoreType
 	}
 	return kv.TiKV
 }
@@ -730,6 +736,8 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*MppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 		t = mpp.ConvertToRootTask(p.SCtx())
+	} else if _, ok := t.(*RootTask); ok {
+		sunk = p.sinkIntoIndexLookUp(t)
 	}
 	if sunk {
 		return t
@@ -942,9 +950,9 @@ func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
 	return false
 }
 
-// canPushDownToTiKV checks whether this topN can be pushed down to TiKV.
-func (p *PhysicalTopN) canPushDownToTiKV(copTask *CopTask) bool {
-	if !p.canExpressionConvertedToPB(kv.TiKV) {
+// canPushDownByCopType checks whether this TopN can be pushed down to the coprocessor store.
+func (p *PhysicalTopN) canPushDownByCopType(copTask *CopTask, storeType kv.StoreType) bool {
+	if !p.canExpressionConvertedToPB(storeType) {
 		return false
 	}
 	if len(copTask.rootTaskConds) != 0 {
@@ -1060,7 +1068,7 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 			return newTask
 		}
 	}
-	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
+	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownByCopType(copTask, copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
 		// Handle IndexMerge with advisory sort items when some (but not all)
 		// partial paths satisfy the sort order. When all paths satisfy, the
 		// existing Limit pushdown via attach2Task4PhysicalLimit gives a better plan.
@@ -1082,7 +1090,16 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
 		if !copTask.indexPlanFinished && p.canPushToIndexPlan(copTask.indexPlan, cols) {
+			// The pushed down TopN is calculated on TiFlash, the embedded TopN info in TiCI is built in TryToPassTiCITopN.
 			pushedDownTopN = p.getPushedDownTopN(copTask.indexPlan)
+			indexScanPlan := copTask.indexPlan
+			for len(indexScanPlan.Children()) > 0 {
+				indexScanPlan = indexScanPlan.Children()[0]
+			}
+			indexScan := indexScanPlan.(*PhysicalIndexScan)
+			if indexScan.StoreType == kv.TiCI {
+				indexScan.TryToPassTiCITopN(pushedDownTopN)
+			}
 			copTask.indexPlan = pushedDownTopN
 		} else {
 			// It works for both normal index scan and index merge scan.
@@ -2570,13 +2587,17 @@ func (p *PhysicalSequence) Attach2Task(tasks ...base.Task) base.Task {
 	return mppTask
 }
 
-func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.PhysicalPlan) {
+func collectScanPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.PhysicalPlan) {
 	switch x := mppPlan.(type) {
 	case *PhysicalTableScan:
-		p.TableScanAndPartitionInfos = append(p.TableScanAndPartitionInfos, tableScanAndPartitionInfo{x, x.PlanPartInfo})
+		p.ScanAndPartitionInfos = append(p.ScanAndPartitionInfos, scanAndPartitionInfo{tableScan: x, physPlanPartInfo: x.PlanPartInfo})
+	case *PhysicalIndexScan:
+		if x.PlanPartInfo != nil {
+			p.ScanAndPartitionInfos = append(p.ScanAndPartitionInfos, scanAndPartitionInfo{indexScan: x, physPlanPartInfo: x.PlanPartInfo})
+		}
 	default:
 		for _, ch := range mppPlan.Children() {
-			collectPartitionInfosFromMPPPlan(p, ch)
+			collectScanPartitionInfosFromMPPPlan(p, ch)
 		}
 	}
 }

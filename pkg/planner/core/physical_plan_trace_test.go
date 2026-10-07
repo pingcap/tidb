@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -138,9 +139,9 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	plan, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
-	flag := uint64(0)
-	// flagGcSubstitute | flagStabilizeResults | flagSkewDistinctAgg | flagEliminateOuterJoin | flagPushDownAgg
-	flag |= flag | 1<<1 | 1<<3 | 1<<8 | 1<<14 | 1<<17
+	// Keep this rule set stable when new optimizer flags are inserted.
+	flag := rule.FlagPruneColumns | rule.FlagBuildKeyInfo | rule.FlagEliminateProjection |
+		rule.FlagPartitionProcessor | rule.FlagDeriveTopNFromWindow
 	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(base.LogicalPlan))
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical

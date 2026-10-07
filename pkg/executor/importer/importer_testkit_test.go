@@ -159,6 +159,35 @@ func TestVerifyChecksum(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestMainChecksumForValidation(t *testing.T) {
+	checksum := verify.NewKVGroupChecksumForAdd()
+	checksum.AddRawGroup(verify.DataKVGroupID, 11, 1, 101)
+	checksum.AddRawGroup(1001, 13, 2, 103)
+	checksum.AddRawGroup(1002, 17, 3, 107)
+
+	ticiTableInfo := &model.TableInfo{
+		Indices: []*model.IndexInfo{
+			{ID: 1001, Name: pmodel.NewCIStr("idx_tici"), FullTextInfo: &model.FullTextIndexInfo{}, State: model.StatePublic},
+			{ID: 1002, Name: pmodel.NewCIStr("idx_normal"), State: model.StatePublic},
+		},
+	}
+
+	merged := importer.MainChecksumForValidation(&importer.Plan{TableInfo: ticiTableInfo}, checksum)
+	require.Equal(t, uint64(28), merged.SumSize())
+	require.Equal(t, uint64(4), merged.SumKVS())
+	require.Equal(t, uint64(14), merged.Sum())
+
+	merged = importer.MainChecksumForValidation(&importer.Plan{DesiredTableInfo: ticiTableInfo}, checksum)
+	require.Equal(t, uint64(28), merged.SumSize())
+	require.Equal(t, uint64(4), merged.SumKVS())
+	require.Equal(t, uint64(14), merged.Sum())
+
+	merged = importer.MainChecksumForValidation(nil, checksum)
+	require.Equal(t, uint64(41), merged.SumSize())
+	require.Equal(t, uint64(6), merged.SumKVS())
+	require.Equal(t, uint64(105), merged.Sum())
+}
+
 func TestGetTargetNodeCpuCnt(t *testing.T) {
 	store, tm, ctx := testutil.InitTableTest(t)
 	tk := testkit.NewTestKit(t, store)
@@ -226,11 +255,39 @@ func TestPostProcess(t *testing.T) {
 	localChecksum = verify.NewKVGroupChecksumForAdd()
 	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 1, 1)
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
+
+	ticiTableInfo := table.Meta().Clone()
+	ticiTableInfo.Indices = append(ticiTableInfo.Indices, &model.IndexInfo{
+		ID:           101,
+		Name:         pmodel.NewCIStr("idx_tici"),
+		FullTextInfo: &model.FullTextIndexInfo{},
+		State:        model.StatePublic,
+	})
+	plan.TableInfo, plan.DesiredTableInfo = ticiTableInfo, ticiTableInfo
+	localChecksum = verify.NewKVGroupChecksumForAdd()
+	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 1, 1)
+	localChecksum.AddRawGroup(101, 7, 8, 9)
+	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
+
+	nonTiCITableInfo := table.Meta().Clone()
+	nonTiCITableInfo.Indices = append(nonTiCITableInfo.Indices, &model.IndexInfo{
+		ID:    102,
+		Name:  pmodel.NewCIStr("idx_normal"),
+		State: model.StatePublic,
+	})
+	plan.TableInfo, plan.DesiredTableInfo = nonTiCITableInfo, nonTiCITableInfo
+	localChecksum = verify.NewKVGroupChecksumForAdd()
+	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 1, 1)
+	localChecksum.AddRawGroup(102, 7, 8, 9)
+	require.ErrorIs(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger), common.ErrChecksumMismatch)
+
 	// rebase success
 	tk.MustExec("create table db.tb2(id int auto_increment primary key)")
 	table, err = do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("db"), pmodel.NewCIStr("tb2"))
 	require.NoError(t, err)
 	plan.TableInfo, plan.DesiredTableInfo = table.Meta(), table.Meta()
+	localChecksum = verify.NewKVGroupChecksumForAdd()
+	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 1, 1)
 	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	t.Cleanup(func() {

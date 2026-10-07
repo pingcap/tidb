@@ -71,6 +71,10 @@ type importStepExecutor struct {
 	indicesGenKV map[int64]genKVIndex
 }
 
+func ticiTaskIDForImportInto(jobID int64) string {
+	return TaskKey(jobID)
+}
+
 func getTableImporter(
 	ctx context.Context,
 	taskID int64,
@@ -93,6 +97,7 @@ func getTableImporter(
 	if err = controller.InitDataStore(ctx); err != nil {
 		return nil, err
 	}
+	controller.TiDBTaskIDForTiCI = ticiTaskIDForImportInto(taskMeta.JobID)
 
 	failpoint.Inject("createTableImporterForTest", func() {
 		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), store))
@@ -496,6 +501,15 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
+	var plan *importer.Plan
+	if e.tableImporter != nil {
+		plan = e.tableImporter.Plan
+	}
+	ticiWriteEnabled, ticiIndexID, err := decideTiCIWriteConfig(e.logger, e.taskID, subtask.ID, sm.KVGroup, plan)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	localBackend := e.tableImporter.Backend()
 	localBackend.WorkerConcurrency.Store(int32(e.GetResource().CPU.Capacity()) * 2)
 	// compatible with old version task meta
@@ -505,6 +519,8 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	}
 
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
+		TiCIWriteEnabled: ticiWriteEnabled,
+		TiCIIndexID:      ticiIndexID,
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
 			DataFiles:     sm.DataFiles,
@@ -534,6 +550,57 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 func (*writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
+}
+
+func decideTiCIWriteEnabled(logger *zap.Logger, taskID int64, subtaskID int64, kvGroup string, plan *importer.Plan) bool {
+	baseLogger := logger.With(
+		zap.Int64("task-id", taskID),
+		zap.Int64("subtask-id", subtaskID),
+		zap.String("kv-group", kvGroup),
+	)
+	if kvGroup == dataKVGroup {
+		baseLogger.Info("TiCI write disabled for data kv group")
+		return false
+	}
+	if plan == nil || plan.TableInfo == nil {
+		baseLogger.Info("TiCI write disabled due to missing plan or table info")
+		return false
+	}
+	indexID, err := strconv.ParseInt(kvGroup, 10, 64)
+	if err != nil {
+		baseLogger.With(zap.Error(err)).Info("TiCI write disabled due to invalid kv group index id")
+		return false
+	}
+	indexInfo := plan.TableInfo.FindIndexByID(indexID)
+	if indexInfo == nil {
+		baseLogger.With(
+			zap.Int64("index-id", indexID),
+			zap.String("schema-name", plan.DBName),
+			zap.String("table-name", plan.TableInfo.Name.O),
+		).Info("TiCI write disabled because index is not found")
+		return false
+	}
+	enabled := indexInfo.IsTiCIIndex()
+	baseLogger.With(
+		zap.Int64("index-id", indexID),
+		zap.String("schema-name", plan.DBName),
+		zap.String("table-name", plan.TableInfo.Name.O),
+		zap.String("index-name", indexInfo.Name.O),
+		zap.Bool("tici-write-enabled", enabled),
+	).Info("TiCI write decision for index engine")
+	return enabled
+}
+
+func decideTiCIWriteConfig(logger *zap.Logger, taskID int64, subtaskID int64, kvGroup string, plan *importer.Plan) (bool, int64, error) {
+	enabled := decideTiCIWriteEnabled(logger, taskID, subtaskID, kvGroup, plan)
+	if !enabled {
+		return false, 0, nil
+	}
+	indexID, err := strconv.ParseInt(kvGroup, 10, 64)
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
+	return true, indexID, nil
 }
 
 func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
@@ -607,7 +674,11 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 	failpoint.Inject("waitBeforePostProcess", func() {
 		time.Sleep(5 * time.Second)
 	})
-	return postProcess(ctx, p.store, p.taskMeta, &stepMeta, logger)
+	if err = postProcess(ctx, p.taskID, p.store, p.taskMeta, &stepMeta, logger); err != nil {
+		return err
+	}
+	subtask.Meta, err = json.Marshal(&stepMeta)
+	return errors.Trace(err)
 }
 
 type importExecutor struct {
