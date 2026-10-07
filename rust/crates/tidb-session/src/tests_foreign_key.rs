@@ -20,8 +20,8 @@
 //! regression names itself instead of showing up as a line number in a
 //! golden file.
 //!
-//! Every expectation here was captured from real TiDB through
-//! `rust/difftests/gorun` before it was written down.
+//! The original cases were captured from real TiDB through
+//! `rust/difftests/gorun`. Later source-linked regressions identify their Go owner.
 
 #![cfg(test)]
 
@@ -2399,4 +2399,65 @@ fn fk_source_foreign_key_on_update_cascade2() {
             vec!["10".to_owned(), "NULL".to_owned()],
         ],
     );
+}
+
+// Go updateRecord checks IGNORE FK candidates before HandleBadNull substitutes
+// the zero value; all UPDATE entrypoints must share this ordering.
+fn shared_write_ignore_null_before_fk(sql: &str) {
+    let mut session = Session::new();
+    session.run("CREATE TABLE p (id INT PRIMARY KEY)").unwrap();
+    session.run("CREATE TABLE c (id INT PRIMARY KEY, pid INT NOT NULL, FOREIGN KEY(pid) REFERENCES p(id))").unwrap();
+    session.run("INSERT INTO p VALUES(1)").unwrap();
+    session.run("INSERT INTO c VALUES(10,1)").unwrap();
+    session.run(sql).unwrap();
+    let warnings = rows(&mut session, "SHOW WARNINGS");
+    assert_eq!(
+        warnings.iter().map(|w| w[1].as_str()).collect::<Vec<_>>(),
+        ["1048"],
+        "{sql}: {warnings:?}"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT id,pid FROM c"),
+        vec![vec!["10", "0"]]
+    );
+}
+#[test]
+fn shared_write_update_ignore_fk_precedes_null_substitution() {
+    shared_write_ignore_null_before_fk("UPDATE IGNORE c SET pid=NULL");
+}
+#[test]
+fn shared_write_joined_ignore_fk_precedes_null_substitution() {
+    shared_write_ignore_null_before_fk("UPDATE IGNORE c JOIN p ON c.pid=p.id SET c.pid=NULL");
+}
+#[test]
+fn shared_write_duplicate_ignore_fk_precedes_null_substitution() {
+    shared_write_ignore_null_before_fk(
+        "INSERT IGNORE INTO c VALUES(10,1) ON DUPLICATE KEY UPDATE pid=NULL",
+    );
+}
+
+#[test]
+fn shared_write_fk_rejection_skips_unrelated_null_warning() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE p(id INT PRIMARY KEY)").unwrap();
+    session.run("CREATE TABLE c(id INT PRIMARY KEY,pid INT,v INT NOT NULL, FOREIGN KEY(pid) REFERENCES p(id))").unwrap();
+    session.run("INSERT INTO p VALUES(1)").unwrap();
+    session.run("INSERT INTO c VALUES(10,1,5)").unwrap();
+    for sql in [
+        "UPDATE IGNORE c SET pid=9,v=NULL",
+        "UPDATE IGNORE c JOIN p ON c.pid=p.id SET c.pid=9,c.v=NULL",
+        "INSERT IGNORE INTO c VALUES(10,1,5) ON DUPLICATE KEY UPDATE pid=9,v=NULL",
+    ] {
+        session.run(sql).unwrap();
+        let warnings = rows(&mut session, "SHOW WARNINGS");
+        assert_eq!(
+            warnings.iter().map(|w| w[1].as_str()).collect::<Vec<_>>(),
+            ["1452"],
+            "{sql}: {warnings:?}"
+        );
+        assert_eq!(
+            rows(&mut session, "SELECT * FROM c"),
+            vec![vec!["10", "1", "5"]]
+        );
+    }
 }

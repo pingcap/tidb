@@ -1,11 +1,11 @@
 //! Multi-table `UPDATE`/`DELETE` and `DELETE IGNORE`, checked against a real
 //! TiDB session.
 //!
-//! Every expectation below was captured from `mockstore`-backed
+//! The original cases were captured from `mockstore`-backed
 //! `session.Execute`, reading the affected-row count off
 //! `StmtCtx.AffectedRows()` and the error code off the returned
 //! `*errors.Error`. `tidb_executor::driver::multi_dml`'s module doc states
-//! the rules; this file is the evidence that they hold.
+//! the rules. Source-linked regressions below also cover current Go branches.
 
 use crate::tests_support::{row_text, warnings_of};
 use crate::{Session, StmtResult};
@@ -1734,4 +1734,165 @@ fn dml_identity_batch_index_join_retains_hidden_columns() {
     assert_eq!(column(&mut s, "SELECT id,pid FROM child"), ["2|2"]);
     s.run("ADMIN CHECK TABLE parent").unwrap();
     s.run("ADMIN CHECK TABLE child").unwrap();
+}
+
+#[test]
+fn shared_write_constant_rowid_assignment_has_go_admission_error() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(a INT)").unwrap();
+    let error = session
+        .run("UPDATE t SET _tidb_rowid=7")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "insert, update and replace statements for _tidb_rowid are not supported"
+    );
+}
+#[test]
+fn shared_write_allowed_rowid_assignment_does_not_move_heap_record() {
+    // Go TblColPosInfo.End excludes ExtraHandleID. Its assignment is evaluated
+    // without a column cast but is not part of updateRecord's writable slice.
+    let mut session = Session::new();
+    session.run("SET tidb_opt_write_row_id=ON").unwrap();
+    session.run("CREATE TABLE t(a INT)").unwrap();
+    session
+        .run("INSERT INTO t(_tidb_rowid,a) VALUES(7,1)")
+        .unwrap();
+    assert_eq!(
+        affected(&mut session, "UPDATE t SET _tidb_rowid='not a number',a=2"),
+        1
+    );
+    assert_eq!(column(&mut session, "SELECT _tidb_rowid,a FROM t"), ["7|2"]);
+}
+#[test]
+fn shared_write_joined_rowid_scope_excludes_hidden_generated_values() {
+    let mut session = Session::new();
+    session.run("SET tidb_opt_write_row_id=ON").unwrap();
+    session
+        .run("CREATE TABLE t(a INT, v INT, KEY ev((v+1)))")
+        .unwrap();
+    session.run("CREATE TABLE b(k INT PRIMARY KEY)").unwrap();
+    session
+        .run("INSERT INTO t(_tidb_rowid,a,v) VALUES(7,1,10)")
+        .unwrap();
+    session.run("INSERT INTO b VALUES(1)").unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE t JOIN b ON t.a=b.k SET t.v=t._tidb_rowid+b.k"
+        ),
+        1
+    );
+    assert_eq!(
+        column(&mut session, "SELECT _tidb_rowid,a,v FROM t"),
+        ["7|1|8"]
+    );
+    session.run("ADMIN CHECK TABLE t").unwrap();
+}
+#[test]
+fn shared_write_joined_rowid_target_uses_write_policy() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(a INT)").unwrap();
+    session.run("CREATE TABLE b(k INT PRIMARY KEY)").unwrap();
+    let error = session
+        .run("UPDATE t JOIN b ON t.a=b.k SET t._tidb_rowid=9")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "insert, update and replace statements for _tidb_rowid are not supported"
+    );
+}
+
+#[test]
+fn shared_write_partitioned_heap_updates_repeated_handles() {
+    // Go UpdateExec.prepare deliberately disables changed-handle skipping for
+    // nonclustered partitioned tables, whose physical rows may share a handle.
+    let mut session = Session::new();
+    session.run("SET tidb_opt_write_row_id=ON").unwrap();
+    session.run("CREATE TABLE t(a INT,v INT) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN(10), PARTITION p1 VALUES LESS THAN(20))").unwrap();
+    session.run("CREATE TABLE b(a INT PRIMARY KEY)").unwrap();
+    session
+        .run("INSERT INTO t(_tidb_rowid,a,v) VALUES(7,1,10),(7,11,20)")
+        .unwrap();
+    session.run("INSERT INTO b VALUES(1),(11)").unwrap();
+    assert_eq!(
+        affected(&mut session, "UPDATE t JOIN b ON t.a=b.a SET t.v=t.v+1"),
+        2
+    );
+    assert_eq!(
+        column(&mut session, "SELECT _tidb_rowid,a,v FROM t ORDER BY a"),
+        ["7|1|11", "7|11|21"]
+    );
+}
+
+#[test]
+fn shared_write_single_rowid_scope_retains_hidden_generated_tail() {
+    let mut session = Session::new();
+    session.run("SET tidb_opt_write_row_id=ON").unwrap();
+    session
+        .run("CREATE TABLE t(a INT,v INT,KEY ev((v+1)))")
+        .unwrap();
+    session
+        .run("INSERT INTO t(_tidb_rowid,a,v) VALUES(7,1,10)")
+        .unwrap();
+    assert_eq!(affected(&mut session, "UPDATE t SET v=_tidb_rowid+a"), 1);
+    assert_eq!(
+        column(&mut session, "SELECT _tidb_rowid,a,v FROM t"),
+        ["7|1|8"]
+    );
+    session.run("ADMIN CHECK TABLE t").unwrap();
+}
+
+#[test]
+fn shared_write_rowid_assignment_stays_outside_writable_rows() {
+    let mut session = Session::new();
+    session.run("SET tidb_opt_write_row_id=ON").unwrap();
+    session
+        .run("CREATE TABLE t(a INT,v INT,KEY ev((v+1)))")
+        .unwrap();
+    session.run("CREATE TABLE b(a INT PRIMARY KEY)").unwrap();
+    session
+        .run("INSERT INTO t(_tidb_rowid,a,v) VALUES(7,1,10)")
+        .unwrap();
+    session.run("INSERT INTO b VALUES(1)").unwrap();
+    assert_eq!(affected(&mut session, "UPDATE t SET _tidb_rowid=99"), 0);
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE t JOIN b ON t.a=b.a SET t._tidb_rowid='not a number'"
+        ),
+        0
+    );
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE t NATURAL JOIN b SET t._tidb_rowid=99,t.v=t._tidb_rowid+b.a"
+        ),
+        1
+    );
+    assert_eq!(
+        column(&mut session, "SELECT _tidb_rowid,a,v FROM t"),
+        ["7|1|8"]
+    );
+    assert_eq!(
+        session
+            .run("UPDATE t SET _tidb_rowid=DEFAULT")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1054
+    );
+    assert_eq!(
+        session
+            .run("UPDATE t JOIN b ON t.a=b.a SET t._tidb_rowid=DEFAULT")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1054
+    );
+    session.run("ADMIN CHECK TABLE t").unwrap();
 }

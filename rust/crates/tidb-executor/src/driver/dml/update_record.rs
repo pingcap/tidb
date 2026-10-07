@@ -97,15 +97,6 @@ impl<'a> UpdateRecords<'a> {
         if let TableEntry::Kv(kv) = entry {
             materialize_generated_for_write(&kv.columns, new, ctx, generation)?;
         }
-        let level = generation.null_level(ctx);
-        for (value, (column, field_type)) in new.iter_mut().zip(entry.columns()) {
-            crate::bad_null::handle_bad_null(value, field_type, column, level, ctx)?;
-        }
-        if let (TableEntry::Kv(kv), Some(partitions)) = (entry, partitions) {
-            if let Err(error) = kv.validate_update_partitions(old, new, partitions, ctx) {
-                return ignored_write_error(kv_write_error(error), ignore, ctx);
-            }
-        }
         let fk_target = if crate::foreign_key::has_triggers(self.triggers, database, name) {
             let index = self
                 .tables
@@ -153,6 +144,21 @@ impl<'a> UpdateRecords<'a> {
                     return Ok(UpdateOutcome::ForeignKeySkipped);
                 }
                 return Err(error);
+            }
+        }
+        // Go updateRecord gives IGNORE's FK checks the evaluated candidate
+        // before bad-NULL substitution and partition validation. Rejected FK
+        // rows must not produce warnings from these later stages.
+        let entry = catalog
+            .get_in(database, name)
+            .expect("the update target still exists");
+        let level = generation.null_level(ctx);
+        for (value, (column, field_type)) in new.iter_mut().zip(entry.columns()) {
+            crate::bad_null::handle_bad_null(value, field_type, column, level, ctx)?;
+        }
+        if let (TableEntry::Kv(kv), Some(partitions)) = (entry, partitions) {
+            if let Err(error) = kv.validate_update_partitions(old, new, partitions, ctx) {
+                return ignored_write_error(kv_write_error(error), ignore, ctx);
             }
         }
         let entry = catalog

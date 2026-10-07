@@ -31,7 +31,9 @@
 //!   two `b` rows per `a` row leaves `a.x` at `x+1`, not `x+2`. Go keys
 //!   `updatedRowKeys` by (target position, handle) and skips a repeat --
 //!   but only when the FIRST visit actually CHANGED the row, which is why
-//!   [`UpdateOnce`] remembers a bool rather than mere presence.
+//!   [`UpdateOnce`] remembers a bool rather than mere presence. Current Go
+//!   disables this skip for partitioned heaps, where physical rows can share
+//!   the same bare handle; `UpdateExec.prepare` owns that exception.
 //! * **Assignments read the ORIGINAL row, across tables.**
 //!   `UPDATE s1, s2 SET s1.x = s2.y, s2.y = s1.x` swaps the two values: both
 //!   right-hand sides see the joined row as the statement found it. This is
@@ -124,7 +126,12 @@ struct SourceTable {
     /// Whether a write may name this source, and where it writes if so.
     origin: SourceOrigin,
     columns: Vec<(String, FieldType)>,
-    /// Default/generation metadata aligned with `columns`.
+    /// The SQL scope ends in a heap handle, outside visible/writable metadata.
+    extra_handle: bool,
+    /// Go UpdateExec.prepare keeps partitioned heap rows eligible even when
+    /// another physical row has the same bare handle.
+    skip_repeated_updates: bool,
+    /// Default/generation metadata for visible stored columns.
     default_meta: Vec<super::dml::ColumnDefaultMeta>,
     /// Generated offsets in the complete writable row, including hidden columns.
     generated_columns: Vec<usize>,
@@ -236,7 +243,7 @@ fn build_multi_layout(
         ctx: &crate::StmtContext,
         columns_for_alias: &impl Fn(&str) -> Result<Vec<(String, FieldType)>, DriverError>,
     ) -> Result<MultiLayout, DriverError> {
-        let (visible, qualifiable_db, origin, columns, default_meta) = match node {
+        let (visible, qualifiable_db, origin, mut columns, default_meta) = match node {
             tidb_ast::JoinNode::Join(join) => {
                 return join_layout(join, catalog, current_db, ctx, columns_for_alias)
             }
@@ -281,6 +288,24 @@ fn build_multi_layout(
                 )
             }
         };
+        let extra = match &origin {
+            SourceOrigin::Base { database, name } => catalog
+                .get_in(database, name)
+                .and_then(super::from::extra_handle_column),
+            SourceOrigin::Derived => None,
+        };
+        let extra_handle = extra.is_some();
+        let skip_repeated_updates = match &origin {
+            SourceOrigin::Base { database, name } => match catalog.get_in(database, name) {
+                Some(TableEntry::Kv(kv)) => !extra_handle || kv.partition().is_none(),
+                _ => true,
+            },
+            SourceOrigin::Derived => true,
+        };
+        let star = (0..columns.len()).collect();
+        if let Some(column) = extra {
+            columns.push(column);
+        }
         let generated_columns = match &origin {
             SourceOrigin::Base { database, name } => match catalog.get_in(database, name) {
                 Some(TableEntry::Kv(kv)) => kv
@@ -299,13 +324,15 @@ fn build_multi_layout(
                 qualifiable_db,
                 origin,
                 columns,
+                extra_handle,
+                skip_repeated_updates,
                 default_meta,
                 generated_columns,
                 offset: 0,
             }],
             constant_context: ctx.clone(),
             coalesced: Vec::new(),
-            star: Vec::new(),
+            star,
         })
     }
 
@@ -461,7 +488,7 @@ fn merge_source_layout(
 /// Go's `updatedRowKeys`: per (target position, row identity), whether the
 /// write that reached it CHANGED the row. A repeat visit is skipped only
 /// when the first one changed something -- a no-op first visit leaves the
-/// row eligible, which is Go's `changed && skipMultipleChangesOnSameRow`.
+/// row eligible. Go also disables skipping for partitioned heap tables.
 type UpdateOnce = BTreeMap<(usize, TableHandle), bool>;
 
 /// Runs a multi-table `UPDATE`, returning MySQL's affected-row count.
@@ -513,7 +540,9 @@ pub(crate) fn run_multi_update(
         .iter()
         .enumerate()
         .map(|(slot, table)| {
-            if !assignments.iter().any(|assignment| assignment.slot == slot) {
+            if !assignments.iter().any(|assignment| {
+                assignment.slot == slot && assignment.column < table.default_meta.len()
+            }) {
                 return None;
             }
             match &table.origin {
@@ -549,6 +578,31 @@ pub(crate) fn run_multi_update(
     for (row_index, row) in rows.iter().enumerate() {
         let (ids, values) = (&row.ids, &row.values);
         let chunk = row_chunk(values, &field_types)?;
+        let evaluated = assignments
+            .iter()
+            .map(|assignment| {
+                let table = &source.tables[assignment.slot];
+                let extra = table.extra_handle && assignment.column == table.default_meta.len();
+                if !extra && ids[assignment.slot].is_none() {
+                    return Ok(None);
+                }
+                let value = assignment
+                    .value
+                    .eval(ctx, chunk.get_row(0))
+                    .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+                if extra {
+                    return Ok(None);
+                }
+                cast_value_for_update_assignment(
+                    value,
+                    &table.columns[assignment.column].1,
+                    &table.columns[assignment.column].0,
+                    row_index,
+                    ctx,
+                )
+                .map(Some)
+            })
+            .collect::<Result<Vec<_>, DriverError>>()?;
         let mut prepared = Vec::with_capacity(source.tables.len());
         // Compose every target from the same input row before merging aliases.
         for (slot, table) in source.tables.iter().enumerate() {
@@ -556,24 +610,18 @@ pub(crate) fn run_multi_update(
                 prepared.push(None);
                 continue;
             };
-            if once.get(&(slot, id.clone())) == Some(&true) {
+            if table.skip_repeated_updates && once.get(&(slot, id.clone())) == Some(&true) {
                 prepared.push(None);
                 continue;
             }
             let mut old = row.stored[slot].clone();
             let mut new = old.clone();
-            for assignment in assignments.iter().filter(|a| a.slot == slot) {
-                let value = assignment
-                    .value
-                    .eval(ctx, chunk.get_row(0))
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                new[assignment.column] = cast_value_for_update_assignment(
-                    value,
-                    &table.columns[assignment.column].1,
-                    &table.columns[assignment.column].0,
-                    row_index,
-                    ctx,
-                )?;
+            for (assignment, value) in assignments.iter().zip(&evaluated) {
+                if assignment.slot == slot {
+                    if let Some(value) = value {
+                        new[assignment.column] = value.clone();
+                    }
+                }
             }
             if multiple[slot] {
                 let key = (
@@ -701,8 +749,11 @@ fn resolve_assignments(
             return Err(source.tables[slot].not_updatable("UPDATE"));
         }
         let column = offset - source.tables[slot].offset;
-        let target_meta = &source.tables[slot].default_meta[column];
-        if target_meta.generated {
+        let target_meta = source.tables[slot].default_meta.get(column);
+        if target_meta.is_none() && !ctx.allow_write_row_id() {
+            return Err(DriverError::unsupported(super::dml::WRITE_ROW_ID_REFUSED));
+        }
+        if let Some(target_meta) = target_meta.filter(|meta| meta.generated) {
             let own_default = match &assignment.value {
                 tidb_ast::Expr::Default(None) => true,
                 tidb_ast::Expr::Default(Some(path)) => resolver
@@ -726,14 +777,17 @@ fn resolve_assignments(
         let value = match &assignment.value {
             tidb_ast::Expr::Default(None) => {
                 let datum = super::dml::materialize_column_default(
-                    target_meta,
+                    target_meta.ok_or_else(|| DriverError::UnknownColumnInClause {
+                        column: source.tables[slot].columns[column].0.clone(),
+                        clause: "field_list".to_owned(),
+                    })?,
                     super::dml::DefaultUse::Expression,
                     ctx,
                     default_row.get_row(0),
                 )?;
                 Expression::Constant(tidb_expr::constant::Constant::new(
                     datum,
-                    target_meta.field_type.clone(),
+                    source.tables[slot].columns[column].1.clone(),
                 ))
             }
             value => {
@@ -765,7 +819,16 @@ fn resolve_assignments(
                                 table: default_slot,
                                 column: default_column,
                             },
-                            meta: source.tables[default_slot].default_meta[default_column].clone(),
+                            meta: source.tables[default_slot]
+                                .default_meta
+                                .get(default_column)
+                                .cloned()
+                                .ok_or_else(|| DriverError::UnknownColumnInClause {
+                                    column: source.tables[default_slot].columns[default_column]
+                                        .0
+                                        .clone(),
+                                    clause: "field_list".to_owned(),
+                                })?,
                         })
                     },
                 )?;
@@ -1024,6 +1087,7 @@ fn planned_source_rows(
         kv: Option<&'a crate::kv_table::KvTable>,
         stored: usize,
         visible: usize,
+        extra: bool,
     }
     let mut slots = Vec::with_capacity(source.tables.len());
     for table in &source.tables {
@@ -1043,7 +1107,8 @@ fn planned_source_rows(
             width: stored + usize::from(extra),
             kv,
             stored,
-            visible: table.columns.len(),
+            visible: table.columns.len() - usize::from(table.extra_handle),
+            extra: table.extra_handle,
         });
     }
     let expected: usize = slots.iter().map(|slot| slot.width).sum();
@@ -1107,6 +1172,9 @@ fn planned_source_rows(
                 };
                 ids.push(id);
                 values.extend_from_slice(&part[..slot.visible]);
+                if slot.extra {
+                    values.push(part[slot.stored].clone());
+                }
                 accountant
                     .account_row(&part[..slot.stored])
                     .map_err(DriverError::from)?;

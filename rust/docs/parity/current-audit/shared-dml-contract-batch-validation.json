@@ -1,0 +1,327 @@
+{
+  "baseline": {
+    "tidb": "ab97d544b62d5e1bc7f59d010931bd9c7df5a08b",
+    "native": "8b752f9638ad157931725b66ffdc57e0465432a9",
+    "go_master": "3ca96b1d5df8da123e7a650512654eedab12c861"
+  },
+  "scope": "B02 E02/E03/K03: shared UPDATE SQL scope, partitioned heap eligibility and FK-before-NULL record policy",
+  "source_inputs": {
+    "pkg/executor/update.go": "e4b3b1ca4669032a647d6fc0c1def39c583e097d671ea4ea95be59499512bb10",
+    "pkg/executor/write.go": "370be12fc703a414eefcbe6cef2295a2fe69e83d95b67ab706d74e5b4a85599c",
+    "pkg/executor/foreign_key.go": "c8c39bf0a8eb711b47f784ffde1f85ac6124f58a4e2f5460541f8d54c02b91f8",
+    "pkg/executor/builder.go": "7d47dc5eec64aa98de44014cf275061b102d6da57a4df2a565694637c53790e7",
+    "pkg/planner/core/logical_plan_builder.go": "01e352e46d091aeb174ce7c71143d23aa92f4b9d0c41d691aaba1cb8baaef131",
+    "pkg/planner/core/expression_rewriter.go": "3620cfdb3ec996eb0fe15a6572a1babc07466e0918f00e42cbed7b13d181db45",
+    "pkg/table/tables/tables.go": "d0b6204e9cade9e9cf5af83b64e682d8e49b4c90ed61b37e460acdb19b1fd46e"
+  },
+  "confirmed_before": {
+    "failed_tests": 10,
+    "log": "/workspace/.cloud-setup/shared-dml-contract-batch/before-corrected.log",
+    "sha256": "a15cc74bc99f273ace1f0321113695aff140209af015036999e16bd5c52dbde1",
+    "failures": [
+      "Single UPDATE pseudo-handle admission returned1054 rather than Go1105",
+      "Enabled pseudo-handle assignments refused rather than evaluated outside the writable row",
+      "Joined pseudo-handle expressions could not bind",
+      "Joined pseudo-handle target used unknown-column rather than write policy",
+      "Single UPDATE read hidden generated value11 as handle7, producing12 rather than8",
+      "Partitioned heap joined UPDATE changed only one of two physical rows sharing handle7",
+      "Ordinary, joined and duplicate IGNORE updates substituted NULL before FK checks, adding1452 and skipping Go-admitted writes",
+      "FK rejection also produced an unrelated later1048 warning"
+    ]
+  },
+  "excluded_probes": {
+    "log": "/workspace/.cloud-setup/shared-dml-contract-batch/before.log",
+    "reason": "Four virtual-NULL probes failed their precondition: the existing virtual read owner substitutes zero. They were removed, not counted as repaired. A nonexistent expression-index enable variable was removed from test setup; the corrected test reproduces the real joined binding failure."
+  },
+  "intermediate": "The first implementation retained an immutable catalog borrow across FK helpers requiring mutable access. Reacquire immutable metadata after FK checks; failed compile logs retained. No semantic test expectation weakened.",
+  "repairs": [
+    "Shared UPDATE and subquery scopes include Go heap handle independent of AST usage. Metadata-free handle assignments evaluate without casting and remain outside writable rows; DEFAULT keeps Go unknown-column policy.",
+    "Single and joined expression inputs contain SQL-visible columns followed by the actual handle, while retained writable rows preserve hidden generated tails. NATURAL/USING visibility excludes implicit handles.",
+    "Joined candidates evaluate assignments in source order before per-target write eligibility; partitioned heap UPDATE disables changed-handle skipping as Go UpdateExec.prepare specifies.",
+    "UpdateRecords now checks IGNORE foreign keys before bad-NULL substitution and partition validation across ordinary, joined and duplicate-key UPDATE."
+  ],
+  "correction_to_prior_evidence": "The dml-identity receipt missed UpdateExec.prepare\u2019s explicit nonclustered partition exception. Its dismissal of the UPDATE repeated-handle divergence is superseded by this reproduced and repaired case. DELETE retains its separate deduplication policy. The old Rust comment claiming ordinary pseudo-handle UPDATE must move the record was also incorrect: Go writable table ranges exclude ExtraHandleID.",
+  "validation": {
+    "environment": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1",
+    "commands": [
+      {
+        "command": "cargo test --locked -p tidb-session --lib -- tests_multi_table_dml:: tests_foreign_key:: tests_generated_columns:: tests_expression_indexes:: tests_statement_rollback:: tests_extra_handle:: --test-threads=1",
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/shared-dml-contract-batch/after.log",
+        "sha256": "ca1456c51b0785330306e996ce4698f9f195af2387f228dcd56268d3a741aec0"
+      },
+      {
+        "command": "cargo check --locked --all-targets -p tidb-executor -p tidb-session -p tidb-server",
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/shared-dml-contract-batch/check.log",
+        "sha256": "98e663115916bee5f434ad80f230a22eaebe663aa14974f03d9b1a7d01531146"
+      },
+      {
+        "command": "make lint",
+        "cwd": "/workspace/tidb",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/shared-dml-contract-batch/lint.log",
+        "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+      },
+      {
+        "command": "cargo build --locked -p tidb-server",
+        "cwd": "/workspace/tidb/rust",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/shared-dml-contract-batch/server-build.log",
+        "sha256": "aba378516ec87156dc972ec592d861531d37b121e4deb9ae546fd7ca9c9a75c5"
+      },
+      {
+        "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/shared-dml-contract-batch/wire.py",
+        "cwd": "/workspace/tidb",
+        "exit_code": 0,
+        "log": "/workspace/.cloud-setup/shared-dml-contract-batch/wire-command.log",
+        "sha256": "ddade463ca2052cd5707a412d772a82e20390538dc0d445a80cc25cd5b366e5e"
+      }
+    ],
+    "selected_rust_tests_passed": 209,
+    "new_regressions": 11,
+    "confirmed_fail_before_cases": 10,
+    "real_mysql_unistore_checks": {
+      "checks": [
+        {
+          "sql": "UPDATE t SET _tidb_rowid=99",
+          "error_expected": 1105,
+          "error_actual": 1105,
+          "passed": true
+        },
+        {
+          "sql": "UPDATE t JOIN b ON t.a=b.a SET t._tidb_rowid=99",
+          "error_expected": 1105,
+          "error_actual": 1105,
+          "passed": true
+        },
+        {
+          "sql": "UPDATE t SET v=_tidb_rowid+a",
+          "affected_expected": 1,
+          "affected_actual": 1,
+          "passed": true
+        },
+        {
+          "sql": "SELECT _tidb_rowid,a,v FROM t",
+          "expected": [
+            [
+              7,
+              1,
+              8
+            ]
+          ],
+          "actual": [
+            [
+              7,
+              1,
+              8
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "sql": "UPDATE t SET _tidb_rowid=99",
+          "affected_expected": 0,
+          "affected_actual": 0,
+          "passed": true
+        },
+        {
+          "sql": "UPDATE t NATURAL JOIN b SET t._tidb_rowid='not a number',t.v=t._tidb_rowid+b.a+1",
+          "affected_expected": 1,
+          "affected_actual": 1,
+          "passed": true
+        },
+        {
+          "sql": "SELECT _tidb_rowid,a,v FROM t",
+          "expected": [
+            [
+              7,
+              1,
+              9
+            ]
+          ],
+          "actual": [
+            [
+              7,
+              1,
+              9
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "sql": "ADMIN CHECK TABLE t",
+          "affected_expected": 0,
+          "affected_actual": 0,
+          "passed": true
+        },
+        {
+          "sql": "UPDATE pt JOIN b ON pt.a=b.a SET pt.v=pt.v+1",
+          "affected_expected": 2,
+          "affected_actual": 2,
+          "passed": true
+        },
+        {
+          "sql": "SELECT _tidb_rowid,a,v FROM pt ORDER BY a",
+          "expected": [
+            [
+              7,
+              1,
+              11
+            ],
+            [
+              7,
+              11,
+              21
+            ]
+          ],
+          "actual": [
+            [
+              7,
+              1,
+              11
+            ],
+            [
+              7,
+              11,
+              21
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "sql": "UPDATE IGNORE c SET pid=9,v=NULL",
+          "affected_expected": 0,
+          "affected_actual": 0,
+          "passed": true
+        },
+        {
+          "sql": "UPDATE IGNORE c SET pid=9,v=NULL",
+          "warning_codes": [
+            1452
+          ],
+          "expected": [
+            1452
+          ],
+          "passed": true
+        },
+        {
+          "sql": "UPDATE IGNORE c JOIN p ON c.pid=p.id SET c.pid=9,c.v=NULL",
+          "affected_expected": 0,
+          "affected_actual": 0,
+          "passed": true
+        },
+        {
+          "sql": "UPDATE IGNORE c JOIN p ON c.pid=p.id SET c.pid=9,c.v=NULL",
+          "warning_codes": [
+            1452
+          ],
+          "expected": [
+            1452
+          ],
+          "passed": true
+        },
+        {
+          "sql": "INSERT IGNORE INTO c VALUES(10,1,5) ON DUPLICATE KEY UPDATE pid=9,v=NULL",
+          "affected_expected": 0,
+          "affected_actual": 0,
+          "passed": true
+        },
+        {
+          "sql": "INSERT IGNORE INTO c VALUES(10,1,5) ON DUPLICATE KEY UPDATE pid=9,v=NULL",
+          "warning_codes": [
+            1452
+          ],
+          "expected": [
+            1452
+          ],
+          "passed": true
+        },
+        {
+          "sql": "SELECT * FROM c",
+          "expected": [
+            [
+              10,
+              1,
+              5
+            ]
+          ],
+          "actual": [
+            [
+              10,
+              1,
+              5
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "sql": "UPDATE IGNORE c SET pid=NULL",
+          "affected_expected": 1,
+          "affected_actual": 1,
+          "passed": true
+        },
+        {
+          "sql": "SHOW WARNINGS",
+          "expected": [
+            [
+              "Warning",
+              1048,
+              "Column 'pid' cannot be null"
+            ]
+          ],
+          "actual": [
+            [
+              "Warning",
+              1048,
+              "Column 'pid' cannot be null"
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "sql": "SELECT * FROM c",
+          "expected": [
+            [
+              10,
+              0,
+              5
+            ]
+          ],
+          "actual": [
+            [
+              10,
+              0,
+              5
+            ]
+          ],
+          "passed": true
+        }
+      ],
+      "passed": 20,
+      "server_exit": 0
+    },
+    "wire_scope": "Fresh isolated unistore with loopback listener, mode0600 temporary auth file and canonical expression-index configuration; owned startup and shutdown. No production credentials used.",
+    "wire_setup_corrections": "First startup omitted auth-file; second tried load-privileges, unsupported by this unistore startup path. Both failed before any assertions. Correct configured-auth startup passes20 assertions. Logs retained; no server code changed for the probe.",
+    "publication": "Actual hook and fresh locked prepush build remain required; final-handoff.json records their outcome.",
+    "diff_review": "git diff --check passed; only E02/E03/K03 finding evidence changes, with counts/statuses preserved."
+  },
+  "finding_dispositions": "E02/E03/K03 remain partial; 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other53 roots retain carried evidence, not a fresh revalidation.",
+  "limits": [
+    "Complete pruned handle metadata and chunk/write streaming remain open",
+    "Full indexed FK lookup/locking and physical cascade substatements remain open",
+    "Broader conversion/generated/ANALYZE and complete upstream package obligations remain unaccepted",
+    "ODKU pseudo-handle assignment is not changed or accepted by this batch",
+    "No full Go suite, live multi-node TiKV or performance measurement"
+  ],
+  "publication_receipt": "/workspace/.cloud-setup/shared-dml-contract-batch/final-handoff.json",
+  "source_outputs": {
+    "rust/crates/tidb-executor/src/driver/dml.rs": "b5d1870f2f24e6806f07f11e17ddc3cd015b95c27f09175f3ad6f349cd8a49a7",
+    "rust/crates/tidb-executor/src/driver/dml/update_record.rs": "510e2be21b0bf25791b7abc861201c804ac4e4b7825eeb96b66a410be3865dae",
+    "rust/crates/tidb-executor/src/driver/multi_dml.rs": "96a90062aac3a05598f57cf9a34bcf194c95eef5f43c8b28b6ce8a2b3cd1f0f9",
+    "rust/crates/tidb-session/src/tests_foreign_key.rs": "43625c266c661beec865639e3aee96da45808a4f6b9c787d1c305e69237d0f6c",
+    "rust/crates/tidb-session/src/tests_multi_table_dml.rs": "410905c3d0a27f3d59dc028acba38f2bdaccddbf9a2cc6a529eb94109b113837"
+  }
+}

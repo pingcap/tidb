@@ -464,7 +464,7 @@ struct InsertTargetLayout {
 
 /// Go's message for writing `_tidb_rowid` without `tidb_opt_write_row_id`,
 /// raised as a plain error and so reaching the client as 1105.
-const WRITE_ROW_ID_REFUSED: &str =
+pub(super) const WRITE_ROW_ID_REFUSED: &str =
     "insert, update and replace statements for _tidb_rowid are not supported";
 
 /// Resolves everything owned by the INSERT target before an INSERT SELECT
@@ -2204,17 +2204,8 @@ fn update_assignment_values_for_plan(
         )))
     })?;
     let mut columns = table.column_list();
-    if statement_names_extra_handle(
-        update.where_clause.iter().chain(
-            update
-                .assignments
-                .iter()
-                .map(|assignment| &assignment.value),
-        ),
-    ) {
-        if let Some(column) = crate::driver::from::extra_handle_column(table) {
-            columns.push(column);
-        }
+    if let Some(column) = crate::driver::from::extra_handle_column(table) {
+        columns.push(column);
     }
     let scope = dml_table_scope(table_ref, &database, &name, columns, ctx);
     update
@@ -2878,19 +2869,10 @@ fn run_update_with_physical(
     }
     let mut column_list = table.column_list();
     let column_meta = column_metadata(table);
-    // Go gives a write's `DataSource` the same schema a read gets, so
-    // `_tidb_rowid` resolves in an `UPDATE`'s `WHERE` and `SET` exactly as it
-    // does in a `SELECT`. It is appended LAST, after the stored columns, so
-    // the row the write itself stages is the same slice it always was.
-    let extra_handle_slot = statement_names_extra_handle(
-        update
-            .where_clause
-            .iter()
-            .chain(update.assignments.iter().map(|a| &a.value)),
-    )
-    .then(|| crate::driver::from::extra_handle_column(table))
-    .flatten()
-    .map(|column| {
+    // Go exposes the heap handle to expressions and assignment admission,
+    // independently of whether the WHERE or a value expression names it.
+    // It remains outside the table's writable row.
+    let extra_handle_slot = crate::driver::from::extra_handle_column(table).map(|column| {
         column_list.push(column);
         column_list.len() - 1
     });
@@ -2919,31 +2901,13 @@ fn run_update_with_physical(
                 clause: "field list".to_owned(),
             }
         })?;
-        // `_tidb_rowid` READS as an ordinary column but is not a stored one,
-        // so it cannot be an assignment target here. Go gates writing it
-        // behind `tidb_opt_write_row_id` (`executor/builder.go:3025`), and
-        // WITHOUT that variable the refusal is the same 1105 an INSERT gets
-        // -- which is what this reports, in Go's own words.
-        //
-        // NARROWER THAN GO with the variable set: Go accepts the assignment
-        // and MOVES the row, because changing the handle means removing the
-        // old record and adding a new one (`tables.UpdateRecord`'s
-        // handle-changed path). That move is unported, so the statement is
-        // refused rather than silently writing the column and leaving the row
-        // under its old handle. Refusing also keeps the column-metadata
-        // lookup below indexed by a STORED column, which is all it describes.
-        if extra_handle_slot == Some(offset) {
-            if !ctx.allow_write_row_id() {
-                return Err(DriverError::unsupported(WRITE_ROW_ID_REFUSED));
-            }
-            return Err(DriverError::unsupported(
-                "UPDATE of _tidb_rowid moves the row, which is not supported yet",
-            ));
+        if extra_handle_slot == Some(offset) && !ctx.allow_write_row_id() {
+            return Err(DriverError::unsupported(WRITE_ROW_ID_REFUSED));
         }
         // Go `IsDefaultExprSameColumn`: a generated target accepts only bare
         // DEFAULT or DEFAULT(the same resolved column). DEFAULT(other), even
         // though it has the same AST variant, is error 3105.
-        if column_meta[offset].generated {
+        if column_meta.get(offset).is_some_and(|meta| meta.generated) {
             let own_default = match &assignment.value {
                 tidb_ast::Expr::Default(None) => true,
                 tidb_ast::Expr::Default(Some(path)) => resolver
@@ -2983,16 +2947,18 @@ fn run_update_with_physical(
                 // computed default and any warning are statement-scoped.
                 tidb_ast::Expr::Default(None) => {
                     let value = materialize_column_default(
-                        &column_meta[*offset],
+                        column_meta.get(*offset).ok_or_else(|| {
+                            DriverError::UnknownColumnInClause {
+                                column: column_list[*offset].0.clone(),
+                                clause: "field_list".to_owned(),
+                            }
+                        })?,
                         DefaultUse::Expression,
                         ctx,
                         default_row.get_row(0),
                     )?;
                     UpdateExpression::scalar(Expression::Constant(
-                        tidb_expr::constant::Constant::new(
-                            value,
-                            column_meta[*offset].field_type.clone(),
-                        ),
+                        tidb_expr::constant::Constant::new(value, column_list[*offset].1.clone()),
                     ))
                 }
                 _ => {
@@ -3010,7 +2976,12 @@ fn run_update_with_physical(
                             })?;
                             Ok(ResolvedDefaultColumn {
                                 identity: DefaultColumnIdentity { table: 0, column },
-                                meta: column_meta[column].clone(),
+                                meta: column_meta.get(column).cloned().ok_or_else(|| {
+                                    DriverError::UnknownColumnInClause {
+                                        column: column_list[column].0.clone(),
+                                        clause: "field_list".to_owned(),
+                                    }
+                                })?,
                             })
                         },
                     )?;
@@ -3144,6 +3115,14 @@ fn run_update_with_physical(
             .map_err(DriverError::from)?;
         rewrites.push((row.id, row.stored, new_row));
     }
+    let writes_stored_columns = set_exprs
+        .iter()
+        .any(|(offset, _)| Some(*offset) != extra_handle_slot);
+    if !writes_stored_columns {
+        // Go assignFlag excludes the extra handle from each writable table range.
+        matched = 0;
+        rewrites.clear();
+    }
     for (row_index, (id, old_row, mut new_row)) in rewrites.into_iter().enumerate() {
         let outcome = records.write(
             catalog,
@@ -3195,22 +3174,13 @@ impl UpdateRowEvaluator<'_> {
         physical_input: Option<(&[Datum], &[FieldType])>,
         matched: &mut u64,
     ) -> Result<Vec<Datum>, DriverError> {
-        // `_tidb_rowid` is the record HANDLE, so it joins the row only for
-        // the reading half of this statement. The row that gets STAGED is
-        // still `row` -- Go's write composes its new row from the
-        // `DataSource`'s stored columns, and the extra handle column is not
-        // one of them.
-        let evaluated: std::borrow::Cow<'_, [Datum]> = match (self.extra_handle, handle) {
-            (true, Some(handle)) => {
-                let mut widened = Vec::with_capacity(row.len() + 1);
-                widened.extend_from_slice(row);
-                widened.push(Datum::Int(handle));
-                std::borrow::Cow::Owned(widened)
-            }
-            _ => std::borrow::Cow::Borrowed(row),
-        };
-        let row = evaluated.as_ref();
-        let chunk = row_chunk(row, self.field_types)?;
+        let visible = self.field_types.len() - usize::from(self.extra_handle);
+        let mut evaluated = row[..visible].to_vec();
+        if self.extra_handle {
+            evaluated.push(handle.map_or(Datum::Null, Datum::Int));
+        }
+        let sql_row = evaluated.as_slice();
+        let chunk = row_chunk(sql_row, self.field_types)?;
         let physical_chunk = physical_input
             .map(|(values, field_types)| row_chunk(values, field_types))
             .transpose()?;
@@ -3230,15 +3200,18 @@ impl UpdateRowEvaluator<'_> {
         let mut new_row = row.to_vec();
         for (offset, expr) in self.set_exprs {
             let value = expr.eval(
-                row,
+                sql_row,
                 chunk.get_row(0),
                 physical_row,
                 self.catalog,
                 self.current_db,
                 self.ctx,
             )?;
-            // Go casts an assigned value to its column's type here too, which is
-            // what stores `SET d = 9.87654` in a DECIMAL(10,3) column as 9.877.
+            // ExtraHandleID has no column metadata in Go composeNewRow:
+            // evaluate it, but neither cast it nor put it in the writable row.
+            if self.extra_handle && *offset == visible {
+                continue;
+            }
             new_row[*offset] = cast_value_for_update_assignment(
                 value,
                 &self.field_types[*offset],
@@ -3249,9 +3222,6 @@ impl UpdateRowEvaluator<'_> {
         }
         self.on_update_now
             .apply(row, &mut new_row, self.ctx, chunk.get_row(0))?;
-        if self.extra_handle {
-            new_row.truncate(new_row.len() - 1);
-        }
         Ok(new_row)
     }
 }

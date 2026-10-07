@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [PD bootstrap/provider policy](pd-bootstrap-policy-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [shared DML contracts](shared-dml-contract-batch-execplan.md). Latest cleanup: [unused DDL leaf retirement](parity/current-audit/unused-carrier-cleanup-validation.json).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -2682,3 +2682,8 @@ The connected B01/B05 P03/P06/N03 maintenance batch uses one native feedback and
 
 
 The [batch plan](dml-identity-batch-execplan.md) and [receipt](parity/current-audit/dml-identity-batch-validation.json) connect B02 E02/E03/K03 through complete retained writable rows and explicit candidate handles. Joined hidden-column UPDATE/DELETE, generation, REPLACE/IGNORE/ODKU and FK callbacks share the repaired layout. Three original session regressions, a further index-join regression and an independent original-server REPLACE failure precede 286 Rust passes and 20 TCP passes. Partial-row fallback rereads are removed; speculative partition expectations are excluded because Go uses the same bare-handle maps. No complete package acceptance; counts remain 30 repaired/56 unresolved.
+
+## Shared DML contract follow-up
+
+
+The [connected plan](shared-dml-contract-batch-execplan.md) and [receipt](parity/current-audit/shared-dml-contract-batch-validation.json) maintain E02/E03/K03 together. Ten original regressions and 209 retained passes cover SQL-visible heap handles versus writable hidden tails, Go’s partitioned-heap UPDATE exception, and shared IGNORE FK checks before bad-NULL substitution. The old claim that enabled ordinary heap-handle assignment must move the row is corrected by current Go’s writable ranges. Earlier UPDATE partition dismissal is superseded; DELETE remains separate. Broader streaming, indexed FK/physical cascades, conversions and complete packages remain unaccepted; counts are unchanged. Final publication and Cloud checkpoint evidence is external to the committed receipt.
