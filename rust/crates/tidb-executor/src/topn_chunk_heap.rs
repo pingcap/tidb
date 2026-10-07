@@ -20,7 +20,7 @@
 //! `topn_chunk_heap.go`. Covered elsewhere: `sort.go` -> [`crate::sort`],
 //! `sort_util.go` -> [`crate::sort_util`], `sort_partition.go` ->
 //! [`crate::sort_partition`], `topn.go` -> [`crate::topn`], `topn_spill.go` ->
-//! [`crate::topn_spill`], `multi_way_merge.go` -> [`crate::multi_way_merge`].
+//! [`crate::topn_spill`]. Sort and TopN own their active result heaps.
 //! NOT COVERED anywhere yet: `parallel_sort_worker.go`,
 //! `parallel_sort_spill_helper.go`, `sort_spill.go`, `topn_worker.go`.
 //!

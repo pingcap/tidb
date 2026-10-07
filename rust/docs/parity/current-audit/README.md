@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [shared read consistency](read-consistency-batch-validation.json). Retire duplicated reader-side scope decisions and condense the three affected current finding descriptions while retaining linked evidence and behavioral tests. Prior [FK cleanup](fk-access-batch-validation.json) remains valid.
+Latest cleanup: [disconnected sort pipeline](sort-cleanup-validation.json). Remove the disabled substitute workers, spill helper, generic merger/cursors, no-op concurrency setting and 37 private tests. Active Sort/TopN behavior remains; the corrected package inventory explicitly retains missing Go parallel-sort obligations.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 

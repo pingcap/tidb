@@ -113,8 +113,6 @@ pub mod mem_reader;
 pub mod mem_table;
 mod mpp_query;
 pub(crate) mod merge_join_plan;
-pub mod multi_way_merge;
-pub mod parallel_sort_spill_helper;
 pub mod partition_pruning;
 pub mod partition_routing;
 mod physical_cte;

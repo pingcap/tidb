@@ -1,0 +1,268 @@
+{
+  "date": "2026-10-07",
+  "base": "e3d660a68ac746966d63efc0838fe5329db5015f",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "native_head": "8b752f9638ad157931725b66ffdc57e0465432a9",
+  "scope": "Deletion-only retirement of the already-disabled substitute parallel sort and private merger/cursor harness. Active serial Sort and live TopN behavior retained. No complete Go package or finding closure.",
+  "disabling_commit": "b00685bdd413629f7a37b82b24fb593b5cd80f06",
+  "caller_evidence": [
+    "SortExec::fetch_and_sort has no parallel dispatch at baseline; Next always invokes it.",
+    "The only production caller of ParallelSortSpillHelper is the disconnected fetch_and_sort_parallel.",
+    "The only production caller of MultiWayMerger is the retired helper. Active Sort and TopN use their own retained result heaps.",
+    "DataCursor/reload_cursor and RowWithPartition are private to the removed generic merger; message/status/admission adapters have no other production consumer.",
+    "SortExec::with_parallelism only wrote a field read by disconnected code; physical builder now constructs the active owner directly. TopN concurrency is unchanged.",
+    "worker_pool::spawned_so_far is used only by the removed source-shape worker-count test; shared pool and panic boundaries are retained."
+  ],
+  "removed_private_tests": 37,
+  "source_net_lines_removed": 2856,
+  "source_changes": [
+    {
+      "path": "rust/crates/tidb-executor/src/driver/physical_builder.rs",
+      "before_lines": 7651,
+      "after_lines": 7648,
+      "before_tests": 27,
+      "after_tests": 27,
+      "before_sha256": "f00af0e71a8abe7851c60e001f253eff2bb90f08a93784abfb1751042c508277",
+      "after_sha256": "6736d8b1fe2637aa57d2ec27c4cd287e467d1e7d127d7bff3ee124e66b3730cb"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/lib.rs",
+      "before_lines": 358,
+      "after_lines": 356,
+      "before_tests": 0,
+      "after_tests": 0,
+      "before_sha256": "f9f6f8c67a0e6ecb120a4fb7c5cdf3abf17551095f90477257b6e06a15dacf1e",
+      "after_sha256": "15ba2f2317abc764bd95f949ea31edf3f58dd3cacf60782edb423ebf4a2336d3"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/multi_way_merge.rs",
+      "before_lines": 498,
+      "after_lines": 0,
+      "before_tests": 10,
+      "after_tests": 0,
+      "before_sha256": "660f5ac83a168298e266652cbcc6b1720b2fd54c9536b9d5ecebe1b7ea99ac72",
+      "after_sha256": null
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/parallel_sort_spill_helper.rs",
+      "before_lines": 1029,
+      "after_lines": 0,
+      "before_tests": 12,
+      "after_tests": 0,
+      "before_sha256": "98a7ab83d119c4fa380b6c376c826ff3742371d1cfd730db04a911917389ccff",
+      "after_sha256": null
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/sort.rs",
+      "before_lines": 2074,
+      "after_lines": 1297,
+      "before_tests": 26,
+      "after_tests": 18,
+      "before_sha256": "ab851107c0f5563245c3864dd064bdcf8954e1e71ff85b694be3ff4b1d884e03",
+      "after_sha256": "669b6a4eb89b5f5e1a11e4b00564adca042a16221fc66a6110700bc106683c9b"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/sort_partition.rs",
+      "before_lines": 765,
+      "after_lines": 562,
+      "before_tests": 0,
+      "after_tests": 0,
+      "before_sha256": "b91039345b56f2f660a6f4f40cddbde9c4d592c2386e2b6a78f66b51aae73f26",
+      "after_sha256": "4483b2bbcca3ee776e4d64519bae046d93bed6fd7aed81d581f164f6c5ba717d"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/sort_util.rs",
+      "before_lines": 404,
+      "after_lines": 76,
+      "before_tests": 8,
+      "after_tests": 1,
+      "before_sha256": "32179a43aa5719173254891f428e4489141141434337c023674e579799e41a20",
+      "after_sha256": "f92e7481af4717ec62ed09ea5e6dd6c6508d1d7ee96653c3fb08f33ce5fe5680"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/topn_chunk_heap.rs",
+      "before_lines": 915,
+      "after_lines": 915,
+      "before_tests": 12,
+      "after_tests": 12,
+      "before_sha256": "a23f3ee1b02498e46105a227d245fa6749c247321f3612841564ad5209e72646",
+      "after_sha256": "f2a6f5f2d2cfb419ef08927224ad60aedbae1372402eb572840f6c9e999dadc2"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/worker_pool.rs",
+      "before_lines": 775,
+      "after_lines": 759,
+      "before_tests": 10,
+      "after_tests": 10,
+      "before_sha256": "37d01052d0bb879e7468946c05c7cd9b030063628303475ad1fd03c3b7997ab2",
+      "after_sha256": "257688516e648cebfc2985223b4918d0921496ca134bb93b0a46ff2affde8da8"
+    }
+  ],
+  "retained_behavior": [
+    "ORDER BY typed comparison, NULL order and compound keys",
+    "memory quota cancellation and logging",
+    "serial comparator cancellation",
+    "multi-run spill ordering and temporary-file cleanup",
+    "single-chunk over-quota spill, corrected to ignore empty trailing run",
+    "TopN heap/rank/spill/live workers",
+    "shared panic recovery and continued pool use"
+  ],
+  "missing_go_obligations": [
+    "Default parallel worker/fetch/result-channel lifecycle",
+    "Coordinated parallel spill including cancellation, error/panic/failpoint and cleanup matrices",
+    "Full original parallel test/type/benchmark and package build acceptance"
+  ],
+  "go_package_inventory": "../sortexec-package-inventory.md",
+  "go_package_sources": [
+    {
+      "path": "pkg/executor/sortexec/BUILD.bazel",
+      "sha256": "aa0782f56d9558a9f3caaeae75f723aab135379bbdbafabe775d3a3d49f7e89b"
+    },
+    {
+      "path": "pkg/executor/sortexec/OWNERS",
+      "sha256": "723e68bf7f720c32664455f989c9f76fb40b53a241a856ceade65412d811bdd6"
+    },
+    {
+      "path": "pkg/executor/sortexec/benchmark_test.go",
+      "sha256": "5346c133de4d8d34992f0bf34957ee16df6593034cd70d9d0c03e028361f2e8f"
+    },
+    {
+      "path": "pkg/executor/sortexec/multi_way_merge.go",
+      "sha256": "194a5c40c10c0192c5dce8c6e7df944c328d302d756b7b64ebb1050c2b8ce8bc"
+    },
+    {
+      "path": "pkg/executor/sortexec/parallel_sort_spill_helper.go",
+      "sha256": "cc73bb2fee4de96ff4ffae5b368576f9c3af3aef94183c1bcffdf31b90cf95ff"
+    },
+    {
+      "path": "pkg/executor/sortexec/parallel_sort_spill_test.go",
+      "sha256": "75b86f064a3a1eb5803d3da7681a8512759dad92be9a0ea8dbdb879bd17d38f9"
+    },
+    {
+      "path": "pkg/executor/sortexec/parallel_sort_test.go",
+      "sha256": "194704b775e84a1a0573e4498b11b89ffba2639a7d0d7b3942f4a4c1c76825b6"
+    },
+    {
+      "path": "pkg/executor/sortexec/parallel_sort_worker.go",
+      "sha256": "29db3d28ee291993cca10b160f51a0e03e69a1151ec5b4e64977908f38d86ef2"
+    },
+    {
+      "path": "pkg/executor/sortexec/rank_topn_test.go",
+      "sha256": "cb567b150612918612ac975aba8fef354d0e2d3893d38029cd6f685556b88936"
+    },
+    {
+      "path": "pkg/executor/sortexec/sort.go",
+      "sha256": "3f52a38ca3a784b76057745aabc4f8da699866bc0459b497ca3e36c9d277daac"
+    },
+    {
+      "path": "pkg/executor/sortexec/sort_partition.go",
+      "sha256": "8489520545a5602d27da14104ba53fc1a8c73c6cd66d8394bb5590d29ef065cd"
+    },
+    {
+      "path": "pkg/executor/sortexec/sort_spill.go",
+      "sha256": "e00da717aae392443ffb0e1cfa9a6b9b2909f082485e320517cc57ee5e092d13"
+    },
+    {
+      "path": "pkg/executor/sortexec/sort_spill_test.go",
+      "sha256": "814464f0833d1031c6b4906d6f26cb874f29779a89724bc35b5406a0fab7dbdf"
+    },
+    {
+      "path": "pkg/executor/sortexec/sort_test.go",
+      "sha256": "96ccddb599eb95847c5b257b34bf44c7b1ebd04e4b1ffc2f258f5967f99f7597"
+    },
+    {
+      "path": "pkg/executor/sortexec/sort_util.go",
+      "sha256": "c94302a62490be3617852768257e73b180ff3ad55cee7cb3859c6c8c2a104fee"
+    },
+    {
+      "path": "pkg/executor/sortexec/sortexec_pkg_test.go",
+      "sha256": "60e1b6d3b0593fd2e927d12443cc84334e7f44692221398a65b5de756f2adbf8"
+    },
+    {
+      "path": "pkg/executor/sortexec/topn.go",
+      "sha256": "d561d8fa1e0868ef4d27bd32c125e02278b375dcf0adcfd5d84b8b19fbae34d8"
+    },
+    {
+      "path": "pkg/executor/sortexec/topn_chunk_heap.go",
+      "sha256": "80487cd92894affe3072e218c3982ae7b54fc52bcd45ba8513533de2ea1a9013"
+    },
+    {
+      "path": "pkg/executor/sortexec/topn_spill.go",
+      "sha256": "0212f68a5645673f3951159b7dae244b5e9ee298970e1abb222c662b4e7e59c2"
+    },
+    {
+      "path": "pkg/executor/sortexec/topn_spill_test.go",
+      "sha256": "ee0b419801401e578f2641a2f14a888a796aa473f668decbdd0c0ea97fe530d6"
+    },
+    {
+      "path": "pkg/executor/sortexec/topn_worker.go",
+      "sha256": "d9cdc1ce053f49cc34251f432e4cad0f710aa29bcfb6f885f1609a42b86f6e32"
+    }
+  ],
+  "validation": {
+    "status": "passed",
+    "commands": [
+      {
+        "cwd": "/workspace/tidb/rust",
+        "command": "cargo test --locked -p tidb-executor --lib -- sort::tests:: sort_partition::tests:: sort_util::tests:: topn::tests:: topn_spill::tests:: topn_chunk_heap::tests:: --test-threads=1",
+        "log": "/workspace/.cloud-setup/sort-cleanup/tests.log",
+        "passed": 48,
+        "exit_code": 0,
+        "sha256": "b2f98a3707d4f26173a45eb83e37dbb61613b2fa32f1c1733b663de6290ccb34"
+      },
+      {
+        "cwd": "/workspace/tidb/rust",
+        "argv": [
+          "/workspace/tidb/rust/target/debug/build/tidb-executor/5de42d9d66be6928/out/tidb_executor-5de42d9d66be6928",
+          "driver::tests::joins::a_forced_merge_lowers_the_planner_selected_sort_enforcers",
+          "driver::tests::point_get::ordered_handle_range_keeps_the_go_cop_projection_below_sort",
+          "driver::tests::aggregates::grouped_order_by_projects_visible_fields_below_sort",
+          "--test-threads=1"
+        ],
+        "log": "/workspace/.cloud-setup/sort-cleanup/sql-tests.log",
+        "note": "Three physical SQL sort consumers; reused the freshly built test executable, no recompilation.",
+        "passed": 3,
+        "exit_code": 0,
+        "sha256": "3306f8b3d436a89e09027e33e2dd9125d8e23683a4d7d4d827fdd4cfaa4b306f"
+      },
+      {
+        "cwd": "/workspace/tidb/rust",
+        "command": "cargo check --locked --all-targets -p tidb-executor -p tidb-server",
+        "log": "/workspace/.cloud-setup/sort-cleanup/check.log",
+        "exit_code": 0,
+        "sha256": "f6f14042e83ca5f751ccfa2cb6c8962b1031391faecde11a28f7888be537ccbd"
+      },
+      {
+        "cwd": "/workspace/tidb",
+        "command": "make lint",
+        "log": "/workspace/.cloud-setup/sort-cleanup/lint.log",
+        "exit_code": 0,
+        "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef"
+      },
+      {
+        "cwd": "/workspace/tidb/rust",
+        "command": "cargo build --locked -p tidb-server",
+        "log": "/workspace/.cloud-setup/sort-cleanup/build.log",
+        "exit_code": 0,
+        "sha256": "40e84bfb479787d8d45e2923975770dd621aa842508852670ef11c934941eee1"
+      }
+    ],
+    "tests_passed": 51,
+    "environment": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1"
+  },
+  "finding_statuses_changed": false,
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "not_verified": [
+    "Full Go package tests",
+    "Live multi-node TiKV",
+    "Workload performance or measured build speedup",
+    "Fresh Cloud restoration"
+  ],
+  "publication": "Actual hook, fresh pre-push locked build and remote verification are recorded outside the commit in /workspace/.cloud-setup/sort-cleanup/final-handoff.json."
+}

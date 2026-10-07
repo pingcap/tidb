@@ -30,9 +30,8 @@
 //! itself at the next safe point -- which is the same point Go's `add`
 //! observes `isSpillTriggered()` and rolls to a new partition. There is no
 //! window in which rows are added to a partition that is being spilled,
-//! because that path has no second thread. The default parallel path uses
-//! [`crate::parallel_sort_spill_helper`] and its coordinated spill action in
-//! [`crate::sort`]; TopN spill lives in [`crate::topn_spill`].
+//! because that path has no second thread. Go's default parallel sort remains
+//! unimplemented; TopN spill lives in [`crate::topn_spill`].
 
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
@@ -40,7 +39,6 @@ use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
-use tidb_chunk::row::OwnedRow;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::Columns;
 use tidb_util::disk;
@@ -60,10 +58,6 @@ pub const SPILL_CHUNK_SIZE: usize = 1024;
 /// Go `signalCheckpointForSort`: comparator calls between SQL-killer polls in
 /// a serial sort partition.
 const SIGNAL_CHECKPOINT_FOR_SORT: u64 = 10_240;
-/// Go `SignalCheckpointForSort`: comparator calls between SQL-killer polls in
-/// a parallel worker.
-const SIGNAL_CHECKPOINT_FOR_PARALLEL_SORT: u64 = 20_000;
-
 /// Go `sortPartitionSpillDiskAction`: the `ActionOnExceed` a spilling sort
 /// registers on the session tracker.
 ///
@@ -196,21 +190,6 @@ impl SortPartition {
         }
     }
 
-    /// Wraps one sorted run produced by Go's parallel spill helper. The disk
-    /// object already accounts to the sort's disk tracker; this wrapper owns
-    /// its read cursor and closes the file with the rest of the sort runs.
-    pub(crate) fn from_spilled(
-        field_types: Vec<FieldType>,
-        parent: &Arc<Tracker>,
-        spill_storage: Arc<SpillStorage>,
-        in_disk: DataInDiskByChunks,
-    ) -> Self {
-        let mut partition = Self::new(field_types, parent, spill_storage);
-        partition.in_disk = Some(in_disk);
-        partition.sorted = true;
-        partition
-    }
-
     /// Test hook for Go `SetSmallSpillChunkSizeForTest`.
     pub fn set_spill_chunk_size(&mut self, size: usize) {
         self.spill_chunk_size = size;
@@ -237,12 +216,6 @@ impl SortPartition {
             Some(in_disk) => in_disk.num_rows() as usize,
             None => self.rows.len(),
         }
-    }
-
-    /// Number of source chunks retained by this in-memory run.
-    #[cfg(test)]
-    pub(crate) fn in_memory_chunk_count(&self) -> usize {
-        self.chunks.len()
     }
 
     /// Go `sortPartition.add`: materialize `chk`'s rows and account for them.
@@ -288,23 +261,6 @@ impl SortPartition {
             compare_funcs,
             ctx,
             Some((memory, SIGNAL_CHECKPOINT_FOR_SORT)),
-        )
-    }
-
-    /// Parallel-worker variant of [`Self::sort`] that uses Go's larger
-    /// `parallelSortWorker.SignalCheckpointForSort` interval.
-    pub(crate) fn sort_with_parallel_memory<C: Columns>(
-        &mut self,
-        by_items: &[SortByItem],
-        compare_funcs: &[Option<ColumnCompareFunc>],
-        ctx: &C,
-        memory: &StatementMemory,
-    ) -> Result<(), ExecError> {
-        self.sort_impl(
-            by_items,
-            compare_funcs,
-            ctx,
-            Some((memory, SIGNAL_CHECKPOINT_FOR_PARALLEL_SORT)),
         )
     }
 
@@ -400,165 +356,6 @@ impl SortPartition {
         }
         self.sorted = true;
         Ok(())
-    }
-
-    /// Copies this in-memory run into the owned-row representation used by
-    /// the parallel worker's local K-way merge, then releases the worker's
-    /// retained chunks. Go keeps borrowed `chunk.Row` handles here; Rust must
-    /// own them because the worker buffers are cleared before the spill or
-    /// result merge outlives the worker lock.
-    pub(crate) fn take_sorted_owned_rows(&mut self) -> Vec<OwnedRow> {
-        debug_assert!(self.sorted);
-        debug_assert!(self.in_disk.is_none());
-        let rows = self
-            .rows
-            .iter()
-            .map(|&(chunk_index, row_index)| {
-                self.chunks[chunk_index].get_row(row_index).copy_construct()
-            })
-            .collect();
-        self.chunks.clear();
-        self.rows.clear();
-        self.mem_tracker.replace_bytes_used(0);
-        rows
-    }
-
-    /// Go `parallelSortWorker.multiWayMergeLocalSortedRows`, retaining the
-    /// fetched chunks and merging only their lightweight row cursors. Go's
-    /// returned `[]chunk.Row` keeps the worker chunks alive; the Rust run owns
-    /// those chunks and stores the equivalent `(chunk, row)` cursor pairs.
-    pub(crate) fn merge_sorted_in_memory<C: Columns>(
-        partitions: Vec<Self>,
-        by_items: &[SortByItem],
-        compare_funcs: &[Option<ColumnCompareFunc>],
-        ctx: &C,
-        memory: &StatementMemory,
-    ) -> Result<Option<Self>, ExecError> {
-        if partitions.is_empty() {
-            return Ok(None);
-        }
-        if partitions.len() == 1 {
-            return Ok(partitions.into_iter().next());
-        }
-        debug_assert!(
-            partitions
-                .iter()
-                .all(|partition| partition.sorted && partition.in_disk.is_none()),
-            "parallel worker batches are sorted in memory before their local merge"
-        );
-
-        let mut heads = partitions
-            .iter()
-            .enumerate()
-            .filter(|(_, partition)| !partition.rows.is_empty())
-            .map(|(partition_id, _)| crate::sort_util::RowWithPartition {
-                row: 0usize,
-                partition_id,
-            })
-            .collect::<Vec<_>>();
-        let compare_head = |left: &crate::sort_util::RowWithPartition<usize>,
-                            right: &crate::sort_util::RowWithPartition<usize>,
-                            error: &mut Option<ExecError>| {
-            let left_partition = &partitions[left.partition_id];
-            let (left_chunk, left_row) = left_partition.rows[left.row];
-            let right_partition = &partitions[right.partition_id];
-            let (right_chunk, right_row) = right_partition.rows[right.row];
-            match compare_rows(
-                by_items,
-                compare_funcs,
-                ctx,
-                left_partition.chunks[left_chunk].get_row(left_row),
-                right_partition.chunks[right_chunk].get_row(right_row),
-            ) {
-                Ok(ordering) => ordering == Ordering::Less,
-                Err(compare_error) => {
-                    if error.is_none() {
-                        *error = Some(compare_error);
-                    }
-                    false
-                }
-            }
-        };
-
-        let mut compare_error = None;
-        crate::topn_chunk_heap::go_heap::init(&mut heads, &mut |left, right| {
-            compare_head(left, right, &mut compare_error)
-        });
-        if let Some(error) = compare_error {
-            return Err(error);
-        }
-
-        let mut order = Vec::with_capacity(
-            partitions
-                .iter()
-                .map(|partition| partition.rows.len())
-                .sum(),
-        );
-        let mut loop_count = 0usize;
-        while !heads.is_empty() {
-            // Go's `parallelSortWorker.multiWayMergeLocalSortedRows` polls
-            // `SQLKiller.HandleSignal` every 100 emitted rows. Check before
-            // producing the corresponding row so a pending cancellation
-            // cannot be hidden by a completed local merge.
-            if loop_count % 100 == 0 {
-                memory.check()?;
-            }
-            loop_count += 1;
-            let head = heads[0];
-            order.push((head.partition_id, head.row));
-            let next_row = head.row + 1;
-            let mut compare_error = None;
-            if next_row < partitions[head.partition_id].rows.len() {
-                heads[0].row = next_row;
-                crate::topn_chunk_heap::go_heap::fix(&mut heads, 0, &mut |left, right| {
-                    compare_head(left, right, &mut compare_error)
-                });
-            } else {
-                crate::topn_chunk_heap::go_heap::remove(&mut heads, 0, &mut |left, right| {
-                    compare_head(left, right, &mut compare_error)
-                });
-            }
-            if let Some(error) = compare_error {
-                return Err(error);
-            }
-        }
-
-        let mut chunk_bases = Vec::with_capacity(partitions.len());
-        let mut chunk_count = 0usize;
-        for partition in &partitions {
-            chunk_bases.push(chunk_count);
-            chunk_count += partition.chunks.len();
-        }
-        let merged_rows = order
-            .into_iter()
-            .map(|(partition_id, row_offset)| {
-                let (chunk, row) = partitions[partition_id].rows[row_offset];
-                (chunk_bases[partition_id] + chunk, row)
-            })
-            .collect();
-
-        let mut partitions = partitions.into_iter();
-        let mut merged = partitions.next().expect("non-empty partitions");
-        let mut chunks = std::mem::take(&mut merged.chunks);
-        for mut partition in partitions {
-            chunks.append(&mut partition.chunks);
-            let bytes = partition.mem_tracker.bytes_consumed();
-            partition.mem_tracker.replace_bytes_used(0);
-            partition.mem_tracker.detach();
-            merged.mem_tracker.consume(bytes);
-        }
-        merged.chunks = chunks;
-        merged.rows = merged_rows;
-        merged.sorted = true;
-        merged.cursor = 0;
-        merged.head_key = None;
-        Ok(Some(merged))
-    }
-
-    /// Transfers this retained in-memory run from the worker's detached
-    /// accounting tree to the Sort executor tracker.
-    pub(crate) fn attach_memory_to(&mut self, parent: &Arc<Tracker>) {
-        self.mem_tracker.attach_to(parent);
     }
 
     /// Go `sortPartition.spillToDisk` + `spillToDiskImpl`: sort, write every

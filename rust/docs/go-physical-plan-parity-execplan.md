@@ -1,5 +1,11 @@
 # Make Rust physical planning and execution match Go TiDB
 
+Current sort status: the substitute parallel dispatch was disabled by b00685bdd4,
+and its disconnected worker/spill/merger harness is retired. Earlier parallel
+sort claims below are historical. Use the corrected [package inventory](parity/sortexec-package-inventory.md)
+and [cleanup receipt](parity/current-audit/sort-cleanup-validation.json);
+Go's default parallel sort lifecycle remains missing.
+
 This ExecPlan is a living document. Keep `Progress`, `Surprises & Discoveries`,
 `Decision Log`, and `Outcomes & Retrospective` current while work proceeds.
 

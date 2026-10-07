@@ -1,5 +1,7 @@
 # Remaining structural mismatches, maintained 2026-10-07
 
+Latest cleanup: [disconnected sort pipeline](sort-cleanup-validation.json). Retired private worker/spill/merger/cursor code and 37 tests. Active Sort/TopN coverage remains; Go parallel sort is still missing. Finding statuses and counts are unchanged.
+
 Latest connected repair: [shared read consistency](read-consistency-batch-validation.json). Session-selected scope and stale mode now reach point/batch snapshots and coprocessor requests. Native stale flags reset between statements; tidb_snapshot and low-level KV Scan retain their distinct Go behavior. Four baseline failures precede 114 passing grouped Rust tests, affected all-target checking, lint and the locked server build. S04/O13/N03 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other53 roots retain carried evidence. Live SafeTS/local-transaction and complete package obligations remain open.
 
 Latest cleanup: [shared read consistency](read-consistency-batch-validation.json). Retire duplicated reader-side scope decisions and condense the three affected current finding descriptions while retaining linked evidence and behavioral tests. Prior [FK cleanup](fk-access-batch-validation.json) remains valid.
