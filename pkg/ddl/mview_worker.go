@@ -778,6 +778,7 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 		return errors.Trace(err)
 	}
 	lastSuccess := time.Now().Unix()
+	jobCtx.mustRollbackTxnOnError = true
 	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mviewTableInfo.ID, readTS, &lastSuccess, next, shouldUpdate))
 }
 
@@ -800,6 +801,7 @@ func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, ml
 	if err != nil {
 		return errors.Trace(err)
 	}
+	jobCtx.mustRollbackTxnOnError = true
 	return errors.Trace(execCreateMaterializedViewLogPurgeInfoUpsert(ctx, w.sess, mlogTableInfo.ID, next, shouldUpdate))
 }
 
