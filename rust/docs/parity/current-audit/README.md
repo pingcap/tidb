@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [executor scaffolding and completed error plans](executor-scaffold-cleanup-validation.json). Remove two redundant test registrations, an unused helper and three completed plans; preserve real DELETE/temporary-table assertions and redirect historical evidence to exact Git archives. All 56 unresolved finding dispositions remain unchanged.
+Latest cleanup: [current planning workflow](planning-history-cleanup-validation.json). Consolidate the living plan and repair maps, retire duplicated chronological instructions and correct stale Cloud paths/counts. Exact prior documents remain in Git archives; all 56 unresolved assignments, owner boundaries and dispositions are unchanged.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 

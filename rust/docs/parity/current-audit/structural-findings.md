@@ -1,6 +1,6 @@
 # Remaining structural mismatches, maintained 2026-10-07
 
-Latest cleanup: [executor scaffolding and completed error plans](executor-scaffold-cleanup-validation.json). Remove two redundant test registrations, an unused helper and three completed plans; preserve real DELETE/temporary-table assertions and redirect historical evidence to exact Git archives. All 56 unresolved finding dispositions remain unchanged.
+Latest cleanup: [current planning workflow](planning-history-cleanup-validation.json). Consolidate the living plan and repair maps, retire duplicated chronological instructions and correct stale Cloud paths/counts. Exact prior documents remain in Git archives; all 56 unresolved assignments, owner boundaries and dispositions are unchanged.
 
 Latest connected repair: [rename admission and publication](rename-owner-batch-validation.json). D01/D11/E02/I04 share ordered RENAME/ALTER admission, FK metadata retention and peer catalog publication. Remove private source/destination checks and use original schema IDs for the direct multi-table transition. Seven Rust regressions and nine of18 live assertions fail on the baseline; exact final gates are in the receipt. Counts remain86 tracked/30 repaired/56 unresolved (27open,29partial). Complete durable DDL and package ownership remain open; other52 roots retain carried evidence.
 

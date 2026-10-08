@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-07",
+  "timezone": "America/Los_Angeles",
+  "baseline": "9a319a5d6d78593e623a9db8e8aed1f750380507",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "scope": "Consolidate the living parity plan and two repair maps: replace copied chronological history, obsolete laptop commands and stale workstream counts with current Cloud instructions and exact Git archives. Keep all 56 unresolved assignments, owner boundaries, dependencies and acceptance gates.",
+  "archives": [
+    {
+      "path": "rust/docs/full-structural-parity-execplan.md",
+      "lines": 2725,
+      "bytes": 204237,
+      "sha256": "dc79ba3b007fcc9d1c859ff46564d2f7479b1cd723cd6d49ac86cc9b0d18ccfe",
+      "archive": "https://github.com/pingcap/tidb/blob/9a319a5d6d78593e623a9db8e8aed1f750380507/rust/docs/full-structural-parity-execplan.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/remaining-batches.md",
+      "lines": 209,
+      "bytes": 20171,
+      "sha256": "5909ffed049cf214a98e5cbe263aab2505a20ab0b550c63473ea0897da54d352",
+      "archive": "https://github.com/pingcap/tidb/blob/9a319a5d6d78593e623a9db8e8aed1f750380507/rust/docs/parity/current-audit/remaining-batches.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/repair-sequence.md",
+      "lines": 297,
+      "bytes": 30299,
+      "sha256": "5916e810d4f9d77da2542dd97d47605c0bff494c7b832d8629902dc62bd37b6e",
+      "archive": "https://github.com/pingcap/tidb/blob/9a319a5d6d78593e623a9db8e8aed1f750380507/rust/docs/parity/current-audit/repair-sequence.md"
+    }
+  ],
+  "validation": {
+    "status": "passed",
+    "command": "python3 /workspace/.cloud-setup/planning-history-cleanup/verify.py",
+    "publication": "Actual hook, fresh locked prepush build, remote SHA and cloud draft readback belong in /workspace/.cloud-setup/planning-history-cleanup/final-handoff.json.",
+    "net_planning_lines_removed": 2798,
+    "planning_bytes_removed": 228741,
+    "local_links_checked": 16,
+    "broken_links": [],
+    "batch_assignments": 56,
+    "batches": 10,
+    "verification_sha256": "f873334a7201b78ce3fb7f08e3ce47f20fd349db1e82ab37efa8632dfee9c717",
+    "diff_check": "git diff --check: passed",
+    "initial_check": "Initial link check ran before its new receipt existed and reported that missing link; receipt creation resolved it. No executable check failed."
+  },
+  "retained": [
+    "remaining-batches.json stays byte-identical; every unresolved ID occurs exactly once.",
+    "Finding bodies, counts, statuses, source owners, completion boundaries and integration dependencies remain unchanged.",
+    "Original Go obligations, regression policy, native sync, active-TS/delete-range prerequisites, unsafe feature refusals, workload cautions and publication gates remain.",
+    "Original plan bytes and dated receipts remain accessible through exact commit archives. No historical laptop log is represented as a Cloud file."
+  ],
+  "limits": [
+    "No executable source, tests, scripts, lockfile, generator or build configuration change.",
+    "Behavioral suites, lint, live clusters and benchmarks are not rerun for documentation-only cleanup. Mandatory commit/push builds remain required.",
+    "No new finding/package closure or measured compile/workload speedup."
+  ],
+  "external_logs": "/workspace/.cloud-setup/planning-history-cleanup"
+}

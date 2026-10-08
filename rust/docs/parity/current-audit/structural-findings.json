@@ -804,8 +804,8 @@
     "scope": "Shared rename admission, retained FK metadata and peer schema publication; existing direct-owner maintenance, not complete durable DDL/package acceptance."
   },
   "latest_test_cleanup": {
-    "receipt": "executor-scaffold-cleanup-validation.json",
-    "scope": "Retire the executor table-creation-only locking fixture, unused datum helper and duplicate DELETE registration: two tests and 69 net Rust lines. Archive three completed DDL error plans (503 lines), redirect all references, and preserve current Go obligations.",
+    "receipt": "planning-history-cleanup-validation.json",
+    "scope": "Consolidate the living parity plan and two repair maps: replace copied chronological history, obsolete laptop commands and stale workstream counts with current Cloud instructions and exact Git archives. Keep all 56 unresolved assignments, owner boundaries, dependencies and acceptance gates.",
     "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
   },
   "test_cleanup_history": [
@@ -1240,6 +1240,11 @@
     {
       "receipt": "executor-scaffold-cleanup-validation.json",
       "scope": "Retire the executor table-creation-only locking fixture, unused datum helper and duplicate DELETE registration: two tests and 69 net Rust lines. Archive three completed DDL error plans (503 lines), redirect all references, and preserve current Go obligations.",
+      "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
+    },
+    {
+      "receipt": "planning-history-cleanup-validation.json",
+      "scope": "Consolidate the living parity plan and two repair maps: replace copied chronological history, obsolete laptop commands and stale workstream counts with current Cloud instructions and exact Git archives. Keep all 56 unresolved assignments, owner boundaries, dependencies and acceptance gates.",
       "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544"
     }
   ],
