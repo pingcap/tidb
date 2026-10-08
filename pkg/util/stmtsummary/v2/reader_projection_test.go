@@ -62,7 +62,7 @@ func TestHistoryProjection(t *testing.T) {
 
 	// Every column factory is checked against the full record. This catches a
 	// missing dependency if a factory starts using another projected text field.
-	var allColumns []*model.ColumnInfo
+	allColumns := make([]*model.ColumnInfo, 0, len(columnFactoryMap))
 	for name, factory := range columnFactoryMap {
 		t.Run(name, func(t *testing.T) {
 			p := makeStmtRecordProjection(projectionColumns(name))
