@@ -423,7 +423,7 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 	oldVals := oldCol.Int64s()
 	addedVals := addedCol.Int64s()
 	removedVals := removedCol.Int64s()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		finalCnt := countVals[rowIdx]
 		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
@@ -571,7 +571,7 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	oldVals := oldCol.Uint64s()
 	addedVals := addedCol.Uint64s()
 	removedVals := removedCol.Uint64s()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		finalCnt := countVals[rowIdx]
 		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
@@ -719,7 +719,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	oldVals := oldCol.Float32s()
 	addedVals := addedCol.Float32s()
 	removedVals := removedCol.Float32s()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		finalCnt := countVals[rowIdx]
 		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
@@ -867,7 +867,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	oldVals := oldCol.Float64s()
 	addedVals := addedCol.Float64s()
 	removedVals := removedCol.Float64s()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		finalCnt := countVals[rowIdx]
 		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
@@ -1015,7 +1015,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	oldVals := oldCol.Decimals()
 	addedVals := addedCol.Decimals()
 	removedVals := removedCol.Decimals()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		finalCnt := countVals[rowIdx]
 		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
@@ -1163,7 +1163,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	oldVals := oldCol.Times()
 	addedVals := addedCol.Times()
 	removedVals := removedCol.Times()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		finalCnt := countVals[rowIdx]
 		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
@@ -1311,7 +1311,7 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 	oldVals := oldCol.GoDurations()
 	addedVals := addedCol.GoDurations()
 	removedVals := removedCol.GoDurations()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		finalCnt := countVals[rowIdx]
 		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
@@ -1455,7 +1455,7 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 	addedCntVals := addedCntCol.Int64s()
 	removedCntVals := removedCntCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		finalCnt := countVals[rowIdx]
 		if finalCnt == 0 {
 			resultCol.AppendNull()

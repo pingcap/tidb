@@ -194,7 +194,7 @@ func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.C
 	deltaVals := deltaCol.Int64s()
 	if !m.hasCountRef {
 		// Fast path for SUM(non-null expr).
-		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		for rowIdx := range numRows {
 			if oldCol.IsNull(rowIdx) {
 				resultVals[rowIdx] = deltaVals[rowIdx]
 				continue
@@ -213,7 +213,7 @@ func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.C
 		return err
 	}
 	countVals := countCol.Int64s()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		if countVals[rowIdx] == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
@@ -267,7 +267,7 @@ func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.
 	oldVals := oldCol.Uint64s()
 	deltaVals := deltaCol.Int64s()
 	if !m.hasCountRef {
-		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		for rowIdx := range numRows {
 			if oldCol.IsNull(rowIdx) {
 				sum, err := types.AddInteger(0, deltaVals[rowIdx])
 				if err != nil {
@@ -290,7 +290,7 @@ func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.
 		return err
 	}
 	countVals := countCol.Int64s()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		if countVals[rowIdx] == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
@@ -348,7 +348,7 @@ func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	oldVals := oldCol.Float64s()
 	deltaVals := deltaCol.Float64s()
 	if !m.hasCountRef {
-		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		for rowIdx := range numRows {
 			if oldCol.IsNull(rowIdx) {
 				resultVals[rowIdx] = deltaVals[rowIdx]
 				continue
@@ -363,7 +363,7 @@ func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return err
 	}
 	countVals := countCol.Int64s()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		if countVals[rowIdx] == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
@@ -412,7 +412,7 @@ func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	oldVals := oldCol.Decimals()
 	deltaVals := deltaCol.Decimals()
 	if !m.hasCountRef {
-		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		for rowIdx := range numRows {
 			if oldCol.IsNull(rowIdx) {
 				resultVals[rowIdx] = deltaVals[rowIdx]
 				continue
@@ -429,7 +429,7 @@ func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return err
 	}
 	countVals := countCol.Int64s()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		if countVals[rowIdx] == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue

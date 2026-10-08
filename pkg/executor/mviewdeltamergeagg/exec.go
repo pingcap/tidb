@@ -72,7 +72,7 @@ var globalContiguousRowIdxes = initContiguousRowIdxes(globalContiguousRowIdxCap)
 
 func initContiguousRowIdxes(rowCnt int) []int {
 	rowIdxes := make([]int, rowCnt)
-	for i := 0; i < rowCnt; i++ {
+	for i := range rowCnt {
 		rowIdxes[i] = i
 	}
 	return rowIdxes
@@ -333,7 +333,7 @@ func (e *Exec) runMergePipeline(ctx context.Context) (mergeWriterStats, error) {
 	freeInputCh := make(chan *chunk.Chunk, inputBufSize)
 	resultCh := make(chan *ChunkResult, workerCnt)
 
-	for i := 0; i < inputBufSize; i++ {
+	for range inputBufSize {
 		freeInputCh <- exec.NewFirstChunk(e.Children(0))
 	}
 
@@ -344,7 +344,7 @@ func (e *Exec) runMergePipeline(ctx context.Context) (mergeWriterStats, error) {
 
 	workerWG := sync.WaitGroup{}
 	workerWG.Add(workerCnt)
-	for i := 0; i < workerCnt; i++ {
+	for i := range workerCnt {
 		workerIdx := i
 		g.Go(func() error {
 			defer workerWG.Done()
@@ -1557,7 +1557,7 @@ func appendDatumToColumn(col *chunk.Column, d *types.Datum, ft *types.FieldType)
 	return nil
 }
 
-func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mergeWorkerData) ([]RowOp, []uint8, int, int, error) {
+func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mergeWorkerData) (rowOps []RowOp, updateTouchedBitmap []uint8, updateTouchedStride, updateTouchedBitCnt int, err error) {
 	if len(e.aggOutputColIDs) == 0 {
 		return nil, nil, 0, 0, errors.New("no aggregate outputs in Exec")
 	}
@@ -1575,13 +1575,13 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 
 	oldCountStarCol := input.Column(countStarOutputColID)
 	newCountStarVals := newCountStarCol.Int64s()
-	rowOps := make([]RowOp, 0, input.NumRows())
+	rowOps = make([]RowOp, 0, input.NumRows())
 
 	var updateRows []int
 	if workerData != nil {
 		updateRows = workerData.updateRows[:0]
 	}
-	for rowIdx := 0; rowIdx < input.NumRows(); rowIdx++ {
+	for rowIdx := range input.NumRows() {
 		newCount := newCountStarVals[rowIdx]
 		if newCount < 0 {
 			return nil, nil, 0, 0, errors.Errorf("count(*) becomes negative (%d)", newCount)
@@ -1610,13 +1610,13 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 		workerData.updateRows = updateRows
 	}
 
-	updateTouchedBitCnt := len(e.aggOutputColIDs)
-	updateTouchedStride := (updateTouchedBitCnt + 7) >> 3
+	updateTouchedBitCnt = len(e.aggOutputColIDs)
+	updateTouchedStride = (updateTouchedBitCnt + 7) >> 3
 	updateCnt := len(updateRows)
 	if updateCnt == 0 {
 		return rowOps, nil, updateTouchedStride, updateTouchedBitCnt, nil
 	}
-	updateTouchedBitmap := make([]uint8, updateCnt*updateTouchedStride)
+	updateTouchedBitmap = make([]uint8, updateCnt*updateTouchedStride)
 
 	fieldTypes := e.Children(0).RetFieldTypes()
 	for bitPos, colID := range e.aggOutputColIDs {

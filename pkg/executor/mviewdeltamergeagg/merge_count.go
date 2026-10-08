@@ -92,7 +92,7 @@ func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Co
 
 	oldVals := oldCol.Int64s()
 	deltaVals := deltaCol.Int64s()
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		var oldVal int64
 		if !oldCol.IsNull(rowIdx) {
 			oldVal = oldVals[rowIdx]

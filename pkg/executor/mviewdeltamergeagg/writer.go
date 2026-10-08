@@ -69,7 +69,7 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 	for i := range writableCols {
 		colIDs[i] = e.DeltaAggColCount + writableCols[i].Offset
 	}
-	for i := 0; i < e.TargetHandleCols.NumCols(); i++ {
+	for i := range e.TargetHandleCols.NumCols() {
 		handleInputIdx := e.TargetHandleCols.GetCol(i).Index
 		if handleInputIdx < 0 || handleInputIdx >= len(childTypes) {
 			return nil, errors.Errorf("TargetHandleCols col index %d out of input range [0,%d)", handleInputIdx, len(childTypes))
