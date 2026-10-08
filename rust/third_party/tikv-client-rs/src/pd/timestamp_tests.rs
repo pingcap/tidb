@@ -47,6 +47,8 @@ struct PdServer {
     group: Arc<std::sync::RwLock<tsopb::KeyspaceGroup>>,
     revision: Arc<AtomicUsize>,
     discovery_requests: Arc<AtomicUsize>,
+    discovery_error: Arc<std::sync::Mutex<Option<String>>>,
+    requested_revisions: Arc<std::sync::Mutex<Vec<u64>>>,
     stall_discovery: Arc<std::sync::atomic::AtomicBool>,
     tso_headers: Arc<std::sync::Mutex<Vec<tsopb::RequestHeader>>>,
     cluster_info: Arc<std::sync::RwLock<Option<pdpb::GetClusterInfoResponse>>>,
@@ -495,6 +497,8 @@ impl Server {
             })),
             revision: Arc::new(AtomicUsize::new(1)),
             discovery_requests: Arc::new(AtomicUsize::new(0)),
+            discovery_error: Arc::default(),
+            requested_revisions: Arc::default(),
             stall_discovery: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tso_headers: Arc::new(std::sync::Mutex::new(Vec::new())),
             cluster_info: Arc::new(std::sync::RwLock::new(None)),
@@ -1650,6 +1654,11 @@ impl tonic::server::UnaryService<tsopb::FindGroupByKeyspaceIdRequest> for TsoSer
         Box::pin(async move {
             assert!(request.metadata().contains_key("grpc-timeout"));
             let request = request.into_inner();
+            service
+                .requested_revisions
+                .lock()
+                .unwrap()
+                .push(request.mod_revision);
             let header = request.header.unwrap();
             let required = service.required_keyspace.load(Ordering::SeqCst);
             if required != 0
@@ -1670,6 +1679,15 @@ impl tonic::server::UnaryService<tsopb::FindGroupByKeyspaceIdRequest> for TsoSer
             Ok(tonic::Response::new(tsopb::FindGroupByKeyspaceIdResponse {
                 header: Some(tsopb::ResponseHeader {
                     cluster_id: 42,
+                    error: service
+                        .discovery_error
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .map(|message| tsopb::Error {
+                            message,
+                            ..Default::default()
+                        }),
                     ..Default::default()
                 }),
                 keyspace_group: Some(service.group.read().unwrap().clone()),
@@ -2975,4 +2993,121 @@ async fn collection_batch_live_wait_option_reaches_existing_oracle() {
         waited >= Duration::from_millis(9),
         "live collector ignored configured wait: {waited:?}"
     );
+}
+
+#[tokio::test]
+async fn observation_batch_failed_modes_preserve_accepted_provider() {
+    for microservice in [false, true] {
+        let pd = Server::start(Reply::Timestamp).await;
+        let tso = Server::start(Reply::Timestamp).await;
+        if microservice {
+            api_mode(&pd, &tso);
+        }
+        let client = metadata_client(&pd).await;
+        let original = client.tso_for_test().await;
+        for observation in [
+            pdpb::GetClusterInfoResponse::default(),
+            pdpb::GetClusterInfoResponse {
+                header: Some(pdpb::ResponseHeader {
+                    cluster_id: 42,
+                    error: Some(pdpb::Error {
+                        message: "observation rejected".into(),
+                        ..Default::default()
+                    }),
+                }),
+                ..Default::default()
+            },
+        ] {
+            *pd.service.cluster_info.write().unwrap() = Some(observation);
+            let result = client.reconnect_for_test().await;
+            assert!(
+                result.is_ok(),
+                "failed observation revoked accepted provider: {result:?}"
+            );
+            assert!(Arc::ptr_eq(
+                &original.inner,
+                &client.tso_for_test().await.inner
+            ));
+            assert_eq!(
+                client.clone().get_timestamp().await.unwrap().physical,
+                if microservice { 200 } else { 100 }
+            );
+        }
+        client.close().await;
+    }
+}
+
+#[tokio::test]
+async fn observation_batch_secondary_must_reach_newly_observed_revision() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let discovery = Server::start(Reply::Timestamp).await;
+    let secondary = Server::start(Reply::Timestamp).await;
+    api_mode(&pd, &discovery);
+    let client = metadata_client(&pd).await;
+    let original = client.tso_for_test().await;
+    discovery.service.revision.store(20, Ordering::SeqCst);
+    secondary.service.revision.store(19, Ordering::SeqCst);
+    *discovery.service.group.write().unwrap() = tsopb::KeyspaceGroup {
+        id: 7,
+        members: vec![tsopb::KeyspaceGroupMember {
+            address: secondary.service.endpoint.clone(),
+            is_primary: false,
+        }],
+        ..Default::default()
+    };
+    assert!(
+        client.reconnect_for_test().await.is_err(),
+        "secondary regressed revision 20 to 19"
+    );
+    assert_eq!(
+        *secondary.service.requested_revisions.lock().unwrap(),
+        vec![20]
+    );
+    assert!(Arc::ptr_eq(
+        &original.inner,
+        &client.tso_for_test().await.inner
+    ));
+    // A failed follow-up must not roll back the observed floor in a clone.
+    let primaryless = discovery.service.group.read().unwrap().clone();
+    discovery.service.revision.store(19, Ordering::SeqCst);
+    *discovery.service.group.write().unwrap() = secondary.service.group.read().unwrap().clone();
+    assert!(
+        client.reconnect_for_test().await.is_err(),
+        "failed refresh forgot the newer revision"
+    );
+    discovery.service.revision.store(20, Ordering::SeqCst);
+    *discovery.service.group.write().unwrap() = primaryless;
+    secondary.service.revision.store(20, Ordering::SeqCst);
+    client.reconnect_for_test().await.unwrap();
+    assert_eq!(client.clone().get_timestamp().await.unwrap().physical, 200);
+    client.close().await;
+}
+
+#[tokio::test]
+async fn observation_batch_callee_mismatch_retires_only_stale_connection() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let tso = Server::start(Reply::Timestamp).await;
+    api_mode(&pd, &tso);
+    let client = metadata_client(&pd).await;
+    let initial = tso.service.connections.load(Ordering::SeqCst);
+    let pd_connections = pd.service.connections.load(Ordering::SeqCst);
+    for (message, should_reconnect) in [
+        ("unrelated header error", false),
+        ("wrapped mismatch callee id: stale DNS", true),
+    ] {
+        *tso.service.discovery_error.lock().unwrap() = Some(message.into());
+        assert!(client.reconnect_for_test().await.is_err());
+        *tso.service.discovery_error.lock().unwrap() = None;
+        client.reconnect_for_test().await.unwrap();
+        assert_eq!(
+            tso.service.connections.load(Ordering::SeqCst) > initial,
+            should_reconnect,
+            "{message}"
+        );
+        assert_eq!(
+            pd.service.connections.load(Ordering::SeqCst),
+            pd_connections
+        );
+    }
+    client.close().await;
 }

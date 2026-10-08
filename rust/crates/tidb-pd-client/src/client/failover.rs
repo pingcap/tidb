@@ -557,7 +557,7 @@ pub(super) fn is_retryable_endpoint_error(
 pub(crate) struct PdChannelCache {
     pub(super) options: Arc<tikv_client::pd_options::Options>,
     pub(super) regions: Arc<tikv_client::pd_region_service::RegionService>,
-    channels: Arc<tikv_client::pd_service_discovery::ChannelCache>,
+    pub(super) channels: Arc<tikv_client::pd_service_discovery::ChannelCache>,
     security: Arc<ClusterSecurity>,
     pub(super) tso_discovery: Arc<tokio::sync::Mutex<TsoDiscoveryState>>,
     pub(super) tso_forwarding: tikv_client::pd_service_discovery::TsoForwarding,

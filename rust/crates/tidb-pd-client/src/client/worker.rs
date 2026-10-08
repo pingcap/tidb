@@ -849,7 +849,7 @@ async fn refresh_tso(
     }
     let mut discovery = shared.discovery.clone();
     let (route, _) = discovery
-        .discover(cluster_id, leader, clients.options.use_tso_server_proxy, timeout, |endpoint| {
+        .discover(cluster_id, leader, clients.options.use_tso_server_proxy, timeout, &clients.channels, |endpoint| {
             let channel = clients.channel(&endpoint);
             async move { channel.map_err(|error| tonic::Status::unavailable(error.to_string())) }
         })

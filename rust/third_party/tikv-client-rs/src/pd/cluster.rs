@@ -949,10 +949,17 @@ impl Connection {
         timeout: Duration,
     ) -> Result<(TsoRoute, Channel)> {
         Ok(discovery
-            .discover(id, url, self.options.use_tso_server_proxy, timeout, |url| {
-                let connection = self.clone();
-                async move { connection.channel(&url).await }
-            })
+            .discover(
+                id,
+                url,
+                self.options.use_tso_server_proxy,
+                timeout,
+                &self.channels,
+                |url| {
+                    let connection = self.clone();
+                    async move { connection.channel(&url).await }
+                },
+            )
             .await?)
     }
 

@@ -4,16 +4,16 @@ Latest cleanup: [current planning workflow](planning-history-cleanup-validation.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [shared FK policy and admission](fk-global-policy-validation.json). N03/D11/E02 now share the process switch, retained constraint versions, parent validation and rename policy. Persistent TRUNCATE/index/database submission reuses existing validators. Legacy metadata remains visible and inactive; existing version-one row checks remain enforced. Stale executor rollback and serial missing-index surrogates are replaced by session-owner coverage. Exact checks and limits are in the receipt. Counts remain86 tracked/30 repaired/56 unresolved (27open,29partial); complete packages and distributed/durable FK ownership remain open.
+Latest connected repair: [PD discovery observations](pd-observation-validation.json). P03/P06 now share accepted-provider retention for invalid mode observations, a revision floor that survives failed secondary lookups, and stale-callee cache eviction. Native and adapter regressions are grouped with existing lifecycle checks. Counts remain 86 tracked/30 repaired/56 unresolved (27 open,29 partial); other 54 findings retain carried evidence, and broader transport/discovery obligations remain partial.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../fk-global-policy-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../pd-observation-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](fk-global-policy-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](pd-observation-validation.json): exact source/log identities and verification limits.
 
-Current Go comparison: `7a3dacb52efe58d28db360ae8639d8838c376544`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master remains `aa2c60f37481c2fe7f03997535d4f238ed485956`; maintained sync is unchanged in this batch. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
+Current Go comparison: `7a3dacb52efe58d28db360ae8639d8838c376544`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `8c98fb002aa27e45aa2eb782fc091d0c7dba0f4b`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
 A complete upstream package, including original tests, generated/platform/build inputs and fixtures, is the minimum acceptance unit. Search hits, a passing subset and retired Rust-only adapter tests do not discharge those obligations. The complete inventories are snapshots, not proof that every semantic mismatch is known.
 
@@ -30,6 +30,8 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 Earlier implementation: [shared read consistency](read-consistency-batch-validation.json). Prior partition reorganization safety remains in place until its durable owner exists.
 
 ## Historical evidence
+
+- [Shared FK policy and admission](fk-global-policy-validation.json)
 
 - [TSO collection and live policy](tso-collection-batch-validation.json)
 

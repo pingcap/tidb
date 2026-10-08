@@ -1330,3 +1330,51 @@ fn collection_batch_preserves_other_commands_and_joins_shutdown() {
         other => panic!("unexpected shutdown result: {other:?}"),
     }
 }
+
+#[test]
+fn observation_batch_adapter_keeps_provider_after_invalid_mode_observations() {
+    for microservice in [false, true] {
+        let pd = Server::start_auto_batching();
+        let tso = Server::start_auto_batching();
+        if microservice {
+            pd.state.lock().unwrap().cluster_info = Some(pdpb::GetClusterInfoResponse {
+                service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+                tso_urls: vec![tso.address.clone()],
+                ..Default::default()
+            });
+        }
+        let client = PdClient::connect(&pd.address, Duration::from_secs(1)).unwrap();
+        client.get_timestamp().unwrap();
+        for (proxy, observation) in [
+            (true, pdpb::GetClusterInfoResponse::default()),
+            (
+                false,
+                pdpb::GetClusterInfoResponse {
+                    header: Some(pdpb::ResponseHeader {
+                        cluster_id: CLUSTER_ID,
+                        error: Some(pdpb::Error {
+                            message: "observation rejected".into(),
+                            ..Default::default()
+                        }),
+                    }),
+                    ..Default::default()
+                },
+            ),
+        ] {
+            pd.state.lock().unwrap().cluster_info = Some(observation);
+            // Changing the live proxy policy forces a refresh without waiting
+            // for the periodic discovery timer.
+            client.set_enable_tso_follower_proxy(proxy);
+            client
+                .get_timestamp()
+                .expect("failed observation must retain the accepted provider");
+        }
+        if microservice {
+            assert!(pd.state.lock().unwrap().requests.is_empty());
+            assert_eq!(tso.state.lock().unwrap().micro_requests.len(), 3);
+        } else {
+            assert_eq!(pd.state.lock().unwrap().requests.len(), 3);
+        }
+        client.shutdown().unwrap();
+    }
+}

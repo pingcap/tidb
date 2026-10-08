@@ -1,0 +1,173 @@
+{
+  "date": "2026-10-08",
+  "scope": "B01 existing-owner maintenance across P03/P06: failed observations, secondary revision floor and stale-callee cache eviction",
+  "baseline": {
+    "tidb": "00c262c166c1595f37187c3e166e7b9325a95c28",
+    "native": "aa2c60f37481c2fe7f03997535d4f238ed485956",
+    "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+    "pd": "v0.0.0-20260805103528-afa43111d149"
+  },
+  "native_published": "8c98fb002aa27e45aa2eb782fc091d0c7dba0f4b",
+  "before": {
+    "native": {
+      "passed": 0,
+      "failed": 3,
+      "ignored": 0
+    },
+    "adapter": {
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0
+    },
+    "behavior": "All four fail on unchanged production code; native failures reproduce invalid observation rejection, secondary revision regression and missing cache eviction. Adapter fails its live request after invalid observation."
+  },
+  "repairs": [
+    "Retain accepted provider on unsuccessful service-mode observations, including empty modes and header errors. No accepted provider at bootstrap still means failure; explicit Unimplemented retains classic compatibility.",
+    "Share the monotonic revision floor across cloned discovery attempts. Advance it on valid primaryless metadata before secondary lookup and reject older secondary or subsequent observations. Reset the floor for a new keyspace/provider lifecycle.",
+    "Select from secondary members for the follow-up. On a FindGroup header containing mismatch callee id, remove only that endpoint from the canonical channel cache. Both native Connection and TiDB PdChannelCache supply their existing cache; unrelated errors retain reuse."
+  ],
+  "source_owners": [
+    "PD servicediscovery/service_discovery.go::checkServiceModeChanged/getClusterInfo",
+    "PD servicediscovery/tso_service_discovery.go::updateMember/updateMemberInner/findGroupByKeyspaceID",
+    "PD servicediscovery/tso_service_discovery_test.go::TestKeyspaceGroupSvcDiscoveryUpdateKeepsPrimary/TestKeyspaceGroupSvcDiscoveryUpdateUpdatesAllFieldsOnFreshRevision"
+  ],
+  "validation": [
+    {
+      "command": "cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib -- pd::timestamp::tests:: pd::service_discovery pd::errs:: --test-threads=1",
+      "cwd": "/workspace/client-rust",
+      "passed": 72,
+      "failed": 0,
+      "ignored": 0,
+      "log": "native-final.log"
+    },
+    {
+      "command": "cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked -p tikv-client --all-targets",
+      "cwd": "/workspace/client-rust",
+      "status": "passed",
+      "log": "native-check.log"
+    },
+    {
+      "command": "cargo test --locked -p tidb-pd-client --lib --test all --no-fail-fast -- tso_source:: pd_client_source:: client::worker_lifecycle_tests:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "passed": 75,
+      "failed": 0,
+      "ignored": 0,
+      "detail": "6 selected library tests and69 selected wire tests",
+      "log": "adapter-final.log"
+    },
+    {
+      "command": "cargo check --locked -p tidb-pd-client -p tidb-server --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "log": "adapter-check.log"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "log": "lint-final.log"
+    }
+  ],
+  "distinct_selected_rust_tests": 147,
+  "native_sync": "Maintained sync-tikv-client-rs.sh applied all4 patches and regenerated bindings. Generated files and dependencies are unchanged. Scratch before-image matched the maintained vendor for all50 previously patched/generated files.",
+  "publication": {
+    "native": "normal commit and push passed after fresh locked server build; remote SHA verified",
+    "tidb": "pending actual hook, fresh pre-push locked server build and remote verification; postcommit evidence belongs to /workspace/.cloud-setup/pd-observation-batch/final-handoff.json"
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "finding_disposition": "P03/P06 remain partial. Other54 findings retain prior evidence, not a new re-audit.",
+  "limits": [
+    "No complete Go package acceptance. Full Go suites, live multi-node TiKV/PD and performance not run.",
+    "Cache eviction forces future lookup reconnection; borrowed tonic streams are not forcibly closed by cache removal. Complete transport generation retirement remains open.",
+    "Primaryless revision publication is repaired, but complete primaryless member-list publication remains open.",
+    "Separate native/adapter dispatchers, RPC concurrency, readiness/prewarm, idle recovery and independent observation timing remain open.",
+    "Cloud configuration saving does not establish publication or fresh-task restoration."
+  ],
+  "artifacts": {
+    "native-before.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/native-before.log",
+      "sha256": "93a64b432fc837776939ee40c7810def87103efc66980902f410fb3e87ae93fc",
+      "bytes": 2144
+    },
+    "adapter-before.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/adapter-before.log",
+      "sha256": "c81014e3d45d4d1b9e0b3f4d9573b1008cc9155c7b912e4c85fc735f3af67245",
+      "bytes": 2290
+    },
+    "native-final.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/native-final.log",
+      "sha256": "5b8cf113af6f3cc6314f2ad8e074c868876f1ef2e858011215f14c07aa8371da",
+      "bytes": 6981
+    },
+    "native-check.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/native-check.log",
+      "sha256": "752654f19077fae3eb03716678b256651536dffbbc29db05786923991319deaf",
+      "bytes": 541
+    },
+    "adapter-final.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/adapter-final.log",
+      "sha256": "25e20d22461b9b912fbfcf813c49a95ef604253e3aa4e0cea6e78ec2059f7acb",
+      "bytes": 8406
+    },
+    "lint-final.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/lint-final.log",
+      "sha256": "cba6076f01c0212b39e9b7da1f5429c862da09dcf8295b44e93b828e38c522d4",
+      "bytes": 2164
+    },
+    "native-commit.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/native-commit.log",
+      "sha256": "d2b21b53f5d7e51c50baf82b2bf9c5e252daf3bc1a6543fd4d7a51948fdbe6dd",
+      "bytes": 139
+    },
+    "native-prepush-build.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/native-prepush-build.log",
+      "sha256": "010eb8353fc62648f668e07388469d3fa350cb05464d1b7b4ed9d7bca03602bb",
+      "bytes": 105999
+    },
+    "native-push.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/native-push.log",
+      "sha256": "7bef1a368a4c7ce8064a9f3f5377ed357b0dc870f4704a44ed0fb58d117a0ae5",
+      "bytes": 82
+    },
+    "native-remote-head.txt": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/native-remote-head.txt",
+      "sha256": "4cb68a08710c2a09f3bcfe0af37fd3c8edf2a32db3236b7894b6f19e7a351ff8",
+      "bytes": 59
+    },
+    "sync.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/sync.log",
+      "sha256": "3ffd9dfff97ed99720257ef33c22275d30f1cb2fef75a37125e76951ac389768",
+      "bytes": 1897
+    },
+    "go-package-inventory.json": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/go-package-inventory.json",
+      "sha256": "27629607cba271f697f2627a1b4bbda3aaa102f574750aaf8544c704b4ee0d12",
+      "bytes": 1684
+    },
+    "adapter-check.log": {
+      "path": "/workspace/.cloud-setup/pd-observation-batch/adapter-check.log",
+      "bytes": 111103,
+      "sha256": "b40a71ca9164e85fadeb9ec2c2f9157d354436a4f2170877f5614a89752a5463"
+    }
+  },
+  "validated_source": {
+    "/workspace/client-rust/src/pd/service_discovery.rs": "48779ad6571d78c6fc9fa149b7c33dac8d42f1f9d2f14bc6b5ff58d1e73bb3ff",
+    "/workspace/client-rust/src/pd/cluster.rs": "b410d42ec1eba4f8f2b53ebd457a4de45f8a339bf5e03972a4cc09bfbbe39d06",
+    "/workspace/client-rust/src/pd/timestamp_tests.rs": "6b7f2b55f6ff90cc3bdbed20001757b43d0fa639f17c389928b3968e8245072d",
+    "/workspace/tidb/rust/crates/tidb-pd-client/src/client/worker.rs": "3bb9dbe0efc7856f11b910e0663fbf49c7a90ed100309836ac6c02f2eb191d28",
+    "/workspace/tidb/rust/crates/tidb-pd-client/src/client/failover.rs": "3cc62c1dafbbd76fb474fb9829958a3e1189c2e8ccd40934c519c4f755058367",
+    "/workspace/tidb/rust/crates/tidb-pd-client/tests/tso_source.rs": "70e6601c02dbb7fa6e61e12d57fc75c332360dba398ba3b9e4a814520cb22ac0",
+    "/workspace/tidb/rust/third_party/tikv-client-rs/src/pd/service_discovery.rs": "e9d56cac6ac076adc649eaa3db50f3319432c7872ddd7f9d68da22b29827d8cd",
+    "/workspace/tidb/rust/third_party/tikv-client-rs/src/pd/cluster.rs": "b410d42ec1eba4f8f2b53ebd457a4de45f8a339bf5e03972a4cc09bfbbe39d06",
+    "/workspace/tidb/rust/third_party/tikv-client-rs/src/pd/timestamp_tests.rs": "6b7f2b55f6ff90cc3bdbed20001757b43d0fa639f17c389928b3968e8245072d"
+  },
+  "bazel_prepare": "Not triggered: no Go/Bazel files, Go imports/tests or module inputs changed.",
+  "self_review": "Diff whitespace check, both caller migrations, source hashes and JSON/Markdown finding consistency passed; only P03/P06 finding bodies changed."
+}

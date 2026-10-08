@@ -6,6 +6,7 @@
 use crate::proto::{keyspacepb, meta_storagepb, pdpb, tsopb};
 use futures::{Stream, StreamExt};
 use prost::Message;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{future::Future, pin::Pin, time::Duration};
 use tonic::{transport::Channel, Request, Status};
@@ -142,6 +143,20 @@ impl ChannelCache {
             .map_err(|_| Status::deadline_exceeded("PD channel dial timed out"))??;
         // Recheck close and concurrent publication after dialing.
         self.get_or_insert_with(endpoint, || Ok(candidate))
+    }
+
+    /// Forget the endpoint whose server rejected its callee identity. The next
+    /// discovery RPC must resolve and connect again, as Go RemoveClientConn does.
+    /// Existing borrowed streams retain their own cancellation lifetime.
+    pub fn remove(&self, endpoint: &str) {
+        if let Some(channels) = self
+            .channels
+            .lock()
+            .expect("PD channel cache poisoned")
+            .as_mut()
+        {
+            channels.remove(endpoint);
+        }
     }
 
     /// Release cached handles and prohibit new publication, including a dial
@@ -378,12 +393,14 @@ impl TsoForwarding {
 }
 
 /// Clone before refreshing, then publish only after discovery and dialing have
-/// succeeded. Failed RPCs must not overwrite the last accepted revision/route.
+/// succeeded. Failed RPCs cannot replace the accepted route. Fresh group
+/// revisions are shared across snapshots even if primary discovery then fails,
+/// as Go keyspaceGroupSvcDiscovery.update publishes primaryless metadata.
 #[derive(Clone, Debug)]
 pub struct TsoDiscovery {
     keyspace_id: u32,
     assigned_group: bool,
-    revision: u64,
+    revision: Arc<AtomicU64>,
     service_urls: Vec<String>,
     cursor: Arc<Mutex<DiscoveryCursor>>,
     forwarding: TsoForwarding,
@@ -401,7 +418,7 @@ impl Default for TsoDiscovery {
         Self {
             keyspace_id: NULL_KEYSPACE_ID,
             assigned_group: false,
-            revision: 0,
+            revision: Arc::default(),
             service_urls: Vec::new(),
             cursor: Arc::new(Mutex::new(DiscoveryCursor::default())),
             forwarding: TsoForwarding::default(),
@@ -429,7 +446,7 @@ impl TsoDiscovery {
             }
         };
         if self.keyspace_id != id {
-            self.revision = 0;
+            self.revision = Arc::default();
             self.accepted_route = None;
         }
         self.keyspace_id = id;
@@ -447,6 +464,7 @@ impl TsoDiscovery {
         leader: &str,
         use_pd_proxy: bool,
         timeout: Duration,
+        channels: &ChannelCache,
         dial: F,
     ) -> Result<(TsoRoute, Channel), Status>
     where
@@ -456,7 +474,7 @@ impl TsoDiscovery {
         // Bound dialing as well as all discovery requests with the caller's budget.
         let result = tokio::time::timeout(
             timeout,
-            self.discover_inner(cluster_id, leader, use_pd_proxy, timeout, dial),
+            self.discover_inner(cluster_id, leader, use_pd_proxy, timeout, channels, dial),
         )
         .await
         .map_err(|_| Status::deadline_exceeded("TSO discovery timed out"))?;
@@ -472,6 +490,7 @@ impl TsoDiscovery {
         leader: &str,
         use_pd_proxy: bool,
         timeout: Duration,
+        channels: &ChannelCache,
         dial: F,
     ) -> Result<(TsoRoute, Channel), Status>
     where
@@ -480,51 +499,58 @@ impl TsoDiscovery {
     {
         let channel = dial(leader.to_owned()).await?;
         let mut client = pdpb::pd_client::PdClient::new(channel.clone());
-        let info = match client
+        let observation = match client
             .get_cluster_info(request(pdpb::GetClusterInfoRequest::default(), timeout))
             .await
         {
-            Ok(response) => response.into_inner(),
+            Ok(response) => {
+                let info = response.into_inner();
+                if let Some(error) = info
+                    .header
+                    .as_ref()
+                    .and_then(|header| header.error.as_ref())
+                {
+                    Err(Status::unknown(error.message.clone()))
+                } else if info
+                    .service_modes
+                    .first()
+                    .copied()
+                    .and_then(|mode| pdpb::ServiceMode::try_from(mode).ok())
+                    .is_none_or(|mode| {
+                        !matches!(
+                            mode,
+                            pdpb::ServiceMode::PdSvcMode | pdpb::ServiceMode::ApiSvcMode
+                        )
+                    })
+                {
+                    Err(Status::unknown("no supported service mode returned"))
+                } else {
+                    Ok(info)
+                }
+            }
             Err(error) if error.code() == tonic::Code::Unimplemented => {
                 return Ok((self.classic(leader), channel));
             }
+            Err(error) => Err(error),
+        };
+        let info = match observation {
+            Ok(info) => info,
             Err(error) => {
-                // Go checks service mode independently of timestamp connections.
-                // A failed observation must not revoke the last accepted provider.
-                if matches!(
-                    error.code(),
-                    tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
-                ) {
-                    if let Some(mut route) = self.accepted_route.clone() {
-                        if route.group_id.is_none() {
-                            route.endpoint = leader.to_owned();
-                        }
-                        let route_channel = dial(route.endpoint.clone()).await?;
-                        return Ok((route, route_channel));
-                    }
+                // Service-mode observation does not own the accepted provider's
+                // lifetime. Go leaves it installed on every failed observation,
+                // including header errors and empty modes, not only network errors.
+                let Some(mut route) = self.accepted_route.clone() else {
+                    return Err(error);
+                };
+                if route.group_id.is_none() {
+                    route.endpoint = leader.to_owned();
                 }
-                return Err(error);
+                let route_channel = dial(route.endpoint.clone()).await?;
+                return Ok((route, route_channel));
             }
         };
-        if let Some(error) = info
-            .header
-            .as_ref()
-            .and_then(|header| header.error.as_ref())
-        {
-            return Err(Status::unknown(error.message.clone()));
-        }
-        match info
-            .service_modes
-            .first()
-            .copied()
-            .and_then(|mode| pdpb::ServiceMode::try_from(mode).ok())
-        {
-            Some(pdpb::ServiceMode::PdSvcMode) => return Ok((self.classic(leader), channel)),
-            Some(pdpb::ServiceMode::ApiSvcMode) if use_pd_proxy => {
-                return Ok((self.classic(leader), channel))
-            }
-            Some(pdpb::ServiceMode::ApiSvcMode) => {}
-            _ => return Err(Status::unknown("no supported service mode returned")),
+        if info.service_modes[0] == pdpb::ServiceMode::PdSvcMode as i32 || use_pd_proxy {
+            return Ok((self.classic(leader), channel));
         }
         let (group, revision) = if info.tso_urls.is_empty() {
             if self.assigned_group {
@@ -590,25 +616,33 @@ impl TsoDiscovery {
                 cursor.next = (cursor.next + 1) % cursor.urls.len();
                 url
             };
-            let (mut group, mut revision) =
-                self.find_group(cluster_id, &url, timeout, &dial).await?;
+            let (mut group, mut revision) = self
+                .find_group(cluster_id, &url, timeout, channels, &dial)
+                .await?;
             // A discovery server outside the group can return only secondaries.
             if !group
                 .members
                 .iter()
                 .any(|member| member.is_primary && !member.address.is_empty())
             {
+                // The metadata revision is accepted before following a group
+                // member, even if that follow-up fails. Older observations must
+                // not resurrect a stale primary on the next refresh either.
+                self.revision.fetch_max(revision, Ordering::SeqCst);
+                use rand::seq::IteratorRandom;
                 let secondary = group
                     .members
-                    .first()
+                    .iter()
+                    .filter(|member| !member.is_primary)
+                    .choose(&mut rand::thread_rng())
                     .ok_or_else(|| Status::unavailable("no TSO group member"))?;
                 (group, revision) = self
-                    .find_group(cluster_id, &secondary.address, timeout, &dial)
+                    .find_group(cluster_id, &secondary.address, timeout, channels, &dial)
                     .await?;
             }
             (group, revision)
         };
-        if revision < self.revision {
+        if revision < self.revision.load(Ordering::SeqCst) {
             return Err(Status::failed_precondition(
                 "stale TSO keyspace group revision",
             ));
@@ -627,13 +661,13 @@ impl TsoDiscovery {
         };
         let channel = dial(route.endpoint.clone()).await?;
         self.service_urls = group.members.iter().map(|m| m.address.clone()).collect();
-        self.revision = revision;
+        self.revision.fetch_max(revision, Ordering::SeqCst);
         Ok((route, channel))
     }
 
     fn classic(&mut self, leader: &str) -> TsoRoute {
         // A subsequent API-mode entry creates a new group discovery lifecycle.
-        self.revision = 0;
+        self.revision = Arc::default();
         self.service_urls.clear();
         *self.cursor.lock().expect("TSO discovery cursor poisoned") = DiscoveryCursor::default();
         TsoRoute {
@@ -760,6 +794,7 @@ impl TsoDiscovery {
         cluster_id: u64,
         url: &str,
         timeout: Duration,
+        channels: &ChannelCache,
         dial: &F,
     ) -> Result<(tsopb::KeyspaceGroup, u64), Status>
     where
@@ -782,16 +817,19 @@ impl TsoDiscovery {
                             self.keyspace_id,
                         ),
                     ),
-                    mod_revision: self.revision,
+                    mod_revision: self.revision.load(Ordering::SeqCst),
                 },
                 timeout,
             ))
             .await?
             .into_inner();
         if let Some(error) = response.header.and_then(|header| header.error) {
+            if error.message.contains(super::errs::MISMATCH_CALLEE_ID_ERR) {
+                channels.remove(url);
+            }
             return Err(Status::unknown(error.message));
         }
-        if response.mod_revision < self.revision {
+        if response.mod_revision < self.revision.load(Ordering::SeqCst) {
             return Err(Status::failed_precondition(
                 "stale TSO keyspace group revision",
             ));
