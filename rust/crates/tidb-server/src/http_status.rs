@@ -12,39 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The status HTTP listener: the `/status` slice of Go's
-//! `pkg/server/http_status.go`.
-//!
-//! Go's status server mounts dozens of handlers; the one every client and
-//! `cmd/tidb-server`'s own `main_test.go` reach first is `/status`
-//! (`http_status.go:689`), whose body is the `Status` struct
-//! (`:675`): `{connections, version, git_hash, status:{init_stats_percentage}}`
-//! in exactly that field order. This module serves that endpoint over a
-//! hand-rolled HTTP/1.1 loop, alongside metrics and the configured routes.
-//!
-//! # Narrowings, each naming its Go symbol
-//!
-//! * Unported handlers such as pprof answer 404. Metrics export the shared
-//!   Prometheus registry; configuration and schema routes require node sources.
-//! * `s.health.Load()` — the 500-during-shutdown arm — narrows with the
-//!   graceful-shutdown integration; this listener lives for the process.
+//! Go's shared status HTTP/gRPC listener, with one joined shutdown owner.
+use crate::sql_node::ConnectionTracker;
+#[cfg(test)]
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
 
-use crate::sql_node::ConnectionTracker;
-
-/// A running status listener; the accept thread lives for the process,
-/// as Go's does until shutdown.
+/// Owns the status socket, connections and runtime until node shutdown.
 pub struct StatusServer {
     local_addr: std::net::SocketAddr,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
-
 impl StatusServer {
-    /// The bound address, for logs and tests.
+    /// The address actually bound by this server.
     #[must_use]
     pub const fn local_addr(&self) -> std::net::SocketAddr {
         self.local_addr
+    }
+}
+impl Drop for StatusServer {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -80,9 +75,13 @@ pub struct StatusRoutes {
     pub schema: Option<SchemaSource>,
     /// Live configuration and the node's shared runtime settings owners.
     pub settings: Option<crate::http_settings::Settings>,
+    /// Local generated TiKV service shared by peer KILL and memory-table scans.
+    pub peer: Option<crate::peer_rpc::PeerService>,
+    /// Cluster TLS policy, shared with outgoing transports.
+    pub security: tidb_pd_client::ClusterSecurity,
 }
 
-/// [`start_status_listener`] also answering the routes in `routes`.
+/// Bind HTTP and generated gRPC routes on Go's shared status port.
 pub fn start_status_listener_with_routes(
     host: &str,
     port: u16,
@@ -91,148 +90,296 @@ pub fn start_status_listener_with_routes(
     git_hash: String,
     routes: StatusRoutes,
 ) -> std::io::Result<StatusServer> {
-    // Go registers every metric family in `main` before `Server.Run` starts
-    // the status listener; the Rust node does the same here so `/metrics`
-    // exports the full registered family set regardless of which node
-    // binary path bound it. Idempotent: repeat calls are no-ops.
     crate::server_metrics::init();
-    let StatusRoutes { schema, settings } = routes;
+    let tls = crate::status_transport::tls_acceptor(&routes.security)?;
     let listener = TcpListener::bind((host, port))?;
+    listener.set_nonblocking(true)?;
     let local_addr = listener.local_addr()?;
-    std::thread::Builder::new()
-        .name("tidb-status-http".to_owned())
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?;
+    let listener = {
+        let _entered = runtime.enter();
+        tokio::net::TcpListener::from_std(listener)?
+    };
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let config = tidb_config::config_tree::config::get_global_config()
+        .status
+        .clone();
+    let worker = std::thread::Builder::new()
+        .name("tidb-status".into())
         .spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let tracker = Arc::clone(&tracker);
-                let version = version.clone();
-                let git_hash = git_hash.clone();
-                let schema = schema.clone();
-                let settings = settings.clone();
-                // One short-lived thread per request keeps the accept loop
-                // from stalling on a slow client without an executor.
-                let _ = std::thread::Builder::new()
-                    .name("tidb-status-conn".to_owned())
-                    .spawn(move || {
-                        let request = match crate::http_request::read_request(&mut stream) {
-                            Ok(request) => request,
-                            Err(error) => {
-                                let response = format!("HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}", error.len());
-                                let _ = stream.write_all(response.as_bytes());
-                                return;
-                            }
-                        };
-                        let path = request
-                            .lines()
-                            .next()
-                            .and_then(|line| line.split_whitespace().nth(1))
-                            .unwrap_or("");
-                        let response = if path == "/status" {
-                            let init_stats_percentage =
-                                tidb_stats_handle_initstats::INIT_STATS_PERCENTAGE.load();
-                            let init_stats_percentage = if init_stats_percentage.is_nan() {
-                                init_stats_percentage
-                            } else {
-                                init_stats_percentage.min(100.0)
-                            };
-                            // Go `handleStatus`: the Status struct's field
-                            // order, `Content-Type: application/json`.
-                            let body = format!(
-                                "{{\"connections\":{},\"version\":\"{}\",\"git_hash\":\"{}\",\
-                                 \"status\":{{\"init_stats_percentage\":{}}}}}",
-                                tracker.active(),
-                                version,
-                                git_hash,
-                                init_stats_percentage,
-                            );
-                            format!(
-                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
-                                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                                body.len(),
-                            )
-                        } else if path == "/metrics" {
-                            // Go's promhttp handler exports the shared registry,
-                            // including metrics registered by statistics and SLI.
-                            // `tidb_server_connections` is the real
-                            // `metrics.ConnGauge` now (Go `server.go:303`), not
-                            // a synthesized line: it carries the
-                            // `resource_group` label and gains series exactly
-                            // when Go's does, on the first connection.
-                            // Go serves one registry; the Rust node renders
-                            // the workspace's 0.14 registry plus the
-                            // client-go `tidb_tikvclient_*` block (0.13
-                            // registry inside tikv-client) as one stream.
-                            let mut body = prometheus::TextEncoder::new()
-                                .encode_to_string(&prometheus::gather())
-                                .expect("registered metrics encode as Prometheus text");
-                            body.push_str(&tidb_txnkv::client_go_metrics::gather_text());
-                            // Go's exposition emits HELP/TYPE headers for
-                            // registered-but-childless histogram vecs;
-                            // rust-prometheus omits them. Append the family
-                            // catalog headers the gathered body lacks so
-                            // dashboards resolve the same family surface.
-                            for (fq, help) in crate::server_metrics::family_catalog() {
-                                if !body.contains(fq.as_str()) {
-                                    body.push_str(&format!(
-                                        "# HELP {fq} {help}\n# TYPE {fq} histogram\n"
-                                    ));
-                                }
-                            }
-                            format!(
-                                "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n\
-                                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                                body.len(),
-                            )
-                        } else if let Some(answer) =
-                            settings_response(path, &request, settings.as_ref())
-                        {
-                            match answer {
-                                Ok(body) => format!(
-                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
-                                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                                    body.len(),
-                                ),
-                                Err(message) => format!(
-                                    "HTTP/1.1 400 Bad Request\r\n\
-                                     Content-Type: text/plain\r\nContent-Length: {}\r\n\
-                                     Connection: close\r\n\r\n{message}",
-                                    message.len(),
-                                ),
-                            }
-                        } else if let Some(body) = schema
-                            .as_ref()
-                            .and_then(|source| schema_response(path, source.as_ref()))
-                        {
-                            match body {
-                                Ok(body) => format!(
-                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
-                                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                                    body.len(),
-                                ),
-                                // Go `handler.WriteError`: the message as
-                                // text, under 500.
-                                Err(message) => format!(
-                                    "HTTP/1.1 500 Internal Server Error\r\n\
-                                     Content-Type: text/plain\r\nContent-Length: {}\r\n\
-                                     Connection: close\r\n\r\n{message}",
-                                    message.len(),
-                                ),
-                            }
-                        } else {
-                            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\
-                             Connection: close\r\n\r\n"
-                                .to_owned()
-                        };
-                        let _ = stream.write_all(response.as_bytes());
-                    });
-            }
+            runtime.block_on(async move {
+                let router = if let Some(peer) = routes.peer.clone() {
+                    tonic::service::Routes::new(
+                        tidb_proto::tikvpb::tikv_server::TikvServer::new(peer)
+                            .max_encoding_message_size(
+                                config.grpc_max_send_msg_size.max(0) as usize
+                            ),
+                    )
+                    .into_axum_router()
+                } else {
+                    axum::Router::new()
+                };
+                let router = router.fallback(move |request: axum::extract::Request| {
+                    let (tracker, version, git_hash, routes) = (
+                        tracker.clone(),
+                        version.clone(),
+                        git_hash.clone(),
+                        routes.clone(),
+                    );
+                    async move { http_response(request, tracker, version, git_hash, routes).await }
+                });
+                // Go closes HTTP and stops gRPC immediately. The transport owns
+                // every connection and incomplete TLS handshake until shutdown.
+                tokio::select! {
+                result = crate::status_transport::serve(listener, tls, router, config) => {
+                    if let Err(error) = result { eprintln!("status listener failed: {error}"); }
+                }
+                _ = stopped => {}
+                }
+            });
         })?;
-    Ok(StatusServer { local_addr })
+    Ok(StatusServer {
+        local_addr,
+        stop: Some(stop),
+        worker: Some(worker),
+    })
+}
+
+async fn http_response(
+    request: axum::extract::Request,
+    tracker: Arc<ConnectionTracker>,
+    version: String,
+    git_hash: String,
+    routes: StatusRoutes,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let (parts, body) = request.into_parts();
+    let bytes = match axum::body::to_bytes(body, 10 << 20).await {
+        Ok(body) => body,
+        Err(error) => {
+            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    };
+    let body = match std::str::from_utf8(&bytes) {
+        Ok(body) => body,
+        Err(error) => {
+            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    };
+    let path = parts.uri.path_and_query().map_or("/", |p| p.as_str());
+    let mut request = format!("{} {} HTTP/1.1\r\n", parts.method, path);
+    for (name, value) in &parts.headers {
+        if name != "transfer-encoding" && name != "content-length" {
+            if let Ok(value) = value.to_str() {
+                request.push_str(&format!("{name}: {value}\r\n"));
+            }
+        }
+    }
+    request.push_str(&format!("Content-Length: {}\r\n\r\n{body}", body.len()));
+    let path = path.to_owned();
+    // Existing settings handlers may open an internal synchronous SQL session.
+    match tokio::task::spawn_blocking(move || {
+        route_response(&path, &request, &tracker, &version, &git_hash, &routes)
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            error.to_string(),
+        )
+            .into_response(),
+    }
+}
+
+fn route_response(
+    path: &str,
+    request: &str,
+    tracker: &ConnectionTracker,
+    version: &str,
+    git_hash: &str,
+    routes: &StatusRoutes,
+) -> axum::response::Response {
+    let route = path.split_once('?').map_or(path, |(route, _)| route);
+    let (code, content_type, body) = if route == "/status" {
+        let percentage = tidb_stats_handle_initstats::INIT_STATS_PERCENTAGE.load();
+        let percentage = if percentage.is_nan() {
+            percentage
+        } else {
+            percentage.min(100.0)
+        };
+        (
+            200,
+            "application/json",
+            format!(
+                "{{\"connections\":{},\"version\":\"{}\",\"git_hash\":\"{}\",\"status\":{{\"init_stats_percentage\":{}}}}}",
+                tracker.active(),
+                version,
+                git_hash,
+                percentage
+            ),
+        )
+    } else if route == "/metrics" {
+        let mut body = prometheus::TextEncoder::new()
+            .encode_to_string(&prometheus::gather())
+            .expect("registered metrics encode as Prometheus text");
+        body.push_str(&tidb_txnkv::client_go_metrics::gather_text());
+        // rust-prometheus omits registered vectors without children; Go exposes
+        // their HELP/TYPE headers. Both client and server use their shared owners.
+        for (name, help) in crate::server_metrics::family_catalog() {
+            if !body.contains(name.as_str()) {
+                body.push_str(&format!("# HELP {name} {help}\n# TYPE {name} histogram\n"));
+            }
+        }
+        (200, "text/plain; version=0.0.4", body)
+    } else if let Some(answer) = settings_response(path, request, routes.settings.as_ref()) {
+        match answer {
+            Ok(body) => (200, "application/json", body),
+            Err(message) => (400, "text/plain", message),
+        }
+    } else if let Some(answer) = routes
+        .schema
+        .as_ref()
+        .and_then(|source| schema_response(path, source.as_ref()))
+    {
+        match answer {
+            Ok(body) => (200, "application/json", body),
+            Err(message) => (500, "text/plain", message),
+        }
+    } else {
+        (404, "text/plain", String::new())
+    };
+    axum::http::Response::builder()
+        .status(code)
+        .header("content-type", content_type)
+        .header("content-length", body.len())
+        .header("connection", "close")
+        .body(axum::body::Body::from(body))
+        .expect("status response headers")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peer_host_batch_drop_releases_the_listener() {
+        let server = start_status_listener(
+            "127.0.0.1",
+            0,
+            Arc::new(ConnectionTracker::default()),
+            "test".into(),
+            "test".into(),
+        )
+        .unwrap();
+        let address = server.local_addr();
+        drop(server);
+        assert!(
+            TcpListener::bind(address).is_ok(),
+            "status owner leaked its listening socket"
+        );
+    }
+
+    #[test]
+    fn peer_host_batch_status_port_accepts_http2() {
+        let server = start_status_listener(
+            "127.0.0.1",
+            0,
+            Arc::new(ConnectionTracker::default()),
+            "test".into(),
+            "test".into(),
+        )
+        .unwrap();
+        let mut stream = std::net::TcpStream::connect(server.local_addr()).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        stream
+            .write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\x00\x00\x00\x04\x00\x00\x00\x00\x00")
+            .unwrap();
+        let mut frame = [0; 9];
+        stream.read_exact(&mut frame).unwrap();
+        assert_eq!(
+            frame[3], 4,
+            "first HTTP/2 server frame must be SETTINGS, received {frame:?}"
+        );
+    }
+
+    #[test]
+    fn peer_host_batch_http_framing_and_shutdown_release_route_owners() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = calls.clone();
+        let settings = crate::http_settings::Settings::new(
+            tidb_session::GlobalSysvars::default(),
+            Arc::new(move |name, value| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push((name.to_owned(), value.to_owned()));
+                Ok(())
+            }),
+        );
+        let server = start_status_listener_with_routes(
+            "127.0.0.1",
+            0,
+            Arc::new(ConnectionTracker::default()),
+            "test".into(),
+            "test".into(),
+            StatusRoutes {
+                settings: Some(settings),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let send = |raw: &[u8]| {
+            let mut socket = std::net::TcpStream::connect(server.local_addr()).unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            for part in raw.chunks(3) {
+                socket.write_all(part).unwrap();
+            }
+            socket.shutdown(std::net::Shutdown::Write).unwrap();
+            let mut response = String::new();
+            socket.read_to_string(&mut response).unwrap();
+            response
+        };
+        let body = "tidb_enable_1pc=1";
+        let raw = format!(
+            "POST /settings HTTP/1.1\r\nHost: x\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        assert!(send(raw.as_bytes()).starts_with("HTTP/1.1 200"));
+        let raw = format!(
+            "POST /settings HTTP/1.1\r\nHost: x\r\nContent-Type: application/x-www-form-urlencoded\r\nTransfer-Encoding: chunked\r\n\r\n{:x};x=1\r\n{body}\r\n0\r\nX-Trailer: yes\r\n\r\n",
+            body.len()
+        );
+        assert!(send(raw.as_bytes()).starts_with("HTTP/1.1 200"));
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            &vec![("tidb_enable_1pc".into(), "ON".into()); 2]
+        );
+        for raw in [
+            "POST /settings HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nContent-Length: 2\r\n\r\na=1",
+            "POST /settings HTTP/1.1\r\nHost: x\r\nContent-Length: 10485761\r\n\r\n",
+            "POST /settings HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\na=1xx",
+        ] {
+            let response = send(raw.as_bytes());
+            assert!(
+                response.is_empty() || response.starts_with("HTTP/1.1 400"),
+                "{response}"
+            );
+        }
+        drop(server);
+        assert_eq!(
+            Arc::strong_count(&calls),
+            1,
+            "status tasks retained route owners"
+        );
+    }
 
     #[test]
     fn status_answers_gos_shape_and_other_paths_answer_404() {

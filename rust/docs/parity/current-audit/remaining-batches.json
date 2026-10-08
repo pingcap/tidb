@@ -1,16 +1,16 @@
 {
-  "date": "2026-10-07",
+  "date": "2026-10-08",
   "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
   "integration_start": "0164d0cddb94258bbc363d9e02ece83d739705c0",
   "counts": {
     "tracked": 86,
-    "unresolved": 55,
-    "repaired": 31,
-    "open": 26,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 25,
     "partial": 29
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "K01 selection/composition repaired; N05 service-hosting residual made explicit. Other roots retain dated carried evidence; no complete package acceptance.",
+  "evidence_limit": "N04 KILL routing/receiving repaired; I03/N05 retain other table/service and full-package residuals. Other roots retain dated evidence.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -246,10 +246,9 @@
         "A03",
         "N01",
         "N03",
-        "N04",
         "N05"
       ],
-      "count": 6,
+      "count": 5,
       "dependencies": [
         "B03"
       ],
@@ -573,13 +572,17 @@
   },
   "latest_repair": {
     "date": "2026-10-08",
-    "receipt": "auto-id-owner-validation.json",
+    "receipt": "peer-host-validation.json",
     "findings": [
-      "K01",
+      "N04",
+      "I03",
       "N05"
+    ],
+    "repaired": [
+      "N04"
     ],
     "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
     "client_rust": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
-    "scope": "K01 allocator selection/composition repair across table, transport, DML/DDL and SHOW consumers; N05 service-hosting residual explicit. No complete-package acceptance."
+    "scope": "Shared incoming TiDB peer/status ownership: KILL and process snapshots, HTTP/gRPC, cluster TLS/CN and joined shutdown. N04 repaired; I03/N05 remain partial. No full package acceptance."
   }
 }

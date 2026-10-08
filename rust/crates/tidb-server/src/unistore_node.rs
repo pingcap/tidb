@@ -408,6 +408,8 @@ pub(crate) fn run_unistore_cluster_session(
             crate::http_status::StatusRoutes {
                 schema: Some(Arc::new(move || schema_factory.catalog_snapshot())),
                 settings: Some(factory.status_settings()),
+                peer: Some(factory.peer_service()),
+                security: config.cluster_security.clone(),
             },
         ) {
             Ok(server) => {

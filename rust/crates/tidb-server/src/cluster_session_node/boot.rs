@@ -658,6 +658,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             async_stats_loader,
         )| {
             let settings = factory.status_settings();
+            let peer = Some(factory.peer_service());
             let status_catalog = Arc::clone(&factory);
             let node =
                 ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
@@ -669,6 +670,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 node.tracker(),
                 Arc::new(move || status_catalog.catalog_snapshot()),
                 settings,
+                peer,
             )
             .map_err(|error| {
                 RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
@@ -737,6 +739,7 @@ fn start_cluster_status(
     tracker: Arc<crate::sql_node::ConnectionTracker>,
     schema: crate::http_status::SchemaSource,
     settings: crate::http_settings::Settings,
+    peer: Option<crate::peer_rpc::PeerService>,
 ) -> std::io::Result<Option<crate::http_status::StatusServer>> {
     // Go Server.Run starts status HTTP beside SQL when ReportStatus is set.
     // Publishing server info alone does not make that endpoint reachable.
@@ -752,6 +755,8 @@ fn start_cluster_status(
         crate::http_status::StatusRoutes {
             schema: Some(schema),
             settings: Some(settings),
+            peer,
+            security: config.cluster_security.clone(),
         },
     ) {
         Ok(server) => {
@@ -796,18 +801,21 @@ mod status_tests {
                 databases: Vec::new(),
                 schema_version: 1,
             });
-        assert!(start_cluster_status(
-            &config,
-            Arc::clone(&tracker),
-            Arc::clone(&schema),
-            test_settings()
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            start_cluster_status(
+                &config,
+                Arc::clone(&tracker),
+                Arc::clone(&schema),
+                test_settings(),
+                None
+            )
+            .unwrap()
+            .is_none()
+        );
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         config.report_status = true;
         config.status_port = occupied.local_addr().unwrap().port();
-        assert!(start_cluster_status(&config, tracker, schema, test_settings()).is_err());
+        assert!(start_cluster_status(&config, tracker, schema, test_settings(), None).is_err());
     }
 
     #[test]
@@ -824,7 +832,7 @@ mod status_tests {
             databases: Vec::new(),
             schema_version: 1,
         });
-        let server = start_cluster_status(&config, tracker, schema, test_settings())
+        let server = start_cluster_status(&config, tracker, schema, test_settings(), None)
             .unwrap()
             .expect("cluster startup must bind the advertised status service like Go");
         for path in ["/status", "/metrics", "/settings", "/config", "/schema"] {

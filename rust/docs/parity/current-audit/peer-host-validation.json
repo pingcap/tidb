@@ -1,0 +1,202 @@
+{
+  "date": "2026-10-08",
+  "baseline": {
+    "tidb_integration": "4a1a0b59c01adf1464cd42d0f2baafdceb3d9628",
+    "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+    "client_rust": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "findings": [
+    "N04",
+    "I03",
+    "N05"
+  ],
+  "repaired": [
+    "N04"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 25,
+    "partial": 29
+  },
+  "complete_package_acceptance": false,
+  "repairs": [
+    "One owned status socket serves HTTP1/HTTP2 and generated TiKV unary, streaming and batch commands in both startup paths.",
+    "Incoming KILL uses the local process registry with live configuration and never redispatches.",
+    "Incoming CLUSTER_PROCESSLIST shares session visibility/formatting, identity/default-role authorization, table IDs and both existing encoders.",
+    "Column IDs and output offsets are validated; unsupported tables/operators and malformed protobuf produce OtherError.",
+    "Cluster TLS follows Go no-client-cert default and required verified leaf-CN allowlist policy; HTTP and gRPC share ALPN.",
+    "Joined shutdown aborts connections and unfinished handshakes and releases listener/route owners. HTTP half-close preserves complete requests.",
+    "Decode all supported nested batch commands before effects; malformed later input cannot execute an earlier KILL."
+  ],
+  "cleanup": [
+    "Removed http_request.rs (145 lines including private framing test); meaningful fragmentation/chunking/error cases migrated to the actual HTTP transport.",
+    "Removed detached status accept/request threads and manual HTTP response framing.",
+    "Removed unused Axum serving features; preserved selected dependency versions.",
+    "Reconciled stale current counts and inbound-hosting descriptions across both registers and batch maps."
+  ],
+  "regressions": {
+    "command": "cargo test --locked --manifest-path rust/Cargo.toml -p tidb-server --lib peer_host_batch -- --nocapture",
+    "before": {
+      "passed": 0,
+      "failed": 2,
+      "log": {
+        "path": "/workspace/.cloud-setup/peer-host-batch/before-final.log",
+        "sha256": "2b06110ada73dc5dd0176e04e8bc57747976fc90aec8d3ef4e990c55c6a6a2c0",
+        "bytes": 106234
+      }
+    },
+    "failure_details": [
+      "HTTP2 preface received HTTP/1 bytes",
+      "Dropped status owner retained listening socket"
+    ]
+  },
+  "tests": [
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib peer_host_batch -- --nocapture",
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/peer-host-batch/final-config-tests.log",
+        "sha256": "b4b5d7223f7ef3a349479266b55b1f66b75b36bae32d51c94045093d5abe09d0",
+        "bytes": 105743
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib status -- --nocapture",
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/peer-host-batch/final-config-status.log",
+        "sha256": "a33850bb6b56b65790557857757a0cba8f5c3c2c09d41faeceaf008387b71cec",
+        "bytes": 108038
+      }
+    }
+  ],
+  "distinct_rust_cases": 17,
+  "sql": {
+    "command": "PYTHONPATH=/workspace/.cloud-setup/python python /workspace/.cloud-setup/peer-host-batch/live.py",
+    "receipt": {
+      "path": "/workspace/.cloud-setup/peer-host-batch/live.json",
+      "sha256": "1489e15f58fcdd28d984baf328472165051f6f3a32ffbbaea9e2d2e2ad0f943b",
+      "bytes": 1087
+    },
+    "binary_sha256": "99074cc7e783aa47691133c5ead304a9140fee2ec5a2494d717b6c42724a720b",
+    "checks": [
+      {
+        "name": "HTTP status sees both real SQL connections",
+        "passed": true
+      },
+      {
+        "name": "peer RPC succeeds without OtherError",
+        "passed": true
+      },
+      {
+        "name": "peer process scan includes this node status address",
+        "passed": true
+      },
+      {
+        "name": "peer process scan reads live SQL identity",
+        "passed": true
+      },
+      {
+        "name": "peer RPC succeeds without OtherError",
+        "passed": true
+      },
+      {
+        "name": "inbound gRPC KILL QUERY interrupts real SQL statement",
+        "passed": true
+      },
+      {
+        "name": "inbound KILL QUERY preserves SQL connection",
+        "passed": true
+      },
+      {
+        "name": "peer RPC succeeds without OtherError",
+        "passed": true
+      },
+      {
+        "name": "inbound gRPC KILL CONNECTION closes real SQL connection",
+        "passed": true
+      }
+    ],
+    "exit": 0,
+    "scope": "real Rust unistore SQL plus generated-descriptor gRPC client; no live Go or multi-node TiKV"
+  },
+  "checks": [
+    {
+      "command": "cd rust && cargo check --locked -p tidb-session -p tidb-server --all-targets",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/peer-host-batch/final-config-check.log",
+        "sha256": "64b22a2e25f5a2c9fc124b9a013d9b4068cbc933dadb192a9eb71e8fe6162e06",
+        "bytes": 109468
+      }
+    },
+    {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/peer-host-batch/lint-final.log",
+        "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+        "bytes": 2164
+      }
+    },
+    {
+      "command": "cd rust && cargo build --locked -p tidb-server",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/peer-host-batch/build-live-final.log",
+        "sha256": "66ecf509abaaf2e84022683c4b396c95b290b2e4d56fee8c221c0755441a9084",
+        "bytes": 104695
+      }
+    }
+  ],
+  "diagnosed_intermediate_failures": [
+    {
+      "cause": "Disk exhausted before baseline execution; then linker lacked space. Completed generated executables were retired with hashes; final baseline executed and failed both assertions.",
+      "logs": [
+        {
+          "path": "/workspace/.cloud-setup/peer-host-batch/before.log",
+          "sha256": "18457203c87d9c77674969028d23577fd5e1a3f49ba322c053c3687e0954e36b",
+          "bytes": 84023
+        },
+        {
+          "path": "/workspace/.cloud-setup/peer-host-batch/before-retry.log",
+          "sha256": "683a53c6247feab4ab3d2fb680006e55e49c8fbd1f8d449d2a7778a5b38e8a78",
+          "bytes": 146338
+        }
+      ]
+    },
+    {
+      "cause": "The first HTTP test detected hyper default half-close behavior; shared transport now enables half_close and the same test passes.",
+      "log": {
+        "path": "/workspace/.cloud-setup/peer-host-batch/after-first.log",
+        "sha256": "9b5c4cd42e1917bd845d35072a0841006741b13c3649d1899f743fc1d916d3f5",
+        "bytes": 110146
+      }
+    },
+    {
+      "cause": "External Python probe used Rust conn_id spelling rather than descriptor connID; fixed probe; no product code change.",
+      "receipt": {
+        "path": "/workspace/.cloud-setup/peer-host-batch/live-probe-error.json",
+        "sha256": "c3d91f5fb36bce8e1005336d7b92326f3e02d87541b3decb5b270b6afc77050b",
+        "bytes": 604
+      }
+    }
+  ],
+  "limits": [
+    "No complete pkg/server/pkg/executor package acceptance, platform/generated/test inventory acceptance, live Go server, multi-node TiKV or performance claim.",
+    "Other cluster memory tables and pushed operators, full coprocessor memory accounting, AutoID/other RPC service hosting and shutdown health signaling remain unresolved.",
+    "Both production startup paths compile; live SQL validation uses unistore.",
+    "Other carried findings were not freshly re-audited."
+  ],
+  "publication": {
+    "required": "Actual hooks/pre-commit locked server build, followed by a fresh locked build immediately before normal push and exact remote SHA verification; recorded in external final-handoff.json",
+    "native_changes": false
+  }
+}

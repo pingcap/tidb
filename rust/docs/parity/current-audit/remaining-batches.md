@@ -2,8 +2,8 @@
 
 The [JSON batch map](remaining-batches.json) owns the allocation below; the
 [finding register](structural-findings.json) owns dispositions and detailed
-residuals. Current counts are 86 tracked, 31 repaired and 55 unresolved
-(25 open, 30 partial). Read [README.md](README.md) for the latest repair and
+residuals. Current counts are 86 tracked, 32 repaired and 54 unresolved
+(25 open, 29 partial). Read [README.md](README.md) for the latest repair and
 validation receipts. Older maintenance summaries are preserved in the
 [planning archive](https://github.com/pingcap/tidb/blob/9a319a5d6d78593e623a9db8e8aed1f750380507/rust/docs/parity/current-audit/remaining-batches.md).
 
@@ -19,7 +19,7 @@ independent prerequisite packages can proceed before a parent is complete.
 | B02 | Shared SQL session, planner and table execution | A01, E02, E03, T01, K03, S03, S04 | 7 |
 | B03 | Schema, identity and timestamp protection | O02, O03, O09, I04, K02 | 5 |
 | B04 | Durable DDL and placement recovery | D01, D02, D03, D05, D08, D09, D10, D11, F01, F02, O14 | 11 |
-| B05 | Account security, wire bytes and administration | A02, A03, N01, N03, N04, N05 | 6 |
+| B05 | Account security, wire bytes and administration | A02, A03, N01, N03, N05 | 5 |
 | B06 | Typed expression and optimizer execution | Q01, X01, E04 | 3 |
 | B07 | MPP fragments and compute topology | M01, M05 | 2 |
 | B08 | Owned job, resource and bulk-operation runtimes | O04, O05, O06, O10, O15, E05, E07 | 7 |
@@ -124,4 +124,4 @@ Completion: One provider/batcher/Domain/cache lifetime, configuration, errors, c
 
 Integration dependencies: B02, B06.
 
-Peer batch update: N04/I03 now share outgoing discovery, generated coprocessor requests and SQL cancellation. I03 is partial. N05 inbound peer hosting is still the shared prerequisite for Rust-only cluster interoperability; no batch or package completion is claimed. See [receipt](cluster-peer-validation.json).
+Peer host batch update: N04 is repaired after composing the generated receiver with the shared outgoing fleet and local process owner. I03/N05 now share incoming HTTP/gRPC, cluster TLS/CN and joined shutdown; other tables/operators, AutoID/other RPC hosts and full package acceptance remain open. See [receipt](peer-host-validation.json).

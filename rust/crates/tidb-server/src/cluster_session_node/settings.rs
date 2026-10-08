@@ -16,6 +16,14 @@
 use super::*;
 
 impl ClusterSessionFactory {
+    pub(crate) fn peer_service(&self) -> crate::peer_rpc::PeerService {
+        crate::peer_rpc::PeerService::new(
+            self.processes.clone(),
+            self.privileges.clone(),
+            self.server_info.clone(),
+        )
+    }
+
     pub(crate) fn status_settings(self: &Arc<Self>) -> crate::http_settings::Settings {
         let factory = Arc::downgrade(self);
         crate::http_settings::Settings::new(

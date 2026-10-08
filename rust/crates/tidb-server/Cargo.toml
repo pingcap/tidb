@@ -12,6 +12,15 @@ autotests = false
 workspace = true
 
 [dependencies]
+hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
+axum = { version = "0.8", default-features = false }
+async-stream = "0.3"
+futures.workspace = true
+prost.workspace = true
+tokio.workspace = true
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tonic.workspace = true
+tidb-codec = { path = "../tidb-codec" }
 rand = "0.10"
 base64.workspace = true
 chrono.workspace = true

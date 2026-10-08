@@ -320,6 +320,10 @@ impl Session {
                 ..process::ProcessRow::default()
             }],
         };
+        self.filter_process_rows(rows)
+    }
+
+    fn filter_process_rows(&self, rows: Vec<process::ProcessRow>) -> Vec<process::ProcessRow> {
         if self.has_process_privilege() {
             return rows;
         }
@@ -340,14 +344,38 @@ impl Session {
     /// Memory arbitration and SQL CPU timing still need their statement
     /// owners. The other values are snapshots of the target's published state.
     pub(crate) fn process_list_table_rows(&self) -> Vec<Vec<Datum>> {
-        self.visible_process_rows(true)
+        self.format_process_rows(self.visible_process_rows(true), &self.session_time_zone())
+    }
+
+    /// Go's receiving memory-table executor reads only the local process owner.
+    /// No synthetic connection is registered and no peer discovery is entered.
+    pub fn local_cluster_process_list_rows(
+        &self,
+        registry: &process::ProcessRegistry,
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Vec<Vec<Datum>> {
+        let instance = self.cluster_instance_address();
+        self.format_process_rows(self.filter_process_rows(registry.snapshot()), zone)
             .into_iter()
+            .map(|mut row| {
+                row.insert(0, Datum::Bytes(instance.clone().into_bytes()));
+                row
+            })
+            .collect()
+    }
+
+    fn format_process_rows(
+        &self,
+        rows: Vec<process::ProcessRow>,
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Vec<Vec<Datum>> {
+        rows.into_iter()
             .map(|row| {
                 let txn_start = if row.cur_txn_start_ts == 0 {
                     String::new()
                 } else {
                     let time = tidb_expr::sessionexpr::get_time_from_ts(row.cur_txn_start_ts)
-                        .with_timezone(&self.session_time_zone());
+                        .with_timezone(zone);
                     format!(
                         "{}({})",
                         time.format("%m-%d %H:%M:%S%.3f"),

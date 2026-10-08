@@ -25,7 +25,7 @@ one package, but it retains one inventory, integration decision and receipt.
 Partial maintenance never accepts the enclosing package.
 
 The [finding register](parity/current-audit/structural-findings.json) records
-86 findings: 31 repaired and 55 unresolved (25 open, 30 partial). The
+86 findings: 32 repaired and 54 unresolved (25 open, 29 partial). The
 [batch map](parity/current-audit/remaining-batches.md) assigns every unresolved
 ID once across B01–B10. Counts describe the known register, not exhaustive
 semantic coverage. [README.md](parity/current-audit/README.md) indexes current
@@ -33,7 +33,8 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
-- [x] Compose outgoing remote KILL and CLUSTER_PROCESSLIST through one discovered peer/RPC owner; retain inbound N05 hosting and full package residuals. See [batch plan](cluster-peer-execplan.md) and [receipt](parity/current-audit/cluster-peer-validation.json).
+- [x] Compose incoming peer KILL/process scans with shared status HTTP/gRPC, cluster TLS/CN and joined shutdown. N04 repaired; I03/N05 retain broader obligations. See [batch plan](peer-host-execplan.md) and [receipt](parity/current-audit/peer-host-validation.json).
+- [x] Compose outgoing remote KILL and CLUSTER_PROCESSLIST through one discovered peer/RPC owner; retain the dated validation limits and full package residuals. See [batch plan](cluster-peer-execplan.md) and [receipt](parity/current-audit/cluster-peer-validation.json).
 
 - [x] Repair K01 allocator selection and shared AutoID client ownership across DML, DDL and SHOW; retain N05 service-hosting/election residual and full package limits. See [batch plan](auto-id-owner-execplan.md) and [receipt](parity/current-audit/auto-id-owner-validation.json).
 
@@ -250,7 +251,7 @@ restart using saved instructions, not presumed surviving processes.
 
 
 The previous 2,725-line plan mixed active workflow with old 77-finding counts,
-retired entrypoints and laptop commands. The current register has 55 unresolved
+retired entrypoints and laptop commands. The current register has 54 unresolved
 findings, and Cloud Cargo requires the `rust/` working directory. Repeating that
 history at startup creates conflicting instructions without adding validation.
 Exact prior bytes remain in Git archives, with checksums in the cleanup receipt.

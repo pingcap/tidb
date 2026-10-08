@@ -1,7 +1,7 @@
 # Repair sequence for Go/Rust structural parity
 
 Use the [current batch map](remaining-batches.md) for all ten owner batches and
-56 unresolved findings, and the [living ExecPlan](../../full-structural-parity-execplan.md)
+the current unresolved findings, and the [living ExecPlan](../../full-structural-parity-execplan.md)
 for implementation, validation and publication. The former W01–W12 assignment,
 old source pins and chronological repair notes are preserved exactly in the
 [historical sequence](https://github.com/pingcap/tidb/blob/9a319a5d6d78593e623a9db8e8aed1f750380507/rust/docs/parity/current-audit/repair-sequence.md).
