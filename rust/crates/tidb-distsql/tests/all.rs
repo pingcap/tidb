@@ -16,7 +16,6 @@
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
 mod active_cancellation_source;
-mod channel_iter_source;
 mod chblock_source;
 mod chunk_decode_source;
 mod cop_paging_source;
@@ -47,7 +46,6 @@ mod region_task_builder_source;
 mod region_task_source;
 mod request_builder_source;
 mod response_channel_source;
-mod select_iter_source;
 mod select_result_source;
 mod signed_handle_range_request_source;
 mod stream_decode_source;

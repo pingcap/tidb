@@ -1,6 +1,8 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [DistSQL carrier retirement](distsql-cleanup-validation.json) removes nine redundant or disconnected-seed cases, two unused policy/metadata helper groups and the superseded laptop coprocessor audit. Two unique cases move unchanged to the unit owner; wide plan-ID coverage moves to the real query-dispatch test. Live behavior and finding statuses are unchanged. Earlier datatype cleanup remains in [its receipt](datatype-cleanup-validation.json).
+Latest cleanup: [row iterator retirement](row-iterator-cleanup-validation.json) removes the unused serial row-source API, duplicate channel container and two private harnesses (nine cases). Decoded rows now stay in the response owner; real chunk, error, layout and close coverage remains. Raw/chunk serial composition is still an unaccepted Go obligation.
+
+Previous cleanup: [DistSQL carrier retirement](distsql-cleanup-validation.json) removes nine redundant or disconnected-seed cases, two unused policy/metadata helper groups and the superseded laptop coprocessor audit. Two unique cases move unchanged to the unit owner; wide plan-ID coverage moves to the real query-dispatch test. Live behavior and finding statuses are unchanged. Earlier datatype cleanup remains in [its receipt](datatype-cleanup-validation.json).
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 

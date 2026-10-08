@@ -23,7 +23,6 @@
 //! remains the single source of session request metadata rather than
 //! inventing a second replica-read or paging contract.
 
-mod channel_iter;
 mod chblock;
 mod chunk_decode;
 mod context;
@@ -49,7 +48,6 @@ mod table_handle_ranges;
 mod transport;
 mod warning;
 
-pub use channel_iter::{ChannelIter, ChannelIterError, ChannelRow};
 pub use chblock::{decode_ch_block, RawChBlockChunk};
 pub use chunk_decode::{
     decode_chunk, decode_response_chunks, decode_select_response, ChunkDecodeError, RawChunk,
@@ -107,9 +105,7 @@ pub use response_channel::{
     ResponseChannel, ResponseChannelError, ResponseChannelEvent, ResponseChannelState,
     ResponseChannelUnsupported, ResponseRuntimeStats, SelectResponseIter,
 };
-pub use select_iter::{
-    SelectResultError, SelectResultRow, SelectResultSource, SerialSelectResults,
-};
+pub use select_iter::SelectResultRow;
 pub use signed_handle_range::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
 pub use stream_decode::{decode_stream_response, RawStreamResponse};
 pub use table_handle_ranges::table_handles_to_kv_ranges;

@@ -1,0 +1,84 @@
+{
+  "baseline": "f7e9bfc7cef034715ec394f4acecbb01f6ca9cf5",
+  "retired_files": [
+    {
+      "path": "rust/crates/tidb-distsql/src/channel_iter.rs",
+      "lines": 207,
+      "sha256": "c30777f76d0e25a84cc799d236cefd395528e5d30b8618710feadd1fc47076f1",
+      "archive": "https://github.com/pingcap/tidb/blob/f7e9bfc7cef034715ec394f4acecbb01f6ca9cf5/rust/crates/tidb-distsql/src/channel_iter.rs"
+    },
+    {
+      "path": "rust/crates/tidb-distsql/tests/channel_iter_source.rs",
+      "lines": 89,
+      "sha256": "007f5b97825a6444ce1611484ad8185a52c1bebac43d68eba9c0e3367817fc1c",
+      "archive": "https://github.com/pingcap/tidb/blob/f7e9bfc7cef034715ec394f4acecbb01f6ca9cf5/rust/crates/tidb-distsql/tests/channel_iter_source.rs"
+    },
+    {
+      "path": "rust/crates/tidb-distsql/tests/select_iter_source.rs",
+      "lines": 147,
+      "sha256": "9128ac5fe9f6d8f4a7ff296cc9f24997ffd119c2f3faf2dd7765d1266346ffb5",
+      "archive": "https://github.com/pingcap/tidb/blob/f7e9bfc7cef034715ec394f4acecbb01f6ca9cf5/rust/crates/tidb-distsql/tests/select_iter_source.rs"
+    }
+  ],
+  "retired_cases": [
+    "go_new_sel_resp_channel_iter_validates_channel_layout",
+    "go_sel_resp_channel_iter_read_skips_empty_chunks_and_preserves_rows",
+    "channel_iter_propagates_owned_input_errors_without_losing_following_rows",
+    "channel_iter_close_is_idempotent_and_drops_owned_rows",
+    "channel_row_map_retains_channel_index",
+    "go_select_result_iter_serially_composes_rows_and_skips_empty_sources",
+    "go_select_result_iter_propagates_next_error_without_skipping_source",
+    "go_serial_select_results_close_calls_every_source_and_returns_last_error",
+    "cancellation_error_and_row_mapping_preserve_contracts"
+  ],
+  "scope": "Retire unconsumed serial source/trait/error and duplicate decoded-channel container; migrate every live caller to SelectResponseChannel and the shared SelectResultRow. Remove fabricated-error and redundant leaf harnesses, retaining real response/protocol/cancellation coverage.",
+  "go_anchors": [
+    "pkg/distsql/select_result.go::serialSelectResults (NextRaw/Next own raw/chunk composition; IntoIter is explicitly unimplemented)",
+    "pkg/distsql/select_result.go::selRespChannelIter, selectResultIter",
+    "pkg/distsql/select_result_test.go::TestSelectResultIter, TestSelRespChannelIterRead"
+  ],
+  "continuity": {
+    "channel/chunk order and empty chunks": "mock_response_iteration_source.rs and select_result_source.rs",
+    "layout validation and repeated close": "select_result_source.rs::select_result_test_file_obligations_publish_warnings_errors_mismatch_and_close",
+    "error order and typed decode": "select_result_source.rs::earlier_chunk_rows_precede_a_later_chunk_decode_error; final_channel_rows_precede_a_lower_priority_decode_error; malformed_typed_chunk_cells_are_query_errors_instead_of_panics",
+    "transport close ownership and errors": "query_runtime_source.rs; active_cancellation_source.rs",
+    "raw/chunk serial composition": "Unaccepted upstream obligation; dead row-source model was not a production implementation. No parity finding is closed."
+  },
+  "date": "2026-10-08",
+  "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+  "validation": {
+    "command": "cd rust && cargo test --locked -p tidb-distsql --lib --test all -- response_channel:: query_runtime_source:: mock_response_iteration_source:: select_result_source:: active_cancellation_source:: --test-threads=1",
+    "passed": 35,
+    "failed": 0,
+    "ignored": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/row-iterator-cleanup/tests.log",
+      "sha256": "161ae098f91d2795a73e769a569ef3246b33c222527f47e7a89674b13beca71a"
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/row-iterator-cleanup/lint.log",
+        "sha256": "614fa8c8e4b42d39d9cde8cad5993c319195d3278961a86d2e15326315886a54"
+      }
+    },
+    "review": {
+      "path": "/workspace/.cloud-setup/row-iterator-cleanup/source-review.json",
+      "sha256": "e1e7ff28f71d5b8317399bd670846756bf66b4e17c0eafa890be9683caa11aa6"
+    }
+  },
+  "net_rust_lines_removed": 652,
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "limits": [
+    "No complete Go package accepted and no performance benchmark or live multi-node TiKV/TiFlash run. Existing production response behavior is preserved.",
+    "Removed publicly exported scaffolding has no consumers in the two maintained repositories. Unknown out-of-tree users are not verified.",
+    "Actual precommit hook and fresh locked pre-push build are required next; their final outcome is recorded externally in /workspace/.cloud-setup/row-iterator-cleanup/final-handoff.json."
+  ]
+}

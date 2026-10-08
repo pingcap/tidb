@@ -32,7 +32,6 @@ use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_proto::{Chunk as ResponseChunk, EncodeType, ExecutorExecutionSummary, SelectResponse};
 
-use super::channel_iter::{ChannelIter, ChannelIterError};
 use super::chunk_decode::{decode_chunk, decode_select_response, ChunkDecodeError};
 use super::distsql_runtime::{LimiterWaitStats, SelectResultMetadata, SelectResultRuntimeStats};
 use super::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
@@ -507,8 +506,8 @@ impl ResponseChannel<prost::bytes::Bytes> {
 
 /// Connected decoder and reverse-priority iterator for raw select responses.
 ///
-/// Each response is decoded once, then represented by the existing
-/// [`ChannelIter`] authority. The final channel is consumed first, followed by
+/// Each channel owns its chunk decoding and row consumption.
+/// The final channel is consumed first, followed by
 /// intermediate channels from highest to lowest index, exactly like Go's
 /// `selectResultIter.Next`.
 pub struct SelectResponseIter {
@@ -553,7 +552,7 @@ struct SelectResponseChannel {
 
 #[derive(Debug)]
 enum DecodedChannel {
-    Rows(ChannelIter<Vec<Datum>>),
+    Rows(VecDeque<Vec<Datum>>),
     TypeChunk {
         chunk: DecodedChunk,
         next_row_index: usize,
@@ -565,9 +564,11 @@ impl DecodedChannel {
         &mut self,
         channel_index: usize,
         field_types: &[FieldType],
-    ) -> Result<Option<super::channel_iter::ChannelRow<Vec<Datum>>>, ResponseChannelError> {
+    ) -> Result<Option<SelectResultRow<Vec<Datum>>>, ResponseChannelError> {
         match self {
-            Self::Rows(rows) => rows.next_row().map_err(map_channel_error),
+            Self::Rows(rows) => Ok(rows
+                .pop_front()
+                .map(|row| SelectResultRow::new(channel_index, row))),
             Self::TypeChunk {
                 chunk,
                 next_row_index,
@@ -580,17 +581,14 @@ impl DecodedChannel {
                     .try_get_datum_row(field_types)
                     .map_err(|error| ResponseChannelError::RowDecode(error.to_string()))?;
                 *next_row_index += 1;
-                Ok(Some(super::channel_iter::ChannelRow::new(
-                    channel_index,
-                    row,
-                )))
+                Ok(Some(SelectResultRow::new(channel_index, row)))
             }
         }
     }
 
     fn close(&mut self) {
         if let Self::Rows(rows) = self {
-            rows.close();
+            rows.clear();
         }
     }
 
@@ -608,10 +606,10 @@ impl DecodedChannel {
         match self {
             Self::Rows(rows) => {
                 while output.num_rows() < required_rows {
-                    let Some(row) = rows.next_row().map_err(map_channel_error)? else {
+                    let Some(row) = rows.pop_front() else {
                         return Ok(false);
                     };
-                    for (column, value) in row.row.iter().enumerate() {
+                    for (column, value) in row.iter().enumerate() {
                         output.append_datum(column, value);
                     }
                 }
@@ -670,7 +668,6 @@ impl SelectResponseChannel {
         };
         let reusable_chunk = self.reusable_chunk.take();
         let decoded = decode_channel(
-            self.channel_index,
             self.raw_encode_type,
             chunk,
             &self.field_types,
@@ -683,9 +680,7 @@ impl SelectResponseChannel {
         Ok(())
     }
 
-    fn next_row(
-        &mut self,
-    ) -> Result<Option<super::channel_iter::ChannelRow<Vec<Datum>>>, ResponseChannelError> {
+    fn next_row(&mut self) -> Result<Option<SelectResultRow<Vec<Datum>>>, ResponseChannelError> {
         loop {
             if self.decoded.is_some() {
                 if let Some(row) = self
@@ -1204,7 +1199,6 @@ impl SelectResponseIter {
 }
 
 fn decode_channel(
-    channel_index: usize,
     raw_encode_type: Option<i32>,
     chunk: &ResponseChunk,
     field_types: &[FieldType],
@@ -1217,10 +1211,7 @@ fn decode_channel(
         ResponseChannelError::RowDecode(format!("invalid tipb encode type {raw_encode_type}"))
     })?;
     if chunk.rows_data.as_deref().unwrap_or_default().is_empty() {
-        return Ok(DecodedChannel::Rows(ChannelIter::new(
-            channel_index,
-            [Vec::<Vec<Datum>>::new()],
-        )));
+        return Ok(DecodedChannel::Rows(VecDeque::new()));
     }
     let raw = decode_chunk(chunk, encode_type).map_err(map_chunk_error)?;
     match encode_type {
@@ -1228,10 +1219,7 @@ fn decode_channel(
             let rows = raw
                 .decode_default_datums_in_timezone(field_types, time_zone)
                 .map_err(map_chunk_error)?;
-            Ok(DecodedChannel::Rows(ChannelIter::new(
-                channel_index,
-                [rows],
-            )))
+            Ok(DecodedChannel::Rows(rows.into()))
         }
         EncodeType::TypeChunk => {
             let mut decoded =
@@ -1256,10 +1244,6 @@ fn decode_channel(
 
 fn append_warning(collector: &WarningCollector, warning: Warning) {
     collector.append_owned_warning(warning);
-}
-
-fn map_channel_error(error: ChannelIterError) -> ResponseChannelError {
-    ResponseChannelError::RowDecode(error.to_string())
 }
 
 fn map_chunk_error(error: ChunkDecodeError) -> ResponseChannelError {

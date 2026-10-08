@@ -22,9 +22,8 @@ use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_codec::{VALUE_COMPACT_BYTES_FLAG, VALUE_VARINT_FLAG};
 use tidb_datatype::{BinaryJSON, Datum, FieldType, FieldTypeCode, VectorFloat32};
 use tidb_distsql::{
-    select_with_runtime_stats, ChannelIter, ChannelIterError, ResponseChannel,
-    ResponseChannelError, ResponseRuntimeStats, SelectInput, StoreType, WarningClass,
-    WarningCollector,
+    select_with_runtime_stats, ResponseChannel, ResponseChannelError, ResponseRuntimeStats,
+    SelectInput, StoreType, WarningClass, WarningCollector,
 };
 use tidb_proto::{
     Chunk, EncodeType, Error as TipbError, ExecutorExecutionSummary, IntermediateOutput,
@@ -210,7 +209,7 @@ fn update_cop_runtime_stats_preserves_source_gates_and_merge_order() {
 }
 
 #[test]
-fn new_sel_resp_channel_iter_uses_each_channel_schema_and_rejects_invalid_layout() {
+fn new_sel_resp_channel_iter_uses_each_channel_schema() {
     let response = SelectResponse {
         encode_type: Some(EncodeType::TypeChunk as i32),
         chunks: vec![type_chunk(&[vec![Cell::Int(3)]])],
@@ -238,11 +237,6 @@ fn new_sel_resp_channel_iter_uses_each_channel_schema_and_rejects_invalid_layout
         row.channel_index
     });
     assert_eq!(channels, [2, 1, 0]);
-
-    assert!(matches!(
-        ChannelIter::<i32>::try_new(3, 3, Vec::<Vec<i32>>::new()),
-        Err(ChannelIterError::InvalidChannel { channel: 3, .. })
-    ));
 }
 
 #[test]

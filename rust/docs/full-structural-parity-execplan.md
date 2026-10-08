@@ -33,6 +33,7 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] 2026-10-08: remove unconsumed serial row sources, duplicate channel storage and two obsolete harnesses (nine cases). Keep decoded rows and errors in the response owner. All 35 selected response/cancellation tests and lint pass. Required commit/push build outcomes are recorded in the external handoff after execution; see [row iterator receipt](parity/current-audit/row-iterator-cleanup-validation.json).
 - [x] 2026-10-08: retire the unused DistSQL metadata carrier, nine redundant/disconnected cases and unconsumed TiFlash/chunk-policy seeds; move two unique cases and the wide-ID assertion to existing owners, and archive the laptop-era audit. The 34 retained cases and lint pass. Required publication gates are recorded after execution in the external handoff; see [cleanup receipt](parity/current-audit/distsql-cleanup-validation.json).
 - [x] 2026-10-08: connect O11/T02/O13 statement KV execution counting across admission, ordinary reads, coprocessor workers and foreground MPP requests; retire the unused interceptor surrogates. See [batch plan](kv-exec-batch-execplan.md) and [receipt](parity/current-audit/kv-exec-batch-validation.json). No parent/package closure.
 - [x] 2026-10-08: connect T02/M04/M05 native compute discovery and MPP invalidation through one process cache owner; see [batch plan](compute-cache-batch-execplan.md) and [validation receipt](parity/current-audit/compute-cache-validation.json). Broader roots remain partial.
@@ -298,3 +299,5 @@ No live multi-node TiKV/TiFlash or benchmark result is claimed.
 
 Revision note: replace copied history with current Cloud instructions and the
 B01–B10 queue; retain exact earlier plans for evidence and recovery.
+
+Decision (2026-10-08): the retired row-source model never implemented Go serialSelectResults, whose NextRaw/Next compose raw responses/chunks and whose IntoIter is unimplemented. The response owner already validates layouts, decodes chunks and closes resources; remove its redundant generic row wrapper and fabricated error path. Complete serial composition remains unaccepted; 54 broader findings remain unresolved.
