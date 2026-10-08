@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -409,6 +408,18 @@ func TestHistoryReader(t *testing.T) {
 	}()
 
 	func() {
+		// Digest filter combined with a time range; the parse worker's digest
+		// pre-filter must not change the result.
+		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, set.NewStringSet("digest2"), []*StmtTimeRange{
+			{Begin: 0, End: 1672129270 - 1},
+		}, 2)
+		require.NoError(t, err)
+		defer reader.Close()
+		rows := readAllRows(t, reader)
+		require.Len(t, rows, 0)
+	}()
+
+	func() {
 		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
 			{Begin: 0, End: 1672128520 - 1},
 		}, 2)
@@ -504,6 +515,40 @@ func TestHistoryReader(t *testing.T) {
 		for _, row := range rows {
 			require.Equal(t, len(columns), len(row))
 		}
+	}()
+
+	func() {
+		// Duplicate digest keys: the full decode keeps the last occurrence, and the
+		// pre-filter must agree — either by picking the same last value or by
+		// falling back to the full decode.
+		dupName := time.Unix(1672129480, 0).In(timeLocation).Format(logFileTimeFormat)
+		dupFile := "tidb-statements-" + dupName + ".log"
+		file, err := os.Create(dupFile)
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, os.Remove(dupFile))
+		}()
+		_, err = file.WriteString("{\"begin\":1672129470,\"end\":1672129480,\"digest\":\"digest2\",\"digest\":\"digest_dup_last\",\"exec_count\":50}\n")
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+
+		func() {
+			// The full decode resolves the duplicate-key record to digest_dup_last,
+			// so filtering for digest2 must still return only the two original rows.
+			reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, set.NewStringSet("digest2"), nil, 2)
+			require.NoError(t, err)
+			defer reader.Close()
+			rows := readAllRows(t, reader)
+			require.Len(t, rows, 2)
+		}()
+		func() {
+			reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, set.NewStringSet("digest_dup_last"), nil, 2)
+			require.NoError(t, err)
+			defer reader.Close()
+			rows := readAllRows(t, reader)
+			require.Len(t, rows, 1)
+			require.Equal(t, "digest_dup_last", rows[0][0].GetString())
+		}()
 	}()
 
 	t.Run("bounds open file descriptors", func(t *testing.T) {
@@ -609,72 +654,139 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 	return results
 }
 
+// benchmarkHistoryReaderRows measures the decode cost of a full history scan with
+// `recordCount` persisted records of which `matchPercent` percent carry the requested
+// digest. It backs the digest pre-filter trade-off: low match rates save record materialization for most lines; matching lines
+// pay a key scan before decoding only requested text fields.
+func benchmarkHistoryReaderRows(b *testing.B, matchPercent int, withDigestFilter bool) {
+	const recordCount = 2000
+	const target = "digest_target"
+	file, err := os.Create("tidb-statements.log")
+	require.NoError(b, err)
+	defer func() {
+		require.NoError(b, os.Remove("tidb-statements.log"))
+	}()
+	for i := 0; i < recordCount; i++ {
+		digest := fmt.Sprintf("digest_%06d", i)
+		if i%100 < matchPercent {
+			digest = target
+		}
+		record := stmtPersistedRecord{StmtRecord: StmtRecord{
+			Begin:         1672128520,
+			End:           1672128521,
+			Digest:        digest,
+			NormalizedSQL: "select ? from t where c > ?",
+			SampleSQL:     strings.Repeat("s", 1024),
+			SamplePlan:    strings.Repeat("p", 1024),
+		}}
+		line, err := json.Marshal(record)
+		require.NoError(b, err)
+		_, err = file.Write(append(line, '\n'))
+		require.NoError(b, err)
+	}
+	require.NoError(b, file.Close())
+
+	columns := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(ExecCountStr)},
+	}
+	var digests set.StringSet
+	if withDigestFilter {
+		digests = set.NewStringSet(target)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader, err := NewHistoryReader(context.Background(), columns, "", time.Local, nil, false, digests, nil, 2)
+		require.NoError(b, err)
+		for {
+			rows, err := reader.Rows()
+			require.NoError(b, err)
+			if rows == nil {
+				break
+			}
+		}
+		reader.Close()
+	}
+}
+
+func BenchmarkHistoryReaderDigestFilter(b *testing.B) {
+	b.Run("filter-match-0-percent", func(b *testing.B) { benchmarkHistoryReaderRows(b, 0, true) })
+	b.Run("filter-match-1-percent", func(b *testing.B) { benchmarkHistoryReaderRows(b, 1, true) })
+	b.Run("filter-match-50-percent", func(b *testing.B) { benchmarkHistoryReaderRows(b, 50, true) })
+	b.Run("filter-match-100-percent", func(b *testing.B) { benchmarkHistoryReaderRows(b, 100, true) })
+	b.Run("no-filter", func(b *testing.B) { benchmarkHistoryReaderRows(b, 0, false) })
+}
+
+func TestExtractDigest(t *testing.T) {
+	// Regular shape: digest is the fourth field and the large fields follow it, so
+	// the key walk never decodes any other value.
+	line := `{"begin":1672128520,"end":1672128521,"schema_name":"test","digest":"digest1","plan_digest":"p","normalized_sql":"select ?","sample_sql":"` +
+		strings.Repeat("s", 4096) + `"}`
+	digest, ok := extractDigest([]byte(line))
+	require.True(t, ok)
+	require.Equal(t, "digest1", digest)
+
+	// Whitespace-tolerant and digest-first shapes still work.
+	digest, ok = extractDigest([]byte(`{ "begin" : 1 , "digest" : "d1" , "end" : 2 }`))
+	require.True(t, ok)
+	require.Equal(t, "d1", digest)
+	digest, ok = extractDigest([]byte(`{"digest":"d2","begin":1}`))
+	require.True(t, ok)
+	require.Equal(t, "d2", digest)
+
+	// Escapes in earlier string fields don't confuse the scan.
+	digest, ok = extractDigest([]byte(`{"schema_name":"a\"b\u4e2d","digest":"d3"}`))
+	require.True(t, ok)
+	require.Equal(t, "d3", digest)
+
+	// Container values are skipped without decoding.
+	digest, ok = extractDigest([]byte(`{"arr":[1,2,{"x":"y"}],"obj":{"k":"v"},"digest":"d4"}`))
+	require.True(t, ok)
+	require.Equal(t, "d4", digest)
+
+	// Duplicate keys: the full decode keeps the last one, and so does the scan.
+	digest, ok = extractDigest([]byte(`{"begin":1,"end":2,"digest":"miss","digest":"target"}`))
+	require.True(t, ok)
+	require.Equal(t, "target", digest)
+
+	t.Run("case insensitive duplicate digest", func(t *testing.T) {
+		for _, key := range []string{"DIGEST", "digeſt"} {
+			raw := []byte(`{"digest":"miss","` + key + `":"target"}`)
+			var full StmtRecord
+			require.NoError(t, json.Unmarshal(raw, &full))
+			digest, ok := extractDigest(raw)
+			require.True(t, ok)
+			require.Equal(t, full.Digest, digest)
+			require.Equal(t, "target", digest)
+		}
+	})
+	t.Run("invalid UTF-8 requires full decoding", func(t *testing.T) {
+		_, ok := extractDigest([]byte("{\"digest\":\"a" + string([]byte{0xff}) + "b\"}"))
+		require.False(t, ok)
+	})
+
+	// Unknown shapes must report ok=false so the caller falls back to the full decode.
+	for _, bad := range []string{
+		`{"begin":1}`, // no digest key
+		`{"digest":"miss","di\u0067est":"target"}`, // escaped key: defer to the full decode
+		`{"digest":"a\"b"}`,                        // escaped digest value
+		`{"digest":null}`,                          // non-string digest
+		`{"digest" "d"}`,                           // missing colon
+		`"digest"`,                                 // not an object
+		`{"begin":1672128520,"end":1672128`,        // truncated
+		`{"arr":[1,2`,                              // truncated container
+	} {
+		_, ok = extractDigest([]byte(bad))
+		require.False(t, ok, bad)
+	}
+}
+
 func countOpenFileDescriptors() (int, bool) {
 	entries, err := os.ReadDir("/proc/self/fd")
 	if err != nil {
 		return 0, false
 	}
 	return len(entries), true
-}
-
-// TestJSONIterDecodeCompat pins the json-iterator swap to encoding/json
-// behavior: for canonical writer records and for non-canonical or malformed
-// lines, both decoders must agree on error acceptance and on the decoded record.
-func TestJSONIterDecodeCompat(t *testing.T) {
-	records := []*stmtPersistedRecord{
-		{
-			StmtRecord: StmtRecord{
-				Begin:                        math.MinInt64,
-				End:                          math.MaxInt64,
-				SchemaName:                   "sch\"ema\\文",
-				Digest:                       strings.Repeat("d", 64),
-				PlanDigest:                   "plan",
-				StmtType:                     "Select",
-				NormalizedSQL:                "select ? from `t` where c = ?",
-				TableNames:                   "test.t",
-				IsInternal:                   true,
-				BindingSQL:                   "select /*+ use_index(@sel_1) */ ?",
-				SampleSQL:                    "select 'q\"uote', 'bin\xff\x00'",
-				PrevSQL:                      "begin",
-				SamplePlan:                   "\tplan\nmultiline",
-				PlanHint:                     "use_index(t, a)",
-				IndexNames:                   []string{"a", "b,c", ""},
-				ExecCount:                    -1,
-				SumErrors:                    math.MaxInt32,
-				SumWarnings:                  math.MinInt32,
-				SumLatency:                   math.MaxInt64,
-				MaxLatency:                   math.MinInt64,
-				SumNumCopTasks:               42,
-				MaxCopProcessTime:            time.Millisecond,
-				SumTotalKeys:                 math.MinInt64,
-				SumRocksdbDeleteSkippedCount: math.MaxUint64,
-			},
-		},
-		{StmtRecord: StmtRecord{Begin: 1, End: 2, Digest: "digest2"}, Evicted: true},
-		{StmtRecord: StmtRecord{}},
-	}
-	lines := make([][]byte, 0, len(records)+5)
-	for _, rec := range records {
-		line, err := json.Marshal(rec)
-		require.NoError(t, err)
-		lines = append(lines, line)
-	}
-	lines = append(lines,
-		[]byte(`{"begin":1,"end":2,"digest":"first","digest":"last"}`),
-		[]byte(`{"digest":null}`),
-		[]byte(`{"begin":1.5}`),
-		[]byte(`not json at all`),
-		[]byte(`{"begin":1}`),
-	)
-	for _, line := range lines {
-		var want, got stmtPersistedRecord
-		wantErr := json.Unmarshal(line, &want)
-		gotErr := jsoniterDecode.Unmarshal(line, &got)
-		if wantErr != nil {
-			require.Error(t, gotErr, "line: %s", line)
-			continue
-		}
-		require.NoError(t, gotErr, "line: %s", line)
-		require.Equal(t, want, got, "line: %s", line)
-	}
 }

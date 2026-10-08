@@ -16,6 +16,7 @@ package stmtsummary
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -27,8 +28,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
-	jsoniter "github.com/json-iterator/go"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -168,6 +169,7 @@ type HistoryReader struct {
 	timeLocation *time.Location
 
 	columnFactories []columnFactory
+	projection      *stmtRecordProjection
 	checker         *stmtChecker
 	files           *stmtFiles
 
@@ -209,6 +211,7 @@ func NewHistoryReader(
 		instanceAddr:    instanceAddr,
 		timeLocation:    timeLocation,
 		columnFactories: makeColumnFactories(columns),
+		projection:      makeStmtRecordProjection(columns),
 		checker: &stmtChecker{
 			user:           user,
 			hasProcessPriv: hasProcessPriv,
@@ -313,6 +316,7 @@ func (r *HistoryReader) scheduleTasks(
 		timeLocation:    r.timeLocation,
 		checker:         r.checker,
 		columnFactories: r.columnFactories,
+		projection:      r.projection,
 	}
 
 	concurrent := r.concurrent
@@ -480,6 +484,162 @@ func (c *stmtChecker) needStop(curBegin int64) bool {
 type stmtTinyRecord struct {
 	Begin int64 `json:"begin"`
 	End   int64 `json:"end"`
+}
+
+// extractDigest returns the digest value of a persisted JSON line exactly as the
+// full decode would see it: top-level keys are walked in order and the last unescaped
+// digest key wins, including case-insensitive matches, just like encoding/json. Only keys
+// are examined — every other value is skipped byte-wise without decoding or
+// allocation. Escaped keys/values and invalid UTF-8 digest values fall back to
+// the standard decoder. This is not a JSON validator: matching and unrecognized
+// lines still pass through the standard decoder before a row can be returned.
+func extractDigest(line []byte) (digest string, ok bool) {
+	i := skipJSONSpace(line, 0)
+	if i >= len(line) || line[i] != '{' {
+		return "", false
+	}
+	i = skipJSONSpace(line, i+1)
+	found := false
+	var value string
+	for {
+		if i >= len(line) {
+			return "", false
+		}
+		if line[i] == '}' {
+			if found {
+				return value, true
+			}
+			// End of the object and no plain digest key was seen.
+			return "", false
+		}
+		key, next, okKey := scanJSONString(line, i)
+		if !okKey || hasJSONEscape(key) {
+			// Escaped keys can't be compared cheaply; defer to the full decode.
+			return "", false
+		}
+		i = skipJSONSpace(line, next)
+		if i >= len(line) || line[i] != ':' {
+			return "", false
+		}
+		i = skipJSONSpace(line, i+1)
+		if bytes.EqualFold(key, []byte("digest")) {
+			v, next, okValue := scanJSONString(line, i)
+			if !okValue || hasJSONEscape(v) || !utf8.Valid(v) {
+				return "", false
+			}
+			value, found = string(v), true
+			i = next
+		} else {
+			next, okValue := skipJSONValue(line, i)
+			if !okValue {
+				return "", false
+			}
+			i = next
+		}
+		i = skipJSONSpace(line, i)
+		if i >= len(line) {
+			return "", false
+		}
+		if line[i] == ',' {
+			i = skipJSONSpace(line, i+1)
+		} else if line[i] != '}' {
+			return "", false
+		}
+	}
+}
+
+func skipJSONSpace(line []byte, i int) int {
+	for i < len(line) {
+		switch line[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+// scanJSONString reads a JSON string starting at the opening quote line[i]. It
+// returns the raw content between the quotes with escapes left as-is, the position
+// after the closing quote, and whether a closing quote was found.
+func scanJSONString(line []byte, i int) (content []byte, next int, ok bool) {
+	if i >= len(line) || line[i] != '"' {
+		return nil, 0, false
+	}
+	i++
+	start := i
+	for i < len(line) {
+		switch line[i] {
+		case '\\':
+			i += 2
+		case '"':
+			return line[start:i], i + 1, true
+		default:
+			i++
+		}
+	}
+	return nil, 0, false
+}
+
+func hasJSONEscape(content []byte) bool {
+	for _, c := range content {
+		if c == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+// skipJSONValue skips one JSON value (string, number, literal, or a balanced
+// container with strings honored) and reports the position after it.
+func skipJSONValue(line []byte, i int) (next int, ok bool) {
+	if i >= len(line) {
+		return 0, false
+	}
+	switch line[i] {
+	case '"':
+		_, next, ok = scanJSONString(line, i)
+		return next, ok
+	case '{', '[':
+		opening := line[i]
+		closing := byte('}')
+		if opening == '[' {
+			closing = ']'
+		}
+		depth := 0
+		for i < len(line) {
+			c := line[i]
+			if c == '"' {
+				_, next, ok = scanJSONString(line, i)
+				if !ok {
+					return 0, false
+				}
+				i = next
+				continue
+			}
+			if c == opening {
+				depth++
+			} else if c == closing {
+				depth--
+				if depth == 0 {
+					return i + 1, true
+				}
+			}
+			i++
+		}
+		return 0, false
+	default:
+		start := i
+		for i < len(line) {
+			switch line[i] {
+			case ',', '}', ']', ' ', '\t', '\n', '\r':
+				return i, i > start
+			}
+			i++
+		}
+		return i, i > start
+	}
 }
 
 type stmtPersistedRecord struct {
@@ -811,6 +971,7 @@ type stmtParseWorker struct {
 	timeLocation    *time.Location
 	checker         *stmtChecker
 	columnFactories []columnFactory
+	projection      *stmtRecordProjection
 }
 
 func (w *stmtParseWorker) run(
@@ -842,6 +1003,15 @@ func (w *stmtParseWorker) handleLines(
 
 	rows := make([][]types.Datum, 0, len(lines))
 	for _, line := range lines {
+		if w.checker.digests != nil {
+			// Cheap digest pre-filter: records whose digest cannot match skip the full
+			// unmarshal. Only keys are walked — values are skipped byte-wise — and the
+			// last case-insensitive digest key wins, matching the full decode; anything not
+			// cheaply skippable falls back to the full decode.
+			if digest, ok := extractDigest(line); ok && !w.checker.isDigestValid(digest) {
+				continue
+			}
+		}
 		record, skipped, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines
@@ -878,14 +1048,12 @@ func (w *stmtParseWorker) putRows(
 	}
 }
 
-// jsoniterDecode decodes persisted records with json-iterator in standard-library
-// compatible mode; decoding every record dominates history scan cost and the
-// compatible config keeps semantics identical (see issue #71814 direction 2).
-var jsoniterDecode = jsoniter.ConfigCompatibleWithStandardLibrary
-
-func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, bool, error) {
+func (w *stmtParseWorker) parse(raw []byte) (*StmtRecord, bool, error) {
+	if w.projection != nil {
+		return w.projection.parse(raw)
+	}
 	var record stmtPersistedRecord
-	if err := jsoniterDecode.Unmarshal(raw, &record); err != nil {
+	if err := json.Unmarshal(raw, &record); err != nil {
 		return nil, false, err
 	}
 	if record.Evicted {
