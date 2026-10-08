@@ -481,6 +481,11 @@ type stmtTinyRecord struct {
 	End   int64 `json:"end"`
 }
 
+type stmtPersistedRecord struct {
+	StmtRecord
+	Evicted bool `json:"evicted"`
+}
+
 type stmtFile struct {
 	path  string
 	file  *os.File
@@ -836,9 +841,12 @@ func (w *stmtParseWorker) handleLines(
 
 	rows := make([][]types.Datum, 0, len(lines))
 	for _, line := range lines {
-		record, err := w.parse(line)
+		record, skipped, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines
+			continue
+		}
+		if skipped {
 			continue
 		}
 
@@ -869,12 +877,15 @@ func (w *stmtParseWorker) putRows(
 	}
 }
 
-func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, error) {
-	var record StmtRecord
+func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, bool, error) {
+	var record stmtPersistedRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return &record, nil
+	if record.Evicted {
+		return nil, true, nil
+	}
+	return &record.StmtRecord, false, nil
 }
 
 func (w *stmtParseWorker) needStop(record *StmtRecord) bool {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -1165,7 +1166,28 @@ func TestAggPrune(t *testing.T) {
 func TestVisitInfo(t *testing.T) {
 	t.Run("test non-column privilege visit info", testNormalVisitInfo)
 	t.Run("test column privilege visit info", testColumnPrivilegeVisitInfo)
+	t.Run("test raw select visit info retains fallback", testRawSelectVisitInfoRetainsFallback)
 	t.Run("test column privilege visit info with PointGet", testColumnPrivilegePointGetVisitInfo)
+}
+
+func testRawSelectVisitInfoRetainsFallback(t *testing.T) {
+	const sql = "SELECT a FROM t"
+	s := createPlannerSuite()
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(stmt)
+	require.NoError(t, Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is})))
+	sctx := MockContext()
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
+	_, err = builder.Build(context.Background(), nodeW)
+	require.NoError(t, err)
+
+	checkRawVisitInfo(t, builder.visitInfo, []visitInfo{
+		{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+		{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+	}, sql)
 }
 
 func testNormalVisitInfo(t *testing.T) {
@@ -2584,14 +2606,12 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			sql: `SELECT count(a) FROM t`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
 		{
 			sql: `SELECT 1 FROM (SELECT count(a) FROM t) tt`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
 		{
@@ -2623,8 +2643,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 			},
 		},
 
@@ -3045,7 +3063,27 @@ func unique(v []visitInfo) []visitInfo {
 	return v[:len(v)-repeat]
 }
 
+// effectiveVisitInfoForTest ignores intentionally retained fallback SELECT
+// requirements when a concrete column requirement exists for the same table.
+func effectiveVisitInfoForTest(vs []visitInfo) []visitInfo {
+	withConcreteColumn := make(map[[2]string]struct{}, len(vs))
+	for _, v := range vs {
+		if v.privilege == mysql.SelectPriv && v.column != "" && v.column != "*" {
+			withConcreteColumn[[2]string{v.db, v.table}] = struct{}{}
+		}
+	}
+	return slices.DeleteFunc(vs, func(v visitInfo) bool {
+		_, concrete := withConcreteColumn[[2]string{v.db, v.table}]
+		return concrete && v.privilege == mysql.SelectPriv && v.column == "*"
+	})
+}
+
 func checkVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) {
+	actual = effectiveVisitInfoForTest(actual)
+	checkRawVisitInfo(t, actual, expected, comment)
+}
+
+func checkRawVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) {
 	sort.Sort(visitInfoArray(actual))
 	sort.Sort(visitInfoArray(expected))
 	actual = unique(actual)

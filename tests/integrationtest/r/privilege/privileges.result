@@ -166,7 +166,7 @@ create database if not exists privilege__privileges;
 create table privilege__privileges.t(id int, v int, primary key(id));
 insert into privilege__privileges.t(id, v) values(1, 1);
 select * from privilege__privileges.t where id = 1;
-Error 1143 (42000): SELECT command denied to user 'tester'@'localhost' for column 'id' in table 't'
+Error 1142 (42000): SELECT command denied to user 'tester'@'localhost' for table 't'
 update privilege__privileges.t set v = 2 where id = 1;
 Error 1143 (42000): SELECT command denied to user 'tester'@'localhost' for column 'id' in table 't'
 DROP USER 'tester'@'localhost';
