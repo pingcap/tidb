@@ -2338,6 +2338,40 @@ func (cli *TestServerClient) RunTestNonPreparedPlanCacheMultiStatements(t *testi
 	})
 }
 
+func (cli *TestServerClient) RunTestNonPreparedPlanCacheMultiStatementsPointGet(t *testing.T) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
+		config.Params["multiStatements"] = "true"
+	}, "NonPreparedPlanCacheMultiStatementsPointGet", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("CREATE TABLE test (id INT PRIMARY KEY, value INT)")
+		dbt.MustExec("INSERT INTO test VALUES (1, 10), (2, 20)")
+		dbt.MustExec("SET tidb_enable_non_prepared_plan_cache = ON")
+		dbt.MustExec("BEGIN OPTIMISTIC")
+		defer dbt.MustExec("ROLLBACK")
+
+		// Activate the transaction so the following multi-statement request
+		// prebuilds a PointGet plan for each statement.
+		rows := dbt.MustQuery("SELECT COUNT(*) FROM test")
+		cli.CheckRows(t, rows, "2")
+		require.NoError(t, rows.Close())
+
+		rows = dbt.MustQuery("SELECT value FROM test WHERE id = 1; SELECT value FROM test WHERE id = 2")
+		for i, expected := range []int{10, 20} {
+			var value int
+			require.True(t, rows.Next())
+			require.NoError(t, rows.Scan(&value))
+			require.Equal(t, expected, value)
+			require.False(t, rows.Next())
+			require.NoError(t, rows.Err())
+			require.Equal(t, i == 0, rows.NextResultSet())
+		}
+		require.NoError(t, rows.Close())
+
+		rows = dbt.MustQuery("SELECT @@last_plan_from_cache")
+		cli.CheckRows(t, rows, "0")
+		require.NoError(t, rows.Close())
+	})
+}
+
 func (cli *TestServerClient) RunTestStmtCount(t *testing.T) {
 	cli.RunTestsOnNewDB(t, nil, "StatementCount", func(dbt *testkit.DBTestKit) {
 		originStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
