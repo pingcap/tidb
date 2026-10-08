@@ -408,6 +408,7 @@ type AsyncBegin<C> = fn(
     &LeaderRequest,
     &DirectUnaryRequest,
     &UnaryCallContext,
+    &tidb_util::topsql_stmtstats::KvExecCounterHandle,
 ) -> Result<
     Result<Box<dyn PendingRequest + Send>, DirectUnaryClientError>,
     DirectUnaryTransportError,
@@ -418,12 +419,15 @@ fn begin_async_request<C>(
     selected: &LeaderRequest,
     request: &DirectUnaryRequest,
     call: &UnaryCallContext,
+    counter: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
 ) -> Result<Result<Box<dyn PendingRequest + Send>, DirectUnaryClientError>, DirectUnaryTransportError>
 where
     C: AsyncRequestDispatcher,
     C::Pending: Send + 'static,
 {
-    Ok(try_borrow_client(client)?
+    let mut client = try_borrow_client(client)?;
+    counter.mark(selected.dispatch_address());
+    Ok(client
         .begin(
             selected.dispatch_address(),
             selected.forwarded_host(),
@@ -712,6 +716,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         );
 
         let source = DirectUnaryQueryResponse {
+            kv_exec_counter: request.kv_exec_counter(),
             shared_runtime: self.shared_runtime.clone(),
             locked_response_delegate: Arc::clone(&self.locked_response_delegate),
             event_callback: self.event_callback.clone(),
@@ -858,6 +863,7 @@ fn task_region_ver_id(
 
 /// Lazy response owner returned by [`DirectUnaryQueryTransport`].
 pub struct DirectUnaryQueryResponse<C, L> {
+    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Arc<dyn LockedResponseDelegate<C, L>>,
     event_callback: Option<tidb_txnkv::EventCallback>,
@@ -1564,6 +1570,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 &prepared_dispatch.selected,
                 &prepared_dispatch.client_request,
                 &call,
+                &self.kv_exec_counter,
             )?;
             if let Err(error) = self.check_retry_active() {
                 if let Ok(pending) = &mut begin_result {
@@ -1611,6 +1618,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         );
         let dispatch = UnaryRouteDispatch::from_request(&prepared_dispatch.selected);
         let mut client = try_borrow_client(self.shared_runtime.client())?;
+        self.kv_exec_counter.mark(dispatch.physical_address());
         let send_result = blocking(|| {
             client.send_request_with_route(
                 dispatch.physical_address(),
@@ -2439,6 +2447,7 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
                     rpc_timeout: self.rpc_timeout,
                     read_policy: self.read_policy,
                     metadata: Arc::clone(&self.metadata),
+                    kv_exec_counter: self.kv_exec_counter.clone(),
                     cluster_id: self.cluster_id,
                     config: Arc::clone(&self.config),
                     runtime,

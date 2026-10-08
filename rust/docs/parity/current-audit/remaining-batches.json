@@ -53,6 +53,14 @@
           "T02"
         ],
         "scope": "Native compute-store cache shared by the process region authority; topology retry and MPP dispatch/setup/cancel invalidation composed. Broader roots and package acceptance remain partial/unaccepted."
+      },
+      "latest_kv_exec_maintenance": {
+        "date": "2026-10-08",
+        "receipt": "kv-exec-batch-validation.json",
+        "findings": [
+          "T02"
+        ],
+        "scope": "Shared statement counter composed through live read dispatch; whole parent/package obligations remain unaccepted."
       }
     },
     {
@@ -540,6 +548,15 @@
         },
         "receipt": "internal-process-batch-validation.json",
         "scope": "I01/N04/O09 shared internal-session maintenance: live auto-analyze task tracking, process publication, SQL KILL cancellation/reset/identity lifetime, and internal timestamp diagnostics. No whole-package acceptance."
+      },
+      "latest_kv_exec_maintenance": {
+        "date": "2026-10-08",
+        "receipt": "kv-exec-batch-validation.json",
+        "findings": [
+          "O11",
+          "O13"
+        ],
+        "scope": "Shared statement counter composed through live read dispatch; whole parent/package obligations remain unaccepted."
       }
     },
     {

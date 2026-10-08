@@ -719,6 +719,7 @@ impl KvClient for ClientKv {
                             timeout.min(parent.timeout()),
                             parent.cancellation().clone(),
                         )
+                        .with_kv_exec_counter(parent.kv_exec_counter().cloned())
                     },
                 )
         };
@@ -734,6 +735,9 @@ impl KvClient for ClientKv {
         let _cancel_background = background
             .as_ref()
             .map(|_| CancelBackgroundCall(call.cancellation().clone()));
+        if let Some(counter) = call.kv_exec_counter() {
+            counter.mark(&self.address);
+        }
         let backend = self.backend.clone();
         let address = self.address.clone();
         let route = self.route.clone();

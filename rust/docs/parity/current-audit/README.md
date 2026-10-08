@@ -4,14 +4,14 @@ Latest cleanup: [datatype test consolidation](datatype-cleanup-validation.json) 
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [native compute-cache ownership and MPP invalidation](compute-cache-validation.json) replaces bypassed PD discovery with the native owner and connects topology retries, dispatch, establishment and cancellation. T02/M04/M05 remain partial for broader cache/coordinator/package obligations. Counts remain 86 tracked, 32 repaired and 54 unresolved (24 open, 30 partial). Previous diagnostic projection evidence remains in [its receipt](digest-projection-validation.json).
+Latest connected repair: [statement KV execution attribution](kv-exec-batch-validation.json) connects admission, ordinary reads, coprocessor workers and foreground MPP requests to one existing counter owner. It removes the unused boolean interceptor placeholder and generic wrapper while preserving useful Go counting assertions. O11/T02/O13 remain partial for broader profiling/write attribution/cache and package obligations. Counts remain 86 tracked, 32 repaired and 54 unresolved (24 open, 30 partial). Previous native compute-cache evidence remains in [its receipt](compute-cache-validation.json).
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../compute-cache-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../kv-exec-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](compute-cache-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](kv-exec-batch-validation.json): exact source/log identities and verification limits.
 
 Current Go comparison: `ab37692e9ebef44a736cd7243deef6020067b743`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `de4c53c34f9fcf53e2e07cb928b6b4af890b02c0`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 

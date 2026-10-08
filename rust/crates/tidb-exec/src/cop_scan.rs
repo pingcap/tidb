@@ -687,6 +687,7 @@ where
         }
         let plan = RemoteScanPlan {
             cancellation: request.statement.memory.coprocessor_request_cancellation(),
+            kv_exec_counter: request.statement.kv_exec_counter.clone(),
             dag,
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
@@ -732,6 +733,7 @@ where
 /// Everything needed to open one response on the query worker.
 struct RemoteScanPlan {
     cancellation: Arc<CancelHandle>,
+    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
     dag: tidb_proto::tipb::DagRequest,
     /// The executor shapes the request builder reads for concurrency, which
     /// must match the DAG's own executor list.
@@ -899,7 +901,8 @@ where
     let request = builder
         .build_transport_request(Arc::clone(&cancellation))
         .map_err(|error| format!("{error:?}"))?
-        .with_cop_lite_worker(plan.cop_lite_worker);
+        .with_cop_lite_worker(plan.cop_lite_worker)
+        .with_kv_exec_counter(plan.kv_exec_counter);
     let mut runtime = InjectedQueryRuntime::new(&mut transport);
     let result = runtime
         .select_with_runtime_stats(

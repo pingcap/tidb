@@ -896,3 +896,38 @@ fn ddl_visit_batch_summary_keeps_both_rename_tables_and_like_source() {
         assert_eq!(record.table_names, expected, "{sql}");
     }
 }
+
+#[test]
+fn kv_exec_counter_batch_admission_and_request_enable_windows() {
+    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    for (admitted, send_enabled, expected) in [(true, true, 2), (false, true, 0), (true, false, 0)]
+    {
+        disable_top_sql();
+        let mut session = Session::new();
+        session.begin_statement_observation("SELECT 1");
+        // Executors capture their statement reference before admission.
+        let ctx = session.statement_context(false);
+        let ordinary = ctx.snapshot_read_options(0.0).kv_exec_counter;
+        let cop =
+            tidb_executor::remote_scan::PushdownStatementContext::from_stmt(&ctx).kv_exec_counter;
+        if admitted {
+            enable_top_sql();
+        }
+        session.notify_before_executor_first_run();
+        if send_enabled {
+            enable_top_sql();
+        } else {
+            disable_top_sql();
+        }
+        ordinary.mark("store-a");
+        cop.mark("store-a");
+        cop.mark("store-b");
+        disable_top_sql();
+        let data = session.statement_stats.take();
+        let total: u64 = data
+            .iter()
+            .flat_map(|(_, v)| v.kv_stats_item.kv_exec_count.values())
+            .sum();
+        assert_eq!(total, expected);
+    }
+}

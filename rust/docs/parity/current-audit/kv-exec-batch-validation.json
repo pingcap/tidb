@@ -1,0 +1,174 @@
+{
+  "date": "2026-10-08",
+  "baseline": "3438819684e44084b964572df42d1eb5cac65007",
+  "native_head": "de4c53c34f9fcf53e2e07cb928b6b4af890b02c0",
+  "native_changes": false,
+  "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+  "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "findings": [
+    "O11",
+    "T02",
+    "O13"
+  ],
+  "changes": [
+    "Initialize the existing counter at admitted statement execution only when TopSQL is enabled; preserve captured references and current-enable checks at every maintained foreground read request.",
+    "Carry one counter through StmtContext, snapshot options, adapter unary scope, coprocessor request binding and independent async workers, plus MPP dispatch/establishment/reconnect. Deduplicate by physical target across failures/retries and reset each statement.",
+    "Keep snapshot attribution separate from commit/write/background cleanup, MPP cancellation and health probes. No new native source, cache, worker, transport or statistics owner."
+  ],
+  "removed": [
+    "Unused DistSQL with_sql_kv_exec_counter_interceptor boolean identity helper and tautological test.",
+    "Unused generic RpcInterceptor wrapper, name constant and counter-only marked accessor. The original Go two-target/once-per-execution assertions remain in the existing test against the live handle."
+  ],
+  "regressions_before": [
+    {
+      "failed": 2,
+      "passed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/kv-exec-batch/before.log",
+        "sha256": "f2710f28b0e621846b6fc93590087095d25b300dcae36601f525336b787e1b7f",
+        "bytes": 105931
+      }
+    },
+    {
+      "failed": 1,
+      "passed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/kv-exec-batch/cop-before.log",
+        "sha256": "bb071a58544ecdc0aad66a76d4bda9dd81abfbc615b5a918a636067ecaf282ff",
+        "bytes": 12212
+      }
+    },
+    {
+      "failed": 1,
+      "passed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/kv-exec-batch/native-before.log",
+        "sha256": "ad86079b35b39091fe8eed10496057409be89caadb8b0a0e4890a245993fb6d6",
+        "bytes": 9730
+      }
+    }
+  ],
+  "baseline_behavior": [
+    "Session and native reads observed zero instead of two executions.",
+    "Coprocessor and retrying MPP establishment observed zero instead of one target execution."
+  ],
+  "validation": {
+    "session_mpp_counter": {
+      "passed": 79,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/kv-exec-batch/grouped.log",
+        "sha256": "690535d24a3addcb9d20774f7708b24dc3d5ff0e589e836095b9cc8be7426da1",
+        "bytes": 113685
+      },
+      "command": "cd rust && cargo test --locked --no-fail-fast -p tidb-session -p tidb-exec -p tidb-util --lib -- kv_exec_counter tests_observation_batch:: tiflash_mpp_scan:: --test-threads=1"
+    },
+    "coprocessor": {
+      "passed": 81,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/kv-exec-batch/cop-after.log",
+        "sha256": "38501a593a01896cbcdeb5f28d9e7bb65fef0be2602e04431c85801491d51568",
+        "bytes": 18858
+      },
+      "command": "cd rust && cargo test --locked -p tidb-distsql --test all -- direct_unary distsql_runtime_source --test-threads=1"
+    },
+    "native_adapter": {
+      "passed": 31,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/kv-exec-batch/native-after.log",
+        "sha256": "f1de0cce2193c431d99c46cadfd20c1358ccad62936c2404aa3e1db7b8df2d0b",
+        "bytes": 11371
+      },
+      "command": "cd rust && cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source -- --test-threads=1"
+    },
+    "locked_server_build": {
+      "command": "cd rust && cargo build --locked -p tidb-server",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/kv-exec-batch/build.log",
+        "sha256": "b0006054cb905b5568421b885a62f9828b1e3acf4a6aa6dbe3bbbe497ea5aa6b",
+        "bytes": 112735
+      }
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/kv-exec-batch/lint.log",
+        "sha256": "2940ec5ab8c0c029de7e054749de7d6c30dd95de575095b6d9fecaf1c07826f8",
+        "bytes": 2164
+      }
+    },
+    "live": {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/kv-exec-batch/live.py",
+      "assertions": 23,
+      "scope": "Real MySQL/unistore startup, config and TopSQL toggles preserve SQL results. Does not establish real remote KV attribution.",
+      "receipt": {
+        "path": "/workspace/.cloud-setup/kv-exec-batch/live.json",
+        "sha256": "ed2238f52cf657df2eaba9785269119fa5320208ed1e4269419b7e171b1c23e4",
+        "bytes": 2052
+      },
+      "binary_sha256": "271e5b69c92f23cca576e0cf54fb3630f2a7e4e8bae075ece60fb1c7ddee2e45"
+    }
+  },
+  "distinct_rust_cases": 191,
+  "go_sources": {
+    "pkg/util/topsql/stmtstats/kv_exec_count.go": "6297c65d9512fc5d99b74af53cbc9cd06bbbdc7ca02e5989eae296c897dda1f2",
+    "pkg/executor/adapter.go": "4d58b42bfbb045634dcfbc0d8cc14d8af79c360aa514aed18d1532bed16fb55c",
+    "pkg/executor/select.go": "4a2ff5a778cafef9428166214b22a8ddf74ebd0a7f3766870b7743ee9ebeb871",
+    "pkg/executor/update.go": "e4b3b1ca4669032a647d6fc0c1def39c583e097d671ea4ea95be59499512bb10",
+    "pkg/distsql/distsql.go": "95224bd94c20e055514897ce510a030af2139b9be42cb5c12bb4dc30043a3bb0",
+    "pkg/executor/internal/mpp/local_mpp_coordinator.go": "314508f5eb9ff1b73f55bc4f92bc2979be0a1d550e5a27e544949b41a2ae4150",
+    "pkg/store/copr/mpp.go": "8f60476304bcaad0315c30977abf75ce0878a0f1621ef519466154279689eb5c"
+  },
+  "source_sha256": {
+    "rust/Cargo.lock": "33070bb64b040c962fd58c6b2e1de6a7647aea2a7521537ee45a128fcb5ee09f",
+    "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs": "052c58669efef0843d9747deb676c20ed158f595617572700848505c3f029632",
+    "rust/crates/tidb-distsql/src/distsql_runtime.rs": "e432ba908e7ae11904e1bf15a9ad65f2b709bd7ded57351a4924fef5f20a663c",
+    "rust/crates/tidb-distsql/src/lib.rs": "e8ba4123ca1d1709be8e4bdd63002cd0774a3e3b24b2b0ff6dd17314c39534b0",
+    "rust/crates/tidb-distsql/src/transport.rs": "fb352278463c3aa5731a09121b9ae23321bb4a8a08d394a34da46373abdcac17",
+    "rust/crates/tidb-distsql/tests/direct_unary_paging_and_close.rs": "f41686199f3decd00e0922dbe27d6cac3c8bf437d701466cd7c515232bd1513f",
+    "rust/crates/tidb-distsql/tests/direct_unary_query_seed.rs": "64a11202167e44d884c1c60accdf224726808e43492996d8494e765e10430307",
+    "rust/crates/tidb-distsql/tests/distsql_runtime_source.rs": "0ae0b1a51e5b9a23f3c7a393de86b293f7c6707cd5cceae6ab9aff32eda2a3ec",
+    "rust/crates/tidb-exec/src/cop_scan.rs": "68ecb895d537e7712d0a7475c1d99fe59d779f5d110744457b32e1104a9fb577",
+    "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs": "ca7d40890dc4fd3f7bd4544be7194276e3ba7d5af24f6139bc9c30a651486f0e",
+    "rust/crates/tidb-executor/src/remote_scan.rs": "fd7222abd2ab64791ed61f2a8e7b41c389d7048b8fc3adc2161a38d3a29a3e4c",
+    "rust/crates/tidb-executor/src/stmt_context.rs": "dec51643f3c5c75eb2289e3bf4e796862c43ba3bfe2e038746a0b5b46006731b",
+    "rust/crates/tidb-session/src/observation.rs": "5cb04fe10f6d3e5775d93cfa33e63401e702af9c30ae6ff543374eb3bf88cef8",
+    "rust/crates/tidb-session/src/stmt_ctx.rs": "351e8e95a8b6e230aa96ca0650d7cad3dd4142b3a4f899ba80cb961a57dbac74",
+    "rust/crates/tidb-session/src/tests_observation_batch.rs": "a385d88c2da25e006c03e14212729ae5eefd6d38f25aaa7ecb7b52ab5df74cbf",
+    "rust/crates/tidb-txnkv/Cargo.toml": "1fd2a9ae5d0517c8105eca835c04db90cdd6d98066c40aee603f810f147ebda7",
+    "rust/crates/tidb-txnkv/src/driver/client_bridge.rs": "a8e62b5bf7feef6ce1cae0607566c1f50e3515c6dabc408d1f120f3c3d583a0b",
+    "rust/crates/tidb-txnkv/src/option.rs": "0ba7d5389696b2f1ffa90876f681f0b234b23a17de42baf4a1b961ce0b6f1496",
+    "rust/crates/tidb-txnkv/src/rpc/unary.rs": "e5ee4f47801d6b5449a1fc7c4a05bb87cc21e4ce8fb6c8aa79b620495138930b",
+    "rust/crates/tidb-txnkv/src/transaction/client.rs": "d9ff8f179733b203b2c09f2bbaa4e44a2778d46f56063fa8fd0385589dcd249b",
+    "rust/crates/tidb-txnkv/tests/snapshot_lock_wait_source.rs": "06778212c17396aa378ede417013b077aa3f6a6acb10dd1fee487d987374e382",
+    "rust/crates/tidb-util/src/topsql_stmtstats/kv_exec_count.rs": "4b8af82e0dac7070c152fbdb4dc7ba7bc0f14ffd3f9c972d323626d9763004c6",
+    "rust/crates/tidb-util/src/topsql_stmtstats/mod.rs": "656390cac216f91f3148ecaa10dd45b8092fef9a36b1456a286b01e46cbfb2f5"
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "limits": [
+    "Existing-owner maintenance only; no complete upstream Go package or parent finding acceptance. O11/T02/O13 remain partial; other 51 unresolved findings retain dated evidence.",
+    "Existing empty plan-digest attribution is preserved. DML write/commit attribution, CPU/RU/network profiling, generated reporter transport and full reporting lifecycle remain incomplete.",
+    "No live Go suite, real multi-node TiKV/TiFlash, full TLS/platform matrix or workload performance acceptance. Existing unrelated compiler warnings remain.",
+    "The historically named Ready skill is absent; applicable root AGENTS.md scoped tests, lint, actual hook and fresh locked pre-push build govern this batch."
+  ],
+  "publication": {
+    "status": "Pending normal commit hook and fresh postcommit locked build at receipt creation; final results belong to the external handoff.",
+    "handoff": "/workspace/.cloud-setup/kv-exec-batch/final-handoff.json"
+  }
+}

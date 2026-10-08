@@ -14,13 +14,9 @@
 
 //! Go `kv_exec_count.go`: counting SQL executions in the kv dimension.
 //!
-//! boundary: Go builds an `interceptor.RPCInterceptor` over
-//! `client-go/v2/tikvrpc.{Request,Response}`. Neither type exists below this
-//! crate, and the counter never inspects them — it only needs the RPC target
-//! string and the ability to call through. [`RpcInterceptor::wrap`] therefore
-//! keeps client-go's exact wrap-a-handler shape while staying generic over the
-//! request, response, and error types, so the kv-side counting logic ports in
-//! full rather than being dropped.
+//! The statement-owned handle is captured before executor admission and bound
+//! to ordinary, coprocessor and MPP request dispatch. It preserves Go's admission
+//! and per-RPC enable checks without introducing another transport wrapper.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -28,8 +24,35 @@ use std::sync::{Arc, Mutex};
 use super::stmtstats::{new_sql_plan_digest, SqlPlanDigest, StatementStats};
 use crate::topsql_state::top_sql_enabled;
 
-/// Go's `interceptor.NewRPCInterceptor("kv-exec-counter", ...)` name.
-pub const KV_EXEC_COUNTER_INTERCEPTOR_NAME: &str = "kv-exec-counter";
+/// Statement-owned reference captured during construction and initialized at
+/// executor admission. Copies share the original counter; a new statement gets
+/// a new reference even when the transaction and transport are reused.
+#[derive(Clone, Debug, Default)]
+pub struct KvExecCounterHandle(Arc<std::sync::OnceLock<Arc<KvExecCounter>>>);
+
+impl PartialEq for KvExecCounterHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for KvExecCounterHandle {}
+
+impl KvExecCounterHandle {
+    /// Publishes Go's single execution counter at executor admission.
+    pub fn initialize(&self, stats: &Arc<StatementStats>, sql: &[u8], plan: &[u8]) {
+        self.0
+            .get_or_init(|| stats.create_kv_exec_counter(sql, plan));
+    }
+
+    /// Runs the source interceptor's current-enable check before marking a target.
+    pub fn mark(&self, target: &str) {
+        if top_sql_enabled() {
+            if let Some(counter) = self.0.get() {
+                counter.mark(target);
+            }
+        }
+    }
+}
 
 /// Go `KvExecCounter`: counts the number of SQL executions of the kv layer.
 ///
@@ -63,20 +86,6 @@ impl StatementStats {
 }
 
 impl KvExecCounter {
-    /// Go `KvExecCounter.RPCInterceptor`: returns an interceptor for
-    /// client-go.
-    ///
-    /// The returned interceptor is generally expected to be bound to a
-    /// transaction or snapshot. That way the logic preset by [`KvExecCounter`]
-    /// runs before each RPC request is initiated, counting SQL executions in
-    /// the TiKV dimension.
-    pub fn rpc_interceptor(self: &Arc<Self>) -> RpcInterceptor {
-        RpcInterceptor {
-            name: KV_EXEC_COUNTER_INTERCEPTOR_NAME,
-            counter: Arc::clone(self),
-        }
-    }
-
     /// Go's `mark`: marks this target during the current execution of the
     /// statement. If the target is marked for the first time, the number of
     /// executions is increased. Thread-safe.
@@ -95,62 +104,13 @@ impl KvExecCounter {
             );
         }
     }
-
-    /// The targets marked so far, Go's `c.marked` field read.
-    #[must_use]
-    pub fn marked(&self) -> HashSet<String> {
-        self.marked
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-    }
 }
-
-/// boundary: Go's `interceptor.RPCInterceptor` for a [`KvExecCounter`].
-///
-/// client-go's interceptor is a named handler-decorator; only the decoration
-/// is meaningful here, so it is kept and the client-go request/response types
-/// are left to the caller as type parameters of [`RpcInterceptor::wrap`].
-#[derive(Debug)]
-pub struct RpcInterceptor {
-    name: &'static str,
-    counter: Arc<KvExecCounter>,
-}
-
-impl RpcInterceptor {
-    /// Go's `interceptor.RPCInterceptor.Name`.
-    #[must_use]
-    pub fn name(&self) -> &'static str {
-        self.name
-    }
-
-    /// Go's `interceptor.RPCInterceptor.Wrap`: decorates `next` so that each
-    /// RPC target is marked before the call is forwarded.
-    pub fn wrap<Req, Resp, Err, Next>(&self, next: Next) -> impl Fn(&str, Req) -> Result<Resp, Err>
-    where
-        Next: Fn(&str, Req) -> Result<Resp, Err>,
-    {
-        let counter = Arc::clone(&self.counter);
-        move |target, req| {
-            if top_sql_enabled() {
-                counter.mark(target);
-            }
-            next(target, req)
-        }
-    }
-}
-
 
 #[cfg(test)]
 mod tests {
     use super::super::stmtstats::create_statement_stats;
     use super::super::test_support::{global_test_guard, reset_topsql_state, sql_plan_digest};
     use crate::topsql_state::enable_top_sql;
-
-    /// Stand-ins for `tikvrpc.Request` / `tikvrpc.Response`, which the counter
-    /// never inspects.
-    type Request = ();
-    type Response = ();
 
     // Go `TestKvExecCounter`.
     #[test]
@@ -159,33 +119,23 @@ mod tests {
         reset_topsql_state();
         enable_top_sql();
         let stats = create_statement_stats();
-        let counter = stats.create_kv_exec_counter(b"SQL-1", b"");
-        let interceptor = counter.rpc_interceptor();
+        let counter = super::KvExecCounterHandle::default();
+        counter.initialize(&stats, b"SQL-1", b"");
         for _ in 0..10 {
-            let _ = interceptor
-                .wrap(|_target: &str, _req: Option<Request>| Ok::<Option<Response>, ()>(None))(
-                "TIKV-1", None,
-            );
+            counter.mark("TIKV-1");
+            counter.clone().mark("TIKV-2");
         }
-        for _ in 0..10 {
-            let _ = interceptor
-                .wrap(|_target: &str, _req: Option<Request>| Ok::<Option<Response>, ()>(None))(
-                "TIKV-2", None,
-            );
-        }
-        let marked = counter.marked();
-        assert_eq!(marked.len(), 2);
-        assert!(marked.contains("TIKV-1"));
-        assert!(marked.contains("TIKV-2"));
+        crate::topsql_state::disable_top_sql();
+        counter.mark("TIKV-3");
         let inner = stats.lock();
         let data = &inner.data;
         assert!(data.contains_key(&sql_plan_digest("SQL-1", "")));
-        assert_eq!(
-            data[&sql_plan_digest("SQL-1", "")]
-                .kv_stats_item
-                .kv_exec_count["TIKV-1"],
-            1
-        );
+        let counts = &data[&sql_plan_digest("SQL-1", "")]
+            .kv_stats_item
+            .kv_exec_count;
+        assert_eq!(counts.len(), 2);
+        assert_eq!(counts["TIKV-1"], 1);
+        assert_eq!(counts["TIKV-2"], 1);
         reset_topsql_state();
     }
 }

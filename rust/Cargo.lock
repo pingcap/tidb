@@ -4432,6 +4432,7 @@ dependencies = [
  "tidb-hack",
  "tidb-pd-client",
  "tidb-proto",
+ "tidb-util",
  "tidb-vardef",
  "tikv-client",
  "tokio",

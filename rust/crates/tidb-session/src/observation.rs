@@ -32,6 +32,7 @@ pub(crate) struct StatementObservation {
     prepared: bool,
     routed: bool,
     phases: Arc<Mutex<StatementPhases>>,
+    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
 }
 
 #[derive(Default)]
@@ -133,12 +134,22 @@ impl Session {
             .tables = tables;
     }
 
+    pub(crate) fn statement_kv_exec_counter(
+        &self,
+    ) -> tidb_util::topsql_stmtstats::KvExecCounterHandle {
+        self.statement_observation
+            .as_ref()
+            .map(|o| o.kv_exec_counter.clone())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn statement_phase_observer(
         &self,
     ) -> Option<Arc<dyn Fn(tidb_executor::StatementPhase) + Send + Sync>> {
         let observation = self.statement_observation.as_ref()?;
         let phases = Arc::clone(&observation.phases);
         let stats = Arc::clone(&self.statement_stats);
+        let kv_exec_counter = observation.kv_exec_counter.clone();
         let plan = Arc::clone(&self.process_plan_info);
         let digest = observation.digest.clone();
         let statement_started = observation.started;
@@ -181,6 +192,9 @@ impl Session {
                 .is_fast_plan;
             if !fast || tidb_util::topsql_state::top_sql_enabled() {
                 stats.on_execution_begin(digest.as_bytes(), &[], None);
+                if tidb_util::topsql_state::top_sql_enabled() {
+                    kv_exec_counter.initialize(&stats, digest.as_bytes(), &[]);
+                }
             }
         }))
     }
@@ -214,6 +228,7 @@ impl Session {
             label: String::new(),
             prepared: false,
             routed: false,
+            kv_exec_counter: Default::default(),
             phases: Arc::new(Mutex::new(StatementPhases {
                 parse,
                 parse_before_start: parse,
@@ -274,6 +289,13 @@ impl Session {
                         &[],
                         None,
                     );
+                    if tidb_util::topsql_state::top_sql_enabled() {
+                        observation.kv_exec_counter.initialize(
+                            &self.statement_stats,
+                            observation.digest.as_bytes(),
+                            &[],
+                        );
+                    }
                 }
                 observation
                     .phases

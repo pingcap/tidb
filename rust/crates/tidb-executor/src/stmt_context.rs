@@ -29,10 +29,10 @@ const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 const DEFAULT_DIST_SQL_SCAN_CONCURRENCY: u64 =
     tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64;
 
-use tidb_error::errctx::{ErrGroup, Level, LevelMap};
 use crate::mem_quota::{OomAction, StatementMemory};
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
 use crate::DriverError;
+use tidb_error::errctx::{ErrGroup, Level, LevelMap};
 use tidb_util::spill_storage::SpillStorage;
 
 static NEXT_STATEMENT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -811,6 +811,7 @@ pub struct StmtContextData {
     /// keeping `TableIDs`/`IndexNames`/stats.
     publish_brief_binary_plan: bool,
     statement_phase_observer: Option<Arc<dyn Fn(StatementPhase) + Send + Sync>>,
+    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -1553,8 +1554,14 @@ context_configuration! {
         self
     }
 
-    /// Attaches the statement owner's phase boundaries to every context clone.
+    /// Retains the statement counter through every execution context clone.
     #[must_use]
+    pub fn with_kv_exec_counter(mut self, counter: tidb_util::topsql_stmtstats::KvExecCounterHandle) -> Self {
+        self.kv_exec_counter = counter;
+        self
+    }
+
+    /// Installs the existing statement phase notification.
     pub fn with_statement_phase_observer(
         mut self,
         observer: Option<Arc<dyn Fn(StatementPhase) + Send + Sync>>,
@@ -2091,6 +2098,7 @@ impl StmtContext {
             process_plan_info: None,
             publish_brief_binary_plan: true,
             statement_phase_observer: None,
+            kv_exec_counter: Default::default(),
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
@@ -3514,10 +3522,16 @@ impl StmtContext {
         self.is_staleness
     }
 
+    /// Borrows the counter shared by every request in this execution.
+    pub fn kv_exec_counter(&self) -> tidb_util::topsql_stmtstats::KvExecCounterHandle {
+        self.kv_exec_counter.clone()
+    }
+
     /// Go executor InitSnapshotWithSessCtx/newReplicaReadAdjuster for point readers.
     pub fn snapshot_read_options(&self, avg_row_bytes: f64) -> tidb_txnkv::SnapshotReadOptions {
         let zone = tidb_config::config_tree::config::get_txn_scope_from_config();
         tidb_txnkv::SnapshotReadOptions {
+            kv_exec_counter: self.kv_exec_counter(),
             is_staleness: self.is_staleness,
             replica_read: self.replica_read,
             read_replica_scope: self.read_replica_scope(),

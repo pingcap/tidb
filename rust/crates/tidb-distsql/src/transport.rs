@@ -76,6 +76,7 @@ pub enum TransportRequestError {
 #[derive(Clone, Debug)]
 pub struct TransportRequest {
     metadata: KvRequestMetadata,
+    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
     cop_lite_worker: Option<Arc<std::sync::atomic::AtomicBool>>,
     execution_cancellation: Arc<CancelHandle>,
     request_cancellation: Option<Arc<CancelHandle>>,
@@ -89,6 +90,7 @@ impl TransportRequest {
     pub fn new(metadata: KvRequestMetadata, execution_cancellation: Arc<CancelHandle>) -> Self {
         Self {
             metadata,
+            kv_exec_counter: Default::default(),
             cop_lite_worker: None,
             execution_cancellation,
             request_cancellation: None,
@@ -103,6 +105,20 @@ impl TransportRequest {
     pub fn with_cop_lite_worker(mut self, token: Arc<std::sync::atomic::AtomicBool>) -> Self {
         self.cop_lite_worker = Some(token);
         self
+    }
+
+    /// Retains the statement interceptor through paging and worker copies.
+    #[must_use]
+    pub fn with_kv_exec_counter(
+        mut self,
+        counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    ) -> Self {
+        self.kv_exec_counter = counter;
+        self
+    }
+
+    pub(crate) fn kv_exec_counter(&self) -> tidb_util::topsql_stmtstats::KvExecCounterHandle {
+        self.kv_exec_counter.clone()
     }
 
     pub(crate) fn cop_lite_worker(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
@@ -256,6 +272,7 @@ impl TransportRequest {
         }
         Ok(Self {
             metadata: self.metadata.clone(),
+            kv_exec_counter: self.kv_exec_counter.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),
@@ -282,6 +299,7 @@ impl TransportRequest {
         metadata.request_source = request_source;
         Ok(Self {
             metadata,
+            kv_exec_counter: self.kv_exec_counter.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),

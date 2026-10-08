@@ -505,9 +505,3 @@ pub const fn system_endian() -> SystemEndian {
         SystemEndian::Little
     }
 }
-
-/// Returns whether the SQL KV execution counter interceptor would be bound.
-#[must_use]
-pub const fn with_sql_kv_exec_counter_interceptor(counter_present: bool) -> bool {
-    counter_present
-}

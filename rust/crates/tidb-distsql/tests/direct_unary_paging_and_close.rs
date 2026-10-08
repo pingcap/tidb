@@ -296,6 +296,10 @@ mod concurrent {
 
     #[test]
     fn one_cop_worker_reuses_its_client_across_regions() {
+        tidb_util::topsql_state::enable_top_sql();
+        let stats = tidb_util::topsql_stmtstats::create_statement_stats();
+        let counter = tidb_util::topsql_stmtstats::KvExecCounterHandle::default();
+        counter.initialize(&stats, b"sql", b"plan");
         let clones = Arc::new(AtomicUsize::new(0));
         let keys: Vec<_> = (0..=64).map(|i| format!("k{i:03}")).collect();
         let (mut runtime, incoming, _) = runtime_with_clones(
@@ -305,7 +309,18 @@ mod concurrent {
         let baseline = clones.load(Ordering::SeqCst);
         let mut request = metadata(&keys[0], &keys[64]);
         request.keep_order = false;
-        let mut result = select_with_concurrency(&mut runtime, request, Arc::default(), 1);
+        request.concurrency = 1;
+        request.tikv_client_read_timeout_ms = 5000;
+        let mut result = runtime
+            .select_with_runtime_stats(
+                &transport_request(request).with_kv_exec_counter(counter),
+                SelectInput::default(),
+                QueryResultContext::new(Vec::<FieldType>::new(), WarningCollector::new()),
+                vec![],
+                0,
+                false,
+            )
+            .unwrap();
         let replies = std::thread::spawn(move || {
             for _ in 0..64 {
                 let attempt = started(&incoming);
@@ -323,6 +338,16 @@ mod concurrent {
             clones.load(Ordering::SeqCst) - baseline,
             1,
             "Go's one cop worker owns one client policy state across region tasks"
+        );
+        tidb_util::topsql_state::disable_top_sql();
+        let data = stats.take();
+        let total: u64 = data
+            .iter()
+            .flat_map(|(_, item)| item.kv_stats_item.kv_exec_count.values())
+            .sum();
+        assert_eq!(
+            total, 1,
+            "async worker forks share one statement target set"
         );
     }
 

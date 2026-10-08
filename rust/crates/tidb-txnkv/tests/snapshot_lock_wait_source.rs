@@ -28,7 +28,6 @@
 //! implements, because a lock that stays alive for exactly N probes cannot be
 //! produced on demand against a live cluster.
 
-
 #![allow(missing_docs)]
 
 use std::sync::{Arc, Condvar, Mutex};
@@ -2600,6 +2599,8 @@ impl tidb_txnkv::region::RegionQueryLoader for OneRegion {
 #[test]
 fn read_consistency_snapshot_options_reach_native_requests_and_reset() {
     let _config = snapshot_test_config();
+    tidb_util::topsql_state::enable_top_sql();
+    let stats = tidb_util::topsql_stmtstats::create_statement_stats();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let client = LockingClient::new(recorded.clone());
     client
@@ -2621,7 +2622,12 @@ fn read_consistency_snapshot_options_reach_native_requests_and_reset() {
     .unwrap();
     for (index, timeout) in [731, 0, 233].into_iter().enumerate() {
         let group = format!("read-group-{index}");
+        let counter = tidb_util::topsql_stmtstats::KvExecCounterHandle::default();
+        if index != 1 {
+            counter.initialize(&stats, b"sql", b"plan");
+        }
         transaction.set_snapshot_read_options(&tidb_txnkv::SnapshotReadOptions {
+            kv_exec_counter: counter,
             read_timeout_ms: timeout,
             is_staleness: index != 1,
             resource_group_name: Some(group.clone()),
@@ -2684,6 +2690,16 @@ fn read_consistency_snapshot_options_reach_native_requests_and_reset() {
         );
     }
     transaction.finish_without_writes().unwrap();
+    tidb_util::topsql_state::disable_top_sql();
+    let data = stats.take();
+    let total: u64 = data
+        .iter()
+        .flat_map(|(_, item)| item.kv_stats_item.kv_exec_count.values())
+        .sum();
+    assert_eq!(
+        total, 2,
+        "read counter resets across statements, including one disabled statement"
+    );
 }
 
 #[derive(Clone)]
@@ -3186,7 +3202,6 @@ fn ordinary_forwarding_disabled_keeps_direct_replica_probe() {
     assert_eq!(recorded.forwarded_hosts, vec![None]);
     assert_ne!(recorded.routed_reads[0].1, 620);
 }
-
 
 #[test]
 fn store_maintenance_timeout_configuration_rejects_invalid_values() {

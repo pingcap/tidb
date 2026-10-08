@@ -335,7 +335,12 @@ impl<C, L, T> ClientTransaction<C, L, T> {
     }
 
     fn prepare_read(&mut self, read_ts: u64, call: &UnaryCallContext) {
-        self.client.set_call(call);
+        let call = call.clone().with_kv_exec_counter(
+            self.snapshot_read_options
+                .as_ref()
+                .map(|o| o.kv_exec_counter.clone()),
+        );
+        self.client.set_call(&call);
         self.client.take_read_trace();
         self.engine
             .transaction_mut()

@@ -229,3 +229,35 @@ fn process_time_admits_a_response_for_the_next_query_on_the_shared_cache() {
     assert!(calls[1].is_cache_enabled);
     assert_eq!(calls[1].cache_if_match_version, 9);
 }
+
+#[test]
+fn kv_exec_counter_batch_coprocessor_attempts_share_statement_targets() {
+    use tidb_util::topsql_stmtstats::{create_statement_stats, KvExecCounterHandle};
+    tidb_util::topsql_state::enable_top_sql();
+    let stats = create_statement_stats();
+    let counter = KvExecCounterHandle::default();
+    counter.initialize(&stats, b"sql", b"plan");
+    let calls = Arc::new(RwLock::new(Vec::new()));
+    let mut runtime = InjectedQueryRuntime::new(transport(
+        Arc::clone(&calls),
+        [Ok(response(b"a")), Ok(response(b"b"))],
+        [location_with_three_peers(1, "a", "z", "tikv")],
+    ));
+    let request = transport_request(metadata("a", "z")).with_kv_exec_counter(counter);
+    for _ in 0..2 {
+        let mut result = select_result(&mut runtime, &request);
+        assert!(result.next_raw().unwrap().is_some());
+        assert!(result.next_raw().unwrap().is_none());
+    }
+    tidb_util::topsql_state::disable_top_sql();
+    let data = stats.take();
+    let total: u64 = data
+        .iter()
+        .flat_map(|(_, v)| v.kv_stats_item.kv_exec_count.values())
+        .sum();
+    assert_eq!(calls.read().unwrap().len(), 2);
+    assert_eq!(
+        total, 1,
+        "same-target retries/readers count one statement execution"
+    );
+}

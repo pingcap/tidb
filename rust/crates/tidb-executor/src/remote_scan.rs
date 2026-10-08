@@ -508,6 +508,8 @@ pub struct PushdownScanRequest {
 /// one and forget the other.
 #[derive(Clone, Debug)]
 pub struct PushdownStatementContext {
+    /// Statement KV execution counter shared with point readers.
+    pub kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
     /// Shared statement quota and SQL killer for remote response ownership.
     pub memory: crate::StatementMemory,
     /// One query identity and allocation state for every MPP gather in this statement.
@@ -583,6 +585,7 @@ impl Default for PushdownStatementContext {
     fn default() -> Self {
         Self {
             memory: crate::StatementMemory::default(),
+            kv_exec_counter: Default::default(),
             mpp_query_info: Arc::default(),
             mpp_server_id: 0,
             tiflash_compute_dispatch_policy: "consistent_hash".into(),
@@ -618,6 +621,7 @@ impl PushdownStatementContext {
     pub fn from_stmt(ctx: &crate::StmtContext) -> Self {
         Self {
             memory: ctx.statement_memory(),
+            kv_exec_counter: ctx.kv_exec_counter(),
             mpp_query_info: ctx.mpp_query_info(),
             mpp_server_id: ctx.mpp_server_id(),
             tiflash_compute_dispatch_policy: ctx.tiflash_compute_dispatch_policy().into(),

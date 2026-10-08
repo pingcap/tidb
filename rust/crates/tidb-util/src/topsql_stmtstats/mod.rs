@@ -39,10 +39,8 @@
 //! - **RU-v2 statement accounting** → [`ExecFinishInfo::total_ru_v2`], the
 //!   finalized statement total supplied at execution finish. In-flight Top-RU
 //!   sampling is v1-only, matching `currentRUTotal` in Go.
-//! - **client-go/v2 `tikvrpc` + `tikvrpc/interceptor`** → [`RpcInterceptor`],
-//!   which keeps client-go's wrap-a-handler shape but is generic over the
-//!   request, response, and error types, so `kv_exec_count.go` ports in full
-//!   instead of being dropped.
+//! - **client-go/v2 `tikvrpc` + `tikvrpc/interceptor`** → [`KvExecCounterHandle`],
+//!   shared from statement admission to the physical request dispatch owners.
 //! - **`rmclient.RUVersion`** (PD client) → [`RuVersion`], the same integer
 //!   enum with the same zero-is-unspecified normalization.
 //! - **`topsql/reporter/metrics`** → the matching process-wide Prometheus
@@ -88,7 +86,7 @@ pub use aggregator::{
     register_ru_collector, setup_aggregator, unregister_collector, unregister_ru_collector,
     Aggregator, Collector, RuCollector, MAX_RU_KEYS_PER_AGGREGATE, MAX_STMT_STATS_SIZE,
 };
-pub use kv_exec_count::{KvExecCounter, RpcInterceptor, KV_EXEC_COUNTER_INTERCEPTOR_NAME};
+pub use kv_exec_count::{KvExecCounter, KvExecCounterHandle};
 pub use rustats::{
     default_ru_version, normalize_ru_version, ExecutionContext, RuIncrement, RuIncrementMap, RuKey,
     RuVersion, RuVersionProvider,

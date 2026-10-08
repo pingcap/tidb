@@ -178,6 +178,8 @@ impl ReplicaReadType {
 /// options have a different owner; ordinary Get/BatchGet must configure this one.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SnapshotReadOptions {
+    /// Statement KV execution counter; clones retain the same admission reference.
+    pub kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
     /// Go IsStalenessReadOnly; independent of replica read preference.
     pub is_staleness: bool,
     /// Go SessionVars.GetReplicaRead, before client-go's mode mapping.

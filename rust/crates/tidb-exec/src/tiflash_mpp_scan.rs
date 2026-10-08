@@ -571,6 +571,7 @@ impl TiFlashMppScanSource {
         let mut response = self
             .runtime
             .block_on(async {
+                request.statement.kv_exec_counter.mark(&address);
                 let memory = &request.statement.memory;
                 let transport = self.transport.lock().expect("MPP transport lock").clone();
                 let mut connection =
@@ -618,6 +619,7 @@ impl TiFlashMppScanSource {
                             return Err(error);
                         }
                     };
+                connection.kv_exec_counter = request.statement.kv_exec_counter.clone();
                 establish_mpp_response(
                     &mut connection,
                     meta.clone(),
@@ -1008,6 +1010,7 @@ struct MppRpcConnection {
     transport: tidb_txnkv::rpc::TonicCoprocessorClient,
     address: String,
     compute_cache: Option<Arc<tikv_client::TiFlashComputeStoreCache>>,
+    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
 }
 
 impl MppRpcConnection {
@@ -1038,6 +1041,7 @@ async fn connect_mpp_client(
             route,
             transport: transport.clone(),
             address: address.to_owned(),
+            kv_exec_counter: Default::default(),
             compute_cache,
         }),
         Err(error) => {
@@ -1061,6 +1065,7 @@ async fn establish_mpp_response(
     let mut backoff = RegionBackoffBudget::campaign_default();
     let result = loop {
         let attempt = async {
+            connection.kv_exec_counter.mark(&connection.address);
             let response = mpp_setup(
                 Some(&memory),
                 None,
@@ -1123,7 +1128,10 @@ async fn establish_mpp_response(
                 )
                 .await
                 {
-                    Ok(next) => *connection = next,
+                    Ok(mut next) => {
+                        next.kv_exec_counter = connection.kv_exec_counter.clone();
+                        *connection = next;
+                    }
                     Err(error) => break Err(error),
                 }
             }
@@ -1743,6 +1751,53 @@ mod mpp_read_batch_tests {
             let _ = self.shutdown.take().unwrap().send(());
             self.runtime.block_on(self.task.take().unwrap()).unwrap();
         }
+    }
+
+    #[test]
+    fn kv_exec_counter_batch_mpp_socket_setup_marks_target() {
+        use tidb_util::topsql_stmtstats::{create_statement_stats, KvExecCounterHandle};
+        tidb_util::topsql_state::enable_top_sql();
+        let fixture = Fixture::with_opening(
+            false,
+            false,
+            false,
+            b"first".to_vec(),
+            Opening::RetryHeaders,
+        );
+        let stats = create_statement_stats();
+        let counter = KvExecCounterHandle::default();
+        counter.initialize(&stats, b"sql", b"plan");
+        let mut response = fixture.runtime.block_on(async {
+            let memory = tidb_executor::StatementMemory::default();
+            let mut connection = connect_mpp_client(
+                &fixture.address,
+                &memory,
+                &fixture.transport.lock().unwrap(),
+                None,
+            )
+            .await
+            .unwrap();
+            connection.kv_exec_counter = counter;
+            establish_mpp_response(
+                &mut connection,
+                TaskMeta::default(),
+                TaskMeta::default(),
+                Arc::new(fixture.runtime.handle().clone()),
+                memory,
+            )
+            .await
+            .unwrap()
+        });
+        assert!(response.next().unwrap().is_some());
+        response.close();
+        tidb_util::topsql_state::disable_top_sql();
+        let data = stats.take();
+        let total: u64 = data
+            .iter()
+            .flat_map(|(_, v)| v.kv_stats_item.kv_exec_count.values())
+            .sum();
+        assert_eq!(fixture.attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(total, 1);
     }
 
     #[test]

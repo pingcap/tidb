@@ -236,6 +236,7 @@ pub struct UnaryCallContext {
     deadline: Option<Instant>,
     cancellation: UnaryCancellation,
     forwarded_host: Option<String>,
+    kv_exec_counter: Option<tidb_util::topsql_stmtstats::KvExecCounterHandle>,
 }
 
 impl UnaryCallContext {
@@ -252,6 +253,7 @@ impl UnaryCallContext {
             deadline: Some(deadline),
             cancellation,
             forwarded_host: None,
+            kv_exec_counter: None,
         }
     }
 
@@ -266,6 +268,7 @@ impl UnaryCallContext {
             deadline,
             cancellation,
             forwarded_host: None,
+            kv_exec_counter: None,
         }
     }
 
@@ -273,6 +276,21 @@ impl UnaryCallContext {
     #[must_use]
     pub fn with_timeout(timeout: Duration) -> Self {
         Self::new(timeout, UnaryCancellation::new())
+    }
+
+    /// Binds the statement observer without changing deadline or cancellation.
+    #[must_use]
+    pub fn with_kv_exec_counter(
+        mut self,
+        counter: Option<tidb_util::topsql_stmtstats::KvExecCounterHandle>,
+    ) -> Self {
+        self.kv_exec_counter = counter;
+        self
+    }
+
+    /// The observer belongs to this call, never the shared connection fleet.
+    pub fn kv_exec_counter(&self) -> Option<&tidb_util::topsql_stmtstats::KvExecCounterHandle> {
+        self.kv_exec_counter.as_ref()
     }
 
     /// Remaining budget, or `Duration::MAX` for a cancellation-only scope.
