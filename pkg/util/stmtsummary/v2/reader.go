@@ -29,7 +29,6 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
-
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"

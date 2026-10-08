@@ -17,9 +17,12 @@ package stmtsummary
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -612,4 +615,66 @@ func countOpenFileDescriptors() (int, bool) {
 		return 0, false
 	}
 	return len(entries), true
+}
+
+// TestJSONIterDecodeCompat pins the json-iterator swap to encoding/json
+// behavior: for canonical writer records and for non-canonical or malformed
+// lines, both decoders must agree on error acceptance and on the decoded record.
+func TestJSONIterDecodeCompat(t *testing.T) {
+	records := []*stmtPersistedRecord{
+		{
+			StmtRecord: StmtRecord{
+				Begin:                        math.MinInt64,
+				End:                          math.MaxInt64,
+				SchemaName:                   "sch\"ema\\文",
+				Digest:                       strings.Repeat("d", 64),
+				PlanDigest:                   "plan",
+				StmtType:                     "Select",
+				NormalizedSQL:                "select ? from `t` where c = ?",
+				TableNames:                   "test.t",
+				IsInternal:                   true,
+				BindingSQL:                   "select /*+ use_index(@sel_1) */ ?",
+				SampleSQL:                    "select 'q\"uote', 'bin\xff\x00'",
+				PrevSQL:                      "begin",
+				SamplePlan:                   "\tplan\nmultiline",
+				PlanHint:                     "use_index(t, a)",
+				IndexNames:                   []string{"a", "b,c", ""},
+				ExecCount:                    -1,
+				SumErrors:                    math.MaxInt32,
+				SumWarnings:                  math.MinInt32,
+				SumLatency:                   math.MaxInt64,
+				MaxLatency:                   math.MinInt64,
+				SumNumCopTasks:               42,
+				MaxCopProcessTime:            time.Millisecond,
+				SumTotalKeys:                 math.MinInt64,
+				SumRocksdbDeleteSkippedCount: math.MaxUint64,
+			},
+		},
+		{StmtRecord: StmtRecord{Begin: 1, End: 2, Digest: "digest2"}, Evicted: true},
+		{StmtRecord: StmtRecord{}},
+	}
+	lines := make([][]byte, 0, len(records)+5)
+	for _, rec := range records {
+		line, err := json.Marshal(rec)
+		require.NoError(t, err)
+		lines = append(lines, line)
+	}
+	lines = append(lines,
+		[]byte(`{"begin":1,"end":2,"digest":"first","digest":"last"}`),
+		[]byte(`{"digest":null}`),
+		[]byte(`{"begin":1.5}`),
+		[]byte(`not json at all`),
+		[]byte(`{"begin":1}`),
+	)
+	for _, line := range lines {
+		var want, got stmtPersistedRecord
+		wantErr := json.Unmarshal(line, &want)
+		gotErr := jsoniterDecode.Unmarshal(line, &got)
+		if wantErr != nil {
+			require.Error(t, gotErr, "line: %s", line)
+			continue
+		}
+		require.NoError(t, gotErr, "line: %s", line)
+		require.Equal(t, want, got, "line: %s", line)
+	}
 }
