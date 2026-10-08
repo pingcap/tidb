@@ -2,7 +2,9 @@
 
 Latest cleanup: [PD artifact retirement](pd-artifact-cleanup-validation.json) removes nine unused method-path constants/eight self-comparison assertions, the obsolete loopback profiler, detached historical transport probes and nine completed plans. Actual wire/socket/TLS/lifecycle coverage remains. Historical source obligations and immutable archives are retained; no findings close.
 
-Latest connected repair: [PD mode/group/member scheduling](pd-mode-scheduling-validation.json) separates stalled mode RPCs from group refresh, cancels obsolete group lookups after provider changes and wakes membership on failed mode checks in both clients. All 159 grouped tests pass. P03/P06 remain partial; no whole-package closure.
+Latest connected repair: [TSO RPC concurrency](tso-rpc-concurrency-validation.json) makes the configured concurrency reach the dispatcher. Native `RpcConcurrency` ports Go's `checkTSORPCConcurrency` -- the five-second check interval, the immediate override when a collection wait is enabled over concurrency above 1, the follower-proxy and collection-wait override to 1, `tokenCount` sizing and a cancellation-abandoned reduction -- and TiDB's `tidb_tso_client_rpc_mode` publishes Go's mapped integer through the shared PD policy. Both halves were previously inert. Native `pd::` 208 pass; adapter policy cases pass. P03/P06 remain partial; no whole-package closure and no count changes.
+
+Previous connected repair: [PD mode/group/member scheduling](pd-mode-scheduling-validation.json) separates stalled mode RPCs from group refresh, cancels obsolete group lookups after provider changes and wakes membership on failed mode checks in both clients. All 159 grouped tests pass. P03/P06 remain partial; no whole-package closure.
 
 Previous connected repair: [independent PD/TSO observations](pd-independent-observation-validation.json) fixes failed-mode group refresh, native member/TSO scheduling and missing adapter periodic membership as one lifecycle batch. The former direct-client helper is removed after migration. P03/P06 remain partial; no broad or complete-package closure.
 

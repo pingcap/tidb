@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-08",
+  "scope": "B01 P03/P06 existing-owner maintenance: the configured TSO RPC concurrency reaches the dispatcher and the TiDB sysvar publishes it. One named residual of P03/P06 only; no broad finding or complete package closure.",
+  "baseline": {
+    "tidb": "2f45659057",
+    "native": "c594ea97615405e6180c3730e98c3611e781be7a",
+    "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+    "pd": "v0.0.0-20260805103528-afa43111d149"
+  },
+  "native_published": "a380f747ae4182b9e7e4ba9aaa0f230140a49241",
+  "before": {
+    "source_confirmed_defect": "Both halves of this option were inert. Native `Options::{set,get}_tso_client_rpc_concurrency` had no reader outside `opt_tests.rs`, and the request stream built one `Semaphore` with a single permit that was never revisited, so no configured value could change the number of ongoing TSO RPCs. On the TiDB side `tidb_tso_client_rpc_mode` validated and stored its enum text and reached no PD option, so the client stayed at its compiled default whatever an operator set.",
+    "reproduction": "Reader search over native `src/pd` and `rust/crates` for the option accessors, and over the sysvar catalog entry's consumers. No behavioral test could fail beforehand because no production path read either value."
+  },
+  "go_owners": [
+    "pd/client/clients/tso/dispatcher.go:573-630 `checkTSORPCConcurrency`: the five-second `dispatcherCheckRPCConcurrencyInterval`, the immediate re-check when a collection wait is enabled over concurrency above 1, the follower-proxy and collection-wait override to 1, and the `tokenCount` sizing of concurrency at 1 and twice the concurrency above it.",
+    "pd/client/opt/option.go:146-153: `SetTSOClientRPCConcurrency` compare-and-swaps and `GetTSOClientRPCConcurrency` loads, neither validating; the only validated writer is TiDB's enum.",
+    "pkg/domain/domain_sysvars.go:92-106 `setPDClientDynamicOption`: `TiDBTSOClientRPCMode` maps DEFAULT/PARALLEL/PARALLEL-FAST onto 1/2/4 and sends the mapped integer through `updatePDClient(opt.TSOClientRPCConcurrency, ...)`; an unmapped spelling is `ErrWrongValueForVar`. The variable text never reaches the client."
+  ],
+  "repairs": [
+    "Native `src/pd/timestamp.rs`: `RpcConcurrency` owns Go's decision and the dispatcher consults it once per circle with the collection wait it already loads. Permit growth adds tokens; a reduction waits for returned tokens and abandons that wait on cancellation, which is Go's select on the dispatcher context.",
+    "TiDB `tidb-session/src/vars.rs`: `PdRegionPolicy::set_tso_rpc_concurrency` plus a `tso_rpc_concurrency` mapper carrying Go's enum-to-integer mapping, published from both existing sites -- policy installation and the live resolved-image publication -- beside the sibling PD options.",
+    "TiDB `tidb-pd-client/src/client/mod.rs`: `set_tso_client_rpc_concurrency` records the setting on the shared options, matching Go's `updatePDClient`, which does not reach into a running collection.",
+    "TiDB `tidb-server/src/cluster_session_node/boot.rs`: the process policy forwards to the real PD client."
+  ],
+  "divergence_recorded": "Go keeps `int` throughout, so a nonpositive option flows into its token count and starves its own dispatcher. A permit count is unsigned here, so the conversion must decide: it floors at Go's default of one ongoing request. Every value TiDB can publish (1, 2, 4) is unaffected, and native `Options` deliberately defers validation to the consuming owner.",
+  "validation": {
+    "native": "5 new `pd::timestamp::tests` cases pin the clauses separately: option adoption with Go's token sizing, interval rate limiting, the immediate collection-wait override, the follower-proxy override, the nonpositive floor and the abandoned reduction under cancellation. Full native `pd::` suite 208 passed, 0 failed.",
+    "tidb": "`tso_client_rpc_mode_publishes_gos_mapped_concurrency` pins all three enum choices, the rejected spelling leaving the published value untouched, and a missing cluster row restoring Go's default. `vars::pd_region_batch_tests` 4 passed, 0 failed.",
+    "build": "`cd rust && cargo build --locked -p tidb-server` passed on the synced tree before commit.",
+    "sync": "`scripts/sync-tikv-client-rs.sh` synced the vendored copy to a380f747ae41 with all 4 maintained patches applied and protobuf regenerated (protoc 35.1). Remote master SHA verified as a380f747ae4182b9e7e4ba9aaa0f230140a49241."
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "finding_disposition": "P03/P06 remain partial. The RPC-concurrency residual both findings named is now closed end to end; every other residual they list is untouched. No finding closes and no count changes.",
+  "limits": [
+    "Request queues/retry orchestration, independent worker/dispatcher, readiness/prewarm, idle recovery, queue/dispatcher consolidation, full primaryless group metadata publication, remaining group refresh/retry scheduling, other RPC-error membership notifications and complete router/security/platform/package obligations remain open.",
+    "Concurrency above 1 is exercised by permit accounting, not by a live multi-stream PD cluster; no throughput measurement was taken, and the adaptive `goalBatchTime` division by concurrency that Go's dispatcher also performs is not part of this repair.",
+    "Full Go suites, live multi-node TiKV/TiFlash and production TLS were not run.",
+    "Other 52 unresolved findings retain carried evidence; no exhaustive re-audit or complete-package acceptance."
+  ]
+}

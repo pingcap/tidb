@@ -3383,3 +3383,144 @@ async fn mode_scheduling_failed_mode_wakes_member_refresh() {
         "mode error waited for the one-minute member timer"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Go `pd/client/clients/tso/dispatcher.go::checkTSORPCConcurrency`.
+// ---------------------------------------------------------------------------
+
+/// Go sizes the token pool at the concurrency itself when that is 1, and at
+/// twice the concurrency above 1, so the count of ongoing requests may
+/// fluctuate around the target while an RPC's duration jitters.
+#[tokio::test]
+async fn rpc_concurrency_adopts_the_option_and_sizes_gos_token_pool() {
+    let options = crate::pd::opt::Options::new();
+    let capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
+    let cancellation = Cancellation::default();
+    let mut owner = RpcConcurrency::new(Arc::clone(&capacity));
+    assert_eq!(capacity.available_permits(), 1, "Go's default concurrency");
+
+    options.set_tso_client_rpc_concurrency(2);
+    owner
+        .check(&options, Duration::ZERO, &cancellation, Instant::now())
+        .await;
+    assert_eq!(capacity.available_permits(), 4, "two concurrency, 2x tokens");
+
+    // A later change is rate-limited: Go checks at most once per interval, so
+    // a second adoption inside the window keeps the previous pool.
+    options.set_tso_client_rpc_concurrency(4);
+    owner
+        .check(&options, Duration::ZERO, &cancellation, Instant::now())
+        .await;
+    assert_eq!(
+        capacity.available_permits(),
+        4,
+        "the interval has not elapsed, so Go does not re-check"
+    );
+
+    // Once the interval has elapsed, the same option is adopted.
+    let later = Instant::now() + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
+    owner.check(&options, Duration::ZERO, &cancellation, later).await;
+    assert_eq!(capacity.available_permits(), 8, "four concurrency, 2x tokens");
+}
+
+/// Concurrent RPCs and an additional collection wait pursue opposite goals, so
+/// Go forces concurrency to 1 while a wait is configured -- and does it
+/// IMMEDIATELY, bypassing the check interval, when the wait has just been
+/// enabled over a concurrency above 1.
+#[tokio::test]
+async fn a_collection_wait_disables_concurrent_rpcs_immediately() {
+    let options = crate::pd::opt::Options::new();
+    let capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
+    let cancellation = Cancellation::default();
+    let mut owner = RpcConcurrency::new(Arc::clone(&capacity));
+    options.set_tso_client_rpc_concurrency(4);
+    owner
+        .check(&options, Duration::ZERO, &cancellation, Instant::now())
+        .await;
+    assert_eq!(capacity.available_permits(), 8);
+
+    // No interval has elapsed, but the wait just turned positive.
+    owner
+        .check(
+            &options,
+            Duration::from_millis(1),
+            &cancellation,
+            Instant::now(),
+        )
+        .await;
+    assert_eq!(
+        capacity.available_permits(),
+        1,
+        "a positive collection wait forces Go's single ongoing request"
+    );
+}
+
+/// Go applies the same override for follower proxy, which multiplies the
+/// streams a single batch already fans out to.
+#[tokio::test]
+async fn follower_proxy_disables_concurrent_rpcs() {
+    let options = crate::pd::opt::Options::new();
+    let capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
+    let cancellation = Cancellation::default();
+    let mut owner = RpcConcurrency::new(Arc::clone(&capacity));
+    options.set_tso_client_rpc_concurrency(2);
+    options.set_enable_tso_follower_proxy(true);
+    owner
+        .check(&options, Duration::ZERO, &cancellation, Instant::now())
+        .await;
+    assert_eq!(
+        capacity.available_permits(),
+        1,
+        "follower proxy keeps one ongoing request"
+    );
+}
+
+/// `Options` stores a concurrency without validating it, and a permit count is
+/// unsigned, so the conversion answers for a nonpositive setting with Go's own
+/// default of one ongoing request rather than draining the pool forever.
+#[tokio::test]
+async fn a_nonpositive_concurrency_keeps_one_ongoing_request() {
+    let options = crate::pd::opt::Options::new();
+    let capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
+    let cancellation = Cancellation::default();
+    let mut owner = RpcConcurrency::new(Arc::clone(&capacity));
+    options.set_tso_client_rpc_concurrency(0);
+    owner
+        .check(&options, Duration::ZERO, &cancellation, Instant::now())
+        .await;
+    assert_eq!(capacity.available_permits(), 1);
+
+    options.set_tso_client_rpc_concurrency(-4);
+    let later = Instant::now() + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
+    owner.check(&options, Duration::ZERO, &cancellation, later).await;
+    assert_eq!(capacity.available_permits(), 1);
+}
+
+/// Cancellation abandons a reduction instead of waiting for tokens that an
+/// in-flight request will never return, which is Go's `select` on the
+/// dispatcher context.
+#[tokio::test]
+async fn cancellation_abandons_a_pending_token_reduction() {
+    let options = crate::pd::opt::Options::new();
+    let capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
+    let cancellation = Cancellation::default();
+    let mut owner = RpcConcurrency::new(Arc::clone(&capacity));
+    options.set_tso_client_rpc_concurrency(4);
+    owner
+        .check(&options, Duration::ZERO, &cancellation, Instant::now())
+        .await;
+    assert_eq!(capacity.available_permits(), 8);
+
+    // Hold every token, so a reduction cannot make progress.
+    let held = Arc::clone(&capacity).acquire_many_owned(8).await.unwrap();
+    options.set_tso_client_rpc_concurrency(1);
+    cancellation.cancel();
+    let later = Instant::now() + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
+    owner.check(&options, Duration::ZERO, &cancellation, later).await;
+    drop(held);
+    assert_eq!(
+        capacity.available_permits(),
+        8,
+        "the abandoned reduction left the pool as it stood"
+    );
+}

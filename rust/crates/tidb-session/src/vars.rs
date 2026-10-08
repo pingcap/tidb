@@ -212,6 +212,14 @@ pub trait PdRegionPolicy: std::fmt::Debug + Send + Sync {
     fn set_tso_follower_proxy(&self, _enabled: bool) {}
     /// Applies the maximum additional collection wait to the shared PD owner.
     fn set_tso_batch_wait(&self, _wait: std::time::Duration) {}
+    /// Applies Go `opt.TSOClientRPCConcurrency` to the same process PD client.
+    ///
+    /// Go's `setPDClientDynamicOption` does not forward the variable's text:
+    /// `TiDBTSOClientRPCMode` is an enum whose three choices each name a
+    /// concurrency (`pkg/domain/domain_sysvars.go:92-106`), and the mapped
+    /// integer is what reaches the client. [`tso_rpc_concurrency`] performs
+    /// that mapping so both publication paths send the same number.
+    fn set_tso_rpc_concurrency(&self, _concurrency: isize) {}
 }
 
 /// Storage-oracle authority installed once by the process session factory.
@@ -226,6 +234,24 @@ pub trait ExternalTimestampProvider: std::fmt::Debug + Send + Sync {
 fn tso_batch_wait(value: &str) -> std::time::Duration {
     let milliseconds = value.parse::<f64>().expect("validated TSO wait is numeric");
     std::time::Duration::from_nanos((milliseconds * 1_000_000.0) as u64)
+}
+
+/// Go's `TiDBTSOClientRPCMode` choice-to-concurrency mapping
+/// (`pkg/domain/domain_sysvars.go:92-106`): `DEFAULT` sends one batch at a
+/// time, `PARALLEL` allows two and `PARALLEL-FAST` four.
+///
+/// Go reaches its `ErrWrongValueForVar` arm only for a value the enum
+/// validator already rejects, so an unknown spelling here means the catalog
+/// and this mapping disagree; it falls back to Go's own default of 1 rather
+/// than failing a publication that the validator already accepted.
+fn tso_rpc_concurrency(value: &str) -> isize {
+    if value.eq_ignore_ascii_case("PARALLEL") {
+        2
+    } else if value.eq_ignore_ascii_case("PARALLEL-FAST") {
+        4
+    } else {
+        1
+    }
 }
 
 impl Default for GlobalSysvars {
@@ -541,6 +567,9 @@ impl GlobalSysvars {
             policy.set_tso_batch_wait(tso_batch_wait(&value(
                 tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME,
             )));
+            policy.set_tso_rpc_concurrency(tso_rpc_concurrency(&value(
+                tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_RPC_MODE,
+            )));
         }
         drop(resolved);
     }
@@ -711,6 +740,8 @@ impl GlobalSysvars {
         let tso_proxy_value = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_TSO_FOLLOWER_PROXY);
         let tso_proxy_enabled =
             tso_proxy_value.eq_ignore_ascii_case("ON") || tso_proxy_value == "1";
+        let tso_rpc_mode =
+            tso_rpc_concurrency(&effective(tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_RPC_MODE));
         let oom_action = tidb_executor::OomAction::parse(&effective(
             tidb_vardef::tidb_vars::TIDB_MEM_OOM_ACTION,
         ));
@@ -813,6 +844,7 @@ impl GlobalSysvars {
                 policy.set_follower_handle(pd_region_enabled);
                 policy.set_tso_follower_proxy(tso_proxy_enabled);
                 policy.set_tso_batch_wait(tso_wait);
+                policy.set_tso_rpc_concurrency(tso_rpc_mode);
             }
         }
     }
@@ -5570,6 +5602,50 @@ mod pd_region_batch_tests {
         fn set_follower_handle(&self, value: bool) {
             self.0.store(value, Ordering::SeqCst);
         }
+    }
+
+    /// Records the concurrency Go's `opt.TSOClientRPCConcurrency` would carry.
+    #[derive(Debug, Default)]
+    struct ConcurrencyPolicy(std::sync::atomic::AtomicIsize);
+    impl PdRegionPolicy for ConcurrencyPolicy {
+        fn set_follower_handle(&self, _value: bool) {}
+        fn set_tso_rpc_concurrency(&self, concurrency: isize) {
+            self.0.store(concurrency, Ordering::SeqCst);
+        }
+    }
+
+    /// Go maps the `tidb_tso_client_rpc_mode` enum onto a concurrency and
+    /// sends THAT to the PD client (`pkg/domain/domain_sysvars.go:92-106`):
+    /// `DEFAULT` 1, `PARALLEL` 2, `PARALLEL-FAST` 4. The variable's text
+    /// never reaches the client, so a node that stored the string without
+    /// mapping it left the option at its compiled default forever -- the
+    /// shape this pins against.
+    #[test]
+    fn tso_client_rpc_mode_publishes_gos_mapped_concurrency() {
+        let globals = GlobalSysvars::default();
+        let policy = Arc::new(ConcurrencyPolicy::default());
+        let name = tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_RPC_MODE;
+        globals.set_pd_region_policy(policy.clone());
+        assert_eq!(
+            policy.0.load(Ordering::SeqCst),
+            1,
+            "installation publishes Go's DEFAULT concurrency"
+        );
+        globals.set(name, "PARALLEL".to_owned()).unwrap();
+        assert_eq!(policy.0.load(Ordering::SeqCst), 2);
+        globals.set(name, "PARALLEL-FAST".to_owned()).unwrap();
+        assert_eq!(policy.0.load(Ordering::SeqCst), 4);
+        globals.set(name, "DEFAULT".to_owned()).unwrap();
+        assert_eq!(policy.0.load(Ordering::SeqCst), 1);
+        // Go's enum validator refuses anything else before the mapping runs,
+        // so a rejected write leaves the published concurrency untouched.
+        globals.set(name, "PARALLEL-SLOW".to_owned()).unwrap_err();
+        assert_eq!(policy.0.load(Ordering::SeqCst), 1);
+        // A missing cluster row restores Go's own default, as the sibling
+        // PD options do.
+        globals.set(name, "PARALLEL".to_owned()).unwrap();
+        globals.reset(name).unwrap();
+        assert_eq!(policy.0.load(Ordering::SeqCst), 1);
     }
 
     #[test]

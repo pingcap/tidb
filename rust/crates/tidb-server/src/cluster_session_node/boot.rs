@@ -881,4 +881,7 @@ impl tidb_session::vars::PdRegionPolicy for ProcessPdRegionPolicy {
             .set_max_tso_batch_wait_interval(wait)
             .expect("validated TSO batch wait");
     }
+    fn set_tso_rpc_concurrency(&self, concurrency: isize) {
+        self.0.set_tso_client_rpc_concurrency(concurrency);
+    }
 }

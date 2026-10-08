@@ -351,6 +351,18 @@ impl PdClient {
         self.shared.options.set_enable_follower_handle(enabled);
     }
 
+    /// Updates the ongoing-TSO-RPC bound sampled by subsequent collections.
+    ///
+    /// Go's `updatePDClient(opt.TSOClientRPCConcurrency, ...)` stores the
+    /// option on the shared client and lets the TSO dispatcher adopt it on its
+    /// own cadence (`pd/client/clients/tso/dispatcher.go::checkTSORPCConcurrency`),
+    /// so this records the setting without reaching into a running collection.
+    pub fn set_tso_client_rpc_concurrency(&self, concurrency: isize) {
+        self.shared
+            .options
+            .set_tso_client_rpc_concurrency(concurrency);
+    }
+
     /// Returns the cluster identity obtained from GetMembers.
     #[must_use]
     pub fn cluster_id(&self) -> u64 {

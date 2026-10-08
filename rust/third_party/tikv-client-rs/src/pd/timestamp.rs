@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::prelude::*;
 use tokio::sync::{mpsc, oneshot, Mutex, OwnedSemaphorePermit, Semaphore};
@@ -28,6 +28,9 @@ use crate::{Error, Result};
 /// collector and request queue. Its default RPC concurrency is one.
 const MAX_BATCH_SIZE: usize = 20_000;
 const DEFAULT_RPC_CONCURRENCY: usize = 1;
+/// Go `dispatcherCheckRPCConcurrencyInterval`
+/// (`pd/client/clients/tso/dispatcher.go:62`).
+const DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL: Duration = Duration::from_secs(5);
 /// `clients/tso.newTSODispatcher` uses the same deadline channel capacity.
 const DEADLINE_CAPACITY: usize = 64;
 
@@ -375,6 +378,103 @@ fn request_stream(
     )
 }
 
+/// Go `tsoDispatcher`'s RPC-concurrency decision
+/// (`pd/client/clients/tso/dispatcher.go::checkTSORPCConcurrency`).
+///
+/// Concurrent TSO RPCs aim at the opposite goal from follower proxy and from
+/// an additional collection wait, so Go forces the concurrency to 1 whenever
+/// either is enabled, however the operator configured it. The decision is
+/// normally rate-limited to one check per
+/// [`DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL`], with one exception Go spells
+/// out: when concurrency is above 1 and a collection wait has just been
+/// enabled, the check runs immediately so the two never overlap.
+///
+/// The permit count is Go's `tokenCount`: one token at concurrency 1, and
+/// twice the concurrency above it, because an RPC's duration jitters and Go
+/// deliberately lets the number of ongoing requests fluctuate around the
+/// target.
+struct RpcConcurrency {
+    capacity: Arc<Semaphore>,
+    /// Go `td.rpcConcurrency`.
+    concurrency: isize,
+    /// Go `td.tokenCount`.
+    token_count: usize,
+    /// Go `td.lastCheckConcurrencyTime`; `None` until the first check, so the
+    /// first dispatcher circle evaluates the option as Go's zero time does.
+    last_check: Option<Instant>,
+}
+
+impl RpcConcurrency {
+    fn new(capacity: Arc<Semaphore>) -> Self {
+        // Go's dispatcher starts with no tokens and adopts the option on its
+        // first circle; this starts at that settled state instead, which is
+        // the same steady state for the default concurrency of 1.
+        Self {
+            capacity,
+            concurrency: DEFAULT_RPC_CONCURRENCY as isize,
+            token_count: DEFAULT_RPC_CONCURRENCY,
+            last_check: None,
+        }
+    }
+
+    async fn check(
+        &mut self,
+        options: &super::opt::Options,
+        max_batch_wait: Duration,
+        cancellation: &Cancellation,
+        now: Instant,
+    ) {
+        let immediately_update = self.concurrency > 1 && !max_batch_wait.is_zero();
+        if !immediately_update
+            && self
+                .last_check
+                .is_some_and(|last| now.duration_since(last) < DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL)
+        {
+            return;
+        }
+        self.last_check = Some(now);
+        let mut new_concurrency = options.get_tso_client_rpc_concurrency();
+        if !max_batch_wait.is_zero() || options.get_enable_tso_follower_proxy() {
+            new_concurrency = 1;
+        }
+        if new_concurrency == self.concurrency {
+            return;
+        }
+        self.concurrency = new_concurrency;
+        // Go keeps `int` throughout, so its arithmetic carries a nonpositive
+        // option into the token count unchanged and the dispatcher starves.
+        // A permit count is unsigned here, so the conversion has to answer for
+        // that value: Go's own default of one ongoing request is the answer,
+        // and every value TiDB can actually publish (1, 2 or 4 from
+        // `tidb_tso_client_rpc_mode`) is unaffected by the floor.
+        let effective = new_concurrency.max(1) as usize;
+        let new_token_count = if effective > 1 {
+            effective * 2
+        } else {
+            effective
+        };
+        if new_token_count > self.token_count {
+            self.capacity.add_permits(new_token_count - self.token_count);
+            self.token_count = new_token_count;
+        } else if new_token_count < self.token_count {
+            let drain = (self.token_count - new_token_count) as u32;
+            // Go drains returned tokens one at a time under `select` on the
+            // dispatcher context; cancellation abandons the reduction and
+            // leaves the count as it stands.
+            let capacity = Arc::clone(&self.capacity);
+            tokio::select! {
+                acquired = capacity.acquire_many_owned(drain) => {
+                    if let Ok(permits) = acquired {
+                        permits.forget();
+                        self.token_count = new_token_count;
+                    }
+                }
+                () = cancellation.cancelled() => {}
+            }
+        }
+    }
+}
+
 fn request_stream_with_options(
     cluster_id: u64,
     request_rx: mpsc::Receiver<TimestampRequest>,
@@ -386,10 +486,14 @@ fn request_stream_with_options(
     order: TimestampTracker,
 ) -> impl Stream<Item = TsoRequest> + Send + 'static {
     let pending_capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
+    let rpc_concurrency = Arc::new(Mutex::new(RpcConcurrency::new(Arc::clone(
+        &pending_capacity,
+    ))));
     let batch_pool = Arc::new(StdMutex::new(Vec::new()));
     futures::stream::unfold(request_rx, move |mut request_rx| {
         let pending_requests = pending_requests.clone();
         let pending_capacity = pending_capacity.clone();
+        let rpc_concurrency = rpc_concurrency.clone();
         let batch_pool = batch_pool.clone();
         let watcher = watcher.clone();
         let options = options.clone();
@@ -398,12 +502,21 @@ fn request_stream_with_options(
         async move {
             let prepare = async {
                 let mut requests = RequestBatch::new(batch_pool);
+                // Go loads the collection wait once per circle and passes it
+                // to the concurrency check, because the two settings are
+                // decided together.
+                let max_batch_wait = options.get_max_tso_batch_wait_interval();
+                rpc_concurrency
+                    .lock()
+                    .await
+                    .check(&options, max_batch_wait, &cancellation, Instant::now())
+                    .await;
                 let permit = requests
                     .fetch_pending_requests(
                         &cancellation,
                         &mut request_rx,
                         Some(&pending_capacity),
-                        options.get_max_tso_batch_wait_interval(),
+                        max_batch_wait,
                     )
                     .await
                     .ok()??;
