@@ -1,6 +1,6 @@
 {
   "date": "2026-10-08",
-  "scope": "B01 P03/P06 existing-owner maintenance: the configured TSO RPC concurrency reaches the dispatcher and the TiDB sysvar publishes it. One named residual of P03/P06 only; no broad finding or complete package closure.",
+  "scope": "B01 P03/P06 existing-owner maintenance: the configured TSO RPC concurrency reaches the dispatcher with Go's token accounting, and the TiDB sysvar publishes Go's mapped integer. The serial send/receive exchange still bounds actual parallelism at one; no broad finding or complete package closure.",
   "baseline": {
     "tidb": "2f45659057",
     "native": "c594ea97615405e6180c3730e98c3611e781be7a",
@@ -41,7 +41,7 @@
   "finding_disposition": "P03/P06 remain partial. The RPC-concurrency residual both findings named is now closed end to end; every other residual they list is untouched. No finding closes and no count changes.",
   "limits": [
     "Request queues/retry orchestration, independent worker/dispatcher, readiness/prewarm, idle recovery, queue/dispatcher consolidation, full primaryless group metadata publication, remaining group refresh/retry scheduling, other RPC-error membership notifications and complete router/security/platform/package obligations remain open.",
-    "Concurrency above 1 is exercised by permit accounting, not by a live multi-stream PD cluster; no throughput measurement was taken, and the adaptive `goalBatchTime` division by concurrency that Go's dispatcher also performs is not part of this repair.",
+    "Concurrency above 1 cannot yet produce concurrent in-flight TSO RPCs, and this repair does not change that. `run_discovered` (native `src/pd/timestamp.rs`) pulls one request from the stream, calls `TsoStreamSet::request` and AWAITS that response before the next send, so the exchange is strictly serial however many tokens the pool grants; the per-route request channel is also `channel(1)` against Go's `maxPendingRequestsInTSOStream = 64`. What this repair establishes is the option path and Go's token accounting, which the pipelining needs; the pipelining itself is Go's `processRequests`/`recvLoop` split and remains the `independent worker/dispatcher` and `request queues` residual P03/P06 already name. No throughput measurement was taken, and Go's adaptive `goalBatchTime` division by concurrency is not part of this repair.",
     "Full Go suites, live multi-node TiKV/TiFlash and production TLS were not run.",
     "Other 52 unresolved findings retain carried evidence; no exhaustive re-audit or complete-package acceptance."
   ]
