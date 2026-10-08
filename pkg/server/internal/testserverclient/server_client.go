@@ -2292,6 +2292,52 @@ func (cli *TestServerClient) RunTestMultiStatements(t *testing.T) {
 	})
 }
 
+func (cli *TestServerClient) RunTestNonPreparedPlanCacheMultiStatements(t *testing.T) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
+		config.Params["multiStatements"] = "true"
+	}, "NonPreparedPlanCacheMultiStatements", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("CREATE TABLE test (id INT, value INT)")
+		dbt.MustExec("INSERT INTO test VALUES (1, 5)")
+		dbt.MustExec("SET tidb_enable_non_prepared_plan_cache = ON")
+
+		// Non-prepared plan cache works for standalone statements.
+		rows := dbt.MustQuery("SELECT value FROM test WHERE value < 6")
+		cli.CheckRows(t, rows, "5")
+		require.NoError(t, rows.Close())
+		rows = dbt.MustQuery("SELECT value FROM test WHERE value < 7")
+		cli.CheckRows(t, rows, "5")
+		require.NoError(t, rows.Close())
+		rows = dbt.MustQuery("SELECT @@last_plan_from_cache")
+		cli.CheckRows(t, rows, "1")
+		require.NoError(t, rows.Close())
+
+		// The same cacheable statement shape can use the non-prepared plan cache
+		// when it is sent as part of one multi-statement request.
+		rows = dbt.MustQuery("SELECT value FROM test WHERE value < 8; SELECT value FROM test WHERE value < 9")
+		var value int
+		for i := range 2 {
+			require.True(t, rows.Next())
+			require.NoError(t, rows.Scan(&value))
+			require.Equal(t, 5, value)
+			require.False(t, rows.Next())
+			require.NoError(t, rows.Err())
+			require.Equal(t, i == 0, rows.NextResultSet())
+		}
+		require.NoError(t, rows.Close())
+		rows = dbt.MustQuery("SELECT @@last_plan_from_cache")
+		cli.CheckRows(t, rows, "1")
+		require.NoError(t, rows.Close())
+
+		// The multi-statement flag must not leak to the next request.
+		rows = dbt.MustQuery("SELECT value FROM test WHERE value < 10")
+		cli.CheckRows(t, rows, "5")
+		require.NoError(t, rows.Close())
+		rows = dbt.MustQuery("SELECT @@last_plan_from_cache")
+		cli.CheckRows(t, rows, "1")
+		require.NoError(t, rows.Close())
+	})
+}
+
 func (cli *TestServerClient) RunTestStmtCount(t *testing.T) {
 	cli.RunTestsOnNewDB(t, nil, "StatementCount", func(dbt *testkit.DBTestKit) {
 		originStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
