@@ -11,7 +11,7 @@ go_test(
         "materialized_view_drop_test.go",
     ],
     flaky = True,
-    shard_count = 36,
+    shard_count = 37,
     deps = [
         "//pkg/config",
         "//pkg/ddl",

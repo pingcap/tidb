@@ -140,10 +140,15 @@ func (w *worker) rollbackCreateMaterializedViewLog(jobCtx *jobContext, job *mode
 		return ver, newRollbackTxnError(errors.Trace(err))
 	}
 
+	// The rollback schema diff needs RollbackDone, but an update failure must
+	// leave the job retryable.
+	prevState, prevSchemaState := job.State, job.SchemaState
 	job.State = model.JobStateRollbackDone
 	job.SchemaState = model.StateNone
 	ver, err = updateSchemaVersion(jobCtx, job, extraInfos...)
 	if err != nil {
+		job.State = prevState
+		job.SchemaState = prevSchemaState
 		return ver, errors.Trace(err)
 	}
 	return ver, nil
@@ -374,10 +379,15 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 	if err := w.deleteCreateMaterializedViewRefreshAlert(jobCtx, job.TableID); err != nil {
 		logutil.DDLLogger().Warn("create materialized view rollback: failed to delete refresh alert", zap.String("schemaName", job.SchemaName), zap.String("tableName", mviewTableInfo.Name.O), zap.Int64("mviewID", job.TableID), zap.Error(err))
 	}
+	// The rollback schema diff needs RollbackDone, but an update failure must
+	// leave the job retryable.
+	prevState, prevSchemaState := job.State, job.SchemaState
 	job.State = model.JobStateRollbackDone
 	job.SchemaState = model.StateNone
 	ver, err = updateSchemaVersion(jobCtx, job, extraInfos...)
 	if err != nil {
+		job.State = prevState
+		job.SchemaState = prevSchemaState
 		return ver, errors.Trace(err)
 	}
 	var mlogTableIDs []int64

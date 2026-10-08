@@ -246,6 +246,86 @@ func TestCreateMaterializedViewLogRollbackPurgeInfoFailureRollsBackMetadata(t *t
 	require.Error(t, <-ddlErrCh)
 }
 
+func TestCreateMaterializedViewLogRollbackUpdateSchemaVersionFailureRetries(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_create_mlog_rollback_retry (a int not null, b int not null)")
+
+	is := dom.InfoSchema()
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	baseTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_create_mlog_rollback_retry"))
+	require.NoError(t, err)
+
+	const upsertErrFP = "github.com/pingcap/tidb/pkg/ddl/mockInsertMLogPurgeTableNotExists"
+	require.NoError(t, failpoint.Enable(upsertErrFP, "1*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(upsertErrFP))
+	}()
+
+	var updateVersionErrInjected atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion", func(job *model.Job, err *error) {
+		if job.Type == model.ActionCreateMaterializedViewLog && job.IsRollbackDone() && updateVersionErrInjected.CompareAndSwap(false, true) {
+			*err = fmt.Errorf("mock materialized view log rollback schema version error")
+		}
+	})
+
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	releaseRetry := func() {
+		select {
+		case <-allowRetry:
+		default:
+			close(allowRetry)
+		}
+	}
+	defer releaseRetry()
+	rollbackAttempts := 0
+	var mlogID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionCreateMaterializedViewLog || !job.IsRollingback() {
+			return
+		}
+		rollbackAttempts++
+		if rollbackAttempts != 2 {
+			return
+		}
+		mlogID = job.TableID
+		close(retryStarted)
+		<-allowRetry
+	})
+
+	tkInspect := newMViewTestKit(t, store)
+	tkInspect.MustExec("use test")
+	ddlErrCh := make(chan error, 1)
+	go func() {
+		ddlErrCh <- tk.ExecToErr("create materialized view log on t_create_mlog_rollback_retry (a, b) purge next date_add(now(), interval 1 hour)")
+	}()
+
+	select {
+	case <-retryStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW LOG rollback retry")
+	}
+	require.NotZero(t, mlogID)
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).Check(testkit.Rows("0"))
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		persistedMLog, err := metaMut.GetTable(dbInfo.ID, mlogID)
+		require.NoError(t, err)
+		require.Nil(t, persistedMLog)
+		persistedBase, err := metaMut.GetTable(dbInfo.ID, baseTable.Meta().ID)
+		require.NoError(t, err)
+		require.Nil(t, persistedBase.MaterializedViewBase)
+		return nil
+	}))
+
+	releaseRetry()
+	require.Error(t, <-ddlErrCh)
+	tk.MustQuery("show tables like '$mlog$t_create_mlog_rollback_retry'").Check(testkit.Rows())
+}
+
 func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := newMViewTestKit(t, store)
