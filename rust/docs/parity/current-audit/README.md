@@ -4,16 +4,16 @@ Latest cleanup: [datatype test consolidation](datatype-cleanup-validation.json) 
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [diagnostic projection and peer selection](digest-projection-validation.json) carries physical columns through all three diagnostic readers, sends remote digest predicates, and composes receiving selection with independently borrowed outgoing transport. I01/I03/O18/N05 retain their broader obligations. Counts remain 86 tracked, 32 repaired and 54 unresolved (24 open, 30 partial).
+Latest connected repair: [native compute-cache ownership and MPP invalidation](compute-cache-validation.json) replaces bypassed PD discovery with the native owner and connects topology retries, dispatch, establishment and cancellation. T02/M04/M05 remain partial for broader cache/coordinator/package obligations. Counts remain 86 tracked, 32 repaired and 54 unresolved (24 open, 30 partial). Previous diagnostic projection evidence remains in [its receipt](digest-projection-validation.json).
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../mpp-failure-lifecycle-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../compute-cache-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](mpp-failure-lifecycle-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](compute-cache-validation.json): exact source/log identities and verification limits.
 
-Current Go comparison: `1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `02880abbab5ed89a4dc603a4ddc7935853870ea6`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
+Current Go comparison: `ab37692e9ebef44a736cd7243deef6020067b743`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `de4c53c34f9fcf53e2e07cb928b6b4af890b02c0`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
 A complete upstream package, including original tests, generated/platform/build inputs and fixtures, is the minimum acceptance unit. Search hits, a passing subset and retired Rust-only adapter tests do not discharge those obligations. The complete inventories are snapshots, not proof that every semantic mismatch is known.
 

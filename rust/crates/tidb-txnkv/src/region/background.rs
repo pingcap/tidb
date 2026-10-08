@@ -131,6 +131,7 @@ struct DriverState {
 /// Shared cache state borrowed by foreground session leases and the worker.
 struct BackgroundRegionCacheShared<L> {
     cache: Arc<RwLock<RegionCache<L>>>,
+    compute_stores: Arc<tikv_client::TiFlashComputeStoreCache>,
     loader: SharedRegionLoader<L>,
     driver: Arc<(Mutex<DriverState>, Condvar)>,
     leases: Mutex<CacheLeaseAdmission>,
@@ -192,6 +193,11 @@ impl<L> std::ops::Deref for BackgroundRegionCacheOwner<L> {
 }
 
 impl<L> BackgroundRegionCache<L> {
+    /// Borrows the native compute discovery owner shared by this process authority.
+    pub fn tiflash_compute_store_cache(&self) -> Arc<tikv_client::TiFlashComputeStoreCache> {
+        Arc::clone(&self.shared.compute_stores)
+    }
+
     /// Retains one foreground request until it releases this lease.
     pub fn open_lease(&self) -> Result<Self, BackgroundRegionCacheError> {
         let mut leases = self
@@ -230,6 +236,7 @@ impl<L> BackgroundRegionCache<L> {
         Self {
             shared: Arc::new(BackgroundRegionCacheShared {
                 cache: Arc::new(RwLock::new(cache)),
+                compute_stores: Arc::new(tikv_client::TiFlashComputeStoreCache::default()),
                 loader,
                 driver: Arc::new((
                     Mutex::new(DriverState {
@@ -302,6 +309,7 @@ impl<L> BackgroundRegionCache<L> {
             .map_err(|error| BackgroundRegionCacheError::Spawn(error.to_string()))?;
         let shared = Arc::new(BackgroundRegionCacheShared {
             cache,
+            compute_stores: Arc::new(tikv_client::TiFlashComputeStoreCache::default()),
             loader,
             driver,
             leases: Mutex::new(CacheLeaseAdmission {

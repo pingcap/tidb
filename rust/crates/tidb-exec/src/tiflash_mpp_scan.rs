@@ -84,7 +84,7 @@ async fn probe_mpp_store(
         "detect compute node",
         None,
         async {
-            let mut connection = connect_mpp_client(address, memory, transport)
+            let mut connection = connect_mpp_client(address, memory, transport, None)
                 .await
                 .map_err(tonic::Status::unavailable)?;
             mpp_setup(
@@ -344,19 +344,16 @@ impl TiFlashMppScanSource {
                     })?
                     .fetch_and_get_topo()?
             } else {
-                self.pd
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .all_stores()
+                let cache = self.regions.tiflash_compute_store_cache();
+                self.runtime
+                    .block_on(cache.get_or_load(|| async {
+                        self.pd
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .all_store_metadata()
+                    }))
                     .map_err(|error| error.to_string())?
                     .into_iter()
-                    .filter(|store| {
-                        store.state == PdStoreState::Up
-                            && store
-                                .labels
-                                .iter()
-                                .any(|(key, value)| key == "engine" && value == "tiflash_compute")
-                    })
                     .map(|store| store.address)
                     .collect()
             };
@@ -404,7 +401,12 @@ impl TiFlashMppScanSource {
             if !alive.is_empty() {
                 return Ok(alive);
             }
-            let error = if was_empty {
+            if !auto_scaler {
+                self.regions.tiflash_compute_store_cache().invalidate();
+            }
+            let error = if !auto_scaler {
+                "tiflash_compute node is unavailable"
+            } else if was_empty {
                 "Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty"
             } else {
                 "Cannot find proper topo to dispatch MPPTask: detect aliveness failed, no alive ComputeNode"
@@ -563,12 +565,16 @@ impl TiFlashMppScanSource {
 
         // Dispatch opens the live stream; the shared response consumer pulls
         // packets on demand using a handle to the shared query runtime.
+        let config = tidb_config::config_tree::config::get_global_config();
+        let compute_cache = (config.disaggregated_tiflash && !config.use_auto_scaler)
+            .then(|| self.regions.tiflash_compute_store_cache());
         let mut response = self
             .runtime
             .block_on(async {
                 let memory = &request.statement.memory;
                 let transport = self.transport.lock().expect("MPP transport lock").clone();
-                let mut connection = connect_mpp_client(&address, memory, &transport).await?;
+                let mut connection =
+                    connect_mpp_client(&address, memory, &transport, compute_cache.clone()).await?;
                 let mut dispatch_request = tonic::Request::new(dispatch_request);
                 dispatch_request.set_timeout(tikv_client::tikv::READ_TIMEOUT_MEDIUM);
                 let response = mpp_setup(
@@ -579,7 +585,10 @@ impl TiFlashMppScanSource {
                     connection.client.dispatch_mpp_task(dispatch_request),
                 )
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| {
+                    connection.invalidate_compute_cache();
+                    error.to_string()
+                })?;
                 let dispatch_response = response.into_inner();
                 if let Some(error) = &dispatch_response.error {
                     return Err(format!(
@@ -599,13 +608,16 @@ impl TiFlashMppScanSource {
                 // Go SendRequest selects from the process fleet for each RPC.
                 // Dispatch already registered the gather: clean it up if the
                 // next channel cannot be acquired (including statement KILL).
-                let mut connection = match connect_mpp_client(&address, memory, &transport).await {
-                    Ok(next) => next,
-                    Err(error) => {
-                        cancel_mpp_task(&mut connection, cancel_task_meta(&meta)).await;
-                        return Err(error);
-                    }
-                };
+                let mut connection =
+                    match connect_mpp_client(&address, memory, &transport, compute_cache.clone())
+                        .await
+                    {
+                        Ok(next) => next,
+                        Err(error) => {
+                            cancel_mpp_task(&mut connection, cancel_task_meta(&meta)).await;
+                            return Err(error);
+                        }
+                    };
                 establish_mpp_response(
                     &mut connection,
                     meta.clone(),
@@ -995,24 +1007,46 @@ struct MppRpcConnection {
     route: tidb_txnkv::rpc::StoreRpcChannel,
     transport: tidb_txnkv::rpc::TonicCoprocessorClient,
     address: String,
+    compute_cache: Option<Arc<tikv_client::TiFlashComputeStoreCache>>,
+}
+
+impl MppRpcConnection {
+    fn invalidate_compute_cache(&self) {
+        if let Some(cache) = &self.compute_cache {
+            cache.invalidate();
+        }
+    }
 }
 
 async fn connect_mpp_client(
     address: &str,
     memory: &tidb_executor::StatementMemory,
     transport: &tidb_txnkv::rpc::TonicCoprocessorClient,
+    compute_cache: Option<Arc<tikv_client::TiFlashComputeStoreCache>>,
 ) -> Result<MppRpcConnection, String> {
-    mpp_memory_error(memory).map_err(|error| error.to_string())?;
-    let route = transport
-        .store_rpc_channel(address)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(MppRpcConnection {
-        client: route.client(),
-        route,
-        transport: transport.clone(),
-        address: address.to_owned(),
-    })
+    let result = async {
+        mpp_memory_error(memory).map_err(|error| error.to_string())?;
+        transport
+            .store_rpc_channel(address)
+            .await
+            .map_err(|error| error.to_string())
+    }
+    .await;
+    match result {
+        Ok(route) => Ok(MppRpcConnection {
+            client: route.client(),
+            route,
+            transport: transport.clone(),
+            address: address.to_owned(),
+            compute_cache,
+        }),
+        Err(error) => {
+            if let Some(cache) = compute_cache {
+                cache.invalidate();
+            }
+            Err(error)
+        }
+    }
 }
 
 async fn establish_mpp_response(
@@ -1057,6 +1091,7 @@ async fn establish_mpp_response(
         match attempt {
             Ok(response) => break Ok(response),
             Err(error) => {
+                connection.invalidate_compute_cache();
                 if !error.retryable() {
                     break Err(error.to_string());
                 }
@@ -1080,7 +1115,13 @@ async fn establish_mpp_response(
                     break Err(error.to_string());
                 }
                 // Select from the same process fleet for each SendRequest.
-                match connect_mpp_client(&connection.address, &memory, &connection.transport).await
+                match connect_mpp_client(
+                    &connection.address,
+                    &memory,
+                    &connection.transport,
+                    connection.compute_cache.clone(),
+                )
+                .await
                 {
                     Ok(next) => *connection = next,
                     Err(error) => break Err(error),
@@ -1147,6 +1188,7 @@ async fn cancel_mpp_task(connection: &mut MppRpcConnection, meta: TaskMeta) {
     {
         Ok(route) => route,
         Err(error) => {
+            connection.invalidate_compute_cache();
             eprintln!("tiflash mpp: cancel unavailable: {error}");
             return;
         }
@@ -1166,6 +1208,7 @@ async fn cancel_mpp_task(connection: &mut MppRpcConnection, meta: TaskMeta) {
     )
     .await
     {
+        connection.invalidate_compute_cache();
         eprintln!("tiflash mpp: cancel failed: {error}");
     }
 }
@@ -1561,6 +1604,219 @@ mod mpp_read_batch_tests {
     use tidb_txnkv::{DirectUnaryClient, LockWaitInfoClient};
     use tokio_stream::StreamExt as _;
 
+    struct ComputePd {
+        endpoint: String,
+        address: String,
+        reads: Arc<AtomicUsize>,
+        fail: Arc<std::sync::atomic::AtomicBool>,
+        empty_once: Arc<std::sync::atomic::AtomicBool>,
+    }
+    #[tonic::async_trait]
+    impl tidb_proto::test_pd_server::Pd for ComputePd {
+        async fn get_members(
+            &self,
+            _: tonic::Request<tidb_proto::pdpb::GetMembersRequest>,
+        ) -> Result<tonic::Response<tidb_proto::pdpb::GetMembersResponse>, tonic::Status> {
+            let member = tidb_proto::pdpb::Member {
+                member_id: 1,
+                client_urls: vec![self.endpoint.clone()],
+                ..Default::default()
+            };
+            Ok(tonic::Response::new(tidb_proto::pdpb::GetMembersResponse {
+                header: Some(tidb_proto::pdpb::ResponseHeader {
+                    cluster_id: 1,
+                    ..Default::default()
+                }),
+                members: vec![member.clone()],
+                leader: Some(member),
+                ..Default::default()
+            }))
+        }
+        async fn get_all_stores(
+            &self,
+            _: tonic::Request<tidb_proto::pdpb::GetAllStoresRequest>,
+        ) -> Result<tonic::Response<tidb_proto::pdpb::GetAllStoresResponse>, tonic::Status>
+        {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            if self.fail.load(Ordering::SeqCst) {
+                return Err(tonic::Status::permission_denied(
+                    "PD lookup denied after warmup",
+                ));
+            }
+            Ok(tonic::Response::new(
+                tidb_proto::pdpb::GetAllStoresResponse {
+                    header: Some(tidb_proto::pdpb::ResponseHeader {
+                        cluster_id: 1,
+                        ..Default::default()
+                    }),
+                    stores: if self.empty_once.swap(false, Ordering::SeqCst) {
+                        vec![]
+                    } else {
+                        [
+                            (1, "tiflash_compute", 0),
+                            (2, "tiflash", 0),
+                            (3, "tiflash_compute", 1),
+                            (4, "tiflash_compute", 2),
+                        ]
+                        .into_iter()
+                        .map(|(id, engine, state)| tidb_proto::metapb::Store {
+                            id,
+                            address: self.address.clone(),
+                            state,
+                            labels: vec![tidb_proto::metapb::StoreLabel {
+                                key: "engine".into(),
+                                value: engine.into(),
+                            }],
+                            ..Default::default()
+                        })
+                        .collect()
+                    },
+                    ..Default::default()
+                },
+            ))
+        }
+    }
+    struct ComputePdFixture {
+        runtime: Arc<tokio::runtime::Runtime>,
+        shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+        task: Option<tokio::task::JoinHandle<()>>,
+        pd: PdClient,
+        reads: Arc<AtomicUsize>,
+        fail: Arc<std::sync::atomic::AtomicBool>,
+        empty_once: Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl ComputePdFixture {
+        fn new(fixture: &Fixture) -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let reads = Arc::new(AtomicUsize::new(0));
+            let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let empty_once = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let service = ComputePd {
+                endpoint: endpoint.clone(),
+                address: fixture.address.clone(),
+                reads: reads.clone(),
+                fail: fail.clone(),
+                empty_once: empty_once.clone(),
+            };
+            let (shutdown, rx) = tokio::sync::oneshot::channel();
+            let task = fixture.runtime.spawn(async move {
+                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                tonic::transport::Server::builder()
+                    .add_service(tidb_proto::test_pd_server::PdServer::new(service))
+                    .serve_with_incoming_shutdown(
+                        tokio_stream::wrappers::TcpListenerStream::new(listener),
+                        async {
+                            let _ = rx.await;
+                        },
+                    )
+                    .await
+                    .unwrap();
+            });
+            let pd = PdClient::connect(endpoint, Duration::from_secs(2)).unwrap();
+            Self {
+                runtime: fixture.runtime.clone(),
+                shutdown: Some(shutdown),
+                task: Some(task),
+                pd,
+                reads,
+                fail,
+                empty_once,
+            }
+        }
+        fn source(
+            &self,
+            fixture: &Fixture,
+            regions: BackgroundRegionCache<PdRegionLoader>,
+        ) -> TiFlashMppScanSource {
+            TiFlashMppScanSource::new(
+                self.pd.clone(),
+                regions,
+                fixture.transport.lock().unwrap().clone(),
+                || 1,
+            )
+        }
+    }
+    impl Drop for ComputePdFixture {
+        fn drop(&mut self) {
+            let _ = self.shutdown.take().unwrap().send(());
+            self.runtime.block_on(self.task.take().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn compute_cache_batch_pd_topology_shared_across_sources() {
+        let fixture = Fixture::with_tail(false);
+        let pd = ComputePdFixture::new(&fixture);
+        let owner = BackgroundRegionCache::start_gc(
+            RegionCache::new(PdRegionLoader::from_client(pd.pd.clone())),
+            Duration::from_secs(3600),
+            1,
+        )
+        .unwrap();
+        let first = pd.source(&fixture, owner.open_lease().unwrap());
+        let second = pd.source(&fixture, owner.open_lease().unwrap());
+        let memory = tidb_executor::StatementMemory::default();
+        for source in [&first, &second, &first.clone()] {
+            assert_eq!(
+                source.compute_addresses(false, &memory).unwrap(),
+                vec![fixture.address.clone()]
+            );
+        }
+        assert_eq!(
+            pd.reads.load(Ordering::SeqCst),
+            1,
+            "one process compute cache must serve every source"
+        );
+    }
+
+    #[test]
+    fn compute_cache_batch_warm_topology_survives_pd_failure() {
+        let fixture = Fixture::with_tail(false);
+        let pd = ComputePdFixture::new(&fixture);
+        let owner = BackgroundRegionCache::start_gc(
+            RegionCache::new(PdRegionLoader::from_client(pd.pd.clone())),
+            Duration::from_secs(3600),
+            1,
+        )
+        .unwrap();
+        let source = pd.source(&fixture, owner.open_lease().unwrap());
+        let memory = tidb_executor::StatementMemory::default();
+        assert_eq!(
+            source.compute_addresses(false, &memory).unwrap(),
+            vec![fixture.address.clone()]
+        );
+        pd.fail.store(true, Ordering::SeqCst);
+        assert_eq!(
+            source.compute_addresses(false, &memory).unwrap(),
+            vec![fixture.address.clone()]
+        );
+        assert_eq!(pd.reads.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn compute_cache_batch_empty_topology_reloads_and_authorities_are_independent() {
+        let fixture = Fixture::with_tail(false);
+        let pd = ComputePdFixture::new(&fixture);
+        pd.empty_once.store(true, Ordering::SeqCst);
+        let memory = tidb_executor::StatementMemory::default();
+        for expected_reads in [2, 3] {
+            let owner = BackgroundRegionCache::start_gc(
+                RegionCache::new(PdRegionLoader::from_client(pd.pd.clone())),
+                Duration::from_secs(3600),
+                1,
+            )
+            .unwrap();
+            let source = pd.source(&fixture, owner.open_lease().unwrap());
+            assert_eq!(
+                source.compute_addresses(false, &memory).unwrap(),
+                vec![fixture.address.clone()]
+            );
+            assert_eq!(pd.reads.load(Ordering::SeqCst), expected_reads);
+        }
+    }
+
     fn region(id: u64, start: &[u8], end: &[u8]) -> RegionLocation {
         RegionLocation {
             region: RegionVerId::new(id, 1, 1),
@@ -1575,6 +1831,154 @@ mod mpp_read_batch_tests {
             (b"x".to_vec().into(), b"z".to_vec().into()),
         ]
     }
+    #[test]
+    fn compute_cache_batch_socket_establishment_cancel_and_tail_policy() {
+        for (opening, fail_tail, expect_reload) in [
+            (Opening::Normal, false, false),
+            (Opening::RetryHeaders, false, true),
+            (Opening::RetryFirstPacket, false, true),
+            (Opening::Canceled, false, true),
+            (Opening::MemoryLimit, false, false),
+            (Opening::Normal, true, false),
+            (Opening::CancelFailure, false, true),
+        ] {
+            let fixture =
+                Fixture::with_opening(fail_tail, false, false, b"first".to_vec(), opening);
+            let cache = Arc::new(tikv_client::TiFlashComputeStoreCache::default());
+            let reads = AtomicUsize::new(0);
+            let read = || async {
+                reads.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, String>(Vec::<tidb_proto::metapb::Store>::new())
+            };
+            fixture.runtime.block_on(cache.get_or_load(read)).unwrap();
+            let result = fixture.runtime.block_on(async {
+                let mut connection = connect_mpp_client(
+                    &fixture.address,
+                    &tidb_executor::StatementMemory::default(),
+                    &fixture.transport.lock().unwrap(),
+                    Some(cache.clone()),
+                )
+                .await
+                .unwrap();
+                establish_mpp_response(
+                    &mut connection,
+                    TaskMeta::default(),
+                    TaskMeta::default(),
+                    Arc::new(fixture.runtime.handle().clone()),
+                    tidb_executor::StatementMemory::default(),
+                )
+                .await
+            });
+            match result {
+                Ok(mut response) => {
+                    let first = response.next();
+                    if matches!(opening, Opening::MemoryLimit) {
+                        assert!(first.is_err());
+                    } else {
+                        assert!(first.unwrap().is_some());
+                    }
+                    if fail_tail {
+                        assert!(response.next().is_err());
+                    }
+                    response.close();
+                }
+                Err(error) => assert!(matches!(opening, Opening::Canceled), "{error}"),
+            }
+            fixture.runtime.block_on(cache.get_or_load(read)).unwrap();
+            assert_eq!(
+                reads.load(Ordering::SeqCst),
+                if expect_reload { 2 } else { 1 }
+            );
+        }
+    }
+
+    #[test]
+    fn compute_cache_batch_dispatch_policy_and_application_errors() {
+        let config = tidb_config::config_tree::config::get_global_config();
+        struct Restore(Arc<tidb_config::config_tree::config::Config>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                tidb_config::config_tree::config::store_global_config(self.0.clone());
+            }
+        }
+        let _restore = Restore(config.clone());
+        for (disaggregated, autoscaler) in [(true, false), (true, true), (false, false)] {
+            for application_error in [false, true] {
+                let mut current = (*config).clone();
+                current.disaggregated_tiflash = disaggregated;
+                current.use_auto_scaler = autoscaler;
+                tidb_config::config_tree::config::store_global_config(current);
+                let fixture = Fixture::with_opening(
+                    false,
+                    false,
+                    false,
+                    b"first".to_vec(),
+                    if application_error {
+                        Opening::DispatchApplicationError
+                    } else {
+                        Opening::DispatchUnavailable
+                    },
+                );
+                let pd = ComputePdFixture::new(&fixture);
+                let owner = BackgroundRegionCache::start_gc(
+                    RegionCache::new(PdRegionLoader::from_client(pd.pd.clone())),
+                    Duration::from_secs(3600),
+                    1,
+                )
+                .unwrap();
+                let source = pd.source(&fixture, owner.open_lease().unwrap());
+                let request = PushdownScanRequest {
+                    table_id: 1,
+                    index: None,
+                    columns: vec![],
+                    handle_index: None,
+                    primary_column_ids: vec![],
+                    primary_prefix_column_ids: vec![],
+                    predicates: vec![],
+                    output_offsets: None,
+                    topn: None,
+                    limit: None,
+                    prefix_limit: None,
+                    paging_min_size: None,
+                    aggregate: None,
+                    desc: false,
+                    keep_order: false,
+                    allow_unordered_response: false,
+                    snapshot_ts: 1,
+                    read_engine: PushdownReadEngine::TiFlash,
+                    schema_version: 1,
+                    ranges: vec![],
+                    range_hints: vec![],
+                    statement: Default::default(),
+                };
+                source
+                    .compute_addresses(false, &request.statement.memory)
+                    .unwrap();
+                let result = source.open_task(
+                    &request,
+                    fixture.address.clone(),
+                    vec![],
+                    owner.open_lease().unwrap(),
+                    TaskMeta::default(),
+                    TaskMeta::default(),
+                    1,
+                );
+                assert!(result.is_err());
+                source
+                    .compute_addresses(false, &request.statement.memory)
+                    .unwrap();
+                assert_eq!(
+                    pd.reads.load(Ordering::SeqCst),
+                    if disaggregated && !autoscaler && !application_error {
+                        2
+                    } else {
+                        1
+                    }
+                );
+            }
+        }
+    }
+
     #[test]
     fn exact_disjoint_ranges_do_not_scan_the_gap() {
         let infos = mpp_region_infos(&ranges(), &[region(1, b"a", b"zz")]);
@@ -1608,6 +2012,9 @@ mod mpp_read_batch_tests {
         StallFirstPacket,
         Canceled,
         Empty,
+        DispatchUnavailable,
+        DispatchApplicationError,
+        CancelFailure,
     }
 
     #[derive(Clone)]
@@ -1621,6 +2028,26 @@ mod mpp_read_batch_tests {
     }
     #[tonic::async_trait]
     impl Tikv for Service {
+        async fn dispatch_mpp_task(
+            &self,
+            _: tonic::Request<DispatchTaskRequest>,
+        ) -> Result<tonic::Response<tidb_proto::mpp::DispatchTaskResponse>, tonic::Status> {
+            if matches!(self.opening, Opening::DispatchUnavailable) {
+                return Err(tonic::Status::unavailable("dispatch unavailable"));
+            }
+            Ok(tonic::Response::new(
+                tidb_proto::mpp::DispatchTaskResponse {
+                    error: matches!(self.opening, Opening::DispatchApplicationError).then(|| {
+                        tidb_proto::mpp::Error {
+                            code: 1,
+                            msg: "application rejection".into(),
+                            ..Default::default()
+                        }
+                    }),
+                    ..Default::default()
+                },
+            ))
+        }
         async fn is_alive(
             &self,
             _: tonic::Request<tidb_proto::mpp::IsAliveRequest>,
@@ -1717,6 +2144,9 @@ mod mpp_read_batch_tests {
             _: tonic::Request<tidb_proto::mpp::CancelTaskRequest>,
         ) -> Result<tonic::Response<tidb_proto::mpp::CancelTaskResponse>, tonic::Status> {
             self.cancels.fetch_add(1, Ordering::SeqCst);
+            if matches!(self.opening, Opening::CancelFailure) {
+                return Err(tonic::Status::unavailable("cancel unavailable"));
+            }
             Ok(tonic::Response::new(Default::default()))
         }
     }
@@ -1860,10 +2290,21 @@ mod mpp_read_batch_tests {
             &self,
             memory: tidb_executor::StatementMemory,
         ) -> Result<MppQueryResponse, String> {
+            self.open_with_cache(memory, None)
+        }
+        fn open_with_cache(
+            &self,
+            memory: tidb_executor::StatementMemory,
+            compute_cache: Option<Arc<tikv_client::TiFlashComputeStoreCache>>,
+        ) -> Result<MppQueryResponse, String> {
             self.runtime.block_on(async {
-                let mut client =
-                    connect_mpp_client(&self.address, &memory, &self.transport.lock().unwrap())
-                        .await?;
+                let mut client = connect_mpp_client(
+                    &self.address,
+                    &memory,
+                    &self.transport.lock().unwrap(),
+                    compute_cache,
+                )
+                .await?;
                 let response = tokio::time::timeout(
                     Duration::from_secs(2),
                     establish_mpp_response(
@@ -2059,8 +2500,25 @@ mod mpp_read_batch_tests {
                 std::thread::sleep(Duration::from_millis(10));
                 killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
             });
-            let result = fixture.open_with_memory(memory.clone());
+            let cache = Arc::new(tikv_client::TiFlashComputeStoreCache::default());
+            fixture
+                .runtime
+                .block_on(cache.get_or_load(|| async { Ok::<_, String>(Vec::new()) }))
+                .unwrap();
+            let result = fixture.open_with_cache(memory.clone(), Some(cache.clone()));
             thread.join().unwrap();
+            let mut reloaded = false;
+            fixture
+                .runtime
+                .block_on(cache.get_or_load(|| async {
+                    reloaded = true;
+                    Ok::<_, String>(Vec::new())
+                }))
+                .unwrap();
+            assert!(
+                reloaded,
+                "interrupted establishment invalidates PD topology"
+            );
             let error = match result {
                 Err(error) => error,
                 Ok(_) => panic!("KILL must terminate setup"),
@@ -2221,6 +2679,7 @@ mod mpp_read_batch_tests {
                 &fixture.address,
                 &tidb_executor::StatementMemory::default(),
                 &fixture.transport.lock().unwrap(),
+                None,
             )
             .await
             .unwrap();

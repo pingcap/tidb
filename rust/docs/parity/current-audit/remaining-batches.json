@@ -44,6 +44,15 @@
         "P06": "partial",
         "T02": "partial",
         "M04": "partial"
+      },
+      "latest_compute_cache_maintenance": {
+        "date": "2026-10-08",
+        "receipt": "compute-cache-validation.json",
+        "findings": [
+          "M04",
+          "T02"
+        ],
+        "scope": "Native compute-store cache shared by the process region authority; topology retry and MPP dispatch/setup/cancel invalidation composed. Broader roots and package acceptance remain partial/unaccepted."
       }
     },
     {
@@ -400,6 +409,14 @@
       "finding_statuses": {
         "M01": "open",
         "M05": "open"
+      },
+      "latest_compute_cache_maintenance": {
+        "date": "2026-10-08",
+        "receipt": "compute-cache-validation.json",
+        "findings": [
+          "M05"
+        ],
+        "scope": "Native compute-store cache shared by the process region authority; topology retry and MPP dispatch/setup/cancel invalidation composed. Broader roots and package acceptance remain partial/unaccepted."
       }
     },
     {

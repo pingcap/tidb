@@ -619,7 +619,7 @@ impl StoreLoadStats {
     }
 }
 
-struct TiFlashComputeStoreCache {
+struct TiFlashComputeStoreState {
     need_reload: bool,
     stores: Vec<Store>,
 }
@@ -641,12 +641,63 @@ impl Drop for BucketRefreshGuard {
     }
 }
 
-impl Default for TiFlashComputeStoreCache {
+impl Default for TiFlashComputeStoreState {
     fn default() -> Self {
         Self {
             need_reload: true,
             stores: Vec::new(),
         }
+    }
+}
+
+/// Go's independent TiFlash-compute discovery cache, reusable by store adapters.
+/// Region peers, channel pools and retry lifetimes remain owned by their callers.
+#[derive(Default)]
+pub struct TiFlashComputeStoreCache {
+    state: StdRwLock<TiFlashComputeStoreState>,
+}
+
+impl TiFlashComputeStoreCache {
+    /// Loads on demand. Like Go, no cache lock spans discovery and failures leave
+    /// reload requested; a successfully discovered empty topology is cached too.
+    pub async fn get_or_load<F, Fut, E>(&self, fetch: F) -> std::result::Result<Vec<Store>, E>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = std::result::Result<Vec<Store>, E>>,
+    {
+        {
+            let state = self.state.read().unwrap();
+            if !state.need_reload {
+                return Ok(state.stores.clone());
+            }
+        }
+        let stores = fetch()
+            .await?
+            .into_iter()
+            .filter(|store| {
+                metapb::StoreState::try_from(store.state)
+                    .is_ok_and(|state| state == metapb::StoreState::Up)
+                    && EndpointType::from_store(store) == EndpointType::TiFlashCompute
+            })
+            .collect::<Vec<_>>();
+        let mut state = self.state.write().unwrap();
+        state.stores.clone_from(&stores);
+        state.need_reload = false;
+        Ok(stores)
+    }
+
+    /// Requests discovery at the next read without discarding in-flight snapshots.
+    pub fn invalidate(&self) {
+        self.state.write().unwrap().need_reload = true;
+    }
+
+    /// Ordinary client-go request errors invalidate only for gRPC Unavailable.
+    pub fn invalidate_if_grpc_error(&self, error: &Error) -> bool {
+        if !is_grpc_unavailable(error) {
+            return false;
+        }
+        self.invalidate();
+        true
     }
 }
 
@@ -790,7 +841,7 @@ pub struct RegionCache<Client = RetryClient<Cluster>> {
     region_cache: RwLock<RegionCacheMap>,
     store_cache: StdRwLock<HashMap<StoreId, CachedStore>>,
     store_resolve_locks: AsyncMutex<HashMap<StoreId, Arc<AsyncMutex<()>>>>,
-    tiflash_compute_store_cache: StdRwLock<TiFlashComputeStoreCache>,
+    tiflash_compute_store_cache: TiFlashComputeStoreCache,
     store_check_notify: Notify,
     store_metrics_cleanup: StdMutex<StoreMetricsCleanupState>,
     health_feedback_callback: StdRwLock<Option<HealthFeedbackCallback>>,
@@ -810,7 +861,7 @@ impl<Client> RegionCache<Client> {
             region_cache: RwLock::new(RegionCacheMap::new()),
             store_cache: StdRwLock::new(HashMap::new()),
             store_resolve_locks: AsyncMutex::new(HashMap::new()),
-            tiflash_compute_store_cache: StdRwLock::new(TiFlashComputeStoreCache::default()),
+            tiflash_compute_store_cache: TiFlashComputeStoreCache::default(),
             store_check_notify: Notify::new(),
             store_metrics_cleanup: StdMutex::new(StoreMetricsCleanupState::default()),
             health_feedback_callback: StdRwLock::new(None),
@@ -2880,43 +2931,18 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// Source's independent TiFlash-compute cache. It is populated only by
     /// explicit all-store discovery and remains separate from region peers.
     pub async fn get_tiflash_compute_stores(&self) -> Result<Vec<Store>> {
-        {
-            let cache = self.tiflash_compute_store_cache.read().unwrap();
-            if !cache.need_reload {
-                return Ok(cache.stores.clone());
-            }
-        }
-        let stores = self
-            .inner_client
-            .clone()
-            .get_all_stores()
-            .await?
-            .into_iter()
-            .filter(|store| {
-                metapb::StoreState::try_from(store.state)
-                    .is_ok_and(|state| state == metapb::StoreState::Up)
-                    && EndpointType::from_store(store) == EndpointType::TiFlashCompute
-            })
-            .collect::<Vec<_>>();
-        let mut cache = self.tiflash_compute_store_cache.write().unwrap();
-        cache.stores.clone_from(&stores);
-        cache.need_reload = false;
-        Ok(stores)
+        self.tiflash_compute_store_cache
+            .get_or_load(|| self.inner_client.clone().get_all_stores())
+            .await
     }
 
     pub fn invalidate_tiflash_compute_stores(&self) {
-        self.tiflash_compute_store_cache
-            .write()
-            .unwrap()
-            .need_reload = true;
+        self.tiflash_compute_store_cache.invalidate();
     }
 
     pub fn invalidate_tiflash_compute_stores_if_grpc_error(&self, error: &Error) -> bool {
-        if !is_grpc_unavailable(error) {
-            return false;
-        }
-        self.invalidate_tiflash_compute_stores();
-        true
+        self.tiflash_compute_store_cache
+            .invalidate_if_grpc_error(error)
     }
 
     pub(crate) fn record_store_replica_flow(
@@ -5775,6 +5801,40 @@ mod test {
         );
         cache.get_tiflash_compute_stores().await?;
         assert_eq!(client.get_all_stores_count.load(SeqCst), 3);
+        for status in [
+            tonic::Status::cancelled("caller"),
+            tonic::Status::deadline_exceeded("deadline"),
+            tonic::Status::resource_exhausted("quota"),
+        ] {
+            assert!(!cache.invalidate_tiflash_compute_stores_if_grpc_error(&Error::GrpcAPI(status)));
+        }
+        cache.get_tiflash_compute_stores().await?;
+        assert_eq!(client.get_all_stores_count.load(SeqCst), 3);
+        // Reused adapters retain Go's empty-result and failed-reload behavior.
+        let owner = super::TiFlashComputeStoreCache::default();
+        assert!(owner
+            .get_or_load(|| async { Ok::<_, &str>(Vec::new()) })
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(owner
+            .get_or_load(|| async { Err::<Vec<metapb::Store>, _>("must stay cached") })
+            .await
+            .unwrap()
+            .is_empty());
+        owner.invalidate();
+        assert_eq!(
+            owner
+                .get_or_load(|| async { Err::<Vec<metapb::Store>, _>("PD unavailable") })
+                .await
+                .unwrap_err(),
+            "PD unavailable"
+        );
+        assert!(owner
+            .get_or_load(|| async { Ok::<_, &str>(Vec::new()) })
+            .await
+            .unwrap()
+            .is_empty());
 
         assert!(super::store_labels_match(
             &client.stores.lock().await[0].labels,

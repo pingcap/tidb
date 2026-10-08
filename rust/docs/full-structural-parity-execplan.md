@@ -33,6 +33,8 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] 2026-10-08: connect T02/M04/M05 native compute discovery and MPP invalidation through one process cache owner; see [batch plan](compute-cache-batch-execplan.md) and [validation receipt](parity/current-audit/compute-cache-validation.json). Broader roots remain partial.
+
 - [x] Carry physical diagnostic columns through local/remote readers; retire unconditional text/key lookup, send digest predicates and compose receiving selection with independently borrowed transport. I01/I03/O18/N05 stay partial. See [batch plan](digest-projection-batch-execplan.md) and [validation](parity/current-audit/digest-projection-validation.json).
 
 - [x] Consolidate vector and charset tests into existing source-backed suites, preserving unique Go and Rust assertions while removing six duplicate cases and two completed numeric plans. See [datatype cleanup](parity/current-audit/datatype-cleanup-validation.json); all54 unresolved findings remain unchanged.

@@ -1,0 +1,132 @@
+{
+  "date": "2026-10-08",
+  "baseline": "d072d33b441578b7f7578a7888e9fb57f6aa1877",
+  "native_baseline": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+  "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+  "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "native_head": "de4c53c34f9fcf53e2e07cb928b6b4af890b02c0",
+  "findings": [
+    "T02",
+    "M04",
+    "M05"
+  ],
+  "changes": [
+    "Extract native TiFlashComputeStoreCache and delegate RegionCache to it; reuse one owner under BackgroundRegionCacheShared. No new transport, worker or PD client.",
+    "Replace MPP direct PD discovery/filtering with cached native metadata; share across independently constructed sources and leases. Empty/no-alive topology invalidates before backoff/retry.",
+    "PD-mode dispatch, establishment including first receive and cancellation RPC failures invalidate. Application packet errors, successful cleanup and ordinary tail failures do not independently invalidate; classic/autoscaler sources do not borrow this PD cache.",
+    "Retain native ordinary Unavailable-only invalidation, Go lock/reload semantics, store filtering, terminal cancellation, region-bearing single-attempt dispatch, existing task lease and shared fleet."
+  ],
+  "go_sources": [
+    "pkg/store/copr/mpp.go::DispatchMPPTask,EstablishMPPConns,CancelMPPTasks",
+    "pkg/store/copr/batch_coprocessor.go::buildBatchCopTasksConsistentHashForPD",
+    "pkg/store/copr/batch_request_sender.go::SendReqToAddr",
+    "client-go internal/locate/region_cache.go::GetTiFlashComputeStores,InvalidateTiFlashComputeStoresIfGRPCError"
+  ],
+  "regressions_before": {
+    "command": "cd rust && cargo test --locked -p tidb-exec --lib compute_cache_batch -- --test-threads=1",
+    "passed": 0,
+    "failed": 2,
+    "ignored": 0,
+    "behavior": [
+      "Three PD reads instead of one shared cache hit",
+      "Warmed topology failed when PD became unavailable"
+    ],
+    "log": {
+      "path": "/workspace/.cloud-setup/next-owner-batch/before.log",
+      "sha256": "f62bcf593cd8b62926f0592f2374fab80f18641e2b09938eabf5a82af627fa07"
+    }
+  },
+  "validation": {
+    "native": {
+      "command": "cd /workspace/client-rust && cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib source_go_region_cache_TestStoreLabels -- --test-threads=1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/next-owner-batch/native-tests-clean.log",
+        "sha256": "39c519af5c2d2252b4c55cbb521a8660e18eaadad9623915826c7f5f4367846c"
+      }
+    },
+    "grouped": {
+      "command": "cd rust && cargo test --locked -p tidb-exec --lib tiflash_mpp_scan -- --test-threads=1",
+      "passed": 46,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/next-owner-batch/after.log",
+        "sha256": "b4d906e72e51c2421edd0e8ae39fefc1b2c2931fdca08eca03b1f5c222ac6776"
+      },
+      "scope": "Shared/independent cache authorities, warm PD outage, empty reload, dispatch mode/application matrix, seven establishment/cancel/tail cases, KILL and neighboring MPP transport/recovery/range contracts."
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/next-owner-batch/lint.log",
+        "sha256": "2940ec5ab8c0c029de7e054749de7d6c30dd95de575095b6d9fecaf1c07826f8"
+      }
+    },
+    "live": {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/next-owner-batch/live.py",
+      "assertions": 19,
+      "receipt": {
+        "path": "/workspace/.cloud-setup/next-owner-batch/live.json",
+        "sha256": "899eb1c436d5c43118d68e2779a6825f7717269304b8ac38abd85ab95679517d"
+      },
+      "scope": "Real MySQL/unistore startup, one joined MPP prober and config/sysvar policy. Socket regressions use generated PD/TiKV services; no multi-node TiFlash acceptance.",
+      "binary_sha256": "fe80da3046969363d57e3f576682f84ca42f6245ceb4763a073127bb18a227d1"
+    },
+    "build": {
+      "command": "cd rust && cargo build --locked -p tidb-server",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/next-owner-batch/live-build.log",
+        "sha256": "dc9406d3e67ecf539be82b5ef3f29b44c47f3350853ec4f438014374e73aedd9"
+      }
+    },
+    "format": "rustfmt --edition 2021 --check on changed authored Rust files; git diff --check",
+    "self_review": "Reviewed all connect_mpp_client call sites, both process-cache constructors, native owner delegation, generated bindings and source-specific cancellation/application/tail boundaries. Native published first and synchronized only through the maintained script.",
+    "iteration_notes": "Baseline fixture API/import compilation mistakes corrected before behavioral baseline. Native test link initially exhausted disk; removed exact failed output and five obsolete native libraries with hash/inode receipts. Clean final log records successful validation."
+  },
+  "native_publication": {
+    "pre_push_locked_build": {
+      "path": "/workspace/.cloud-setup/next-owner-batch/native-pre-push-build.log",
+      "sha256": "9b8595a850955b2f19e2aad9bcf5ccfc30f4846535c4a753b58d6e64c7a9f774"
+    },
+    "commit": {
+      "path": "/workspace/.cloud-setup/next-owner-batch/native-commit.log",
+      "sha256": "2972ef806e24bef967867325b076c4c9049e1378964d27562aedcbc47ada3ae4"
+    },
+    "push": {
+      "path": "/workspace/.cloud-setup/next-owner-batch/native-push.log",
+      "sha256": "86539b0a794878fe005f59498cfc9cc63998b4143e0e93eb166d8889c2856bec"
+    },
+    "remote": {
+      "path": "/workspace/.cloud-setup/next-owner-batch/native-remote-sha.txt",
+      "sha256": "a4a973a90ee9a48e531fee1b4b8b68a6c4f248ba88b228308d3d69aa0d945b9c"
+    },
+    "sync": {
+      "path": "/workspace/.cloud-setup/next-owner-batch/sync.log",
+      "sha256": "975218594e6356fa4671314afea1ccff495658bc456c56cba8cb9994b3e039d2"
+    }
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "remaining": [
+    "T02 full region/cache/RequestSelector/recovery consolidation",
+    "M04/M05 general coordinator/fragments, reporting and full package/distributed acceptance",
+    "Other 51 unresolved findings retain dated evidence"
+  ],
+  "not_verified": [
+    "Live Go suites",
+    "Real multi-node PD/TiKV/TiFlash failure or interoperability",
+    "Complete source-package acceptance",
+    "Performance benchmarks"
+  ],
+  "publication_gate": "TiDB commit must run actual precommit locked server build; repeat immediately before push and verify remote SHA. Final evidence is external next-owner-batch/final-handoff.json."
+}
