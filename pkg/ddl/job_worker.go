@@ -788,14 +788,10 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 
-	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
-		// If the running job meets an error
-		// and the job state is rolling back, it means that we have already handled this error.
-		// Some DDL jobs (such as adding indexes) may need to update the table info and the schema version,
-		// then shouldn't discard the KV modification.
-		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
-		// Otherwise, we should discard the KV modification when running job.
+	if runJobErr != nil {
 		if isRollbackTxnError(runJobErr) {
+			// rollbackTxnError always discards the mutations from this job step,
+			// including ones made while the job is already rolling back.
 			w.sess.Rollback()
 			txn, txnErr := w.prepareTxn(job)
 			if txnErr != nil {
@@ -803,12 +799,17 @@ func (w *worker) transitOneJobStep(
 				return 0, txnErr
 			}
 			jobCtx.metaMut = meta.NewMutator(txn)
-		} else {
+			schemaVer = 0
+		} else if !job.IsRollingback() && !job.IsRollbackDone() {
+			// If the running job meets an error and the job state is rolling back,
+			// the rollback path may have intentionally updated table info and the
+			// schema version. Keep those mutations unless the error explicitly
+			// requires the whole transaction to be rolled back.
 			w.sess.Reset()
+			// If error happens after updateSchemaVersion(), then the schemaVer is updated.
+			// Result in the retry duration is up to 2 * lease.
+			schemaVer = 0
 		}
-		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
-		// Result in the retry duration is up to 2 * lease.
-		schemaVer = 0
 	}
 
 	err = w.registerMDLInfo(job, schemaVer)
