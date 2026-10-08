@@ -694,15 +694,10 @@ func (w *worker) transitOneJobStep(
 	// time range of another concurrent job updates, such as 'cancel/pause' job
 	// or on owner change, overlap with us, we will report 'write conflict', but
 	// if they don't overlap, we query and check inside our txn to detect the conflict.
-	currBytes, err := jobCtx.sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
-	if err != nil {
+	if err = w.checkJobMetaUnchanged(jobCtx, jobW); err != nil {
 		// TODO maybe we can unify where to rollback, they are scatting around.
 		w.sess.Rollback()
 		return 0, err
-	}
-	if !bytes.Equal(currBytes, jobW.Bytes) {
-		w.sess.Rollback()
-		return 0, errors.New("job meta changed by others")
 	}
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
@@ -778,8 +773,16 @@ func (w *worker) transitOneJobStep(
 			// Discard all mutations from this job step, including ones made while
 			// the job is already rolling back.
 			w.sess.Rollback()
+			failpoint.InjectCall("afterRollbackTxnForMustRollbackTxnOnError", job)
 			txn, txnErr := w.prepareTxn(job)
 			if txnErr != nil {
+				jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+				return 0, txnErr
+			}
+			// Rollback ends the transaction checked above. Recheck in the new
+			// transaction so it does not overwrite a concurrent job update.
+			if txnErr = w.checkJobMetaUnchanged(jobCtx, jobW); txnErr != nil {
+				w.sess.Rollback()
 				jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 				return 0, txnErr
 			}
@@ -838,6 +841,17 @@ func (w *worker) transitOneJobStep(
 	}
 
 	return schemaVer, nil
+}
+
+func (w *worker) checkJobMetaUnchanged(jobCtx *jobContext, jobW *model.JobW) error {
+	currBytes, err := jobCtx.sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, jobW.Job.ID)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(currBytes, jobW.Bytes) {
+		return errors.New("job meta changed by others")
+	}
+	return nil
 }
 
 func (w *worker) checkBeforeCommit() error {

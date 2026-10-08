@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -288,6 +289,97 @@ func TestCreateMaterializedViewRollbackUpdateSchemaVersionFailureRetries(t *test
 	require.Error(t, <-ddlErrCh)
 	tk.MustQuery("show tables like 'mv_create_rollback_retry'").Check(testkit.Rows())
 	tk.MustExec("drop materialized view log on t_create_mv_rollback_retry")
+}
+
+func TestCreateMaterializedViewRollbackRechecksJobMetaAfterReopenTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_create_mv_recheck_job_meta (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_create_mv_recheck_job_meta (a, b) purge next date_add(now(), interval 1 hour)")
+
+	const buildErrFP = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr"
+	require.NoError(t, failpoint.Enable(buildErrFP, "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(buildErrFP))
+	}()
+
+	var updateVersionErrOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion", func(job *model.Job, err *error) {
+		if job.Type == model.ActionCreateMaterializedView && job.IsRollbackDone() {
+			updateVersionErrOnce.Do(func() {
+				*err = fmt.Errorf("mock materialized view rollback schema version error")
+			})
+		}
+	})
+
+	tkConcurrent := newMViewTestKit(t, store)
+	var expectedErrorCount int64
+	concurrentUpdateDone := make(chan struct{})
+	var concurrentUpdateOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError", func(job *model.Job) {
+		if job.Type != model.ActionCreateMaterializedView || !job.IsRollingback() {
+			return
+		}
+		concurrentUpdateOnce.Do(func() {
+			jobBytes, err := job.Encode(false)
+			require.NoError(t, err)
+			concurrentJob := &model.Job{}
+			require.NoError(t, concurrentJob.Decode(jobBytes))
+			concurrentJob.ErrorCount++
+			expectedErrorCount = concurrentJob.ErrorCount
+			updatedJobBytes, err := concurrentJob.Encode(false)
+			require.NoError(t, err)
+			tkConcurrent.MustExec(fmt.Sprintf(
+				"update mysql.tidb_ddl_job set job_meta = %s where job_id = %d",
+				ddlutil.WrapKey2String(updatedJobBytes), job.ID,
+			))
+			close(concurrentUpdateDone)
+		})
+	})
+
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	releaseRetry := func() {
+		select {
+		case <-allowRetry:
+		default:
+			close(allowRetry)
+		}
+	}
+	defer releaseRetry()
+	var retryOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionCreateMaterializedView || !job.IsRollingback() {
+			return
+		}
+		select {
+		case <-concurrentUpdateDone:
+		default:
+			return
+		}
+		if job.ErrorCount != expectedErrorCount {
+			return
+		}
+		retryOnce.Do(func() {
+			close(retryStarted)
+			<-allowRetry
+		})
+	})
+
+	ddlErrCh := make(chan error, 1)
+	go func() {
+		ddlErrCh <- tk.ExecToErr("create materialized view mv_create_recheck_job_meta (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_create_mv_recheck_job_meta group by a")
+	}()
+
+	select {
+	case <-retryStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW retry with concurrent job metadata")
+	}
+
+	releaseRetry()
+	require.Error(t, <-ddlErrCh)
 }
 
 func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
