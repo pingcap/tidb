@@ -733,6 +733,32 @@ func TestStmtSummaryHistoryPreparedTimeRange(t *testing.T) {
 		}
 	}
 	t.Log("Prepared range: 1 file scanned / 1 record parsed; unpruned baseline: 3 files / 3 records; no match: 0 / 0. File-header reads are not counted.")
+
+	// Fractional-second bounds must never prune a window the exact predicates keep:
+	// the coarse range may only widen, and the retained SQL predicates filter exactly.
+	tk.MustExec("set time_zone = '+00:00'")
+	fractionalCases := []struct {
+		query string
+		end   string
+		begin string
+	}{
+		{
+			// window0 begins exactly at `begin`; begin_time < begin+500us keeps it.
+			"select digest from information_schema.statements_summary_history where summary_begin_time < from_unixtime(?) and summary_end_time >= from_unixtime(?) order by digest",
+			fmt.Sprintf("%d.000500", begin), fmt.Sprint(begin - 1),
+		},
+		{
+			"select digest from information_schema.statements_summary_history where summary_begin_time <= from_unixtime(?) and summary_end_time > from_unixtime(?) order by digest",
+			fmt.Sprintf("%d.000500", begin), fmt.Sprint(begin - 600),
+		},
+	}
+	for _, fc := range fractionalCases {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
+		baseline := tk.MustQuery(fc.query, fc.end, fc.begin).Rows()
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
+		require.Equal(t, testkit.Rows("window0"), baseline)
+		tk.MustQuery(fc.query, fc.end, fc.begin).Check(baseline)
+	}
 }
 
 func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {
