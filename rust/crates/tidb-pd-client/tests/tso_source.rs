@@ -43,6 +43,9 @@ struct State {
     forwarding: Vec<Option<String>>,
     cluster_info: Option<pdpb::GetClusterInfoResponse>,
     cluster_info_failure: bool,
+    member_requests: usize,
+    group_requests: usize,
+    group_delay: Duration,
     discovery_delay: Duration,
     discovery_requests: usize,
     micro_requests: Vec<tsopb::TsoRequest>,
@@ -235,6 +238,7 @@ impl Pd for MockPd {
         &self,
         request: tonic::Request<pdpb::GetMembersRequest>,
     ) -> Result<tonic::Response<pdpb::GetMembersResponse>, tonic::Status> {
+        self.state.lock().unwrap().member_requests += 1;
         self.state
             .lock()
             .unwrap()
@@ -322,6 +326,9 @@ impl Server {
             forwarding: Vec::new(),
             cluster_info: None,
             cluster_info_failure: false,
+            member_requests: 0,
+            group_requests: 0,
+            group_delay: Duration::ZERO,
             discovery_delay: Duration::ZERO,
             discovery_requests: 0,
             micro_requests: Vec::new(),
@@ -751,7 +758,13 @@ impl tonic::server::UnaryService<tsopb::FindGroupByKeyspaceIdRequest> for Micros
     type Future = tonic::codegen::BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
     fn call(&mut self, _: tonic::Request<tsopb::FindGroupByKeyspaceIdRequest>) -> Self::Future {
         let address = self.0.address.clone();
+        let delay = {
+            let mut state = self.0.state.lock().unwrap();
+            state.group_requests += 1;
+            state.group_delay
+        };
         Box::pin(async move {
+            tokio::time::sleep(delay).await;
             Ok(tonic::Response::new(tsopb::FindGroupByKeyspaceIdResponse {
                 keyspace_group: Some(tsopb::KeyspaceGroup {
                     members: vec![tsopb::KeyspaceGroupMember {
@@ -1390,10 +1403,19 @@ fn observation_batch_adapter_keeps_provider_after_invalid_mode_observations() {
                 },
             ),
         ] {
+            let before = pd.state.lock().unwrap().discovery_requests;
             pd.state.lock().unwrap().cluster_info = Some(observation);
-            // Changing the live proxy policy forces a refresh without waiting
-            // for the periodic discovery timer.
             client.set_enable_tso_follower_proxy(proxy);
+            // A group refresh no longer performs a mode RPC. Observe the
+            // independent mode check before asserting retained routing.
+            let until = std::time::Instant::now() + Duration::from_secs(5);
+            while pd.state.lock().unwrap().discovery_requests == before {
+                assert!(
+                    std::time::Instant::now() < until,
+                    "mode observation did not run"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
             client
                 .get_timestamp()
                 .expect("failed observation must retain the accepted provider");
@@ -1425,4 +1447,85 @@ fn completion_batch_payload_does_not_require_pd_response_header() {
         assert_eq!(client.get_timestamp().unwrap(), (40_u64 << 18) + logical);
     }
     assert_eq!(server.state.lock().unwrap().stream_opens, 1);
+}
+
+#[test]
+fn mode_scheduling_stalled_mode_does_not_freeze_group() {
+    let pd = Server::start_auto_batching();
+    let tso = Server::start_auto_batching();
+    pd.state.lock().unwrap().cluster_info = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+        tso_urls: vec![tso.address.clone()],
+        ..Default::default()
+    });
+    let client = PdClient::connect(&pd.address, Duration::from_secs(15)).unwrap();
+    client.get_timestamp().unwrap();
+    let before = tso.state.lock().unwrap().group_requests;
+    pd.state.lock().unwrap().discovery_delay = Duration::from_secs(15);
+    let until = std::time::Instant::now() + Duration::from_secs(7);
+    while tso.state.lock().unwrap().group_requests == before && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let after = tso.state.lock().unwrap().group_requests;
+    client.shutdown().unwrap();
+    assert!(after > before, "stalled mode froze group refresh");
+}
+
+#[test]
+fn mode_scheduling_failed_mode_wakes_member_refresh() {
+    let pd = Server::start_auto_batching();
+    let client = PdClient::connect(&pd.address, Duration::from_secs(1)).unwrap();
+    client.get_timestamp().unwrap();
+    let before = pd.state.lock().unwrap().member_requests;
+    pd.state.lock().unwrap().cluster_info_failure = true;
+    let until = std::time::Instant::now() + Duration::from_secs(7);
+    while pd.state.lock().unwrap().member_requests == before && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let after = pd.state.lock().unwrap().member_requests;
+    client.shutdown().unwrap();
+    assert!(
+        after > before,
+        "mode failure waited for periodic membership"
+    );
+}
+
+#[test]
+fn mode_scheduling_provider_change_cancels_stalled_group() {
+    let pd = Server::start_auto_batching();
+    let tso = Server::start_auto_batching();
+    pd.state.lock().unwrap().cluster_info = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+        tso_urls: vec![tso.address.clone()],
+        ..Default::default()
+    });
+    let client = PdClient::connect(&pd.address, Duration::from_secs(15)).unwrap();
+    client.get_timestamp().unwrap();
+    let before = tso.state.lock().unwrap().group_requests;
+    tso.state.lock().unwrap().group_delay = Duration::from_secs(15);
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while tso.state.lock().unwrap().group_requests == before {
+        assert!(
+            std::time::Instant::now() < until,
+            "background group request did not start"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    pd.state.lock().unwrap().cluster_info = None;
+    // Classic fixture starts below the prior microservice clock; use a later clock.
+    pd.state.lock().unwrap().auto_batch_physical = Some(1000);
+    let pending_client = client.clone();
+    let pending = std::thread::spawn(move || pending_client.get_timestamp());
+    let until = std::time::Instant::now() + Duration::from_secs(7);
+    while pd.state.lock().unwrap().requests.is_empty() && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let served = !pd.state.lock().unwrap().requests.is_empty();
+    client.shutdown().unwrap();
+    let result = pending.join().unwrap();
+    assert!(served, "stalled group blocked provider replacement");
+    assert!(
+        result.is_ok(),
+        "replacement provider did not return timestamp: {result:?}"
+    );
 }

@@ -1,6 +1,8 @@
 # Structural parity audit: current evidence
 
-Latest connected repair: [independent PD/TSO observations](pd-independent-observation-validation.json) fixes failed-mode group refresh, native member/TSO scheduling and missing adapter periodic membership as one lifecycle batch. The former direct-client helper is removed after migration. P03/P06 remain partial; no broad or complete-package closure.
+Latest connected repair: [PD mode/group/member scheduling](pd-mode-scheduling-validation.json) separates stalled mode RPCs from group refresh, cancels obsolete group lookups after provider changes and wakes membership on failed mode checks in both clients. All 159 grouped tests pass. P03/P06 remain partial; no whole-package closure.
+
+Previous connected repair: [independent PD/TSO observations](pd-independent-observation-validation.json) fixes failed-mode group refresh, native member/TSO scheduling and missing adapter periodic membership as one lifecycle batch. The former direct-client helper is removed after migration. P03/P06 remain partial; no broad or complete-package closure.
 
 Latest cleanup: [PD seed and historical-plan retirement](pd-seed-cleanup-validation.json) removes three unconsumed classifiers, their private two-case harness and five superseded PD documents. The former util/engine acceptance claim is withdrawn; Go source/test obligations and active transport coverage remain. No findings close.
 
@@ -17,11 +19,11 @@ Previous connected repair: [statement KV execution attribution](kv-exec-batch-va
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../pd-independent-observation-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../pd-mode-scheduling-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](pd-independent-observation-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](pd-mode-scheduling-validation.json): exact source/log identities and verification limits.
 
-Current Go comparison: `ab37692e9ebef44a736cd7243deef6020067b743`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `203893b5a4a0ae74a86599cb1dfdc993f999f3ca`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
+Current Go comparison: `ab37692e9ebef44a736cd7243deef6020067b743`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `c594ea97615405e6180c3730e98c3611e781be7a`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
 A complete upstream package, including original tests, generated/platform/build inputs and fixtures, is the minimum acceptance unit. Search hits, a passing subset and retired Rust-only adapter tests do not discharge those obligations. The complete inventories are snapshots, not proof that every semantic mismatch is known.
 

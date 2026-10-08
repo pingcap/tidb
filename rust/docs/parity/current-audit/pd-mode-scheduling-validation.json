@@ -1,0 +1,291 @@
+{
+  "date": "2026-10-08",
+  "scope": "B01 P03/P06 existing-owner maintenance: three connected mode/group/member scheduling defects; no broad finding or complete package closure",
+  "baseline": {
+    "tidb": "3def9e97b134f2a50681a26def8e2e95002e95e5",
+    "native": "203893b5a4a0ae74a86599cb1dfdc993f999f3ca",
+    "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+    "pd": "v0.0.0-20260805103528-afa43111d149"
+  },
+  "native_published": "c594ea97615405e6180c3730e98c3611e781be7a",
+  "before": {
+    "valid_behavioral_failures": 5,
+    "native_valid": 2,
+    "adapter_valid": 3,
+    "native_raw_failed": 3,
+    "excluded": "The original native member-wake case used new_with_cluster, which starts no background workers. Its failure is not evidence. The adapter reproduces that defect on production construction; the corrected native case uses connect. Initial adapter Arc move compilation failure is also excluded."
+  },
+  "repairs": [
+    "Shared ServiceModeDiscovery separates bounded serialized mode observation from accepted group candidates. Native and adapter refresh groups while mode RPCs stall, retaining previously accepted facts on errors.",
+    "Mode-change notifications cancel obsolete group lookup candidates and refresh the provider in both clients; adapter route caching checks the candidate mode snapshot. Actual Cluster mode ownership is preserved for externally constructed native clients.",
+    "Failed mode checks coalesce a notification to the independent membership loop in both clients. Background membership refresh does not recursively poll mode and reschedule itself. Existing channels, runtime, cancellation and joined shutdown remain shared."
+  ],
+  "source_owners": [
+    "PD servicediscovery/service_discovery.go::updateServiceModeLoop/checkServiceModeChanged/ScheduleCheckMemberChanged",
+    "PD servicediscovery/tso_service_discovery.go group refresh",
+    "PD inner_client.go::resetTSOClientLocked"
+  ],
+  "source_inventory": {
+    "module": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149",
+    "files": [
+      {
+        "path": "servicediscovery/callbacks.go",
+        "bytes": 2694,
+        "sha256": "5f927301227919e13a6c30a0466b749e25765e85e8ca69d73fa131972b318f25"
+      },
+      {
+        "path": "servicediscovery/mock_service_discovery.go",
+        "bytes": 4160,
+        "sha256": "bb36615732f3228f1078b74c347124837651fe81b5173144d4de456abc69e3a1"
+      },
+      {
+        "path": "servicediscovery/resource_manager_service_discovery.go",
+        "bytes": 8410,
+        "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e"
+      },
+      {
+        "path": "servicediscovery/resource_manager_service_discovery_test.go",
+        "bytes": 3516,
+        "sha256": "28c9cb214e9ab7beb4d4bf9d930c1e6203ae5b6a146f0bcc2c5264a5a7c24094"
+      },
+      {
+        "path": "servicediscovery/router_service_discovery.go",
+        "bytes": 10789,
+        "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e"
+      },
+      {
+        "path": "servicediscovery/service_discovery.go",
+        "bytes": 36195,
+        "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9"
+      },
+      {
+        "path": "servicediscovery/service_discovery_test.go",
+        "bytes": 15988,
+        "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf"
+      },
+      {
+        "path": "servicediscovery/tso_service_discovery.go",
+        "bytes": 29010,
+        "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de"
+      },
+      {
+        "path": "servicediscovery/tso_service_discovery_test.go",
+        "bytes": 2652,
+        "sha256": "a2379d4732fddd244d08d0c8e38e2e0f928d937ba2fd830ac5461c9091aa94a9"
+      },
+      {
+        "path": "clients/tso/client.go",
+        "bytes": 20084,
+        "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1"
+      },
+      {
+        "path": "clients/tso/dispatcher.go",
+        "bytes": 24731,
+        "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820"
+      },
+      {
+        "path": "clients/tso/dispatcher_test.go",
+        "bytes": 14920,
+        "sha256": "14b85206ada0b37cff9a7615518c7bb2bab69035abef4fb43a9f687947f6b6eb"
+      },
+      {
+        "path": "clients/tso/request.go",
+        "bytes": 3567,
+        "sha256": "b3d69292c26b3da4ae46323f4af2ea4e4fbe32d1565c2628968385d7c38d523b"
+      },
+      {
+        "path": "clients/tso/request_test.go",
+        "bytes": 1338,
+        "sha256": "3ae4662de27a60b517f7ec2389abcdf43113b410e1a0b3eb210419567bb587a9"
+      },
+      {
+        "path": "clients/tso/stream.go",
+        "bytes": 17357,
+        "sha256": "3429bfeae2d3d9386a866708fcc6694c26245dc6e098bfed70356ce83951ca36"
+      },
+      {
+        "path": "clients/tso/stream_test.go",
+        "bytes": 16735,
+        "sha256": "755898f5b942a46639a0794e17ffc6ed85c4d08d7979f099b9549230a9eabe96"
+      },
+      {
+        "path": "pkg/utils/grpcutil/grpcutil.go",
+        "bytes": 8136,
+        "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273"
+      },
+      {
+        "path": "pkg/utils/grpcutil/grpcutil_test.go",
+        "bytes": 1759,
+        "sha256": "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b"
+      }
+    ],
+    "acceptance": "Inventory of the three named package directories; existing-owner maintenance only. No complete transcreation/dependency-closure acceptance."
+  },
+  "source_review": {
+    "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+    "native_head": "c594ea97615405e6180c3730e98c3611e781be7a",
+    "owner": "ServiceModeDiscovery owns accepted cluster mode and bounded serialized RPC observation; TsoDiscovery owns group revision and routing candidates. Existing client workers own cancellation/join.",
+    "callers": [
+      "native Connection bootstrap and reconnect; RetryClient mode/member/TSO maintenance",
+      "TiDB PdChannelCache/DiscoveryWorker and foreground timestamp refresh"
+    ],
+    "review": [
+      "No new cache, channel factory, generated-message definition or independent Tokio runtime",
+      "Mode notifications cancel the pending group candidate while preserving accepted streams until replacement",
+      "Member notification is coalesced; periodic member checks do not recursively schedule their own mode check",
+      "Actual Cluster mode owner supplies native subscriptions, including new_with_cluster callers",
+      "Initial observations must exist before cached discovery; malformed observations never replace accepted facts",
+      "Adapter cached route is invalidated when its accepted mode snapshot is no longer current"
+    ],
+    "remaining": [
+      "Full primaryless group metadata, group cadence/retry scheduling, every RPC-error member notification, dispatcher/queue unification, concurrency/readiness/idle/router/security/platform and full-package acceptance"
+    ],
+    "native_files": [
+      {
+        "path": "src/pd/service_mode.rs",
+        "sha256": "2938c4708e88a4a1c8b7da4e5caba75f568d0f04b6d2f95b83e79376c44c9212"
+      },
+      {
+        "path": "src/pd/service_discovery.rs",
+        "sha256": "30dcbdd51a9d7234bf465f4f1a5fc8a6c61295814c7b40e7b3d3295102ebf96e"
+      },
+      {
+        "path": "src/pd/retry.rs",
+        "sha256": "9ea9d18f1de894815a8ac896866ab02b960302d7f7fa0764eca5962e7bc2bb81"
+      },
+      {
+        "path": "src/pd/cluster.rs",
+        "sha256": "6435c7f0b4eeb4fdd1da429dec30c203e7d496855acd7e4288ad60940723cd4f"
+      }
+    ]
+  },
+  "validation": {
+    "environment": "Source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1; no competing compilation during socket tests",
+    "commands": {
+      "native_tests": "cd /workspace/client-rust && cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked --lib -- pd::timestamp::tests:: pd::retry::test:: pd::service_discovery --test-threads=1",
+      "native_check": "cd /workspace/client-rust && cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked -p tikv-client --all-targets",
+      "adapter_tests": "cd /workspace/tidb/rust && cargo test --locked -p tidb-pd-client --lib --test all --no-fail-fast -- tso_source:: pd_client_source:: pd_worker_lifecycle_source:: client::worker_lifecycle_tests:: --test-threads=1",
+      "adapter_check": "cd /workspace/tidb/rust && cargo check --locked -p tidb-pd-client -p tidb-server --all-targets",
+      "lint": "cd /workspace/tidb && make lint",
+      "sync": "cd /workspace/tidb && bash rust/scripts/sync-tikv-client-rs.sh",
+      "format": "cd /workspace/tidb/rust && rustfmt --check --edition 2021 --config skip_children=true crates/tidb-pd-client/src/client/worker.rs crates/tidb-pd-client/src/client/failover.rs crates/tidb-pd-client/tests/tso_source.rs"
+    },
+    "native": {
+      "passed": 77,
+      "failed": 0,
+      "ignored": 0
+    },
+    "adapter_lib": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    "adapter_integration": {
+      "passed": 76,
+      "failed": 0,
+      "ignored": 0
+    },
+    "distinct_passed": 159,
+    "new_regressions_passed": 6,
+    "native_all_targets": "passed",
+    "adapter_server_all_targets": "passed",
+    "lint": "passed",
+    "changed_file_format": "passed",
+    "sync": "four maintained patches applied; protobuf generation completed"
+  },
+  "logs": {
+    "native-before.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/native-before.log",
+      "sha256": "508f4502b281b0acd2e7444ad1f7d39bf8020ff3c1b88377f0b924bd55293792",
+      "bytes": 1867
+    },
+    "adapter-before.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/adapter-before.log",
+      "sha256": "90d7e9e7c03024d1e707c914ec68971a24cd0d295a2f6becbc1cd38d778741b1",
+      "bytes": 2164
+    },
+    "native-fixture-diagnostic.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/native-fixture-diagnostic.log",
+      "sha256": "4dd6c4ccb34b20aa2af6a676476ffb6a8dfabbecee4c8de01c0a38cafcc457f0",
+      "bytes": 7845
+    },
+    "adapter-fixture-compile.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/adapter-fixture-compile.log",
+      "sha256": "66e5cf28703682917518aac88ac5093d1849dcadd4b41e3a62ac34b4a86f88a5",
+      "bytes": 1533
+    },
+    "native-green.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/native-green.log",
+      "sha256": "10a8c227fc82f625e39dc8c870b8e74065c3f7958849a4d89e62862d1a15cd29",
+      "bytes": 7343
+    },
+    "adapter-green.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/adapter-green.log",
+      "sha256": "d1162318b5df47418db352fccf80e0b9e074be63608a121c74fd40013ecebbf3",
+      "bytes": 8270
+    },
+    "native-check.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/native-check.log",
+      "sha256": "25d83092c0e930112d37dbc83fc5af2e1919c6653d623ce40dcc165b10cdd2a4",
+      "bytes": 487
+    },
+    "adapter-check.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/adapter-check.log",
+      "sha256": "0f6d4951236666a624e4c7dbe1800cd281dbae8c3d34fc02cd9fb76395dec760",
+      "bytes": 115843
+    },
+    "lint.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/lint.log",
+      "sha256": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4",
+      "bytes": 2164
+    },
+    "format.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "sync.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/sync.log",
+      "sha256": "01ce0937cf4ff2a5aea695bb63a4fe45ffa311fba1880aaa25fc79e9869eb80e",
+      "bytes": 1890
+    },
+    "native-commit.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/native-commit.log",
+      "sha256": "372634da59a9b15bcd038fc0a204bb85f065393f1316e24600a461874989f18a",
+      "bytes": 175
+    },
+    "native-prepush-build.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/native-prepush-build.log",
+      "sha256": "8aee11ca260790d8c3a52e1a8e5b82648f65af00f4193bf336527ab50684a28b",
+      "bytes": 109454
+    },
+    "native-push.log": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/native-push.log",
+      "sha256": "017ffe1c9a71513d3399202eec21650b47c9571d00e9e7728c0f79759ff1b74a",
+      "bytes": 80
+    },
+    "native-remote-sha.txt": {
+      "path": "/workspace/.cloud-setup/pd-mode-scheduling/native-remote-sha.txt",
+      "sha256": "c79153544de3e9e99dd6faaecc20d384856a04a3250dac736abe110e44999828",
+      "bytes": 59
+    }
+  },
+  "publication": {
+    "native_remote_sha_verified": "c594ea97615405e6180c3730e98c3611e781be7a",
+    "native_fresh_locked_tidb_build": "passed immediately before native push",
+    "tidb": "Actual hook, fresh pre-push locked build, normal push and remote verification are recorded after execution in /workspace/.cloud-setup/pd-mode-scheduling/final-handoff.json; not predicted here."
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "limits": [
+    "Full primaryless group metadata publication, remaining group refresh/retry scheduling, other RPC-error membership notifications, RPC concurrency, readiness/prewarm, idle recovery, queue/dispatcher consolidation and complete router/security/platform/package obligations remain open.",
+    "Full Go suites, live multi-node TiKV/TiFlash, production TLS and performance measurements were not run.",
+    "Other 52 unresolved findings retain carried evidence; no exhaustive re-audit or complete-package acceptance."
+  ]
+}

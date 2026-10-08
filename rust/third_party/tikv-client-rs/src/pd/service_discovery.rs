@@ -3,6 +3,7 @@
 //! Shared PD service-mode and keyspace-group discovery. Metadata continues to
 //! use the PD leader; timestamp routing follows the separately discovered owner.
 
+pub use super::service_mode::ServiceModeDiscovery;
 use crate::proto::{keyspacepb, meta_storagepb, pdpb, tsopb};
 use futures::{Stream, StreamExt};
 use prost::Message;
@@ -454,6 +455,7 @@ pub struct TsoDiscovery {
     cursor: Arc<Mutex<DiscoveryCursor>>,
     forwarding: TsoForwarding,
     accepted_info: Option<pdpb::GetClusterInfoResponse>,
+    service_mode: ServiceModeDiscovery,
 }
 
 #[derive(Debug, Default)]
@@ -472,6 +474,7 @@ impl Default for TsoDiscovery {
             cursor: Arc::new(Mutex::new(DiscoveryCursor::default())),
             forwarding: TsoForwarding::default(),
             accepted_info: None,
+            service_mode: ServiceModeDiscovery::default(),
         }
     }
 }
@@ -519,7 +522,43 @@ impl TsoDiscovery {
         F: Fn(String) -> Fut,
         Fut: Future<Output = Result<Channel, Status>>,
     {
-        // Bound dialing as well as all discovery requests with the caller's budget.
+        tokio::time::timeout(timeout, async {
+            if let Err(error) = self.service_mode.refresh(leader, timeout, &dial).await {
+                if self.service_mode.snapshot().is_none() {
+                    return Err(error);
+                }
+            }
+            self.discover_inner(cluster_id, leader, use_pd_proxy, timeout, channels, dial)
+                .await
+        })
+        .await
+        .map_err(|_| Status::deadline_exceeded("TSO discovery timed out"))?
+    }
+
+    /// The PD root owns mode polling; TSO refresh consumes its last accepted facts.
+    pub fn service_mode(&self) -> ServiceModeDiscovery {
+        self.service_mode.clone()
+    }
+
+    /// Whether this candidate uses the current accepted mode observation.
+    pub fn mode_is_current(&self) -> bool {
+        self.accepted_info == self.service_mode.snapshot()
+    }
+
+    /// Refresh group routing without issuing a service-mode RPC.
+    pub async fn discover_cached<F, Fut>(
+        &mut self,
+        cluster_id: u64,
+        leader: &str,
+        use_pd_proxy: bool,
+        timeout: Duration,
+        channels: &ChannelCache,
+        dial: F,
+    ) -> Result<(TsoRoute, Channel), Status>
+    where
+        F: Fn(String) -> Fut,
+        Fut: Future<Output = Result<Channel, Status>>,
+    {
         tokio::time::timeout(
             timeout,
             self.discover_inner(cluster_id, leader, use_pd_proxy, timeout, channels, dial),
@@ -542,54 +581,11 @@ impl TsoDiscovery {
         Fut: Future<Output = Result<Channel, Status>>,
     {
         let channel = dial(leader.to_owned()).await?;
-        let mut client = pdpb::pd_client::PdClient::new(channel.clone());
-        let observation = match client
-            .get_cluster_info(request(pdpb::GetClusterInfoRequest::default(), timeout))
-            .await
-        {
-            Ok(response) => {
-                let info = response.into_inner();
-                if let Some(error) = info
-                    .header
-                    .as_ref()
-                    .and_then(|header| header.error.as_ref())
-                {
-                    Err(Status::unknown(error.message.clone()))
-                } else if info
-                    .service_modes
-                    .first()
-                    .copied()
-                    .and_then(|mode| pdpb::ServiceMode::try_from(mode).ok())
-                    .is_none_or(|mode| {
-                        !matches!(
-                            mode,
-                            pdpb::ServiceMode::PdSvcMode | pdpb::ServiceMode::ApiSvcMode
-                        )
-                    })
-                {
-                    Err(Status::unknown("no supported service mode returned"))
-                } else {
-                    Ok(info)
-                }
-            }
-            Err(error) if error.code() == tonic::Code::Unimplemented => {
-                self.accepted_info = Some(pdpb::GetClusterInfoResponse {
-                    service_modes: vec![pdpb::ServiceMode::PdSvcMode as i32],
-                    ..Default::default()
-                });
-                return Ok((self.classic(leader), channel));
-            }
-            Err(error) => Err(error),
-        };
-        let info = match observation {
-            Ok(info) => {
-                self.accepted_info = Some(info.clone());
-                info
-            }
-            // Failed service-mode observation does not revoke the accepted
-            // provider or suppress that provider's independent group refresh.
-            Err(error) => self.accepted_info.clone().ok_or(error)?,
-        };
+        let info = self
+            .service_mode
+            .snapshot()
+            .ok_or_else(|| Status::unavailable("PD service mode has not been observed"))?;
+        self.accepted_info = Some(info.clone());
         if info.service_modes[0] == pdpb::ServiceMode::PdSvcMode as i32 || use_pd_proxy {
             return Ok((self.classic(leader), channel));
         }

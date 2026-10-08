@@ -575,6 +575,8 @@ pub(crate) struct PdChannelCache {
     membership_refresh: Arc<tokio::sync::Mutex<()>>,
     pub(super) tso_discovery: Arc<tokio::sync::Mutex<TsoDiscoveryState>>,
     pub(super) tso_forwarding: tikv_client::pd_service_discovery::TsoForwarding,
+    pub(super) service_mode: tikv_client::pd_service_discovery::ServiceModeDiscovery,
+    pub(super) member_wake: Arc<tokio::sync::Notify>,
     pub(super) tso_routes:
         tokio::sync::watch::Sender<Vec<tikv_client::pd_service_discovery::TsoRoute>>,
 }
@@ -595,6 +597,7 @@ impl PdChannelCache {
     pub(super) fn new(security: Arc<ClusterSecurity>) -> Self {
         let discovery = TsoDiscoveryState::default();
         let tso_forwarding = discovery.discovery.forwarding();
+        let service_mode = discovery.discovery.service_mode();
         Self {
             channels: Arc::new(tikv_client::pd_service_discovery::ChannelCache::default()),
             options: Arc::new(tikv_client::pd_options::Options::new()),
@@ -603,6 +606,8 @@ impl PdChannelCache {
             membership_refresh: Arc::default(),
             tso_discovery: Arc::new(tokio::sync::Mutex::new(discovery)),
             tso_forwarding,
+            service_mode,
+            member_wake: Arc::default(),
             tso_routes: tokio::sync::watch::channel(Vec::new()).0,
         }
     }

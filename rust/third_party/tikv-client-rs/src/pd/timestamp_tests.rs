@@ -63,6 +63,8 @@ struct PdServer {
     reply: Reply,
     tso_failure: Arc<std::sync::Mutex<Option<tonic::Code>>>,
     cluster_info_failure: Arc<std::sync::atomic::AtomicBool>,
+    stall_mode: Arc<std::sync::atomic::AtomicBool>,
+    mode_requests: Arc<AtomicUsize>,
     received: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
 }
@@ -526,6 +528,8 @@ impl Server {
             reply,
             tso_failure: Arc::default(),
             cluster_info_failure: Arc::default(),
+            stall_mode: Arc::default(),
+            mode_requests: Arc::default(),
             received: Arc::new(AtomicUsize::new(0)),
             dropped: Arc::new(AtomicUsize::new(0)),
         };
@@ -1574,7 +1578,12 @@ impl tonic::server::UnaryService<pdpb::GetClusterInfoRequest> for PdServer {
     fn call(&mut self, _: tonic::Request<pdpb::GetClusterInfoRequest>) -> Self::Future {
         let response = self.cluster_info.read().unwrap().clone();
         let failure = self.cluster_info_failure.load(Ordering::SeqCst);
+        self.mode_requests.fetch_add(1, Ordering::SeqCst);
+        let stall = self.stall_mode.load(Ordering::SeqCst);
         Box::pin(async move {
+            if stall {
+                futures::future::pending::<()>().await;
+            }
             if failure {
                 return Err(tonic::Status::unavailable(
                     "PD mode observation unavailable",
@@ -3267,4 +3276,110 @@ async fn completion_batch_order_survives_dispatcher_replacement() {
         });
     assert!(client.tso_for_test().await.get_timestamp().await.is_err());
     client.close().await;
+}
+
+#[tokio::test]
+async fn mode_scheduling_stalled_mode_does_not_freeze_group() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let first = Server::start(Reply::Timestamp).await;
+    let second =
+        Server::start_with_clock(Reply::Timestamp, first.service.next_logical.clone()).await;
+    api_mode(&pd, &first);
+    let client = RetryClient::connect(
+        &[pd.service.endpoint.clone()],
+        Arc::new(SecurityManager::default()),
+        Duration::from_secs(15),
+    )
+    .await
+    .unwrap();
+    let old = client.tso_for_test().await;
+    pd.service.stall_mode.store(true, Ordering::SeqCst);
+    *first.service.group.write().unwrap() = tsopb::KeyspaceGroup {
+        id: 9,
+        members: vec![tsopb::KeyspaceGroupMember {
+            address: second.service.endpoint.clone(),
+            is_primary: true,
+        }],
+        ..Default::default()
+    };
+    first.service.revision.store(20, Ordering::SeqCst);
+    let switched = tokio::time::timeout(Duration::from_secs(7), async {
+        while !old.cancellation().is_cancelled() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    let mode_polled = pd.service.mode_requests.load(Ordering::SeqCst) > 1;
+    client.close().await;
+    assert!(
+        switched.is_ok(),
+        "stalled mode RPC froze accepted group refresh"
+    );
+    assert!(mode_polled, "independent mode polling stopped");
+}
+
+#[tokio::test]
+async fn mode_scheduling_provider_change_cancels_stalled_group() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let tso = Server::start(Reply::Timestamp).await;
+    api_mode(&pd, &tso);
+    let client = RetryClient::connect(
+        &[pd.service.endpoint.clone()],
+        Arc::new(SecurityManager::default()),
+        Duration::from_secs(15),
+    )
+    .await
+    .unwrap();
+    let old = client.tso_for_test().await;
+    tso.service.stall_discovery.store(true, Ordering::SeqCst);
+    let requests = tso.service.discovery_requests.load(Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while tso.service.discovery_requests.load(Ordering::SeqCst) == requests {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    *pd.service.cluster_info.write().unwrap() = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::PdSvcMode as i32],
+        ..Default::default()
+    });
+    let switched = tokio::time::timeout(Duration::from_secs(7), async {
+        while !old.cancellation().is_cancelled() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    client.close().await;
+    assert!(
+        switched.is_ok(),
+        "stalled group RPC prevented provider replacement"
+    );
+}
+
+#[tokio::test]
+async fn mode_scheduling_failed_mode_wakes_member_refresh() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let client = RetryClient::connect(
+        &[pd.service.endpoint.clone()],
+        Arc::new(SecurityManager::default()),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    let requests = pd.service.member_requests.load(Ordering::SeqCst);
+    pd.service
+        .cluster_info_failure
+        .store(true, Ordering::SeqCst);
+    let refreshed = tokio::time::timeout(Duration::from_secs(7), async {
+        while pd.service.member_requests.load(Ordering::SeqCst) == requests {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    client.close().await;
+    assert!(
+        refreshed.is_ok(),
+        "mode error waited for the one-minute member timer"
+    );
 }

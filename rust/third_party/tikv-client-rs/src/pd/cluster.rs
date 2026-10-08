@@ -63,6 +63,10 @@ macro_rules! pd_request {
 // its connection and owned arguments across I/O. The static future lifetime
 // prevents a retry caller from accidentally holding the cluster lock while waiting.
 impl Cluster {
+    pub(crate) fn service_mode(&self) -> super::service_discovery::ServiceModeDiscovery {
+        self.discovery.service_mode()
+    }
+
     fn rpc_client(&self) -> impl Future<Output = Result<RoutedPdClient>> + Send + 'static {
         let connection = self.connection.clone();
         let regions = self.region_service.clone();
@@ -865,6 +869,7 @@ impl Connection {
         let start = Instant::now();
         let leader = self.prepare_reconnect(cluster, timeout).await?;
         cluster.install_leader(leader)?;
+        let _ = self.prepare_service_mode(cluster, timeout).await;
         let timestamp = self.prepare_timestamp(cluster, timeout, None).await?;
         cluster.install_timestamp(timestamp, timeout)?.await;
         cluster.finish_retirement();
@@ -896,6 +901,30 @@ impl Connection {
         }
     }
 
+    pub(crate) fn prepare_service_mode(
+        &self,
+        cluster: &Cluster,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<()>> + Send + 'static {
+        let mut connection = self.clone();
+        connection.channels = cluster.channels.clone();
+        let mode = cluster.discovery.service_mode();
+        let url = cluster
+            .members
+            .leader
+            .as_ref()
+            .and_then(|member| connection.member_url(member));
+        async move {
+            let url = url.ok_or_else(|| internal_err!("PD membership has no leader"))?;
+            Ok(mode
+                .refresh(&url, timeout, |url| {
+                    let connection = connection.clone();
+                    async move { connection.channel(&url).await }
+                })
+                .await?)
+        }
+    }
+
     pub(crate) fn prepare_timestamp(
         &self,
         cluster: &Cluster,
@@ -921,8 +950,18 @@ impl Connection {
                 .as_ref()
                 .and_then(|member| connection.member_url(member))
                 .ok_or_else(|| internal_err!("PD membership has no leader"))?;
-            let (route, _) = connection
-                .discover(&mut discovery, id, &url, timeout)
+            let (route, _) = discovery
+                .discover_cached(
+                    id,
+                    &url,
+                    connection.options.use_tso_server_proxy,
+                    timeout,
+                    &connection.channels,
+                    |url| {
+                        let connection = connection.clone();
+                        async move { connection.channel(&url).await }
+                    },
+                )
                 .await?;
             let routes = connection
                 .stream_routes(&discovery, &route, &members, timeout)

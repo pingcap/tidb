@@ -24,5 +24,6 @@ pub use self::retry::RetryClient;
 pub use self::retry::RetryClientTrait;
 
 pub mod service_discovery;
+mod service_mode;
 
 pub mod region_service;

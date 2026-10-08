@@ -208,6 +208,7 @@ pub trait RetryClientTrait {
 struct DiscoveryRefresh {
     members: tokio::sync::Mutex<()>,
     timestamp: tokio::sync::Mutex<()>,
+    members_changed: tokio::sync::Notify,
 }
 
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
@@ -382,18 +383,39 @@ impl RetryClient<Cluster> {
         let refresh = self.reconnect.clone();
         let cancellation = self.cancellation.clone();
         let timeout = self.timeout;
+        let mode = self.cluster.read().await.0.service_mode();
         let worker = tokio::spawn(async move {
+            let mut mode_changes = mode.subscribe();
+            let observe_mode = async {
+                let mut ticks = tokio::time::interval_at(
+                    tokio::time::Instant::now() + super::service_discovery::UPDATE_INTERVAL,
+                    super::service_discovery::UPDATE_INTERVAL,
+                );
+                ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    ticks.tick().await;
+                    let Some(cluster) = cluster.upgrade() else {
+                        break;
+                    };
+                    let observe = connection.prepare_service_mode(&cluster.read().await.0, timeout);
+                    if let Err(error) = observe.await {
+                        refresh.members_changed.notify_one();
+                        log::warn!("PD service mode observation: {error}");
+                    }
+                }
+            };
             let discover = async {
                 loop {
                     tokio::select! {
                         _ = sleep(super::service_discovery::UPDATE_INTERVAL) => {},
+                        _ = mode_changes.changed() => {},
                         _ = async { connection.options.enable_tso_follower_proxy_ch.receiver.lock().await.recv().await } => {},
                     }
                     let Some(cluster) = cluster.upgrade() else {
                         break;
                     };
                     if let Err(error) =
-                        refresh_timestamp(&cluster, &connection, &refresh, timeout, None, None)
+                        refresh_timestamp_cached(&cluster, &connection, &refresh, timeout, None)
                             .await
                     {
                         log::warn!("PD service discovery refresh: {error}");
@@ -406,12 +428,16 @@ impl RetryClient<Cluster> {
                     tokio::time::interval_at(tokio::time::Instant::now() + period, period);
                 ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 loop {
-                    ticks.tick().await;
+                    tokio::select! {
+                        _ = ticks.tick() => {},
+                        _ = refresh.members_changed.notified() => {},
+                    }
                     let Some(cluster) = cluster.upgrade() else {
                         break;
                     };
                     if let Err(error) =
-                        refresh_cluster(&cluster, &connection, &refresh, timeout, 0, None).await
+                        refresh_cluster(&cluster, &connection, &refresh, timeout, 0, None, false)
+                            .await
                     {
                         log::warn!("PD membership refresh: {error}");
                     }
@@ -434,7 +460,7 @@ impl RetryClient<Cluster> {
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => {},
-                _ = async { tokio::join!(discover, members, health); } => {},
+                _ = async { tokio::join!(observe_mode, discover, members, health); } => {},
             }
         });
         *self.discovery_worker.lock().await = Some(worker);
@@ -445,7 +471,7 @@ impl RetryClient<Cluster> {
         tokio::select! {
             biased;
             _ = self.cancellation.cancelled() => Err(Error::ContextCanceled),
-            result = refresh_cluster(&self.cluster, &self.connection, &self.reconnect, self.timeout, 0, Some(meta)) => result,
+            result = refresh_cluster(&self.cluster, &self.connection, &self.reconnect, self.timeout, 0, Some(meta), true) => result,
         }
     }
 
@@ -826,6 +852,7 @@ impl Reconnect for RetryClient<Cluster> {
             self.timeout,
             interval_sec,
             None,
+            true,
         );
         tokio::select! {
             biased;
@@ -848,6 +875,7 @@ async fn refresh_cluster(
     timeout: Duration,
     interval_sec: u64,
     keyspace: Option<&keyspacepb::KeyspaceMeta>,
+    observe_mode: bool,
 ) -> Result<()> {
     let begin = Instant::now();
     let _members = refresh.members.lock().await;
@@ -862,6 +890,13 @@ async fn refresh_cluster(
         connection.prepare_reconnect(&guard.0, timeout)
     };
     let leader = prepare.await?;
+    if !observe_mode {
+        let _timestamp = refresh.timestamp.lock().await;
+        let mut guard = cluster.write().await;
+        guard.0.install_leader(leader)?;
+        guard.1 = Instant::now();
+        return Ok(());
+    }
     refresh_timestamp(
         cluster,
         connection,
@@ -883,26 +918,46 @@ async fn refresh_timestamp(
     keyspace: Option<&keyspacepb::KeyspaceMeta>,
     leader: Option<super::cluster::LeaderConnection>,
 ) -> Result<()> {
-    // Serialize provider publication and keyspace changes, but never hold this
-    // lock across GetMembers. A stalled PD member must not freeze TSO discovery.
-    let _refresh = refresh.timestamp.lock().await;
-    let prepare = {
-        let mut guard = cluster.write().await;
-        if let Some(leader) = leader {
-            guard.0.install_leader(leader)?;
+    if let Some(leader) = leader {
+        let _refresh = refresh.timestamp.lock().await;
+        cluster.write().await.0.install_leader(leader)?;
+    }
+    // Mode observation never holds the timestamp/group publication lock.
+    let observe = connection.prepare_service_mode(&cluster.read().await.0, timeout);
+    if observe.await.is_err() {
+        refresh.members_changed.notify_one();
+    }
+    refresh_timestamp_cached(cluster, connection, refresh, timeout, keyspace).await
+}
+
+async fn refresh_timestamp_cached(
+    cluster: &RwLock<(Cluster, Instant)>,
+    connection: &Connection,
+    refresh: &DiscoveryRefresh,
+    timeout: Duration,
+    keyspace: Option<&keyspacepb::KeyspaceMeta>,
+) -> Result<()> {
+    let mut mode_changes = cluster.read().await.0.service_mode().subscribe();
+    loop {
+        let update = async {
+            let _refresh = refresh.timestamp.lock().await;
+            let prepare = connection.prepare_timestamp(&cluster.read().await.0, timeout, keyspace);
+            let timestamp = prepare.await?;
+            let retire = cluster
+                .write()
+                .await
+                .0
+                .install_timestamp(timestamp, timeout)?;
+            retire.await;
+            cluster.write().await.0.finish_retirement();
+            Ok(())
+        };
+        tokio::select! {
+            biased;
+            _ = mode_changes.changed() => continue,
+            result = update => return result,
         }
-        connection.prepare_timestamp(&guard.0, timeout, keyspace)
-    };
-    let timestamp = prepare.await?;
-    let retire = cluster
-        .write()
-        .await
-        .0
-        .install_timestamp(timestamp, timeout)?;
-    retire.await;
-    let mut guard = cluster.write().await;
-    guard.0.finish_retirement();
-    Ok(())
+    }
 }
 
 #[cfg(test)]

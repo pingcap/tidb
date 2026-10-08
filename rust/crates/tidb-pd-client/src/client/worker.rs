@@ -813,11 +813,55 @@ async fn refresh_tso(
     timeout: Duration,
     force: bool,
 ) -> Result<Vec<tikv_client::pd_service_discovery::TsoRoute>, PdClientError> {
+    if clients.service_mode.snapshot().is_none() {
+        observe_service_mode(clients, leader, timeout).await?;
+    }
+    let mut changes = clients.service_mode.subscribe();
+    loop {
+        tokio::select! {
+            biased;
+            _ = changes.changed() => continue,
+            result = refresh_tso_cached(clients, leader, members, cluster_id, timeout, force) => return result,
+        }
+    }
+}
+
+async fn observe_service_mode(
+    clients: &PdChannelCache,
+    leader: &str,
+    timeout: Duration,
+) -> Result<(), PdClientError> {
+    clients
+        .service_mode
+        .refresh(leader, timeout, |endpoint| {
+            let channel = clients.channel(&endpoint);
+            async move { channel.map_err(|error| tonic::Status::unavailable(error.to_string())) }
+        })
+        .await
+        .map_err(|error| {
+            clients.member_wake.notify_one();
+            PdClientError::Transport {
+                operation: PdOperation::Tso,
+                endpoint: leader.to_owned(),
+                code: format!("{:?}", error.code()),
+                message: error.message().to_owned(),
+            }
+        })
+}
+
+async fn refresh_tso_cached(
+    clients: &PdChannelCache,
+    leader: &str,
+    members: &[String],
+    cluster_id: u64,
+    timeout: Duration,
+    force: bool,
+) -> Result<Vec<tikv_client::pd_service_discovery::TsoRoute>, PdClientError> {
     // Only timestamp discovery serializes here. Metadata commands never wait
     // for the independent periodic probe or hold this guard.
     let mut shared = clients.tso_discovery.lock().await;
     let proxy = clients.options.get_enable_tso_follower_proxy();
-    if !force {
+    if !force && shared.discovery.mode_is_current() {
         if let Some((route, checked, previous_leader, previous_proxy, previous_members)) =
             &shared.route
         {
@@ -832,7 +876,7 @@ async fn refresh_tso(
     }
     let mut discovery = shared.discovery.clone();
     let (route, _) = discovery
-        .discover(cluster_id, leader, clients.options.use_tso_server_proxy, timeout, &clients.channels, |endpoint| {
+        .discover_cached(cluster_id, leader, clients.options.use_tso_server_proxy, timeout, &clients.channels, |endpoint| {
             let channel = clients.channel(&endpoint);
             async move { channel.map_err(|error| tonic::Status::unavailable(error.to_string())) }
         })
@@ -893,10 +937,22 @@ impl DiscoveryWorker {
         let clients = clients.clone();
         let (stop, mut stopped) = tokio::sync::oneshot::channel();
         let worker = runtime.spawn(async move {
+            let mut mode_changes = clients.service_mode.subscribe();
+            let observe_mode = async {
+                let period = tikv_client::pd_service_discovery::UPDATE_INTERVAL;
+                let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+                ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    ticks.tick().await;
+                    let leader = state.read().expect("PD state lock poisoned").members.leader_url.clone();
+                    let _ = observe_service_mode(&clients, &leader, timeout).await;
+                }
+            };
             let discover = async {
                 loop {
                     tokio::select! {
                         _ = tokio::time::sleep(tikv_client::pd_service_discovery::UPDATE_INTERVAL) => {},
+                        _ = mode_changes.changed() => {},
                         _ = async { clients.options.enable_tso_follower_proxy_ch.receiver.lock().await.recv().await } => {},
                     }
                     let snapshot = state.read().expect("PD state lock poisoned").clone();
@@ -917,7 +973,10 @@ impl DiscoveryWorker {
                 let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
                 ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 loop {
-                    ticks.tick().await;
+                    tokio::select! {
+                        _ = ticks.tick() => {},
+                        _ = clients.member_wake.notified() => {},
+                    }
                     let _ = super::failover::refresh_membership_async(
                         &clients, timeout, &state, &membership_shutdown,
                     ).await;
@@ -947,7 +1006,7 @@ impl DiscoveryWorker {
                 biased;
                 _ = &mut stopped => {},
                 () = super::shutdown_requested(&mut shutdown) => {},
-                _ = async { tokio::join!(discover, members, health); } => {},
+                _ = async { tokio::join!(observe_mode, discover, members, health); } => {},
             }
         });
         Self {

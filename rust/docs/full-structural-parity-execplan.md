@@ -33,6 +33,8 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] 2026-10-08: repair the connected P03/P06 mode/group/member scheduling batch through shared native mode ownership and both caller migrations. Stalled mode RPCs no longer freeze groups; provider changes cancel old group candidates; failed mode checks wake membership. All 159 grouped tests, affected all-target checks and lint pass. See [plan](pd-mode-scheduling-execplan.md) and [receipt](parity/current-audit/pd-mode-scheduling-validation.json); publication gates are recorded after execution in the external handoff. No broad/package closure.
+
 - [x] 2026-10-08: repair the connected P03/P06 discovery batch: retain mode facts through failed observation, let TSO refresh bypass stalled members, and compose one-minute membership maintenance in both clients with shared async validation. Native and adapter grouped tests, all-target checks and lint pass; see [batch plan](pd-independent-observation-execplan.md) and [receipt](parity/current-audit/pd-independent-observation-validation.json). Required publication outcomes are recorded after execution in the external handoff. No broad/package closure.
 
 - [x] 2026-10-08: retire unused stream-protobuf wrapper and transport encoding/state helpers, six redundant/disconnected cases and the always-skipped cop_encode benchmark. Move the unique partition case to request-builder coverage and archive the old VM performance diary. All 76 selected tests, benchmark checking and lint pass. Required publication gate outcomes are recorded after execution in the external handoff; see [wire seed receipt](parity/current-audit/wire-seed-cleanup-validation.json).
