@@ -369,16 +369,7 @@ func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 
 // MergeCollector merges the collectors to a final one.
 func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
-	s.Count += subCollector.Base().Count
-	for i, fms := range subCollector.Base().FMSketches {
-		s.FMSketches[i].MergeFMSketch(fms)
-	}
-	for i, nullCount := range subCollector.Base().NullCount {
-		s.NullCount[i] += nullCount
-	}
-	for i, totSize := range subCollector.Base().TotalSizes {
-		s.TotalSizes[i] += totSize
-	}
+	s.mergeBase(subCollector.Base())
 	oldSampleNum := len(s.Samples)
 	for _, sample := range subCollector.Base().Samples {
 		s.sampleZippedRow(sample)
@@ -463,18 +454,22 @@ func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 
 // MergeCollector merges the collectors to a final one.
 func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
-	s.Count += subCollector.Base().Count
-	for i := range subCollector.Base().FMSketches {
-		s.FMSketches[i].MergeFMSketch(subCollector.Base().FMSketches[i])
-	}
-	for i := range subCollector.Base().NullCount {
-		s.NullCount[i] += subCollector.Base().NullCount[i]
-	}
-	for i := range subCollector.Base().TotalSizes {
-		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
-	}
-	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
+	s.mergeBase(subCollector.Base())
+	s.Samples = append(s.Samples, subCollector.Base().Samples...)
 	s.MemSize += subCollector.Base().MemSize
+}
+
+func (s *baseCollector) mergeBase(other *baseCollector) {
+	s.Count += other.Count
+	for i, fms := range other.FMSketches {
+		s.FMSketches[i].MergeFMSketch(fms)
+	}
+	for i, nullCount := range other.NullCount {
+		s.NullCount[i] += nullCount
+	}
+	for i, totSize := range other.TotalSizes {
+		s.TotalSizes[i] += totSize
+	}
 }
 
 // Base implements the interface RowSampleCollector.

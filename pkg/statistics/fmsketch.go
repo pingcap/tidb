@@ -113,10 +113,13 @@ func (s *FMSketch) insertHashValue(hashVal uint64) {
 		// If the size of the hashset exceeds the maximum size, move the mask to the next level.
 		s.mask = s.mask*2 + 1
 		// Clean up the hashset by removing the hashed values with trailing zeroes less than the new mask.
-		maps.DeleteFunc(s.hashset, func(k uint64, _ struct{}) bool {
-			return (k & s.mask) != 0
-		})
+		s.filterHashes()
 	}
+}
+
+func (s *FMSketch) filterHashes() {
+	rejected := func(hash uint64, _ struct{}) bool { return hash&s.mask != 0 }
+	maps.DeleteFunc(s.hashset, rejected)
 }
 
 // InsertValue inserts a value into the FM sketch.
@@ -184,9 +187,7 @@ func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
 	}
 	if s.mask < rs.mask {
 		s.mask = rs.mask
-		maps.DeleteFunc(s.hashset, func(k uint64, _ struct{}) bool {
-			return (k & s.mask) != 0
-		})
+		s.filterHashes()
 	}
 	for key := range rs.hashset {
 		s.insertHashValue(key)
