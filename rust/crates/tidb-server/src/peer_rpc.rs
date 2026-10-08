@@ -27,6 +27,7 @@ pub struct PeerService {
     session_factory: Arc<dyn Fn() -> Session + Send + Sync>,
     processes: ProcessRegistry,
     privileges: PrivilegeRegistry,
+    cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
     server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
 }
 
@@ -40,6 +41,7 @@ impl PeerService {
             session_factory: Arc::new(Session::new),
             processes,
             privileges,
+            cluster_peer: None,
             server_info,
         }
     }
@@ -51,6 +53,15 @@ impl PeerService {
         factory: Arc<dyn Fn() -> Session + Send + Sync>,
     ) -> Self {
         self.session_factory = factory;
+        self
+    }
+
+    /// Borrows the existing outgoing fleet independently of metadata projection.
+    pub(crate) fn with_cluster_peer_client(
+        mut self,
+        peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
+    ) -> Self {
+        self.cluster_peer = peer;
         self
     }
 
@@ -67,9 +78,27 @@ impl PeerService {
             return Err(format!("unsupported request type {}", request.tp));
         }
         let dag = tipb::DagRequest::decode(request.data.as_slice()).map_err(|e| e.to_string())?;
-        let [executor] = dag.executors.as_slice() else {
-            return Err("TiDB peer requires one supported local executor".into());
-        };
+        let (executor, tail) = dag
+            .executors
+            .split_first()
+            .ok_or("TiDB peer requires a local executor")?;
+        let mut conditions = Vec::new();
+        for selection in tail {
+            if executor.tp != Some(tipb::ExecType::TypeTableScan as i32)
+                || selection.tp != Some(tipb::ExecType::TypeSelection as i32)
+            {
+                return Err("unsupported TiDB peer executor chain".into());
+            }
+            conditions.extend(
+                selection
+                    .selection
+                    .as_ref()
+                    .ok_or("missing peer selection")?
+                    .conditions
+                    .iter()
+                    .cloned(),
+            );
+        }
         // Go ConstructTimeZone prefers the name to the offset, including System.
         let zone = match tidb_util::timeutil::construct_time_zone(
             dag.time_zone_name.as_deref().unwrap_or(""),
@@ -87,9 +116,14 @@ impl PeerService {
         // registry/counter readers must not rebuild schema metadata.
         let needs_catalog = executor.tp == Some(tipb::ExecType::TypeTableScan as i32)
             && executor.tbl_scan.as_ref().is_some_and(|scan| {
-                ["CLUSTER_DEADLOCKS", "CLUSTER_TIDB_INDEX_USAGE"]
-                    .iter()
-                    .any(|name| scan.table_id == tidb_session::infoschema::memory_table_id(name))
+                scan.table_id
+                    == tidb_session::infoschema::memory_table_id("CLUSTER_TIDB_INDEX_USAGE")
+                    || (scan.table_id
+                        == tidb_session::infoschema::memory_table_id("CLUSTER_DEADLOCKS")
+                        && scan
+                            .columns
+                            .iter()
+                            .any(|column| column.column_id == Some(9)))
             });
         let mut session = if needs_catalog {
             (self.session_factory)()
@@ -106,6 +140,9 @@ impl PeerService {
             session.set_user(format!("{auth_user}@{auth_host}"), format!("{name}@{host}"));
         }
         session.attach_privileges(self.privileges.clone());
+        if let Some(peer) = &self.cluster_peer {
+            session.set_cluster_peer_client(Arc::clone(peer));
+        }
         if let Some(info) = &self.server_info {
             session.set_server_info_syncer(info.clone());
         }
@@ -161,9 +198,36 @@ impl PeerService {
                     .iter()
                     .map(|index| columns[*index].1.clone())
                     .collect();
+                let required = selected
+                    .iter()
+                    .map(|index| columns[*index].0.clone())
+                    .collect();
+                let digest_filter = summary_digest_filter(&conditions, &selected, &columns)?;
                 let rows = session
-                    .local_cluster_table_rows(table, Some(&self.processes), &zone)
+                    .local_cluster_table_rows_for(
+                        table,
+                        Some(&self.processes),
+                        &zone,
+                        Some(&required),
+                        digest_filter.as_ref(),
+                    )
                     .map_err(|error| error.to_string())?;
+                let scan_types: Vec<_> = selected
+                    .iter()
+                    .map(|index| columns[*index].1.clone())
+                    .collect();
+                let rows = rows
+                    .into_iter()
+                    .map(|row| selected.iter().map(|index| row[*index].clone()).collect())
+                    .collect();
+                let rows =
+                    select_peer_rows(rows, &scan_types, &conditions, &zone, &mut result.warnings)?;
+                // Selection consumes scan-column offsets; output projection follows it.
+                let projection: Vec<_> = dag
+                    .output_offsets
+                    .iter()
+                    .map(|offset| *offset as usize)
+                    .collect();
                 let encoding = tipb::EncodeType::try_from(dag.encode_type.unwrap_or(0))
                     .map_err(|_| "unsupported result encoding")?;
                 let batch_size = if encoding == tipb::EncodeType::TypeDefault {
@@ -213,6 +277,160 @@ impl PeerService {
             data: result.encode_to_vec().into(),
             ..Default::default()
         })
+    }
+}
+
+/// Extract only the exact binary string-IN shape used by restricted digest lookup.
+/// Every condition still executes through SelectionExec after reader filtering.
+fn summary_digest_filter(
+    conditions: &[tipb::Expr],
+    selected: &[usize],
+    columns: &[(String, tidb_datatype::FieldType)],
+) -> Result<Option<std::collections::HashSet<String>>, String> {
+    let mut result: Option<std::collections::HashSet<String>> = None;
+    for condition in conditions {
+        if condition.tp != Some(tipb::ExprType::ScalarFunc as i32)
+            || condition.sig != Some(tipb::ScalarFuncSig::InString as i32)
+            || condition
+                .field_type
+                .as_ref()
+                .is_none_or(|field| !matches!(field.collate(), 46 | -46))
+        {
+            continue;
+        }
+        let Some((column, values)) = condition.children.split_first() else {
+            continue;
+        };
+        if column.tp != Some(tipb::ExprType::ColumnRef as i32) {
+            continue;
+        }
+        let (_, offset) =
+            tidb_codec::decode_int(column.val()).map_err(|error| error.to_string())?;
+        let Some(index) = usize::try_from(offset)
+            .ok()
+            .and_then(|offset| selected.get(offset))
+        else {
+            return Err("digest column offset out of range".into());
+        };
+        if !columns[*index].0.eq_ignore_ascii_case("DIGEST") {
+            continue;
+        }
+        let values: Option<std::collections::HashSet<String>> = values
+            .iter()
+            .map(|value| {
+                (value.tp == Some(tipb::ExprType::String as i32))
+                    .then(|| String::from_utf8(value.val().to_vec()).ok())
+                    .flatten()
+            })
+            .collect();
+        if let Some(values) = values {
+            // Stored digests are canonical hex. Other literals (including PAD
+            // SPACE variants) must retain the expression collator's semantics.
+            if values.iter().any(|value| {
+                value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }) {
+                continue;
+            }
+            result = Some(match result {
+                Some(previous) => previous.intersection(&values).cloned().collect(),
+                None => values,
+            });
+        }
+    }
+    Ok(result)
+}
+
+/// Reuse the ordinary typed expression and selection owners for received DAGs.
+fn select_peer_rows(
+    rows: Vec<Vec<tidb_datatype::Datum>>,
+    fields: &[tidb_datatype::FieldType],
+    conditions: &[tipb::Expr],
+    zone: &SessionTimeZone,
+    warnings: &mut Vec<tipb::Error>,
+) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+    use tidb_executor::{Executor, ExecutorMeta};
+    if conditions.is_empty() {
+        return Ok(rows);
+    }
+    fn validate(expr: &tipb::Expr, width: usize) -> Result<(), String> {
+        if expr.tp == Some(tipb::ExprType::ColumnRef as i32) {
+            let (remaining, offset) =
+                tidb_codec::decode_int(expr.val()).map_err(|error| error.to_string())?;
+            if !remaining.is_empty()
+                || usize::try_from(offset)
+                    .ok()
+                    .is_none_or(|offset| offset >= width)
+            {
+                return Err("peer predicate column offset out of range".into());
+            }
+        }
+        for child in &expr.children {
+            validate(child, width)?;
+        }
+        Ok(())
+    }
+    let filters = conditions
+        .iter()
+        .map(|condition| {
+            validate(condition, fields.len())?;
+            tidb_expr::distsql_builtin::pb_to_expr_in(condition, fields, zone)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let schema = tidb_expr::schema::Schema::new(
+        fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| tidb_expr::column::Column::new(index as i64, field.clone()))
+            .collect(),
+    );
+    let meta = ExecutorMeta::new(schema, 0, 32, 1024);
+    let ctx = tidb_executor::StmtContext::for_query().with_time_zone(zone.clone());
+    let memory = ctx.statement_memory().clone();
+    let source = tidb_executor::mem_table::MemTableSourceExec::new(meta.clone(), rows);
+    let mut selection = tidb_executor::selection::SelectionExec::new(
+        meta,
+        filters,
+        Box::new(source),
+        ctx.clone(),
+        memory,
+    );
+    selection
+        .open()
+        .map_err(|error| tidb_executor::DriverError::from(error).to_string())?;
+    let result = (|| {
+        let mut output = Vec::new();
+        let mut chunk = tidb_chunk::chunk::Chunk::new(fields, 32, 1024);
+        loop {
+            selection
+                .next(&mut chunk)
+                .map_err(|error| tidb_executor::DriverError::from(error).to_string())?;
+            if chunk.num_rows() == 0 {
+                break;
+            }
+            for index in 0..chunk.num_rows() {
+                output.push(chunk.get_row(index).get_datum_row(fields));
+            }
+        }
+        Ok(output)
+    })();
+    let close = selection
+        .close()
+        .map_err(|error| tidb_executor::DriverError::from(error).to_string());
+    warnings.extend(
+        ctx.take_warnings()
+            .into_iter()
+            .map(|(_, code, message)| tipb::Error {
+                code: Some(i32::from(code)),
+                msg: Some(message),
+                ..Default::default()
+            }),
+    );
+    match result {
+        Err(error) => Err(error),
+        Ok(rows) => {
+            close?;
+            Ok(rows)
+        }
     }
 }
 
@@ -388,7 +606,7 @@ mod tests {
     }
 
     // Go infoschema_reader.go uses SQLDigestTextRetriever for all three readers.
-    fn digest_reader_persistent_case(table: &str, history: bool) {
+    fn digest_reader_persistent_case(table: &str, history: bool, lazy: bool) {
         use tidb_executor::deadlock_history::{
             DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY,
         };
@@ -417,6 +635,10 @@ mod tests {
         let _file = RemoveFile(path.clone());
         let mut persistent = (*config).clone();
         persistent.instance.stmt_summary_filename = path.to_string_lossy().into_owned();
+        if lazy {
+            persistent.instance.stmt_summary_filename =
+                "/proc/0/missing-digest-history/summary.log".into();
+        }
         persistent.instance.stmt_summary_enable_persistent = true;
         tidb_config::config_tree::config::store_global_config(persistent);
         struct Restore(
@@ -468,6 +690,32 @@ mod tests {
                 );
                 processes.transaction_started(71, 123 << 18);
                 processes.statement_started_with_digest(71, text, Some(digest), "Running");
+                if lazy {
+                    let service = PeerService::new(processes, PrivilegeRegistry::default(), None);
+                    let response = service.handle(request(tipb::DagRequest {
+                        executors: vec![tipb::Executor {
+                            tp: Some(tipb::ExecType::TypeTableScan as i32),
+                            tbl_scan: Some(tipb::TableScan {
+                                table_id: tidb_session::infoschema::memory_table_id(
+                                    "CLUSTER_TIDB_TRX",
+                                ),
+                                columns: vec![tipb::ColumnInfo {
+                                    column_id: Some(2),
+                                    ..Default::default()
+                                }],
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }],
+                        output_offsets: vec![0],
+                        ..Default::default()
+                    }));
+                    assert!(response.other_error.is_empty(), "{}", response.other_error);
+                    let selected = tipb::SelectResponse::decode(response.data.as_ref()).unwrap();
+                    assert!(selected.error.is_none(), "{:?}", selected.error);
+                    assert!(!selected.chunks.is_empty());
+                    return;
+                }
                 let rows = session
                     .local_cluster_table_rows(
                         "CLUSTER_TIDB_TRX",
@@ -496,8 +744,42 @@ mod tests {
                         key: vec![],
                     }],
                 });
+                if lazy {
+                    let metadata_reads = Arc::new(AtomicUsize::new(0));
+                    let observed = metadata_reads.clone();
+                    let service = PeerService::new(
+                        ProcessRegistry::default(),
+                        PrivilegeRegistry::default(),
+                        None,
+                    )
+                    .with_session_factory(Arc::new(move || {
+                        observed.fetch_add(1, Ordering::SeqCst);
+                        Session::new()
+                    }));
+                    for (column, expected_reads) in [(6, 0), (9, 1)] {
+                        let mut dag = scan(None, tipb::EncodeType::TypeDefault);
+                        dag.output_offsets = vec![0];
+                        dag.executors[0].tbl_scan = Some(tipb::TableScan {
+                            table_id: tidb_session::infoschema::memory_table_id(
+                                "CLUSTER_DEADLOCKS",
+                            ),
+                            columns: vec![tipb::ColumnInfo {
+                                column_id: Some(column),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        });
+                        let response = service.handle(request(dag));
+                        assert!(response.other_error.is_empty(), "{}", response.other_error);
+                        assert_eq!(metadata_reads.load(Ordering::SeqCst), expected_reads);
+                    }
+                }
                 let tidb_session::StmtResult::Rows(rows) = session
-                    .run("SELECT CURRENT_SQL_DIGEST_TEXT FROM information_schema.DEADLOCKS")
+                    .run(if lazy {
+                        "SELECT CURRENT_SQL_DIGEST FROM information_schema.DEADLOCKS"
+                    } else {
+                        "SELECT CURRENT_SQL_DIGEST_TEXT FROM information_schema.DEADLOCKS"
+                    })
                     .unwrap()
                 else {
                     panic!("rows")
@@ -522,7 +804,11 @@ mod tests {
                     },
                 ])));
                 let tidb_session::StmtResult::Rows(rows) = session
-                    .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
+                    .run(if lazy {
+                        "SELECT SQL_DIGEST FROM information_schema.DATA_LOCK_WAITS"
+                    } else {
+                        "SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS"
+                    })
                     .unwrap()
                 else {
                     panic!("rows")
@@ -534,33 +820,143 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(
             rows[0][0].as_raw_bytes(),
-            Some(text.as_bytes()),
+            Some(if lazy {
+                digest.as_bytes()
+            } else {
+                text.as_bytes()
+            }),
             "{table}: {rows:?}"
         );
     }
 
     #[test]
+    fn digest_projection_batch_received_selection_keeps_predicate_only_columns() {
+        let processes = ProcessRegistry::default();
+        let _alice = processes.register(
+            11,
+            "selection_alice".into(),
+            "localhost".into(),
+            "test".into(),
+            None,
+        );
+        let _bob = processes.register(
+            12,
+            "selection_bob".into(),
+            "localhost".into(),
+            "test".into(),
+            None,
+        );
+        let service = PeerService::new(processes, PrivilegeRegistry::default(), None);
+        for encoding in [tipb::EncodeType::TypeDefault, tipb::EncodeType::TypeChunk] {
+            let mut dag = scan(None, encoding);
+            dag.output_offsets = vec![1, 1]; // ID repeated; USER retained only for the predicate.
+            let string_type = tipb::FieldType {
+                tp: Some(253),
+                charset: Some("utf8mb4".into()),
+                collate: Some(-46),
+                ..Default::default()
+            };
+            dag.executors.push(tipb::Executor {
+                tp: Some(tipb::ExecType::TypeSelection as i32),
+                selection: Some(Box::new(tipb::Selection {
+                    conditions: vec![tipb::Expr {
+                        tp: Some(tipb::ExprType::ScalarFunc as i32),
+                        sig: Some(tipb::ScalarFuncSig::InString as i32),
+                        field_type: Some(tipb::FieldType {
+                            tp: Some(8),
+                            collate: Some(-46),
+                            ..Default::default()
+                        }),
+                        children: vec![
+                            tipb::Expr {
+                                tp: Some(tipb::ExprType::ColumnRef as i32),
+                                val: Some({
+                                    let mut bytes = Vec::new();
+                                    tidb_codec::encode_int(&mut bytes, 0);
+                                    bytes
+                                }),
+                                field_type: Some(string_type.clone()),
+                                ..Default::default()
+                            },
+                            tipb::Expr {
+                                tp: Some(tipb::ExprType::String as i32),
+                                val: Some(b"selection_alice".to_vec()),
+                                field_type: Some(string_type),
+                                ..Default::default()
+                            },
+                        ],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })),
+                ..Default::default()
+            });
+            let response = service.handle(request(dag.clone()));
+            assert!(response.other_error.is_empty(), "{}", response.other_error);
+            let response = tipb::SelectResponse::decode(response.data.as_ref()).unwrap();
+            assert!(response.error.is_none());
+            let schema = tidb_session::infoschema::table_schema("CLUSTER_PROCESSLIST").unwrap();
+            let fields = vec![schema[1].1.clone(), schema[1].1.clone()];
+            let expected = if encoding == tipb::EncodeType::TypeDefault {
+                tidb_codec::encode_value(&[Datum::UInt(11), Datum::UInt(11)]).unwrap()
+            } else {
+                let mut chunk = tidb_chunk::chunk::Chunk::new(&fields, 1, 1024);
+                chunk.append_datum(0, &Datum::UInt(11));
+                chunk.append_datum(1, &Datum::UInt(11));
+                tidb_chunk::codec::Codec::new(fields).encode(&chunk)
+            };
+            assert_eq!(response.chunks.len(), 1);
+            assert_eq!(
+                response.chunks[0].rows_data.as_deref(),
+                Some(expected.as_slice())
+            );
+            dag.executors[1].selection.as_mut().unwrap().conditions[0].children[0].val = Some({
+                let mut bytes = Vec::new();
+                tidb_codec::encode_int(&mut bytes, 99);
+                bytes
+            });
+            assert!(service
+                .handle(request(dag))
+                .other_error
+                .contains("column offset out of range"));
+        }
+    }
+
+    #[test]
+    fn digest_projection_batch_skips_unselected_transaction_history() {
+        digest_reader_persistent_case("TIDB_TRX", false, true);
+    }
+    #[test]
+    fn digest_projection_batch_skips_unselected_deadlock_history() {
+        digest_reader_persistent_case("DEADLOCKS", false, true);
+    }
+    #[test]
+    fn digest_projection_batch_skips_unselected_lock_wait_history() {
+        digest_reader_persistent_case("DATA_LOCK_WAITS", false, true);
+    }
+
+    #[test]
     fn digest_readers_batch_transaction_persistent() {
-        digest_reader_persistent_case("TIDB_TRX", false);
+        digest_reader_persistent_case("TIDB_TRX", false, false);
     }
     #[test]
     fn digest_readers_batch_deadlock_persistent() {
-        digest_reader_persistent_case("DEADLOCKS", false);
+        digest_reader_persistent_case("DEADLOCKS", false, false);
     }
     #[test]
     fn digest_readers_batch_lock_wait_persistent() {
-        digest_reader_persistent_case("DATA_LOCK_WAITS", false);
+        digest_reader_persistent_case("DATA_LOCK_WAITS", false, false);
     }
 
     #[test]
     fn digest_readers_batch_persisted_history_all_consumers() {
         for table in ["TIDB_TRX", "DEADLOCKS", "DATA_LOCK_WAITS"] {
-            digest_reader_persistent_case(table, true);
+            digest_reader_persistent_case(table, true, false);
         }
     }
 
     #[test]
-    fn digest_readers_batch_remote_fallback_projection_and_errors() {
+    fn digest_projection_batch_remote_fallback_predicate_and_errors() {
         use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
         let config = tidb_config::config_tree::config::get_global_config();
         struct RestoreConfig(Arc<tidb_config::config_tree::config::Config>);
@@ -670,13 +1066,15 @@ mod tests {
         let mut session = Session::new();
         session.set_user("digest_reader@%".into(), "digest_reader@localhost".into());
         session.set_process_privilege(true);
-        session.set_server_info_syncer(Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
+        let syncer = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
             local,
             Some(discovery),
-        )));
-        session.set_cluster_peer_client(Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
+        ));
+        let peer = Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
             tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap(),
-        )));
+        ));
+        session.set_server_info_syncer(syncer.clone());
+        session.set_cluster_peer_client(peer.clone());
         let mut info = tidb_stmtsummary::v2::record::generate_stmt_exec_info_4_test("c1c2");
         info.normalized_sql = "local normalized statement".into();
         tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.add_statement(&info);
@@ -761,14 +1159,83 @@ mod tests {
                     .collect::<Vec<_>>()
             );
             assert_eq!(dag.output_offsets, vec![0, 1]);
+            assert_eq!(dag.executors.len(), 2, "missing remote digest selection");
+            let selection = dag.executors[1]
+                .selection
+                .as_ref()
+                .expect("digest predicate");
+            assert_eq!(selection.conditions.len(), 1);
+            assert_eq!(
+                selection.conditions[0].sig,
+                Some(tipb::ScalarFuncSig::InString as i32)
+            );
+        }
+        // Text-only receiving scans retain global lookup without metadata.
+        {
+            use tidb_executor::deadlock_history::{
+                DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY,
+            };
+            struct ClearHistory;
+            impl Drop for ClearHistory {
+                fn drop(&mut self) {
+                    GLOBAL_DEADLOCK_HISTORY.clear();
+                }
+            }
+            let _history = ClearHistory;
+            GLOBAL_DEADLOCK_HISTORY.resize(10);
+            GLOBAL_DEADLOCK_HISTORY.push(DeadlockRecord {
+                occur_time: tidb_datatype::Time::new(
+                    tidb_datatype::CoreTime::from_date(2026, 10, 8, 1, 2, 3, 0),
+                    tidb_datatype::TimeType::Timestamp,
+                    6,
+                )
+                .unwrap(),
+                id: 0,
+                is_retryable: false,
+                wait_chain: vec![WaitChainItem {
+                    sql_digest: "d1d2".into(),
+                    all_sql_digests: vec![],
+                    try_lock_txn: 1,
+                    txn_holding_lock: 2,
+                    key: vec![],
+                }],
+            });
+            let receiver = PeerService::new(
+                ProcessRegistry::default(),
+                PrivilegeRegistry::default(),
+                Some(syncer),
+            )
+            .with_session_factory(Arc::new(|| {
+                panic!("text-only scan must not construct metadata")
+            }))
+            .with_cluster_peer_client(Some(peer));
+            let mut dag = scan(None, tipb::EncodeType::TypeDefault);
+            dag.output_offsets = vec![0];
+            dag.executors[0].tbl_scan = Some(tipb::TableScan {
+                table_id: tidb_session::infoschema::memory_table_id("CLUSTER_DEADLOCKS"),
+                columns: vec![tipb::ColumnInfo {
+                    column_id: Some(7),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            });
+            let response = receiver.handle(request(dag));
+            assert!(response.other_error.is_empty(), "{}", response.other_error);
+            let selected = tipb::SelectResponse::decode(response.data).unwrap();
+            assert_eq!(
+                selected.chunks[0].rows_data.as_deref().unwrap(),
+                tidb_codec::encode_value(&[Datum::new_string("remote normalized statement")])
+                    .unwrap()
+            );
         }
         // Known local text never reaches a failing peer.
+        let known_requests = captured.lock().unwrap().len();
         fail.store(true, Ordering::SeqCst);
         session.set_data_lock_waits_provider(waits(&[[0xc1, 0xc2]]));
         session
             .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
             .unwrap();
-        assert_eq!(captured.lock().unwrap().len(), 2);
+        assert_eq!(captured.lock().unwrap().len(), known_requests);
         // Running transactions use only local lookup, including an unknown digest.
         let processes = ProcessRegistry::default();
         let _guard = processes.register(
@@ -788,13 +1255,52 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rows[0][4], Datum::Null);
-        assert_eq!(captured.lock().unwrap().len(), 2);
+        assert_eq!(captured.lock().unwrap().len(), known_requests);
         session.set_data_lock_waits_provider(waits(&[[0xd1, 0xd2]]));
+        let before = captured.lock().unwrap().len();
+        for sql in [
+            "SELECT SQL_DIGEST FROM information_schema.DATA_LOCK_WAITS",
+            "SELECT COUNT(*) FROM information_schema.DATA_LOCK_WAITS",
+            "WITH c AS (SELECT SQL_DIGEST FROM information_schema.DATA_LOCK_WAITS) SELECT * FROM c",
+        ] {
+            session.run(sql).unwrap();
+        }
+        assert_eq!(
+            captured.lock().unwrap().len(),
+            before,
+            "unused text must not contact peers"
+        );
+        for sql in [
+            "SELECT SQL_DIGEST FROM information_schema.DATA_LOCK_WAITS WHERE SQL_DIGEST_TEXT IS NOT NULL",
+            "SELECT SQL_DIGEST FROM information_schema.DATA_LOCK_WAITS ORDER BY SQL_DIGEST_TEXT",
+        ] { assert!(session.run(sql).unwrap_err().to_string().contains("digest peer failure")); }
         assert!(session
             .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
             .unwrap_err()
             .to_string()
             .contains("digest peer failure"));
+        // Go's 512-request boundary selects bounded IN versus fetch-all.
+        fail.store(false, Ordering::SeqCst);
+        for size in [512, 513] {
+            let keys: Vec<_> = (0..size)
+                .map(|index| (0x8000_u16 + index as u16).to_be_bytes())
+                .collect();
+            session.set_data_lock_waits_provider(waits(&keys));
+            let before = captured.lock().unwrap().len();
+            let tidb_session::StmtResult::Rows(rows) = session
+                .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
+                .unwrap()
+            else {
+                panic!("rows");
+            };
+            assert_eq!(rows.len(), size);
+            let requests = captured.lock().unwrap();
+            assert_eq!(requests.len(), before + 2);
+            assert!(requests[before..]
+                .iter()
+                .all(|dag| dag.executors.len() == if size <= 512 { 2 } else { 1 }));
+        }
+        fail.store(true, Ordering::SeqCst);
         let count = captured.lock().unwrap().len();
         session.set_process_privilege(false);
         assert!(session
@@ -1231,6 +1737,40 @@ mod tests {
                 .rows
                 .iter()
                 .all(|row| row[0].as_raw_bytes() == Some(b"192.0.2.7:10080".as_slice())));
+            if table != "CLUSTER_TIDB_STATEMENTS_STATS" {
+                let digest = columns
+                    .iter()
+                    .position(|(name, _)| name == "DIGEST")
+                    .unwrap();
+                let expected = rows
+                    .rows
+                    .iter()
+                    .find(|row| row[text].as_raw_bytes() == Some(b"select ? + ?".as_slice()))
+                    .unwrap();
+                let value =
+                    String::from_utf8(expected[digest].as_raw_bytes().unwrap().to_vec()).unwrap();
+                for value in [value.clone(), format!("{value} ")] {
+                    let filtered = outbound
+                        .scan_projected(
+                            &[address.clone()],
+                            tidb_session::infoschema::memory_table_id(table).unwrap(),
+                            &columns,
+                            &[digest, text],
+                            None,
+                            &tidb_executor::StmtContext::for_query(),
+                            &SessionTimeZone::utc(),
+                            2,
+                            Some(&[value, "00".into()].into_iter().collect()),
+                        )
+                        .unwrap();
+                    assert!(filtered.warnings.is_empty());
+                    assert_eq!(
+                        filtered.rows,
+                        vec![vec![expected[digest].clone(), expected[text].clone()]],
+                        "{table}"
+                    );
+                }
+            }
             // Both generated result encodings support reordered and repeated outputs.
             for encoding in [tipb::EncodeType::TypeDefault, tipb::EncodeType::TypeChunk] {
                 let mut dag = scan(Some("summary_alice"), encoding);

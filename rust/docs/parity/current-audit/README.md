@@ -4,7 +4,7 @@ Latest cleanup: [datatype test consolidation](datatype-cleanup-validation.json) 
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [MPP failure lifecycle](mpp-failure-lifecycle-validation.json) composes process probing, foreground failed-node admission, statement fallback policy and safe raw-packet gather recovery. M04/M05/N03 remain partial for their stated broader obligations. Counts remain86 tracked,32 repaired,54 unresolved (24 open,30 partial); other roots retain carried evidence.
+Latest connected repair: [diagnostic projection and peer selection](digest-projection-validation.json) carries physical columns through all three diagnostic readers, sends remote digest predicates, and composes receiving selection with independently borrowed outgoing transport. I01/I03/O18/N05 retain their broader obligations. Counts remain 86 tracked, 32 repaired and 54 unresolved (24 open, 30 partial).
 
 ## Work from these owners
 

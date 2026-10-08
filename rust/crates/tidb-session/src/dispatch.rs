@@ -552,6 +552,39 @@ impl Session {
         }
     }
 
+    fn information_schema_read_columns(
+        plan: &tidb_planner::physical::PhysicalPlan,
+    ) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
+        fn visit(
+            plan: &tidb_planner::physical::PhysicalPlan,
+            columns: &mut std::collections::HashMap<String, std::collections::HashSet<String>>,
+        ) {
+            use tidb_planner::physical::PhysicalPlan;
+            if let PhysicalPlan::MemTable(scan) = plan {
+                columns
+                    .entry(scan.table_name.to_ascii_uppercase())
+                    .or_default()
+                    .extend(
+                        scan.columns
+                            .iter()
+                            .map(|column| column.name.to_ascii_uppercase()),
+                    );
+            }
+            if let PhysicalPlan::CTE(cte) = plan {
+                visit(&cte.seed_plan, columns);
+                if let Some(recursive) = &cte.recursive_plan {
+                    visit(recursive, columns);
+                }
+            }
+            for child in plan.children() {
+                visit(child, columns);
+            }
+        }
+        let mut columns = std::collections::HashMap::new();
+        visit(plan, &mut columns);
+        columns
+    }
+
     /// Opens the ordinary executor over the virtual table image. The image
     /// remains eagerly generated; query evaluation and result delivery use Next.
     fn open_information_schema_query(
@@ -581,6 +614,7 @@ impl Session {
             ctx,
             needs_storage_stats,
             needs_column_lengths,
+            &Self::information_schema_read_columns(&physical),
             &tidb_planner::cluster_table_extractor::cluster_table_filters(
                 &physical,
                 "CLUSTER_CONFIG",
@@ -641,6 +675,7 @@ impl Session {
         ctx: &tidb_executor::StmtContext,
         needs_storage_stats: bool,
         needs_column_lengths: bool,
+        required_columns: &std::collections::HashMap<String, std::collections::HashSet<String>>,
         cluster_config_filters: &[tidb_planner::cluster_table_extractor::ClusterTableFilter],
     ) -> Result<Catalog, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
@@ -696,12 +731,18 @@ impl Session {
                     table_name
                 ))));
             };
+            let empty = std::collections::HashSet::new();
+            let required = Some(
+                required_columns
+                    .get(&table_name.to_ascii_uppercase())
+                    .unwrap_or(&empty),
+            );
             let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
                 self.process_list_table_rows()
             } else if tidb_executor::driver::infoschema_meta::cluster_table_source(&table_name)
                 .is_some()
             {
-                self.cluster_table_rows(&table_name, &columns)?
+                self.cluster_table_rows(&table_name, &columns, required)?
             } else if [
                 "TIDB_INDEX_USAGE",
                 "TIDB_TRX",
@@ -712,7 +753,7 @@ impl Session {
             .iter()
             .any(|name| table_name.eq_ignore_ascii_case(name))
             {
-                self.diagnostic_table_rows(&table_name.to_ascii_uppercase(), None)?
+                self.diagnostic_table_rows(&table_name.to_ascii_uppercase(), None, required)?
             } else if table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS")
                 || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY")
                 || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_HISTORY")
@@ -722,7 +763,7 @@ impl Session {
             } else if table_name.eq_ignore_ascii_case("TRX_SUMMARY") {
                 self.transaction_summary_table_rows(None)
             } else if table_name.eq_ignore_ascii_case("DATA_LOCK_WAITS") {
-                self.data_lock_waits_table_rows()?
+                self.data_lock_waits_table_rows(required)?
             } else if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL")
                 || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_USER")
                 || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST")
@@ -871,6 +912,19 @@ impl Session {
         registry: Option<&crate::process::ProcessRegistry>,
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        self.local_cluster_table_rows_for(table_name, registry, zone, None, None)
+    }
+
+    /// Receiving scan requirements use original column names, including predicates.
+    /// None retains full-row callers; a present empty set needs no expensive fields.
+    pub fn local_cluster_table_rows_for(
+        &mut self,
+        table_name: &str,
+        registry: Option<&crate::process::ProcessRegistry>,
+        zone: &tidb_datatype::SessionTimeZone,
+        required: Option<&std::collections::HashSet<String>>,
+        digests: Option<&std::collections::HashSet<String>>,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         let source = tidb_executor::driver::infoschema_meta::cluster_table_source(table_name)
             .ok_or_else(|| DriverError::unsupported("unsupported TiDB cluster table"))?;
         let mut rows = match source {
@@ -887,9 +941,28 @@ impl Session {
             | "STATEMENTS_SUMMARY_EVICTED"
             | "TIDB_STATEMENTS_STATS" => {
                 let columns = infoschema::table_schema(source).expect("registered summary source");
-                self.statement_summary_table_rows(source, &columns, zone)?
+                let offsets: Vec<_> = columns
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (name, _))| required.is_none_or(|set| set.contains(name)))
+                    .map(|(index, _)| index)
+                    .collect();
+                let selected: Vec<_> = offsets
+                    .iter()
+                    .map(|index| columns[*index].clone())
+                    .collect();
+                self.statement_summary_rows_for(source, &selected, zone, false, digests)?
+                    .into_iter()
+                    .map(|row| {
+                        let mut full = vec![tidb_datatype::Datum::Null; columns.len()];
+                        for (index, value) in offsets.iter().zip(row) {
+                            full[*index] = value;
+                        }
+                        full
+                    })
+                    .collect()
             }
-            _ => self.diagnostic_table_rows(source, registry)?,
+            _ => self.diagnostic_table_rows(source, registry, required)?,
         };
         let instance = self.cluster_instance_address();
         for row in &mut rows {
@@ -903,14 +976,19 @@ impl Session {
         &mut self,
         source: &str,
         registry: Option<&crate::process::ProcessRegistry>,
+        required: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        let needs = |name: &str| required.is_none_or(|set| set.contains(name));
         Ok(match source {
-            "TIDB_TRX" => self.tidb_trx_table_rows(registry)?,
+            "TIDB_TRX" => self.tidb_trx_table_rows(registry, needs("CURRENT_SQL_DIGEST_TEXT"))?,
             "DEADLOCKS" => {
                 if !self.has_process_privilege() {
                     return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
                 }
-                self.deadlock_history_table_rows()?
+                self.deadlock_history_table_rows(
+                    needs("CURRENT_SQL_DIGEST_TEXT"),
+                    needs("KEY_INFO"),
+                )?
             }
             "MEMORY_USAGE" => memory_usage_table_rows(),
             "MEMORY_USAGE_OPS_HISTORY" => {
@@ -1093,6 +1171,7 @@ impl Session {
     fn tidb_trx_table_rows(
         &mut self,
         registry: Option<&crate::process::ProcessRegistry>,
+        needs_text: bool,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use chrono::{DateTime, Local};
         use tidb_datatype::{core_time_from_datetime, Collation, Datum, MysqlEnum, Time, TimeType};
@@ -1115,12 +1194,16 @@ impl Session {
                     || login_username.is_none_or(|username| username == transaction.user.as_str())
             })
             .collect();
-        let texts = self.sql_digest_texts(
-            transactions
-                .iter()
-                .filter_map(|transaction| transaction.current_sql_digest.clone()),
-            false,
-        )?;
+        let texts = if needs_text {
+            self.sql_digest_texts(
+                transactions
+                    .iter()
+                    .filter_map(|transaction| transaction.current_sql_digest.clone()),
+                false,
+            )?
+        } else {
+            Default::default()
+        };
         Ok(transactions
             .into_iter()
             .map(|transaction| {
@@ -1211,6 +1294,7 @@ impl Session {
     /// Pinned Go `dataLockWaitsTableRetriever.retrieve` for pessimistic waits.
     fn data_lock_waits_table_rows(
         &mut self,
+        required: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use std::fmt::Write as _;
         use tidb_datatype::Datum;
@@ -1238,19 +1322,27 @@ impl Session {
                     })
             })
             .collect();
-        let texts = self.sql_digest_texts(digests.iter().flatten().cloned(), true)?;
-        let key_info = self.with_catalog_mut(|catalog| {
-            Ok(waits
-                .iter()
-                .map(|wait| {
-                    tidb_executor::keydecoder::decode_key(&wait.key, catalog)
-                        .ok()
-                        .and_then(|decoded| serde_json::to_vec(&decoded).ok())
-                        .map(Datum::Bytes)
-                        .unwrap_or(Datum::Null)
-                })
-                .collect::<Vec<_>>())
-        })?;
+        let texts = if required.is_none_or(|set| set.contains("SQL_DIGEST_TEXT")) {
+            self.sql_digest_texts(digests.iter().flatten().cloned(), true)?
+        } else {
+            Default::default()
+        };
+        let key_info = if required.is_none_or(|set| set.contains("KEY_INFO")) {
+            self.with_catalog_mut(|catalog| {
+                Ok(waits
+                    .iter()
+                    .map(|wait| {
+                        tidb_executor::keydecoder::decode_key(&wait.key, catalog)
+                            .ok()
+                            .and_then(|decoded| serde_json::to_vec(&decoded).ok())
+                            .map(Datum::Bytes)
+                            .unwrap_or(Datum::Null)
+                    })
+                    .collect::<Vec<_>>())
+            })?
+        } else {
+            vec![Datum::Null; waits.len()]
+        };
 
         Ok(waits
             .into_iter()

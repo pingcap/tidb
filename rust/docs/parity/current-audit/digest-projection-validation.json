@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-08",
+  "baseline": "2bce1b5ba2eb985412c1d6bef9f6299d71872d1f",
+  "go_master": "518bfd82dcf3efadfbd63f9faad9787b4247fabb",
+  "client_rust": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+  "findings": [
+    "I01",
+    "I03",
+    "O18",
+    "N05"
+  ],
+  "batch": "B09 diagnostic reader projection and predicates with B05 peer receiver/client ownership",
+  "changes": [
+    "Physical MemTable column unions, including CTE and predicate/order references, govern all three diagnostic text readers and key decoding. Unselected internal schema slots remain NULL placeholders only.",
+    "Cluster scans project original IDs before transport and retain row cardinality for COUNT. Restricted digest fallback sends shared TiPB string-IN Selection at <=512 requested digests; >512 retains fetch-all.",
+    "Receiver passes selected columns and canonical-hex filters to existing local/summary owners, decodes predicates through the existing typed TiPB decoder, and executes SelectionExec before output projection. Other literals retain collation evaluation, including PAD SPACE.",
+    "Borrow the existing outgoing peer fleet independently from catalog construction in the production factory/receiver. Text-only deadlock lookup preserves global fallback without a metadata session."
+  ],
+  "go_sources": [
+    "pkg/executor/infoschema_reader.go::tidbTrxTableRetriever.retrieve",
+    "pkg/executor/infoschema_reader.go::deadlocksTableRetriever.retrieve",
+    "pkg/executor/infoschema_reader.go::dataLockWaitsTableRetriever.retrieve",
+    "pkg/expression/util.go::SQLDigestTextRetriever",
+    "pkg/executor/coprocessor.go"
+  ],
+  "regressions_before": {
+    "command": "cd rust && cargo test --locked -p tidb-server --lib digest_projection_batch -- --test-threads=1",
+    "failed": 4,
+    "passed": 0,
+    "ignored": 0,
+    "behavior": "Three ID/digest-only reads touched unavailable persistent history; outgoing digest fallback omitted Selection. Initial fixture compilation mistakes were corrected before this behavioral baseline.",
+    "log": {
+      "path": "/workspace/.cloud-setup/digest-projection-batch/before.log",
+      "sha256": "c8a551d322230994b36a03f1578108329e766904c4316b6fea9a86b8565cb6ad"
+    }
+  },
+  "validation": {
+    "grouped": {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib peer_rpc -- --test-threads=1",
+      "passed": 21,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/digest-projection-batch/after.log",
+        "sha256": "544cee594b2e2df3c2513f35f6afca4905d1027710638a5bb8c1ed94d3d9e40e"
+      },
+      "scope": "Three diagnostic lazy/history readers; local/global/error/PROCESS rules; 512/513 thresholds; receiver predicate-only and duplicate outputs; both encodings; canonical/padded digest IN over real socket; metadata-free outgoing fallback; neighboring summary/diagnostic/KILL/stream/batch contracts."
+    },
+    "live": {
+      "command": "source /workspace/.cloud-setup/env.sh && PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/digest-projection-batch/live.py",
+      "assertions": 28,
+      "receipt": {
+        "path": "/workspace/.cloud-setup/digest-projection-batch/live.json",
+        "sha256": "2041dffd69e9452f996367d942294c40b4f0e65ed3c69aa3fec0a5f1e1e9f07f"
+      },
+      "log": {
+        "path": "/workspace/.cloud-setup/digest-projection-batch/live.log",
+        "sha256": "a015137ba04d52db931d3cb24edf2e9ab9540c43d40bc68bf9377794aaccce10"
+      },
+      "binary_sha256": "7e12d6b1c02d0f1411cadd752b2df2d67ac2d6e108b4505b54383f76a1be04ea",
+      "scope": "real Rust unistore v1/v2 SQL and generated-descriptor gRPC; no live Go or multi-node TiKV"
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/digest-projection-batch/lint.log",
+        "sha256": "9d7144b3ac5507dddd2a7999c8f9c5a5cef2fda86125b6649dea2a195782ad7a"
+      }
+    },
+    "build": {
+      "command": "cd rust && cargo build --locked -p tidb-server",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/digest-projection-batch/live-build.log",
+        "sha256": "ddf68f66b5b73b04fbb44fc8cfdf411fabeab0f3aa2bb43da386460447ff11b8"
+      }
+    },
+    "self_review": "Checked caller migration, CTE union/cardinality, privilege/error paths, non-prefix column identity, padded collation, original row schemas, independent fleet borrowing and joined selection close. git diff --check passed. No dependency, generated, Go or native source changes.",
+    "iteration_notes": "Initial generated Selection boxing, executor error conversion and codec fixture calls corrected. Extending the existing remote fixture required updating its no-new-request baseline; no behavioral assertion was disabled."
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "limits": [
+    "Existing-owner maintenance only. No complete Go package accepted or broad finding closed; other50 unresolved findings retain carried evidence.",
+    "Full digest builtin/privilege integration, other providers/operators, complete memory/execution accounting, AutoID/other RPC hosting and package/platform obligations remain.",
+    "No live Go oracle, multi-node TiKV/TiFlash, TLS, benchmark or quantified performance acceptance.",
+    "Actual locked precommit build and fresh locked build immediately before push remain mandatory; publication evidence is recorded outside the commit in /workspace/.cloud-setup/digest-projection-batch/final-handoff.json."
+  ]
+}

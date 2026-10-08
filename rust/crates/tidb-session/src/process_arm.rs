@@ -156,21 +156,47 @@ impl Session {
         )
     }
 
-    /// Each discovered peer consumes the same local table owner. Projection
-    /// and predicates remain in the ordinary SQL executor after fanout.
+    /// Each discovered peer consumes the same projected local table owner.
+    /// The ordinary SQL executor retains residual predicates after fanout.
     pub(crate) fn cluster_table_rows(
         &mut self,
         table_name: &str,
         columns: &[(String, FieldType)],
+        required: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let rows = self.local_cluster_table_rows(table_name, None, &self.session_time_zone())?;
-        self.cluster_table_rows_with_rows(
+        let rows = self.local_cluster_table_rows_for(
             table_name,
-            columns,
-            &(0..columns.len()).collect::<Vec<_>>(),
-            rows,
-            false,
-        )
+            None,
+            &self.session_time_zone(),
+            required,
+            None,
+        )?;
+        let mut offsets: Vec<_> = columns
+            .iter()
+            .enumerate()
+            .filter(|(_, (name, _))| required.is_none_or(|set| set.contains(name)))
+            .map(|(index, _)| index)
+            .collect();
+        // A transport column preserves row cardinality for COUNT(*) scans.
+        if offsets.is_empty() && !columns.is_empty() {
+            offsets.push(0);
+        }
+        let projected = rows
+            .into_iter()
+            .map(|row| offsets.iter().map(|index| row[*index].clone()).collect())
+            .collect();
+        self.cluster_table_rows_with_rows(table_name, columns, &offsets, projected, false, None)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| {
+                        let mut full = vec![Datum::Null; columns.len()];
+                        for (index, value) in offsets.iter().zip(row) {
+                            full[*index] = value;
+                        }
+                        full
+                    })
+                    .collect()
+            })
     }
 
     /// Shared discovery, cancellation and warnings for ordinary and restricted readers.
@@ -181,6 +207,7 @@ impl Session {
         offsets: &[usize],
         mut rows: Vec<Vec<Datum>>,
         internal: bool,
+        digests: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         let Some(syncer) = &self.server_info_syncer else {
             return Ok(rows);
@@ -222,6 +249,7 @@ impl Session {
             &ctx,
             &self.session_time_zone(),
             ctx.dist_sql_scan_concurrency() as usize,
+            digests,
         )?;
         for (code, message) in result.warnings {
             self.append_warning(WarningLevel::Warning, code, message);
@@ -317,7 +345,8 @@ impl Session {
                 true,
                 filter,
             )?;
-            let rows = self.cluster_table_rows_with_rows(table, &schema, &offsets, local, true)?;
+            let rows =
+                self.cluster_table_rows_with_rows(table, &schema, &offsets, local, true, filter)?;
             merge(&mut texts, rows);
         }
         Ok(texts)
@@ -542,21 +571,29 @@ impl Session {
     }
 
     /// Executor-owned rows of `INFORMATION_SCHEMA.DEADLOCKS`.
-    pub(crate) fn deadlock_history_table_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
+    pub(crate) fn deadlock_history_table_rows(
+        &mut self,
+        needs_text: bool,
+        needs_key_info: bool,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_datatype::{Collation, StringDatum};
         use tidb_executor::deadlock_history::{
             COL_CURRENT_SQL_DIGEST, COL_DEADLOCK_ID, COL_KEY, COL_OCCUR_TIME, COL_RETRYABLE,
             COL_TRX_HOLDING_LOCK, COL_TRY_LOCK_TRX_ID, GLOBAL_DEADLOCK_HISTORY,
         };
         let records = GLOBAL_DEADLOCK_HISTORY.get_all();
-        let texts = self.sql_digest_texts(
+        let texts = if needs_text {
+            self.sql_digest_texts(
+                records.iter().flat_map(|record| {
+                    record.wait_chain.iter().map(|item| item.sql_digest.clone())
+                }),
+                true,
+            )?
+        } else {
+            Default::default()
+        };
+        let render = |catalog: Option<&Catalog>| {
             records
-                .iter()
-                .flat_map(|record| record.wait_chain.iter().map(|item| item.sql_digest.clone())),
-            true,
-        )?;
-        self.with_catalog_mut(|catalog| {
-            Ok(records
                 .into_iter()
                 .flat_map(|record| {
                     (0..record.wait_chain.len())
@@ -568,16 +605,19 @@ impl Session {
                                 .cloned()
                                 .map(Datum::new_string)
                                 .unwrap_or(Datum::Null);
-                            let key_info = if item.key.is_empty() {
+                            let key_info = if item.key.is_empty() || !needs_key_info {
                                 Datum::Null
                             } else {
-                                tidb_executor::keydecoder::decode_key(&item.key, catalog)
-                                    .ok()
-                                    .and_then(|decoded| serde_json::to_vec(&decoded).ok())
-                                    .map(|json| {
-                                        Datum::String(StringDatum::new(json, Collation::DEFAULT))
-                                    })
-                                    .unwrap_or(Datum::Null)
+                                tidb_executor::keydecoder::decode_key(
+                                    &item.key,
+                                    catalog.expect("requested key metadata"),
+                                )
+                                .ok()
+                                .and_then(|decoded| serde_json::to_vec(&decoded).ok())
+                                .map(|json| {
+                                    Datum::String(StringDatum::new(json, Collation::DEFAULT))
+                                })
+                                .unwrap_or(Datum::Null)
                             };
                             vec![
                                 record.to_datum(idx, COL_DEADLOCK_ID),
@@ -593,7 +633,12 @@ impl Session {
                         })
                         .collect::<Vec<_>>()
                 })
-                .collect())
-        })
+                .collect()
+        };
+        if needs_key_info {
+            self.with_catalog_mut(|catalog| Ok(render(Some(catalog))))
+        } else {
+            Ok(render(None))
+        }
     }
 }

@@ -121,6 +121,7 @@ impl ClusterPeerClient {
             ctx,
             zone,
             concurrency,
+            None,
         )
     }
 
@@ -136,6 +137,7 @@ impl ClusterPeerClient {
         ctx: &StmtContext,
         zone: &SessionTimeZone,
         concurrency: usize,
+        digests: Option<&std::collections::HashSet<String>>,
     ) -> Result<PeerRows, DriverError> {
         let selected = offsets
             .iter()
@@ -175,6 +177,49 @@ impl ClusterPeerClient {
             }),
             ..Default::default()
         });
+        if let Some(digests) = digests {
+            if digests.is_empty() {
+                return Ok(PeerRows::default());
+            }
+            let (offset, (_, field)) = selected
+                .iter()
+                .enumerate()
+                .find(|(_, (original, _))| columns[*original].0.eq_ignore_ascii_case("DIGEST"))
+                .ok_or_else(|| DriverError::unsupported("digest predicate needs DIGEST column"))?;
+            let column = crate::cop_scan::scan_column(&PushdownScanColumn {
+                id: (offset + 1) as i64,
+                field_type: (*field).clone(),
+                is_handle: false,
+                origin_default: None,
+            })
+            .ok_or_else(|| DriverError::unsupported("unsupported digest column"))?;
+            let mut values: Vec<_> = digests
+                .iter()
+                .map(|value| value.as_bytes().to_vec())
+                .collect();
+            values.sort();
+            let condition = tidb_expr::pb_predicate::string_column_in_to_pb(
+                tidb_expr::pb_predicate::StringPbOperand::Column {
+                    offset,
+                    mysql_type: column.tp,
+                    flags: column.flag as u32,
+                    flen: column.column_len,
+                    charset: field.charset_name().to_owned(),
+                    collation: field.collation_name().to_owned(),
+                },
+                values,
+                field.collation_name(),
+            )
+            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+            dag.executors.push(tipb::Executor {
+                tp: Some(tipb::ExecType::TypeSelection as i32),
+                selection: Some(Box::new(tipb::Selection {
+                    conditions: vec![condition],
+                    ..Default::default()
+                })),
+                ..Default::default()
+            });
+        }
         let types: Vec<_> = selected.iter().map(|(_, field)| (*field).clone()).collect();
         self.with_cancellation(ctx, |cancel| {
             let mut result = PeerRows::default();
