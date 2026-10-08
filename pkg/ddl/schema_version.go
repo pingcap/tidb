@@ -275,6 +275,14 @@ func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx 
 	return nil
 }
 
+// SetSchemaDiffForMViewRefreshOutOfPlaceCutover sets the old and new table IDs
+// used by InfoSchema to atomically replace an MV with its shadow table.
+func SetSchemaDiffForMViewRefreshOutOfPlaceCutover(diff *model.SchemaDiff, jobCtx *jobContext) {
+	args := jobCtx.jobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
+	diff.TableID = args.ShadowTableID
+	diff.OldTableID = args.OldMViewID
+}
+
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
 func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error {
 	args, err := model.GetRecoverArgs(job)
@@ -357,14 +365,16 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 		SetSchemaDiffForDropTablePartition(diff, job, jobCtx)
 	case model.ActionRecoverTable:
 		SetSchemaDiffForRecoverTable(diff, job, jobCtx)
-	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow:
 		SetSchemaDiffForDropTable(diff, job, jobCtx)
 	case model.ActionReorganizePartition:
 		SetSchemaDiffForReorganizePartition(diff, job, jobCtx)
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		SetSchemaDiffForPartitionModify(diff, job, jobCtx)
-	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewLog:
+	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewLog, model.ActionCreateMaterializedViewShadow:
 		err = SetSchemaDiffForCreateTable(diff, job, jobCtx)
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		SetSchemaDiffForMViewRefreshOutOfPlaceCutover(diff, jobCtx)
 	case model.ActionRecoverSchema:
 		err = SetSchemaDiffForRecoverSchema(diff, job)
 	case model.ActionFlashbackCluster:

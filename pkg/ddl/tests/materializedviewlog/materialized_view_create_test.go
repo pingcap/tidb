@@ -90,7 +90,7 @@ func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {
 	require.Contains(t, mvRegionNames, fmt.Sprintf("t_%d_r_6917529027641081856", mvTable.Meta().ID))
 }
 
-func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsUsesScheduleTimeZone(t *testing.T) {
+func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsUsesUTC(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
@@ -107,7 +107,7 @@ func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsUsesScheduleTimeZone(t
 	tk.MustExec("create materialized view log on t_purge_schedule_next (a) purge next cast('2030-01-02 10:00:00' as datetime)")
 	mlogNextID := getMLogID("t_purge_schedule_next")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_PURGE_UNIX_SECONDS = 1893549600, NEXT_PURGE_UNIX_SECONDS = 1893578400 from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		"select NEXT_PURGE_UNIX_SECONDS = 1893578400, NEXT_PURGE_UNIX_SECONDS = 1893549600 from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogNextID,
 	)).Check(testkit.Rows("1 0"))
 
@@ -115,9 +115,35 @@ func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsUsesScheduleTimeZone(t
 	tk.MustExec("create materialized view log on t_purge_schedule_start (a) purge start with cast('2030-01-02 10:00:00' as datetime) next cast('2030-01-03 10:00:00' as datetime)")
 	mlogStartID := getMLogID("t_purge_schedule_start")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_PURGE_UNIX_SECONDS = 1893549600, NEXT_PURGE_UNIX_SECONDS = 1893636000 from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		"select NEXT_PURGE_UNIX_SECONDS = 1893578400, NEXT_PURGE_UNIX_SECONDS = 1893636000 from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogStartID,
 	)).Check(testkit.Rows("1 0"))
+
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	tk.MustExec("create table t_purge_dst_gap (a int)")
+	tk.MustExec("create materialized view log on t_purge_dst_gap (a) purge next cast('2021-03-14 02:30:00' as datetime)")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_PURGE_UNIX_SECONDS = 1615689000 from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		getMLogID("t_purge_dst_gap"),
+	)).Check(testkit.Rows("1"))
+
+	tk.MustExec("create table t_purge_utc_now (a int)")
+	tk.MustExec("create materialized view log on t_purge_utc_now (a) purge next date_add(now(), interval 40 minute)")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_PURGE_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 30 minute), NEXT_PURGE_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 50 minute) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		getMLogID("t_purge_utc_now"),
+	)).Check(testkit.Rows("1 1"))
+
+	const injectNowFailpoint = "github.com/pingcap/tidb/pkg/expression/injectNow"
+	require.NoError(t, failpoint.Enable(injectNowFailpoint, "return(1636275480)"))
+	defer func() { require.NoError(t, failpoint.Disable(injectNowFailpoint)) }()
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	tk.MustExec("create table t_purge_dst_fallback (a int)")
+	tk.MustExec("create materialized view log on t_purge_dst_fallback (a) purge next date_add(now(), interval 5 minute)")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_PURGE_UNIX_SECONDS = 1636275780 from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		getMLogID("t_purge_dst_fallback"),
+	)).Check(testkit.Rows("1"))
 }
 
 func TestCreateMaterializedViewLogPurgeInfoFailureRollback(t *testing.T) {

@@ -31,13 +31,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// CheckMViewUpdatable checks whether a DML operation on a materialized view or materialized view
-// log table should be rejected. It returns an error if the table is an MV or MV log and the current
-// session is not in internal maintenance mode.
+// CheckMViewUpdatable checks whether a DML operation on a materialized view, materialized view log,
+// or materialized view shadow table should be rejected. It returns an error if the table is an
+// MV-related table and the current session is not in internal maintenance mode.
 func CheckMViewUpdatable(
 	sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName, op string,
 ) error {
-	if tableInfo.MaterializedView == nil && tableInfo.MaterializedViewLog == nil {
+	if tableInfo.MaterializedView == nil && tableInfo.MaterializedViewLog == nil && tableInfo.MaterializedViewShadow == nil {
 		return nil
 	}
 
@@ -57,7 +57,7 @@ func CheckMViewUpdatable(
 }
 
 func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
-	if !sv.InMViewMaintenance {
+	if sv == nil || !sv.InMViewMaintenance {
 		return false, nil
 	}
 	// All MV maintenance work should use internal sessions (restricted SQL).
@@ -69,12 +69,28 @@ func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
 	return true, nil
 }
 
-// CheckMViewReadable checks whether a read on a materialized view should be rejected because
-// its initial build is not ready yet.
+// CheckMViewReadable checks whether a read on an MV-related table should be rejected.
 func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
-	if tableInfo == nil || tableInfo.MaterializedView == nil {
+	if tableInfo == nil || (tableInfo.MaterializedView == nil && tableInfo.MaterializedViewShadow == nil) {
 		return nil
 	}
+
+	if tableInfo.MaterializedViewShadow != nil {
+		// check mv shadow table
+		allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+		if err != nil {
+			return err
+		}
+		if allowMaintenance || sv == nil || sv.User == nil {
+			return nil
+		}
+		if aliasName == "" {
+			aliasName = tableInfo.Name.O
+		}
+		return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", sv.User.AuthUsername, sv.User.AuthHostname, aliasName)
+	}
+
+	// check mv table
 	initBuildState := tableInfo.MaterializedView.GetInitBuildState()
 	if initBuildState.IsReady() {
 		return nil

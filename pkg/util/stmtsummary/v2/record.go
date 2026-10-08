@@ -96,7 +96,7 @@ type StmtRecord struct {
 	MaxRocksdbBlockReadCount       uint64        `json:"max_rocksdb_block_read_count"`
 	SumRocksdbBlockReadByte        uint64        `json:"sum_rocksdb_block_read_byte"`
 	MaxRocksdbBlockReadByte        uint64        `json:"max_rocksdb_block_read_byte"`
-	IAExecCount                    int64         `json:"ia_remote_exec_count"`
+	IAExecCount                    int64         `json:"ia_exec_count"`
 	SumIARemoteReadSegmentCount    uint64        `json:"sum_ia_remote_read_segment_count"`
 	MaxIARemoteReadSegmentCount    uint64        `json:"max_ia_remote_read_segment_count"`
 	SumIARemoteReadSegmentSize     uint64        `json:"sum_ia_remote_read_segment_size"`

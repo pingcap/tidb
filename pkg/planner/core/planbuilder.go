@@ -81,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
@@ -3723,6 +3724,10 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("show table distributions")
 		}
+	case ast.ShowStorageClassTransitions:
+		if !config.GetGlobalConfig().EnableStorageClass {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("SHOW STORAGE_CLASS TRANSITIONS is disabled; set enable-storage-class = true in the TiDB configuration")
+		}
 	case ast.ShowReplicaStatus:
 		return nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("SHOW {REPLICA | SLAVE} STATUS")
 	}
@@ -5258,24 +5263,13 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan base.Lo
 	if err != nil {
 		return d, err
 	}
-	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType)
-	if err != nil {
-		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) && !types.ErrBadNumber.Equal(err) {
-			return d, err
-		}
-		valStr, err1 := value.ToString()
-		if err1 != nil {
-			return d, err
-		}
-		return d, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for column '%.192s'", valStr, col.Name.O)
-	}
-	return d, nil
+	return regionsplit.ConvertValueToColumnType(value, col, b.ctx.GetSessionVars().StmtCtx.TypeCtx())
 }
 
 func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
-	handleColInfos := buildHandleColumnInfos(tblInfo)
+	handleColInfos := regionsplit.GetHandleColumnInfos(tblInfo)
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
 	if err != nil {
@@ -5319,26 +5313,6 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Pla
 	}
 	p.Num = int(node.SplitOpt.Num)
 	return p, nil
-}
-
-func buildHandleColumnInfos(tblInfo *model.TableInfo) []*model.ColumnInfo {
-	switch {
-	case tblInfo.PKIsHandle:
-		if col := tblInfo.GetPkColInfo(); col != nil {
-			return []*model.ColumnInfo{col}
-		}
-	case tblInfo.IsCommonHandle:
-		pkIdx := tables.FindPrimaryIndex(tblInfo)
-		pkCols := make([]*model.ColumnInfo, 0, len(pkIdx.Columns))
-		cols := tblInfo.Columns
-		for _, idxCol := range pkIdx.Columns {
-			pkCols = append(pkCols, cols[idxCol.Offset])
-		}
-		return pkCols
-	default:
-		return []*model.ColumnInfo{model.NewExtraHandleColInfo()}
-	}
-	return nil
 }
 
 const (

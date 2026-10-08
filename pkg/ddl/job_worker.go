@@ -131,11 +131,9 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
-	// DXF propagates add-index reorganization RU v2 through:
-	// BackfillTaskMeta.Summary.IndexKVSize -> recordDistTaskRU -> reorgCtx.ru ->
-	// reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
-	// accountPendingReorgRU -> Job.RU. It is persisted only after the matching
-	// table-state transition succeeds.
+	// DXF propagates add-index reorganization RU v2 through recordDistTaskRU ->
+	// reorgCtx.ru -> reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
+	// accountPendingReorgRU -> Job.RU, reading the workload from the task meta.
 	pendingReorgRU float64
 	// Keep storage-class history changes pending until a batched multi-schema
 	// step is known to commit its TableInfo changes.
@@ -417,13 +415,14 @@ func JobNeedGC(job *model.Job) bool {
 		switch job.Type {
 		case model.ActionDropSchema, model.ActionDropTable,
 			model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+			model.ActionDropMaterializedViewShadow,
 			model.ActionTruncateTable,
 			model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 			model.ActionDropColumn, model.ActionModifyColumn,
 			model.ActionAddIndex, model.ActionAddPrimaryKey,
 			model.ActionReorganizePartition, model.ActionRemovePartitioning,
-			model.ActionAlterTablePartitioning:
+			model.ActionAlterTablePartitioning, model.ActionMViewRefreshOutOfPlaceCutover:
 			return true
 		case model.ActionCreateMaterializedView:
 			// CREATE MATERIALIZED VIEW may create a physical table before the initial
@@ -672,9 +671,11 @@ func (w *worker) accountJobRU(job *model.Job) error {
 	if !kerneltype.IsNextGen() {
 		return nil
 	}
-	// For reorganization jobs, only distributed add-index currently accounts
-	// the reorganization workload itself. Other reorganization jobs account the
-	// DDL transaction below, but their reorganization RU v2 is not fully accounted.
+	// The reorganization work itself is accounted separately from this
+	// DDL-transaction sample: distributed add-index charges the ingest KV size,
+	// while transactional backfill workers charge their committed transaction
+	// bytes. Reorganization paths without either hook still only account the DDL
+	// transaction below.
 	txn, err := w.sess.Txn()
 	if err != nil {
 		return errors.Trace(err)
@@ -722,6 +723,12 @@ func (w *worker) transitOneJobStep(
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
 		if job.IsDone() {
+			if err := w.checkBeforeCommit(); err != nil {
+				return 0, err
+			}
+			if job.Type == model.ActionMViewRefreshOutOfPlaceCutover {
+				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
+			}
 			job.State = model.JobStateSynced
 		}
 		// Inject the failpoint to prevent the progress of index creation.
@@ -1105,6 +1112,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onModifySchemaDefaultPlacement(jobCtx, job)
 	case model.ActionCreateTable:
 		ver, err = w.onCreateTable(jobCtx, job)
+	case model.ActionCreateMaterializedViewShadow:
+		ver, err = w.onCreateMaterializedViewShadow(jobCtx, job)
 	case model.ActionCreateMaterializedViewLog:
 		ver, err = w.onCreateMaterializedViewLog(jobCtx, job)
 	case model.ActionCreateMaterializedView:
@@ -1116,7 +1125,8 @@ func (w *worker) runOneJobStep(
 	case model.ActionCreateView:
 		ver, err = onCreateView(jobCtx, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
-		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		ver, err = w.onDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(jobCtx, job)
@@ -1164,6 +1174,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onAlterMaterializedViewAttributes(jobCtx, job, w.sess)
 	case model.ActionAlterMaterializedViewLogPurge:
 		ver, err = onAlterMaterializedViewLogPurge(jobCtx, job, w.sess)
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		ver, err = w.onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx, job)
 	case model.ActionModifyTableAutoIDCache:
 		ver, err = onModifyTableAutoIDCache(jobCtx, job)
 	case model.ActionAddTablePartition:
