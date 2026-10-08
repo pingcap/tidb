@@ -77,6 +77,7 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 		keyspaceMeta  []string // [name,id]
 		queryErr      error
 		confPD        string
+		nextGen       bool
 		expectErr     string
 		expectKSPName string
 		expectKSPID   uint32
@@ -89,10 +90,11 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 			expectKSPID:   123,
 		},
 		{
-			name:         "premium_missing_pd",
-			keyspaceMeta: []string{"ks1", "123"},
-			confPD:       "",
-			expectErr:    "requires --pd",
+			name:          "premium_missing_pd_is_ok",
+			keyspaceMeta:  []string{"ks1", "123"},
+			confPD:        "",
+			expectKSPName: "ks1",
+			expectKSPID:   123,
 		},
 		{
 			name:         "classical_ok",
@@ -114,6 +116,22 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 			name:      "premium_no_keyspace_meta_table_is_error",
 			queryErr:  &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
 			confPD:    "pd1:2379",
+			expectErr: "KEYSPACE_META",
+		},
+		{
+			// A next-gen cluster always exposes KEYSPACE_META, so a lookup error
+			// must not silently fall back to the classical global-safepoint path.
+			name:      "nextgen_keyspace_meta_error_is_fatal",
+			queryErr:  &mysql.MySQLError{Number: 1142, Message: "SELECT command denied to user 'cloud' for table 'KEYSPACE_META'"},
+			confPD:    "",
+			nextGen:   true,
+			expectErr: "denied",
+		},
+		{
+			name:      "nextgen_no_keyspace_meta_table_is_error",
+			queryErr:  &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
+			confPD:    "",
+			nextGen:   true,
 			expectErr: "KEYSPACE_META",
 		},
 	}
@@ -143,6 +161,7 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 			d.conf.ServerInfo = version.ServerInfo{
 				ServerType:    version.ServerTypeTiDB,
 				ServerVersion: gcSafePointVersion,
+				NextGen:       tc.nextGen,
 			}
 			d.conf.PDAddr = tc.confPD
 			err = tidbResolveKeyspaceMetaForGC(d)
@@ -176,6 +195,12 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 		expectID         uint32
 		useKeyspaceGC    bool
 		expectBarrierAPI bool
+		// expectNoPDClient means the cluster is premium but --pd is absent, so
+		// tidbSetPDClientForGC must disable GC pause instead of failing.
+		expectNoPDClient bool
+		// expectSetPDErr means tidbSetPDClientForGC must fail with an actionable
+		// error instead of silently disabling GC pause.
+		expectSetPDErr string
 	}{
 		{
 			name:             "premium_uses_keyspace_barrier_api",
@@ -203,6 +228,24 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			expectID:         0,
 			useKeyspaceGC:    false,
 			expectBarrierAPI: false,
+		},
+		{
+			name:             "premium_without_pd_disables_gc_pause",
+			keyspaceMeta:     []string{"ks1", "42"},
+			confPD:           "",
+			expectKeyspace:   "ks1",
+			expectID:         42,
+			expectNoPDClient: true,
+		},
+		{
+			// A non-empty but unusable --pd (a typo such as ",") must surface as
+			// an error, not be treated as "flag not provided".
+			name:           "premium_malformed_pd_is_error",
+			keyspaceMeta:   []string{"ks1", "42"},
+			confPD:         " , ",
+			expectKeyspace: "ks1",
+			expectID:       42,
+			expectSetPDErr: "invalid --pd",
 		},
 	}
 
@@ -239,6 +282,26 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.expectKeyspace, d.tidbKeyspaceName)
 			require.Equal(t, tc.expectID, d.tidbKeyspaceID)
+
+			if tc.expectNoPDClient {
+				// Premium cluster without --pd: no error, and GC pause is
+				// disabled because no PD client is created.
+				require.NoError(t, tidbSetPDClientForGC(d))
+				require.Nil(t, d.tidbPDClientForGC)
+				require.False(t, d.tidbUseKeyspaceGC)
+				return
+			}
+
+			if tc.expectSetPDErr != "" {
+				// Premium cluster with a malformed --pd: fail with an actionable
+				// error and do not install a PD client.
+				err = tidbSetPDClientForGC(d)
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectSetPDErr)
+				require.Nil(t, d.tidbPDClientForGC)
+				require.False(t, d.tidbUseKeyspaceGC)
+				return
+			}
 
 			// Simulate the PD client being set already (we don't test actual
 			// PD connections here, just the dispatch decision).
