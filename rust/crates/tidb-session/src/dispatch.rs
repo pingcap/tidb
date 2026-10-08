@@ -905,7 +905,7 @@ impl Session {
         registry: Option<&crate::process::ProcessRegistry>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         Ok(match source {
-            "TIDB_TRX" => self.tidb_trx_table_rows(registry),
+            "TIDB_TRX" => self.tidb_trx_table_rows(registry)?,
             "DEADLOCKS" => {
                 if !self.has_process_privilege() {
                     return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
@@ -958,13 +958,25 @@ impl Session {
         columns: &[(String, tidb_datatype::FieldType)],
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        self.statement_summary_rows_for(table_name, columns, zone, false, None)
+    }
+
+    pub(crate) fn statement_summary_rows_for(
+        &self,
+        table_name: &str,
+        columns: &[(String, tidb_datatype::FieldType)],
+        zone: &tidb_datatype::SessionTimeZone,
+        internal: bool,
+        digests: Option<&std::collections::HashSet<String>>,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_ast::CiString;
         use tidb_model::ColumnInfo;
         use tidb_parser::auth::UserIdentity;
-        use tidb_stmtsummary::reader::StmtSummaryReader;
+        use tidb_stmtsummary::reader::{StmtSummaryChecker, StmtSummaryReader};
+        let has_process = internal || self.has_process_privilege();
 
         if table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_EVICTED") {
-            if !self.has_process_privilege() {
+            if !has_process {
                 return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
             }
             return Ok(
@@ -994,18 +1006,22 @@ impl Session {
                 ..ColumnInfo::default()
             })
             .collect();
-        let user = self.login_user.as_deref().map(|login| {
-            let (username, hostname) = login.split_once('@').unwrap_or((login, ""));
-            let (auth_username, auth_hostname) = self.current_identity().unwrap_or(("", ""));
-            UserIdentity {
-                username: username.to_owned(),
-                hostname: hostname.to_owned(),
-                current_user: false,
-                auth_username: auth_username.to_owned(),
-                auth_hostname: auth_hostname.to_owned(),
-                auth_plugin: String::new(),
-            }
-        });
+        let user = self
+            .login_user
+            .as_deref()
+            .filter(|_| !internal)
+            .map(|login| {
+                let (username, hostname) = login.split_once('@').unwrap_or((login, ""));
+                let (auth_username, auth_hostname) = self.current_identity().unwrap_or(("", ""));
+                UserIdentity {
+                    username: username.to_owned(),
+                    hostname: hostname.to_owned(),
+                    current_user: false,
+                    auth_username: auth_username.to_owned(),
+                    auth_hostname: auth_hostname.to_owned(),
+                    auth_plugin: String::new(),
+                }
+            });
         let persistent = tidb_config::config_tree::config::get_global_config()
             .instance
             .stmt_summary_enable_persistent;
@@ -1025,8 +1041,8 @@ impl Session {
                 String::new(),
                 zone.clone(),
                 user.clone(),
-                self.has_process_privilege(),
-                None,
+                has_process,
+                digests.cloned(),
                 Vec::new(),
             )
             .rows();
@@ -1037,8 +1053,8 @@ impl Session {
                     String::new(),
                     zone.clone(),
                     user,
-                    self.has_process_privilege(),
-                    None,
+                    has_process,
+                    digests.cloned(),
                     Vec::new(),
                     self.vars
                         .get_system(tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY)
@@ -1061,13 +1077,9 @@ impl Session {
             }
             return Ok(rows);
         }
-        let reader = StmtSummaryReader::new(
-            user,
-            self.has_process_privilege(),
-            columns,
-            String::new(),
-            zone.clone(),
-        );
+        let mut reader =
+            StmtSummaryReader::new(user, has_process, columns, String::new(), zone.clone());
+        reader.set_checker(digests.cloned().map(StmtSummaryChecker::new));
         Ok(if cumulative {
             reader.get_stmt_summary_cumulative_rows()
         } else if history {
@@ -1079,38 +1091,45 @@ impl Session {
 
     /// Pinned Go `tidbTrxTableRetriever.retrieve` for this node.
     fn tidb_trx_table_rows(
-        &self,
+        &mut self,
         registry: Option<&crate::process::ProcessRegistry>,
-    ) -> Vec<Vec<tidb_datatype::Datum>> {
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use chrono::{DateTime, Local};
         use tidb_datatype::{core_time_from_datetime, Collation, Datum, MysqlEnum, Time, TimeType};
 
         let Some(registry) =
             registry.or_else(|| self.process.as_ref().map(|guard| guard.registry()))
         else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let login_username = self
             .login_user
             .as_deref()
             .and_then(|identity| identity.split_once('@').map(|(user, _)| user));
         let has_process = self.has_process_privilege();
-        registry
+        let transactions: Vec<_> = registry
             .transaction_snapshot()
             .into_iter()
             .filter(|transaction| {
                 has_process
                     || login_username.is_none_or(|username| username == transaction.user.as_str())
             })
+            .collect();
+        let texts = self.sql_digest_texts(
+            transactions
+                .iter()
+                .filter_map(|transaction| transaction.current_sql_digest.clone()),
+            false,
+        )?;
+        Ok(transactions
+            .into_iter()
             .map(|transaction| {
-                let current_sql_digest_text =
-                    transaction
-                        .current_sql_digest
-                        .as_deref()
-                        .and_then(|digest| {
-                            tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP
-                                .normalized_sql_for_digest(digest)
-                        });
+                let current_sql_digest_text = transaction
+                    .current_sql_digest
+                    .as_ref()
+                    .and_then(|digest| texts.get(digest))
+                    .filter(|text| !text.is_empty())
+                    .cloned();
                 let start = DateTime::from_timestamp_millis((transaction.start_ts >> 18) as i64)
                     .map(DateTime::<Local>::from)
                     .map(|value| {
@@ -1186,7 +1205,7 @@ impl Session {
                     waiting_time,
                 ]
             })
-            .collect()
+            .collect())
     }
 
     /// Pinned Go `dataLockWaitsTableRetriever.retrieve` for pessimistic waits.
@@ -1195,7 +1214,6 @@ impl Session {
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use std::fmt::Write as _;
         use tidb_datatype::Datum;
-        use tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP;
 
         if !self.has_process_privilege() {
             return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
@@ -1204,6 +1222,23 @@ impl Session {
             return Ok(Vec::new());
         };
         let waits = provider.lock_waits().map_err(DriverError::unsupported)?;
+        let digests: Vec<_> = waits
+            .iter()
+            .map(|wait| {
+                tidb_txnkv::decode_resource_group_tag(&wait.resource_group_tag)
+                    .ok()
+                    .flatten()
+                    .map(|bytes| {
+                        let mut hex = String::with_capacity(bytes.len() * 2);
+                        for byte in bytes {
+                            write!(&mut hex, "{byte:02x}")
+                                .expect("writing hexadecimal to String cannot fail");
+                        }
+                        hex
+                    })
+            })
+            .collect();
+        let texts = self.sql_digest_texts(digests.iter().flatten().cloned(), true)?;
         let key_info = self.with_catalog_mut(|catalog| {
             Ok(waits
                 .iter()
@@ -1220,26 +1255,18 @@ impl Session {
         Ok(waits
             .into_iter()
             .zip(key_info)
-            .map(|(wait, key_info)| {
+            .zip(digests)
+            .map(|((wait, key_info), digest)| {
                 let mut key_hex = String::with_capacity(wait.key.len() * 2);
                 for byte in &wait.key {
                     write!(&mut key_hex, "{byte:02X}")
                         .expect("writing hexadecimal to String cannot fail");
                 }
-                let digest = tidb_txnkv::decode_resource_group_tag(&wait.resource_group_tag)
-                    .ok()
-                    .flatten()
-                    .map(|bytes| {
-                        let mut hex = String::with_capacity(bytes.len() * 2);
-                        for byte in bytes {
-                            write!(&mut hex, "{byte:02x}")
-                                .expect("writing hexadecimal to String cannot fail");
-                        }
-                        hex
-                    });
                 let digest_text = digest
-                    .as_deref()
-                    .and_then(|digest| STMT_SUMMARY_BY_DIGEST_MAP.normalized_sql_for_digest(digest))
+                    .as_ref()
+                    .and_then(|digest| texts.get(digest))
+                    .filter(|text| !text.is_empty())
+                    .cloned()
                     .map(Datum::new_string)
                     .unwrap_or(Datum::Null);
                 vec![

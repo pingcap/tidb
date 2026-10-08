@@ -1,0 +1,193 @@
+{
+  "date": "2026-10-08",
+  "baseline": "bb8b09a2af06203a684c1d95611566fadc307656",
+  "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+  "native_head": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+  "native_changed": false,
+  "findings": [
+    "I01",
+    "I03",
+    "O18",
+    "N05"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 25,
+    "partial": 29
+  },
+  "complete_package_acceptance": false,
+  "scope": "Three diagnostic consumers share selected current/history digest lookup, local-first remote fallback and projected peer scans. Parent findings remain partial; no complete-package acceptance.",
+  "go_sources": [
+    "pkg/expression/util.go::SQLDigestTextRetriever.RetrieveLocal,RetrieveGlobal,runFetchDigestQuery",
+    "pkg/expression/util_test.go::TestSQLDigestTextRetriever",
+    "pkg/executor/infoschema_reader.go::tidbTrxTableRetriever.retrieve,dataLockWaitsTableRetriever.retrieve,deadlocksTableRetriever.retrieve",
+    "pkg/executor/stmtsummary.go",
+    "pkg/util/stmtsummary/reader.go",
+    "pkg/util/stmtsummary/v2/reader.go"
+  ],
+  "changes": [
+    "Batch diagnostic text requests through selected current/history summary readers.",
+    "Keep transaction lookup local; use missing-only global fallback for deadlocks and lock waits, retaining known local text.",
+    "Use internal summary visibility without mutating the caller identity or bypassing outer admission.",
+    "Project original table column IDs through shared peer discovery/cancellation/warning/error and transport owners.",
+    "Borrow outgoing peer client in received deadlock metadata sessions.",
+    "Delete all direct map-only callers and normalized_sql_for_digest; reuse existing discovery fixture."
+  ],
+  "regressions": {
+    "command": "cd rust && cargo test --locked -p tidb-server --lib digest_readers_batch -- --test-threads=1",
+    "passed": 0,
+    "failed": 3,
+    "log": {
+      "path": "/workspace/.cloud-setup/digest-readers-batch/before.log",
+      "sha256": "306c640c603775d82ad0105ef2c1b2fdcf8606656bab19e260659e9df789dec4",
+      "bytes": 110268
+    },
+    "failures": [
+      "TIDB_TRX returned NULL for text owned by v2",
+      "DEADLOCKS returned NULL for text owned by v2",
+      "DATA_LOCK_WAITS returned NULL for text owned by v2"
+    ]
+  },
+  "validation": [
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib digest_readers_batch -- --test-threads=1",
+      "passed": 5,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/digest-readers-batch/after.log",
+        "sha256": "8c6caae1c8c83b7509e94dd1b7d7b1f8417f3c20160d696de5852de93911aa1a",
+        "bytes": 106017
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib cluster_diagnostics_batch -- --test-threads=1",
+      "passed": 6,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/digest-readers-batch/diagnostics.log",
+        "sha256": "eee3e6abcbc2e8e1a6d58f9885f7f63d572bce9988c2f829892c1c981c6ce095",
+        "bytes": 105683
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib cluster_summary_batch -- --test-threads=1",
+      "passed": 5,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/digest-readers-batch/summary.log",
+        "sha256": "4a4a8104b204931042cf98ad4db863570136fa4a12c6b270e825c600aa2087da",
+        "bytes": 105673
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib peer_host_batch -- --test-threads=1",
+      "passed": 5,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/digest-readers-batch/host.log",
+        "sha256": "547f226aa102b85231e5449228e0e5ad4b56ab3a68fb134109957dcfc47ed478",
+        "bytes": 105668
+      }
+    }
+  ],
+  "distinct_rust_cases": 21,
+  "check": {
+    "command": "cd rust && cargo check --locked -p tidb-exec -p tidb-session -p tidb-stmtsummary -p tidb-server --all-targets",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/digest-readers-batch/check.log",
+      "sha256": "e6c0f114a455180a109f9baf039a87ff1efc3f76f47ae8e0d9398b358d4e66f4",
+      "bytes": 121784
+    }
+  },
+  "lint": {
+    "command": "make lint",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/digest-readers-batch/lint.log",
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+      "bytes": 2164
+    }
+  },
+  "build": {
+    "command": "cd rust && cargo build --locked -p tidb-server",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/digest-readers-batch/build.log",
+      "sha256": "9e3110b14da7ab662a2669a10fd1772e2b351071c09eb97c931f4bc28d9bc106",
+      "bytes": 105065
+    }
+  },
+  "live": {
+    "command": "source /workspace/.cloud-setup/env.sh && PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/digest-readers-batch/live.py",
+    "receipt": {
+      "path": "/workspace/.cloud-setup/digest-readers-batch/live.json",
+      "sha256": "b58439db181290213c0358b701083a67eb627497723cbcb577cc32998fbdb75a",
+      "bytes": 1710
+    },
+    "assertions": 16,
+    "exit": 0,
+    "binary_sha256": "7120e9c84c04416a2d02fd1837f6657ee855662c25d14f1db5a0b70476fa4231"
+  },
+  "self_review": {
+    "sources": [
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-exec/src/cluster_peer.rs",
+        "sha256": "4dda25ae0badfc95820cdc4e6a5816df297b5466c7464adaef55761bf637d308",
+        "bytes": 13433
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-server/src/cluster_session_node/settings.rs",
+        "sha256": "13d5fad446956ae1ce0cbfeaa117f1b2ae07c630a03fc233143f9051ac7a1c47",
+        "bytes": 4445
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-server/src/peer_rpc.rs",
+        "sha256": "38039fe8b5a6a75e9b91d2e2dc75532e0c62782886ca8a1c32aecdcf61c4bd4b",
+        "bytes": 70232
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-session/src/dispatch.rs",
+        "sha256": "560169acfdad7c23e77097822897b0e2ca55830b033f24c669e99dcae980e9f6",
+        "bytes": 159365
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-session/src/process_arm.rs",
+        "sha256": "1c321a4101ae0b8a73c78fe1e62d7129eba044735167716e653d847d19180835",
+        "bytes": 25163
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-stmtsummary/src/statement_summary.rs",
+        "sha256": "cd9a036b674e5d8874c8609c88b7c2c703eec729eb072c9c3171b878f43e2966",
+        "bytes": 67978
+      }
+    ],
+    "checks": [
+      "Every direct digest helper caller migrated before deletion.",
+      "Internal lookup retains caller identity and the outer PROCESS/transaction gates.",
+      "Ordinary scans and diagnostic projections share existing transport/cancellation/lifecycle.",
+      "Remote requests carry real table IDs and projected column IDs; known local text is preserved.",
+      "Both production storage hosts borrow the same outgoing client for received diagnostics."
+    ]
+  },
+  "publication": "Actual hook, fresh locked pre-push build and remote verification are finalized in /workspace/.cloud-setup/digest-readers-batch/final-handoff.json. No bypass or force push.",
+  "limits": [
+    "No complete Go package acceptance or exhaustive re-audit of54 unresolved roots.",
+    "No live Go server, multi-node TiKV, broad platform suite or benchmark validation.",
+    "Diagnostic row construction remains eager; full projection-aware lazy lookup and remote predicate pushdown remain incomplete.",
+    "Full SQLDigestTextRetriever expression/builtin integration is not accepted by this consumer repair.",
+    "The remote fallback Rust test uses generated gRPC with a digest-data fixture and existing discovery fixture. Production probe uses real unistore v1/v2 SQL and generated-descriptor gRPC. Persisted history uses valid record fixtures."
+  ],
+  "intermediate_notes": [
+    {
+      "scope": "Live probe assertion correction; no production source change",
+      "note": "Initial probe expected an unquoted sleep prefix. The actual canonical text is select `sleep` ( ? ). Corrected probe selects its observed summary row and compares that exact digest/text in local SQL, cluster SQL and incoming gRPC. Both modes pass on rerun.",
+      "receipt": {
+        "path": "/workspace/.cloud-setup/digest-readers-batch/initial-live.json",
+        "sha256": "3f07c48b8e00a5d29d0b6132676e403ec2c28dcfc0e0deb9ddf62e62f788cea2"
+      }
+    }
+  ]
+}

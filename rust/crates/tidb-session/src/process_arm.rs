@@ -163,8 +163,25 @@ impl Session {
         table_name: &str,
         columns: &[(String, FieldType)],
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let mut rows =
-            self.local_cluster_table_rows(table_name, None, &self.session_time_zone())?;
+        let rows = self.local_cluster_table_rows(table_name, None, &self.session_time_zone())?;
+        self.cluster_table_rows_with_rows(
+            table_name,
+            columns,
+            &(0..columns.len()).collect::<Vec<_>>(),
+            rows,
+            false,
+        )
+    }
+
+    /// Shared discovery, cancellation and warnings for ordinary and restricted readers.
+    pub(crate) fn cluster_table_rows_with_rows(
+        &mut self,
+        table_name: &str,
+        columns: &[(String, FieldType)],
+        offsets: &[usize],
+        mut rows: Vec<Vec<Datum>>,
+        internal: bool,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
         let Some(syncer) = &self.server_info_syncer else {
             return Ok(rows);
         };
@@ -189,14 +206,18 @@ impl Session {
             .ok_or_else(|| DriverError::unsupported("TiDB peer RPC client is not installed"))?;
         let ctx = self.statement_context(false);
         // Go carries Username/Hostname (the presented login), not AuthHostname.
-        let user = self
-            .login_user
-            .as_deref()
-            .and_then(|identity| identity.split_once('@'));
-        let result = client.scan(
+        let user = if internal {
+            None
+        } else {
+            self.login_user
+                .as_deref()
+                .and_then(|identity| identity.split_once('@'))
+        };
+        let result = client.scan_projected(
             &servers,
             infoschema::memory_table_id(table_name).expect("registered memory table"),
             columns,
+            offsets,
             user,
             &ctx,
             &self.session_time_zone(),
@@ -207,6 +228,99 @@ impl Session {
         }
         rows.extend(result.rows);
         Ok(rows)
+    }
+
+    /// Go expression.SQLDigestTextRetriever: current plus history, then peers
+    /// only for unknown digests. Restricted lookup does not change SQL identity.
+    pub(crate) fn sql_digest_texts(
+        &mut self,
+        digests: impl IntoIterator<Item = String>,
+        global: bool,
+    ) -> Result<std::collections::HashMap<String, String>, DriverError> {
+        use std::collections::{HashMap, HashSet};
+        let mut texts: HashMap<String, String> = digests
+            .into_iter()
+            .map(|digest| (digest, String::new()))
+            .collect();
+        if texts.is_empty() {
+            return Ok(texts);
+        }
+        let requested: HashSet<_> = texts.keys().cloned().collect();
+        // Go limits the WHERE IN list to512 digests, otherwise fetching all.
+        let filter = (requested.len() <= 512).then_some(&requested);
+        let columns = infoschema::table_schema("STATEMENTS_SUMMARY").expect("summary schema");
+        let columns: Vec<_> = ["DIGEST", "DIGEST_TEXT"]
+            .iter()
+            .map(|name| {
+                columns
+                    .iter()
+                    .find(|(column, _)| column == name)
+                    .expect("digest column")
+                    .clone()
+            })
+            .collect();
+        fn merge(texts: &mut HashMap<String, String>, rows: Vec<Vec<Datum>>) {
+            for row in rows {
+                let (Some(digest), Some(text)) = (row[0].as_raw_bytes(), row[1].as_raw_bytes())
+                else {
+                    continue;
+                };
+                if let Some(known) = texts.get_mut(String::from_utf8_lossy(digest).as_ref()) {
+                    if known.is_empty() {
+                        *known = String::from_utf8_lossy(text).into_owned();
+                    }
+                }
+            }
+        }
+        for table in ["STATEMENTS_SUMMARY", "STATEMENTS_SUMMARY_HISTORY"] {
+            merge(
+                &mut texts,
+                self.statement_summary_rows_for(
+                    table,
+                    &columns,
+                    &self.session_time_zone(),
+                    true,
+                    filter,
+                )?,
+            );
+        }
+        let unknown: HashSet<_> = texts
+            .iter()
+            .filter(|(_, text)| text.is_empty())
+            .map(|(digest, _)| digest.clone())
+            .collect();
+        if !global || unknown.is_empty() {
+            return Ok(texts);
+        }
+        let filter = (requested.len() <= 512).then_some(&unknown);
+        for (table, source) in [
+            ("CLUSTER_STATEMENTS_SUMMARY", "STATEMENTS_SUMMARY"),
+            (
+                "CLUSTER_STATEMENTS_SUMMARY_HISTORY",
+                "STATEMENTS_SUMMARY_HISTORY",
+            ),
+        ] {
+            let schema = infoschema::table_schema(table).expect("cluster summary schema");
+            let offsets: Vec<_> = ["DIGEST", "DIGEST_TEXT"]
+                .iter()
+                .map(|name| {
+                    schema
+                        .iter()
+                        .position(|(column, _)| column == name)
+                        .expect("digest column")
+                })
+                .collect();
+            let local = self.statement_summary_rows_for(
+                source,
+                &columns,
+                &self.session_time_zone(),
+                true,
+                filter,
+            )?;
+            let rows = self.cluster_table_rows_with_rows(table, &schema, &offsets, local, true)?;
+            merge(&mut texts, rows);
+        }
+        Ok(texts)
     }
 
     /// The rows of `SHOW [FULL] PROCESSLIST`.
@@ -434,9 +548,13 @@ impl Session {
             COL_CURRENT_SQL_DIGEST, COL_DEADLOCK_ID, COL_KEY, COL_OCCUR_TIME, COL_RETRYABLE,
             COL_TRX_HOLDING_LOCK, COL_TRY_LOCK_TRX_ID, GLOBAL_DEADLOCK_HISTORY,
         };
-        use tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP;
-
         let records = GLOBAL_DEADLOCK_HISTORY.get_all();
+        let texts = self.sql_digest_texts(
+            records
+                .iter()
+                .flat_map(|record| record.wait_chain.iter().map(|item| item.sql_digest.clone())),
+            true,
+        )?;
         self.with_catalog_mut(|catalog| {
             Ok(records
                 .into_iter()
@@ -444,8 +562,10 @@ impl Session {
                     (0..record.wait_chain.len())
                         .map(|idx| {
                             let item = &record.wait_chain[idx];
-                            let digest_text = STMT_SUMMARY_BY_DIGEST_MAP
-                                .normalized_sql_for_digest(&item.sql_digest)
+                            let digest_text = texts
+                                .get(&item.sql_digest)
+                                .filter(|text| !text.is_empty())
+                                .cloned()
                                 .map(Datum::new_string)
                                 .unwrap_or(Datum::Null);
                             let key_info = if item.key.is_empty() {

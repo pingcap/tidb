@@ -18,6 +18,7 @@ use super::*;
 impl ClusterSessionFactory {
     pub(crate) fn peer_service(&self) -> crate::peer_rpc::PeerService {
         let catalog = Arc::clone(&self.catalog);
+        let peer = self.cluster_peer.clone();
         let stats = Arc::clone(&self.stats);
         let auto_ids = Arc::clone(&self.auto_ids);
         let index_usage = self.stats_usage.index_usage_collector();
@@ -44,6 +45,9 @@ impl ClusterSessionFactory {
             );
             let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
             session.set_index_usage_collector(Arc::clone(&index_usage));
+            if let Some(peer) = &peer {
+                session.set_cluster_peer_client(Arc::clone(peer));
+            }
             session
         }))
     }

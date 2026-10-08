@@ -32,7 +32,7 @@ pub struct ClusterPeerClient {
 /// Rows and peer warnings are published together at the statement boundary.
 #[derive(Debug, Default)]
 pub struct PeerRows {
-    /// Decoded rows, including the instance column supplied by the remote node.
+    /// Decoded rows in the requested projection order.
     pub rows: Vec<Vec<Datum>>,
     /// Go SelectResponse warnings, preserving their MySQL codes.
     pub warnings: Vec<(u16, String)>,
@@ -112,18 +112,51 @@ impl ClusterPeerClient {
         zone: &SessionTimeZone,
         concurrency: usize,
     ) -> Result<PeerRows, DriverError> {
+        self.scan_projected(
+            servers,
+            table_id,
+            columns,
+            &(0..columns.len()).collect::<Vec<_>>(),
+            user,
+            ctx,
+            zone,
+            concurrency,
+        )
+    }
+
+    /// Read selected columns using their original table IDs and the shared fleet.
+    #[allow(clippy::too_many_arguments)]
+    pub fn scan_projected(
+        &self,
+        servers: &[ServerInfo],
+        table_id: i64,
+        columns: &[(String, FieldType)],
+        offsets: &[usize],
+        user: Option<(&str, &str)>,
+        ctx: &StmtContext,
+        zone: &SessionTimeZone,
+        concurrency: usize,
+    ) -> Result<PeerRows, DriverError> {
+        let selected = offsets
+            .iter()
+            .map(|offset| {
+                columns
+                    .get(*offset)
+                    .map(|(_, field)| (*offset, field))
+                    .ok_or_else(|| DriverError::unsupported("invalid cluster column projection"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut dag = dag_context(ctx, zone);
         dag.user = user.map(|(name, host)| tipb::UserIdentity {
             user_name: Some(name.to_owned()),
             user_host: Some(host.to_owned()),
         });
-        let columns_pb = columns
+        let columns_pb = selected
             .iter()
-            .enumerate()
-            .map(|(offset, (_, field_type))| {
+            .map(|(offset, field_type)| {
                 crate::cop_scan::scan_column(&PushdownScanColumn {
-                    id: (offset + 1) as i64,
-                    field_type: field_type.clone(),
+                    id: (*offset + 1) as i64,
+                    field_type: (*field_type).clone(),
                     is_handle: false,
                     origin_default: None,
                 })
@@ -132,7 +165,7 @@ impl ClusterPeerClient {
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(DriverError::unsupported)?;
-        dag.output_offsets = (0..columns.len() as u32).collect();
+        dag.output_offsets = (0..selected.len() as u32).collect();
         dag.executors.push(tipb::Executor {
             tp: Some(tipb::ExecType::TypeTableScan as i32),
             tbl_scan: Some(tipb::TableScan {
@@ -142,7 +175,7 @@ impl ClusterPeerClient {
             }),
             ..Default::default()
         });
-        let types: Vec<_> = columns.iter().map(|(_, field)| field.clone()).collect();
+        let types: Vec<_> = selected.iter().map(|(_, field)| (*field).clone()).collect();
         self.with_cancellation(ctx, |cancel| {
             let mut result = PeerRows::default();
             for batch in peer_addresses(servers, None).chunks(concurrency.max(1)) {

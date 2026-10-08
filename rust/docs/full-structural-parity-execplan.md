@@ -33,6 +33,8 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] Migrate transaction/deadlock/lock-wait SQL text to shared selected summary readers and projected peer fallback; retire direct v1-only lookup. See [batch plan](digest-readers-execplan.md) and [receipt](parity/current-audit/digest-readers-validation.json). I01/I03/O18/N05 retain broader obligations.
+
 - [x] Compose five cluster transaction/deadlock/memory/index readers with shared local owners, real process visibility and request-time catalog/collector metadata; retain I01/I03/N05 residuals. See [batch plan](cluster-diagnostics-execplan.md) and [receipt](parity/current-audit/cluster-diagnostics-validation.json).
 
 - [x] Compose five cluster summary readers with shared local schemas, eviction owners and peer transport; retain I01/I03/O18/N05 residuals. See [batch plan](cluster-summary-execplan.md) and [receipt](parity/current-audit/cluster-summary-validation.json).

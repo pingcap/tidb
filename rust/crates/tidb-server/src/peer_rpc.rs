@@ -354,6 +354,457 @@ mod tests {
         }
     }
 
+    struct Discovery(Vec<(String, Vec<u8>)>);
+    impl tidb_domain::serverinfo_syncer::EtcdOps for Discovery {
+        fn lease_grant(&self, _: i64) -> Result<i64, String> {
+            Err("read-only discovery".into())
+        }
+        fn lease_keep_alive_once(&self, _: i64) -> Result<(), String> {
+            Err("read-only discovery".into())
+        }
+        fn lease_revoke(&self, _: i64) -> Result<(), String> {
+            Err("read-only discovery".into())
+        }
+        fn put_with_lease(&self, _: &str, _: &[u8], _: i64) -> Result<(), String> {
+            Err("read-only discovery".into())
+        }
+        fn get_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
+            Ok(self
+                .0
+                .iter()
+                .filter(|(key, _)| key.starts_with(prefix))
+                .cloned()
+                .collect())
+        }
+        fn delete(&self, _: &str) -> Result<(), String> {
+            Err("read-only discovery".into())
+        }
+        fn put(&self, _: &str, _: &[u8]) -> Result<(), String> {
+            Err("read-only discovery".into())
+        }
+        fn delete_prefix(&self, _: &str) -> Result<(), String> {
+            Err("read-only discovery".into())
+        }
+    }
+
+    // Go infoschema_reader.go uses SQLDigestTextRetriever for all three readers.
+    fn digest_reader_persistent_case(table: &str, history: bool) {
+        use tidb_executor::deadlock_history::{
+            DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY,
+        };
+        use tidb_stmtsummary::v2::stmtsummary::{
+            global_stmt_summary, set_global_stmt_summary, StmtSummary,
+        };
+        let config = tidb_config::config_tree::config::get_global_config();
+        let previous = global_stmt_summary();
+        let summary = StmtSummary::new_for_test(64);
+        set_global_stmt_summary(Some(summary.clone()));
+        let path = std::env::temp_dir().join(format!(
+            "tidb-digest-{}-{}-{}.log",
+            std::process::id(),
+            table,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        struct RemoveFile(std::path::PathBuf);
+        impl Drop for RemoveFile {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let _file = RemoveFile(path.clone());
+        let mut persistent = (*config).clone();
+        persistent.instance.stmt_summary_filename = path.to_string_lossy().into_owned();
+        persistent.instance.stmt_summary_enable_persistent = true;
+        tidb_config::config_tree::config::store_global_config(persistent);
+        struct Restore(
+            Arc<tidb_config::config_tree::config::Config>,
+            Option<Arc<StmtSummary>>,
+            Arc<StmtSummary>,
+        );
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                tidb_config::config_tree::config::store_global_config(self.0.clone());
+                set_global_stmt_summary(self.1.clone());
+                self.2.close();
+                GLOBAL_DEADLOCK_HISTORY.clear();
+                GLOBAL_DEADLOCK_HISTORY.resize(0);
+            }
+        }
+        let _restore = Restore(config, previous, summary.clone());
+        let digest = "aabbccdd1144";
+        let text = "select digest_reader_persistent";
+        let mut info = tidb_stmtsummary::v2::record::generate_stmt_exec_info_4_test(digest);
+        info.normalized_sql = text.into();
+        if history {
+            std::fs::write(
+                &path,
+                format!(
+                    "{}\n",
+                    serde_json::json!({"begin":1,"end":2,"digest":digest,"normalized_sql":text})
+                ),
+            )
+            .unwrap();
+        } else {
+            summary.add(&info);
+        }
+        let mut session = Session::new();
+        session.set_user(
+            "diagnostic_reader@%".into(),
+            "diagnostic_reader@localhost".into(),
+        );
+        session.set_process_privilege(true);
+        let rows = match table {
+            "TIDB_TRX" => {
+                let processes = ProcessRegistry::default();
+                let _guard = processes.register(
+                    71,
+                    "diagnostic_reader".into(),
+                    "localhost".into(),
+                    "test".into(),
+                    None,
+                );
+                processes.transaction_started(71, 123 << 18);
+                processes.statement_started_with_digest(71, text, Some(digest), "Running");
+                let rows = session
+                    .local_cluster_table_rows(
+                        "CLUSTER_TIDB_TRX",
+                        Some(&processes),
+                        &SessionTimeZone::utc(),
+                    )
+                    .unwrap();
+                vec![vec![rows[0][4].clone()]]
+            }
+            "DEADLOCKS" => {
+                GLOBAL_DEADLOCK_HISTORY.resize(10);
+                GLOBAL_DEADLOCK_HISTORY.push(DeadlockRecord {
+                    occur_time: tidb_datatype::Time::new(
+                        tidb_datatype::CoreTime::from_date(2026, 10, 8, 1, 2, 3, 0),
+                        tidb_datatype::TimeType::Timestamp,
+                        6,
+                    )
+                    .unwrap(),
+                    id: 0,
+                    is_retryable: false,
+                    wait_chain: vec![WaitChainItem {
+                        sql_digest: digest.into(),
+                        all_sql_digests: vec![],
+                        try_lock_txn: 1,
+                        txn_holding_lock: 2,
+                        key: vec![],
+                    }],
+                });
+                let tidb_session::StmtResult::Rows(rows) = session
+                    .run("SELECT CURRENT_SQL_DIGEST_TEXT FROM information_schema.DEADLOCKS")
+                    .unwrap()
+                else {
+                    panic!("rows")
+                };
+                rows
+            }
+            "DATA_LOCK_WAITS" => {
+                struct Waits(Vec<tidb_session::DataLockWait>);
+                impl tidb_session::DataLockWaitsProvider for Waits {
+                    fn lock_waits(&self) -> Result<Vec<tidb_session::DataLockWait>, String> {
+                        Ok(self.0.clone())
+                    }
+                }
+                let mut tag = tidb_txnkv::ResourceGroupTagBuilder::new(None);
+                tag.set_sql_digest(&[0xaa, 0xbb, 0xcc, 0xdd, 0x11, 0x44]);
+                session.set_data_lock_waits_provider(Arc::new(Waits(vec![
+                    tidb_session::DataLockWait {
+                        txn: 1,
+                        wait_for_txn: 2,
+                        key: vec![],
+                        resource_group_tag: tag.encode_tag_with_key(&[]),
+                    },
+                ])));
+                let tidb_session::StmtResult::Rows(rows) = session
+                    .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
+                    .unwrap()
+                else {
+                    panic!("rows")
+                };
+                rows
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0][0].as_raw_bytes(),
+            Some(text.as_bytes()),
+            "{table}: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn digest_readers_batch_transaction_persistent() {
+        digest_reader_persistent_case("TIDB_TRX", false);
+    }
+    #[test]
+    fn digest_readers_batch_deadlock_persistent() {
+        digest_reader_persistent_case("DEADLOCKS", false);
+    }
+    #[test]
+    fn digest_readers_batch_lock_wait_persistent() {
+        digest_reader_persistent_case("DATA_LOCK_WAITS", false);
+    }
+
+    #[test]
+    fn digest_readers_batch_persisted_history_all_consumers() {
+        for table in ["TIDB_TRX", "DEADLOCKS", "DATA_LOCK_WAITS"] {
+            digest_reader_persistent_case(table, true);
+        }
+    }
+
+    #[test]
+    fn digest_readers_batch_remote_fallback_projection_and_errors() {
+        use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
+        let config = tidb_config::config_tree::config::get_global_config();
+        struct RestoreConfig(Arc<tidb_config::config_tree::config::Config>);
+        impl Drop for RestoreConfig {
+            fn drop(&mut self) {
+                tidb_config::config_tree::config::store_global_config(self.0.clone());
+            }
+        }
+        let _config = RestoreConfig(config.clone());
+        let mut nonpersistent = (*config).clone();
+        nonpersistent.instance.stmt_summary_enable_persistent = false;
+        tidb_config::config_tree::config::store_global_config(nonpersistent);
+        let captured = Arc::new(std::sync::Mutex::new(Vec::<tipb::DagRequest>::new()));
+        let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        struct DigestPeer(
+            Arc<std::sync::Mutex<Vec<tipb::DagRequest>>>,
+            Arc<std::sync::atomic::AtomicBool>,
+        );
+        #[tonic::async_trait]
+        impl Tikv for DigestPeer {
+            async fn coprocessor(
+                &self,
+                request: tonic::Request<coprocessor::Request>,
+            ) -> Result<tonic::Response<coprocessor::Response>, tonic::Status> {
+                let dag = tipb::DagRequest::decode(request.into_inner().data.as_slice()).unwrap();
+                self.0.lock().unwrap().push(dag);
+                if self.1.load(Ordering::SeqCst) {
+                    return Ok(tonic::Response::new(coprocessor::Response {
+                        other_error: "digest peer failure".into(),
+                        ..Default::default()
+                    }));
+                }
+                let mut bytes = Vec::new();
+                for (digest, text) in [
+                    ("d1d2", "remote normalized statement"),
+                    ("c1c2", "must not replace local"),
+                ] {
+                    bytes.extend(
+                        tidb_codec::encode_value(&[
+                            Datum::new_string(digest),
+                            Datum::new_string(text),
+                        ])
+                        .unwrap(),
+                    );
+                }
+                Ok(tonic::Response::new(coprocessor::Response {
+                    data: tipb::SelectResponse {
+                        chunks: vec![tipb::Chunk {
+                            rows_data: Some(bytes.into()),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }
+                    .encode_to_vec()
+                    .into(),
+                    ..Default::default()
+                }))
+            }
+        }
+        let (ready, receive) = std::sync::mpsc::channel();
+        let (stop, done) = tokio::sync::oneshot::channel();
+        let service = DigestPeer(captured.clone(), fail.clone());
+        let worker = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                    ready.send(listener.local_addr().unwrap()).unwrap();
+                    let incoming = futures::stream::unfold(listener, |listener| async move {
+                        let stream = listener.accept().await.map(|(stream, _)| stream);
+                        Some((stream, listener))
+                    });
+                    tonic::transport::Server::builder()
+                        .add_service(TikvServer::new(service))
+                        .serve_with_incoming_shutdown(incoming, async {
+                            let _ = done.await;
+                        })
+                        .await
+                        .unwrap();
+                });
+        });
+        struct StopPeer(
+            Option<tokio::sync::oneshot::Sender<()>>,
+            Option<std::thread::JoinHandle<()>>,
+        );
+        impl Drop for StopPeer {
+            fn drop(&mut self) {
+                let _ = self.0.take().unwrap().send(());
+                self.1.take().unwrap().join().unwrap();
+            }
+        }
+        let _peer = StopPeer(Some(stop), Some(worker));
+        let addr = receive.recv().unwrap();
+        let mut remote = tidb_domain::serverinfo::ServerInfo::default();
+        remote.static_info.id = "digest-remote".into();
+        remote.static_info.ip = addr.ip().to_string();
+        remote.static_info.status_port = addr.port() as usize;
+        let discovery = Arc::new(Discovery(vec![(
+            tidb_domain::serverinfo_syncer::server_info_key_path("digest-remote"),
+            remote.marshal().unwrap(),
+        )]));
+        let mut local = tidb_domain::serverinfo::ServerInfo::default();
+        local.static_info.id = "digest-local".into();
+        local.static_info.ip = "127.0.0.1".into();
+        let mut session = Session::new();
+        session.set_user("digest_reader@%".into(), "digest_reader@localhost".into());
+        session.set_process_privilege(true);
+        session.set_server_info_syncer(Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
+            local,
+            Some(discovery),
+        )));
+        session.set_cluster_peer_client(Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
+            tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap(),
+        )));
+        let mut info = tidb_stmtsummary::v2::record::generate_stmt_exec_info_4_test("c1c2");
+        info.normalized_sql = "local normalized statement".into();
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.add_statement(&info);
+        struct Waits(Vec<tidb_session::DataLockWait>);
+        impl tidb_session::DataLockWaitsProvider for Waits {
+            fn lock_waits(&self) -> Result<Vec<tidb_session::DataLockWait>, String> {
+                Ok(self.0.clone())
+            }
+        }
+        let waits = |digests: &[[u8; 2]]| {
+            Arc::new(Waits(
+                digests
+                    .iter()
+                    .map(|digest| {
+                        let mut tag = tidb_txnkv::ResourceGroupTagBuilder::new(None);
+                        tag.set_sql_digest(digest);
+                        tidb_session::DataLockWait {
+                            resource_group_tag: tag.encode_tag_with_key(&[]),
+                            ..Default::default()
+                        }
+                    })
+                    .collect(),
+            ))
+        };
+        session.set_data_lock_waits_provider(waits(&[[0xc1, 0xc2], [0xd1, 0xd2], [0xe1, 0xe2]]));
+        let tidb_session::StmtResult::Rows(rows) = session
+            .run("SELECT SQL_DIGEST, SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
+            .unwrap()
+        else {
+            panic!("rows")
+        };
+        for (digest, text) in [
+            (
+                b"c1c2".as_slice(),
+                Some(b"local normalized statement".as_slice()),
+            ),
+            (
+                b"d1d2".as_slice(),
+                Some(b"remote normalized statement".as_slice()),
+            ),
+            (b"e1e2".as_slice(), None),
+        ] {
+            assert_eq!(
+                rows.iter()
+                    .find(|row| row[0].as_raw_bytes() == Some(digest))
+                    .unwrap()[1]
+                    .as_raw_bytes(),
+                text
+            );
+        }
+        let requests = captured.lock().unwrap().clone();
+        assert_eq!(requests.len(), 2, "current and history share one fallback");
+        for dag in requests {
+            assert!(
+                dag.user.is_none(),
+                "restricted lookup must not inherit user filtering"
+            );
+            let scan = dag.executors[0].tbl_scan.as_ref().unwrap();
+            let table = if scan.table_id
+                == tidb_session::infoschema::memory_table_id("CLUSTER_STATEMENTS_SUMMARY")
+            {
+                "CLUSTER_STATEMENTS_SUMMARY"
+            } else {
+                assert_eq!(
+                    scan.table_id,
+                    tidb_session::infoschema::memory_table_id("CLUSTER_STATEMENTS_SUMMARY_HISTORY")
+                );
+                "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
+            };
+            let columns = tidb_session::infoschema::table_schema(table).unwrap();
+            assert_eq!(
+                scan.columns.iter().map(|c| c.column_id).collect::<Vec<_>>(),
+                ["DIGEST", "DIGEST_TEXT"]
+                    .iter()
+                    .map(|name| Some(
+                        columns
+                            .iter()
+                            .position(|(column, _)| column == name)
+                            .unwrap() as i64
+                            + 1
+                    ))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(dag.output_offsets, vec![0, 1]);
+        }
+        // Known local text never reaches a failing peer.
+        fail.store(true, Ordering::SeqCst);
+        session.set_data_lock_waits_provider(waits(&[[0xc1, 0xc2]]));
+        session
+            .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
+            .unwrap();
+        assert_eq!(captured.lock().unwrap().len(), 2);
+        // Running transactions use only local lookup, including an unknown digest.
+        let processes = ProcessRegistry::default();
+        let _guard = processes.register(
+            91,
+            "digest_reader".into(),
+            "localhost".into(),
+            "test".into(),
+            None,
+        );
+        processes.transaction_started(91, 1 << 18);
+        processes.statement_started_with_digest(91, "running", Some("e1e2"), "Running");
+        let rows = session
+            .local_cluster_table_rows(
+                "CLUSTER_TIDB_TRX",
+                Some(&processes),
+                &SessionTimeZone::utc(),
+            )
+            .unwrap();
+        assert_eq!(rows[0][4], Datum::Null);
+        assert_eq!(captured.lock().unwrap().len(), 2);
+        session.set_data_lock_waits_provider(waits(&[[0xd1, 0xd2]]));
+        assert!(session
+            .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
+            .unwrap_err()
+            .to_string()
+            .contains("digest peer failure"));
+        let count = captured.lock().unwrap().len();
+        session.set_process_privilege(false);
+        assert!(session
+            .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
+            .unwrap_err()
+            .to_string()
+            .contains("PROCESS"));
+        assert_eq!(captured.lock().unwrap().len(), count);
+    }
+
     #[test]
     fn cluster_diagnostics_batch_transaction_sql() {
         Session::new()
@@ -865,38 +1316,6 @@ mod tests {
         scan_evicted().unwrap();
         // Exercise SQL -> discovered peer -> receiver, excluding an unpublished
         // local identity. This is a discovery fixture, not another RPC harness.
-        struct Discovery(Vec<(String, Vec<u8>)>);
-        impl tidb_domain::serverinfo_syncer::EtcdOps for Discovery {
-            fn lease_grant(&self, _: i64) -> Result<i64, String> {
-                Err("read-only discovery".into())
-            }
-            fn lease_keep_alive_once(&self, _: i64) -> Result<(), String> {
-                Err("read-only discovery".into())
-            }
-            fn lease_revoke(&self, _: i64) -> Result<(), String> {
-                Err("read-only discovery".into())
-            }
-            fn put_with_lease(&self, _: &str, _: &[u8], _: i64) -> Result<(), String> {
-                Err("read-only discovery".into())
-            }
-            fn get_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
-                Ok(self
-                    .0
-                    .iter()
-                    .filter(|(key, _)| key.starts_with(prefix))
-                    .cloned()
-                    .collect())
-            }
-            fn delete(&self, _: &str) -> Result<(), String> {
-                Err("read-only discovery".into())
-            }
-            fn put(&self, _: &str, _: &[u8]) -> Result<(), String> {
-                Err("read-only discovery".into())
-            }
-            fn delete_prefix(&self, _: &str) -> Result<(), String> {
-                Err("read-only discovery".into())
-            }
-        }
         address.static_info.id = "remote-summary".into();
         let discovery = Arc::new(Discovery(vec![(
             tidb_domain::serverinfo_syncer::server_info_key_path("remote-summary"),
