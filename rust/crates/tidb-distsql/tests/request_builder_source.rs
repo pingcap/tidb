@@ -578,3 +578,44 @@ fn test_request_builder_handle() {
     let tag = ResourceGroupTag::decode(encoded.as_slice()).expect("valid tag");
     assert_eq!(tag.table_id, Some(15));
 }
+
+#[test]
+fn go_partition_table_scan_keeps_partition_ids_next_to_ranges() {
+    // `pkg/kv/kv.go:579-581,678-682` and
+    // `pkg/distsql/request_builder.go:311-314` keep TiFlash partition
+    // ranges separate from ordinary `KeyRanges`.  Preserve source order and
+    // bytes at the request boundary; region splitting is checked separately.
+    use tidb_distsql::{KvRequestBuilder, PartitionIdAndRanges};
+
+    let mut builder = KvRequestBuilder::new();
+    builder.set_partition_id_and_ranges(vec![
+        PartitionIdAndRanges {
+            id: 41,
+            key_ranges: vec![RequestKeyRange {
+                start_key: vec![1, 2].into(),
+                end_key: vec![3].into(),
+            }],
+        },
+        PartitionIdAndRanges {
+            id: 42,
+            key_ranges: vec![RequestKeyRange {
+                start_key: vec![4].into(),
+                end_key: vec![5, 6].into(),
+            }],
+        },
+    ]);
+
+    let request = builder.build().expect("partition request build");
+    assert_eq!(request.partition_id_and_ranges.len(), 2);
+    assert_eq!(request.partition_id_and_ranges[0].id, 41);
+    assert_eq!(
+        request.partition_id_and_ranges[0].key_ranges[0].start_key,
+        vec![1, 2]
+    );
+    assert_eq!(request.partition_id_and_ranges[1].id, 42);
+    assert_eq!(
+        request.partition_id_and_ranges[1].key_ranges[0].end_key,
+        vec![5, 6]
+    );
+    assert!(request.key_ranges.is_some());
+}

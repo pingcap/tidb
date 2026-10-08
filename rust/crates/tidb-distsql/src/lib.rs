@@ -43,7 +43,6 @@ mod request_builder;
 mod response_channel;
 mod select_iter;
 mod signed_handle_range;
-mod stream_decode;
 mod table_handle_ranges;
 mod transport;
 mod warning;
@@ -107,7 +106,6 @@ pub use response_channel::{
 };
 pub use select_iter::SelectResultRow;
 pub use signed_handle_range::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
-pub use stream_decode::{decode_stream_response, RawStreamResponse};
 pub use table_handle_ranges::table_handles_to_kv_ranges;
 pub use tidb_txnkv::lock::{FixedTimestampSource, LockRecoveryClient, TimestampSource};
 pub use tidb_txnkv::region;
@@ -121,7 +119,7 @@ pub use tidb_util::paging::{
     MIN_PAGING_SIZE, THRESHOLD as PAGING_THRESHOLD,
 };
 pub use transport::{
-    TransportBinding, TransportRequest, TransportRequestError, TransportRequestState,
+    TransportBinding, TransportRequest, TransportRequestError,
 };
 pub use warning::{Warning, WarningClass, WarningCollector, WarningLevel};
 

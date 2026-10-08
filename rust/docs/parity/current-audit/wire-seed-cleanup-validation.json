@@ -1,0 +1,110 @@
+{
+  "baseline": "7f64194730bc7a76ae90e758427a1de146598bee",
+  "retired_files": [
+    {
+      "path": "rust/crates/tidb-distsql/src/stream_decode.rs",
+      "lines": 107,
+      "sha256": "5f4039f98e7c20f6fac02e3902f5791a42ff84b8d5e2c0b8c24d0bb45e7fbcad",
+      "archive": "https://github.com/pingcap/tidb/blob/7f64194730bc7a76ae90e758427a1de146598bee/rust/crates/tidb-distsql/src/stream_decode.rs"
+    },
+    {
+      "path": "rust/crates/tidb-distsql/tests/stream_decode_source.rs",
+      "lines": 83,
+      "sha256": "7d7da1e487ee8fb7b3b0470302dc8b21dc4072624a6b1d7910806ba8b3248272",
+      "archive": "https://github.com/pingcap/tidb/blob/7f64194730bc7a76ae90e758427a1de146598bee/rust/crates/tidb-distsql/tests/stream_decode_source.rs"
+    },
+    {
+      "path": "rust/crates/tidb-distsql/tests/kv_request_source.rs",
+      "lines": 73,
+      "sha256": "6d9df8b6e191b900beabcae3d3cc844c42db7009e0b8fc5122e864a6117d84c8",
+      "archive": "https://github.com/pingcap/tidb/blob/7f64194730bc7a76ae90e758427a1de146598bee/rust/crates/tidb-distsql/tests/kv_request_source.rs"
+    },
+    {
+      "path": "rust/docs/perf-parity-2026-09-17.md",
+      "lines": 3568,
+      "sha256": "77df31616a7106878929afd5cdfc687f6c57f63a8179765b2cd1774283b41d31",
+      "archive": "https://github.com/pingcap/tidb/blob/7f64194730bc7a76ae90e758427a1de146598bee/rust/docs/perf-parity-2026-09-17.md",
+      "reason": "Historical September 17\u201320 VM/commit results and scratchpad commands; current planner plan already labels them historical and non-validating. Includes retired cop_encode skip. Exact evidence remains in immutable Git history."
+    }
+  ],
+  "retired_cases": [
+    "stream_response_preserves_payload_and_all_metadata",
+    "stream_response_preserves_absent_vs_present_empty_data",
+    "stream_response_rejects_invalid_protobuf_without_guessing_payload",
+    "go_request_builder_preserves_raw_payload_bytes",
+    "binding_marker_carries_no_transport_details",
+    "transport_request_rejects_unbound_serialization_and_allows_bound_snapshot"
+  ],
+  "moved_case": "go_partition_table_scan_keeps_partition_ids_next_to_ranges",
+  "retired_benchmark": {
+    "name": "cop_encode",
+    "lines": 62,
+    "sha256": "866ecee2af85258215ddaf688e91436788b26aea4a25dc5f5380e727dfad59e7",
+    "reason": "Request is never bound, so every invocation prints skipped Unbound and returns before measurement."
+  },
+  "continuity": {
+    "coprocessor payload, field tags, range shapes": "coprocessor_request_source.rs retained exact wire and derived-message comparisons",
+    "transport binding, cancellation, repeated bind rejection": "transport.rs retained three tests; query_runtime_source.rs and active_cancellation_source.rs",
+    "region splitting and StoreBatchTask wire": "region_task_builder_source.rs original Go cases remain; region_task_source.rs",
+    "partition IDs/ranges": "unique existing case moved into request_builder_source.rs",
+    "streaming protobuf": "Generated tidb_proto::StreamResponse retained; deleted wrapper had no production consumers and proves no streaming/MPP acceptance."
+  },
+  "date": "2026-10-08",
+  "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+  "go_anchors": [
+    "pkg/executor/coprocessor.go::CoprocessorDAGHandler.buildStreamResponse uses generated tipb.StreamResponse",
+    "pkg/store/copr/coprocessor.go constructs coprocessor.Request at the task/RPC owner",
+    "pkg/distsql/request_builder.go and request_builder_test.go preserve opaque payload and partition ranges"
+  ],
+  "validation": {
+    "command": "cd rust && cargo test --locked -p tidb-distsql --lib --test all -- transport:: coprocessor_request_source:: region_task_builder_source:: region_task_source:: request_builder_source:: query_runtime_source:: active_cancellation_source:: direct_unary_dispatch_contract:: --test-threads=1",
+    "passed": 76,
+    "failed": 0,
+    "ignored": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/wire-seed-cleanup/tests.log",
+      "sha256": "381115940476fc62eaf2d7a5dfc618468baac64d1c2d9191308541077143929c"
+    },
+    "benchmark_check": {
+      "command": "cd rust && cargo check --locked -p tidb-executor --bench pipeline",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/wire-seed-cleanup/bench-check.log",
+        "sha256": "44135592eae697f8f4a1c4b26751fe6c8f3dbd190ef97a9d88fca2b99f2abab8"
+      }
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/wire-seed-cleanup/lint.log",
+        "sha256": "282d643ed28ef0a95d8ec53cd3472789e530ba2f5bb50c0f33be56fea307d9ef"
+      }
+    },
+    "preflight_abort": {
+      "reason": "Initial Cargo launch used repository root with --manifest-path instead of rust/; interrupted before tests to restore required workspace-local Cargo configuration. Correct-directory run above passed.",
+      "exit": 130,
+      "log": {
+        "path": "/workspace/.cloud-setup/wire-seed-cleanup/wrong-directory-aborted.log",
+        "sha256": "1874345d2e3a830f707e1843453f6aabd8de8822c7ef9b3164d2cca16cd7ad01"
+      }
+    },
+    "self_review": {
+      "path": "/workspace/.cloud-setup/wire-seed-cleanup/source-review.json",
+      "sha256": "d98718710a66e2af74f22da459373d6a5a4b2b9d507ee58784b97ebb989c176f"
+    }
+  },
+  "net_rust_lines_removed": 394,
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "limits": [
+    "No full Go package acceptance, finding closure, new streaming/MPP behavior, live multi-node run or performance measurement. Generated protocol messages remain.",
+    "Removed public seed APIs have no production users in the maintained repositories; external consumers are not verified.",
+    "Actual precommit hook and fresh locked pre-push build must follow; final outcomes are in /workspace/.cloud-setup/wire-seed-cleanup/final-handoff.json."
+  ]
+}

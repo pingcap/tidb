@@ -1352,7 +1352,7 @@ is the current crate-boundary authority; both stay accurate through this plan.
   region-aware task splitting (`region_task.rs`, `region_location.rs`),
   dispatch/retry (`cop_paging/` — `DirectUnaryQueryTransport`,
   `RegionRetryWaiter`, `OptimisticLockRecovery`), and response decoding
-  (`chunk_decode.rs`, `stream_decode.rs`, `select_iter.rs`).
+  (`chunk_decode.rs`, `response_channel.rs`, `select_iter.rs`).
 
 **Consumers** (grep counts from research, approximate, re-verify per phase):
 `tidb-distsql` (uses `tidb-txnkv::{lock,region,rpc}` and `tidb-pd-client`
@@ -1542,7 +1542,7 @@ splitting/retry, and `tikv_client::store::{client, command}` for the actual
 RPC send (the same transport Phase 2 wired `tidb-txnkv/rpc` onto — reuse it
 rather than duplicating). Keep `envelope.rs`, `request_builder.rs`,
 `kv_request.rs`, `coprocessor_request.rs`, `region_task.rs`,
-`chunk_decode.rs`, `stream_decode.rs`, `chblock.rs`, `distsql_runtime.rs`,
+`chunk_decode.rs`, `chblock.rs`, `distsql_runtime.rs`,
 `copr_cache.rs`, `read_bytes_ema.rs` unchanged — these encode the DAG/paging
 wire protocol and TiDB-specific caching/EMA behavior that has no client-rust
 equivalent (matching Go's `pkg/distsql`/`pkg/store/copr` being hand-rolled

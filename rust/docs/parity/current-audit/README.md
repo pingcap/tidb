@@ -1,6 +1,8 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [row iterator retirement](row-iterator-cleanup-validation.json) removes the unused serial row-source API, duplicate channel container and two private harnesses (nine cases). Decoded rows now stay in the response owner; real chunk, error, layout and close coverage remains. Raw/chunk serial composition is still an unaccepted Go obligation.
+Latest cleanup: [wire seed retirement](wire-seed-cleanup-validation.json) removes unused stream and transport wrappers, six redundant/disconnected cases and an always-skipped benchmark. The unique partition test stays in the request-builder suite. Historical VM performance evidence is archived in Git; no findings or package obligations close.
+
+Previous cleanup: [row iterator retirement](row-iterator-cleanup-validation.json) removes the unused serial row-source API, duplicate channel container and two private harnesses (nine cases). Decoded rows now stay in the response owner; real chunk, error, layout and close coverage remains. Raw/chunk serial composition is still an unaccepted Go obligation.
 
 Previous cleanup: [DistSQL carrier retirement](distsql-cleanup-validation.json) removes nine redundant or disconnected-seed cases, two unused policy/metadata helper groups and the superseded laptop coprocessor audit. Two unique cases move unchanged to the unit owner; wide plan-ID coverage moves to the real query-dispatch test. Live behavior and finding statuses are unchanged. Earlier datatype cleanup remains in [its receipt](datatype-cleanup-validation.json).
 

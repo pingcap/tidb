@@ -21,7 +21,7 @@ use prost::Message;
 use tidb_distsql::{
     KvRequestBuilder, KvRequestMetadata, ReadBytesEma, RegionTaskEnvelope,
     RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges, StoreType,
-    TransportBinding, TransportRequest,
+    TransportRequest,
 };
 
 fn transport_request(metadata: KvRequestMetadata) -> TransportRequest {
@@ -30,7 +30,7 @@ fn transport_request(metadata: KvRequestMetadata) -> TransportRequest {
         std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
     )
 }
-use tidb_proto::{CoprocessorRequest, StoreBatchTask};
+use tidb_proto::StoreBatchTask;
 
 const COP_SMALL_TASK_ROW: usize = 32;
 
@@ -201,16 +201,6 @@ fn build_tasks_without_buckets_matches_every_original_range_case() {
         let tiflash = tiflash_request.build_region_tasks(&topo).unwrap();
         assert_tasks(&tiflash, expected);
     }
-
-    let bound_request = request(&["a", "k"], None)
-        .bind(TransportBinding::new())
-        .unwrap();
-    let tasks = bound_request.build_region_tasks(&topo).unwrap();
-    let encoded = bound_request.encode_region_task_request(&tasks[0]).unwrap();
-    let decoded = CoprocessorRequest::decode(encoded.as_slice()).unwrap();
-    assert_eq!(decoded.ranges.len(), 1);
-    assert_eq!(decoded.ranges[0].start, b"a");
-    assert_eq!(decoded.ranges[0].end, b"g");
 
     // A checked snapshot may omit unrelated keyspace. Coverage is required
     // only for requested ranges, not as a global region-contiguity rule.

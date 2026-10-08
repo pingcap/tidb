@@ -15,10 +15,7 @@
 //! Source-contract tests for the pre-region coprocessor request wire leaf.
 
 use prost::Message;
-use tidb_distsql::{
-    CoprocessorRequestEnvelope, KvRequestBuilder, RequestKeyRange, RequestType, TransportBinding,
-    TransportRequest, TransportRequestError,
-};
+use tidb_distsql::{CoprocessorRequestEnvelope, KvRequestBuilder, RequestKeyRange, RequestType};
 use tidb_proto::{CoprocessorRequest, KvrpcContext};
 
 #[test]
@@ -136,39 +133,4 @@ fn coprocessor_request_encoding_matches_the_derived_message_for_every_range_shap
     }
     .encode_to_vec();
     assert_eq!(envelope.encode_to_vec(), derived);
-}
-
-#[test]
-fn transport_request_rejects_unbound_serialization_and_allows_bound_snapshot() {
-    let mut builder = KvRequestBuilder::new();
-    builder
-        .set_request_type(RequestType::Checksum)
-        .set_data(vec![0xaa, 0xbb]);
-    let request = TransportRequest::new(
-        builder.build().expect("metadata"),
-        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
-    );
-    let ranges = vec![RequestKeyRange {
-        start_key: vec![4].into(),
-        end_key: vec![5].into(),
-    }];
-
-    assert!(matches!(
-        request.encode_coprocessor_request(ranges.clone()),
-        Err(TransportRequestError::Unbound)
-    ));
-
-    let bound = request
-        .bind(TransportBinding::new())
-        .expect("first transport owner");
-    let decoded = CoprocessorRequest::decode(
-        bound
-            .encode_coprocessor_request(ranges)
-            .expect("bound wire")
-            .as_slice(),
-    )
-    .expect("decode bound wire");
-    assert_eq!(decoded.tp, RequestType::Checksum.raw());
-    assert_eq!(decoded.data, vec![0xaa, 0xbb]);
-    assert_eq!(decoded.ranges.len(), 1);
 }

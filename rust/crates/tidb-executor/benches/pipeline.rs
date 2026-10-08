@@ -898,9 +898,6 @@ fn main() {
     if wanted("append") {
         bench_cell_append();
     }
-    if wanted("cop_encode") {
-        bench_cop_encode();
-    }
     if wanted("join_probe int_key bytes_key composite_key fanout") {
         bench_hash_join_probe();
     }
@@ -1317,67 +1314,4 @@ fn bench_cell_append() {
         );
         println!("{label} cal_per_cell {:.5}", ratio / CHUNK as f64);
     }
-}
-
-/// The wire encode of one region task's coprocessor request, which a
-/// profile of Q10 put at 1.7% of the node: `encode_region_task_request`
-/// per task after `build_region_tasks`.
-fn bench_cop_encode() {
-    use tidb_distsql::{
-        CancelHandle, KvRequestMetadata, RegionTaskTopology, RequestKeyRange, RequestKeyRanges,
-        TransportRequest,
-    };
-    use tidb_txnkv::RequestType;
-    let count = 1024_u32;
-    let key = |index: u32| index.to_be_bytes().to_vec();
-    let mut metadata = KvRequestMetadata::default();
-    metadata.request_type = RequestType::Dag;
-    metadata.data = Some(vec![0_u8; 512]);
-    metadata.start_ts = 100;
-    metadata.key_ranges = Some(
-        RequestKeyRanges::new_non_partitioned(
-            (0..count)
-                .map(|index| RequestKeyRange {
-                    start_key: key(index * 2).into(),
-                    end_key: key(index * 2 + 1).into(),
-                })
-                .collect(),
-        )
-        .into(),
-    );
-    let topology: Vec<_> = (0..8_u32)
-        .map(|region| RegionTaskTopology {
-            region_id: u64::from(region + 1),
-            start_key: if region == 0 {
-                Vec::new()
-            } else {
-                key(region * count / 4)
-            },
-            end_key: if region == 7 {
-                Vec::new()
-            } else {
-                key((region + 1) * count / 4)
-            },
-            buckets_version: 1,
-            ..RegionTaskTopology::default()
-        })
-        .collect();
-    let request = TransportRequest::new(metadata, std::sync::Arc::new(CancelHandle::default()));
-    let tasks = request.build_region_tasks(&topology).expect("region tasks");
-    if let Err(error) = request.encode_region_task_request(&tasks[0]) {
-        println!("cop_encode skipped {error:?}");
-        return;
-    }
-    let per_pass = tasks.len() as f64;
-    let mut pass = || {
-        for task in &tasks {
-            black_box(request.encode_region_task_request(task).expect("encode"));
-        }
-    };
-    let (elapsed, ratio) = best_of_blocks(&mut [("cop_encode", &mut pass)])[0];
-    println!(
-        "cop_encode ns_per_task {:.0}",
-        elapsed.as_secs_f64() * 1e9 / per_pass
-    );
-    println!("cop_encode cal_per_task {:.4}", ratio / per_pass);
 }

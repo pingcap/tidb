@@ -1993,7 +1993,7 @@ Logs: /tmp/tidb-window-peers-before.log, /tmp/tidb-window-peers-after.log,
 /tmp/tidb-window-peers-lint.log, and
 /tmp/tidb-window-peers-lint-installed.log.
 
-The performance reference rust/docs/perf-parity-2026-09-17.md is historical:
+The [archived performance reference](https://github.com/pingcap/tidb/blob/7f64194730bc7a76ae90e758427a1de146598bee/rust/docs/perf-parity-2026-09-17.md) is historical:
 its different shared VM/commit/cluster measurements do not validate this
 worktree. Current workload throughput remains unmeasured. Ranking's eager
 peer metadata and comparison timing, extreme backward-moving sliding frames,

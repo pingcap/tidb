@@ -14,34 +14,22 @@
 
 //! Explicit transport ownership at the `kv.Client.Send` boundary.
 //!
-//! Go's `distsql.RequestBuilder.Build` produces request metadata and the
-//! caller later supplies that metadata to `kv.Client.Send`.  Keep those two
-//! ownership steps separate while the Rust rewrite has no TiKV client,
-//! protobuf transport, or region router.  [`TransportRequest`] is therefore
-//! an immutable metadata snapshot with an explicit unbound state.  A future
-//! transport owner can attach a [`TransportBinding`] without changing the
-//! request fields or inventing an endpoint/RPC representation here.
+//! Built requests are bound by the query runtime before client send. The
+//! binding retains request-local cancellation, statement attribution and the
+//! send timestamp. Region routing and wire encoding belong to the concrete
+//! coprocessor transport and request envelope.
 
 use std::{sync::Arc, time::Instant};
 
 use crate::{
-    region_task::build_region_tasks, CancelHandle, CoprocessorRequestEnvelope, KvRequestMetadata,
-    RegionTaskEnvelope, RegionTaskTopology, RequestKeyRange, RequestSource,
+    region_task::build_region_tasks, CancelHandle, KvRequestMetadata, RegionTaskEnvelope,
+    RegionTaskTopology, RequestKeyRange, RequestSource,
 };
-
-/// The state of a request at the transport boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TransportRequestState {
-    /// No client/transport owner has been attached yet.
-    Unbound,
-    /// A future transport owner has claimed this immutable request snapshot.
-    Bound,
-}
 
 /// A proof that a caller owns a transport capable of taking this request.
 ///
 /// This marker intentionally has no endpoint, region, protobuf, or RPC
-/// fields.  Those belong to the eventual TiKV client owner, not the DistSQL
+/// fields.  Those belong to the TiKV client owner, not the DistSQL
 /// request metadata leaf.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TransportBinding;
@@ -71,7 +59,7 @@ pub enum TransportRequestError {
 ///
 /// `bind` returns a new snapshot rather than mutating the original request.
 /// This mirrors the source ownership split: request construction is finished
-/// before `kv.Client.Send` receives the request, and a future client cannot
+/// before `kv.Client.Send` receives the request, and a client cannot
 /// accidentally mutate the metadata while claiming transport ownership.
 #[derive(Clone, Debug)]
 pub struct TransportRequest {
@@ -152,8 +140,8 @@ impl TransportRequest {
     /// Builds the source resource-group tag from the first request key.
     ///
     /// This is a real pre-transport consumer of the canonical request
-    /// envelope. It deliberately stops before `tikvrpc.Request`, which does
-    /// not exist in the Rust dependency graph yet.
+    /// envelope. It deliberately stops before `tikvrpc.Request`, which is
+    /// encoded separately by the concrete transport.
     #[must_use]
     pub fn resource_group_tag(&self) -> Option<Vec<u8>> {
         let tagger = self.metadata.resource_group_tagger.as_ref()?;
@@ -167,16 +155,6 @@ impl TransportRequest {
         Some(tagger.encode_tag_with_key(first_key))
     }
 
-    /// Returns the current transport ownership state.
-    #[must_use]
-    pub const fn state(&self) -> TransportRequestState {
-        if self.binding.is_some() {
-            TransportRequestState::Bound
-        } else {
-            TransportRequestState::Unbound
-        }
-    }
-
     /// Returns whether a transport owner has been attached.
     #[must_use]
     pub const fn is_bound(&self) -> bool {
@@ -186,28 +164,14 @@ impl TransportRequest {
     /// Returns metadata only when a transport owner is attached.
     ///
     /// The error is deliberate: returning fake serialized bytes or silently
-    /// treating an unbound request as sendable would hide the missing TiKV
-    /// transport layer.
+    /// treating an unbound request as sendable would bypass the query runtime
+    /// transport boundary.
     pub fn metadata_for_send(&self) -> Result<&KvRequestMetadata, TransportRequestError> {
         if self.binding.is_some() {
             Ok(&self.metadata)
         } else {
             Err(TransportRequestError::Unbound)
         }
-    }
-
-    /// Serializes one task's coprocessor request only after transport ownership
-    /// has been claimed.
-    ///
-    /// The bytes are still a protobuf envelope, not an RPC: Context encoding,
-    /// region splitting, retries, and endpoint selection belong to the future
-    /// transport owner represented by [`TransportBinding`].
-    pub fn encode_coprocessor_request(
-        &self,
-        ranges: Vec<RequestKeyRange>,
-    ) -> Result<Vec<u8>, TransportRequestError> {
-        let metadata = self.metadata_for_send()?;
-        Ok(CoprocessorRequestEnvelope::from_metadata(metadata, ranges).encode_to_vec())
     }
 
     /// Splits this immutable built request into source-shaped region tasks.
@@ -254,15 +218,6 @@ impl TransportRequest {
             .into_iter()
             .flatten()
             .collect())
-    }
-
-    /// Encodes the coprocessor request for one already-built task after the
-    /// transport owner has been attached.
-    pub fn encode_region_task_request(
-        &self,
-        task: &RegionTaskEnvelope,
-    ) -> Result<Vec<u8>, TransportRequestError> {
-        self.encode_coprocessor_request(task.ranges.clone())
     }
 
     /// Attaches an opaque transport owner without mutating this snapshot.
@@ -322,7 +277,6 @@ mod tests {
         assert_eq!(metadata.read_replica_scope, GLOBAL_REPLICA_SCOPE);
 
         let request = TransportRequest::new(metadata, Arc::new(CancelHandle::default()));
-        assert_eq!(request.state(), TransportRequestState::Unbound);
         assert!(!request.is_bound());
         assert!(matches!(
             request.metadata_for_send(),
@@ -343,8 +297,6 @@ mod tests {
         let bound = request
             .bind(TransportBinding::new())
             .expect("unbound request can be claimed");
-        assert_eq!(request.state(), TransportRequestState::Unbound);
-        assert_eq!(bound.state(), TransportRequestState::Bound);
         assert!(bound.is_bound());
         assert_eq!(bound.metadata().start_ts, 42);
         assert_eq!(
@@ -369,11 +321,5 @@ mod tests {
             bound.bind(TransportBinding::new()),
             Err(TransportRequestError::AlreadyBound)
         ));
-    }
-
-    #[test]
-    fn binding_marker_carries_no_transport_details() {
-        assert_eq!(TransportBinding::new(), TransportBinding);
-        assert_eq!(format!("{:?}", TransportBinding::new()), "TransportBinding");
     }
 }
