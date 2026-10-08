@@ -1150,7 +1150,8 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			row[columnIdx] = types.NewFloat64Datum(v)
 			return true, nil
 		}, nil
-	case variable.SlowLogUserStr, variable.SlowLogHostStr, execdetails.BackoffTypesStr, variable.SlowLogDBStr, variable.SlowLogIndexNamesStr, variable.SlowLogDigestStr,
+	case variable.SlowLogUserStr, variable.SlowLogHostStr, execdetails.BackoffTypesStr, execdetails.PrewriteBackoffTypesStr,
+		execdetails.CommitBackoffTypesStr, variable.SlowLogDBStr, variable.SlowLogIndexNamesStr, variable.SlowLogDigestStr,
 		variable.SlowLogStatsInfoStr, variable.SlowLogCopProcAddr, variable.SlowLogCopWaitAddr, variable.SlowLogPlanDigest,
 		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr, variable.SlowLogWarnings, variable.SlowLogSessAliasStr,
 		variable.SlowLogResourceGroup, execdetails.ReadPoolTaskDetailsStr:
