@@ -46,9 +46,9 @@ type Config struct {
 	RetainedPrefixes []string
 }
 
-type noActiveProducerChecker struct{}
+type noopActiveProducerChecker struct{}
 
-func (noActiveProducerChecker) HasActiveProducers(context.Context) (bool, error) {
+func (noopActiveProducerChecker) HasActiveProducers(context.Context) (bool, error) {
 	return false, nil
 }
 
@@ -68,7 +68,7 @@ func NewMonitor(cfg Config) *Monitor {
 		cfg.Logger = zap.NewNop()
 	}
 	if cfg.ActiveProducerChecker == nil {
-		cfg.ActiveProducerChecker = noActiveProducerChecker{}
+		cfg.ActiveProducerChecker = noopActiveProducerChecker{}
 	}
 	if cfg.GetStorageURI == nil {
 		cfg.GetStorageURI = func() string { return "" }
@@ -141,12 +141,20 @@ func (m *Monitor) Trigger(ctx context.Context) {
 		return
 	}
 
-	metrics.GlobalSortOrphanDataSize.Set(float64(stats.sizeBytes))
+	metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(float64(stats.sizeBytes))
 	m.cfg.Logger.Info("global sort orphan data monitor success",
 		zap.Int64("size-bytes", stats.sizeBytes),
 		zap.Int64("object-count", stats.objectCount),
 		zap.Strings("sample-objects", stats.sampleObjects),
 		zap.Bool("sample-truncated", stats.truncated))
+}
+
+// Reset removes the published orphan data size. The scheduler calls it on owner
+// change, so a former owner stops exporting the last value it observed. The
+// series is deleted rather than set to zero, so a measured zero stays
+// distinguishable from "not measured".
+func (m *Monitor) Reset() {
+	metrics.GlobalSortOrphanDataSize.Reset()
 }
 
 // sampleObjectLimit bounds how many object names are kept for diagnostics.
