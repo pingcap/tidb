@@ -240,7 +240,7 @@ func (e *MViewCompleteDeltaApplyExec) applyChunk(
 
 	insertOrdinal := 0
 	updateOrdinal := 0
-	for rowIdx := 0; rowIdx < input.NumRows(); rowIdx++ {
+	for rowIdx := range input.NumRows() {
 		row := input.GetRow(rowIdx)
 		op := ops[rowIdx]
 		switch op {
