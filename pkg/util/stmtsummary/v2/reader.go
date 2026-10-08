@@ -28,6 +28,8 @@ import (
 	"sync"
 	"time"
 
+	jsoniter "github.com/json-iterator/go"
+
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -877,9 +879,14 @@ func (w *stmtParseWorker) putRows(
 	}
 }
 
+// jsoniterDecode decodes persisted records with json-iterator in standard-library
+// compatible mode; decoding every record dominates history scan cost and the
+// compatible config keeps semantics identical (see issue #71814 direction 2).
+var jsoniterDecode = jsoniter.ConfigCompatibleWithStandardLibrary
+
 func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, bool, error) {
 	var record stmtPersistedRecord
-	if err := json.Unmarshal(raw, &record); err != nil {
+	if err := jsoniterDecode.Unmarshal(raw, &record); err != nil {
 		return nil, false, err
 	}
 	if record.Evicted {
