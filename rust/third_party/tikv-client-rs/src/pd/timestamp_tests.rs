@@ -2138,7 +2138,7 @@ async fn source_channel_batch_periodic_discovery_keeps_bootstrap_connection() {
     );
     client.clone().get_timestamp().await.unwrap();
     let previous = pd.service.member_requests.load(Ordering::SeqCst);
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(65), async {
         while pd.service.member_requests.load(Ordering::SeqCst) <= previous {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -3061,6 +3061,80 @@ async fn observation_batch_failed_modes_preserve_accepted_provider() {
         }
         client.close().await;
     }
+}
+
+#[tokio::test]
+async fn independent_observation_mode_failure_does_not_freeze_group() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let first = Server::start(Reply::Timestamp).await;
+    let second =
+        Server::start_with_clock(Reply::Timestamp, first.service.next_logical.clone()).await;
+    api_mode(&pd, &first);
+    let client = metadata_client(&pd).await;
+    let old = client.tso_for_test().await;
+    *first.service.group.write().unwrap() = tsopb::KeyspaceGroup {
+        id: 9,
+        members: vec![tsopb::KeyspaceGroupMember {
+            address: second.service.endpoint.clone(),
+            is_primary: true,
+        }],
+        ..Default::default()
+    };
+    first.service.revision.store(20, Ordering::SeqCst);
+    pd.service
+        .cluster_info_failure
+        .store(true, Ordering::SeqCst);
+    client.reconnect_for_test().await.unwrap();
+    let retired = old.cancellation().is_cancelled();
+    client.clone().get_timestamp().await.unwrap();
+    let headers = second.service.tso_headers.lock().unwrap().clone();
+    client.close().await;
+    assert!(
+        retired,
+        "failed PD mode observation froze the accepted TSO group"
+    );
+    assert_eq!(headers[0].keyspace_group_id, 9);
+}
+
+#[tokio::test]
+async fn independent_observation_stalled_members_do_not_block_mode_switch() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let tso = Server::start(Reply::Timestamp).await;
+    let client = Arc::new(
+        RetryClient::connect(
+            &[pd.service.endpoint.clone()],
+            Arc::new(SecurityManager::default()),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap(),
+    );
+    let old = client.tso_for_test().await;
+    pd.service.stall_members.store(true, Ordering::SeqCst);
+    let requests = pd.service.member_requests.load(Ordering::SeqCst);
+    let refreshing = client.clone();
+    let refresh = tokio::spawn(async move { refreshing.reconnect_for_test().await });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while pd.service.member_requests.load(Ordering::SeqCst) <= requests {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    api_mode(&pd, &tso);
+    let switched = tokio::time::timeout(Duration::from_secs(6), async {
+        while !old.cancellation().is_cancelled() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    client.close().await;
+    refresh.abort();
+    let _ = refresh.await;
+    assert!(
+        switched.is_ok(),
+        "GetMembers prevented background TSO discovery"
+    );
 }
 
 #[tokio::test]

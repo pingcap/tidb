@@ -911,6 +911,18 @@ impl DiscoveryWorker {
                     .await;
                 }
             };
+            let membership_shutdown = shutdown.clone();
+            let members = async {
+                let period = tikv_client::pd_service_discovery::MEMBER_UPDATE_INTERVAL;
+                let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+                ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    ticks.tick().await;
+                    let _ = super::failover::refresh_membership_async(
+                        &clients, timeout, &state, &membership_shutdown,
+                    ).await;
+                }
+            };
             let health = async {
                 let period = tikv_client::pd_region_service::HEALTH_CHECK_INTERVAL;
                 let mut ticks =
@@ -929,13 +941,13 @@ impl DiscoveryWorker {
                         .await;
                 }
             };
-            // Poll both maintenance owners independently. Dropping their joined
+            // Poll all maintenance owners independently. Dropping their joined
             // future cancels in-flight dialing/RPCs before this task completes.
             tokio::select! {
                 biased;
                 _ = &mut stopped => {},
                 () = super::shutdown_requested(&mut shutdown) => {},
-                _ = async { tokio::join!(discover, health); } => {},
+                _ = async { tokio::join!(discover, members, health); } => {},
             }
         });
         Self {

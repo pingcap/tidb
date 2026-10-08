@@ -173,6 +173,8 @@ impl ChannelCache {
 pub const NULL_KEYSPACE_ID: u32 = u32::MAX;
 /// Go servicediscovery.serviceModeUpdateInterval.
 pub const UPDATE_INTERVAL: Duration = Duration::from_secs(3);
+/// Go servicediscovery.MemberUpdateInterval.
+pub const MEMBER_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Published timestamp destination, independent of the PD metadata leader.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -451,7 +453,7 @@ pub struct TsoDiscovery {
     service_urls: Vec<String>,
     cursor: Arc<Mutex<DiscoveryCursor>>,
     forwarding: TsoForwarding,
-    accepted_route: Option<TsoRoute>,
+    accepted_info: Option<pdpb::GetClusterInfoResponse>,
 }
 
 #[derive(Debug, Default)]
@@ -469,7 +471,7 @@ impl Default for TsoDiscovery {
             service_urls: Vec::new(),
             cursor: Arc::new(Mutex::new(DiscoveryCursor::default())),
             forwarding: TsoForwarding::default(),
-            accepted_route: None,
+            accepted_info: None,
         }
     }
 }
@@ -494,7 +496,6 @@ impl TsoDiscovery {
         };
         if self.keyspace_id != id {
             self.revision = Arc::default();
-            self.accepted_route = None;
         }
         self.keyspace_id = id;
         self.assigned_group = meta
@@ -519,16 +520,12 @@ impl TsoDiscovery {
         Fut: Future<Output = Result<Channel, Status>>,
     {
         // Bound dialing as well as all discovery requests with the caller's budget.
-        let result = tokio::time::timeout(
+        tokio::time::timeout(
             timeout,
             self.discover_inner(cluster_id, leader, use_pd_proxy, timeout, channels, dial),
         )
         .await
-        .map_err(|_| Status::deadline_exceeded("TSO discovery timed out"))?;
-        if let Ok((route, _)) = &result {
-            self.accepted_route = Some(route.clone());
-        }
-        result
+        .map_err(|_| Status::deadline_exceeded("TSO discovery timed out"))?
     }
 
     async fn discover_inner<F, Fut>(
@@ -576,25 +573,22 @@ impl TsoDiscovery {
                 }
             }
             Err(error) if error.code() == tonic::Code::Unimplemented => {
+                self.accepted_info = Some(pdpb::GetClusterInfoResponse {
+                    service_modes: vec![pdpb::ServiceMode::PdSvcMode as i32],
+                    ..Default::default()
+                });
                 return Ok((self.classic(leader), channel));
             }
             Err(error) => Err(error),
         };
         let info = match observation {
-            Ok(info) => info,
-            Err(error) => {
-                // Service-mode observation does not own the accepted provider's
-                // lifetime. Go leaves it installed on every failed observation,
-                // including header errors and empty modes, not only network errors.
-                let Some(mut route) = self.accepted_route.clone() else {
-                    return Err(error);
-                };
-                if route.group_id.is_none() {
-                    route.endpoint = leader.to_owned();
-                }
-                let route_channel = dial(route.endpoint.clone()).await?;
-                return Ok((route, route_channel));
+            Ok(info) => {
+                self.accepted_info = Some(info.clone());
+                info
             }
+            // Failed service-mode observation does not revoke the accepted
+            // provider or suppress that provider's independent group refresh.
+            Err(error) => self.accepted_info.clone().ok_or(error)?,
         };
         if info.service_modes[0] == pdpb::ServiceMode::PdSvcMode as i32 || use_pd_proxy {
             return Ok((self.classic(leader), channel));

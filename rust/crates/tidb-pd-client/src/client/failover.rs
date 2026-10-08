@@ -38,7 +38,7 @@ use crate::{
 };
 
 use super::requests::{
-    batch_scan_regions, get_all_stores, get_gc_state, get_members, get_prev_region, get_region,
+    batch_scan_regions, get_all_stores, get_gc_state, get_prev_region, get_region,
     get_region_by_id, get_store, scan_regions,
 };
 use super::topology::invalid_topology;
@@ -460,18 +460,31 @@ pub(super) fn refresh_membership(
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
 ) -> Result<PdMemberSet, PdClientError> {
+    runtime.block_on(refresh_membership_async(clients, timeout, state, shutdown))
+}
+
+pub(super) async fn refresh_membership_async(
+    clients: &PdChannelCache,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
+) -> Result<PdMemberSet, PdClientError> {
+    // Background and foreground observations publish in request order, while
+    // timestamp discovery uses its own lock and continues independently.
+    let _refresh = clients.membership_refresh.lock().await;
     let snapshot = state.read().expect("PD state lock poisoned").clone();
     let mut last_error = None;
     let mut cluster_mismatch = None;
     for endpoint in endpoint_attempt_order(&snapshot) {
-        match get_members(
-            runtime,
+        match super::requests::get_members_async(
             clients,
             &endpoint,
             timeout,
             shutdown,
             Some(snapshot.members.cluster_id),
-        ) {
+        )
+        .await
+        {
             Ok(observation) => match observation.projected {
                 Ok(members) => {
                     let mut current = state.write().expect("PD state lock poisoned");
@@ -559,6 +572,7 @@ pub(crate) struct PdChannelCache {
     pub(super) regions: Arc<tikv_client::pd_region_service::RegionService>,
     pub(super) channels: Arc<tikv_client::pd_service_discovery::ChannelCache>,
     security: Arc<ClusterSecurity>,
+    membership_refresh: Arc<tokio::sync::Mutex<()>>,
     pub(super) tso_discovery: Arc<tokio::sync::Mutex<TsoDiscoveryState>>,
     pub(super) tso_forwarding: tikv_client::pd_service_discovery::TsoForwarding,
     pub(super) tso_routes:
@@ -586,6 +600,7 @@ impl PdChannelCache {
             options: Arc::new(tikv_client::pd_options::Options::new()),
             regions: Arc::default(),
             security,
+            membership_refresh: Arc::default(),
             tso_discovery: Arc::new(tokio::sync::Mutex::new(discovery)),
             tso_forwarding,
             tso_routes: tokio::sync::watch::channel(Vec::new()).0,
@@ -646,15 +661,6 @@ pub(super) fn tonic_client(
         clients.channel(&endpoint)?,
         forwarding,
     ))
-}
-
-pub(super) fn direct_tonic_client(
-    runtime: &tokio::runtime::Runtime,
-    clients: &PdChannelCache,
-    endpoint: &str,
-) -> Result<TonicPdClient<Channel>, PdClientError> {
-    let _guard = runtime.enter();
-    Ok(TonicPdClient::new(clients.channel(endpoint)?))
 }
 
 pub(super) fn region_tonic_client(

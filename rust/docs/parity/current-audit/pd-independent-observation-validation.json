@@ -1,0 +1,247 @@
+{
+  "date": "2026-10-08",
+  "scope": "B01 P03/P06 existing-owner maintenance: three connected discovery defects; no broad finding or package closure",
+  "baseline": {
+    "tidb": "dbd8c9015183b91c7dec514406586ccf4fec362b",
+    "native": "de4c53c34f9fcf53e2e07cb928b6b4af890b02c0",
+    "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+    "pd": "v0.0.0-20260805103528-afa43111d149"
+  },
+  "native_published": "203893b5a4a0ae74a86599cb1dfdc993f999f3ca",
+  "before": {
+    "native": {
+      "passed": 0,
+      "failed": 2,
+      "ignored": 0
+    },
+    "adapter": {
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0
+    },
+    "behavior": "Failed mode observation froze a moved TSO group; stalled GetMembers prevented a background mode switch; adapter retained an old leader after 65 seconds without a foreground RPC. All failed on unchanged production. Native stalled-members regression was then strengthened to include a concurrent foreground refresh."
+  },
+  "repairs": [
+    "Retain the accepted mode response and discovery URLs, then continue group lookup after a failed mode observation. Bootstrap still rejects unsupported/failed initial observations; Unimplemented retains classic compatibility. Keyspace changes preserve cluster-wide mode facts while resetting the group revision lifetime.",
+    "Split native metadata observation/publication from timestamp preparation/installation. Independent background TSO refresh no longer requires GetMembers. Separate member and timestamp mutexes retain metadata publication order and serialized keyspace/provider installation. Close cancels and joins all maintenance before acquiring those locks in the same order.",
+    "Compose the one-minute Go membership timer in native and TiDB maintenance. TiDB background and foreground calls share async RPC cancellation/metrics/header validation/topology publication, and serialize with each other independently of timestamp discovery. Remove the now-unconsumed direct_tonic_client helper. Retain the existing shared channel cache and joined worker."
+  ],
+  "source_owners": [
+    "PD servicediscovery/service_discovery.go::updateMemberLoop/updateServiceModeLoop/checkServiceModeChanged",
+    "PD servicediscovery/tso_service_discovery.go::updateMember"
+  ],
+  "source_inventory": {
+    "module": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149",
+    "files": [
+      {
+        "path": "servicediscovery/callbacks.go",
+        "bytes": 2694,
+        "sha256": "5f927301227919e13a6c30a0466b749e25765e85e8ca69d73fa131972b318f25"
+      },
+      {
+        "path": "servicediscovery/mock_service_discovery.go",
+        "bytes": 4160,
+        "sha256": "bb36615732f3228f1078b74c347124837651fe81b5173144d4de456abc69e3a1"
+      },
+      {
+        "path": "servicediscovery/resource_manager_service_discovery.go",
+        "bytes": 8410,
+        "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e"
+      },
+      {
+        "path": "servicediscovery/resource_manager_service_discovery_test.go",
+        "bytes": 3516,
+        "sha256": "28c9cb214e9ab7beb4d4bf9d930c1e6203ae5b6a146f0bcc2c5264a5a7c24094"
+      },
+      {
+        "path": "servicediscovery/router_service_discovery.go",
+        "bytes": 10789,
+        "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e"
+      },
+      {
+        "path": "servicediscovery/service_discovery.go",
+        "bytes": 36195,
+        "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9"
+      },
+      {
+        "path": "servicediscovery/service_discovery_test.go",
+        "bytes": 15988,
+        "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf"
+      },
+      {
+        "path": "servicediscovery/tso_service_discovery.go",
+        "bytes": 29010,
+        "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de"
+      },
+      {
+        "path": "servicediscovery/tso_service_discovery_test.go",
+        "bytes": 2652,
+        "sha256": "a2379d4732fddd244d08d0c8e38e2e0f928d937ba2fd830ac5461c9091aa94a9"
+      },
+      {
+        "path": "clients/tso/client.go",
+        "bytes": 20084,
+        "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1"
+      },
+      {
+        "path": "clients/tso/dispatcher.go",
+        "bytes": 24731,
+        "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820"
+      },
+      {
+        "path": "clients/tso/dispatcher_test.go",
+        "bytes": 14920,
+        "sha256": "14b85206ada0b37cff9a7615518c7bb2bab69035abef4fb43a9f687947f6b6eb"
+      },
+      {
+        "path": "clients/tso/request.go",
+        "bytes": 3567,
+        "sha256": "b3d69292c26b3da4ae46323f4af2ea4e4fbe32d1565c2628968385d7c38d523b"
+      },
+      {
+        "path": "clients/tso/request_test.go",
+        "bytes": 1338,
+        "sha256": "3ae4662de27a60b517f7ec2389abcdf43113b410e1a0b3eb210419567bb587a9"
+      },
+      {
+        "path": "clients/tso/stream.go",
+        "bytes": 17357,
+        "sha256": "3429bfeae2d3d9386a866708fcc6694c26245dc6e098bfed70356ce83951ca36"
+      },
+      {
+        "path": "clients/tso/stream_test.go",
+        "bytes": 16735,
+        "sha256": "755898f5b942a46639a0794e17ffc6ed85c4d08d7979f099b9549230a9eabe96"
+      },
+      {
+        "path": "pkg/utils/grpcutil/grpcutil.go",
+        "bytes": 8136,
+        "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273"
+      },
+      {
+        "path": "pkg/utils/grpcutil/grpcutil_test.go",
+        "bytes": 1759,
+        "sha256": "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b"
+      }
+    ],
+    "acceptance": "Inventory of the three named package directories; existing-owner maintenance only. No complete transcreation/dependency-closure acceptance."
+  },
+  "validation": [
+    {
+      "command": "cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked --lib -- pd::timestamp::tests:: pd::retry::test:: pd::service_discovery --test-threads=1",
+      "cwd": "/workspace/client-rust",
+      "passed": 74,
+      "failed": 0,
+      "ignored": 0,
+      "log": "native-green.log"
+    },
+    {
+      "command": "cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked -p tikv-client --all-targets",
+      "cwd": "/workspace/client-rust",
+      "status": "passed",
+      "log": "native-check.log"
+    },
+    {
+      "command": "cargo test --locked -p tidb-pd-client --lib --test all --no-fail-fast -- tso_source:: pd_client_source:: pd_worker_lifecycle_source:: client::worker_lifecycle_tests:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "passed": 79,
+      "failed": 0,
+      "ignored": 0,
+      "log": "adapter-green.log"
+    },
+    {
+      "command": "cargo check --locked -p tidb-pd-client -p tidb-server --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "log": "adapter-check.log"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "log": "lint.log"
+    }
+  ],
+  "native_publication": {
+    "fresh_locked_tidb_build": {
+      "file": "native-pre-push-build.log",
+      "bytes": 111455,
+      "sha256": "e8045bd8d57a7a6249896800cfd8f79b5c9cc421bd77ffacbf90d30d8486ee42"
+    },
+    "push": {
+      "file": "native-push.log",
+      "bytes": 82,
+      "sha256": "7a067e27a02875671344bc5a3d6528257b8219aeaed195e0e633a089e2884c9a"
+    },
+    "remote": {
+      "file": "native-remote-sha.txt",
+      "bytes": 59,
+      "sha256": "7e8e47c42030d91b6fe0dabcd843c05121d84ec9d78befa89db969c49bbe89ee"
+    }
+  },
+  "remaining": [
+    "Separate stalled service-mode/group RPC scheduling and error-triggered membership notification",
+    "Full primaryless metadata publication",
+    "TSO RPC concurrency, readiness/prewarm, idle recovery, native/adapter dispatcher consolidation",
+    "Router, security/platform and complete PD root/TSO/discovery/grpcutil package obligations",
+    "No full Go suites, live multi-node TiKV/TiFlash, TLS policy or performance measurement in this batch"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "publication_gates": "TiDB actual precommit hook and fresh locked pre-push build are mandatory after this receipt is staged. Record their executed outcomes and remote SHA in external final-handoff.json; this receipt does not predict them.",
+  "evidence_directory": "/workspace/.cloud-setup/pd-independent-observation",
+  "logs": [
+    {
+      "file": "native-before.log",
+      "bytes": 21608,
+      "sha256": "52d0933ea4bb7fda7dfc5d3e4516055b8c9460dc173a16e1ee29d698d416a7ea"
+    },
+    {
+      "file": "native-before-retry.log",
+      "bytes": 1361,
+      "sha256": "17b9848476262b7523e7dc5ac01139e94b9e04c8e321ad169f2a9c92eac50537"
+    },
+    {
+      "file": "adapter-before.log",
+      "bytes": 2339,
+      "sha256": "6d26640e81b4c38e6d21a8018a7f1cf75636efa40d394bfc76cdf8ca6d051915"
+    },
+    {
+      "file": "native-green.log",
+      "bytes": 7087,
+      "sha256": "bc3f38d6b60d2a2dd22455d8f6d1b53a9c7a9778344ec333ed0c007ca73579f6"
+    },
+    {
+      "file": "native-check.log",
+      "bytes": 541,
+      "sha256": "6d66a9a79211a149230f868cf0bcb3426e0b1c5c458c4945406ac8a6846dd329"
+    },
+    {
+      "file": "adapter-green.log",
+      "bytes": 8760,
+      "sha256": "f8d62e9b017e844c73cecba12e811b35322bc4adae2a1de55838de601629cd52"
+    },
+    {
+      "file": "adapter-check.log",
+      "bytes": 116613,
+      "sha256": "97a24915b90070156a81595ec740594762452787ae924bd92e16fb2da6c17cec"
+    },
+    {
+      "file": "lint.log",
+      "bytes": 2164,
+      "sha256": "c72935b44eef54853f2a1a8273a134087c28294ee8ddb2abfeadc7f6208e0e4b"
+    },
+    {
+      "file": "sync.log",
+      "bytes": 1885,
+      "sha256": "f023b332c30c6d4b12955d789868372dcc99d5f20b6b002dbc3f057073d0bd46"
+    }
+  ],
+  "environment_notes": "The first native baseline link failed on the full 32 GB disk; that is not fail-before behavioral evidence. Retired completed binaries and six obsolete library dependency sets have separate path/hash/process-check receipts; newest library sets and shared dependencies were retained. An interrupted review build and corrected close-lock type-check error are retained separately."
+}

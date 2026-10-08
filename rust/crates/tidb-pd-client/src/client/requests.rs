@@ -29,7 +29,7 @@ use tokio::sync::watch;
 
 use crate::{PdClientError, PdGcState, PdOperation, PdRegion, PdStore};
 
-use super::failover::{direct_tonic_client, region_tonic_client, tonic_client, PdChannelCache};
+use super::failover::{region_tonic_client, tonic_client, PdChannelCache};
 use super::topology::{
     invalid_topology, project_extended_region, project_member_set, project_region,
     project_scan_regions, project_store,
@@ -50,14 +50,30 @@ pub(super) fn get_members(
     shutdown: &watch::Receiver<bool>,
     expected_cluster_id: Option<u64>,
 ) -> Result<PdMemberObservation, PdClientError> {
-    let mut client = direct_tonic_client(runtime, clients, endpoint)?;
-    let response = block_on_rpc(
-        runtime,
+    runtime.block_on(get_members_async(
+        clients,
+        endpoint,
+        timeout,
+        shutdown,
+        expected_cluster_id,
+    ))
+}
+
+pub(super) async fn get_members_async(
+    clients: &PdChannelCache,
+    endpoint: &str,
+    timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
+    expected_cluster_id: Option<u64>,
+) -> Result<PdMemberObservation, PdClientError> {
+    let mut client = pdpb::pd_client::PdClient::new(clients.channel(endpoint)?);
+    let response = super::await_rpc(
         timeout,
         shutdown,
         PdOperation::GetMembers,
         client.get_members(pdpb::GetMembersRequest { header: None }),
-    );
+    )
+    .await;
     let response = map_rpc_result(response, PdOperation::GetMembers, endpoint, timeout)?;
     let response = response.into_inner();
     let header = response

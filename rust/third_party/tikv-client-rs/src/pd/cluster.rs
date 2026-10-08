@@ -614,27 +614,25 @@ impl Cluster {
         }
     }
 
-    pub(crate) fn install_leader(
+    pub(crate) fn install_leader(&mut self, leader: LeaderConnection) -> Result<()> {
+        if self.client.is_none() {
+            return Err(Error::ContextCanceled);
+        }
+        self.client = Some(leader.client);
+        self.keyspace_client = Some(leader.keyspace_client);
+        self.members = leader.members;
+        self.update_region_members();
+        Ok(())
+    }
+
+    pub(crate) fn install_timestamp(
         &mut self,
-        leader: LeaderConnection,
+        (discovery, route, routes): TimestampConnection,
         timeout: Duration,
     ) -> Result<impl Future<Output = ()> + Send + 'static> {
         if self.client.is_none() {
             return Err(Error::ContextCanceled);
         }
-        let LeaderConnection {
-            client,
-            keyspace_client,
-            members,
-            timestamp,
-        } = leader;
-        // Metadata leadership can change while TSO discovery is unavailable.
-        // Publish its valid connection independently, retaining the old TSO route.
-        self.client = Some(client);
-        self.keyspace_client = Some(keyspace_client);
-        self.members = members;
-        self.update_region_members();
-        let (discovery, route, routes) = timestamp?;
         let url = route.endpoint.clone();
         let previous = self.tso.randomly_pick();
         let reuse = previous
@@ -741,8 +739,9 @@ pub(crate) struct LeaderConnection {
     client: RoutedPdClient,
     keyspace_client: keyspacepb::keyspace_client::KeyspaceClient<Channel>,
     members: pdpb::GetMembersResponse,
-    timestamp: Result<(TsoDiscovery, TsoRoute, Vec<(TsoRoute, Channel)>)>,
 }
+
+type TimestampConnection = (TsoDiscovery, TsoRoute, Vec<(TsoRoute, Channel)>);
 
 /// An object for connecting and reconnecting to a PD cluster.
 #[derive(Clone)]
@@ -865,7 +864,9 @@ impl Connection {
         warn!("updating pd client");
         let start = Instant::now();
         let leader = self.prepare_reconnect(cluster, timeout).await?;
-        cluster.install_leader(leader, timeout)?.await;
+        cluster.install_leader(leader)?;
+        let timestamp = self.prepare_timestamp(cluster, timeout, None).await?;
+        cluster.install_timestamp(timestamp, timeout)?.await;
         cluster.finish_retirement();
 
         info!("updating PD client done, spent {:?}", start.elapsed());
@@ -877,15 +878,30 @@ impl Connection {
         cluster: &Cluster,
         timeout: Duration,
     ) -> impl Future<Output = Result<LeaderConnection>> + Send + 'static {
-        self.prepare_keyspace_reconnect(cluster, timeout, None)
+        let mut connection = self.clone();
+        connection.channels = cluster.channels.clone();
+        let members = cluster.members.clone();
+        let closed = cluster.client.is_none();
+        async move {
+            if closed {
+                return Err(Error::ContextCanceled);
+            }
+            let (client, keyspace_client, members, _) =
+                connection.try_connect_leader(&members, timeout).await?;
+            Ok(LeaderConnection {
+                client,
+                keyspace_client,
+                members,
+            })
+        }
     }
 
-    pub(crate) fn prepare_keyspace_reconnect(
+    pub(crate) fn prepare_timestamp(
         &self,
         cluster: &Cluster,
         timeout: Duration,
         keyspace: Option<&keyspacepb::KeyspaceMeta>,
-    ) -> impl Future<Output = Result<LeaderConnection>> + Send + 'static {
+    ) -> impl Future<Output = Result<TimestampConnection>> + Send + 'static {
         let mut connection = self.clone();
         connection.channels = cluster.channels.clone();
         let mut discovery = cluster.discovery.clone();
@@ -893,31 +909,25 @@ impl Connection {
             .map(|meta| discovery.set_keyspace(meta))
             .transpose();
         let members = cluster.members.clone();
+        let id = cluster.id;
         let closed = cluster.client.is_none();
         async move {
             if closed {
                 return Err(Error::ContextCanceled);
             }
             keyspace_result?;
-            let (client, keyspace_client, members, url) =
-                connection.try_connect_leader(&members, timeout).await?;
-            let id = members.header.as_ref().unwrap().cluster_id;
-            let timestamp = async {
-                let (route, _) = connection
-                    .discover(&mut discovery, id, &url, timeout)
-                    .await?;
-                let routes = connection
-                    .stream_routes(&discovery, &route, &members, timeout)
-                    .await?;
-                Ok((discovery, route, routes))
-            }
-            .await;
-            Ok(LeaderConnection {
-                client,
-                keyspace_client,
-                members,
-                timestamp,
-            })
+            let url = members
+                .leader
+                .as_ref()
+                .and_then(|member| connection.member_url(member))
+                .ok_or_else(|| internal_err!("PD membership has no leader"))?;
+            let (route, _) = connection
+                .discover(&mut discovery, id, &url, timeout)
+                .await?;
+            let routes = connection
+                .stream_routes(&discovery, &route, &members, timeout)
+                .await?;
+            Ok((discovery, route, routes))
         }
     }
 

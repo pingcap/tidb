@@ -829,13 +829,25 @@ fn block_on_rpc<F, T>(
 where
     F: Future<Output = Result<tonic::Response<T>, tonic::Status>>,
 {
+    runtime.block_on(await_rpc(timeout, shutdown, op, future))
+}
+
+async fn await_rpc<F, T>(
+    timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
+    op: crate::error::PdOperation,
+    future: F,
+) -> RpcCompletion<T>
+where
+    F: Future<Output = Result<tonic::Response<T>, tonic::Status>>,
+{
     if *shutdown.borrow() {
         crate::metrics::observe_cmd(op, 0.0, false);
         return RpcCompletion::Shutdown;
     }
     let started = std::time::Instant::now();
     let mut cancellation = shutdown.clone();
-    let completion = runtime.block_on(async move {
+    let completion = {
         tokio::select! {
             biased;
             () = shutdown_requested(&mut cancellation) => RpcCompletion::Shutdown,
@@ -844,7 +856,7 @@ where
                 Err(_) => RpcCompletion::Timeout,
             },
         }
-    });
+    };
     // Use the native metric owner while this adapter still owns these RPCs.
     // Metadata total duration includes failed attempts.
     let seconds = started.elapsed().as_secs_f64();

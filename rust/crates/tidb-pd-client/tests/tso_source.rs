@@ -1268,6 +1268,35 @@ fn collection_batch_configured_wait() {
 }
 
 #[test]
+fn independent_observation_members_refresh_without_foreground_requests() {
+    let pd = Server::start_auto_batching();
+    let next = Server::start_auto_batching();
+    let client = PdClient::connect(&pd.address, Duration::from_secs(1)).unwrap();
+    let member = pdpb::Member {
+        member_id: 2,
+        client_urls: vec![next.address.clone()],
+        ..Default::default()
+    };
+    pd.state.lock().unwrap().members = Some(pdpb::GetMembersResponse {
+        header: Some(pdpb::ResponseHeader {
+            cluster_id: CLUSTER_ID,
+            error: None,
+        }),
+        leader: Some(member.clone()),
+        members: vec![member],
+        ..Default::default()
+    });
+    // Exercise Go's real one-minute member timer without issuing an RPC.
+    let deadline = std::time::Instant::now() + Duration::from_secs(65);
+    while client.member_set().leader_url != next.address && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let observed = client.member_set();
+    client.shutdown().unwrap();
+    assert_eq!(observed.leader_url, next.address);
+}
+
+#[test]
 fn collection_batch_uses_twenty_thousand_request_bound() {
     let server = Server::start_auto_batching();
     // Keep the first exchange in flight so the next collector sees the full queue.

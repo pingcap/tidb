@@ -1,5 +1,7 @@
 # Structural parity audit: current evidence
 
+Latest connected repair: [independent PD/TSO observations](pd-independent-observation-validation.json) fixes failed-mode group refresh, native member/TSO scheduling and missing adapter periodic membership as one lifecycle batch. The former direct-client helper is removed after migration. P03/P06 remain partial; no broad or complete-package closure.
+
 Latest cleanup: [wire seed retirement](wire-seed-cleanup-validation.json) removes unused stream and transport wrappers, six redundant/disconnected cases and an always-skipped benchmark. The unique partition test stays in the request-builder suite. Historical VM performance evidence is archived in Git; no findings or package obligations close.
 
 Previous cleanup: [row iterator retirement](row-iterator-cleanup-validation.json) removes the unused serial row-source API, duplicate channel container and two private harnesses (nine cases). Decoded rows now stay in the response owner; real chunk, error, layout and close coverage remains. Raw/chunk serial composition is still an unaccepted Go obligation.
