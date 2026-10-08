@@ -1244,8 +1244,12 @@ func (cc *clientConn) Run(ctx context.Context) {
 		data, err := cc.readPacket()
 		if err != nil {
 			if !lingerUntil.IsZero() {
-				server_metrics.DisconnectNormal.Inc()
-				return
+				// The linger window ended, or the client closed the connection. Other errors are handled below.
+				netErr, isNetErr := errors.Cause(err).(net.Error)
+				if terror.ErrorEqual(err, io.EOF) || (isNetErr && netErr.Timeout()) {
+					server_metrics.DisconnectNormal.Inc()
+					return
+				}
 			}
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
@@ -1285,8 +1289,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 		// 3. The connection changes its status to `connStatusDispatching` and starts to execute the command.
 		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
 			// `Server.DrainClients` closes the idle connection, but the client has already sent a command.
-			if cc.getStatus() == connStatusWaitShutdown && cc.server.inShutdownMode.Load() {
-				cc.rejectCommandInShutdown(ctx, data)
+			if cc.getStatus() == connStatusWaitShutdown && cc.server.inShutdownMode.Load() &&
+				!cc.rejectCommandInShutdown(ctx, data) && cc.lingerAfterNoReplyCommand(data, &lingerUntil) &&
+				cc.CompareAndSwapStatus(connStatusWaitShutdown, connStatusDispatching) {
+				continue
 			}
 			return
 		}
@@ -1296,8 +1302,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		// retry on another server.
 		if cc.server.inShutdownMode.Load() {
 			if !cc.ctx.GetSessionVars().InTxn() {
-				if !cc.rejectCommandInShutdown(ctx, data) && !lingerUntil.IsZero() {
-					// The command expects no response, keep waiting for the next one.
+				if !cc.rejectCommandInShutdown(ctx, data) && cc.lingerAfterNoReplyCommand(data, &lingerUntil) {
 					continue
 				}
 				return
@@ -1775,6 +1780,26 @@ func (cc *clientConn) rejectCommandInShutdown(ctx context.Context, data []byte) 
 	if err := cc.writeError(ctx, servererr.ErrServerShutdown); err != nil {
 		terror.Log(err)
 	}
+	return true
+}
+
+// lingerAfterNoReplyCommand is called in shutdown mode after a command that expects no response was read and not
+// executed. It reports whether the connection keeps reading until the linger ends, so that the client's next command
+// is rejected with ER_SERVER_SHUTDOWN instead of hitting a closed connection.
+func (cc *clientConn) lingerAfterNoReplyCommand(data []byte, lingerUntil *time.Time) bool {
+	if len(data) == 0 || data[0] == mysql.ComQuit {
+		return false
+	}
+	if lingerUntil.IsZero() {
+		linger := cc.server.gracefulCloseLinger()
+		if linger <= 0 {
+			return false
+		}
+		*lingerUntil = time.Now().Add(linger)
+	}
+	// The next command starts a new packet sequence, as after a dispatched command.
+	cc.pkt.SetSequence(0)
+	cc.pkt.SetCompressedSequence(0)
 	return true
 }
 

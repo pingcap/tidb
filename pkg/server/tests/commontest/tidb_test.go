@@ -1248,6 +1248,10 @@ func TestGracefulShutdownRejectsCommandsWithServerShutdown(t *testing.T) {
 	var busyID uint64
 	require.NoError(t, busyConn.QueryRowContext(ctx, "select connection_id()").Scan(&busyID))
 	require.NoError(t, idleConn.PingContext(ctx))
+	idleStmt, err := idleConn.PrepareContext(ctx, "select 1")
+	require.NoError(t, err)
+	stmt, err := busyConn.PrepareContext(ctx, "select 1")
+	require.NoError(t, err)
 
 	busyResult := make(chan error, 1)
 	go func() {
@@ -1256,7 +1260,12 @@ func TestGracefulShutdownRejectsCommandsWithServerShutdown(t *testing.T) {
 			busyResult <- err
 			return
 		}
-		// Reuse the connection right after its statement finished in shutdown mode.
+		// Reuse the connection right after its statement finished in shutdown mode. COM_STMT_CLOSE expects no
+		// response, and the command after it must still be rejected.
+		if err := stmt.Close(); err != nil {
+			busyResult <- err
+			return
+		}
 		_, err := busyConn.ExecContext(ctx, "insert into shutdown_reject values (2)")
 		busyResult <- err
 	}()
@@ -1286,7 +1295,9 @@ func TestGracefulShutdownRejectsCommandsWithServerShutdown(t *testing.T) {
 		myErr, ok := err.(*mysql.MySQLError)
 		return ok && myErr.Number == tmysql.ErrServerShutdown
 	}
-	// The idle connection lingers and rejects the command instead of dropping it.
+	// The idle connection lingers and rejects the command instead of dropping it, also after a COM_STMT_CLOSE,
+	// which expects no response.
+	require.NoError(t, idleStmt.Close())
 	_, err = idleConn.ExecContext(ctx, "insert into shutdown_reject values (1)")
 	require.True(t, isServerShutdown(err), "%v", err)
 	// The busy connection finishes its statement, then rejects the next one.
