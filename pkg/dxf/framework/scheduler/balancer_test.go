@@ -270,6 +270,7 @@ func TestBalanceOneTask(t *testing.T) {
 		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
 			mockTaskMgr := mock.NewMockTaskManager(ctrl)
 			mockTaskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), gomock.Any()).Return(c.subtasks, nil)
+			mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil).AnyTimes()
 			if !assert.ObjectsAreEqual(c.subtasks, c.expectedSubtasks) {
 				mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(nil)
 			}
@@ -337,6 +338,7 @@ func TestBalanceOneTask(t *testing.T) {
 				{ID: 1, ExecID: "tidb1", State: proto.SubtaskStateRunning},
 				{ID: 2, ExecID: "tidb1", State: proto.SubtaskStatePending},
 			}, nil)
+		mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
 		mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(errors.New("mock error2"))
 		mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1, RequiredSlots: 16}}).Times(2)
 		mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
@@ -435,6 +437,7 @@ func TestBalanceMultipleTasks(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// balance multiple tasks
+	mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
 	for i, c := range taskCases {
 		taskID := int64(i + 1)
 		if !assert.ObjectsAreEqual(c.subtasks, c.expectedSubtasks) {
@@ -473,4 +476,70 @@ func TestBalancerUpdateUsedNodes(t *testing.T) {
 		{ID: 5, ExecID: "tidb3", State: proto.SubtaskStatePending},
 	})
 	require.Equal(t, map[string]int{"tidb1": 28, "tidb2": 12, "tidb3": 12}, b.currUsedSlots)
+}
+
+func TestBalanceAvoidPreemptingRunningSubtasks(t *testing.T) {
+	ctx := context.Background()
+	runBalance := func(t *testing.T, nodeIDs []string, actualUsedSlots map[string]int,
+		taskSubtasks [][]*proto.SubtaskBase) *balancer {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockTaskMgr := mock.NewMockTaskManager(ctrl)
+		manager := NewManager(ctx, nil, mockTaskMgr, "1", proto.NodeResourceForTest)
+		manager.slotMgr.updateCapacity(3)
+		nodes := make([]proto.ManagedNode, 0, len(nodeIDs))
+		for _, id := range nodeIDs {
+			nodes = append(nodes, proto.ManagedNode{ID: id})
+		}
+		manager.nodeMgr.nodes.Store(&nodes)
+		b := newBalancer(Param{
+			taskMgr: manager.taskMgr,
+			nodeMgr: manager.nodeMgr,
+			slotMgr: manager.slotMgr,
+		})
+		for i, subtasks := range taskSubtasks {
+			taskID := int64(i + 1)
+			sch := mock.NewMockScheduler(ctrl)
+			sch.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: taskID, RequiredSlots: 3, MaxNodeCount: 1}}).AnyTimes()
+			sch.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+			manager.addScheduler(taskID, sch)
+			mockTaskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), taskID).Return(subtasks, nil)
+		}
+		mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(actualUsedSlots, nil)
+		mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		b.balance(ctx, manager)
+		require.True(t, ctrl.Satisfied())
+		return b
+	}
+
+	t.Run("move to idle node", func(t *testing.T) {
+		// n1 is full, n2 and n3 are running subtasks of lower ranking tasks, n4
+		// and n5 are idle.
+		taskSubtasks := [][]*proto.SubtaskBase{
+			{{ID: 1, ExecID: "n1", State: proto.SubtaskStateRunning}},
+			{{ID: 2, ExecID: "n1", State: proto.SubtaskStatePending}},
+			{{ID: 3, ExecID: "n2", State: proto.SubtaskStateRunning}},
+			{{ID: 4, ExecID: "n3", State: proto.SubtaskStateRunning}},
+		}
+		b := runBalance(t, []string{"n1", "n2", "n3", "n4", "n5"},
+			map[string]int{"n1": 6, "n2": 3, "n3": 3}, taskSubtasks)
+		require.Equal(t, "n1", taskSubtasks[0][0].ExecID)
+		require.Equal(t, "n4", taskSubtasks[1][0].ExecID)
+		require.Equal(t, "n2", taskSubtasks[2][0].ExecID)
+		require.Equal(t, "n3", taskSubtasks[3][0].ExecID)
+		require.Equal(t, map[string]int{"n1": 3, "n2": 3, "n3": 3, "n4": 3}, b.actualUsedSlots)
+	})
+
+	t.Run("preempt lower ranking task if no idle node", func(t *testing.T) {
+		taskSubtasks := [][]*proto.SubtaskBase{
+			{{ID: 1, ExecID: "n1", State: proto.SubtaskStateRunning}},
+			{{ID: 2, ExecID: "n1", State: proto.SubtaskStatePending}},
+			{{ID: 3, ExecID: "n2", State: proto.SubtaskStateRunning}},
+		}
+		runBalance(t, []string{"n1", "n2"}, map[string]int{"n1": 6, "n2": 3}, taskSubtasks)
+		require.Equal(t, "n1", taskSubtasks[0][0].ExecID)
+		require.Equal(t, "n2", taskSubtasks[1][0].ExecID)
+		// no node has enough slots for task 3, it's not balanced.
+		require.Equal(t, "n2", taskSubtasks[2][0].ExecID)
+	})
 }
