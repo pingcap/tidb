@@ -91,6 +91,14 @@ func TestValidatePathExpr(t *testing.T) {
 		{`$.Ā`, false, 0},
 		{`$.你`, false, 0},
 		{`$."你"`, true, 1},
+		// MySQL only treats ASCII whitespace as whitespace in a JSON path, so
+		// U+00A0 and U+0085 are part of the key, and U+3000 is not a letter.
+		{"$.a\u00a0b", true, 1},
+		{"$.a\u0085b", true, 1},
+		{"$.a\u00a0.b", true, 2},
+		{"$.a\u3000b", false, 0},
+		{"$.\xff", false, 0},
+		{"$.\"\xff\"", false, 0},
 	}
 
 	for _, test := range tests {
@@ -103,6 +111,18 @@ func TestValidatePathExpr(t *testing.T) {
 				require.Error(t, err)
 			}
 		})
+	}
+}
+
+func TestPathKeyRoundTrip(t *testing.T) {
+	// The path built from a key by quoteJSONString, like the result of
+	// JSON_SEARCH, should be parsed back to the same key.
+	keys := []string{"a", "a b", "é", "你", "a\u00a0b", "a\u0085b", "a\u1680b", "a\u3000b", "a.b", "a\"b"}
+	for _, key := range keys {
+		pe, err := ParseJSONPathExpr("$." + quoteJSONString(key))
+		require.NoError(t, err, key)
+		require.Len(t, pe.legs, 1)
+		require.Equal(t, key, pe.legs[0].dotKey)
 	}
 }
 

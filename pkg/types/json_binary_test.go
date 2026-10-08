@@ -178,7 +178,8 @@ func TestQuoteString(t *testing.T) {
 		{raw: "hello, \"escaped quotes\" world", quoted: `"hello, \"escaped quotes\" world"`},
 		{raw: "你", quoted: `"你"`},
 		// The expected results below are the same as MySQL 8.0, which checks
-		// letters and digits by the lowest byte of the code point.
+		// letters and digits by the lowest byte of the code point, and accepts
+		// the combining marks U+0300-U+036F except as the first character.
 		{raw: "é", quoted: `é`},
 		{raw: "ß", quoted: `ß`},
 		{raw: "α", quoted: `α`},

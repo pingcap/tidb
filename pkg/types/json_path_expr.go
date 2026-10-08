@@ -272,9 +272,16 @@ type jsonPathStream struct {
 	pos      int
 }
 
+// isJSONPathWhiteSpace follows `is_whitespace` in MySQL's
+// sql-common/json_path.cc, which only treats the ASCII whitespace characters
+// as whitespace in a JSON path.
+func isJSONPathWhiteSpace(c rune) bool {
+	return c == ' ' || ('\t' <= c && c <= '\r')
+}
+
 func (s *jsonPathStream) skipWhiteSpace() {
 	for ; s.pos < len(s.pathExpr); s.pos++ {
-		if !unicode.IsSpace(s.pathExpr[s.pos]) {
+		if !isJSONPathWhiteSpace(s.pathExpr[s.pos]) {
 			break
 		}
 	}
@@ -309,6 +316,11 @@ func (s *jsonPathStream) readWhile(f func(rune) bool) (str []rune, metEnd bool) 
 }
 
 func parseJSONPathExpr(pathExpr string) (pe JSONPathExpression, err error) {
+	// Converting to []rune replaces invalid UTF-8 with U+FFFD, so check it
+	// before the conversion.
+	if !utf8.ValidString(pathExpr) {
+		return JSONPathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(0)
+	}
 	s := &jsonPathStream{pathExpr: []rune(pathExpr), pos: 0}
 	s.skipWhiteSpace()
 	if s.exhausted() || s.read() != '$' {
@@ -460,9 +472,9 @@ func parseJSONPathArray(s *jsonPathStream, p *JSONPathExpression) bool {
 		var selection jsonPathArraySelection
 		selection = jsonPathArraySelectionIndex{start}
 		// try to read " to " and the end
-		if unicode.IsSpace(s.peek()) {
+		if isJSONPathWhiteSpace(s.peek()) {
 			s.skipWhiteSpace()
-			if s.tryReadString(toStr) && unicode.IsSpace(s.peek()) {
+			if s.tryReadString(toStr) && isJSONPathWhiteSpace(s.peek()) {
 				s.skipWhiteSpace()
 				if s.exhausted() {
 					return false
@@ -523,7 +535,7 @@ func parseJSONPathMember(s *jsonPathStream, p *JSONPathExpression) bool {
 			wasQuoted = true
 		} else {
 			dotKeyInRune, _ := s.readWhile(func(b rune) bool {
-				return !(unicode.IsSpace(b) || b == '.' || b == '[' || b == '*')
+				return !(isJSONPathWhiteSpace(b) || b == '.' || b == '[' || b == '*')
 			})
 			dotKey = string(dotKeyInRune)
 		}
@@ -546,6 +558,7 @@ func parseJSONPathMember(s *jsonPathStream, p *JSONPathExpression) bool {
 // sql-common/json_path.cc, which decides whether a key in a JSON path needs to
 // be quoted.
 func isEcmascriptIdentifier(s string) bool {
+	// MySQL decodes the name as UTF-8, and malformed UTF-8 is not an identifier.
 	if s == "" || !utf8.ValidString(s) {
 		return false
 	}
@@ -587,6 +600,10 @@ func isEcmascriptIdentifier(s string) bool {
 	return true
 }
 
+// isUnicodeCombiningMark follows `unicode_combining_mark` in MySQL, which only
+// covers the Combining Diacritical Marks block. MySQL also uses it to exclude
+// these code points from `is_letter`, because the lowest bytes of some of
+// them are ASCII letters.
 func isUnicodeCombiningMark(c rune) bool {
 	return 0x300 <= c && c <= 0x36F
 }
