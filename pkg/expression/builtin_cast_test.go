@@ -897,6 +897,14 @@ func TestCastFuncSig(t *testing.T) {
 			mysql.TypeDatetime,
 			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(curTimeInt)}),
 		},
+		// cast year as Date.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeYear), Index: 0},
+			types.NewTime(types.FromDate(2024, 0, 0, 0, 0, 0, 0), mysql.TypeDate, types.DefaultFsp),
+			types.DefaultFsp,
+			mysql.TypeDate,
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(2024)}),
+		},
 		// cast string as Datetime(6).
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
