@@ -310,6 +310,45 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 	c.length += times
 }
 
+// AppendCellRange appends cells in [begin, end) from the source column.
+func (c *Column) AppendCellRange(src *Column, begin, end int) {
+	if src == nil || begin < 0 || begin >= end || end > src.Rows() {
+		return
+	}
+	oldLen := c.length
+	newLen := oldLen + end - begin
+	sizeNulls := (newLen + 7) >> 3
+	if cap(c.nullBitmap) >= sizeNulls {
+		c.nullBitmap = c.nullBitmap[:sizeNulls]
+	} else {
+		bitmap := make([]byte, sizeNulls)
+		copy(bitmap, c.nullBitmap)
+		c.nullBitmap = bitmap
+	}
+	for i := begin; i < end; i++ {
+		dst := oldLen + i - begin
+		if src.IsNull(i) {
+			c.nullBitmap[dst>>3] &^= byte(1 << uint(dst&7))
+		} else {
+			c.nullBitmap[dst>>3] |= byte(1 << uint(dst&7))
+		}
+	}
+	if c.IsFixed() {
+		elemLen := len(src.elemBuf)
+		c.data = append(c.data, src.data[begin*elemLen:end*elemLen]...)
+		c.length = newLen
+		return
+	}
+	dataStart := src.offsets[begin]
+	dataEnd := src.offsets[end]
+	dstStart := int64(len(c.data))
+	c.data = append(c.data, src.data[dataStart:dataEnd]...)
+	for i := begin + 1; i <= end; i++ {
+		c.offsets = append(c.offsets, dstStart+(src.offsets[i]-dataStart))
+	}
+	c.length = newLen
+}
+
 // appendMultiSameNullBitmap appends multiple same bit value to `nullBitMap`.
 // notNull means not null.
 // num means the number of bits that should be appended.
@@ -556,6 +595,21 @@ func (c *Column) nullCount() int {
 		}
 	}
 	return cnt
+}
+
+// HasNull returns true if there is any null value in this Column.
+func (c *Column) HasNull() bool {
+	for i := 0; i+8 <= c.length; i += 8 {
+		if c.nullBitmap[i>>3] != 0xff {
+			return true
+		}
+	}
+	for i := (c.length / 8) * 8; i < c.length; i++ {
+		if c.IsNull(i) {
+			return true
+		}
+	}
+	return false
 }
 
 // ResizeInt64 resizes the column so that it contains n int64 elements.
