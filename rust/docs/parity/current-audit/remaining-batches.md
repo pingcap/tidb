@@ -2,8 +2,8 @@
 
 The [JSON batch map](remaining-batches.json) owns the allocation below; the
 [finding register](structural-findings.json) owns dispositions and detailed
-residuals. Current counts are 86 tracked, 30 repaired and 56 unresolved
-(27 open, 29 partial). Read [README.md](README.md) for the latest repair and
+residuals. Current counts are 86 tracked, 31 repaired and 55 unresolved
+(26 open, 29 partial). Read [README.md](README.md) for the latest repair and
 validation receipts. Older maintenance summaries are preserved in the
 [planning archive](https://github.com/pingcap/tidb/blob/9a319a5d6d78593e623a9db8e8aed1f750380507/rust/docs/parity/current-audit/remaining-batches.md).
 
@@ -16,7 +16,7 @@ independent prerequisite packages can proceed before a parent is complete.
 | Batch | Shared owner | Findings | Count |
 | --- | --- | --- | ---: |
 | B01 | Native PD and shared transport | P03, P06, T02, M04 | 4 |
-| B02 | Shared SQL session, planner and table execution | A01, E02, E03, T01, K01, K03, S03, S04 | 8 |
+| B02 | Shared SQL session, planner and table execution | A01, E02, E03, T01, K03, S03, S04 | 7 |
 | B03 | Schema, identity and timestamp protection | O02, O03, O09, I04, K02 | 5 |
 | B04 | Durable DDL and placement recovery | D01, D02, D03, D05, D08, D09, D10, D11, F01, F02, O14 | 11 |
 | B05 | Account security, wire bytes and administration | A02, A03, N01, N03, N04, N05 | 6 |

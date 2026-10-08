@@ -368,6 +368,19 @@ pub(crate) fn run_cluster_session_node_with_spill(
     let schema_version_syncer = schema_sync_ack
         .as_ref()
         .map(super::schema_sync::SchemaSyncAck::syncer);
+    let auto_id_etcd =
+        crate::real_tikv_node::connect_schema_notifier(&config).ok_or_else(|| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+                "cluster AutoID discovery requires its configured etcd client",
+            ))
+        })?;
+    let auto_id_service = Arc::new(
+        tidb_exec::auto_id_client::AutoIdClient::new(
+            Arc::new(tidb_exec::auto_id_client::EtcdAutoIdLeader(auto_id_etcd)),
+            config.cluster_security.clone(),
+        )
+        .map_err(|e| RunConfiguredNodeError::Engine(SqlQueryError::unknown(e.to_string())))?,
+    );
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             authority.transaction_opener(),
@@ -384,7 +397,8 @@ pub(crate) fn run_cluster_session_node_with_spill(
             RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
                 "campaign DDL owner failed: {error}"
             )))
-        })?,
+        })?
+        .with_auto_ids(auto_id_service.clone()),
     );
     // One DDL-gated worker. Its guard joins before the node releases DDL/PD.
     let replica_poll = crate::cluster_session_node::build_tiflash_replica_poll(
@@ -445,10 +459,13 @@ pub(crate) fn run_cluster_session_node_with_spill(
         // One registry for the whole node, so every connection inserting
         // into a table allocates from the one range this node reserved --
         // Go's per-`tidb-server` allocator, not a per-session one.
-        Arc::new(crate::cluster_auto_id_seam::ClusterTableAutoIds::new(
-            authority.transaction_opener(),
-            CONTROL_PLANE_TIMEOUT,
-        )),
+        Arc::new(
+            crate::cluster_auto_id_seam::ClusterTableAutoIds::new(
+                authority.transaction_opener(),
+                CONTROL_PLANE_TIMEOUT,
+            )
+            .with_service(auto_id_service),
+        ),
     )
     .with_global_config_syncer(global_config_keeper.syncer())
     .with_cop_scans(cop_scans)

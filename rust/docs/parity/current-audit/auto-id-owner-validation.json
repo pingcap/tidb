@@ -1,0 +1,376 @@
+{
+  "date": "2026-10-08",
+  "integration_start": "6eb40e1ee63f3cdd66edeeb3a0a646e92c90b72f",
+  "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+  "client_rust": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+  "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "findings": {
+    "K01": "repaired",
+    "N05": "partial; service-hosting residual explicit",
+    "T02": "partial; unchanged",
+    "M04": "partial; unchanged"
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 31,
+    "unresolved": 55,
+    "open": 26,
+    "partial": 29
+  },
+  "complete_package_acceptance": false,
+  "source_package_inventory": {
+    "go": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+    "package": "pkg/meta/autoid",
+    "acceptance": false,
+    "files": [
+      {
+        "path": "autoid_service_test.go",
+        "sha256": "02e9c7e060398550262071eb0ea0ea58077c9f901f039614fd179b95fdaeffeb"
+      },
+      {
+        "path": "memid_test.go",
+        "sha256": "98c8dc2168559f3f7cac01edc778ce41245fa7890688dc49582a2461275235e2"
+      },
+      {
+        "path": "autoid.go",
+        "sha256": "74a8b43a65ddf4882535157b527aa880983229d42486e7f138298f87e3fde533"
+      },
+      {
+        "path": "memid.go",
+        "sha256": "666a846b53fdeb5209d5a3c38894497fd7102bd4ec0069a697dff5a5bb93807c"
+      },
+      {
+        "path": "autoid_test.go",
+        "sha256": "d2b03e69dc5b8633d933172939125bca9f2c562d5097b87d97d7f559d4403dcb"
+      },
+      {
+        "path": "autoid_service.go",
+        "sha256": "251fd439f945f85e131705db3033e774a36814d0fbf05fca70059fdcee08bc32"
+      },
+      {
+        "path": "BUILD.bazel",
+        "sha256": "935e8a9629d2d395b16722e9aa6017107b335f1210a401e1ebdee37e48bb98fb"
+      },
+      {
+        "path": "seq_autoid_test.go",
+        "sha256": "070cb012b6db14430f556ceac8c9be1797377c922cd6150cc7b1258633020fe1"
+      },
+      {
+        "path": "main_test.go",
+        "sha256": "d24debbc3923d89a08be79f45e1c0c0cec96916a1adfbab22893a629594f46ba"
+      },
+      {
+        "path": "bench_test.go",
+        "sha256": "d1e57788bf1e096ce3ab295d784fbb4192af8c42dc8b3f49287673cc5b30f5c8"
+      },
+      {
+        "path": "errors.go",
+        "sha256": "ae23d822ad91dc0a3a3e79add458a07544f42150b8d7a14eb57416e92e93842c"
+      }
+    ]
+  },
+  "repairs": [
+    "Eligible version-five/cache-one service selection and process-shared generated gRPC transport",
+    "Earliest-created etcd leader discovery, TLS policy reuse, exact generation retirement and joined runtime",
+    "Hidden row IDs separated from AUTO_INCREMENT; legacy and AUTO_RANDOM remain ordinary",
+    "INSERT/UPDATE carry the statement SQL killer through service calls and preserve kill error identity",
+    "SHOW CREATE and NEXT_ROW_ID consume authoritative service IDs and distinct allocator kinds",
+    "DDL non-force rebase reads consumed service base; FORCE bypasses read and rejects zero; no competing IID metadata writes",
+    "DDL reload rebuilds table-local service Base while preserving shared discovery",
+    "Rename retains AutoIDSchemaID in registry and DDL counter keys",
+    "Canceled discovery waiters share at most one bounded etcd lookup"
+  ],
+  "cleanup": [
+    "Removed per-table reset generation and reset_connection callback after process transport migration",
+    "Removed mock reset counters/assertions tied to the retired owner; retained behavioral tests",
+    "Corrected TestIssue40584 to inspect issued Base instead of reserved End and TestInMemoryAlloc to use its one-ID source contract"
+  ],
+  "baseline": {
+    "command": "cargo test --locked -p tidb-executor --lib auto_id_owner_ -- --test-threads=1",
+    "passed": 0,
+    "failed": 3,
+    "log": {
+      "path": "/workspace/.cloud-setup/auto-id-owner-batch/before.log",
+      "sha256": "8e2939694ee9aa1f3fe812f9b7412aefd01cc1f182ef4dca4a33f45ea1070eb0",
+      "bytes": 65232
+    }
+  },
+  "tests": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib -- auto_id_owner_ kv_table::auto_id:: kv_table::auto_increment:: --test-threads=1",
+      "passed": 20,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/auto-id-owner-batch/executor-verified.log",
+        "sha256": "86263c9dd3e65f826015182f919dc8e0076af4f1f35d8d33387e26584f4375a3",
+        "bytes": 64467
+      }
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --test all -- auto_id_client_source cluster_auto_id --test-threads=1",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/auto-id-owner-batch/exec-tests.log",
+        "sha256": "5a50871af3c827e5b86e8db4c2f60a6ff5fd853b1b9791e5fb30a65f5e96b3bb",
+        "bytes": 88373
+      }
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --lib cluster_auto_id -- --test-threads=1",
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/auto-id-owner-batch/exec-policy-tests.log",
+        "sha256": "e222ea66b12b3622d84f6ce68dcd534637420bb28b4ebe61eab71e42a365d782",
+        "bytes": 84734
+      }
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib -- auto_id_owner_ --test-threads=1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/auto-id-owner-batch/server-registry-tests.log",
+        "sha256": "fa762720eeda81945d9422b8f4a6bc35efb29234c982b9d734ffb9a02c2cccd9",
+        "bytes": 109033
+      }
+    }
+  ],
+  "distinct_rust_cases": 37,
+  "sql": {
+    "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/auto-id-owner-batch/live.py after",
+    "checks": [
+      {
+        "name": "first insert",
+        "sql": "INSERT INTO t(v) VALUES (10)",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "second insert",
+        "sql": "INSERT INTO t(v) VALUES (20)",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "separate counters",
+        "sql": "SELECT id,_tidb_rowid FROM t ORDER BY id",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            2
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "explicit separate bases",
+        "sql": "INSERT INTO t(id,_tidb_rowid,v) VALUES (50,700,50)",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "next after explicit",
+        "sql": "INSERT INTO t(v) VALUES (51)",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "explicit counters stay separate",
+        "sql": "SELECT id,_tidb_rowid FROM t WHERE v=51",
+        "rows": [
+          [
+            51,
+            701
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "update rebases increment",
+        "sql": "UPDATE t SET id=80 WHERE v=51",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "insert after update",
+        "sql": "INSERT INTO t(v) VALUES (81)",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "update preserves row counter",
+        "sql": "SELECT id,_tidb_rowid FROM t WHERE v=81",
+        "rows": [
+          [
+            81,
+            702
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "cross database rename",
+        "sql": "RENAME TABLE t TO auto_dest.t",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "insert after rename",
+        "sql": "INSERT INTO auto_dest.t(v) VALUES (82)",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "rename preserves counters",
+        "sql": "SELECT id,_tidb_rowid FROM auto_dest.t WHERE v=82",
+        "rows": [
+          [
+            82,
+            703
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "force rebase",
+        "sql": "ALTER TABLE auto_dest.t FORCE AUTO_INCREMENT=10",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "insert after force",
+        "sql": "INSERT INTO auto_dest.t(v) VALUES (100)",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "force increment and Go row-cache invalidation",
+        "sql": "SELECT id,_tidb_rowid FROM auto_dest.t WHERE v=100",
+        "rows": [
+          [
+            10,
+            30001
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "truncate",
+        "sql": "TRUNCATE TABLE auto_dest.t",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "insert after truncate",
+        "sql": "INSERT INTO auto_dest.t(v) VALUES (1)",
+        "rows": [],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "truncate resets both",
+        "sql": "SELECT id,_tidb_rowid FROM auto_dest.t",
+        "rows": [
+          [
+            1,
+            1
+          ]
+        ],
+        "error": null,
+        "pass": true
+      },
+      {
+        "name": "show both allocator kinds",
+        "rows": [
+          [
+            "auto_dest",
+            "t",
+            "_tidb_rowid",
+            30001,
+            "_TIDB_ROWID"
+          ],
+          [
+            "auto_dest",
+            "t",
+            "id",
+            2,
+            "AUTO_INCREMENT"
+          ]
+        ],
+        "pass": true
+      }
+    ],
+    "binary_sha256": "63f218198b6b2acfe3ac172a62e6d35362af0581ab9c1a46f609fac807594928",
+    "exit": 0,
+    "receipt": {
+      "path": "/workspace/.cloud-setup/auto-id-owner-batch/after-wire.json",
+      "sha256": "4a3b1e03bf6786105937bc33f97f7abe4b9a16b2556562ff95f064e934cc9c5f",
+      "bytes": 3797
+    },
+    "scope": "Real MySQL protocol against Rust unistore; no live TiKV or Go AutoID service"
+  },
+  "checks": [
+    {
+      "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-server -p tidb-session --all-targets",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/auto-id-owner-batch/final-check.log",
+        "sha256": "dc2c8c3c9649ef618e22152354d70bbde7b907a56b88f8128b77a0a6d667275c",
+        "bytes": 124687
+      },
+      "note": "Subsequent retained-schema key and background-context corrections compiled in the final locked server build; final rebuilt server repeated all 19 SQL checks."
+    },
+    {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/auto-id-owner-batch/lint.log",
+        "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+        "bytes": 2164
+      }
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/auto-id-owner-batch/build.log",
+        "sha256": "01f671455ea8c9c913b8e7e0482b184ca95a0d8fc86c00626890cd682e1813cf",
+        "bytes": 105233
+      }
+    }
+  ],
+  "publication": "Actual pre-commit hook, fresh pre-push locked build, push and remote SHA are recorded after this receipt in /workspace/.cloud-setup/auto-id-owner-batch/final-handoff.json; do not infer completion from this field.",
+  "limitations": [
+    "Rust does not host/elect the AutoID gRPC service; TiKV cache-one tables require an existing compatible external leader (N05).",
+    "Socket tests use generated-protocol Rust test peers, not live Go/TiKV nodes.",
+    "API-v2/keyspace hosting, complete Go package/platform/generated/test acceptance, full Go suites and performance are unverified.",
+    "Broader K03/N03/D01 and T02/M04 remain partial. Other carried findings were not all freshly re-audited."
+  ],
+  "self_review": "Reviewed changed ownership, all production DML/DDL/SHOW callers, generated protocol, cancellation, row/auto-random separation, schema identity, force rebasing, stale test expectations and unrelated formatting; no native/vendor/dependency edits."
+}

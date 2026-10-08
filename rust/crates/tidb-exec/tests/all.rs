@@ -59,3 +59,5 @@ mod tikv_selection_dag_lowering_source;
 mod txn_summary_source;
 mod warning_publication_source;
 mod wide_scan_selection_source;
+
+mod auto_id_client_source;

@@ -68,6 +68,11 @@ pub trait TableAutoIds: std::fmt::Debug + Send + Sync {
     /// The live allocator for `table`, which is stored in database `db_id`.
     fn allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId;
 
+    /// Hidden handles use RowIDAllocType, distinct when SepAutoInc applies.
+    fn row_allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId {
+        self.allocator_for(db_id, table)
+    }
+
     /// The live, distinct AUTO_RANDOM allocator for `table`.
     fn random_allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId;
 
@@ -98,10 +103,17 @@ pub struct LocalTableAutoIds {
     allocators: Mutex<LocalTableAutoIdMap>,
 }
 
-type LocalTableAutoIdMap = std::collections::HashMap<(i64, bool), (i64, TableAutoId)>;
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub(crate) enum AutoIdKind {
+    AutoIncrement,
+    RowId,
+    AutoRandom,
+}
+
+type LocalTableAutoIdMap = std::collections::HashMap<(i64, AutoIdKind), (i64, TableAutoId)>;
 
 fn auto_id_step(table: &TableInfo) -> u64 {
-    if table.auto_id_cache > 1 {
+    if table.auto_id_cache > 0 {
         table.auto_id_cache as u64
     } else {
         tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP
@@ -110,33 +122,52 @@ fn auto_id_step(table: &TableInfo) -> u64 {
 
 impl TableAutoIds for LocalTableAutoIds {
     fn allocator_for(&self, _db_id: i64, table: &TableInfo) -> TableAutoId {
-        local_allocator_for(&self.allocators, table, false)
+        local_allocator_for(&self.allocators, table, AutoIdKind::AutoIncrement)
     }
 
+    fn row_allocator_for(&self, _db_id: i64, table: &TableInfo) -> TableAutoId {
+        local_allocator_for(
+            &self.allocators,
+            table,
+            if table.sep_auto_inc() {
+                AutoIdKind::RowId
+            } else {
+                AutoIdKind::AutoIncrement
+            },
+        )
+    }
     fn random_allocator_for(&self, _db_id: i64, table: &TableInfo) -> TableAutoId {
-        local_allocator_for(&self.allocators, table, true)
+        local_allocator_for(&self.allocators, table, AutoIdKind::AutoRandom)
     }
 }
 
 fn local_allocator_for(
     allocators: &Mutex<LocalTableAutoIdMap>,
     table: &TableInfo,
-    random: bool,
+    kind: AutoIdKind,
 ) -> TableAutoId {
     let mut allocators = allocators.lock().expect("local auto id map poisoned");
-    if let Some((cache, allocator)) = allocators.get(&(table.id, random)) {
+    if let Some((cache, allocator)) = allocators.get(&(table.id, kind)) {
         if *cache == table.auto_id_cache {
             return allocator.clone();
         }
-        let allocator = allocator.with_step(auto_id_step(table));
-        allocators.insert((table.id, random), (table.auto_id_cache, allocator.clone()));
+        let allocator = allocator.with_step(if kind == AutoIdKind::RowId {
+            tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP
+        } else {
+            auto_id_step(table)
+        });
+        allocators.insert((table.id, kind), (table.auto_id_cache, allocator.clone()));
         return allocator;
     }
     let allocator = TableAutoId::over(
         Arc::new(tidb_executor::kv_table::LocalAutoIdStore::new()),
-        auto_id_step(table),
+        if kind == AutoIdKind::RowId {
+            tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP
+        } else {
+            auto_id_step(table)
+        },
     );
-    allocators.insert((table.id, random), (table.auto_id_cache, allocator.clone()));
+    allocators.insert((table.id, kind), (table.auto_id_cache, allocator.clone()));
     allocator
 }
 
@@ -175,6 +206,13 @@ impl AutoIdSource<'_> {
     fn allocator_for(&self, table: &TableInfo) -> TableAutoId {
         match self {
             AutoIdSource::In { db_id, ids } => ids.allocator_for(*db_id, table),
+            AutoIdSource::Unavailable => TableAutoId::over(Arc::new(UnavailableAutoIdStore), 1),
+        }
+    }
+
+    fn row_allocator_for(&self, table: &TableInfo) -> TableAutoId {
+        match self {
+            AutoIdSource::In { db_id, ids } => ids.row_allocator_for(*db_id, table),
             AutoIdSource::Unavailable => TableAutoId::over(Arc::new(UnavailableAutoIdStore), 1),
         }
     }
@@ -837,6 +875,9 @@ pub(crate) fn cluster_table(
     // overwrite one another's record keys.
     if auto_increment_offset.is_some() || (!table.pk_is_handle && !table.is_common_handle) {
         kv_table.set_auto_id(auto.allocator_for(table));
+    }
+    if table.sep_auto_inc() {
+        kv_table.set_row_id(auto.row_allocator_for(table));
     }
     if table.pk_is_handle {
         let handle = columns

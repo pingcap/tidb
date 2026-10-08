@@ -36,6 +36,7 @@ pub mod cluster_discovery;
 mod cluster_http;
 pub mod cluster_analyze;
 pub mod cluster_auto_id;
+pub mod auto_id_client;
 pub mod cluster_catalog;
 pub mod cluster_ddl;
 pub mod cluster_index_id;

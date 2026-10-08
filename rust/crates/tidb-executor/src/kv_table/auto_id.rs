@@ -434,7 +434,7 @@ pub fn advance(base: u64, step: u64, unsigned: bool) -> u64 {
 /// Cloning shares the cache AND the store, so the staged catalog copy a
 /// transaction allocates from is the same allocator the committed table has.
 #[derive(Clone, Debug)]
-pub(crate) struct AutoIdAllocator {
+pub(crate) struct CachedAutoIdAllocator {
     /// Go `allocator.base`/`allocator.end`: the ids `(base, end]` reserved
     /// for this allocator and not yet handed out.
     cache: Arc<Mutex<AutoIdRange>>,
@@ -446,6 +446,290 @@ pub(crate) struct AutoIdAllocator {
     dynamic_step: bool,
     /// Go `allocator.isUnsigned`: which domain the patterns are read in.
     pub(crate) unsigned: bool,
+}
+
+/// AutoID request lifetime, sharing the SQL killer and transport cancellation.
+#[derive(Clone)]
+pub struct AutoIdCall {
+    rpc: tidb_txnkv::rpc::UnaryCallContext,
+    killer: Option<Arc<tidb_util::sqlkiller::SqlKiller>>,
+}
+impl AutoIdCall {
+    /// Go context.Background for service reads without a caller deadline.
+    pub fn background() -> Self {
+        Self {
+            rpc: tidb_txnkv::rpc::UnaryCallContext::with_optional_deadline(
+                None,
+                tidb_txnkv::rpc::UnaryCancellation::new(),
+            ),
+            killer: None,
+        }
+    }
+    /// Bounded internal operation (Go singlePointWriteOperationTimeout).
+    pub fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            rpc: tidb_txnkv::rpc::UnaryCallContext::with_timeout(timeout),
+            killer: None,
+        }
+    }
+    /// Explicit cancellation used by callers that already own a transport scope.
+    pub fn new(timeout: Duration, cancel: tidb_txnkv::rpc::UnaryCancellation) -> Self {
+        Self {
+            rpc: tidb_txnkv::rpc::UnaryCallContext::new(timeout, cancel),
+            killer: None,
+        }
+    }
+    /// SQL allocation follows the statement killer; DML has no SELECT deadline.
+    pub fn statement(memory: &crate::StatementMemory) -> Self {
+        Self {
+            rpc: tidb_txnkv::rpc::UnaryCallContext::with_optional_deadline(
+                None,
+                tidb_txnkv::rpc::UnaryCancellation::new(),
+            ),
+            killer: Some(memory.sql_killer().clone()),
+        }
+    }
+    /// Poll the shared SQL kill signal before transport admission and retry waits.
+    pub fn cancellation(&self) -> &tidb_txnkv::rpc::UnaryCancellation {
+        if self.killer.as_ref().is_some_and(|k| {
+            k.get_kill_signal() != tidb_util::sqlkiller::KillSignal::UnspecifiedKillSignal
+        }) {
+            self.rpc.cancellation().cancel();
+        }
+        self.rpc.cancellation()
+    }
+}
+impl std::ops::Deref for AutoIdCall {
+    type Target = tidb_txnkv::rpc::UnaryCallContext;
+    fn deref(&self) -> &Self::Target {
+        &self.rpc
+    }
+}
+
+/// Table-bound single-point authority. The process owns discovery and transport.
+pub trait AutoIdService: fmt::Debug + Send + Sync {
+    /// Go Alloc, including n=0 for the authoritative next-ID query.
+    fn alloc(
+        &self,
+        call: &AutoIdCall,
+        n: u64,
+        increment: u64,
+        offset: u64,
+    ) -> Result<(u64, u64), AutoIdStoreError>;
+    /// Go Rebase/ForceRebase; the service never reserves a local window.
+    fn rebase(&self, call: &AutoIdCall, base: u64, force: bool) -> Result<(), AutoIdStoreError>;
+    /// Last completed service allocation or rebase.
+    fn base(&self) -> u64;
+}
+
+#[derive(Clone, Debug)]
+enum AllocatorBackend {
+    Cached(CachedAutoIdAllocator),
+    Service(Arc<dyn AutoIdService>),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AutoIdAllocator {
+    backend: AllocatorBackend,
+    pub(crate) unsigned: bool,
+}
+impl AutoIdAllocator {
+    pub(crate) fn new() -> Self {
+        Self::over(Arc::new(LocalAutoIdStore::new()), DEFAULT_AUTO_ID_STEP)
+    }
+    pub(crate) fn over(store: Arc<dyn AutoIdStore>, step: u64) -> Self {
+        Self {
+            backend: AllocatorBackend::Cached(CachedAutoIdAllocator::over(store, step)),
+            unsigned: false,
+        }
+    }
+    pub(crate) fn service(service: Arc<dyn AutoIdService>) -> Self {
+        Self {
+            backend: AllocatorBackend::Service(service),
+            unsigned: false,
+        }
+    }
+    pub(crate) fn set_unsigned(&mut self, unsigned: bool) {
+        self.unsigned = unsigned;
+        if let AllocatorBackend::Cached(c) = &mut self.backend {
+            c.set_unsigned(unsigned);
+        }
+    }
+    pub(crate) fn shares_cache_with(&self, other: &Self) -> bool {
+        match (&self.backend, &other.backend) {
+            (AllocatorBackend::Cached(a), AllocatorBackend::Cached(b)) => a.shares_cache_with(b),
+            (AllocatorBackend::Service(a), AllocatorBackend::Service(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+    pub(crate) fn with_step(&self, step: u64) -> Self {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => Self {
+                backend: AllocatorBackend::Cached(c.with_step(step)),
+                unsigned: self.unsigned,
+            },
+            AllocatorBackend::Service(_) => self.clone(),
+        }
+    }
+    pub(crate) fn is_single_point(&self) -> bool {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => c.is_single_point(),
+            AllocatorBackend::Service(_) => true,
+        }
+    }
+    pub(crate) fn alloc(&self, increment: u64, offset: u64) -> Result<u64, AutoIdError> {
+        self.alloc_batch(1, increment, offset).map(|(_, max)| max)
+    }
+    fn alloc_batch(&self, n: u64, increment: u64, offset: u64) -> Result<(u64, u64), AutoIdError> {
+        self.alloc_batch_in(
+            &AutoIdCall::with_timeout(Duration::from_secs(30)),
+            n,
+            increment,
+            offset,
+        )
+    }
+    pub(crate) fn alloc_in(
+        &self,
+        call: &AutoIdCall,
+        increment: u64,
+        offset: u64,
+    ) -> Result<u64, AutoIdError> {
+        self.alloc_batch_in(call, 1, increment, offset)
+            .map(|(_, max)| max)
+    }
+    fn alloc_batch_in(
+        &self,
+        call: &AutoIdCall,
+        n: u64,
+        increment: u64,
+        offset: u64,
+    ) -> Result<(u64, u64), AutoIdError> {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => c.alloc_batch(n, increment, offset),
+            AllocatorBackend::Service(s) => s
+                .alloc(call, n, increment, offset)
+                .map_err(AutoIdError::Store),
+        }
+    }
+    pub(crate) fn next(&self) -> u64 {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => c.next(),
+            AllocatorBackend::Service(s) => s.base().wrapping_add(1),
+        }
+    }
+    pub(crate) fn allocated_next(&self) -> u64 {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => c.allocated_next(),
+            AllocatorBackend::Service(s) => s.base().wrapping_add(1),
+        }
+    }
+    pub(crate) fn next_for_show(&self) -> Result<u64, AutoIdStoreError> {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => Ok(c.next()),
+            AllocatorBackend::Service(_) => self.next_global(),
+        }
+    }
+    pub(crate) fn next_global(&self) -> Result<u64, AutoIdStoreError> {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => c.next_global(),
+            AllocatorBackend::Service(s) => s
+                .alloc(&AutoIdCall::background(), 0, 1, 1)
+                .map(|(_, max)| max.wrapping_add(1)),
+        }
+    }
+    pub(crate) fn advance_global_one(&self) -> Result<u64, AutoIdError> {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => c.advance_global_one(),
+            AllocatorBackend::Service(_) => self.alloc(1, 1),
+        }
+    }
+    pub(crate) fn rebase_allocating(&self, value: u64) -> Result<(), AutoIdStoreError> {
+        self.rebase_allocating_in(&AutoIdCall::with_timeout(Duration::from_secs(30)), value)
+    }
+    pub(crate) fn rebase_allocating_in(
+        &self,
+        call: &AutoIdCall,
+        value: u64,
+    ) -> Result<(), AutoIdStoreError> {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => c.rebase_allocating(value),
+            AllocatorBackend::Service(s) => s.rebase(call, value, false),
+        }
+    }
+    pub(crate) fn rebase(&self, value: u64) -> Result<(), AutoIdStoreError> {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => c.rebase(value),
+            AllocatorBackend::Service(s) => s.rebase(
+                &AutoIdCall::with_timeout(Duration::from_secs(30)),
+                value,
+                false,
+            ),
+        }
+    }
+    pub(crate) fn rebase_to_next(&self, next: u64) -> Result<(), AutoIdStoreError> {
+        let base = if self.unsigned {
+            next.checked_sub(1)
+        } else {
+            (next as i64).checked_sub(1).map(|v| v as u64)
+        };
+        match base {
+            Some(base) => self.rebase(base),
+            None => Ok(()),
+        }
+    }
+    fn checked_force_rebase_base(&self, next: u64) -> Result<u64, AutoIdError> {
+        if next == 0 {
+            return Err(AutoIdError::Exhausted);
+        }
+        if self.unsigned {
+            Ok(next - 1)
+        } else {
+            (next as i64)
+                .checked_sub(1)
+                .map(|v| v as u64)
+                .ok_or(AutoIdError::Exhausted)
+        }
+    }
+    pub(crate) fn prepare_rebase_to_next(
+        &self,
+        next: u64,
+        force: bool,
+    ) -> Result<PreparedAutoIdRebase, AutoIdError> {
+        if force {
+            self.checked_force_rebase_base(next)?;
+        }
+        Ok(PreparedAutoIdRebase {
+            allocator: self.clone(),
+            next,
+            force,
+        })
+    }
+    pub(crate) fn force_rebase_to_next(&self, next: u64) -> Result<(), AutoIdError> {
+        let base = self.checked_force_rebase_base(next)?;
+        match &self.backend {
+            AllocatorBackend::Cached(c) => c.force_rebase_to_next(next),
+            AllocatorBackend::Service(s) => s
+                .rebase(
+                    &AutoIdCall::with_timeout(Duration::from_secs(30)),
+                    base,
+                    true,
+                )
+                .map_err(AutoIdError::Store),
+        }
+    }
+    pub(crate) fn forget_reservation(&self) {
+        if let AllocatorBackend::Cached(c) = &self.backend {
+            c.forget_reservation();
+        }
+    }
+    pub(crate) fn reset(&self) -> Result<(), AutoIdStoreError> {
+        match &self.backend {
+            AllocatorBackend::Cached(c) => c.reset(),
+            AllocatorBackend::Service(s) => {
+                s.rebase(&AutoIdCall::with_timeout(Duration::from_secs(30)), 0, true)
+            }
+        }
+    }
 }
 
 /// A validated DDL rebase that retains the live allocator without changing it.
@@ -482,7 +766,7 @@ struct AutoIdRange {
     last_reserve_at: Instant,
 }
 
-impl AutoIdAllocator {
+impl CachedAutoIdAllocator {
     /// A fresh in-process allocator, whose first id is 1.
     pub(crate) fn new() -> Self {
         Self::over(Arc::new(LocalAutoIdStore::new()), DEFAULT_AUTO_ID_STEP)
@@ -491,7 +775,7 @@ impl AutoIdAllocator {
     /// An allocator over `store`, reserving `step` ids at a time.
     pub(crate) fn over(store: Arc<dyn AutoIdStore>, step: u64) -> Self {
         let step = step.max(1);
-        AutoIdAllocator {
+        CachedAutoIdAllocator {
             // An empty range, so the first allocation reserves.
             cache: Arc::new(Mutex::new(AutoIdRange {
                 base: 0,
@@ -508,7 +792,7 @@ impl AutoIdAllocator {
 
     /// Whether `other` is a clone of this allocator rather than a second one
     /// over the same store: same cache, so the same reserved range.
-    pub(crate) fn shares_cache_with(&self, other: &AutoIdAllocator) -> bool {
+    pub(crate) fn shares_cache_with(&self, other: &CachedAutoIdAllocator) -> bool {
         Arc::ptr_eq(&self.cache, &other.cache)
     }
 
@@ -772,21 +1056,6 @@ impl AutoIdAllocator {
         }
     }
 
-    pub(crate) fn prepare_rebase_to_next(
-        &self,
-        next: u64,
-        force: bool,
-    ) -> Result<PreparedAutoIdRebase, AutoIdError> {
-        if force {
-            self.checked_force_rebase_base(next)?;
-        }
-        Ok(PreparedAutoIdRebase {
-            allocator: self.clone(),
-            next,
-            force,
-        })
-    }
-
     fn checked_force_rebase_base(&self, next: u64) -> Result<u64, AutoIdError> {
         if next == 0 {
             return Err(AutoIdError::Exhausted);
@@ -866,15 +1135,15 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Barrier;
 
-    fn allocator(unsigned: bool) -> (Arc<LocalAutoIdStore>, AutoIdAllocator) {
+    fn allocator(unsigned: bool) -> (Arc<LocalAutoIdStore>, CachedAutoIdAllocator) {
         let store = Arc::new(LocalAutoIdStore::new());
-        let mut allocator = AutoIdAllocator::over(store.clone(), DEFAULT_AUTO_ID_STEP);
+        let mut allocator = CachedAutoIdAllocator::over(store.clone(), DEFAULT_AUTO_ID_STEP);
         allocator.set_unsigned(unsigned);
         (store, allocator)
     }
 
-    fn allocator_over(store: &Arc<LocalAutoIdStore>, unsigned: bool) -> AutoIdAllocator {
-        let mut allocator = AutoIdAllocator::over(store.clone(), DEFAULT_AUTO_ID_STEP);
+    fn allocator_over(store: &Arc<LocalAutoIdStore>, unsigned: bool) -> CachedAutoIdAllocator {
+        let mut allocator = CachedAutoIdAllocator::over(store.clone(), DEFAULT_AUTO_ID_STEP);
         allocator.set_unsigned(unsigned);
         allocator
     }
@@ -883,7 +1152,7 @@ mod tests {
         store.last.load(Ordering::SeqCst).wrapping_add(1)
     }
 
-    fn cache_end(allocator: &AutoIdAllocator) -> u64 {
+    fn cache_end(allocator: &CachedAutoIdAllocator) -> u64 {
         allocator.cache.lock().expect("auto id cache").end
     }
 
@@ -898,7 +1167,7 @@ mod tests {
     #[test]
     fn changing_cache_step_keeps_the_global_counter_and_discards_the_old_range() {
         let store = Arc::new(LocalAutoIdStore::new());
-        let allocator = AutoIdAllocator::over(store.clone(), DEFAULT_AUTO_ID_STEP);
+        let allocator = CachedAutoIdAllocator::over(store.clone(), DEFAULT_AUTO_ID_STEP);
         assert_eq!(allocator.alloc(1, 1), Ok(1));
         assert_eq!(allocator.next_global(), Ok(DEFAULT_AUTO_ID_STEP + 1));
 
@@ -1042,7 +1311,7 @@ mod tests {
         let mut workers = Vec::new();
 
         for worker in 0_u64..10 {
-            let allocator = AutoIdAllocator::over(store.clone(), 100);
+            let allocator = CachedAutoIdAllocator::over(store.clone(), 100);
             let seen = seen.clone();
             let start = start.clone();
             workers.push(std::thread::spawn(move || {
@@ -1126,7 +1395,7 @@ mod tests {
     #[test]
     fn an_ascending_run_of_explicit_ids_crosses_the_store_once_per_window() {
         let store = Arc::new(CountingStore::default());
-        let mut allocator = AutoIdAllocator::over(store.clone(), 10);
+        let mut allocator = CachedAutoIdAllocator::over(store.clone(), 10);
         allocator.set_unsigned(false);
         for id in 1..=35_u64 {
             allocator.rebase_allocating(id).unwrap();
@@ -1142,7 +1411,7 @@ mod tests {
     #[test]
     fn an_allocating_rebase_returns_owning_the_window_above_the_value() {
         let store = Arc::new(CountingStore::default());
-        let mut allocator = AutoIdAllocator::over(store.clone(), 10);
+        let mut allocator = CachedAutoIdAllocator::over(store.clone(), 10);
         allocator.set_unsigned(false);
         allocator.rebase_allocating(100).unwrap();
         // Window = (100, 110]; the next allocation is 101, still local.
@@ -1164,7 +1433,7 @@ mod tests {
     #[test]
     fn a_plain_rebase_still_reserves_nothing() {
         let store = Arc::new(CountingStore::default());
-        let mut allocator = AutoIdAllocator::over(store.clone(), 10);
+        let mut allocator = CachedAutoIdAllocator::over(store.clone(), 10);
         allocator.set_unsigned(false);
         allocator.rebase(500).unwrap();
         assert_eq!(store.crossings.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -1196,7 +1465,7 @@ mod tests {
     /// Source: `pkg/meta/autoid/autoid_test.go::TestRollbackAlloc`.
     #[test]
     fn test_rollback_alloc() {
-        let allocator = AutoIdAllocator::over(Arc::new(FailingStore), 1);
+        let allocator = CachedAutoIdAllocator::over(Arc::new(FailingStore), 1);
         assert_eq!(
             allocator.alloc(1, 1),
             Err(AutoIdError::Store(AutoIdStoreError("injected".to_owned())))
@@ -1233,7 +1502,11 @@ mod tests {
 
     #[test]
     fn prepared_rebase_retains_the_live_allocator() {
-        let (store, allocator) = allocator(false);
+        let (store, cached) = allocator(false);
+        let allocator = AutoIdAllocator {
+            backend: AllocatorBackend::Cached(cached),
+            unsigned: false,
+        };
         let rebase = allocator.prepare_rebase_to_next(2, false).unwrap();
         assert_eq!(global_next(&store), 1, "preparation does not reserve IDs");
         // Interleave another holder's allocations while the DDL is prepared.
@@ -1268,14 +1541,17 @@ mod tests {
             allocator.prepare_rebase_to_next(i64::MIN as u64, true),
             Err(AutoIdError::Exhausted)
         ));
-        let cache = allocator.cache.lock().unwrap();
+        let AllocatorBackend::Cached(cached) = &allocator.backend else {
+            panic!("cached allocator")
+        };
+        let cache = cached.cache.lock().unwrap();
         assert_eq!((cache.base, cache.end), (0, 0));
     }
 
     /// Source: `pkg/meta/autoid/autoid_test.go::TestIssue40584`.
     #[test]
     fn test_issue40584() {
-        let allocator = Arc::new(AutoIdAllocator::new());
+        let allocator = Arc::new(CachedAutoIdAllocator::new());
         let start = Arc::new(Barrier::new(3));
 
         let allocating = {
@@ -1294,7 +1570,7 @@ mod tests {
             std::thread::spawn(move || {
                 start.wait();
                 for _ in 0..20_000 {
-                    let _ = allocator.next();
+                    let _ = allocator.allocated_next();
                 }
             })
         };
@@ -1302,16 +1578,15 @@ mod tests {
         start.wait();
         allocating.join().unwrap();
         reading.join().unwrap();
-        assert_eq!(allocator.next(), 20_001);
+        assert_eq!(allocator.allocated_next(), 20_001);
     }
 
-    /// Complete observable translation of
-    /// `pkg/meta/autoid/memid_test.go::TestInMemoryAlloc`.
+    /// Allocation cases from Go TestInMemoryAlloc over an uncached local counter.
     ///
     #[test]
     fn test_in_memory_alloc() {
         fn alloc_many(
-            allocator: &AutoIdAllocator,
+            allocator: &CachedAutoIdAllocator,
             count: u64,
             increment: u64,
             offset: u64,
@@ -1321,7 +1596,7 @@ mod tests {
                 .map(|(_, maximum)| maximum)
         }
 
-        let allocator = AutoIdAllocator::new();
+        let allocator = CachedAutoIdAllocator::over(Arc::new(LocalAutoIdStore::new()), 1);
         assert_eq!(allocator.next(), 1);
         assert_eq!(alloc_many(&allocator, 1, 1, 1), Ok(1));
         assert_eq!(allocator.next(), 2);
@@ -1340,7 +1615,7 @@ mod tests {
         assert_eq!(alloc_many(&allocator, 1, 1, 1), Ok(i64::MAX as u64 - 1));
         assert_eq!(alloc_many(&allocator, 1, 1, 1), Err(AutoIdError::Exhausted));
 
-        let mut unsigned = AutoIdAllocator::new();
+        let mut unsigned = CachedAutoIdAllocator::over(Arc::new(LocalAutoIdStore::new()), 1);
         unsigned.set_unsigned(true);
         let near_unsigned_max = u64::MAX - 2;
         unsigned.rebase(near_unsigned_max).unwrap();
@@ -1348,7 +1623,7 @@ mod tests {
         assert_eq!(alloc_many(&unsigned, 1, 1, 1), Ok(near_unsigned_max + 1));
         assert_eq!(alloc_many(&unsigned, 1, 1, 1), Err(AutoIdError::Exhausted));
 
-        let initial_base = AutoIdAllocator::new();
+        let initial_base = CachedAutoIdAllocator::over(Arc::new(LocalAutoIdStore::new()), 1);
         initial_base.rebase_to_next(100).unwrap();
         assert_eq!(initial_base.next(), 100);
         assert_eq!(alloc_many(&initial_base, 1, 1, 1), Ok(100));

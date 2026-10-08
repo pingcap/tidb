@@ -1140,18 +1140,26 @@ fn run_insert_with_physical(
                 // is read lazily so that a row carrying its OWN id does not
                 // consume from it -- see `apply_auto_increment`.
                 let outcome = kv
-                    .apply_auto_increment(&mut new_rows[*index], ctx.auto_increment_step(), || {
-                        ctx.reuse_auto_increment_id()
-                    })
-                    .map_err(|error| match error {
-                        AutoIdError::Exhausted => DriverError::AutoincReadFailed,
-                        // An id that does not fit the COLUMN is not a full
-                        // domain: Go casts the allocated id and reports the
-                        // cast's own 1690, which names the value and type.
-                        AutoIdError::OutOfRange { value, type_name } => {
-                            DriverError::ConstantOverflows { value, type_name }
+                    .apply_auto_increment_in(
+                        &mut new_rows[*index],
+                        ctx.auto_increment_step(),
+                        || ctx.reuse_auto_increment_id(),
+                        &crate::kv_table::AutoIdCall::statement(&ctx.statement_memory()),
+                    )
+                    .map_err(|error| {
+                        if let Err(killed) = ctx.statement_memory().check() {
+                            return DriverError::Exec(killed);
                         }
-                        AutoIdError::Store(detail) => DriverError::AutoIdUnavailable(detail.0),
+                        match error {
+                            AutoIdError::Exhausted => DriverError::AutoincReadFailed,
+                            // An id that does not fit the COLUMN is not a full
+                            // domain: Go casts the allocated id and reports the
+                            // cast's own 1690, which names the value and type.
+                            AutoIdError::OutOfRange { value, type_name } => {
+                                DriverError::ConstantOverflows { value, type_name }
+                            }
+                            AutoIdError::Store(detail) => DriverError::AutoIdUnavailable(detail.0),
+                        }
                     })?;
                 // Recorded whether it was drawn, handed back, or supplied by
                 // the row, so the NEXT attempt replays this attempt's

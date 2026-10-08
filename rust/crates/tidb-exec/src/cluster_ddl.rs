@@ -7527,6 +7527,17 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     start_ts: u64,
     use_new_collation: bool,
 ) -> Result<DdlPlan, DdlPlanError> {
+    plan_ddl_with_auto_ids(snapshot, statement, start_ts, use_new_collation, None)
+}
+
+/// DDL uses the same process AutoID authority as SQL table writes.
+pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
+    snapshot: &mut S,
+    statement: &DdlStatement,
+    start_ts: u64,
+    use_new_collation: bool,
+    auto_ids: Option<&std::sync::Arc<crate::auto_id_client::AutoIdClient>>,
+) -> Result<DdlPlan, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     // Filled by the arms that change what PD must know about an object's
     // placement; empty for every other statement, and an empty list is never
@@ -10485,14 +10496,46 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             force,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            if *force && *new_base == 0 {
+                return Err(DdlPlanError::AutoIdReadFailed);
+            }
             let counter_key = crate::cluster_auto_id::auto_id_key_for(db_id, stored);
+            let service = auto_ids.filter(|_| stored.sep_auto_inc()).map(|client| {
+                let unsigned = stored.is_auto_inc_col_unsigned();
+                crate::cluster_auto_id::AutoIdServiceAllocator::new(
+                    client.clone(),
+                    if stored.auto_id_schema_id == 0 {
+                        db_id
+                    } else {
+                        stored.auto_id_schema_id
+                    },
+                    stored.id,
+                    unsigned,
+                    u32::MAX,
+                )
+            });
+            let call = if *force {
+                tidb_executor::kv_table::AutoIdCall::with_timeout(std::time::Duration::from_secs(30))
+            } else {
+                tidb_executor::kv_table::AutoIdCall::background()
+            };
+
             // Go `NextGlobalAutoID`: the stored counter holds the id LAST
             // handed out, so the next one to allocate is one past it. An
             // absent key reads as 0, matching Go's `GetInt64`.
-            let stored_counter = match snapshot.get(&counter_key)? {
-                Some(value) => value::parse_int_value(&value)
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-                None => 0,
+            let stored_counter = if *force && service.is_some() {
+                0
+            } else if let Some(service) = &service {
+                service
+                    .alloc(&call, 0, 1, 1)
+                    .map_err(|e| DdlPlanError::Encode(e.to_string()))?
+                    .1
+            } else {
+                match snapshot.get(&counter_key)? {
+                    Some(value) => value::parse_int_value(&value)
+                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                    None => 0,
+                }
             };
             let next_global = (stored_counter as u64).wrapping_add(1);
             let mut new_base = *new_base;
@@ -10530,7 +10573,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // non-force base was already raised to at least the current
             // counter above, so both reduce to one write here.
             let new_end = new_base.wrapping_sub(1);
-            if *force || (new_end as u64) > (stored_counter as u64) {
+            if let Some(service) = &service {
+                service
+                    .rebase(&call, new_end, *force)
+                    .map_err(|e| DdlPlanError::Encode(e.to_string()))?;
+            } else if *force || (new_end as u64) > (stored_counter as u64) {
                 writes.push(BufferMutation::set(
                     counter_key,
                     value::encode_int_value(new_end),

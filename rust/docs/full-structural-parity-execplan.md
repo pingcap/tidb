@@ -25,7 +25,7 @@ one package, but it retains one inventory, integration decision and receipt.
 Partial maintenance never accepts the enclosing package.
 
 The [finding register](parity/current-audit/structural-findings.json) records
-86 findings: 30 repaired and 56 unresolved (27 open, 29 partial). The
+86 findings: 31 repaired and 55 unresolved (26 open, 29 partial). The
 [batch map](parity/current-audit/remaining-batches.md) assigns every unresolved
 ID once across B01–B10. Counts describe the known register, not exhaustive
 semantic coverage. [README.md](parity/current-audit/README.md) indexes current
@@ -33,13 +33,15 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] Repair K01 allocator selection and shared AutoID client ownership across DML, DDL and SHOW; retain N05 service-hosting/election residual and full package limits. See [batch plan](auto-id-owner-execplan.md) and [receipt](parity/current-audit/auto-id-owner-validation.json).
+
 - [x] Maintain T02/M04 setup/first-receive recovery and shared storage error/backoff ownership; [plan](mpp-recovery-execplan.md) and [receipt](parity/current-audit/mpp-recovery-validation.json) record grouped validation.
 
 - [x] Consolidate P03/P06 retained TSO streams and completion/order ownership in both consumers; [batch plan](tso-completion-execplan.md) and [receipt](parity/current-audit/tso-completion-validation.json) track validation and publication.
 
-- [x] Maintain P03/P06 discovery observations, primaryless revision floors and stale-callee cache lookup retirement together; see [plan](pd-observation-execplan.md) and [receipt](parity/current-audit/pd-observation-validation.json). Complete transport/discovery packages remain partial; 56 broader findings remain unresolved.
+- [x] Maintain P03/P06 discovery observations, primaryless revision floors and stale-callee cache lookup retirement together; see [plan](pd-observation-execplan.md) and [receipt](parity/current-audit/pd-observation-validation.json). Complete transport/discovery packages remain partial.
 
-- [x] Maintain N03/D11/E02 together through shared FK policy, metadata versions and persistent admission; see [current plan](fk-global-policy-execplan.md) and [receipt](parity/current-audit/fk-global-policy-validation.json). Broad counts remain56 unresolved; complete package/durable lifecycle obligations remain open.
+- [x] Maintain N03/D11/E02 together through shared FK policy, metadata versions and persistent admission; see [current plan](fk-global-policy-execplan.md) and [receipt](parity/current-audit/fk-global-policy-validation.json). Complete package/durable lifecycle obligations remain open.
 
 - [x] Restore clean Cloud checkouts at TiDB `9a319a5d6d78593e623a9db8e8aed1f750380507` and native `aa2c60f37481c2fe7f03997535d4f238ed485956`; refresh Go master at `7a3dacb52efe58d28db360ae8639d8838c376544`.
 - [x] Retain the latest [rename admission/publication repair](parity/current-audit/rename-owner-batch-validation.json) and [executor scaffolding cleanup](parity/current-audit/executor-scaffold-cleanup-validation.json), without expanding their acceptance claims.
@@ -246,7 +248,7 @@ restart using saved instructions, not presumed surviving processes.
 
 
 The previous 2,725-line plan mixed active workflow with old 77-finding counts,
-retired entrypoints and laptop commands. The current register has 56 unresolved
+retired entrypoints and laptop commands. The current register has 55 unresolved
 findings, and Cloud Cargo requires the `rust/` working directory. Repeating that
 history at startup creates conflicting instructions without adding validation.
 Exact prior bytes remain in Git archives, with checksums in the cleanup receipt.

@@ -4,16 +4,16 @@ Latest cleanup: [shared TSO completion](tso-completion-validation.json) retires 
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [MPP recovery](mpp-recovery-validation.json). MPP shares storage transport error projection and the native TiFlash backoff budget; setup now includes the first receive. Transient setup/first-receive failures retry before delivery, cancellation stays terminal without retiring the shared fleet, and empty EOF completes without cancel. Shared setup/receive cancellation replaces the duplicate tail polling loop. T02/M04 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 54 findings retain prior evidence.
+Latest connected repair: [AutoID ownership](auto-id-owner-validation.json). The batch composes shared service discovery/recovery, eligible allocator selection, separate hidden-row counters, DML cancellation, SHOW and DDL rebasing/rename identity. K01's recorded selection defect is repaired; N05 explicitly retains missing AutoID service hosting/election. Counts: 86 tracked,31 repaired,55 unresolved (26 open,29 partial). T02/M04 remain partial; other carried findings were not freshly re-audited. No complete-package or live Go/TiKV acceptance.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../mpp-recovery-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../auto-id-owner-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](mpp-recovery-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](auto-id-owner-validation.json): exact source/log identities and verification limits.
 
-Current Go comparison: `9e298833cf87fe957f146f32d1f1a273356a5d22`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `02880abbab5ed89a4dc603a4ddc7935853870ea6`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
+Current Go comparison: `1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `02880abbab5ed89a4dc603a4ddc7935853870ea6`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
 A complete upstream package, including original tests, generated/platform/build inputs and fixtures, is the minimum acceptance unit. Search hits, a passing subset and retired Rust-only adapter tests do not discharge those obligations. The complete inventories are snapshots, not proof that every semantic mismatch is known.
 
@@ -30,6 +30,8 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 Earlier implementation: [shared read consistency](read-consistency-batch-validation.json). Prior partition reorganization safety remains in place until its durable owner exists.
 
 ## Historical evidence
+
+- [MPP setup/recovery](mpp-recovery-validation.json)
 
 - [Shared TSO completion](tso-completion-validation.json)
 

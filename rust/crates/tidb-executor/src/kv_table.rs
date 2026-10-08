@@ -57,6 +57,7 @@ pub use auto_id::{
     LocalAutoIdStore, DEFAULT_AUTO_ID_STEP,
 };
 
+pub use auto_id::{AutoIdCall, AutoIdService};
 pub use auto_increment::{AutoIncrement, TableAutoId};
 pub use auto_random::{AutoRandom, AutoRandomError, AutoRandomSpec};
 
@@ -514,6 +515,7 @@ pub struct KvTable {
     /// Go's auto-id allocator, shared across the copies a transaction stages
     /// so that a consumed id is never returned (see [`AutoIdAllocator`]).
     auto_id: AutoIdAllocator,
+    row_id: Option<AutoIdAllocator>,
     /// The `AUTO_RANDOM` handle layout and its distinct TARID allocator.
     auto_random: Option<AutoRandomSpec>,
     auto_random_id: AutoIdAllocator,
@@ -1165,6 +1167,7 @@ impl KvTable {
             common_handle_version: 0,
             auto_increment_offset: None,
             auto_id: AutoIdAllocator::new(),
+            row_id: None,
             auto_random: None,
             auto_random_id: AutoIdAllocator::new(),
             charset: TableCharset::default(),
@@ -1981,8 +1984,16 @@ impl KvTable {
         self.charset
     }
 
-    /// Records Go `TableInfo.AutoIDCache` without touching the allocator,
-    /// for a loader that already gave the allocator its step.
+    fn row_id_allocator(&self) -> &AutoIdAllocator {
+        self.row_id.as_ref().unwrap_or(&self.auto_id)
+    }
+
+    /// Installs Go's separate RowIDAllocType for a SepAutoInc table.
+    pub fn set_row_id(&mut self, allocator: TableAutoId) {
+        self.row_id = Some(allocator.0);
+    }
+
+    /// Records metadata after the loader has installed the live allocators.
     pub fn set_recorded_auto_id_cache(&mut self, cache: i64) {
         self.auto_id_cache = cache;
     }
@@ -2478,13 +2489,15 @@ impl KvTable {
                 ))),
             },
             None => {
-                // Go `AllocHandle`: `_tidb_rowid` comes off the SAME counter
-                // the AUTO_INCREMENT column allocates from -- see this
-                // method's doc for why one counter serves both.
-                let handle = self.auto_id.alloc(1, 1).map_err(|error| match error {
-                    AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
-                    _ => KvTableError::AutoIdExhausted,
-                })?;
+                // Go AllocHandle uses RowIDAllocType, independent of the
+                // service-backed AUTO_INCREMENT authority for SepAutoInc.
+                let handle = self
+                    .row_id_allocator()
+                    .alloc(1, 1)
+                    .map_err(|error| match error {
+                        AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
+                        _ => KvTableError::AutoIdExhausted,
+                    })?;
                 // Go `AllocHandleIDs`: `if meta.ShardRowIDBits > 0 { base =
                 // shardFmt.Compose(shard, base) }`. Composing here rather
                 // than at the caller keeps the ONE place a heap table's
@@ -2596,6 +2609,9 @@ impl KvTable {
     pub fn truncate(&mut self) -> Result<(), AutoIdStoreError> {
         self.store.clear();
         self.auto_id.reset()?;
+        if let Some(row_id) = &self.row_id {
+            row_id.reset()?;
+        }
         self.auto_random_id.reset()
     }
 
@@ -2605,7 +2621,17 @@ impl KvTable {
         debug_assert_eq!(self.temp_table_type(), tidb_model::TempTableType::LOCAL);
         self.table_id = table_id;
         self.store = Box::new(MemTableStorage::new());
-        self.auto_id = AutoIdAllocator::new();
+        self.auto_id = AutoIdAllocator::over(
+            std::sync::Arc::new(LocalAutoIdStore::new()),
+            if self.auto_id_cache == 0 {
+                DEFAULT_AUTO_ID_STEP
+            } else {
+                self.auto_id_cache as u64
+            },
+        );
+        if self.row_id.is_some() {
+            self.row_id = Some(AutoIdAllocator::new());
+        }
         self.auto_random_id = AutoIdAllocator::new();
     }
 
@@ -3232,9 +3258,15 @@ impl KvTable {
         self.indexes_mut().push(index);
     }
 
-    /// The next auto-increment value, which `SHOW TABLE STATUS` reports as
-    /// `Auto_increment`. `None` when the table has no auto column at all,
-    /// which is the NULL Go reports there.
+    /// SHOW CREATE reads the single-point service authority, including peer allocations.
+    #[must_use]
+    pub fn next_auto_increment_for_show(&self) -> Result<Option<i64>, AutoIdStoreError> {
+        self.auto_increment_offset
+            .map(|_| self.auto_id.next_for_show().map(|v| v as i64))
+            .transpose()
+    }
+
+    /// Local allocator cursor used by information schema and SHOW TABLE STATUS.
     #[must_use]
     pub fn next_auto_increment(&self) -> Option<i64> {
         self.auto_increment_offset
@@ -3598,7 +3630,7 @@ impl KvTable {
                 // Go's `adjustImplicitRowID` rebases with allocIDs=true, so an
                 // ascending run of explicit row ids crosses to the counter's
                 // home once per reserved window.
-                self.auto_id
+                self.row_id_allocator()
                     .rebase_allocating(value as u64)
                     .map_err(|error| {
                         KvTableError::from(crate::storage::StorageError::Backend(error.0))
@@ -3837,9 +3869,16 @@ impl KvTable {
             };
             // Same arm Go's insert arms use: the rebase reserves a window on
             // its one store crossing, matching `Rebase(..., true)`.
-            self.auto_id.rebase_allocating(assigned).map_err(|error| {
-                KvTableError::from(crate::storage::StorageError::Backend(error.0))
-            })?;
+            self.auto_id
+                .rebase_allocating_in(&AutoIdCall::statement(&ctx.statement_memory()), assigned)
+                .map_err(|error| {
+                    if let Err(killed) = ctx.statement_memory().check() {
+                        return KvTableError::from(crate::storage::StorageError::Sql(
+                            crate::DriverError::Exec(killed).to_mysql_error(),
+                        ));
+                    }
+                    KvTableError::from(crate::storage::StorageError::Backend(error.0))
+                })?;
         }
         self.rebase_auto_random_from_row(row)?;
         // A clustered primary key IS the row handle, and the record value omits
@@ -4173,6 +4212,54 @@ mod tests {
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)
+    }
+
+    #[test]
+    fn auto_id_owner_separates_hidden_handles_from_single_point_values() {
+        let mut table = test_table();
+        table.set_auto_increment_offset(0);
+        table.init_auto_id_cache(1);
+        for expected in 1..=3 {
+            assert_eq!(table.auto_id.alloc(1, 1).unwrap(), expected);
+            let handle = table
+                .handle_of_row(
+                    &[Datum::Int(expected as i64), Datum::Null],
+                    &SessionTimeZone::utc(),
+                    0,
+                )
+                .unwrap();
+            assert_eq!(handle, TableHandle::Int(expected as i64));
+        }
+    }
+
+    #[test]
+    fn auto_id_owner_explicit_hidden_handle_does_not_rebase_auto_increment() {
+        let mut table = test_table();
+        table.set_auto_increment_offset(0);
+        table.init_auto_id_cache(1);
+        table
+            .insert_row_with_row_id(
+                &[Datum::Int(1), Datum::Null],
+                Some(700),
+                0,
+                &crate::StmtContext::for_dml(false, false, false),
+            )
+            .unwrap();
+        assert_eq!(table.auto_id.alloc(1, 1).unwrap(), 1);
+    }
+
+    #[test]
+    fn auto_id_owner_show_lists_both_separate_counters() {
+        let mut table = test_table();
+        table.set_auto_increment_offset(0);
+        table.init_auto_id_cache(1);
+        let rows = table.next_global_row_ids().unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|(name, _, kind)| (name.as_str(), *kind))
+                .collect::<Vec<_>>(),
+            vec![("_tidb_rowid", "_TIDB_ROWID"), ("a", "AUTO_INCREMENT")]
+        );
     }
 
     fn varstr() -> FieldType {

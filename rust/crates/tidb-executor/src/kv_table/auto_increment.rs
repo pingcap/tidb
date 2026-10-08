@@ -56,6 +56,11 @@ impl TableAutoId {
         TableAutoId(AutoIdAllocator::over(store, step))
     }
 
+    /// A table-bound AutoID service allocator; transport is shared by the process.
+    pub fn service(service: Arc<dyn super::auto_id::AutoIdService>) -> Self {
+        Self(AutoIdAllocator::service(service))
+    }
+
     /// Whether both handles drive the same allocator, and so the same
     /// reserved range.
     ///
@@ -182,7 +187,7 @@ impl KvTable {
         let mut rows = Vec::new();
         let has_implicit_row_id =
             self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty();
-        if has_implicit_row_id || self.auto_increment_offset.is_some() {
+        if has_implicit_row_id || (self.auto_increment_offset.is_some() && self.row_id.is_none()) {
             let column = if self.pk_handle_offset.is_some() {
                 self.auto_increment_column_name().unwrap_or_default()
             } else {
@@ -190,8 +195,17 @@ impl KvTable {
             };
             rows.push((
                 column.to_owned(),
-                self.auto_id.next_global()? as i64,
+                self.row_id_allocator().next_global()? as i64,
                 "_TIDB_ROWID",
+            ));
+        }
+        if self.row_id.is_some() && self.auto_increment_offset.is_some() {
+            rows.push((
+                self.auto_increment_column_name()
+                    .unwrap_or_default()
+                    .to_owned(),
+                self.auto_id.next_global()? as i64,
+                "AUTO_INCREMENT",
             ));
         }
         if let Some(spec) = self.auto_random {
@@ -219,6 +233,9 @@ impl KvTable {
             cache
         };
         self.auto_id = self.auto_id.with_step(step);
+        if cache == 1 && self.row_id.is_none() {
+            self.row_id = Some(AutoIdAllocator::new());
+        }
         self.auto_random_id = self.auto_random_id.with_step(step);
         self.auto_id_cache = i64::try_from(cache).unwrap_or(i64::MAX);
     }
@@ -233,6 +250,9 @@ impl KvTable {
             cache
         };
         self.auto_id = self.auto_id.with_step(step);
+        if cache == 1 && self.row_id.is_none() {
+            self.row_id = Some(AutoIdAllocator::new());
+        }
         self.auto_random_id = self.auto_random_id.with_step(step);
         // Go keeps the written value on the TableInfo, not just in the
         // allocator, because `SHOW CREATE TABLE` prints it back.
@@ -250,7 +270,7 @@ impl KvTable {
         Ok(())
     }
 
-/// Go's `AUTO_INCREMENT=n` table option: the first id the table hands out.
+    /// Go's `AUTO_INCREMENT=n` table option: the first id the table hands out.
     ///
     /// Go seeds the allocator so the next id is `n`, so `AUTO_INCREMENT=100`
     /// at CREATE makes the first row land on 100. On an existing table
@@ -327,6 +347,22 @@ impl KvTable {
         step: (u64, u64),
         reuse: impl FnOnce() -> Option<u64>,
     ) -> Result<AutoIncrement, AutoIdError> {
+        self.apply_auto_increment_in(
+            row,
+            step,
+            reuse,
+            &super::AutoIdCall::with_timeout(std::time::Duration::from_secs(30)),
+        )
+    }
+
+    /// The statement's cancellation scope accompanies service RPCs and backoff.
+    pub fn apply_auto_increment_in(
+        &mut self,
+        row: &mut [Datum],
+        step: (u64, u64),
+        reuse: impl FnOnce() -> Option<u64>,
+        call: &super::AutoIdCall,
+    ) -> Result<AutoIncrement, AutoIdError> {
         let Some(offset) = self.auto_increment_offset else {
             return Ok(AutoIncrement::Absent);
         };
@@ -343,7 +379,7 @@ impl KvTable {
             // the store crossing reserves a fresh window: an ascending run of
             // explicit ids pays the counter's home once per window, not per row.
             self.auto_id
-                .rebase_allocating(current)
+                .rebase_allocating_in(call, current)
                 .map_err(AutoIdError::Store)?;
             return Ok(AutoIncrement::Given(current));
         }
@@ -353,7 +389,7 @@ impl KvTable {
         // that moves `LAST_INSERT_ID()` off the row it names.
         let (id, reused) = match reuse() {
             Some(id) => (id, true),
-            None => (self.auto_id.alloc(increment, step_offset)?, false),
+            None => (self.auto_id.alloc_in(call, increment, step_offset)?, false),
         };
         self.check_auto_increment_fits(offset, id)?;
         // The allocated id skips the per-column cast the written values went

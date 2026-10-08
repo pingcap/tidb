@@ -398,6 +398,7 @@ where
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     catalog: Arc<SharedClusterCatalog>,
     timeout: Duration,
+    auto_ids: Option<Arc<tidb_exec::auto_id_client::AutoIdClient>>,
     /// The etcd client this node announces its catalog changes through, so
     /// peers' watches fire promptly. `None` leaves them to their lease tick;
     /// a failed announcement is a warning, never a failed DDL.
@@ -418,6 +419,12 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    /// DDL rebases use the process AutoID service rather than stale IID metadata.
+    pub fn with_auto_ids(mut self, client: Arc<tidb_exec::auto_id_client::AutoIdClient>) -> Self {
+        self.auto_ids = Some(client);
+        self
+    }
+
     /// Binds the writer to an already-connected authority and the catalog slot
     /// the reload thread publishes into.
     pub fn new(
@@ -536,6 +543,7 @@ where
             owner.campaign_owner(&[])?;
         }
         Ok(Self {
+            auto_ids: None,
             opener,
             catalog,
             timeout,
@@ -2235,6 +2243,7 @@ where
             &KvTableIndexBackfiller,
             &KvTableIndexBackfiller,
             self.schema_sync.as_ref(),
+            self.auto_ids.as_ref(),
         )
         .map_err(cluster_ddl_error)?;
         self.refresh_catalog();

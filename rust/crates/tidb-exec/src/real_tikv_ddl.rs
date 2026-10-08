@@ -784,6 +784,7 @@ pub fn commit_cluster_ddl_with_backfill<
     exchange_validator: &dyn ExchangePartitionValidator,
     check_constraint_validator: &dyn CheckConstraintValidator,
     schema_sync: &dyn DdlSchemaSync,
+    auto_ids: Option<&Arc<crate::auto_id_client::AutoIdClient>>,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
     if matches!(
         statement,
@@ -803,6 +804,7 @@ pub fn commit_cluster_ddl_with_backfill<
         exchange_validator,
         check_constraint_validator,
         schema_sync.owner_id(),
+        auto_ids,
     )? {
         DdlPhaseOutcome::SchemaSync { .. } | DdlPhaseOutcome::Paused => {
             unreachable!("direct DDL has no persisted job")
@@ -858,6 +860,7 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
             exchange_validator,
             check_constraint_validator,
             schema_sync.owner_id(),
+            None,
         )?;
         match outcome {
             DdlPhaseOutcome::Paused => return Ok(PersistedDdlJobOutcome::Paused),
@@ -1270,6 +1273,7 @@ fn commit_cluster_ddl_phase_with_retry<
     exchange_validator: &dyn ExchangePartitionValidator,
     check_constraint_validator: &dyn CheckConstraintValidator,
     owner_id: &str,
+    auto_ids: Option<&Arc<crate::auto_id_client::AutoIdClient>>,
 ) -> Result<DdlPhaseOutcome, ClusterDdlError> {
     let mut attempt: u32 = 0;
     loop {
@@ -1282,6 +1286,7 @@ fn commit_cluster_ddl_phase_with_retry<
             exchange_validator,
             check_constraint_validator,
             owner_id,
+            auto_ids,
         ) {
             Err(ClusterDdlError::ConcurrentSchemaChange { .. })
                 if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT =>
@@ -1307,6 +1312,7 @@ fn commit_cluster_ddl_with_backfill_once<
     exchange_validator: &dyn ExchangePartitionValidator,
     check_constraint_validator: &dyn CheckConstraintValidator,
     owner_id: &str,
+    auto_ids: Option<&Arc<crate::auto_id_client::AutoIdClient>>,
 ) -> Result<DdlPhaseOutcome, ClusterDdlError> {
     if let DdlPhase::Persisted { check_owner, .. } = phase {
         check_owner().map_err(ClusterDdlError::SchemaSync)?;
@@ -1324,9 +1330,14 @@ fn commit_cluster_ddl_with_backfill_once<
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
         match phase {
-            DdlPhase::Initial(statement) => {
-                plan_ddl(&mut snapshot, statement, start_ts).map(|plan| (plan, false, None))
-            }
+            DdlPhase::Initial(statement) => crate::cluster_ddl::plan_ddl_with_auto_ids(
+                &mut snapshot,
+                statement,
+                start_ts,
+                tidb_datatype::new_collation_enabled(),
+                auto_ids,
+            )
+            .map(|plan| (plan, false, None)),
             DdlPhase::Persisted {
                 ddl_job_id,
                 schema_state,
