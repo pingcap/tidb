@@ -476,13 +476,17 @@ impl<D: RuStatsDeps, Tz: TimeZone> RuStatsWriter<D, Tz> {
     /// fetch, the meta persist, or the insert — in that order, as Go does.
     pub fn do_write_ru_statistics(&self) -> Result<(), RuStatsError> {
         // check if is already inserted
-        let last_end_time = get_last_expected_time(&self.start_time, self.interval, &self.local);
-        let last_end_time = last_end_time.fixed_offset();
-        if self.is_latest_data_inserted(&last_end_time)? {
+        let last_end_time_local =
+            get_last_expected_time(&self.start_time, self.interval, &self.local);
+        // The probe subtracts a day, so it needs the zone, not a frozen
+        // offset; the stored row and the needFetchData comparison below are
+        // the only places that want the fixed form.
+        if self.is_latest_data_inserted(&last_end_time_local)? {
             // boundary: Go logs "[ru_stats] ru data is already inserted, skip".
             return Ok(());
         }
 
+        let last_end_time = last_end_time_local.fixed_offset();
         let last_stats = self.load_latest_ru_stats()?;
         let need_fetch_data = needs_fetch_data(last_stats.as_ref(), &last_end_time);
 
@@ -559,12 +563,18 @@ impl<D: RuStatsDeps, Tz: TimeZone> RuStatsWriter<D, Tz> {
     ///
     /// # Errors
     /// Whatever the executor reports.
-    pub fn is_latest_data_inserted(
+    pub fn is_latest_data_inserted<Z: TimeZone>(
         &self,
-        last_end_time: &DateTime<chrono::FixedOffset>,
+        last_end_time: &DateTime<Z>,
     ) -> Result<bool, RuStatsError> {
-        let end = last_end_time.format(GO_DATE_TIME_LAYOUT).to_string();
-        let start = (*last_end_time - RU_STATS_INTERVAL)
+        // Subtract in the zone, then render each instant with its own offset,
+        // which is what Go's Location-carrying `time.Time` does.
+        let end = last_end_time
+            .fixed_offset()
+            .format(GO_DATE_TIME_LAYOUT)
+            .to_string();
+        let start = (last_end_time.clone() - RU_STATS_INTERVAL)
+            .fixed_offset()
             .format(GO_DATE_TIME_LAYOUT)
             .to_string();
         self.deps
@@ -599,11 +609,18 @@ impl<D: RuStatsDeps, Tz: TimeZone> RuStatsWriter<D, Tz> {
     /// # Errors
     /// Whatever the executor reports. A failed delete aborts the loop with
     /// the remaining batches undone, as in Go.
-    pub fn gc_outdated_records(
+    pub fn gc_outdated_records<Z: TimeZone>(
         &self,
-        last_end_time: &DateTime<chrono::FixedOffset>,
+        last_end_time: &DateTime<Z>,
     ) -> Result<(), RuStatsError> {
-        let gc_end_date = (*last_end_time - RU_STATS_GC_DURATION)
+        // Go's `lastEndTime.Add(-ruStatsGCDuration)` keeps the time's
+        // Location, so `Format` renders the earlier instant with ITS offset.
+        // Doing this on a `FixedOffset` froze the later date's offset instead:
+        // across a DST change -- which a 92-day window crosses every spring
+        // and autumn -- the boundary printed an hour off, and the GC deleted
+        // by the wrong `end_time`.
+        let gc_end_date = (last_end_time.clone() - RU_STATS_GC_DURATION)
+            .fixed_offset()
             .format(GO_DATE_TIME_LAYOUT)
             .to_string();
         let count_sql = gc_count_sql(&gc_end_date);
@@ -1077,7 +1094,7 @@ mod tests {
         };
         let start = at(tz, 2023, 12, 26, 0, 0, 0) + Duration::hours(92 * 24);
         let w = writer(deps, start.clone(), tz);
-        w.gc_outdated_records(&start.fixed_offset()).unwrap();
+        w.gc_outdated_records(&start).unwrap();
         let stmts = w.deps.statements.borrow();
         assert_eq!(
             stmts[0],
