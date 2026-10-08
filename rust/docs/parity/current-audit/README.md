@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [inert gap tests](inert-gap-cleanup-validation.json). Remove four registrations, constant-only locking placeholders and the inverted DELETE expectation; preserve meaningful DML assertions and activate the existing server-info predicate coverage. Missing locking/cross-keyspace obligations and all 56 unresolved finding dispositions remain unchanged.
+Latest cleanup: [executor scaffolding and completed error plans](executor-scaffold-cleanup-validation.json). Remove two redundant test registrations, an unused helper and three completed plans; preserve real DELETE/temporary-table assertions and redirect historical evidence to exact Git archives. All 56 unresolved finding dispositions remain unchanged.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
@@ -93,8 +93,8 @@ The repeated milestone summaries and stale count tables formerly copied into thi
 - [2026-10-02 review after shared worker repairs](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/worker-followup-structural-review.md)
 - [atomic health-publication repair](../../health-feedback-publication-execplan.md)
 - [PD request-ownership follow-up](../../pd-request-ownership-execplan.md)
-- [DDL error identity repair](../../ddl-error-identity-execplan.md)
-- [CHECK error generation follow-up](../../ddl-error-generation-execplan.md)
+- [DDL error identity repair](https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/docs/ddl-error-identity-execplan.md)
+- [CHECK error generation follow-up](https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/docs/ddl-error-generation-execplan.md)
 - [2026-10-01 full register reconciliation](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/remaining-structure-review.md)
 - [review of every unresolved finding](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/structural-review-followup.md)
 - [review after removals](https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/post-removal-structural-review.md)
@@ -128,7 +128,7 @@ The repeated milestone summaries and stale count tables formerly copied into thi
 - [DDL pause lifecycle repair](../../ddl-pause-lifecycle-execplan.md)
 - [shared cancellation and error-checkpoint repair](../../ddl-cancellation-lifecycle-execplan.md)
 - [action panic recovery repair](../../ddl-panic-owner-execplan.md)
-- [shared DDL error conversion repair](../../ddl-error-conversion-execplan.md)
+- [shared DDL error conversion repair](https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/docs/ddl-error-conversion-execplan.md)
 - [shared worker continuation repair](../../ddl-worker-continuation-execplan.md)
 
 ## Reproduced baseline failures still requiring root-cause review

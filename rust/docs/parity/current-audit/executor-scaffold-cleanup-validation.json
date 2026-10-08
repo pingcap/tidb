@@ -1,0 +1,81 @@
+{
+  "date": "2026-10-08",
+  "baseline": "81367d835b0dbc0d0a252edb02424bb3c01b17e1",
+  "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+  "scope": "Retire the executor table-creation-only locking fixture, unused datum helper and duplicate DELETE registration: two tests and 69 net Rust lines. Archive three completed DDL error plans (503 lines), redirect all references, and preserve current Go obligations.",
+  "removed": [
+    {
+      "path": "rust/crates/tidb-executor/src/tests_batch_point_get_locking_gaps.rs",
+      "lines": 45,
+      "sha256": "76ba54108c4ba296bfd984d0e3043b80ccb098ad37769aa7e529efeb044799d7",
+      "archive": "https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/crates/tidb-executor/src/tests_batch_point_get_locking_gaps.rs"
+    },
+    {
+      "path": "rust/docs/ddl-error-conversion-execplan.md",
+      "lines": 157,
+      "sha256": "6088c002fabf2750c0feabe2d462f1a002b926e9ba10615904c0fe5d6942e507",
+      "archive": "https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/docs/ddl-error-conversion-execplan.md"
+    },
+    {
+      "path": "rust/docs/ddl-error-generation-execplan.md",
+      "lines": 187,
+      "sha256": "0e09c0b958eff7fe3252f8ba57a2c93106f5271d86d9346e37739b791eaaa2c8",
+      "archive": "https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/docs/ddl-error-generation-execplan.md"
+    },
+    {
+      "path": "rust/docs/ddl-error-identity-execplan.md",
+      "lines": 159,
+      "sha256": "638d4b383fcdf37f50d8813313371467d996843e65fb5d2d2e31d1b66c8b8269",
+      "archive": "https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/docs/ddl-error-identity-execplan.md"
+    }
+  ],
+  "removed_tests": [
+    "batch_point_get_fixture_tables_create",
+    "delete_on_removes_matched_rows"
+  ],
+  "removed_helper": "_text_datum",
+  "retained": {
+    "statement_suite": "All 29 retained function bodies byte-identical.",
+    "delete_owner": "driver/tests/dml.rs::update_and_delete_rows covers selected DELETE, affected count, surviving row, delete-all and reinsertion.",
+    "point_get_owner": "tests_batch_point_get_temporary_source.rs retains real row-visibility and plan assertions.",
+    "go_contract": "pkg/executor/batch_point_get_test.go::TestBatchPointGetLockExistKey exercises competing sessions, lock release and isolation; creating fixture tables cannot establish this. Pessimistic and cache snapshot obligations remain unresolved.",
+    "error_plans": "Archived exact bytes include original red/green receipts, limitations and dated laptop log references; no claim those logs exist in Cloud. Current D05 producer/taxonomy/transaction obligations remain."
+  },
+  "verification": {
+    "archives_verified": 4,
+    "redirected_archive_links": 13,
+    "retained_statement_functions_byte_identical": 29,
+    "retained_owner_files_byte_identical": [
+      "rust/crates/tidb-executor/src/driver/tests/dml.rs",
+      "rust/crates/tidb-executor/src/tests_batch_point_get_temporary_source.rs"
+    ],
+    "dispositions_unchanged": true,
+    "broken_retired_plan_links": []
+  },
+  "validation": {
+    "grouped_tests": {
+      "command": "cd rust && cargo test --locked -p tidb-executor --lib -- tests_batch_point_get_temporary_source driver::tests::dml::update_and_delete_rows tests_executor_suite_statements_source --test-threads=1",
+      "status": "passed",
+      "passed": 22,
+      "failed": 0,
+      "ignored": 0,
+      "exit_code": 0,
+      "sha256": "9fbffb366e2304da71e5622ccb0dee67664d6415819351b73d5655bb09d4a0c9"
+    },
+    "lint": {
+      "command": "make lint",
+      "status": "passed",
+      "exit_code": 0,
+      "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef"
+    },
+    "archive_and_retention_check": "python3 /workspace/.cloud-setup/executor-scaffold-cleanup/verify.py: passed",
+    "publication": "Actual hook, fresh prepush build and remote SHA recorded in /workspace/.cloud-setup/executor-scaffold-cleanup/final-handoff.json.",
+    "diff_check": "git diff --check: passed"
+  },
+  "limits": [
+    "Production behavior, original Go source/tests, dependencies, generators and live runner safeguards unchanged.",
+    "No complete package, full suite, live cluster or measured build/workload speedup acceptance.",
+    "All 56 unresolved finding dispositions unchanged; only D05 evidence links move to immutable archives."
+  ],
+  "external_logs": "/workspace/.cloud-setup/executor-scaffold-cleanup"
+}

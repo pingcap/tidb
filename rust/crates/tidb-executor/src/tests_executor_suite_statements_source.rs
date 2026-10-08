@@ -17,11 +17,10 @@
 //! Broader session, memory and kill obligations remain in the parity audit.
 
 use crate::{
-    run_create_table_on, run_delete_on, run_insert_on, run_select_meta_in, run_select_on,
-    run_update_on, Catalog, StmtContext,
+    run_create_table_on, run_insert_on, run_select_meta_in, run_select_on, run_update_on, Catalog,
+    StmtContext,
 };
-use tidb_datatype::Collation;
-use tidb_datatype::{Datum, StringDatum};
+use tidb_datatype::Datum;
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
@@ -1008,25 +1007,4 @@ fn drop_table(catalog: &mut Catalog, name: &str) {
         true,
     )
     .unwrap_or_else(|error| panic!("drop {name}: {error:?}"));
-}
-
-// Keep the collation import referenced for the text renderer's evolution.
-#[allow(dead_code)]
-fn _text_datum(value: &str) -> Datum {
-    Datum::String(StringDatum::new(value, Collation::Utf8Mb4Bin))
-}
-
-// `run_delete_on` is part of this module's surface (Go's suite uses DELETE);
-// exercise it in a tiny arm so the import stays honest.
-#[test]
-fn delete_on_removes_matched_rows() {
-    let mut catalog = Catalog::default();
-    create(&mut catalog, "create table t (a int)");
-    insert(&mut catalog, "insert into t values (1), (2)");
-    let deleted = run_delete_on("delete from t where a = 1", &mut catalog, &ctx()).expect("delete");
-    assert_eq!(deleted, 1);
-    assert_eq!(
-        rows_text(&select(&catalog, "select * from t")),
-        vec![vec!["2"]]
-    );
 }

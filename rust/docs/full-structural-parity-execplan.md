@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [rename admission and publication](rename-owner-batch-execplan.md); previous [TSO collection and live policy](tso-collection-batch-execplan.md); previous [numeric production](numeric-production-batch-execplan.md); previous [YEAR/ENUM/SET/BIT conversion](ordinal-owner-batch-execplan.md); previous [shared string conversion](string-owner-batch-execplan.md); previous [shared CTE visibility](cte-scope-batch-execplan.md); previous [shared calendar conversion](calendar-owner-batch-execplan.md); previous [shared TIME conversion](duration-owner-batch-execplan.md); previous [shared read consistency](read-consistency-batch-execplan.md); previous [shared FK access](fk-access-batch-execplan.md); previous [partition lock identity and reorganization safety](partition-lock-batch-execplan.md); previous [partitioned shared readers](partition-reader-batch-execplan.md); previous [cluster column composition](cluster-column-batch-execplan.md); previous [ALTER metadata admission](alter-admission-batch-execplan.md); previous [shared common-handle reader evidence](parity/current-audit/common-reader-batch-validation.json). Latest cleanup: [inert gap test retirement](parity/current-audit/inert-gap-cleanup-validation.json); Go locking and cross-keyspace lifecycle obligations remain explicit.
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [rename admission and publication](rename-owner-batch-execplan.md); previous [TSO collection and live policy](tso-collection-batch-execplan.md); previous [numeric production](numeric-production-batch-execplan.md); previous [YEAR/ENUM/SET/BIT conversion](ordinal-owner-batch-execplan.md); previous [shared string conversion](string-owner-batch-execplan.md); previous [shared CTE visibility](cte-scope-batch-execplan.md); previous [shared calendar conversion](calendar-owner-batch-execplan.md); previous [shared TIME conversion](duration-owner-batch-execplan.md); previous [shared read consistency](read-consistency-batch-execplan.md); previous [shared FK access](fk-access-batch-execplan.md); previous [partition lock identity and reorganization safety](partition-lock-batch-execplan.md); previous [partitioned shared readers](partition-reader-batch-execplan.md); previous [cluster column composition](cluster-column-batch-execplan.md); previous [ALTER metadata admission](alter-admission-batch-execplan.md); previous [shared common-handle reader evidence](parity/current-audit/common-reader-batch-validation.json). Latest cleanup: [executor scaffolding and completed error plans](parity/current-audit/executor-scaffold-cleanup-validation.json); missing Go locking and full DDL ownership remain explicit.
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -40,6 +40,8 @@ and validation results in those receipts apply only to their recorded point
 in time. This revision is a plan; it closes no production finding.
 
 ## Progress
+
+- [x] (2026-10-08, cleanup) Retire executor fixture-only scaffolding, its duplicate DELETE arm and three completed error plans. Preserve retained test bodies, immutable historical receipts and all unresolved Go obligations; exact grouped checks are in `parity/current-audit/executor-scaffold-cleanup-validation.json`.
 
 - [x] (2026-10-07, cleanup) Remove four inert/divergence-preserving registrations across DML and server-info suites, retaining Go cases and missing lifecycle obligations. Grouped checks and exact results: `parity/current-audit/inert-gap-cleanup-validation.json`.
 
@@ -2253,7 +2255,7 @@ the error owner. Checkpoints no longer flatten non-admission coded failures to
 1105; history reads derive SQLSTATE from the common MySQL catalog. Plain action,
 rollback-budget and panic diagnostics share Go's DDL/CodeUnknown fallback.
 All 21 enum variants are covered through queue/history persistence, and existing
-direct SQL tests remain valid. See ddl-error-conversion-execplan.md for the three
+direct SQL tests remain valid. See [archived ddl-error-conversion plan](https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/docs/ddl-error-conversion-execplan.md) for the three
 red reproductions, final checks and publication gates.
 
 This maintains existing contracts without accepting an upstream package. D05
@@ -2290,7 +2292,7 @@ validation. Remove the CHECK-specific wire-error outcome and reconstructing its
 identity from an errno. Source equality governs cancellation and CHECK rollback;
 legacy job history keeps its compatible envelope, and plain decode failures use
 DDL/CodeUnknown before SQL conversion. The targeted receipt and publication gates
-are in ddl-error-identity-execplan.md.
+are in [archived ddl-error-identity plan](https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/docs/ddl-error-identity-execplan.md).
 
 This repairs an existing owner without accepting an upstream package. D05 remains
 partial for remaining numeric/string producers, complete taxonomy, transaction
@@ -2308,7 +2310,7 @@ and ALTER's no-error switch fallthrough. Missing names preserve original case;
 validation names use Go lowercase. Remove CHECK's schema-dependent argument
 encoding flag: all successful steps re-encode decoded args, while the shared
 worker preserves original raw args after failure. Red/green tests, a Go message
-oracle and publication evidence are in ddl-error-generation-execplan.md.
+oracle and publication evidence are in [archived ddl-error-generation plan](https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/docs/ddl-error-generation-execplan.md).
 
 All 187 scoped tests, the affected all-target check, lint and audit consistency
 pass. D05 stays partial and counts remain 85 tracked, 75 unresolved, ten repaired.

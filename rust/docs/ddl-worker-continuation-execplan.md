@@ -1,6 +1,6 @@
 # Keep committed DDL errors inside the shared worker
 
-This living ExecPlan follows root PLANS.md and continues ddl-error-conversion-execplan.md.
+This living ExecPlan follows root PLANS.md and continues [archived ddl-error-conversion plan](https://github.com/pingcap/tidb/blob/81367d835b0dbc0d0a252edb02424bb3c01b17e1/rust/docs/ddl-error-conversion-execplan.md).
 
 ## Purpose and scope
 

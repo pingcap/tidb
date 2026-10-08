@@ -122,8 +122,6 @@ mod tests_aggfuncs_approx_pushdown_source;
 #[cfg(test)]
 mod tests_analyze_panic_recovery_source;
 #[cfg(test)]
-mod tests_batch_point_get_locking_gaps;
-#[cfg(test)]
 mod tests_batch_point_get_temporary_source;
 #[cfg(test)]
 mod tests_ddl_b100_source;
