@@ -62,7 +62,7 @@ type FTSNativeEvalInfo struct {
 	BooleanQuery *tipb.FTSBooleanQuery
 }
 
-const ftsMatchExpressionMetadataVersion uint32 = 1
+const ftsMatchBooleanMetadataVersion uint32 = 1
 
 // Clone returns an independent copy of the native evaluation metadata.
 func (info *FTSNativeEvalInfo) Clone() *FTSNativeEvalInfo {
@@ -108,6 +108,13 @@ func SetFTSMysqlMatchAgainstModifier(sf *ScalarFunction, modifier ast.FulltextSe
 		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
 	}
 	sig.modifier = modifier
+	if modifier.IsBooleanMode() && !modifier.WithQueryExpansion() {
+		sig.setPbCode(tipb.ScalarFuncSig_FTSMatchBooleanExpression)
+	} else {
+		// Only Boolean mode has a TiFlash scalar protocol. Keep other MATCH
+		// modifiers local instead of serializing them as a different FTS op.
+		sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	}
 	return nil
 }
 
@@ -215,7 +222,9 @@ func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args [
 	}
 
 	sig := &builtinFtsMysqlMatchAgainstSig{baseBuiltinFunc: bf}
-	sig.setPbCode(tipb.ScalarFuncSig_FTSMatchExpression)
+	// The SQL modifier is attached after builtin construction. Until then this
+	// function must not be pushable to a storage engine.
+	sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
 	return sig, nil
 }
 

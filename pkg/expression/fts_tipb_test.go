@@ -85,4 +85,8 @@ func TestBuildFTSBooleanQuerySupportsNgramAndRejectsUnsupportedSyntax(t *testing
 
 	_, err = BuildFTSBooleanQuery("(cat)", model.FullTextParserTypeStandardV1)
 	require.Error(t, err)
+	for _, unsupported := range []string{">cat", "<cat", "~cat", `"cat dog"@2`} {
+		_, err = BuildFTSBooleanQuery(unsupported, model.FullTextParserTypeStandardV1)
+		require.Error(t, err, "unsupported Boolean extensions must not enter the scalar wire protocol: %s", unsupported)
+	}
 }

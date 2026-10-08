@@ -2026,6 +2026,8 @@ func TestFTSBooleanQueryUsesVersionedFunctionMetadata(t *testing.T) {
 	query, err := BuildFTSBooleanQuery("+tidb -mysql", model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
 	require.NoError(t, SetFTSMysqlMatchAgainstNativeEvalInfo(sf, &FTSNativeEvalInfo{BooleanQuery: query}))
+	require.True(t, canFuncBePushed(ctx, sf, kv.TiFlash))
+	require.False(t, canFuncBePushed(ctx, sf, kv.TiKV), "the Boolean scalar signature is TiFlash-only")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("all")`))
 	defer func() {
@@ -2034,13 +2036,46 @@ func TestFTSBooleanQueryUsesVersionedFunctionMetadata(t *testing.T) {
 
 	pbExpr := (PbConverter{client: client, ctx: ctx}).ExprToPB(sf)
 	require.NotNil(t, pbExpr)
-	require.Equal(t, tipb.ScalarFuncSig_FTSMatchExpression, pbExpr.GetSig())
+	require.Equal(t, tipb.ScalarFuncSig_FTSMatchBooleanExpression, pbExpr.GetSig())
 	require.Len(t, pbExpr.GetChildren(), 2, "query metadata must not be encoded as a synthetic string child")
 	require.NotEmpty(t, pbExpr.GetVal(), "FTS metadata must use the scalar-function metadata slot")
-	metadata := &tipb.FTSMatchExpressionMetadata{}
+	metadata := &tipb.FTSMatchBooleanMetadata{}
 	require.NoError(t, proto.Unmarshal(pbExpr.GetVal(), metadata))
-	require.Equal(t, ftsMatchExpressionMetadataVersion, metadata.GetVersion())
+	require.Equal(t, ftsMatchBooleanMetadataVersion, metadata.GetVersion())
 	require.Equal(t, query, metadata.GetBooleanQuery())
+	decoded, err := PBToExpr(ctx, pbExpr, []*types.FieldType{nil, matchColumn.RetType})
+	require.NoError(t, err)
+	decodedSF := decoded.(*ScalarFunction)
+	modifier, ok := GetFTSMysqlMatchAgainstModifier(decodedSF)
+	require.True(t, ok)
+	require.True(t, modifier.IsBooleanMode())
+	decodedInfo, ok := FTSMysqlMatchAgainstNativeEvalInfo(decodedSF)
+	require.True(t, ok)
+	require.Equal(t, query, decodedInfo.BooleanQuery)
+}
+
+func TestLocalFTSMatchIsNotSerializedForStorage(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	searchType := types.NewFieldType(mysql.TypeVarchar)
+	searchType.SetCollate(mysql.DefaultCollationName)
+	search := &Constant{Value: types.NewStringDatum("+tidb"), RetType: searchType}
+	matchColumn := genColumn(mysql.TypeVarchar, 1)
+	matchColumn.RetType.SetCollate(mysql.DefaultCollationName)
+	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, matchColumn)
+	require.NoError(t, err)
+	sf := fn.(*ScalarFunction)
+	require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+
+	// Force expression conversion past the ordinary capability check to verify
+	// the local-evaluation marker itself prevents accidental pushdown.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("all")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher"))
+	}()
+
+	require.Nil(t, (PbConverter{client: client, ctx: ctx}).ExprToPB(sf))
 }
 
 func TestPushDownSwitcher(t *testing.T) {

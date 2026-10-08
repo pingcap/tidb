@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -1149,12 +1150,11 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinVecCosineDistanceSig{base}
 	case tipb.ScalarFuncSig_VecL2NormSig:
 		f = &builtinVecL2NormSig{base}
-	case tipb.ScalarFuncSig_FTSMatchExpression:
-		// The scalar function encoding does not carry the MATCH modifier. Native
-		// BOOLEAN MODE pushdown is represented by FTSQueryInfo.boolean_query on
-		// the table scan instead; a reconstructed scalar function therefore
-		// remains natural-language-only.
-		f = &builtinFtsMysqlMatchAgainstSig{baseBuiltinFunc: base}
+	case tipb.ScalarFuncSig_FTSMatchBooleanExpression:
+		f = &builtinFtsMysqlMatchAgainstSig{
+			baseBuiltinFunc: base,
+			modifier:        ast.FulltextSearchModifierBooleanMode,
+		}
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e
@@ -1256,6 +1256,20 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 	sf, err := newDistSQLFunctionBySig(ctx, expr.Sig, expr.FieldType, args)
 	if err != nil {
 		return nil, err
+	}
+	if expr.Sig == tipb.ScalarFuncSig_FTSMatchBooleanExpression {
+		metadata := &tipb.FTSMatchBooleanMetadata{}
+		if err := proto.Unmarshal(expr.Val, metadata); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if metadata.GetVersion() != ftsMatchBooleanMetadataVersion || metadata.GetBooleanQuery() == nil {
+			return nil, errors.Errorf("invalid Boolean MATCH scalar metadata version %d", metadata.GetVersion())
+		}
+		if err := SetFTSMysqlMatchAgainstNativeEvalInfo(sf.(*ScalarFunction), &FTSNativeEvalInfo{
+			BooleanQuery: metadata.GetBooleanQuery(),
+		}); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	return sf, nil

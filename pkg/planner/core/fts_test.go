@@ -17,10 +17,8 @@ package core
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,33 +59,4 @@ func TestPublicFTSIndexOnColumns(t *testing.T) {
 	require.Same(t, titleIndex, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title}, true))
 	require.Nil(t, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title, pmodel.NewCIStr("missing")}, true))
 	require.Nil(t, publicFTSIndexOnColumns(nil, []pmodel.CIStr{title, body}, true))
-}
-
-func TestFindMatchingFullTextIndexForMultiColumnMatch(t *testing.T) {
-	title := pmodel.NewCIStr("title")
-	body := pmodel.NewCIStr("body")
-	compositeIndex := &model.IndexInfo{
-		State: model.StatePublic,
-		Columns: []*model.IndexColumn{
-			{Name: title, Offset: 0},
-			{Name: body, Offset: 1},
-		},
-		FullTextInfo: &model.FullTextIndexInfo{ParserType: model.FullTextParserTypeNgramV1},
-	}
-	tblInfo := &model.TableInfo{
-		Columns: []*model.ColumnInfo{{ID: 1, Name: title}, {ID: 2, Name: body}},
-		Indices: []*model.IndexInfo{compositeIndex},
-	}
-	ds := &logicalop.DataSource{TableInfo: tblInfo}
-	ftsInfo := &expression.FTSInfo{
-		IsMatchAgainst: true,
-		Columns: []*expression.Column{
-			{ID: 1, OrigName: title.O},
-			{ID: 2, OrigName: body.O},
-		},
-	}
-
-	require.Same(t, compositeIndex, findMatchingFullTextIndex(ds, ftsInfo))
-	ftsInfo.Columns[0], ftsInfo.Columns[1] = ftsInfo.Columns[1], ftsInfo.Columns[0]
-	require.Nil(t, findMatchingFullTextIndex(ds, ftsInfo))
 }

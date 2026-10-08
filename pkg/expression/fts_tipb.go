@@ -32,9 +32,8 @@ func BuildFTSBooleanQuery(search string, parserType model.FullTextParserType) (*
 }
 
 // BuildFTSBooleanQueryWithNgramTokenSize parses a BOOLEAN MODE search string
-// and attaches the analyzer configuration required by TiFlash. A zero ngram
-// token size is kept for callers that only need the legacy STANDARD_V1
-// protocol representation.
+// and attaches the analyzer configuration required by TiFlash. A zero NGRAM
+// token size tells TiFlash to use its configured default.
 func BuildFTSBooleanQueryWithNgramTokenSize(search string, parserType model.FullTextParserType, ngramTokenSize int) (*tipb.FTSBooleanQuery, error) {
 	var (
 		group *matchagainst.BooleanGroup
@@ -117,38 +116,32 @@ func buildFTSBooleanGroup(group *matchagainst.BooleanGroup) (*tipb.FTSBooleanQue
 }
 
 func buildFTSBooleanNode(clause matchagainst.BooleanClause) (*tipb.FTSBooleanNode, error) {
-	node := &tipb.FTSBooleanNode{
-		Occur:    ftsBooleanOccur(clause.Modifier),
-		Modifier: ftsBooleanModifier(clause.Modifier),
+	switch clause.Modifier {
+	case matchagainst.BooleanModifierNone, matchagainst.BooleanModifierMust, matchagainst.BooleanModifierMustNot:
+	default:
+		return nil, fmt.Errorf("unsupported BOOLEAN MODE score modifier")
 	}
+	node := &tipb.FTSBooleanNode{Occur: ftsBooleanOccur(clause.Modifier)}
 	switch expr := clause.Expr.(type) {
 	case *matchagainst.BooleanTerm:
 		termType := tipb.FTSBooleanTermType_FTSBooleanTermWord
 		if expr.Wildcard {
 			termType = tipb.FTSBooleanTermType_FTSBooleanTermPrefix
 		}
-		node.Node = &tipb.FTSBooleanNode_Term{Term: &tipb.FTSBooleanTerm{
+		node.Term = &tipb.FTSBooleanTerm{
 			TermType: termType,
 			Text:     expr.Text(),
-		}}
+		}
 	case *matchagainst.BooleanPhrase:
-		term := &tipb.FTSBooleanTerm{
+		if expr.Distance != nil {
+			return nil, fmt.Errorf("proximity BOOLEAN MODE phrases are not supported by TiFlash pushdown")
+		}
+		node.Term = &tipb.FTSBooleanTerm{
 			TermType: tipb.FTSBooleanTermType_FTSBooleanTermPhrase,
 			Text:     expr.Text(),
 		}
-		if expr.Distance != nil {
-			if *expr.Distance < 0 {
-				return nil, fmt.Errorf("negative fulltext phrase distance: %d", *expr.Distance)
-			}
-			term.PhraseDistance = uint32(*expr.Distance)
-		}
-		node.Node = &tipb.FTSBooleanNode_Term{Term: term}
 	case *matchagainst.BooleanGroup:
-		subQuery, err := buildFTSBooleanGroup(expr)
-		if err != nil {
-			return nil, err
-		}
-		node.Node = &tipb.FTSBooleanNode_SubExpression{SubExpression: subQuery}
+		return nil, fmt.Errorf("nested BOOLEAN MODE groups are not supported by TiFlash FTS pushdown")
 	default:
 		return nil, fmt.Errorf("unsupported fulltext boolean expression %T", clause.Expr)
 	}
@@ -163,18 +156,5 @@ func ftsBooleanOccur(modifier matchagainst.BooleanModifier) tipb.FTSBooleanOccur
 		return tipb.FTSBooleanOccur_FTSBooleanOccurMustNot
 	default:
 		return tipb.FTSBooleanOccur_FTSBooleanOccurShould
-	}
-}
-
-func ftsBooleanModifier(modifier matchagainst.BooleanModifier) tipb.FTSBooleanModifier {
-	switch modifier {
-	case matchagainst.BooleanModifierBoost:
-		return tipb.FTSBooleanModifier_FTSBooleanModifierBoost
-	case matchagainst.BooleanModifierDeBoost:
-		return tipb.FTSBooleanModifier_FTSBooleanModifierDeBoost
-	case matchagainst.BooleanModifierNegate:
-		return tipb.FTSBooleanModifier_FTSBooleanModifierNegate
-	default:
-		return tipb.FTSBooleanModifier_FTSBooleanModifierNone
 	}
 }

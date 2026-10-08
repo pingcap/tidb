@@ -2417,14 +2417,14 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 }
 
 // ftsNativeViable reports whether the MATCH(...) currently being rewritten
-// can be served on TiFlash by the native FTSMysqlMatchAgainst builtin. It
+// can be evaluated by TiFlash's row-wise Boolean MATCH scalar function. It
 // walks the resolved column FieldNames sitting on ctxNameStk (stack layout is
 // [..., col1, ..., colN, against]) and requires for each column:
 //   - the originating table has an available TiFlash replica;
 //   - the column list matches one public FULLTEXT index on that table.
 //
 // BOOLEAN MODE requires a parser and analyzer configuration represented by the
-// TiFlash protocol. Other MATCH modes remain outside this pushdown feature.
+// scalar-expression protocol. It does not select or consult a TiCI index.
 func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) (*expression.FTSNativeEvalInfo, bool) {
 	if numCols <= 0 {
 		return nil, false
@@ -2515,9 +2515,8 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 }
 
 // ftsModifierAllowsNativePushdown reports whether an FTS modifier can be
-// safely served by the native FTSMysqlMatchAgainst builtin pushed to TiFlash.
-// BOOLEAN MODE is carried by FTSQueryInfo.boolean_query; query expansion still
-// has no protocol representation and is therefore rejected.
+// safely evaluated by TiFlash's row-wise Boolean MATCH scalar function.
+// Query expansion has no scalar-protocol representation and is rejected.
 func ftsModifierAllowsNativePushdown(modifier ast.FulltextSearchModifier) bool {
 	return modifier.IsBooleanMode() && !modifier.WithQueryExpansion()
 }

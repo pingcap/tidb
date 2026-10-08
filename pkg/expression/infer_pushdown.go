@@ -415,9 +415,8 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		return true
 	case ast.FTSMysqlMatchAgainst:
 		sig, ok := function.Function.(*builtinFtsMysqlMatchAgainstSig)
-		return ok && sig.localEvalInfo == nil &&
-			((sig.nativeEvalInfo != nil && sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()) ||
-				(!sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()))
+		return ok && sig.localEvalInfo == nil && sig.nativeEvalInfo != nil &&
+			sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}

@@ -1036,16 +1036,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}()
 	}
 	var err error
-	// Resolve native full-text predicates before ordinary predicate pushdown.
-	// The resolver needs to see the original Selection directly above the data
-	// source; after PPD the MATCH expression would either be buried in pushed
-	// conditions or lose the table/index context needed to build FTSQueryInfo.
-	if vars.StmtCtx.AlternativeLogicalPlanHasPredicateMatch {
-		logic, _, err = (&FullTextIndexResolverWhere{}).Optimize(ctx, logic)
-		if err != nil {
-			return nil, err
-		}
-	}
+	// Keep Boolean MATCH as an ordinary scalar predicate so TiFlash evaluates
+	// it row by row through the scalar expression protocol.
 	var againRuleList []base.LogicalOptRule
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.

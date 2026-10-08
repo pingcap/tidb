@@ -266,6 +266,16 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 
 	// Check whether all of its parameters can be pushed.
 	nativeFTSInfo, hasNativeFTSInfo := FTSMysqlMatchAgainstNativeEvalInfo(expr)
+	if _, hasLocalFTSInfo := FTSMysqlMatchAgainstLocalEvalInfo(expr); hasLocalFTSInfo {
+		// Local fallback is a TiDB evaluator, never a storage scalar expression.
+		return nil
+	}
+	if hasNativeFTSInfo != (pbCode == tipb.ScalarFuncSig_FTSMatchBooleanExpression) {
+		// Fail closed: the dedicated Boolean protocol requires its versioned
+		// query metadata, while legacy signatures must not be reinterpreted as
+		// Boolean matching by an older or incomplete planner path.
+		return nil
+	}
 	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
 	for _, arg := range expr.GetArgs() {
 		pbArg := pc.ExprToPB(arg)
@@ -289,8 +299,8 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 	var metadata proto.Message
 	if hasNativeFTSInfo {
-		metadata = &tipb.FTSMatchExpressionMetadata{
-			Version:      ftsMatchExpressionMetadataVersion,
+		metadata = &tipb.FTSMatchBooleanMetadata{
+			Version:      ftsMatchBooleanMetadataVersion,
 			BooleanQuery: proto.Clone(nativeFTSInfo.BooleanQuery).(*tipb.FTSBooleanQuery),
 		}
 	} else {

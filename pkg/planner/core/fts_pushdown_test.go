@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -54,28 +55,26 @@ func TestMatchAgainstBooleanPushdownToTiFlash(t *testing.T) {
 
 	queries := []struct {
 		sql       string
-		indexName string
+		name      string
 		columnNum int
 	}{
 		{
 			sql:       "select id from articles where match(title) against('+tidb -mysql' in boolean mode)",
-			indexName: "idx_title",
+			name:      "single_column_match",
 			columnNum: 1,
 		},
 		{
 			sql:       "select id from articles where match(title, body) against('+tidb -mysql' in boolean mode)",
-			indexName: "idx_title_body",
+			name:      "multi_column_match",
 			columnNum: 2,
 		},
 	}
 	for _, query := range queries {
-		t.Run(query.indexName, func(t *testing.T) {
+		t.Run(query.name, func(t *testing.T) {
 			plan := compilePhysicalPlan(t, tk, query.sql)
 			scan := findFTSTableScan(t, plan)
-			require.NotNil(t, scan.FtsQueryInfo)
 			// MATCH columns must be read by TiFlash even when they are not
-			// projected by the SQL query. The table reader still exposes only
-			// the requested id column.
+			// projected by the SQL query; the scalar Selection evaluates them.
 			require.Len(t, plan.Schema().Columns, 1)
 			scanColumnNames := make(map[string]struct{}, len(scan.Columns))
 			for _, col := range scan.Columns {
@@ -86,33 +85,17 @@ func TestMatchAgainstBooleanPushdownToTiFlash(t *testing.T) {
 				require.Contains(t, scanColumnNames, "body")
 			}
 
-			var expectedIndexID int64
-			for _, index := range tbl.Meta().Indices {
-				if index.Name.L == query.indexName {
-					expectedIndexID = index.ID
-					break
-				}
-			}
-			require.NotZero(t, expectedIndexID)
-			require.Equal(t, expectedIndexID, scan.FtsQueryInfo.IndexId)
-			require.Equal(t, tipb.ScalarFuncSig_FTSMatchExpression, scan.FtsQueryInfo.QueryFunc)
-			require.NotNil(t, scan.FtsQueryInfo.BooleanQuery)
-			require.Len(t, scan.FtsQueryInfo.Columns, query.columnNum)
-
 			pb, err := scan.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 			require.NoError(t, err)
 			require.NotNil(t, pb.TblScan)
-			require.Len(t, pb.TblScan.UsedColumnarIndexes, 1)
-			indexInfo := pb.TblScan.UsedColumnarIndexes[0]
-			require.Equal(t, tipb.ColumnarIndexType_TypeFulltext, indexInfo.IndexType)
-			ftsInfo, ok := indexInfo.Index.(*tipb.ColumnarIndexInfo_FtsQueryInfo)
-			require.True(t, ok)
-			require.NotNil(t, ftsInfo.FtsQueryInfo.BooleanQuery)
+			metadata := assertFTSScalarSelection(t, tk, plan, query.columnNum)
+			require.NotNil(t, metadata.GetBooleanQuery())
+			require.NotZero(t, metadata.GetVersion())
 
 			explainRows := tk.MustQuery("explain format='brief' " + query.sql).Rows()
 			explain := fmt.Sprint(explainRows)
 			require.Contains(t, explain, "tiflash")
-			require.NotContains(t, explain, "Selection")
+			require.Contains(t, strings.ToLower(explain), "selection")
 		})
 	}
 }
@@ -138,7 +121,6 @@ func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {
 	sql := "select id from ngram_articles where match(title) against('+tidb' in boolean mode)"
 	plan := compilePhysicalPlan(t, tk, sql)
 	scan := findFTSTableScan(t, plan)
-	require.NotNil(t, scan.FtsQueryInfo)
 	require.Len(t, plan.Schema().Columns, 1)
 	var hasTitle bool
 	for _, col := range scan.Columns {
@@ -148,17 +130,13 @@ func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {
 		}
 	}
 	require.True(t, hasTitle, "the TiFlash table scan must include the NGRAM MATCH column")
-	require.Equal(t, string(model.FullTextParserTypeNgramV1), scan.FtsQueryInfo.QueryTokenizer)
-	require.NotNil(t, scan.FtsQueryInfo.BooleanQuery)
-	require.Equal(t, uint32(2), scan.FtsQueryInfo.BooleanQuery.NgramTokenSize)
+	metadata := assertFTSScalarSelection(t, tk, plan, 1)
+	require.Equal(t, string(model.FullTextParserTypeNgramV1), metadata.GetBooleanQuery().GetQueryTokenizer())
+	require.Equal(t, uint32(2), metadata.GetBooleanQuery().GetNgramTokenSize())
 
 	pb, err := scan.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
 	require.NotNil(t, pb.TblScan)
-	require.Len(t, pb.TblScan.UsedColumnarIndexes, 1)
-	ftsInfo, ok := pb.TblScan.UsedColumnarIndexes[0].Index.(*tipb.ColumnarIndexInfo_FtsQueryInfo)
-	require.True(t, ok)
-	require.Equal(t, uint32(2), ftsInfo.FtsQueryInfo.BooleanQuery.NgramTokenSize)
 
 	explainRows := tk.MustQuery("explain format='brief' " + sql).Rows()
 	require.Contains(t, fmt.Sprint(explainRows), "tiflash")
@@ -186,10 +164,16 @@ func TestMultipleMatchAgainstBooleanPredicatesUseTiFlashSelection(t *testing.T) 
 		"match(title) against('+tidb' in boolean mode) OR " +
 		"match(title) against('+mysql' in boolean mode)"
 	plan := compilePhysicalPlan(t, tk, sql)
-	scan := findFTSTableScan(t, plan)
 	// Multi-predicate Boolean expressions are represented by a TiFlash
 	// Selection containing scalar FTS calls, not by one scan-level query.
-	require.Nil(t, scan.FtsQueryInfo)
+	selection := findFTSSelection(t, plan)
+	selectionPB, err := selection.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
+	require.NoError(t, err)
+	var booleanFunctionCount int
+	for _, condition := range selectionPB.GetSelection().GetConditions() {
+		booleanFunctionCount += countScalarFunctionExpr(condition, tipb.ScalarFuncSig_FTSMatchBooleanExpression)
+	}
+	require.Equal(t, 2, booleanFunctionCount)
 	explain := strings.ToLower(fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows()))
 	require.Contains(t, explain, "mpp[tiflash]")
 	require.Contains(t, explain, "selection")
@@ -226,8 +210,8 @@ func TestMatchAgainstStandardAnalyzerSettingsPushdownToTiFlash(t *testing.T) {
 
 	plan := compilePhysicalPlan(t, tk, "select id from standard_articles where match(body) against('+the' in boolean mode)")
 	scan := findFTSTableScan(t, plan)
-	require.NotNil(t, scan.FtsQueryInfo)
-	booleanQuery := scan.FtsQueryInfo.BooleanQuery
+	metadata := assertFTSScalarSelection(t, tk, plan, 1)
+	booleanQuery := metadata.GetBooleanQuery()
 	require.NotNil(t, booleanQuery)
 	require.Equal(t, uint32(1), booleanQuery.GetInnodbFtMinTokenSize())
 	require.Equal(t, uint32(10), booleanQuery.GetInnodbFtMaxTokenSize())
@@ -236,12 +220,86 @@ func TestMatchAgainstStandardAnalyzerSettingsPushdownToTiFlash(t *testing.T) {
 	pb, err := scan.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
 	require.NotNil(t, pb.TblScan)
-	require.Len(t, pb.TblScan.UsedColumnarIndexes, 1)
-	ftsInfo, ok := pb.TblScan.UsedColumnarIndexes[0].Index.(*tipb.ColumnarIndexInfo_FtsQueryInfo)
-	require.True(t, ok)
-	require.Equal(t, uint32(1), ftsInfo.FtsQueryInfo.BooleanQuery.GetInnodbFtMinTokenSize())
-	require.Equal(t, uint32(10), ftsInfo.FtsQueryInfo.BooleanQuery.GetInnodbFtMaxTokenSize())
-	require.False(t, ftsInfo.FtsQueryInfo.BooleanQuery.GetInnodbFtEnableStopword())
+}
+
+func assertFTSScalarSelection(t *testing.T, tk *testkit.TestKit, plan base.Plan, matchColumnCount int) *tipb.FTSMatchBooleanMetadata {
+	t.Helper()
+	selection := findFTSSelection(t, plan)
+	pb, err := selection.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
+	require.NoError(t, err)
+	require.NotNil(t, pb.GetSelection())
+	var ftsExpr *tipb.Expr
+	for _, condition := range pb.GetSelection().GetConditions() {
+		if found := findScalarFunctionExpr(condition, tipb.ScalarFuncSig_FTSMatchBooleanExpression); found != nil {
+			ftsExpr = found
+			break
+		}
+	}
+	require.NotNil(t, ftsExpr, "Boolean MATCH must be encoded as its dedicated scalar function")
+	require.Len(t, ftsExpr.GetChildren(), matchColumnCount+1)
+	metadata := &tipb.FTSMatchBooleanMetadata{}
+	require.NoError(t, proto.Unmarshal(ftsExpr.GetVal(), metadata))
+	require.Equal(t, uint32(1), metadata.GetVersion())
+	require.NotNil(t, metadata.GetBooleanQuery())
+	return metadata
+}
+
+func findFTSSelection(t *testing.T, plan base.Plan) *core.PhysicalSelection {
+	t.Helper()
+	var result *core.PhysicalSelection
+	var visit func(base.Plan)
+	visit = func(plan base.Plan) {
+		if result != nil || plan == nil {
+			return
+		}
+		if selection, ok := plan.(*core.PhysicalSelection); ok {
+			result = selection
+			return
+		}
+		if reader, ok := plan.(*core.PhysicalTableReader); ok {
+			for _, child := range reader.TablePlans {
+				visit(child)
+			}
+			return
+		}
+		if physical, ok := plan.(base.PhysicalPlan); ok {
+			for _, child := range physical.Children() {
+				visit(child)
+			}
+		}
+	}
+	visit(plan)
+	require.NotNil(t, result, "expected TiFlash scalar Selection for Boolean MATCH")
+	return result
+}
+
+func findScalarFunctionExpr(expr *tipb.Expr, sig tipb.ScalarFuncSig) *tipb.Expr {
+	if expr == nil {
+		return nil
+	}
+	if expr.GetTp() == tipb.ExprType_ScalarFunc && expr.GetSig() == sig {
+		return expr
+	}
+	for _, child := range expr.GetChildren() {
+		if found := findScalarFunctionExpr(child, sig); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func countScalarFunctionExpr(expr *tipb.Expr, sig tipb.ScalarFuncSig) int {
+	if expr == nil {
+		return 0
+	}
+	count := 0
+	if expr.GetTp() == tipb.ExprType_ScalarFunc && expr.GetSig() == sig {
+		count++
+	}
+	for _, child := range expr.GetChildren() {
+		count += countScalarFunctionExpr(child, sig)
+	}
+	return count
 }
 
 func compilePhysicalPlan(t *testing.T, tk *testkit.TestKit, sql string) base.Plan {

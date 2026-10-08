@@ -286,16 +286,6 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
 		tsExec.AnnQuery = &annQueryCopy
 	}
-	if storeType == kv.TiFlash && p.FtsQueryInfo != nil {
-		ftsQueryCopy := *p.FtsQueryInfo
-		tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
-			IndexType: tipb.ColumnarIndexType_TypeFulltext,
-			Index: &tipb.ColumnarIndexInfo_FtsQueryInfo{
-				FtsQueryInfo: &ftsQueryCopy,
-			},
-		})
-	}
-
 	var err error
 	tsExec.RuntimeFilterList, err = RuntimeFilterListToPB(ctx, p.runtimeFilterList, ctx.GetClient())
 	if err != nil {
@@ -349,16 +339,6 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
 		ptsExec.AnnQuery = &annQueryCopy
 	}
-	if p.FtsQueryInfo != nil {
-		ftsQueryCopy := *p.FtsQueryInfo
-		ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
-			IndexType: tipb.ColumnarIndexType_TypeFulltext,
-			Index: &tipb.ColumnarIndexInfo_FtsQueryInfo{
-				FtsQueryInfo: &ftsQueryCopy,
-			},
-		})
-	}
-
 	executorID := p.ExplainID().String()
 	err = tables.SetPBColumnsDefaultValue(ctx.GetExprCtx(), ptsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err
