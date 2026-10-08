@@ -156,21 +156,15 @@ impl Session {
         )
     }
 
-    /// Local formatting and visibility stay with PROCESSLIST; discovered peers
-    /// execute the same cluster table with the originating user's identity.
-    pub(crate) fn cluster_process_list_table_rows(
+    /// Each discovered peer consumes the same local table owner. Projection
+    /// and predicates remain in the ordinary SQL executor after fanout.
+    pub(crate) fn cluster_table_rows(
         &mut self,
+        table_name: &str,
         columns: &[(String, FieldType)],
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let instance = self.cluster_instance_address();
-        let mut rows: Vec<_> = self
-            .process_list_table_rows()
-            .into_iter()
-            .map(|mut row| {
-                row.insert(0, Datum::Bytes(instance.clone().into_bytes()));
-                row
-            })
-            .collect();
+        let mut rows =
+            self.local_cluster_table_rows(table_name, None, &self.session_time_zone())?;
         let Some(syncer) = &self.server_info_syncer else {
             return Ok(rows);
         };
@@ -201,7 +195,7 @@ impl Session {
             .and_then(|identity| identity.split_once('@'));
         let result = client.scan(
             &servers,
-            infoschema::memory_table_id("CLUSTER_PROCESSLIST").expect("registered memory table"),
+            infoschema::memory_table_id(table_name).expect("registered memory table"),
             columns,
             user,
             &ctx,
@@ -347,21 +341,13 @@ impl Session {
         self.format_process_rows(self.visible_process_rows(true), &self.session_time_zone())
     }
 
-    /// Go's receiving memory-table executor reads only the local process owner.
-    /// No synthetic connection is registered and no peer discovery is entered.
-    pub fn local_cluster_process_list_rows(
+    /// Snapshot the supplied local registry without registering a synthetic connection.
+    pub(crate) fn process_list_rows_from_registry(
         &self,
         registry: &process::ProcessRegistry,
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Vec<Vec<Datum>> {
-        let instance = self.cluster_instance_address();
         self.format_process_rows(self.filter_process_rows(registry.snapshot()), zone)
-            .into_iter()
-            .map(|mut row| {
-                row.insert(0, Datum::Bytes(instance.clone().into_bytes()));
-                row
-            })
-            .collect()
     }
 
     fn format_process_rows(

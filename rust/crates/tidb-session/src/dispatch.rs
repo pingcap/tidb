@@ -698,8 +698,10 @@ impl Session {
             };
             let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
                 self.process_list_table_rows()
-            } else if table_name.eq_ignore_ascii_case("CLUSTER_PROCESSLIST") {
-                self.cluster_process_list_table_rows(&columns)?
+            } else if tidb_executor::driver::infoschema_meta::cluster_table_source(&table_name)
+                .is_some()
+            {
+                self.cluster_table_rows(&table_name, &columns)?
             } else if table_name.eq_ignore_ascii_case("TIDB_INDEX_USAGE") {
                 let visibility = self.schema_visibility();
                 let collector = std::sync::Arc::clone(&self.index_usage_collector);
@@ -707,26 +709,11 @@ impl Session {
             } else if table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS")
                 || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY")
                 || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_HISTORY")
+                || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_EVICTED")
             {
-                self.statement_summary_table_rows(&table_name, &columns)?
-            } else if table_name.eq_ignore_ascii_case("TRX_SUMMARY")
-                || table_name.eq_ignore_ascii_case("CLUSTER_TRX_SUMMARY")
-            {
-                let mut rows = if self.has_process_privilege() {
-                    self.process.as_ref().map_or_else(
-                        || tidb_exec::txn_summary::RECORDER.rows(),
-                        |guard| guard.registry().transaction_history_rows(),
-                    )
-                } else {
-                    Vec::new()
-                };
-                if table_name.eq_ignore_ascii_case("CLUSTER_TRX_SUMMARY") {
-                    let instance = self.cluster_instance_address();
-                    for row in &mut rows {
-                        row.insert(0, tidb_datatype::Datum::new_string(instance.as_str()));
-                    }
-                }
-                rows
+                self.statement_summary_table_rows(&table_name, &columns, &self.session_time_zone())?
+            } else if table_name.eq_ignore_ascii_case("TRX_SUMMARY") {
+                self.transaction_summary_table_rows(None)
             } else if table_name.eq_ignore_ascii_case("TIDB_TRX") {
                 self.tidb_trx_table_rows()
             } else if table_name.eq_ignore_ascii_case("DATA_LOCK_WAITS") {
@@ -880,17 +867,85 @@ impl Session {
             .collect()
     }
 
+    /// Go's receiving cluster table reader. It borrows live process/history
+    /// owners without registering a synthetic connection or redispatching.
+    pub fn local_cluster_table_rows(
+        &self,
+        table_name: &str,
+        registry: Option<&crate::process::ProcessRegistry>,
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        let source = tidb_executor::driver::infoschema_meta::cluster_table_source(table_name)
+            .ok_or_else(|| DriverError::unsupported("unsupported TiDB cluster table"))?;
+        let mut rows = match source {
+            "PROCESSLIST" => {
+                if let Some(registry) = registry {
+                    self.process_list_rows_from_registry(registry, zone)
+                } else {
+                    self.process_list_table_rows()
+                }
+            }
+            "TRX_SUMMARY" => self.transaction_summary_table_rows(registry),
+            _ => {
+                let columns = infoschema::table_schema(source).expect("registered summary source");
+                self.statement_summary_table_rows(source, &columns, zone)?
+            }
+        };
+        let instance = self.cluster_instance_address();
+        for row in &mut rows {
+            row.insert(0, tidb_datatype::Datum::new_string(instance.as_str()));
+        }
+        Ok(rows)
+    }
+
+    fn transaction_summary_table_rows(
+        &self,
+        registry: Option<&crate::process::ProcessRegistry>,
+    ) -> Vec<Vec<tidb_datatype::Datum>> {
+        if !self.has_process_privilege() {
+            return Vec::new();
+        }
+        registry
+            .or_else(|| self.process.as_ref().map(|guard| guard.registry()))
+            .map_or_else(
+                || tidb_exec::txn_summary::RECORDER.rows(),
+                |registry| registry.transaction_history_rows(),
+            )
+    }
+
     /// Go `stmtSummaryRetriever.initSummaryRowsReader` for the cumulative
     /// `TIDB_STATEMENTS_STATS` table used by the workload repository.
     fn statement_summary_table_rows(
         &self,
         table_name: &str,
         columns: &[(String, tidb_datatype::FieldType)],
+        zone: &tidb_datatype::SessionTimeZone,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_ast::CiString;
         use tidb_model::ColumnInfo;
         use tidb_parser::auth::UserIdentity;
         use tidb_stmtsummary::reader::StmtSummaryReader;
+
+        if table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_EVICTED") {
+            if !self.has_process_privilege() {
+                return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
+            }
+            return Ok(
+                if tidb_config::config_tree::config::get_global_config()
+                    .instance
+                    .stmt_summary_enable_persistent
+                {
+                    tidb_stmtsummary::v2::stmtsummary::global_stmt_summary()
+                        .map(|summary| summary.evicted())
+                        .filter(|row| !row.is_empty())
+                        .into_iter()
+                        .collect()
+                } else {
+                    tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP
+                        .to_evicted_count_datum()
+                },
+            );
+        }
 
         let columns: Vec<ColumnInfo> = columns
             .iter()
@@ -931,7 +986,7 @@ impl Session {
                 tidb_stmtsummary::v2::stmtsummary::global_stmt_summary(),
                 &columns,
                 String::new(),
-                self.session_time_zone(),
+                zone.clone(),
                 user.clone(),
                 self.has_process_privilege(),
                 None,
@@ -943,7 +998,7 @@ impl Session {
                     None,
                     &columns,
                     String::new(),
-                    self.session_time_zone(),
+                    zone.clone(),
                     user,
                     self.has_process_privilege(),
                     None,
@@ -974,7 +1029,7 @@ impl Session {
             self.has_process_privilege(),
             columns,
             String::new(),
-            self.session_time_zone(),
+            zone.clone(),
         );
         Ok(if cumulative {
             reader.get_stmt_summary_cumulative_rows()

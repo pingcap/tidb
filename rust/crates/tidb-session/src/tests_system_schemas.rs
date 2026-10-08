@@ -346,10 +346,10 @@ fn information_schema_lists_its_own_tables_with_gos_ids() {
          WHERE TIDB_TABLE_ID = 4611686018427387919"
     ))
     .is_empty());
-    // And an unserved listed table still refuses at the query, not the list.
-    assert!(session
+    // Its cluster history rows now use the shared local/distributed reader.
+    session
         .run("SELECT * FROM information_schema.CLUSTER_STATEMENTS_SUMMARY_HISTORY")
-        .is_err());
+        .unwrap();
 }
 
 /// `pkg/util/workloadrepo/workloadTables` reads these ten memory tables

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go's status-port TiKV service for local KILL and cluster process snapshots.
+//! Go's status-port TiKV service for local KILL and shared cluster-table readers.
 use prost::Message;
 use std::{pin::Pin, sync::Arc};
 use tidb_datatype::SessionTimeZone;
@@ -100,13 +100,13 @@ impl PeerService {
             }
             Some(tipb::ExecType::TypeTableScan) => {
                 let scan = executor.tbl_scan.as_ref().ok_or("missing table scan")?;
-                if scan.table_id != tidb_session::infoschema::memory_table_id("CLUSTER_PROCESSLIST")
-                {
-                    return Err("unsupported TiDB cluster table".into());
-                }
-                let columns =
-                    tidb_executor::driver::infoschema_meta::table_schema("CLUSTER_PROCESSLIST")
-                        .ok_or("missing cluster process schema")?;
+                let table = tidb_executor::driver::infoschema_meta::CLUSTER_TABLES
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .find(|name| scan.table_id == tidb_session::infoschema::memory_table_id(name))
+                    .ok_or("unsupported TiDB cluster table")?;
+                let columns = tidb_executor::driver::infoschema_meta::table_schema(table)
+                    .ok_or("missing cluster table schema")?;
                 let selected = scan
                     .columns
                     .iter()
@@ -116,8 +116,10 @@ impl PeerService {
                             .unwrap_or(0)
                             .checked_sub(1)
                             .and_then(|id| usize::try_from(id).ok())
-                            .ok_or("invalid process column ID")?;
-                        columns.get(index).ok_or("invalid process column ID")?;
+                            .ok_or("invalid cluster table column ID")?;
+                        columns
+                            .get(index)
+                            .ok_or("invalid cluster table column ID")?;
                         Ok(index)
                     })
                     .collect::<Result<Vec<_>, &str>>()?;
@@ -128,14 +130,16 @@ impl PeerService {
                         selected
                             .get(*offset as usize)
                             .copied()
-                            .ok_or("invalid process output offset")
+                            .ok_or("invalid cluster table output offset")
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let fields: Vec<_> = projection
                     .iter()
                     .map(|index| columns[*index].1.clone())
                     .collect();
-                let rows = session.local_cluster_process_list_rows(&self.processes, &zone);
+                let rows = session
+                    .local_cluster_table_rows(table, Some(&self.processes), &zone)
+                    .map_err(|error| error.to_string())?;
                 let encoding = tipb::EncodeType::try_from(dag.encode_type.unwrap_or(0))
                     .map_err(|_| "unsupported result encoding")?;
                 let batch_size = if encoding == tipb::EncodeType::TypeDefault {
@@ -324,6 +328,358 @@ mod tests {
             }],
             ..Default::default()
         }
+    }
+
+    // Go executor/stmtsummary.go and infoschema_reader.go: the local and
+    // distributed readers consume the same live summary owners.
+    #[test]
+    fn cluster_summary_batch_sql_tables_share_completed_statements() {
+        let mut session = Session::new();
+        session.set_user("summary_reader@%".into(), "summary_reader@localhost".into());
+        session.run("SELECT 918273 + 4").unwrap();
+        for table in [
+            "CLUSTER_STATEMENTS_SUMMARY",
+            "CLUSTER_STATEMENTS_SUMMARY_HISTORY",
+            "CLUSTER_TIDB_STATEMENTS_STATS",
+        ] {
+            let output = session.run(&format!(
+                "SELECT DIGEST_TEXT FROM information_schema.{table}"
+            ));
+            let tidb_session::StmtResult::Rows(rows) = output.unwrap() else {
+                panic!("expected rows")
+            };
+            assert!(
+                rows.iter()
+                    .any(|row| row[0] == Datum::new_string("select ? + ?")),
+                "{table}: {rows:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cluster_summary_batch_evicted_requires_process() {
+        let mut session = Session::new();
+        session.set_user("summary_reader@%".into(), "summary_reader@localhost".into());
+        let error = session
+            .run("SELECT * FROM information_schema.STATEMENTS_SUMMARY_EVICTED")
+            .unwrap_err();
+        assert!(
+            matches!(error, tidb_executor::DriverError::SpecificAccessDenied(ref privilege) if privilege == "PROCESS"),
+            "{error:?}"
+        );
+        session.set_process_privilege(true);
+        session
+            .run("SELECT * FROM information_schema.STATEMENTS_SUMMARY_EVICTED")
+            .unwrap();
+        session
+            .run("SELECT * FROM information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED")
+            .unwrap();
+    }
+
+    #[test]
+    fn cluster_summary_batch_incoming_transaction_summary() {
+        let service = PeerService::new(
+            ProcessRegistry::default(),
+            PrivilegeRegistry::default(),
+            None,
+        );
+        let mut dag = scan(None, tipb::EncodeType::TypeDefault);
+        dag.executors[0].tbl_scan.as_mut().unwrap().table_id =
+            tidb_session::infoschema::memory_table_id("CLUSTER_TRX_SUMMARY");
+        let response = service.handle(request(dag));
+        assert!(response.other_error.is_empty(), "{}", response.other_error);
+        tipb::SelectResponse::decode(response.data).unwrap();
+    }
+
+    #[test]
+    fn cluster_summary_batch_shared_client_reads_live_summaries_and_admission() {
+        let privileges = PrivilegeRegistry::default();
+        privileges.create_user("summary_alice", "%", "");
+        privileges.create_user("summary_bob", "%", "");
+        let mut producer = Session::new();
+        producer.set_user("summary_alice@%".into(), "summary_alice@localhost".into());
+        producer.run("SELECT 73 + 8").unwrap();
+        producer.set_user("summary_bob@%".into(), "summary_bob@localhost".into());
+        producer.run("SELECT 73 * 8").unwrap();
+        let mut identity = tidb_domain::serverinfo::ServerInfo::default();
+        identity.static_info.id = "summary-node".into();
+        identity.static_info.ip = "192.0.2.7".into();
+        identity.static_info.status_port = 10080;
+        let syncer = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(identity, None));
+        let service =
+            PeerService::new(ProcessRegistry::default(), privileges.clone(), Some(syncer));
+        let server = crate::http_status::start_status_listener_with_routes(
+            "127.0.0.1",
+            0,
+            Arc::new(crate::sql_node::ConnectionTracker::default()),
+            "test".into(),
+            "test".into(),
+            crate::http_status::StatusRoutes {
+                peer: Some(service.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut address = tidb_domain::serverinfo::ServerInfo::default();
+        address.static_info.ip = server.local_addr().ip().to_string();
+        address.static_info.status_port = server.local_addr().port() as usize;
+        let outbound = Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
+            tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap(),
+        ));
+        for table in [
+            "CLUSTER_STATEMENTS_SUMMARY",
+            "CLUSTER_STATEMENTS_SUMMARY_HISTORY",
+            "CLUSTER_TIDB_STATEMENTS_STATS",
+        ] {
+            let columns = tidb_executor::driver::infoschema_meta::table_schema(table).unwrap();
+            let rows = outbound
+                .scan(
+                    &[address.clone()],
+                    tidb_session::infoschema::memory_table_id(table).unwrap(),
+                    &columns,
+                    Some(("summary_alice", "127.0.0.1")),
+                    &tidb_executor::StmtContext::for_query(),
+                    &SessionTimeZone::utc(),
+                    2,
+                )
+                .unwrap();
+            assert!(rows.warnings.is_empty(), "{:?}", rows.warnings);
+            let text = columns
+                .iter()
+                .position(|(name, _)| name == "DIGEST_TEXT")
+                .unwrap();
+            assert!(
+                rows.rows
+                    .iter()
+                    .any(|row| row[text].as_raw_bytes() == Some(b"select ? + ?".as_slice())),
+                "{table}: {:?}",
+                rows.rows
+            );
+            assert!(
+                rows.rows
+                    .iter()
+                    .all(|row| row[text].as_raw_bytes() != Some(b"select ? * ?".as_slice())),
+                "{table} exposed another user's statements"
+            );
+            assert!(rows
+                .rows
+                .iter()
+                .all(|row| row[0].as_raw_bytes() == Some(b"192.0.2.7:10080".as_slice())));
+            // Both generated result encodings support reordered and repeated outputs.
+            for encoding in [tipb::EncodeType::TypeDefault, tipb::EncodeType::TypeChunk] {
+                let mut dag = scan(Some("summary_alice"), encoding);
+                dag.executors[0].tbl_scan = Some(tipb::TableScan {
+                    table_id: tidb_session::infoschema::memory_table_id(table),
+                    columns: vec![
+                        tipb::ColumnInfo {
+                            column_id: Some((text + 1) as i64),
+                            ..Default::default()
+                        },
+                        tipb::ColumnInfo {
+                            column_id: Some(1),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                });
+                dag.output_offsets = vec![1, 0, 1];
+                let response = service.handle(request(dag));
+                assert!(response.other_error.is_empty(), "{}", response.other_error);
+                let selected = tipb::SelectResponse::decode(response.data).unwrap();
+                assert_eq!(selected.encode_type, Some(encoding as i32));
+                assert!(!selected.chunks.is_empty());
+                let expected: Vec<_> = rows
+                    .rows
+                    .iter()
+                    .map(|row| vec![row[0].clone(), row[text].clone(), row[0].clone()])
+                    .collect();
+                let fields = vec![
+                    columns[0].1.clone(),
+                    columns[text].1.clone(),
+                    columns[0].1.clone(),
+                ];
+                let data = if encoding == tipb::EncodeType::TypeDefault {
+                    expected
+                        .iter()
+                        .flat_map(|row| tidb_codec::encode_value(row).unwrap())
+                        .collect::<Vec<_>>()
+                } else {
+                    let mut chunk = tidb_chunk::chunk::Chunk::new(&fields, expected.len(), 1024);
+                    for row in &expected {
+                        for (col, value) in row.iter().enumerate() {
+                            chunk.append_datum(col, value);
+                        }
+                    }
+                    tidb_chunk::codec::Codec::new(fields).encode(&chunk)
+                };
+                assert_eq!(
+                    selected.chunks[0].rows_data.as_deref().unwrap(),
+                    data,
+                    "{table}"
+                );
+            }
+        }
+        let columns = tidb_executor::driver::infoschema_meta::table_schema(
+            "CLUSTER_STATEMENTS_SUMMARY_EVICTED",
+        )
+        .unwrap();
+        let scan_evicted = || {
+            outbound.scan(
+                &[address.clone()],
+                tidb_session::infoschema::memory_table_id("CLUSTER_STATEMENTS_SUMMARY_EVICTED")
+                    .unwrap(),
+                &columns,
+                Some(("summary_alice", "127.0.0.1")),
+                &tidb_executor::StmtContext::for_query(),
+                &SessionTimeZone::utc(),
+                1,
+            )
+        };
+        assert!(scan_evicted().unwrap_err().to_string().contains("PROCESS"));
+        // The receiver loads the account's default roles before admission.
+        let role = ("summary_observer".to_owned(), "%".to_owned());
+        let account = ("summary_alice".to_owned(), "%".to_owned());
+        privileges.create_role(&role.0, &role.1);
+        privileges.grant(
+            &role.0,
+            &role.1,
+            tidb_session::privilege::GlobalPriv::Process.mask(),
+        );
+        privileges.grant_role(&role, &account);
+        privileges.set_default_roles(&account, &[role]);
+        scan_evicted().unwrap();
+        // Exercise SQL -> discovered peer -> receiver, excluding an unpublished
+        // local identity. This is a discovery fixture, not another RPC harness.
+        struct Discovery(Vec<(String, Vec<u8>)>);
+        impl tidb_domain::serverinfo_syncer::EtcdOps for Discovery {
+            fn lease_grant(&self, _: i64) -> Result<i64, String> {
+                Err("read-only discovery".into())
+            }
+            fn lease_keep_alive_once(&self, _: i64) -> Result<(), String> {
+                Err("read-only discovery".into())
+            }
+            fn lease_revoke(&self, _: i64) -> Result<(), String> {
+                Err("read-only discovery".into())
+            }
+            fn put_with_lease(&self, _: &str, _: &[u8], _: i64) -> Result<(), String> {
+                Err("read-only discovery".into())
+            }
+            fn get_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
+                Ok(self
+                    .0
+                    .iter()
+                    .filter(|(key, _)| key.starts_with(prefix))
+                    .cloned()
+                    .collect())
+            }
+            fn delete(&self, _: &str) -> Result<(), String> {
+                Err("read-only discovery".into())
+            }
+            fn put(&self, _: &str, _: &[u8]) -> Result<(), String> {
+                Err("read-only discovery".into())
+            }
+            fn delete_prefix(&self, _: &str) -> Result<(), String> {
+                Err("read-only discovery".into())
+            }
+        }
+        address.static_info.id = "remote-summary".into();
+        let discovery = Arc::new(Discovery(vec![(
+            tidb_domain::serverinfo_syncer::server_info_key_path("remote-summary"),
+            address.marshal().unwrap(),
+        )]));
+        let mut local = tidb_domain::serverinfo::ServerInfo::default();
+        local.static_info.id = "unpublished-local".into();
+        local.static_info.ip = "127.0.0.1".into();
+        let mut origin = Session::new();
+        origin.set_user("summary_alice@%".into(), "summary_alice@127.0.0.1".into());
+        origin.attach_privileges(privileges.clone());
+        origin.set_server_info_syncer(Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
+            local,
+            Some(discovery),
+        )));
+        origin.set_cluster_peer_client(outbound.clone());
+        for table in [
+            "CLUSTER_STATEMENTS_SUMMARY",
+            "CLUSTER_STATEMENTS_SUMMARY_HISTORY",
+            "CLUSTER_TIDB_STATEMENTS_STATS",
+        ] {
+            let output = origin.run(&format!(
+                "SELECT INSTANCE FROM information_schema.{table} WHERE DIGEST_TEXT='select ? + ?'"
+            ));
+            let tidb_session::StmtResult::Rows(rows) = output.unwrap() else {
+                panic!("expected SQL rows")
+            };
+            assert_eq!(rows.len(), 1, "{table}: {rows:?}");
+            assert_eq!(
+                rows[0][0].as_raw_bytes(),
+                Some(b"192.0.2.7:10080".as_slice()),
+                "{table}"
+            );
+        }
+        drop(origin);
+        drop(outbound);
+        drop(server);
+    }
+
+    #[test]
+    fn cluster_summary_batch_persistent_owner_and_eviction_rows() {
+        use tidb_stmtsummary::v2::stmtsummary::{
+            global_stmt_summary, set_global_stmt_summary, StmtSummary,
+        };
+        let config = tidb_config::config_tree::config::get_global_config();
+        let previous = global_stmt_summary();
+        let summary = StmtSummary::new_for_test(1);
+        set_global_stmt_summary(Some(summary.clone()));
+        let mut persistent = (*config).clone();
+        persistent.instance.stmt_summary_enable_persistent = true;
+        tidb_config::config_tree::config::store_global_config(persistent);
+        struct Restore(
+            Arc<tidb_config::config_tree::config::Config>,
+            Option<Arc<StmtSummary>>,
+            Arc<StmtSummary>,
+        );
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                tidb_config::config_tree::config::store_global_config(self.0.clone());
+                set_global_stmt_summary(self.1.clone());
+                self.2.close();
+            }
+        }
+        let _restore = Restore(config, previous, summary.clone());
+        let mut session = Session::new();
+        session.set_user("summary_v2@%".into(), "summary_v2@localhost".into());
+        session.set_process_privilege(true);
+        session.run("SELECT 12 + 19").unwrap();
+        session.run("SELECT 12 * 19").unwrap();
+        let rows = session
+            .run("SELECT EVICTED_COUNT FROM information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED")
+            .unwrap();
+        assert_eq!(
+            rows,
+            tidb_session::StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        let error = session
+            .run("SELECT * FROM information_schema.CLUSTER_TIDB_STATEMENTS_STATS")
+            .unwrap_err();
+        assert!(
+            matches!(error, tidb_executor::DriverError::NotSupportedYet(_)),
+            "{error:?}"
+        );
+        session
+            .run("SELECT DIGEST_TEXT FROM information_schema.CLUSTER_STATEMENTS_SUMMARY")
+            .unwrap();
+        // No background collector or v1 substitution is needed for an empty v2 owner.
+        summary.clear();
+        assert_eq!(
+            session
+                .local_cluster_table_rows(
+                    "CLUSTER_STATEMENTS_SUMMARY_EVICTED",
+                    None,
+                    &SessionTimeZone::utc()
+                )
+                .unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
     }
 
     #[test]

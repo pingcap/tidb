@@ -1,0 +1,118 @@
+{
+  "date": "2026-10-08",
+  "baseline": "04853ff95243a7673f791457cfb6d0f389c553a5",
+  "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+  "native_head": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+  "native_changed": false,
+  "findings": [
+    "I01",
+    "I03",
+    "O18",
+    "N05"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 25,
+    "partial": 29
+  },
+  "complete_package_acceptance": false,
+  "scope": "Shared cluster summary schemas, SQL fanout, local/peer readers and v1/v2 eviction admission. Parent findings remain partial; no complete-package acceptance.",
+  "go_sources": [
+    "pkg/infoschema/cluster.go",
+    "pkg/infoschema/tables.go",
+    "pkg/executor/stmtsummary.go",
+    "pkg/executor/stmtsummary_test.go",
+    "pkg/executor/infoschema_reader.go::setDataForTrxSummary,setDataForClusterTrxSummary",
+    "pkg/executor/coprocessor.go",
+    "pkg/store/copr/coprocessor.go::buildTiDBMemCopTasks"
+  ],
+  "changes": [
+    "Generate cluster schemas from existing local declarations; retire duplicate process/transaction column arrays.",
+    "Share discovered-peer fanout and local-only row dispatch across six registered cluster tables.",
+    "Wire current/history/cumulative/evicted statements and transaction history to generated incoming/outgoing protocol.",
+    "Expose existing v1/v2 eviction rows with PROCESS admission; preserve v2 cumulative refusal, identity/default roles and both encodings.",
+    "Migrate obsolete history refusal assertion; retain meaningful SQL/process/transport tests."
+  ],
+  "regressions": {
+    "command": "cd rust && cargo test --locked -p tidb-server --lib cluster_summary_batch",
+    "passed": 0,
+    "failed": 3,
+    "log": {
+      "path": "/workspace/.cloud-setup/cluster-summary-batch/before-final.log",
+      "sha256": "38457c54afbe08bd6b35de7c06b45f923ec2733a32efc114b9e3f0c34186c175",
+      "bytes": 106862
+    },
+    "failures": [
+      "Unknown CLUSTER_STATEMENTS_SUMMARY",
+      "Unknown STATEMENTS_SUMMARY_EVICTED instead of PROCESS admission",
+      "Incoming CLUSTER_TRX_SUMMARY rejected"
+    ]
+  },
+  "validation": [
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib cluster_summary_batch -- --test-threads=1",
+      "passed": 5,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-summary-batch/final-tests.log",
+        "sha256": "5932e368aca080c0a98f575adbed697aadc9961f93abaec0b8941b782d28b2dd",
+        "bytes": 106142
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib peer_host_batch -- --test-threads=1",
+      "passed": 5,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-summary-batch/peer-tests.log",
+        "sha256": "1e96e2d3d041e16469341afbc3daaa9faae0a752ec3b9153031e1aa60dbbb451",
+        "bytes": 105668
+      }
+    }
+  ],
+  "distinct_rust_cases": 10,
+  "check": {
+    "command": "cd rust && cargo check --locked -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/cluster-summary-batch/check.log",
+      "sha256": "28619b48eda3eab275311ef908a120cf0b73b453c7bbc64a2d269a262dfa4d53",
+      "bytes": 117796
+    }
+  },
+  "lint": {
+    "command": "make lint",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/cluster-summary-batch/lint.log",
+      "sha256": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4",
+      "bytes": 2164
+    }
+  },
+  "live": {
+    "command": "source /workspace/.cloud-setup/env.sh; PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/cluster-summary-batch/live.py",
+    "receipt": {
+      "path": "/workspace/.cloud-setup/cluster-summary-batch/live.json",
+      "sha256": "75a78584ae493a88495b670c2370540d6a0922d3f689b54a323f3068e0d51cfa",
+      "bytes": 2137
+    },
+    "assertions": 19,
+    "exit": 0,
+    "binary_sha256": "fb094229c122566170a4e6d05e3eb72fcacdb7b1a8b809a1a68338d13d20b598"
+  },
+  "intermediate_notes": [
+    "Baseline test compilation needed StmtResult/type-path corrections before the three actual source failures were captured.",
+    "First after run passed4 cases; wire assertion initially compared datum collation representation rather than bytes. Corrected assertion plus SQL-to-peer coverage pass in the final grouped run.",
+    "First real-server probe omitted the saved RUST_MIN_STACK=33554432 development environment. Six assertions passed before cumulative SQL overflowed the default thread stack. The preserved missing-stack-env receipts show exit -6. Rerun after sourcing env.sh passes all19 assertions and exits0; no source changes were needed. Default-stack debug deployment remains a limitation."
+  ],
+  "publication": "Actual hook, fresh locked pre-push build and remote verification are finalized in /workspace/.cloud-setup/cluster-summary-batch/final-handoff.json. No bypass or force push.",
+  "limits": [
+    "No complete upstream Go package acceptance or exhaustive re-audit of remaining54 findings.",
+    "No live Go server or multi-node TiKV interoperability, broader platform suites or benchmarks.",
+    "Other cluster tables, pushed operators and complete memory/extractor/accounting remain open.",
+    "The SQL-to-peer unit test uses a read-only discovery fixture with a real status socket; live probe uses real unistore SQL and generated-descriptor gRPC.",
+    "Development binary requires the saved Cloud RUST_MIN_STACK=33554432 setting for these paths; default-stack debug execution is not validated."
+  ]
+}

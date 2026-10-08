@@ -1813,180 +1813,6 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
     },
 ];
 
-/// Go's cluster-table render of PROCESSLIST: `INSTANCE` varchar(64) first
-/// (`pkg/infoschema/tables.go` cluster column prefix), then the instance
-/// processlist columns.
-const CLUSTER_PROCESSLIST_COLUMNS: &[InfoColumn] = &[
-    InfoColumn {
-        name: "INSTANCE",
-        tp: FieldTypeCode::Varchar,
-        size: 64,
-        flag: 0,
-        deflt: None,
-        comment: None,
-    },
-    InfoColumn {
-        name: "ID",
-        tp: FieldTypeCode::LongLong,
-        size: 21,
-        flag: NOT_NULL_FLAG | UNSIGNED_FLAG,
-        deflt: Some("0"),
-        comment: None,
-    },
-    InfoColumn {
-        name: "USER",
-        tp: FieldTypeCode::Varchar,
-        size: 16,
-        flag: NOT_NULL_FLAG,
-        deflt: Some(""),
-        comment: None,
-    },
-    InfoColumn {
-        name: "HOST",
-        tp: FieldTypeCode::Varchar,
-        size: 64,
-        flag: NOT_NULL_FLAG,
-        deflt: Some(""),
-        comment: None,
-    },
-    InfoColumn {
-        name: "DB",
-        tp: FieldTypeCode::Varchar,
-        size: 64,
-        flag: 0,
-        deflt: None,
-        comment: None,
-    },
-    InfoColumn {
-        name: "COMMAND",
-        tp: FieldTypeCode::Varchar,
-        size: 16,
-        flag: NOT_NULL_FLAG,
-        deflt: Some(""),
-        comment: None,
-    },
-    InfoColumn {
-        name: "TIME",
-        tp: FieldTypeCode::Long,
-        size: 7,
-        flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
-        comment: None,
-    },
-    InfoColumn {
-        name: "STATE",
-        tp: FieldTypeCode::Varchar,
-        size: 7,
-        flag: 0,
-        deflt: None,
-        comment: None,
-    },
-    InfoColumn {
-        name: "INFO",
-        tp: FieldTypeCode::LongBlob,
-        size: UNSPECIFIED_LENGTH,
-        flag: 0,
-        deflt: None,
-        comment: None,
-    },
-    InfoColumn {
-        name: "DIGEST",
-        tp: FieldTypeCode::Varchar,
-        size: 64,
-        flag: 0,
-        deflt: Some(""),
-        comment: None,
-    },
-    InfoColumn {
-        name: "MEM",
-        tp: FieldTypeCode::LongLong,
-        size: 21,
-        flag: UNSIGNED_FLAG,
-        deflt: None,
-        comment: None,
-    },
-    InfoColumn {
-        name: "MEM_ARBITRATION",
-        tp: FieldTypeCode::Double,
-        size: 22,
-        flag: 0,
-        deflt: None,
-        comment: None,
-    },
-    InfoColumn {
-        name: "MEM_WAIT_ARBITRATE_START",
-        tp: FieldTypeCode::Varchar,
-        size: 32,
-        flag: 0,
-        deflt: None,
-        comment: None,
-    },
-    InfoColumn {
-        name: "MEM_WAIT_ARBITRATE_BYTES",
-        tp: FieldTypeCode::LongLong,
-        size: 21,
-        flag: 0,
-        deflt: None,
-        comment: None,
-    },
-    InfoColumn {
-        name: "DISK",
-        tp: FieldTypeCode::LongLong,
-        size: 21,
-        flag: UNSIGNED_FLAG,
-        deflt: None,
-        comment: None,
-    },
-    InfoColumn {
-        name: "TxnStart",
-        tp: FieldTypeCode::Varchar,
-        size: 64,
-        flag: NOT_NULL_FLAG,
-        deflt: Some(""),
-        comment: None,
-    },
-    InfoColumn {
-        name: "RESOURCE_GROUP",
-        tp: FieldTypeCode::Varchar,
-        size: RESOURCE_GROUP_NAME_LENGTH,
-        flag: NOT_NULL_FLAG,
-        deflt: Some(""),
-        comment: None,
-    },
-    InfoColumn {
-        name: "SESSION_ALIAS",
-        tp: FieldTypeCode::Varchar,
-        size: 64,
-        flag: NOT_NULL_FLAG,
-        deflt: Some(""),
-        comment: None,
-    },
-    InfoColumn {
-        name: "ROWS_AFFECTED",
-        tp: FieldTypeCode::LongLong,
-        size: 21,
-        flag: UNSIGNED_FLAG,
-        deflt: None,
-        comment: None,
-    },
-    InfoColumn {
-        name: "TIDB_CPU",
-        tp: FieldTypeCode::LongLong,
-        size: 21,
-        flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
-        comment: None,
-    },
-    InfoColumn {
-        name: "TIKV_CPU",
-        tp: FieldTypeCode::LongLong,
-        size: 21,
-        flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
-        comment: None,
-    },
-];
-
 /// Go `infoschema.tableMemoryUsageOpsHistoryCols`.
 const MEMORY_USAGE_OPS_HISTORY_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
@@ -2089,33 +1915,6 @@ const MEMORY_USAGE_OPS_HISTORY_COLUMNS: &[InfoColumn] = &[
 
 /// Go `infoschema.tableTrxSummaryCols`.
 const TRX_SUMMARY_COLUMNS: &[InfoColumn] = &[
-    InfoColumn {
-        name: "DIGEST",
-        tp: FieldTypeCode::Varchar,
-        size: 16,
-        flag: NOT_NULL_FLAG,
-        deflt: None,
-        comment: Some("Digest of a transaction"),
-    },
-    InfoColumn {
-        name: "ALL_SQL_DIGESTS",
-        tp: FieldTypeCode::Blob,
-        size: UNSPECIFIED_LENGTH,
-        flag: 0,
-        deflt: None,
-        comment: Some("A list of the digests of SQL statements that the transaction has executed"),
-    },
-];
-
-const CLUSTER_TRX_SUMMARY_COLUMNS: &[InfoColumn] = &[
-    InfoColumn {
-        name: "INSTANCE",
-        tp: FieldTypeCode::Varchar,
-        size: 64,
-        flag: 0,
-        deflt: None,
-        comment: None,
-    },
     InfoColumn {
         name: "DIGEST",
         tp: FieldTypeCode::Varchar,
@@ -4004,6 +3803,68 @@ const RESOURCE_GROUPS_COLUMNS: &[InfoColumn] = &[
 /// which these are ported. `SHOW TABLES` therefore under-reports rather
 /// than reporting nothing, and naming an unported one still refuses with
 /// 1146 -- the same honest shape `mysql` has.
+/// Go infoschema/cluster.go derives cluster schemas from their local owner.
+/// Only tables with composed local and peer readers are registered here.
+pub const CLUSTER_TABLES: &[(&str, &str)] = &[
+    ("CLUSTER_PROCESSLIST", "PROCESSLIST"),
+    ("CLUSTER_TRX_SUMMARY", "TRX_SUMMARY"),
+    ("CLUSTER_STATEMENTS_SUMMARY", "STATEMENTS_SUMMARY"),
+    (
+        "CLUSTER_STATEMENTS_SUMMARY_HISTORY",
+        "STATEMENTS_SUMMARY_HISTORY",
+    ),
+    (
+        "CLUSTER_STATEMENTS_SUMMARY_EVICTED",
+        "STATEMENTS_SUMMARY_EVICTED",
+    ),
+    ("CLUSTER_TIDB_STATEMENTS_STATS", "TIDB_STATEMENTS_STATS"),
+];
+
+/// The local source of a composed cluster memory table.
+pub fn cluster_table_source(name: &str) -> Option<&'static str> {
+    CLUSTER_TABLES
+        .iter()
+        .find(|(cluster, _)| cluster.eq_ignore_ascii_case(name))
+        .map(|(_, local)| *local)
+}
+
+const INSTANCE_COLUMN: InfoColumn = InfoColumn {
+    name: "INSTANCE",
+    tp: FieldTypeCode::Varchar,
+    size: 64,
+    flag: 0,
+    deflt: None,
+    comment: None,
+};
+
+/// Go infoschema.tableStatementsSummaryEvictedCols.
+const STATEMENTS_SUMMARY_EVICTED_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "BEGIN_TIME",
+        tp: FieldTypeCode::Timestamp,
+        size: 26,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "END_TIME",
+        tp: FieldTypeCode::Timestamp,
+        size: 26,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "EVICTED_COUNT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+];
+
 const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("CHARACTER_SETS", CHARACTER_SETS_COLUMNS),
     (
@@ -4051,14 +3912,6 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("MEMORY_USAGE_OPS_HISTORY", MEMORY_USAGE_OPS_HISTORY_COLUMNS),
     ("PARTITIONS", PARTITIONS_COLUMNS),
     ("PROCESSLIST", PROCESSLIST_COLUMNS),
-    // CLUSTER_PROCESSLIST is backed by the same process registry in the
-    // single-node Rust server.  Keep it visible so dashboard queries and
-    // cluster diagnostics get a real result instead of 1146.  Go's cluster
-    // machinery prepends the INSTANCE column to the instance table's columns
-    // (`pkg/infoschema/cluster.go` maps the cluster name onto PROCESSLIST,
-    // whose render adds `INSTANCE` varchar(64) first), so the served columns
-    // are INSTANCE plus PROCESSLIST_COLUMNS.
-    ("CLUSTER_PROCESSLIST", CLUSTER_PROCESSLIST_COLUMNS),
     ("REFERENTIAL_CONSTRAINTS", REFERENTIAL_CONSTRAINTS_COLUMNS),
     ("SCHEMATA", SCHEMATA_COLUMNS),
     ("SCHEMA_PRIVILEGES", SCHEMA_PRIVILEGES_COLUMNS),
@@ -4072,11 +3925,14 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
         "TIDB_STATEMENTS_STATS",
         WORKLOAD_TIDB_STATEMENTS_STATS_COLUMNS,
     ),
+    (
+        "STATEMENTS_SUMMARY_EVICTED",
+        STATEMENTS_SUMMARY_EVICTED_COLUMNS,
+    ),
     ("STATEMENTS_SUMMARY", STATEMENTS_SUMMARY_COLUMNS),
     ("STATEMENTS_SUMMARY_HISTORY", STATEMENTS_SUMMARY_COLUMNS),
     ("TIDB_TRX", WORKLOAD_TIDB_TRX_COLUMNS),
     ("TRX_SUMMARY", TRX_SUMMARY_COLUMNS),
-    ("CLUSTER_TRX_SUMMARY", CLUSTER_TRX_SUMMARY_COLUMNS),
     ("USER_PRIVILEGES", USER_PRIVILEGES_COLUMNS),
     ("USER_ATTRIBUTES", USER_ATTRIBUTES_COLUMNS),
     ("VIEWS", VIEWS_COLUMNS),
@@ -4396,15 +4252,24 @@ static EVENTS_STATEMENTS_SUMMARY_BY_DIGEST_COLUMNS: &[InfoColumn] = &[
 
 /// The declared columns of one `information_schema` table, or `None` when the
 /// table is not one this tier implements.
-fn table_columns(name: &str) -> Option<&'static [InfoColumn]> {
-    SERVED_TABLES
+fn table_columns(name: &str) -> Option<Vec<&'static InfoColumn>> {
+    let local = cluster_table_source(name);
+    let name = local.unwrap_or(name);
+    let columns = SERVED_TABLES
         .iter()
         .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
         .map(|(_, columns)| *columns)
         .or_else(|| {
             (name.eq_ignore_ascii_case("events_statements_summary_by_digest"))
                 .then_some(EVENTS_STATEMENTS_SUMMARY_BY_DIGEST_COLUMNS)
-        })
+        })?;
+    Some(
+        local
+            .map(|_| &INSTANCE_COLUMN)
+            .into_iter()
+            .chain(columns.iter())
+            .collect(),
+    )
 }
 
 /// Registers every served table in `catalog` as a real object in the
@@ -4417,7 +4282,8 @@ fn table_columns(name: &str) -> Option<&'static [InfoColumn]> {
 /// the object carries the schema, and the rows still come from
 /// [`table_rows`] at query time.
 pub fn register_tables(catalog: &mut Catalog) {
-    for (name, columns) in SERVED_TABLES {
+    for name in served_table_names() {
+        let columns = table_columns(name).expect("registered memory table");
         let kv_columns = columns
             .iter()
             .enumerate()
@@ -4437,7 +4303,7 @@ pub fn register_tables(catalog: &mut Catalog) {
             })
             .collect();
         let mut table = KvTable::new(0, kv_columns);
-        table.name = (*name).to_owned();
+        table.name = name.to_owned();
         // The schema exists in every catalog this is called on (see
         // `Catalog::default`), so the only error `register_kv_in` reports
         // cannot happen here.
@@ -4461,5 +4327,9 @@ pub fn table_schema(name: &str) -> Option<Vec<(String, FieldType)>> {
 /// The names of every served table, in `SHOW TABLES` order.
 #[must_use]
 pub fn served_table_names() -> Vec<&'static str> {
-    SERVED_TABLES.iter().map(|(name, _)| *name).collect()
+    SERVED_TABLES
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(CLUSTER_TABLES.iter().map(|(name, _)| *name))
+        .collect()
 }
