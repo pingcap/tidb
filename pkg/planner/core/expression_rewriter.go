@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
-	"github.com/pingcap/tidb/pkg/expression/fulltext"
+	"github.com/pingcap/tidb/pkg/expression/localfts"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2260,9 +2260,10 @@ func (er *expressionRewriter) inDirectMatchBooleanContext() bool {
 	return true
 }
 
-// ErrLocalMatchDisabled identifies an unavailable default MATCH candidate.
-// Only this error may be rescued by the explicitly enabled ILIKE alternative;
-// unrelated build, privilege, and lock errors must remain fatal.
+// ErrLocalMatchDisabled identifies a row-wise Boolean MATCH request when both
+// TiDB and TiFlash local evaluation are disabled. Only this error may be
+// rescued by the explicitly enabled ILIKE alternative; unrelated build,
+// privilege, and lock errors must remain fatal.
 var ErrLocalMatchDisabled = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST without tidb_enable_local_match_against")
 
 func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
@@ -2285,27 +2286,31 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		er.matchAgainstToLike(v, numCols, stackLen)
 		return
 	}
-	if nativeInfo, ok := er.ftsNativeViable(v.Modifier, numCols, stackLen); ok {
-		er.matchAgainstToBuiltin(v, numCols, stackLen, nativeInfo)
-		return
-	}
 	if !sessVars.EnableLocalMatchAgainst {
 		er.err = ErrLocalMatchDisabled
 		return
 	}
-	if !expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+	if !expression.MatchAgainstModifierSupportedByLocalNoScore(v.Modifier) {
 		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST outside direct IN BOOLEAN MODE predicate context")
 		return
 	}
-	indexInfo, err := er.resolveLocalFullTextIndex(numCols, stackLen)
+	indexInfo, err := er.resolveLocalMatchAgainstConfigIndex(numCols, stackLen)
 	if err != nil {
 		er.err = err
 		return
 	}
-	er.matchAgainstToLocalBuiltin(v, numCols, stackLen, indexInfo)
+	// This switch gates both row-wise executors. Build one logical MATCH
+	// expression with TiDB evaluation metadata and, when TiFlash can execute
+	// the same Boolean query, TiFlash serialization metadata as well. Physical
+	// planning can then choose the storage placement by its normal cost model;
+	// if TiFlash pushdown is unavailable or not selected, TiDB evaluates it.
+	tiFlashInfo, _ := er.localMatchAgainstTiFlashRowWiseViable(v.Modifier, numCols, stackLen)
+	er.matchAgainstToLocalBuiltin(v, numCols, stackLen, indexInfo, tiFlashInfo)
 }
 
-func (er *expressionRewriter) resolveLocalFullTextIndex(numCols, stackLen int) (*model.IndexInfo, error) {
+// resolveLocalMatchAgainstConfigIndex reads parser/analyzer settings from the
+// matching FULLTEXT index definition; Local MATCH itself is evaluated row by row.
+func (er *expressionRewriter) resolveLocalMatchAgainstConfigIndex(numCols, stackLen int) (*model.IndexInfo, error) {
 	nameStart := stackLen - numCols - 1
 	if nameStart < 0 || er.planCtx == nil || er.planCtx.builder == nil {
 		return nil, plannererrors.ErrFtMatchingKeyNotFound
@@ -2362,7 +2367,7 @@ func (er *expressionRewriter) resolveLocalFullTextIndex(numCols, stackLen int) (
 	return nil, plannererrors.ErrFtMatchingKeyNotFound
 }
 
-func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int, indexInfo *model.IndexInfo) {
+func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int, indexInfo *model.IndexInfo, tiFlashInfo *expression.LocalMatchAgainstTiFlashEvalInfo) {
 	against := er.ctxStack[stackLen-1]
 	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
 	args := make([]expression.Expression, 0, numCols+1)
@@ -2380,26 +2385,26 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
 		return
 	}
-	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
+	if err := expression.SetMatchAgainstModifier(sf, v.Modifier); err != nil {
 		er.err = err
 		return
 	}
 
-	config, err := fulltext.AnalyzerConfigFromSessionVars(er.planCtx.builder.ctx.GetSessionVars(), indexInfo.FullTextInfo.ParserType)
+	config, err := localfts.AnalyzerConfigFromSessionVars(er.planCtx.builder.ctx.GetSessionVars(), indexInfo.FullTextInfo.ParserType)
 	if err != nil {
 		er.err = err
 		return
 	}
 	// MATCH token equality follows the collation of the first MATCH column.
 	// Keep the collation in the local evaluator config so the no-TiFlash path
-	// uses the same comparison semantics as the TiFlash FTS expression.
+	// uses the same comparison semantics as the TiFlash Local MATCH expression.
 	if len(cols) > 0 {
 		config.Collation = cols[0].GetType(er.sctx.GetEvalCtx()).GetCollate()
 	}
-	info := &expression.FTSLocalEvalInfo{AnalyzerConfig: config}
+	info := &expression.LocalMatchAgainstEvalInfo{AnalyzerConfig: config}
 	if constExpr, isConst := against.(*expression.Constant); isConst &&
 		!expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {
-		query, err := expression.CompileFTSMysqlMatchAgainstLocalQuery(er.sctx.GetEvalCtx(), sf, config)
+		query, err := expression.CompileLocalMatchAgainstQuery(er.sctx.GetEvalCtx(), sf, config)
 		if err != nil {
 			er.err = err
 			return
@@ -2409,27 +2414,34 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 			info.SelectivityTerm, _ = query.SelectivityTerm()
 		}
 	}
-	if err := expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, info); err != nil {
+	if err := expression.SetLocalMatchAgainstEvalInfo(sf, info); err != nil {
 		er.err = err
 		return
+	}
+	if tiFlashInfo != nil {
+		if err := expression.SetLocalMatchAgainstTiFlashEvalInfo(sf, tiFlashInfo); err != nil {
+			er.err = err
+			return
+		}
 	}
 	er.ctxStackAppend(fn, types.EmptyName)
 }
 
-// ftsNativeViable reports whether the MATCH(...) currently being rewritten
-// can be evaluated by TiFlash's row-wise Boolean MATCH scalar function. It
-// walks the resolved column FieldNames sitting on ctxNameStk (stack layout is
+// localMatchAgainstTiFlashRowWiseViable reports whether MATCH(...) can be
+// evaluated by TiFlash's row-wise Boolean MATCH scalar function. It walks the resolved
+// column FieldNames sitting on ctxNameStk (stack layout is
 // [..., col1, ..., colN, against]) and requires for each column:
 //   - the originating table has an available TiFlash replica;
 //   - the column list matches one public FULLTEXT index on that table.
 //
 // BOOLEAN MODE requires a parser and analyzer configuration represented by the
-// scalar-expression protocol. It does not select or consult a TiCI index.
-func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) (*expression.FTSNativeEvalInfo, bool) {
+// scalar-expression protocol. This is the row-wise TiFlash path, not a TiCI
+// index lookup.
+func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) (*expression.LocalMatchAgainstTiFlashEvalInfo, bool) {
 	if numCols <= 0 {
 		return nil, false
 	}
-	if !ftsModifierAllowsNativePushdown(modifier) {
+	if !matchAgainstAllowsTiFlashRowWise(modifier) {
 		return nil, false
 	}
 	builder := er.planCtx.builder
@@ -2489,8 +2501,8 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 		if matchingIndex == nil {
 			return nil, false
 		}
-		analyzerConfig, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, matchingIndex.FullTextInfo.ParserType)
-		if err != nil || !ftsNativeAnalyzerConfigSupportedForParser(sessVars, matchingIndex.FullTextInfo.ParserType) {
+		analyzerConfig, err := localfts.AnalyzerConfigFromSessionVars(sessVars, matchingIndex.FullTextInfo.ParserType)
+		if err != nil || !localMatchAgainstTiFlashAnalyzerConfigSupportedForParser(sessVars, matchingIndex.FullTextInfo.ParserType) {
 			return nil, false
 		}
 		against := er.ctxStack[stackLen-1]
@@ -2499,25 +2511,25 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 			return nil, false
 		}
 		if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constant}) {
-			er.sctx.SetSkipPlanCache("native MATCH ... AGAINST serializes the Boolean query into the TiFlash expression")
+			er.sctx.SetSkipPlanCache("TiFlash row-wise MATCH ... AGAINST serializes the Boolean query into the scalar expression")
 		}
 		queryText := ""
 		if !constant.Value.IsNull() {
 			queryText = constant.Value.GetString()
 		}
-		booleanQuery, err := expression.BuildFTSBooleanQueryWithAnalyzerConfig(queryText, analyzerConfig)
+		booleanQuery, err := expression.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(queryText, analyzerConfig)
 		if err != nil {
 			return nil, false
 		}
-		return &expression.FTSNativeEvalInfo{BooleanQuery: booleanQuery}, true
+		return &expression.LocalMatchAgainstTiFlashEvalInfo{BooleanQuery: booleanQuery}, true
 	}
 	return nil, true
 }
 
-// ftsModifierAllowsNativePushdown reports whether an FTS modifier can be
-// safely evaluated by TiFlash's row-wise Boolean MATCH scalar function.
+// matchAgainstAllowsTiFlashRowWise reports whether a MATCH modifier can be
+// evaluated by TiFlash's row-wise Boolean MATCH scalar function.
 // Query expansion has no scalar-protocol representation and is rejected.
-func ftsModifierAllowsNativePushdown(modifier ast.FulltextSearchModifier) bool {
+func matchAgainstAllowsTiFlashRowWise(modifier ast.FulltextSearchModifier) bool {
 	return modifier.IsBooleanMode() && !modifier.WithQueryExpansion()
 }
 
@@ -2542,61 +2554,37 @@ func tableHasPublicFTSIndexOnColumnWithParser(tblInfo *model.TableInfo, columnNa
 	return false
 }
 
-func ftsNativeAnalyzerConfigSupportedForParser(sessVars *variable.SessionVars, parserType model.FullTextParserType) bool {
+func localMatchAgainstTiFlashAnalyzerConfigSupportedForParser(sessVars *variable.SessionVars, parserType model.FullTextParserType) bool {
+	config, err := localfts.AnalyzerConfigFromSessionVars(sessVars, parserType)
+	if err != nil || (config.InnodbFtEnableStopword &&
+		!localMatchAgainstTiFlashCollationSupported(config.StopwordCollation)) {
+		return false
+	}
 	switch parserType {
 	case model.FullTextParserTypeStandardV1:
-		return ftsNativeAnalyzerConfigSupported(sessVars)
+		return config.InnodbFtMinTokenSize >= 0 && config.InnodbFtMaxTokenSize > 0
 	case model.FullTextParserTypeNgramV1:
-		config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, parserType)
-		return err == nil && config.NgramTokenSize > 0
+		return config.NgramTokenSize > 0
 	default:
 		return false
 	}
 }
 
-func ftsNativeAnalyzerConfigSupported(sessVars *variable.SessionVars) bool {
-	config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeStandardV1)
-	return err == nil && config.InnodbFtMinTokenSize >= 0 &&
-		config.InnodbFtMaxTokenSize > 0
-}
-
-// matchAgainstToBuiltin converts MATCH...AGAINST to the FTSMysqlMatchAgainst
-// builtin scalar function which can be pushed down to TiFlash for execution
-// against a fulltext index.
-func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols, stackLen int, nativeInfo *expression.FTSNativeEvalInfo) {
-	against := er.ctxStack[stackLen-1]
-	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
-
-	args := make([]expression.Expression, 0, 1+numCols)
-	args = append(args, against)
-	args = append(args, cols...)
-
-	er.ctxStackPop(numCols + 1)
-	fn, err := er.newFunction(ast.FTSMysqlMatchAgainst, &v.Type, args...)
-	if err != nil {
-		er.err = err
-		return
+// localMatchAgainstTiFlashCollationSupported keeps the pushdown on TiFlash
+// only when its collation registry can implement the same stopword lookup as
+// TiDB. Unsupported collations still use the TiDB Local MATCH fallback.
+func localMatchAgainstTiFlashCollationSupported(collation string) bool {
+	switch strings.ToLower(collation) {
+	case "utf8_general_ci", "utf8mb4_general_ci", "utf8_unicode_ci", "utf8mb4_unicode_ci",
+		"utf8mb4_0900_ai_ci", "utf8mb4_0900_bin", "utf8mb4_bin", "latin1_bin", "binary", "ascii_bin", "utf8_bin":
+		return true
+	default:
+		return false
 	}
-	sf, ok := fn.(*expression.ScalarFunction)
-	if !ok {
-		er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
-		return
-	}
-	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
-		er.err = err
-		return
-	}
-	if nativeInfo != nil {
-		if err := expression.SetFTSMysqlMatchAgainstNativeEvalInfo(sf, nativeInfo); err != nil {
-			er.err = err
-			return
-		}
-	}
-	er.ctxStackAppend(fn, types.EmptyName)
 }
 
 // matchAgainstToLike converts MATCH...AGAINST to LIKE predicates as a
-// fallback when the native FTS pushdown path is not viable.
+// separately configured alternative when local Boolean MATCH is unavailable.
 func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, stackLen int) {
 	againstExpr := er.ctxStack[stackLen-1]
 
@@ -2638,8 +2626,8 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 	}
 
 	if searchText.IsNull() {
-		// NULL search yields NULL in MySQL FTS semantics
-		// (builtin_fts.go evalReal returns isNull=true for NULL args), so we
+		// NULL search yields NULL in MySQL MATCH semantics
+		// (builtin_match_against.go evalReal returns isNull=true for NULL args), so we
 		// emit Constant(NULL) rather than Constant(0). This preserves
 		// three-valued logic under NOT — NOT NULL = NULL filters the row —
 		// and under IS NULL / IS NOT NULL. A literal Constant(0) would make

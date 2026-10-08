@@ -19,65 +19,72 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/fulltext"
+	"github.com/pingcap/tidb/pkg/expression/localfts"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-var _ functionClass = &ftsMysqlMatchAgainstFunctionClass{}
-var _ builtinFunc = &builtinFtsMysqlMatchAgainstSig{}
+var _ functionClass = &mysqlMatchAgainstFunctionClass{}
+var _ builtinFunc = &builtinMysqlMatchAgainstSig{}
 
-type ftsMysqlMatchAgainstFunctionClass struct {
+type mysqlMatchAgainstFunctionClass struct {
 	baseFunctionClass
 }
 
-type builtinFtsMysqlMatchAgainstSig struct {
+type builtinMysqlMatchAgainstSig struct {
 	baseBuiltinFunc
-	modifier       ast.FulltextSearchModifier
-	localEvalInfo  *FTSLocalEvalInfo
-	nativeEvalInfo *FTSNativeEvalInfo
+	modifier        ast.FulltextSearchModifier
+	localEvalInfo   *LocalMatchAgainstEvalInfo
+	tiFlashEvalInfo *LocalMatchAgainstTiFlashEvalInfo
 
 	// A prepared statement can reuse this signature with different search
 	// strings. Key the compiled plan by the actual string and protect it when
 	// executor workers share the signature.
 	localPlanMu sync.Mutex
-	localPlan   *ftsLocalEvalPlan
+	localPlan   *localMatchAgainstEvalPlan
 }
 
-// FTSLocalEvalInfo is planner-validated metadata authorising local no-score
-// MATCH ... AGAINST evaluation. The planner only attaches it in direct boolean
-// predicate positions, so relevance-score positions never receive a 0/1 value.
-type FTSLocalEvalInfo struct {
-	AnalyzerConfig  fulltext.AnalyzerConfig
+// LocalMatchAgainstEvalInfo is planner-validated metadata authorizing TiDB's
+// row-wise, no-score MATCH ... AGAINST evaluator. The planner only attaches it in direct
+// boolean predicate positions, so relevance-score positions never receive a
+// 0/1 value.
+type LocalMatchAgainstEvalInfo struct {
+	AnalyzerConfig  localfts.AnalyzerConfig
 	SelectivityTerm string
 	MatchNothing    bool
 }
 
-// FTSNativeEvalInfo carries the Boolean query AST for a TiFlash scalar MATCH
-// expression. The query is serialized as versioned scalar-function metadata
-// in Expr.val, independently of the SQL arguments in Expr.children.
-type FTSNativeEvalInfo struct {
-	BooleanQuery *tipb.FTSBooleanQuery
+// LocalMatchAgainstTiFlashEvalInfo carries the Boolean query AST for TiFlash's
+// row-wise scalar MATCH expression. The query is serialized in Expr.val,
+// independently of the SQL arguments in Expr.children. A planner-built
+// expression can carry both this metadata and LocalMatchAgainstEvalInfo so TiDB
+// can evaluate it if TiFlash pushdown is not selected.
+type LocalMatchAgainstTiFlashEvalInfo struct {
+	BooleanQuery *tipb.LocalMatchAgainstBooleanQuery
 }
 
-const ftsMatchBooleanMetadataVersion uint32 = 1
+// localMatchAgainstProtocolVersion versions the Local MATCH semantics carried
+// by Expr.val, including the built-in stopword set. TiFlash must implement and
+// be deployed with a version before TiDB emits it. Never change the meaning of
+// an existing version; reject unknown versions and add a new version instead.
+const localMatchAgainstProtocolVersion uint32 = 1
 
-// Clone returns an independent copy of the native evaluation metadata.
-func (info *FTSNativeEvalInfo) Clone() *FTSNativeEvalInfo {
+// Clone returns an independent copy of the TiFlash evaluation metadata.
+func (info *LocalMatchAgainstTiFlashEvalInfo) Clone() *LocalMatchAgainstTiFlashEvalInfo {
 	if info == nil {
 		return nil
 	}
-	cloned := &FTSNativeEvalInfo{}
+	cloned := &LocalMatchAgainstTiFlashEvalInfo{}
 	if info.BooleanQuery != nil {
-		cloned.BooleanQuery = proto.Clone(info.BooleanQuery).(*tipb.FTSBooleanQuery)
+		cloned.BooleanQuery = proto.Clone(info.BooleanQuery).(*tipb.LocalMatchAgainstBooleanQuery)
 	}
 	return cloned
 }
 
 // Clone returns an independent copy of the local evaluation metadata.
-func (info *FTSLocalEvalInfo) Clone() *FTSLocalEvalInfo {
+func (info *LocalMatchAgainstEvalInfo) Clone() *LocalMatchAgainstEvalInfo {
 	if info == nil {
 		return nil
 	}
@@ -85,52 +92,52 @@ func (info *FTSLocalEvalInfo) Clone() *FTSLocalEvalInfo {
 	return &cloned
 }
 
-type ftsLocalEvalPlan struct {
+type localMatchAgainstEvalPlan struct {
 	search   string
-	query    *fulltext.Query
-	analyzer fulltext.Analyzer
+	query    *localfts.Query
+	analyzer localfts.Analyzer
 }
 
-func (b *builtinFtsMysqlMatchAgainstSig) Clone() builtinFunc {
-	newSig := &builtinFtsMysqlMatchAgainstSig{}
+func (b *builtinMysqlMatchAgainstSig) Clone() builtinFunc {
+	newSig := &builtinMysqlMatchAgainstSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.modifier = b.modifier
 	newSig.localEvalInfo = b.localEvalInfo.Clone()
-	newSig.nativeEvalInfo = b.nativeEvalInfo.Clone()
+	newSig.tiFlashEvalInfo = b.tiFlashEvalInfo.Clone()
 	return newSig
 }
 
-// SetFTSMysqlMatchAgainstModifier sets the SQL modifier on the internal
+// SetMatchAgainstModifier sets the SQL modifier on the internal
 // MATCH ... AGAINST builtin immediately after planner construction.
-func SetFTSMysqlMatchAgainstModifier(sf *ScalarFunction, modifier ast.FulltextSearchModifier) error {
-	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+func SetMatchAgainstModifier(sf *ScalarFunction, modifier ast.FulltextSearchModifier) error {
+	sig, ok := sf.Function.(*builtinMysqlMatchAgainstSig)
 	if !ok {
 		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
 	}
 	sig.modifier = modifier
 	if modifier.IsBooleanMode() && !modifier.WithQueryExpansion() {
-		sig.setPbCode(tipb.ScalarFuncSig_FTSMatchBooleanExpression)
+		sig.setPbCode(tipb.ScalarFuncSig_LocalMatchAgainstBoolean)
 	} else {
 		// Only Boolean mode has a TiFlash scalar protocol. Keep other MATCH
-		// modifiers local instead of serializing them as a different FTS op.
+		// modifiers local instead of serializing them as a different Local MATCH opcode.
 		sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
 	}
 	return nil
 }
 
-// GetFTSMysqlMatchAgainstModifier returns the modifier attached to the
+// GetMatchAgainstModifier returns the modifier attached to the
 // internal `MATCH ... AGAINST` builtin signature.
-func GetFTSMysqlMatchAgainstModifier(sf *ScalarFunction) (ast.FulltextSearchModifier, bool) {
-	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+func GetMatchAgainstModifier(sf *ScalarFunction) (ast.FulltextSearchModifier, bool) {
+	sig, ok := sf.Function.(*builtinMysqlMatchAgainstSig)
 	if !ok {
 		return ast.FulltextSearchModifierNaturalLanguageMode, false
 	}
 	return sig.modifier, true
 }
 
-// SetFTSMysqlMatchAgainstLocalEvalInfo authorises local no-score evaluation.
-func SetFTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction, info *FTSLocalEvalInfo) error {
-	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+// SetLocalMatchAgainstEvalInfo authorises local no-score evaluation.
+func SetLocalMatchAgainstEvalInfo(sf *ScalarFunction, info *LocalMatchAgainstEvalInfo) error {
+	sig, ok := sf.Function.(*builtinMysqlMatchAgainstSig)
 	if !ok {
 		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
 	}
@@ -138,60 +145,60 @@ func SetFTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction, info *FTSLocalEval
 	return nil
 }
 
-// FTSMysqlMatchAgainstLocalEvalInfo returns attached local-evaluation metadata.
-func FTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction) (*FTSLocalEvalInfo, bool) {
-	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+// GetLocalMatchAgainstEvalInfo returns attached local-evaluation metadata.
+func GetLocalMatchAgainstEvalInfo(sf *ScalarFunction) (*LocalMatchAgainstEvalInfo, bool) {
+	sig, ok := sf.Function.(*builtinMysqlMatchAgainstSig)
 	if !ok || sig.localEvalInfo == nil {
 		return nil, false
 	}
 	return sig.localEvalInfo, true
 }
 
-// SetFTSMysqlMatchAgainstNativeEvalInfo attaches the planner-validated
-// Boolean query representation required by TiFlash's scalar FTS function.
-func SetFTSMysqlMatchAgainstNativeEvalInfo(sf *ScalarFunction, info *FTSNativeEvalInfo) error {
-	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+// SetLocalMatchAgainstTiFlashEvalInfo attaches the planner-validated
+// Boolean query representation required by TiFlash's row-wise Local MATCH function.
+func SetLocalMatchAgainstTiFlashEvalInfo(sf *ScalarFunction, info *LocalMatchAgainstTiFlashEvalInfo) error {
+	sig, ok := sf.Function.(*builtinMysqlMatchAgainstSig)
 	if !ok {
 		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
 	}
-	sig.nativeEvalInfo = info.Clone()
+	sig.tiFlashEvalInfo = info.Clone()
 	return nil
 }
 
-// FTSMysqlMatchAgainstNativeEvalInfo returns attached native-evaluation metadata.
-func FTSMysqlMatchAgainstNativeEvalInfo(sf *ScalarFunction) (*FTSNativeEvalInfo, bool) {
-	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
-	if !ok || sig.nativeEvalInfo == nil {
+// GetLocalMatchAgainstTiFlashEvalInfo returns attached TiFlash-evaluation metadata.
+func GetLocalMatchAgainstTiFlashEvalInfo(sf *ScalarFunction) (*LocalMatchAgainstTiFlashEvalInfo, bool) {
+	sig, ok := sf.Function.(*builtinMysqlMatchAgainstSig)
+	if !ok || sig.tiFlashEvalInfo == nil {
 		return nil, false
 	}
-	return sig.nativeEvalInfo, true
+	return sig.tiFlashEvalInfo, true
 }
 
-// FTSModifierSupportedByLocalNoScore reports whether local boolean matching can
+// MatchAgainstModifierSupportedByLocalNoScore reports whether local Boolean matching can
 // preserve the SQL modifier semantics. Natural-language relevance and query
 // expansion are deliberately excluded.
-func FTSModifierSupportedByLocalNoScore(modifier ast.FulltextSearchModifier) bool {
+func MatchAgainstModifierSupportedByLocalNoScore(modifier ast.FulltextSearchModifier) bool {
 	return modifier.IsBooleanMode() && !modifier.WithQueryExpansion()
 }
 
-// CompileFTSMysqlMatchAgainstLocalQuery compiles a stable search argument at
+// CompileLocalMatchAgainstQuery compiles a stable search argument at
 // plan time, surfacing syntax errors even for empty inputs or short-circuits.
-func CompileFTSMysqlMatchAgainstLocalQuery(ctx EvalContext, sf *ScalarFunction, config fulltext.AnalyzerConfig) (*fulltext.Query, error) {
-	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+func CompileLocalMatchAgainstQuery(ctx EvalContext, sf *ScalarFunction, config localfts.AnalyzerConfig) (*localfts.Query, error) {
+	sig, ok := sf.Function.(*builtinMysqlMatchAgainstSig)
 	if !ok {
 		return nil, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
 	}
-	if !FTSModifierSupportedByLocalNoScore(sig.modifier) {
+	if !MatchAgainstModifierSupportedByLocalNoScore(sig.modifier) {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("local MATCH ... AGAINST outside of IN BOOLEAN MODE")
 	}
 	search, isNull, err := sig.args[0].EvalString(ctx, chunk.Row{})
 	if err != nil || isNull {
 		return nil, err
 	}
-	return fulltext.CompileBooleanQuery(search, config)
+	return localfts.CompileBooleanQuery(search, config)
 }
 
-func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *mysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -221,21 +228,21 @@ func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 
-	sig := &builtinFtsMysqlMatchAgainstSig{baseBuiltinFunc: bf}
+	sig := &builtinMysqlMatchAgainstSig{baseBuiltinFunc: bf}
 	// The SQL modifier is attached after builtin construction. Until then this
 	// function must not be pushable to a storage engine.
 	sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
 	return sig, nil
 }
 
-func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+func (b *builtinMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	if b.localEvalInfo == nil {
 		if constArg, ok := b.args[0].(*Constant); ok && constArg.Value.IsNull() {
 			return 0, true, nil
 		}
 		return 0, false, errors.Errorf("cannot use 'MATCH ... AGAINST' outside of fulltext index")
 	}
-	if !FTSModifierSupportedByLocalNoScore(b.modifier) {
+	if !MatchAgainstModifierSupportedByLocalNoScore(b.modifier) {
 		return 0, false, errors.Errorf("local 'MATCH ... AGAINST' only supports IN BOOLEAN MODE")
 	}
 
@@ -261,7 +268,7 @@ func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row
 	if err != nil {
 		return 0, false, err
 	}
-	doc, err := fulltext.BuildDocument(columns, plan.analyzer)
+	doc, err := localfts.BuildDocument(columns, plan.analyzer)
 	if err != nil {
 		return 0, false, err
 	}
@@ -271,21 +278,21 @@ func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row
 	return 0, false, nil
 }
 
-func (b *builtinFtsMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search string) (*ftsLocalEvalPlan, error) {
+func (b *builtinMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search string) (*localMatchAgainstEvalPlan, error) {
 	b.localPlanMu.Lock()
 	defer b.localPlanMu.Unlock()
 	if b.localPlan != nil && b.localPlan.search == search {
 		return b.localPlan, nil
 	}
-	analyzer, err := fulltext.GetAnalyzer(b.localEvalInfo.AnalyzerConfig)
+	analyzer, err := localfts.GetAnalyzer(b.localEvalInfo.AnalyzerConfig)
 	if err != nil {
 		return nil, err
 	}
-	query, err := fulltext.CompileBooleanQuery(search, b.localEvalInfo.AnalyzerConfig)
+	query, err := localfts.CompileBooleanQuery(search, b.localEvalInfo.AnalyzerConfig)
 	if err != nil {
 		return nil, err
 	}
-	b.localPlan = &ftsLocalEvalPlan{search: search, query: query, analyzer: analyzer}
+	b.localPlan = &localMatchAgainstEvalPlan{search: search, query: query, analyzer: analyzer}
 
 	// Re-derive the search-dependent metadata from the query just compiled, so
 	// it describes the search string this signature last saw rather than the
@@ -301,18 +308,18 @@ func (b *builtinFtsMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search strin
 	return b.localPlan, nil
 }
 
-func (b *builtinFtsMysqlMatchAgainstSig) evalLocalMatchColumns(ctx EvalContext, row chunk.Row) ([]fulltext.ColumnInput, error) {
-	columns := make([]fulltext.ColumnInput, 0, len(b.args)-1)
+func (b *builtinMysqlMatchAgainstSig) evalLocalMatchColumns(ctx EvalContext, row chunk.Row) ([]localfts.ColumnInput, error) {
+	columns := make([]localfts.ColumnInput, 0, len(b.args)-1)
 	for _, arg := range b.args[1:] {
 		text, isNull, err := arg.EvalString(ctx, row)
 		if err != nil {
 			return nil, err
 		}
 		if isNull {
-			columns = append(columns, fulltext.ColumnInput{IsNull: true})
+			columns = append(columns, localfts.ColumnInput{IsNull: true})
 			continue
 		}
-		columns = append(columns, fulltext.ColumnInput{Text: text})
+		columns = append(columns, localfts.ColumnInput{Text: text})
 	}
 	return columns, nil
 }

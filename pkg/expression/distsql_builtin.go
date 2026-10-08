@@ -1150,8 +1150,8 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinVecCosineDistanceSig{base}
 	case tipb.ScalarFuncSig_VecL2NormSig:
 		f = &builtinVecL2NormSig{base}
-	case tipb.ScalarFuncSig_FTSMatchBooleanExpression:
-		f = &builtinFtsMysqlMatchAgainstSig{
+	case tipb.ScalarFuncSig_LocalMatchAgainstBoolean:
+		f = &builtinMysqlMatchAgainstSig{
 			baseBuiltinFunc: base,
 			modifier:        ast.FulltextSearchModifierBooleanMode,
 		}
@@ -1257,16 +1257,19 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 	if err != nil {
 		return nil, err
 	}
-	if expr.Sig == tipb.ScalarFuncSig_FTSMatchBooleanExpression {
-		metadata := &tipb.FTSMatchBooleanMetadata{}
-		if err := proto.Unmarshal(expr.Val, metadata); err != nil {
+	if expr.Sig == tipb.ScalarFuncSig_LocalMatchAgainstBoolean {
+		query := &tipb.LocalMatchAgainstBooleanQuery{}
+		if err := proto.Unmarshal(expr.Val, query); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if metadata.GetVersion() != ftsMatchBooleanMetadataVersion || metadata.GetBooleanQuery() == nil {
-			return nil, errors.Errorf("invalid Boolean MATCH scalar metadata version %d", metadata.GetVersion())
+		// Expr.val contains the Local MATCH semantic protocol version. TiDB only
+		// decodes versions it understands; TiFlash support must be deployed before
+		// TiDB starts emitting a newer version.
+		if query.GetVersion() != localMatchAgainstProtocolVersion {
+			return nil, errors.Errorf("invalid Local MATCH protocol version %d", query.GetVersion())
 		}
-		if err := SetFTSMysqlMatchAgainstNativeEvalInfo(sf.(*ScalarFunction), &FTSNativeEvalInfo{
-			BooleanQuery: metadata.GetBooleanQuery(),
+		if err := SetLocalMatchAgainstTiFlashEvalInfo(sf.(*ScalarFunction), &LocalMatchAgainstTiFlashEvalInfo{
+			BooleanQuery: query,
 		}); err != nil {
 			return nil, errors.Trace(err)
 		}

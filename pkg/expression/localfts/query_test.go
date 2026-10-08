@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package fulltext
+package localfts
 
 import (
 	"fmt"
@@ -252,6 +252,32 @@ func TestCompileBooleanQueryNgram(t *testing.T) {
 	require.True(t, matchQueryForTest(t, config, "ab*", []ColumnInput{{Text: "abc"}}))
 	require.True(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abc"}}))
 	require.False(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abx"}}))
+}
+
+func TestCompileBooleanQueryNgramStopwords(t *testing.T) {
+	config := ngramConfigForTest()
+	config.InnodbFtEnableStopword = true
+
+	// Stopwords longer than ngram_token_size are ignored by the NGRAM parser.
+	require.True(t, matchQueryForTest(t, config, "+the", []ColumnInput{{Text: "the"}}))
+	// At size 2, both grams of "caf" contain the built-in stopword "a".
+	require.False(t, matchQueryForTest(t, config, "+caf*", []ColumnInput{{Text: "cafe"}}))
+
+	// At size 3, the query gram "the" is filtered. A required term that
+	// disappears during analysis cannot match any document.
+	config.NgramTokenSize = 3
+	query, err := CompileBooleanQuery("+the", config)
+	require.NoError(t, err)
+	require.True(t, query.MatchesNothing())
+	require.False(t, matchQueryForTest(t, config, "+the", []ColumnInput{{Text: "the"}}))
+
+	// The same query and document become matchable when stopword filtering is
+	// explicitly disabled.
+	config.InnodbFtEnableStopword = false
+	query, err = CompileBooleanQuery("+the", config)
+	require.NoError(t, err)
+	require.False(t, query.MatchesNothing())
+	require.True(t, matchQueryForTest(t, config, "+the", []ColumnInput{{Text: "the"}}))
 }
 
 func TestCompileBooleanQueryNgramUnicodeNumber(t *testing.T) {

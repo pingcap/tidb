@@ -52,6 +52,10 @@ func TestMatchAgainstBooleanPushdownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	tk.MustExec("set @@session.tidb_enable_local_match_against=OFF")
+	require.Error(t, tk.ExecToErr("select id from articles where match(title) against('+tidb' in boolean mode)"),
+		"OFF must disable TiFlash's row-wise Boolean MATCH as well as TiDB fallback")
+	tk.MustExec("set @@session.tidb_enable_local_match_against=ON")
+	tk.MustExec("set @@session.collation_server='utf8mb4_general_ci'")
 
 	queries := []struct {
 		sql       string
@@ -72,7 +76,7 @@ func TestMatchAgainstBooleanPushdownToTiFlash(t *testing.T) {
 	for _, query := range queries {
 		t.Run(query.name, func(t *testing.T) {
 			plan := compilePhysicalPlan(t, tk, query.sql)
-			scan := findFTSTableScan(t, plan)
+			scan := findLocalMatchAgainstTableScan(t, plan)
 			// MATCH columns must be read by TiFlash even when they are not
 			// projected by the SQL query; the scalar Selection evaluates them.
 			require.Len(t, plan.Schema().Columns, 1)
@@ -88,9 +92,10 @@ func TestMatchAgainstBooleanPushdownToTiFlash(t *testing.T) {
 			pb, err := scan.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 			require.NoError(t, err)
 			require.NotNil(t, pb.TblScan)
-			metadata := assertFTSScalarSelection(t, tk, plan, query.columnNum)
-			require.NotNil(t, metadata.GetBooleanQuery())
+			metadata := assertLocalMatchAgainstScalarSelection(t, tk, plan, query.columnNum)
 			require.NotZero(t, metadata.GetVersion())
+			require.Equal(t, "utf8mb4_general_ci", metadata.GetStopwordCollation(),
+				"TiFlash stopword lookup must use collation_server, not the MATCH column collation")
 
 			explainRows := tk.MustQuery("explain format='brief' " + query.sql).Rows()
 			explain := fmt.Sprint(explainRows)
@@ -98,6 +103,32 @@ func TestMatchAgainstBooleanPushdownToTiFlash(t *testing.T) {
 			require.Contains(t, strings.ToLower(explain), "selection")
 		})
 	}
+}
+
+func TestMatchAgainstTiDBFallbackWhenTiFlashIsNotSelected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table fallback_articles (
+		id int primary key,
+		body text,
+		fulltext index idx_body(body)
+	)`)
+	tk.MustExec("insert into fallback_articles values (1, 'tidb storage'), (2, 'mysql database')")
+	dom := domain.GetDomain(tk.Session())
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("fallback_articles"))
+	require.NoError(t, err)
+	// TiFlash is available, so the rewritten scalar carries TiFlash metadata;
+	// restrict this query to TiKV to exercise the same expression's TiDB fallback.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tikv'")
+	tk.MustExec("set @@session.tidb_enable_local_match_against=ON")
+
+	sql := "select id from fallback_articles where match(body) against('+tidb' in boolean mode) order by id"
+	tk.MustQuery(sql).Check(testkit.Rows("1"))
+	plan := strings.ToLower(fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows()))
+	require.NotContains(t, plan, "mpp[tiflash]")
 }
 
 func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {
@@ -116,11 +147,12 @@ func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	tk.MustExec("set @@session.tidb_enable_local_match_against=OFF")
+	tk.MustExec("set @@session.tidb_enable_local_match_against=ON")
+	tk.MustExec("set @@session.collation_server='utf8mb4_bin'")
 
 	sql := "select id from ngram_articles where match(title) against('+tidb' in boolean mode)"
 	plan := compilePhysicalPlan(t, tk, sql)
-	scan := findFTSTableScan(t, plan)
+	scan := findLocalMatchAgainstTableScan(t, plan)
 	require.Len(t, plan.Schema().Columns, 1)
 	var hasTitle bool
 	for _, col := range scan.Columns {
@@ -130,9 +162,19 @@ func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {
 		}
 	}
 	require.True(t, hasTitle, "the TiFlash table scan must include the NGRAM MATCH column")
-	metadata := assertFTSScalarSelection(t, tk, plan, 1)
-	require.Equal(t, string(model.FullTextParserTypeNgramV1), metadata.GetBooleanQuery().GetQueryTokenizer())
-	require.Equal(t, uint32(2), metadata.GetBooleanQuery().GetNgramTokenSize())
+	metadata := assertLocalMatchAgainstScalarSelection(t, tk, plan, 1)
+	require.Equal(t, tipb.LocalMatchAgainstParser_LocalMatchAgainstParserNgram, metadata.GetParser())
+	require.Equal(t, uint32(2), metadata.GetNgramTokenSize())
+	require.Equal(t, tipb.LocalMatchAgainstStopwordMode_LocalMatchAgainstStopwordModeBuiltin, metadata.GetStopwordMode(),
+		"the NGRAM stopword setting must be serialized for TiFlash")
+	require.Equal(t, "utf8mb4_bin", metadata.GetStopwordCollation())
+
+	// The same protocol field must preserve an explicit OFF setting too.
+	tk.MustExec("set session innodb_ft_enable_stopword=OFF")
+	plan = compilePhysicalPlan(t, tk, sql)
+	metadata = assertLocalMatchAgainstScalarSelection(t, tk, plan, 1)
+	require.Equal(t, tipb.LocalMatchAgainstStopwordMode_LocalMatchAgainstStopwordModeDisabled, metadata.GetStopwordMode())
+	scan = findLocalMatchAgainstTableScan(t, plan)
 
 	pb, err := scan.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
@@ -158,20 +200,20 @@ func TestMultipleMatchAgainstBooleanPredicatesUseTiFlashSelection(t *testing.T) 
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	tk.MustExec("set @@session.tidb_enable_local_match_against=OFF")
+	tk.MustExec("set @@session.tidb_enable_local_match_against=ON")
 
 	sql := "select id from multi_match_articles where " +
 		"match(title) against('+tidb' in boolean mode) OR " +
 		"match(title) against('+mysql' in boolean mode)"
 	plan := compilePhysicalPlan(t, tk, sql)
 	// Multi-predicate Boolean expressions are represented by a TiFlash
-	// Selection containing scalar FTS calls, not by one scan-level query.
-	selection := findFTSSelection(t, plan)
+	// Selection containing scalar Local MATCH calls, not by one scan-level query.
+	selection := findLocalMatchAgainstSelection(t, plan)
 	selectionPB, err := selection.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
 	var booleanFunctionCount int
 	for _, condition := range selectionPB.GetSelection().GetConditions() {
-		booleanFunctionCount += countScalarFunctionExpr(condition, tipb.ScalarFuncSig_FTSMatchBooleanExpression)
+		booleanFunctionCount += countScalarFunctionExpr(condition, tipb.ScalarFuncSig_LocalMatchAgainstBoolean)
 	}
 	require.Equal(t, 2, booleanFunctionCount)
 	explain := strings.ToLower(fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows()))
@@ -206,45 +248,44 @@ func TestMatchAgainstStandardAnalyzerSettingsPushdownToTiFlash(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	tk.MustExec("set @@session.tidb_enable_local_match_against=OFF")
+	tk.MustExec("set @@session.tidb_enable_local_match_against=ON")
 
 	plan := compilePhysicalPlan(t, tk, "select id from standard_articles where match(body) against('+the' in boolean mode)")
-	scan := findFTSTableScan(t, plan)
-	metadata := assertFTSScalarSelection(t, tk, plan, 1)
-	booleanQuery := metadata.GetBooleanQuery()
+	scan := findLocalMatchAgainstTableScan(t, plan)
+	metadata := assertLocalMatchAgainstScalarSelection(t, tk, plan, 1)
+	booleanQuery := metadata
 	require.NotNil(t, booleanQuery)
 	require.Equal(t, uint32(1), booleanQuery.GetInnodbFtMinTokenSize())
 	require.Equal(t, uint32(10), booleanQuery.GetInnodbFtMaxTokenSize())
-	require.False(t, booleanQuery.GetInnodbFtEnableStopword())
+	require.Equal(t, tipb.LocalMatchAgainstStopwordMode_LocalMatchAgainstStopwordModeDisabled, booleanQuery.GetStopwordMode())
 
 	pb, err := scan.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
 	require.NotNil(t, pb.TblScan)
 }
 
-func assertFTSScalarSelection(t *testing.T, tk *testkit.TestKit, plan base.Plan, matchColumnCount int) *tipb.FTSMatchBooleanMetadata {
+func assertLocalMatchAgainstScalarSelection(t *testing.T, tk *testkit.TestKit, plan base.Plan, matchColumnCount int) *tipb.LocalMatchAgainstBooleanQuery {
 	t.Helper()
-	selection := findFTSSelection(t, plan)
+	selection := findLocalMatchAgainstSelection(t, plan)
 	pb, err := selection.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
 	require.NotNil(t, pb.GetSelection())
 	var ftsExpr *tipb.Expr
 	for _, condition := range pb.GetSelection().GetConditions() {
-		if found := findScalarFunctionExpr(condition, tipb.ScalarFuncSig_FTSMatchBooleanExpression); found != nil {
+		if found := findScalarFunctionExpr(condition, tipb.ScalarFuncSig_LocalMatchAgainstBoolean); found != nil {
 			ftsExpr = found
 			break
 		}
 	}
 	require.NotNil(t, ftsExpr, "Boolean MATCH must be encoded as its dedicated scalar function")
 	require.Len(t, ftsExpr.GetChildren(), matchColumnCount+1)
-	metadata := &tipb.FTSMatchBooleanMetadata{}
+	metadata := &tipb.LocalMatchAgainstBooleanQuery{}
 	require.NoError(t, proto.Unmarshal(ftsExpr.GetVal(), metadata))
 	require.Equal(t, uint32(1), metadata.GetVersion())
-	require.NotNil(t, metadata.GetBooleanQuery())
 	return metadata
 }
 
-func findFTSSelection(t *testing.T, plan base.Plan) *core.PhysicalSelection {
+func findLocalMatchAgainstSelection(t *testing.T, plan base.Plan) *core.PhysicalSelection {
 	t.Helper()
 	var result *core.PhysicalSelection
 	var visit func(base.Plan)
@@ -313,7 +354,7 @@ func compilePhysicalPlan(t *testing.T, tk *testkit.TestKit, sql string) base.Pla
 	return stmt.Plan
 }
 
-func findFTSTableScan(t *testing.T, plan base.Plan) *core.PhysicalTableScan {
+func findLocalMatchAgainstTableScan(t *testing.T, plan base.Plan) *core.PhysicalTableScan {
 	t.Helper()
 	var result *core.PhysicalTableScan
 	var visit func(base.Plan)

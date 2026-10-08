@@ -1,13 +1,13 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "fulltext",
+    name = "localfts",
     srcs = [
         "analyzer.go",
         "document.go",
         "query.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/expression/fulltext",
+    importpath = "github.com/pingcap/tidb/pkg/expression/localfts",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression/matchagainst",
@@ -18,13 +18,13 @@ go_library(
 )
 
 go_test(
-    name = "fulltext_test",
+    name = "localfts_test",
     timeout = "short",
     srcs = [
         "analyzer_test.go",
         "query_test.go",
     ],
-    embed = [":fulltext"],
+    embed = [":localfts"],
     flaky = False,
     shard_count = 18,
     deps = [

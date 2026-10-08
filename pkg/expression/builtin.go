@@ -652,7 +652,7 @@ var funcs = map[string]functionClass{
 	ast.Interval: &intervalFunctionClass{baseFunctionClass{ast.Interval, 2, -1}},
 
 	// FTS functions.
-	ast.FTSMysqlMatchAgainst: &ftsMysqlMatchAgainstFunctionClass{baseFunctionClass{ast.FTSMysqlMatchAgainst, 2, -1}},
+	ast.FTSMysqlMatchAgainst: &mysqlMatchAgainstFunctionClass{baseFunctionClass{ast.FTSMysqlMatchAgainst, 2, -1}},
 
 	// math functions
 	ast.Abs:      &absFunctionClass{baseFunctionClass{ast.Abs, 1, 1}},

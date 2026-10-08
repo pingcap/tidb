@@ -22,6 +22,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression/localfts"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2011,7 +2012,7 @@ func TestMetadata(t *testing.T) {
 	require.Equal(t, true, metadata.InUnion)
 }
 
-func TestFTSBooleanQueryUsesVersionedFunctionMetadata(t *testing.T) {
+func TestLocalMatchAgainstBooleanQueryUsesVersionedPayload(t *testing.T) {
 	ctx := mock.NewContext()
 	client := new(mock.Client)
 	searchType := types.NewFieldType(mysql.TypeVarchar)
@@ -2022,10 +2023,19 @@ func TestFTSBooleanQueryUsesVersionedFunctionMetadata(t *testing.T) {
 	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, matchColumn)
 	require.NoError(t, err)
 	sf := fn.(*ScalarFunction)
-	require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
-	query, err := BuildFTSBooleanQuery("+tidb -mysql", model.FullTextParserTypeStandardV1)
+	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+	query, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+tidb -mysql", localfts.AnalyzerConfig{
+		ParserType:             model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize:   3,
+		InnodbFtMaxTokenSize:   84,
+		InnodbFtEnableStopword: true,
+		StopwordCollation:      mysql.DefaultCollationName,
+	})
 	require.NoError(t, err)
-	require.NoError(t, SetFTSMysqlMatchAgainstNativeEvalInfo(sf, &FTSNativeEvalInfo{BooleanQuery: query}))
+	require.NoError(t, SetLocalMatchAgainstTiFlashEvalInfo(sf, &LocalMatchAgainstTiFlashEvalInfo{BooleanQuery: query}))
+	// Planner-generated expressions retain a TiDB evaluator as a fallback,
+	// while still being eligible for TiFlash scalar pushdown.
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 	require.True(t, canFuncBePushed(ctx, sf, kv.TiFlash))
 	require.False(t, canFuncBePushed(ctx, sf, kv.TiKV), "the Boolean scalar signature is TiFlash-only")
 
@@ -2036,25 +2046,34 @@ func TestFTSBooleanQueryUsesVersionedFunctionMetadata(t *testing.T) {
 
 	pbExpr := (PbConverter{client: client, ctx: ctx}).ExprToPB(sf)
 	require.NotNil(t, pbExpr)
-	require.Equal(t, tipb.ScalarFuncSig_FTSMatchBooleanExpression, pbExpr.GetSig())
+	require.Equal(t, tipb.ScalarFuncSig_LocalMatchAgainstBoolean, pbExpr.GetSig())
 	require.Len(t, pbExpr.GetChildren(), 2, "query metadata must not be encoded as a synthetic string child")
-	require.NotEmpty(t, pbExpr.GetVal(), "FTS metadata must use the scalar-function metadata slot")
-	metadata := &tipb.FTSMatchBooleanMetadata{}
-	require.NoError(t, proto.Unmarshal(pbExpr.GetVal(), metadata))
-	require.Equal(t, ftsMatchBooleanMetadataVersion, metadata.GetVersion())
-	require.Equal(t, query, metadata.GetBooleanQuery())
+	require.NotEmpty(t, pbExpr.GetVal(), "Local MATCH metadata must use the scalar-function metadata slot")
+	decodedQuery := &tipb.LocalMatchAgainstBooleanQuery{}
+	require.NoError(t, proto.Unmarshal(pbExpr.GetVal(), decodedQuery))
+	require.Equal(t, localMatchAgainstProtocolVersion, decodedQuery.GetVersion())
+	require.Equal(t, query, decodedQuery)
 	decoded, err := PBToExpr(ctx, pbExpr, []*types.FieldType{nil, matchColumn.RetType})
 	require.NoError(t, err)
 	decodedSF := decoded.(*ScalarFunction)
-	modifier, ok := GetFTSMysqlMatchAgainstModifier(decodedSF)
+	modifier, ok := GetMatchAgainstModifier(decodedSF)
 	require.True(t, ok)
 	require.True(t, modifier.IsBooleanMode())
-	decodedInfo, ok := FTSMysqlMatchAgainstNativeEvalInfo(decodedSF)
+	decodedInfo, ok := GetLocalMatchAgainstTiFlashEvalInfo(decodedSF)
 	require.True(t, ok)
 	require.Equal(t, query, decodedInfo.BooleanQuery)
+
+	unsupportedQuery := proto.Clone(query).(*tipb.LocalMatchAgainstBooleanQuery)
+	unsupportedQuery.Version++
+	unsupportedPayload, err := proto.Marshal(unsupportedQuery)
+	require.NoError(t, err)
+	unsupportedExpr := proto.Clone(pbExpr).(*tipb.Expr)
+	unsupportedExpr.Val = unsupportedPayload
+	_, err = PBToExpr(ctx, unsupportedExpr, []*types.FieldType{nil, matchColumn.RetType})
+	require.ErrorContains(t, err, "invalid Local MATCH protocol version")
 }
 
-func TestLocalFTSMatchIsNotSerializedForStorage(t *testing.T) {
+func TestLocalMatchAgainstIsNotSerializedForStorage(t *testing.T) {
 	ctx := mock.NewContext()
 	client := new(mock.Client)
 	searchType := types.NewFieldType(mysql.TypeVarchar)
@@ -2065,8 +2084,8 @@ func TestLocalFTSMatchIsNotSerializedForStorage(t *testing.T) {
 	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, matchColumn)
 	require.NoError(t, err)
 	sf := fn.(*ScalarFunction)
-	require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	// Force expression conversion past the ordinary capability check to verify
 	// the local-evaluation marker itself prevents accidental pushdown.

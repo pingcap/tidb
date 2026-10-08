@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-// FTSInfo is an easy to use struct for interpreting a FullTextSearch expression.
-type FTSInfo struct {
+// MatchAgainstInfo is an easy to use struct for interpreting a FullTextSearch expression.
+type MatchAgainstInfo struct {
 	Query          string
 	Column         *Column
 	Columns        []*Column
@@ -30,24 +30,24 @@ type FTSInfo struct {
 	Modifier       ast.FulltextSearchModifier
 }
 
-// ContainsFullTextSearchFn recursively checks whether the expression tree contains a
+// ContainsMatchAgainstFn recursively checks whether the expression tree contains a
 // possible FullTextSearch function.
-func ContainsFullTextSearchFn(expr Expression) bool {
+func ContainsMatchAgainstFn(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		if x.FuncName.L == ast.FTSMysqlMatchAgainst {
 			return true
 		}
-		if slices.ContainsFunc(x.GetArgs(), ContainsFullTextSearchFn) {
+		if slices.ContainsFunc(x.GetArgs(), ContainsMatchAgainstFn) {
 			return true
 		}
 	}
 	return false
 }
 
-// InterpretFullTextSearchExpr try to interpret a FullText search expression.
-// If interpret successfully, return a FTSInfo struct, otherwise return nil.
-func InterpretFullTextSearchExpr(expr Expression) *FTSInfo {
+// InterpretMatchAgainstExpr try to interpret a FullText search expression.
+// If interpret successfully, return a MatchAgainstInfo struct, otherwise return nil.
+func InterpretMatchAgainstExpr(expr Expression) *MatchAgainstInfo {
 	x, ok := expr.(*ScalarFunction)
 	if !ok {
 		return nil
@@ -62,9 +62,9 @@ func InterpretFullTextSearchExpr(expr Expression) *FTSInfo {
 	isMatchAgainst := x.FuncName.L == ast.FTSMysqlMatchAgainst
 	if isMatchAgainst {
 		var ok bool
-		modifier, ok = GetFTSMysqlMatchAgainstModifier(x)
+		modifier, ok = GetMatchAgainstModifier(x)
 		if !ok || !modifier.IsBooleanMode() || modifier.WithQueryExpansion() {
-			// The native TiFlash FTS query path currently carries only the
+			// The TiFlash Local MATCH scalar path currently carries only the
 			// BOOLEAN-mode AST. Keep natural-language and query-expansion
 			// MATCH expressions on their existing scalar-function path.
 			return nil
@@ -90,7 +90,7 @@ func InterpretFullTextSearchExpr(expr Expression) *FTSInfo {
 		columns = append(columns, column)
 	}
 
-	return &FTSInfo{
+	return &MatchAgainstInfo{
 		Query:          query.Value.GetString(),
 		Column:         columns[0],
 		Columns:        columns,

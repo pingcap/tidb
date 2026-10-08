@@ -339,7 +339,7 @@ func (f *fixture) testNgram(t *testing.T) {
 	for _, tc := range []matchCase{
 		{"chinese_ngram", "MATCH(body) AGAINST('+数据' IN BOOLEAN MODE)", []int{3, 4}},
 		{"chinese_inner_ngram", "MATCH(body) AGAINST('+据库' IN BOOLEAN MODE)", []int{3}},
-		{"short_prefix", "MATCH(body) AGAINST('+ap*' IN BOOLEAN MODE)", []int{1}},
+		{"short_prefix", "MATCH(body) AGAINST('+p*' IN BOOLEAN MODE)", []int{1}},
 		{"long_prefix", "MATCH(body) AGAINST('+app*' IN BOOLEAN MODE)", []int{1}},
 		{"multiple_match_ngram", "MATCH(body) AGAINST('+数据' IN BOOLEAN MODE) AND MATCH(body) AGAINST('+科学' IN BOOLEAN MODE)", []int{4}},
 	} {

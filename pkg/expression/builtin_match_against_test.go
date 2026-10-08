@@ -17,7 +17,7 @@ package expression
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression/fulltext"
+	"github.com/pingcap/tidb/pkg/expression/localfts"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newFTSMatchAgainstForTest(t *testing.T, ctx BuildContext, search string, numCols int, modifier ast.FulltextSearchModifier) *ScalarFunction {
+func newLocalMatchAgainstForTest(t *testing.T, ctx BuildContext, search string, numCols int, modifier ast.FulltextSearchModifier) *ScalarFunction {
 	t.Helper()
 	stringTp := types.NewFieldType(mysql.TypeVarchar)
 	stringTp.SetCollate(mysql.DefaultCollationName)
@@ -41,19 +41,19 @@ func newFTSMatchAgainstForTest(t *testing.T, ctx BuildContext, search string, nu
 	require.NoError(t, err)
 	sf, ok := fn.(*ScalarFunction)
 	require.True(t, ok)
-	require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, modifier))
+	require.NoError(t, SetMatchAgainstModifier(sf, modifier))
 	return sf
 }
 
-func TestFTSMysqlMatchAgainstLocalEval(t *testing.T) {
+func TestLocalMatchAgainst(t *testing.T) {
 	ctx := mock.NewContext()
 	booleanMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierBooleanMode)
 
-	sf := newFTSMatchAgainstForTest(t, ctx, "+tidb -mysql", 1, booleanMode)
+	sf := newLocalMatchAgainstForTest(t, ctx, "+tidb -mysql", 1, booleanMode)
 	_, _, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
 	require.ErrorContains(t, err, "outside of fulltext index")
 
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	v, isNull, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
 	require.NoError(t, err)
@@ -73,30 +73,30 @@ func TestFTSMysqlMatchAgainstLocalEval(t *testing.T) {
 	require.Equal(t, float64(0), v)
 }
 
-func TestFTSMysqlMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
+func TestLocalMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, "+PostgreSQL", 1, ast.FulltextSearchModifierBooleanMode)
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
-	booleanQuery, err := BuildFTSBooleanQuery("+PostgreSQL", model.FullTextParserTypeStandardV1)
+	sf := newLocalMatchAgainstForTest(t, ctx, "+PostgreSQL", 1, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
+	booleanQuery, err := BuildLocalMatchAgainstBooleanQuery("+PostgreSQL", model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
-	require.NoError(t, SetFTSMysqlMatchAgainstNativeEvalInfo(sf, &FTSNativeEvalInfo{BooleanQuery: booleanQuery}))
+	require.NoError(t, SetLocalMatchAgainstTiFlashEvalInfo(sf, &LocalMatchAgainstTiFlashEvalInfo{BooleanQuery: booleanQuery}))
 
 	t.Run("clone", func(t *testing.T) {
 		cloned := sf.Clone().(*ScalarFunction)
-		originalInfo, ok := FTSMysqlMatchAgainstLocalEvalInfo(sf)
+		originalInfo, ok := GetLocalMatchAgainstEvalInfo(sf)
 		require.True(t, ok)
-		clonedInfo, ok := FTSMysqlMatchAgainstLocalEvalInfo(cloned)
+		clonedInfo, ok := GetLocalMatchAgainstEvalInfo(cloned)
 		require.True(t, ok)
 		require.Equal(t, originalInfo, clonedInfo)
 		require.NotSame(t, originalInfo, clonedInfo)
-		originalNativeInfo, ok := FTSMysqlMatchAgainstNativeEvalInfo(sf)
+		originalTiFlashInfo, ok := GetLocalMatchAgainstTiFlashEvalInfo(sf)
 		require.True(t, ok)
-		clonedNativeInfo, ok := FTSMysqlMatchAgainstNativeEvalInfo(cloned)
+		clonedTiFlashInfo, ok := GetLocalMatchAgainstTiFlashEvalInfo(cloned)
 		require.True(t, ok)
-		require.Equal(t, originalNativeInfo, clonedNativeInfo)
-		require.NotSame(t, originalNativeInfo.BooleanQuery, clonedNativeInfo.BooleanQuery)
-		clonedNativeInfo.BooleanQuery.Nodes[0].GetTerm().Text = "changed"
-		require.Equal(t, "PostgreSQL", originalNativeInfo.BooleanQuery.Nodes[0].GetTerm().GetText())
+		require.Equal(t, originalTiFlashInfo, clonedTiFlashInfo)
+		require.NotSame(t, originalTiFlashInfo.BooleanQuery, clonedTiFlashInfo.BooleanQuery)
+		clonedTiFlashInfo.BooleanQuery.Nodes[0].Text = "changed"
+		require.Equal(t, "PostgreSQL", originalTiFlashInfo.BooleanQuery.Nodes[0].GetText())
 
 		v, isNull, err := cloned.EvalReal(ctx, stringRow("MySQL vs. PostgreSQL"))
 		require.NoError(t, err)
@@ -105,8 +105,8 @@ func TestFTSMysqlMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
 	})
 
 	t.Run("column substitute", func(t *testing.T) {
-		multiColumnSF := newFTSMatchAgainstForTest(t, ctx, "+PostgreSQL", 2, ast.FulltextSearchModifierBooleanMode)
-		require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(multiColumnSF, localEvalInfoForTest()))
+		multiColumnSF := newLocalMatchAgainstForTest(t, ctx, "+PostgreSQL", 2, ast.FulltextSearchModifierBooleanMode)
+		require.NoError(t, SetLocalMatchAgainstEvalInfo(multiColumnSF, localEvalInfoForTest()))
 		matchedColumns := []*Column{
 			multiColumnSF.GetArgs()[1].(*Column),
 			multiColumnSF.GetArgs()[2].(*Column),
@@ -129,7 +129,7 @@ func TestFTSMysqlMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
 		require.True(t, changed)
 		require.False(t, failed)
 		substitutedSF := substituted.(*ScalarFunction)
-		_, ok := FTSMysqlMatchAgainstLocalEvalInfo(substitutedSF)
+		_, ok := GetLocalMatchAgainstEvalInfo(substitutedSF)
 		require.True(t, ok)
 		for i, replacement := range replacements {
 			require.Equal(t, replacement.(*Column).UniqueID, substitutedSF.GetArgs()[i+1].(*Column).UniqueID)
@@ -145,7 +145,7 @@ func TestFTSMysqlMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
 		substituted, err := SubstituteCorCol2Constant(ctx, sf)
 		require.NoError(t, err)
 		substitutedSF := substituted.(*ScalarFunction)
-		_, ok := FTSMysqlMatchAgainstLocalEvalInfo(substitutedSF)
+		_, ok := GetLocalMatchAgainstEvalInfo(substitutedSF)
 		require.True(t, ok)
 
 		v, isNull, err := substitutedSF.EvalReal(ctx, stringRow("MySQL vs. PostgreSQL"))
@@ -155,16 +155,16 @@ func TestFTSMysqlMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
 	})
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalWordBoundary covers the headline semantic
+// TestLocalMatchAgainstWordBoundary covers the headline semantic
 // difference from the ILIKE fallback, which matches "cat" inside "concatenate"
 // because it can only test for a substring.
-func TestFTSMysqlMatchAgainstLocalEvalWordBoundary(t *testing.T) {
+func TestLocalMatchAgainstWordBoundary(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, "+cat", 1, ast.FulltextSearchModifierBooleanMode)
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	sf := newLocalMatchAgainstForTest(t, ctx, "+cat", 1, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	// STANDARD keeps "category" as one token. ILIKE "%cat%" would match it,
-	// which is incompatible with the Local FTS result asserted here.
+	// which is incompatible with the Local MATCH result asserted here.
 	v, isNull, err := sf.EvalReal(ctx, stringRow("category"))
 	require.NoError(t, err)
 	require.False(t, isNull)
@@ -179,12 +179,12 @@ func TestFTSMysqlMatchAgainstLocalEvalWordBoundary(t *testing.T) {
 	require.Equal(t, float64(1), v)
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalPhrase covers quoted phrases, which the
+// TestLocalMatchAgainstPhrase covers quoted phrases, which the
 // ILIKE fallback cannot express at all: it degrades them to independent terms.
-func TestFTSMysqlMatchAgainstLocalEvalPhrase(t *testing.T) {
+func TestLocalMatchAgainstPhrase(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, `"distributed sql"`, 1, ast.FulltextSearchModifierBooleanMode)
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	sf := newLocalMatchAgainstForTest(t, ctx, `"distributed sql"`, 1, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	v, _, err := sf.EvalReal(ctx, stringRow("a distributed sql database"))
 	require.NoError(t, err)
@@ -196,10 +196,10 @@ func TestFTSMysqlMatchAgainstLocalEvalPhrase(t *testing.T) {
 	require.Equal(t, float64(0), v)
 }
 
-func TestFTSMysqlMatchAgainstLocalEvalPrefix(t *testing.T) {
+func TestLocalMatchAgainstPrefix(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, "+data*", 1, ast.FulltextSearchModifierBooleanMode)
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	sf := newLocalMatchAgainstForTest(t, ctx, "+data*", 1, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	v, _, err := sf.EvalReal(ctx, stringRow("the database layer"))
 	require.NoError(t, err)
@@ -210,7 +210,7 @@ func TestFTSMysqlMatchAgainstLocalEvalPrefix(t *testing.T) {
 	require.Equal(t, float64(0), v)
 }
 
-func TestFTSMysqlMatchAgainstLocalEvalCollation(t *testing.T) {
+func TestLocalMatchAgainstCollation(t *testing.T) {
 	previous := collate.NewCollationEnabled()
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(previous)
@@ -224,10 +224,10 @@ func TestFTSMysqlMatchAgainstLocalEvalCollation(t *testing.T) {
 		fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, column)
 		require.NoError(t, err)
 		sf := fn.(*ScalarFunction)
-		require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+		require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
 		info := localEvalInfoForTest()
 		info.AnalyzerConfig.Collation = columnCollation
-		require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, info))
+		require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, info))
 		return sf
 	}
 
@@ -245,7 +245,7 @@ func TestFTSMysqlMatchAgainstLocalEvalCollation(t *testing.T) {
 	require.Equal(t, float64(1), v)
 }
 
-func TestFTSMysqlMatchAgainstLocalEvalCollationMatrix(t *testing.T) {
+func TestLocalMatchAgainstCollationMatrix(t *testing.T) {
 	previous := collate.NewCollationEnabled()
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(previous)
@@ -259,10 +259,10 @@ func TestFTSMysqlMatchAgainstLocalEvalCollationMatrix(t *testing.T) {
 		fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), searchExpr, column)
 		require.NoError(t, err)
 		sf := fn.(*ScalarFunction)
-		require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+		require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
 		info := localEvalInfoForTest()
 		info.AnalyzerConfig.Collation = columnCollation
-		require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, info))
+		require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, info))
 
 		value, isNull, err := sf.EvalReal(ctx, stringRow(document))
 		require.NoError(t, err)
@@ -293,13 +293,13 @@ func TestFTSMysqlMatchAgainstLocalEvalCollationMatrix(t *testing.T) {
 	}
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalMultiColumn checks that a token found in any
+// TestLocalMatchAgainstMultiColumn checks that a token found in any
 // matched column satisfies the query, as MySQL treats the columns as one
 // concatenated document.
-func TestFTSMysqlMatchAgainstLocalEvalMultiColumn(t *testing.T) {
+func TestLocalMatchAgainstMultiColumn(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, "+storage", 2, ast.FulltextSearchModifierBooleanMode)
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	sf := newLocalMatchAgainstForTest(t, ctx, "+storage", 2, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	v, _, err := sf.EvalReal(ctx, twoStringRow("title text", "storage body"))
 	require.NoError(t, err)
@@ -310,14 +310,14 @@ func TestFTSMysqlMatchAgainstLocalEvalMultiColumn(t *testing.T) {
 	require.Equal(t, float64(0), v)
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalShortTokenFiltered checks that a term below
+// TestLocalMatchAgainstShortTokenFiltered checks that a term below
 // innodb_ft_min_token_size is dropped by the analyzer. A query consisting only
 // of such terms matches nothing, which the ILIKE fallback gets wrong by
 // substring-matching them.
-func TestFTSMysqlMatchAgainstLocalEvalShortTokenFiltered(t *testing.T) {
+func TestLocalMatchAgainstShortTokenFiltered(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, "+ab", 1, ast.FulltextSearchModifierBooleanMode)
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	sf := newLocalMatchAgainstForTest(t, ctx, "+ab", 1, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	v, isNull, err := sf.EvalReal(ctx, stringRow("ab abc abcd"))
 	require.NoError(t, err)
@@ -325,7 +325,7 @@ func TestFTSMysqlMatchAgainstLocalEvalShortTokenFiltered(t *testing.T) {
 	require.Equal(t, float64(0), v)
 }
 
-func TestFTSMysqlMatchAgainstLocalEvalNullSearch(t *testing.T) {
+func TestLocalMatchAgainstNullSearch(t *testing.T) {
 	ctx := mock.NewContext()
 	stringTp := types.NewFieldType(mysql.TypeVarchar)
 	nullArg := &Constant{Value: types.NewDatum(nil), RetType: stringTp}
@@ -333,7 +333,7 @@ func TestFTSMysqlMatchAgainstLocalEvalNullSearch(t *testing.T) {
 	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), nullArg, col)
 	require.NoError(t, err)
 	sf := fn.(*ScalarFunction)
-	require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
 
 	v, isNull, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
 	require.NoError(t, err)
@@ -341,27 +341,27 @@ func TestFTSMysqlMatchAgainstLocalEvalNullSearch(t *testing.T) {
 	require.Equal(t, float64(0), v)
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalRejectsNaturalLanguage checks that the
+// TestLocalMatchAgainstRejectsNaturalLanguage checks that the
 // no-score path refuses modifiers it cannot serve, rather than silently
 // returning a 0/1 result where a relevance score is expected.
-func TestFTSMysqlMatchAgainstLocalEvalRejectsNaturalLanguage(t *testing.T) {
+func TestLocalMatchAgainstRejectsNaturalLanguage(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, "tidb", 1, ast.FulltextSearchModifier(0))
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	sf := newLocalMatchAgainstForTest(t, ctx, "tidb", 1, ast.FulltextSearchModifier(0))
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	_, _, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
 	require.ErrorContains(t, err, "IN BOOLEAN MODE")
 
-	require.False(t, FTSModifierSupportedByLocalNoScore(ast.FulltextSearchModifier(0)))
-	require.True(t, FTSModifierSupportedByLocalNoScore(ast.FulltextSearchModifierBooleanMode))
-	require.False(t, FTSModifierSupportedByLocalNoScore(
+	require.False(t, MatchAgainstModifierSupportedByLocalNoScore(ast.FulltextSearchModifier(0)))
+	require.True(t, MatchAgainstModifierSupportedByLocalNoScore(ast.FulltextSearchModifierBooleanMode))
+	require.False(t, MatchAgainstModifierSupportedByLocalNoScore(
 		ast.FulltextSearchModifierBooleanMode|ast.FulltextSearchModifierWithQueryExpansion))
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalPreparedSearchValueChanges checks that the
+// TestLocalMatchAgainstPreparedSearchValueChanges checks that the
 // compiled-query cache is keyed by search string, so re-executing a prepared
 // statement with a new parameter does not reuse the previous query.
-func TestFTSMysqlMatchAgainstLocalEvalPreparedSearchValueChanges(t *testing.T) {
+func TestLocalMatchAgainstPreparedSearchValueChanges(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().PlanCacheParams.Reset()
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewStringDatum("tidb"))
@@ -371,8 +371,8 @@ func TestFTSMysqlMatchAgainstLocalEvalPreparedSearchValueChanges(t *testing.T) {
 	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, col)
 	require.NoError(t, err)
 	sf := fn.(*ScalarFunction)
-	require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	ctx.GetSessionVars().PlanCacheParams.Reset()
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewStringDatum("tidb"))
@@ -389,21 +389,21 @@ func TestFTSMysqlMatchAgainstLocalEvalPreparedSearchValueChanges(t *testing.T) {
 	require.Equal(t, float64(0), v)
 }
 
-func TestFTSMysqlMatchAgainstLocalEvalCloneMetadata(t *testing.T) {
+func TestLocalMatchAgainstCloneMetadata(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, "+tidb", 1, ast.FulltextSearchModifierBooleanMode)
+	sf := newLocalMatchAgainstForTest(t, ctx, "+tidb", 1, ast.FulltextSearchModifierBooleanMode)
 	info := localEvalInfoForTest()
 	info.SelectivityTerm = "tidb"
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, info))
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, info))
 
 	cloned := sf.Clone().(*ScalarFunction)
-	clonedInfo, ok := FTSMysqlMatchAgainstLocalEvalInfo(cloned)
+	clonedInfo, ok := GetLocalMatchAgainstEvalInfo(cloned)
 	require.True(t, ok)
 	require.Equal(t, "tidb", clonedInfo.SelectivityTerm)
 
 	// The clone carries its own copy: mutating it must not affect the original.
 	clonedInfo.SelectivityTerm = "changed"
-	originalInfo, ok := FTSMysqlMatchAgainstLocalEvalInfo(sf)
+	originalInfo, ok := GetLocalMatchAgainstEvalInfo(sf)
 	require.True(t, ok)
 	require.Equal(t, "tidb", originalInfo.SelectivityTerm)
 
@@ -413,17 +413,17 @@ func TestFTSMysqlMatchAgainstLocalEvalCloneMetadata(t *testing.T) {
 	require.Equal(t, float64(1), v)
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalIgnoresStaleMatchNothing checks that the
+// TestLocalMatchAgainstIgnoresStaleMatchNothing checks that the
 // plan-time MatchNothing flag does not override the query actually in hand. The
 // flag describes the search string seen when the plan was built, and a plan can
 // be re-executed with a different one, so evaluation reads match-nothing from
 // the compiled query instead.
-func TestFTSMysqlMatchAgainstLocalEvalIgnoresStaleMatchNothing(t *testing.T) {
+func TestLocalMatchAgainstIgnoresStaleMatchNothing(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, "+tidb", 1, ast.FulltextSearchModifierBooleanMode)
+	sf := newLocalMatchAgainstForTest(t, ctx, "+tidb", 1, ast.FulltextSearchModifierBooleanMode)
 	info := localEvalInfoForTest()
 	info.MatchNothing = true // stale: "+tidb" does match documents
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, info))
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, info))
 
 	v, isNull, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
 	require.NoError(t, err)
@@ -431,13 +431,13 @@ func TestFTSMysqlMatchAgainstLocalEvalIgnoresStaleMatchNothing(t *testing.T) {
 	require.Equal(t, float64(1), v, "a stale flag must not suppress a real match")
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalMatchNothingQuery covers a query that really
+// TestLocalMatchAgainstMatchNothingQuery covers a query that really
 // matches nothing: every required term is removed by the analyzer, so no
 // document can satisfy it.
-func TestFTSMysqlMatchAgainstLocalEvalMatchNothingQuery(t *testing.T) {
+func TestLocalMatchAgainstMatchNothingQuery(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, "+ab", 1, ast.FulltextSearchModifierBooleanMode)
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	sf := newLocalMatchAgainstForTest(t, ctx, "+ab", 1, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	v, isNull, err := sf.EvalReal(ctx, stringRow("ab abc abcd"))
 	require.NoError(t, err)
@@ -445,18 +445,18 @@ func TestFTSMysqlMatchAgainstLocalEvalMatchNothingQuery(t *testing.T) {
 	require.Equal(t, float64(0), v)
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalNotFlashSupported checks that a locally
+// TestLocalMatchAgainstNotFlashSupported checks that a locally
 // evaluated MATCH is never pushed to TiFlash, which cannot produce its result.
-func TestFTSMysqlMatchAgainstLocalEvalNotFlashSupported(t *testing.T) {
+func TestLocalMatchAgainstNotFlashSupported(t *testing.T) {
 	ctx := mock.NewContext()
-	sf := newFTSMatchAgainstForTest(t, ctx, "tidb", 1, ast.FulltextSearchModifierBooleanMode)
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	sf := newLocalMatchAgainstForTest(t, ctx, "tidb", 1, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 	require.False(t, scalarExprSupportedByFlash(ctx.GetEvalCtx(), sf))
 }
 
-func localEvalInfoForTest() *FTSLocalEvalInfo {
-	return &FTSLocalEvalInfo{
-		AnalyzerConfig: fulltext.AnalyzerConfig{
+func localEvalInfoForTest() *LocalMatchAgainstEvalInfo {
+	return &LocalMatchAgainstEvalInfo{
+		AnalyzerConfig: localfts.AnalyzerConfig{
 			ParserType:           model.FullTextParserTypeStandardV1,
 			InnodbFtMinTokenSize: 3,
 			InnodbFtMaxTokenSize: 84,
@@ -480,12 +480,12 @@ func nullStringRow() chunk.Row {
 	return chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}).ToRow()
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalInfoTracksSearch checks the search-dependent
+// TestGetLocalMatchAgainstEvalInfoTracksSearch checks the search-dependent
 // metadata follows the search string the signature last evaluated, rather than
 // staying at whatever the plan was built with. Only the planner reads it today,
 // and only for a stable constant, so this pins the guarantee rather than a
 // currently reachable bug.
-func TestFTSMysqlMatchAgainstLocalEvalInfoTracksSearch(t *testing.T) {
+func TestGetLocalMatchAgainstEvalInfoTracksSearch(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().PlanCacheParams.Reset()
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewStringDatum("tidb"))
@@ -495,20 +495,20 @@ func TestFTSMysqlMatchAgainstLocalEvalInfoTracksSearch(t *testing.T) {
 	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, col)
 	require.NoError(t, err)
 	sf := fn.(*ScalarFunction)
-	require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
 
 	// Deliberately stale to start with, as if the plan were built elsewhere.
 	stale := localEvalInfoForTest()
 	stale.MatchNothing = true
 	stale.SelectivityTerm = "stale"
-	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, stale))
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, stale))
 
-	evalWith := func(bind string) *FTSLocalEvalInfo {
+	evalWith := func(bind string) *LocalMatchAgainstEvalInfo {
 		ctx.GetSessionVars().PlanCacheParams.Reset()
 		ctx.GetSessionVars().PlanCacheParams.Append(types.NewStringDatum(bind))
 		_, _, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
 		require.NoError(t, err)
-		info, ok := FTSMysqlMatchAgainstLocalEvalInfo(sf)
+		info, ok := GetLocalMatchAgainstEvalInfo(sf)
 		require.True(t, ok)
 		return info
 	}

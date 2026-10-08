@@ -414,8 +414,8 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
 		return true
 	case ast.FTSMysqlMatchAgainst:
-		sig, ok := function.Function.(*builtinFtsMysqlMatchAgainstSig)
-		return ok && sig.localEvalInfo == nil && sig.nativeEvalInfo != nil &&
+		sig, ok := function.Function.(*builtinMysqlMatchAgainstSig)
+		return ok && sig.tiFlashEvalInfo != nil &&
 			sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
