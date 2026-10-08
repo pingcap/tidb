@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -949,11 +950,36 @@ func TestPointReadScanDetailsInDiagnostics(t *testing.T) {
 	t.Cleanup(func() { tk.MustExec(fmt.Sprintf("set global tidb_enable_stmt_summary=%v", previousSummaryEnabled)) })
 	tk.MustExec("create table t_point_scan_details (id int primary key, u int unique, v int)")
 	tk.MustExec("insert into t_point_scan_details values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+	tableID := external.GetTableByName(t, tk, "test", "t_point_scan_details").Meta().ID
+	noiseTK := testkit.NewTestKit(t, store)
+	noiseTK.MustExec("use test")
+	noiseTK.MustExec("create table t_point_scan_noise (id int primary key, v int)")
+	noiseTK.MustExec("insert into t_point_scan_noise values (1, 1)")
 
 	var cold atomic.Bool
 	var responses atomic.Int64
-	responseHook := func(_ *tikvrpc.Request, resp *tikvrpc.Response) {
+	responseHook := func(req *tikvrpc.Request, resp *tikvrpc.Response) {
 		if !cold.Load() {
+			return
+		}
+		var key []byte
+		switch req.Type {
+		case tikvrpc.CmdGet:
+			key = req.Get().Key
+		case tikvrpc.CmdBatchGet:
+			if len(req.BatchGet().Keys) == 0 {
+				return
+			}
+			key = req.BatchGet().Keys[0]
+		case tikvrpc.CmdCop:
+			if len(req.Cop().Ranges) == 0 {
+				return
+			}
+			key = req.Cop().Ranges[0].Start
+		default:
+			return
+		}
+		if tablecodec.DecodeTableID(key) != tableID {
 			return
 		}
 		details := &kvrpcpb.ExecDetailsV2{ScanDetailV2: &kvrpcpb.ScanDetailV2{
@@ -1001,6 +1027,10 @@ func TestPointReadScanDetailsInDiagnostics(t *testing.T) {
 				}
 				responses.Store(0)
 				cold.Store(true)
+				if tc.name == "primary" && !explain {
+					// An unrelated response must not contribute to this query's scan details.
+					noiseTK.MustQuery("select v from t_point_scan_noise where id=1")
+				}
 				rows := tk.MustQuery(sql).Rows()
 				cold.Store(false)
 				require.Equal(t, tc.requests, responses.Load())
