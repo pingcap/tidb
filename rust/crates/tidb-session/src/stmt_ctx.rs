@@ -1225,6 +1225,8 @@ impl Session {
             mpp_query_info: Arc::clone(&self.mpp_query_info),
             mpp_server_id: (self.server_id_getter)(),
             tiflash_compute_dispatch_policy: self.vars.get_system("tiflash_compute_dispatch_policy").unwrap_or_else(|_| "consistent_hash".into()),
+            allow_tiflash_fallback: self.vars.get_system("tidb_allow_fallback_to_tikv")
+                .is_ok_and(|value| value.split(',').any(|engine| engine.trim().eq_ignore_ascii_case("tiflash"))),
             advisory_locks: self.advisory_locks.clone(),
             before_executor_first_run: Arc::clone(&self.executor_first_run_breakpoint),
             breakpoint_notify_func: self.breakpoint_notify_func(),

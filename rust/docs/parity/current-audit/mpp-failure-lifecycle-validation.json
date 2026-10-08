@@ -1,0 +1,225 @@
+{
+  "date": "2026-10-08",
+  "baseline": "7aa3044431c35340e2bfbc3d0cb4b64e11dfed11",
+  "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+  "native_head": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+  "native_changed": false,
+  "findings": [
+    "M04",
+    "M05",
+    "N03"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "scope": "B07 failure admission, process probing, raw-packet gather recovery and B05 statement fallback policy. Existing partial owners maintained together; canonical PD compute cache and full coordinator/fragment package obligations remain open.",
+  "package_acceptance": "Maintenance of existing partial copr/coordinator owners, not a transcreated or accepted complete upstream package. Original Go producer/consumer/test vectors inspected; no complete Go suite run.",
+  "go_evidence": [
+    {
+      "path": "/workspace/.cloud-setup/go-master/pkg/store/copr/mpp_probe.go",
+      "sha256": "d9f3a923d3214cb457a6e5812a6e1dfd2499158097542169898b343621e96eb2",
+      "bytes": 9582
+    },
+    {
+      "path": "/workspace/.cloud-setup/go-master/pkg/store/copr/mpp_probe_test.go",
+      "sha256": "0d40af599f5fe002e045b40904a2168d863c84d4a2818400ce3399450a2f04b0",
+      "bytes": 6208
+    },
+    {
+      "path": "/workspace/.cloud-setup/go-master/pkg/store/copr/batch_coprocessor.go",
+      "sha256": "d39b7cef54938935e6be3a90cf494ffa317b111f1689219aeefe1d61161a4790",
+      "bytes": 64045
+    },
+    {
+      "path": "/workspace/.cloud-setup/go-master/pkg/store/copr/mpp.go",
+      "sha256": "8f60476304bcaad0315c30977abf75ce0878a0f1621ef519466154279689eb5c",
+      "bytes": 13767
+    },
+    {
+      "path": "/workspace/.cloud-setup/go-master/pkg/executor/internal/mpp/executor_with_retry.go",
+      "sha256": "4789e01d16f33525ce82b6939bdbed4f486b8a3f9dfb3e20e04442786829195d",
+      "bytes": 9378
+    },
+    {
+      "path": "/workspace/.cloud-setup/go-master/pkg/executor/internal/mpp/recovery_handler.go",
+      "sha256": "f57d80386adb998efeaab0eb9c3242f8f8717aeb1be3f5e3bb4e4f1837b60125",
+      "bytes": 5447
+    },
+    {
+      "path": "/workspace/.cloud-setup/go-master/pkg/executor/internal/mpp/local_mpp_coordinator.go",
+      "sha256": "314508f5eb9ff1b73f55bc4f92bc2979be0a1d550e5a27e544949b41a2ae4150",
+      "bytes": 33590
+    },
+    {
+      "path": "/workspace/.cloud-setup/go-master/pkg/executor/test/tiflashtest/tiflash_test.go",
+      "sha256": "db485664d8418e4b92b874513e105f2b199a0c4f673455bf94a4be08e0c5d8d7",
+      "bytes": 113332
+    },
+    {
+      "path": "/workspace/.cloud-setup/go-master/cmd/tidb-server/main.go",
+      "sha256": "2679ee3cd0480f67e1c8acf23db64b33139a3ba3666de4c70576a940a471223d",
+      "bytes": 54885
+    }
+  ],
+  "regressions": {
+    "command": "cd rust && cargo test --locked -p tidb-txnkv --lib mpp_failure_batch -- --test-threads=1",
+    "failed": 2,
+    "passed": 0,
+    "behavior": [
+      "Stop returned before an in-flight probe released the transport.",
+      "Cooldown timestamp preceded completion of the health RPC."
+    ],
+    "log": {
+      "path": "/workspace/.cloud-setup/mpp-failure-lifecycle-batch/baseline.log",
+      "sha256": "85a74d2c279a3443814c2018f27680831fa59a3d0fadddc3435cdaa13fb35715",
+      "bytes": 6372
+    },
+    "fixture_refinement": "Final cooldown vector compares recorded completion instants instead of a sleep threshold; existing TTL vectors no longer sleep."
+  },
+  "changes": [
+    "Process startup and transport shutdown compose the existing failed-store prober, with one scanner and joined active probes.",
+    "Foreground admission checks the failed map and registers failed probes using existing runtime/store fleet; deprecated TTL remains zero.",
+    "One raw gather feeds the shared decoder; the obsolete decoded task-concatenation owner/fixture is removed.",
+    "Hold two packets before delivery; at most three autoscaler Memory limit recoveries; never replay delivered data or local cancellation/quota errors.",
+    "Retain snapshot/query/schema across attempts; allocate new gather/task IDs and close old responses before reopening.",
+    "Carry session fallback policy through statement/pushdown snapshots.",
+    "Transfer packet memory ownership once and release held buffers/retry capabilities on every close/error/drop path."
+  ],
+  "distinct_rust_cases": 79,
+  "validation": [
+    {
+      "command": "cd rust && cargo test --locked -p tidb-exec --lib tiflash_ -- --test-threads=1",
+      "exit": 0,
+      "passed": 72,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/mpp-failure-lifecycle-batch/exec.log",
+        "sha256": "b33ee7193063db0e63879981ddaf4c012ccb078387e1a56e0cae9ce5227c87c9",
+        "bytes": 121867
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-txnkv --lib mpp_probe -- --test-threads=1",
+      "exit": 0,
+      "passed": 6,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/mpp-failure-lifecycle-batch/prober.log",
+        "sha256": "1fcd85baa7f1b2b2a5872aac4b84340b8b159410a4e976aa8ab326dc3ac9f60b",
+        "bytes": 5837
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-session --lib mpp_failure_batch -- --test-threads=1",
+      "exit": 0,
+      "passed": 1,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/mpp-failure-lifecycle-batch/session.log",
+        "sha256": "a82440a958a32387cb191defde2885d19a21e4aed67f6ba8acfc4c2732ed5d0d",
+        "bytes": 99672
+      }
+    }
+  ],
+  "check": {
+    "command": "cd rust && cargo check --locked -p tidb-txnkv -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/mpp-failure-lifecycle-batch/check.log",
+      "sha256": "83d9c1d0b8661e456a0504e8c1aa1b67bd904d9b6c8978b51732ebe0e5a714bb",
+      "bytes": 135996
+    }
+  },
+  "lint": {
+    "command": "make lint",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/mpp-failure-lifecycle-batch/lint.log",
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+      "bytes": 2164
+    }
+  },
+  "build": {
+    "command": "cd rust && cargo build --locked -p tidb-server",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/mpp-failure-lifecycle-batch/build.log",
+      "sha256": "0abd42191f90da0300e20bad8d1b6f378f34e46dbc2015bbff1af42429a6bb86",
+      "bytes": 111125
+    }
+  },
+  "live": {
+    "command": "source /workspace/.cloud-setup/env.sh && PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/mpp-failure-lifecycle-batch/live.py",
+    "exit": 0,
+    "assertions": 19,
+    "receipt": {
+      "path": "/workspace/.cloud-setup/mpp-failure-lifecycle-batch/live.json",
+      "sha256": "def7754031a5748c30f670a7648396788ad0936af1ffd4d117084fb3c3e420f9",
+      "bytes": 1656
+    },
+    "binary_sha256": "cce156168f6d4a76a7a9cc965a96ee14813ce3d871f88982f37d6476a3e7763b"
+  },
+  "self_review": {
+    "sources": [
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-exec/src/real_tikv_read.rs",
+        "sha256": "591d1eda211afe016988b9b3f5a884e79afde2a8e3601d835863ed884666f131",
+        "bytes": 56108
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+        "sha256": "fba95c371bbf167abb74ada92090cca0ef729670e5c3631f37211651b8cb7acc",
+        "bytes": 107821
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-executor/src/remote_scan.rs",
+        "sha256": "cb0b7c3d15f8463453a8e638ccc954305345de2ad0132616d5467720cb5b1653",
+        "bytes": 153722
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-executor/src/stmt_context.rs",
+        "sha256": "bfd27f40998c651dda0bc5f8506b16fcd0b626dfbae0f8138399bec81a49a73f",
+        "bytes": 204520
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-server/src/lib.rs",
+        "sha256": "52322e982dca2a0d57200ec75786bee84fe36aae64d1e93937a5dd277c290d54",
+        "bytes": 20002
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-session/src/stmt_ctx.rs",
+        "sha256": "c9a6cb3b79af52374a4c07ae1582058d5fd7f6a21efbedaa465785db25ce2f08",
+        "bytes": 106314
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-session/src/tests_core/lifecycle.rs",
+        "sha256": "1059ec60d7218f7944b7cb34a4f7d88e03821a06a957076c53c7a24cbe6a58f6",
+        "bytes": 22693
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-txnkv/src/mpp_probe.rs",
+        "sha256": "3efc6b682f58416901a82f057e41d9825b88a6eea2a364dfe2999e311bc5f33e",
+        "bytes": 18412
+      }
+    ],
+    "checks": [
+      "Recovery is below decoding and bounded before first result.",
+      "All task responses close on error; retry capabilities close with the response.",
+      "The prober stops before process transport retirement.",
+      "Health detection including channel acquisition has a bounded deadline.",
+      "Region-bearing dispatch remains single attempt as in Go; no unsupported fragment rescheduling added.",
+      "Canonical compute cache is explicitly unresolved; no second cache or transport pool was added."
+    ]
+  },
+  "publication": "Final actual hook, fresh pre-push locked build, remote SHA and saved checkpoint are recorded in /workspace/.cloud-setup/mpp-failure-lifecycle-batch/final-handoff.json. No force push or hook bypass.",
+  "limits": [
+    "No full copr/coordinator/planner or native package acceptance; no fresh exhaustive audit of54 broader findings.",
+    "Canonical PD compute-store cache/invalidation awaits storage-owner migration.",
+    "General physical fragments, coordinator registration/reporting and dispatch-time memory-limit recovery remain incomplete; this composes receive-time recovery for the existing single-fragment full scan.",
+    "No live multi-node TiKV/TiFlash/autoscaler service, full Go suite, broad platform sweep or benchmark was run. Socket fixtures verify real transport behavior but do not establish distributed production parity."
+  ]
+}

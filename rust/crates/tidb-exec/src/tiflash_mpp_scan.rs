@@ -31,7 +31,8 @@
 //! the packet stream (`MPPDataPacket.data` = tipb `SelectResponse`) in the
 //! same `SelectResponseIter` the TiKV cop path consumes.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use tidb_distsql::QueryResponse;
 
 use prost::Message as _;
 use tidb_chunk::chunk::Chunk;
@@ -63,20 +64,62 @@ use tidb_txnkv::PdRegionLoader;
 use crate::cop_scan::scan_column;
 use crate::dag_request::{column_to_pb, DagRequestContext, DEFAULT_DIV_PRECISION_INCREMENT};
 
+struct MppHealthClient(tidb_txnkv::rpc::TonicCoprocessorClient);
+impl tidb_txnkv::MppAliveClient for MppHealthClient {
+    fn is_alive(&self, address: &str, timeout: std::time::Duration) -> Result<bool, String> {
+        let runtime = tidb_txnkv::rpc::query_worker_runtime().map_err(|error| error.to_string())?;
+        let memory = tidb_executor::StatementMemory::default();
+        runtime.block_on(probe_mpp_store(address, &memory, &self.0, timeout))
+    }
+}
+async fn probe_mpp_store(
+    address: &str,
+    memory: &tidb_executor::StatementMemory,
+    transport: &tidb_txnkv::rpc::TonicCoprocessorClient,
+    timeout: std::time::Duration,
+) -> Result<bool, String> {
+    mpp_setup(
+        Some(memory),
+        Some(timeout),
+        "detect compute node",
+        None,
+        async {
+            let mut connection = connect_mpp_client(address, memory, transport)
+                .await
+                .map_err(tonic::Status::unavailable)?;
+            mpp_setup(
+                Some(memory),
+                Some(timeout),
+                "detect compute node",
+                Some(&connection.route),
+                connection
+                    .client
+                    .is_alive(tidb_proto::mpp::IsAliveRequest::default()),
+            )
+            .await
+            .map(|response| response.into_inner().available)
+            .map_err(|error| tonic::Status::unavailable(error.to_string()))
+        },
+    )
+    .await
+    .map_err(|error| error.to_string())
+}
+
 /// The process-owned MPP dispatch capability.
 ///
 /// PD, region cache and store channel fleet are borrowed from the process.
 /// MPP retains no independent connection pool, transport worker or runtime.
+#[derive(Clone)]
 pub struct TiFlashMppScanSource {
-    pd: Mutex<PdClient>,
-    regions: BackgroundRegionCache<PdRegionLoader>,
+    pd: Arc<Mutex<PdClient>>,
+    regions: Arc<BackgroundRegionCache<PdRegionLoader>>,
     runtime: &'static tokio::runtime::Runtime,
-    transport: Mutex<tidb_txnkv::rpc::TonicCoprocessorClient>,
+    transport: Arc<Mutex<tidb_txnkv::rpc::TonicCoprocessorClient>>,
     /// Go `is.SchemaMetaVersion()`, read at dispatch time from the node's
     /// catalog watch: TiFlash resolves the request's table in the schema
     /// generation the coordinator names, so a stale or zero version makes
     /// even a synced table "not exist".
-    schema_version: Box<dyn Fn() -> i64 + Send + Sync>,
+    schema_version: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
 impl std::fmt::Debug for TiFlashMppScanSource {
@@ -94,12 +137,12 @@ impl TiFlashMppScanSource {
         schema_version: impl Fn() -> i64 + Send + Sync + 'static,
     ) -> Self {
         Self {
-            regions,
-            transport: Mutex::new(transport),
-            pd: Mutex::new(pd),
+            regions: Arc::new(regions),
+            transport: Arc::new(Mutex::new(transport)),
+            pd: Arc::new(Mutex::new(pd)),
             runtime: tidb_txnkv::rpc::query_worker_runtime()
                 .expect("the shared query runtime starts"),
-            schema_version: Box::new(schema_version),
+            schema_version: Arc::new(schema_version),
         }
     }
 
@@ -156,6 +199,68 @@ impl TiFlashMppScanSource {
         if request.index.is_some() {
             return Err(refuse("index scans have no TiFlash path".to_owned()));
         }
+        let config = tidb_config::config_tree::config::get_global_config();
+        let enabled = config.disaggregated_tiflash
+            && config.use_auto_scaler
+            && !request.statement.allow_tiflash_fallback;
+        let schema_version = (self.schema_version)();
+        let response = self.open_gather(request, schema_version)?;
+        let source = self.clone();
+        let retry_request = request.clone();
+        let response = MppRecoveryResponse::new(
+            response,
+            enabled,
+            request.statement.memory.clone(),
+            Box::new(move || {
+                source
+                    .open_gather(&retry_request, schema_version)
+                    .map_err(|error| QueryResponseError::Source(error.to_string()))
+            }),
+            Box::new(|node_count| {
+                crate::tiflash_compute::global_topo_fetcher()
+                    .ok_or_else(|| {
+                        "TiFlash compute topology fetcher is not initialized".to_owned()
+                    })?
+                    .recovery_and_get_topo(
+                        crate::tiflash_compute::RecoveryType::MEM_LIMIT,
+                        node_count as i64,
+                    )
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            }),
+        );
+        let field_types: Vec<FieldType> = request
+            .columns
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect();
+        let iter = SelectResponseIter::from_query_response(
+            Box::new(response),
+            field_types.clone(),
+            Vec::new(),
+            request.statement.time_zone.clone(),
+            request.statement.warnings.clone(),
+            mpp_result_metadata(request.columns.len(), Vec::new(), request.statement.plan_id),
+            None,
+        );
+        Ok(Box::new(MppRowStream {
+            iter: Some(iter),
+            pending: None,
+            pending_row: 0,
+            field_types,
+            returned: 0,
+            exhausted: false,
+        }))
+    }
+
+    fn open_gather(
+        &self,
+        request: &PushdownScanRequest,
+        schema_version: i64,
+    ) -> Result<MppTaskResponses, PushdownScannerError> {
+        let refuse = |reason: String| {
+            PushdownScannerError::Backend(StorageError::Backend(format!("tiflash mpp: {reason}")))
+        };
         let region_lease = self
             .regions
             .open_lease()
@@ -198,9 +303,9 @@ impl TiFlashMppScanSource {
         };
         let (mut meta, receiver_meta) =
             mpp_task_metadata(request.snapshot_ts, &request.statement, &tasks[0].0);
-        let mut streams = MppTaskStreams {
+        let mut streams = MppTaskResponses {
             streams: std::collections::VecDeque::new(),
-            returned: 0,
+            node_count: tasks.len(),
         };
         for (index, (address, regions)) in tasks.into_iter().enumerate() {
             if index != 0 {
@@ -217,10 +322,11 @@ impl TiFlashMppScanSource {
                         .map_err(|error| refuse(error.to_string()))?,
                     meta.clone(),
                     receiver_meta.clone(),
+                    schema_version,
                 )?,
             );
         }
-        Ok(Box::new(streams))
+        Ok(streams)
     }
 
     fn compute_addresses(
@@ -262,24 +368,28 @@ impl TiFlashMppScanSource {
                     let transport = transport.clone();
                     let memory = memory.clone();
                     probes.spawn(async move {
-                        let Ok(mut connection) =
-                            connect_mpp_client(&address, &memory, &transport).await
-                        else {
+                        let prober = tidb_txnkv::global_mpp_failed_store_prober();
+                        // Go deprecated tidb_mpp_store_fail_ttl is always zero.
+                        if !prober.is_recovery(&address, std::time::Duration::ZERO) {
                             return None;
-                        };
-                        let response = mpp_setup(
-                            Some(&memory),
-                            Some(tidb_txnkv::DETECT_TIMEOUT_LIMIT),
-                            "detect compute node",
-                            Some(&connection.route),
-                            connection
-                                .client
-                                .is_alive(tidb_proto::mpp::IsAliveRequest::default()),
+                        }
+                        match probe_mpp_store(
+                            &address,
+                            &memory,
+                            &transport,
+                            tidb_txnkv::DETECT_TIMEOUT_LIMIT,
                         )
-                        .await;
-                        response
-                            .is_ok_and(|response| response.into_inner().available)
-                            .then_some(address)
+                        .await
+                        {
+                            Ok(true) => Some(address),
+                            _ => {
+                                // Statement cancellation is not evidence that a store failed.
+                                if memory.check().is_ok() {
+                                    prober.add(address, Arc::new(MppHealthClient(transport)));
+                                }
+                                None
+                            }
+                        }
                     });
                 }
                 let mut alive = Vec::new();
@@ -325,7 +435,8 @@ impl TiFlashMppScanSource {
         region_lease: BackgroundRegionCache<PdRegionLoader>,
         meta: TaskMeta,
         receiver_meta: TaskMeta,
-    ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
+        schema_version: i64,
+    ) -> Result<Box<dyn MppTaskResponse>, PushdownScannerError> {
         let refuse = |reason: String| {
             PushdownScannerError::Backend(StorageError::Backend(format!("tiflash mpp: {reason}")))
         };
@@ -446,7 +557,7 @@ impl TiFlashMppScanSource {
             meta: Some(meta.clone()),
             encoded_plan,
             regions: region_infos,
-            schema_ver: (self.schema_version)(),
+            schema_ver: schema_version,
             ..Default::default()
         });
 
@@ -507,34 +618,7 @@ impl TiFlashMppScanSource {
             .map_err(|message| mpp_open_error(&request.statement.memory, message))?;
         response.region_lease = Some(region_lease);
 
-        let field_types: Vec<FieldType> = request
-            .columns
-            .iter()
-            .map(|column| column.field_type.clone())
-            .collect();
-        let time_zone = request.statement.time_zone.clone();
-        let warnings = request.statement.warnings.clone();
-        let iter = SelectResponseIter::from_query_response(
-            Box::new(response),
-            field_types,
-            Vec::new(),
-            time_zone,
-            warnings,
-            mpp_result_metadata(request.columns.len(), Vec::new(), request.statement.plan_id),
-            None,
-        );
-        Ok(Box::new(MppRowStream {
-            iter: Some(iter),
-            pending: None,
-            pending_row: 0,
-            field_types: request
-                .columns
-                .iter()
-                .map(|column| column.field_type.clone())
-                .collect(),
-            returned: 0,
-            exhausted: false,
-        }))
+        Ok(Box::new(response))
     }
 }
 
@@ -580,19 +664,29 @@ fn compute_region_tasks(
     Ok(tasks)
 }
 
-// All task streams share one gather. Closing any incomplete task cancels that
-// gather; close the rest before reporting failure or releasing this reader.
-struct MppTaskStreams {
-    streams: std::collections::VecDeque<Box<dyn PushdownRowStream>>,
-    returned: u64,
+// The transport charges a packet while receiving it. Hand that charge to the
+// gather holder before buffering, matching coordinator -> ExecutorWithRetry.
+trait MppTaskResponse: QueryResponse + Send {
+    fn release_packet_memory(&mut self);
 }
-impl PushdownRowStream for MppTaskStreams {
-    fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+impl MppTaskResponse for MppQueryResponse {
+    fn release_packet_memory(&mut self) {
+        self.release_packet();
+    }
+}
+
+// One gather owns all raw task responses, below the shared SelectResponse decoder.
+struct MppTaskResponses {
+    streams: std::collections::VecDeque<Box<dyn MppTaskResponse>>,
+    node_count: usize,
+}
+impl QueryResponse for MppTaskResponses {
+    fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         while let Some(stream) = self.streams.front_mut() {
-            match stream.next_row() {
-                Ok(Some(row)) => {
-                    self.returned += 1;
-                    return Ok(Some(row));
+            match stream.next() {
+                Ok(Some(packet)) => {
+                    stream.release_packet_memory();
+                    return Ok(Some(packet));
                 }
                 Ok(None) => {
                     stream.close();
@@ -612,11 +706,116 @@ impl PushdownRowStream for MppTaskStreams {
         }
         self.streams.clear();
     }
-    fn rows_returned(&self) -> u64 {
-        self.returned
+}
+impl Drop for MppTaskResponses {
+    fn drop(&mut self) {
+        self.close();
     }
 }
-impl Drop for MppTaskStreams {
+
+// Go ExecutorWithRetry holds two raw responses and retries at most three times.
+// Once any response is exposed to SelectResponseIter, replay is permanently unsafe.
+struct MppRecoveryResponse {
+    gather: MppTaskResponses,
+    enabled: bool,
+    recovering: bool,
+    attempts: u32,
+    held: std::collections::VecDeque<QueryResultSubset>,
+    memory: tidb_executor::StatementMemory,
+    open: Option<Box<dyn FnMut() -> Result<MppTaskResponses, QueryResponseError> + Send>>,
+    recover: Box<dyn FnMut(usize) -> Result<(), String> + Send>,
+    closed: bool,
+}
+impl MppRecoveryResponse {
+    fn new(
+        gather: MppTaskResponses,
+        enabled: bool,
+        memory: tidb_executor::StatementMemory,
+        open: Box<dyn FnMut() -> Result<MppTaskResponses, QueryResponseError> + Send>,
+        recover: Box<dyn FnMut(usize) -> Result<(), String> + Send>,
+    ) -> Self {
+        Self {
+            gather,
+            enabled,
+            recovering: enabled,
+            attempts: 0,
+            held: Default::default(),
+            memory,
+            open: Some(open),
+            recover,
+            closed: false,
+        }
+    }
+    fn clear_held(&mut self) {
+        for packet in self.held.drain(..) {
+            self.memory
+                .stmt_tracker()
+                .consume(-(packet.data.len() as i64));
+        }
+    }
+    fn pull(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        mpp_memory_error(&self.memory)?;
+        while self.enabled && self.recovering && self.held.len() < 2 {
+            match self.gather.next() {
+                Ok(Some(packet)) => {
+                    self.memory.stmt_tracker().consume(packet.data.len() as i64);
+                    self.held.push_back(packet);
+                    mpp_memory_error(&self.memory)?;
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    // Local quota/KILL errors are terminal, even if their text
+                    // happens to contain the remote TiFlash memory error pattern.
+                    mpp_memory_error(&self.memory)?;
+                    let eligible = matches!(&error, QueryResponseError::Source(message)
+                        if message.contains("Memory limit"));
+                    if !eligible || self.attempts >= 3 {
+                        return Err(error);
+                    }
+                    self.attempts += 1;
+                    if (self.recover)(self.gather.node_count).is_err() {
+                        return Err(error);
+                    }
+                    self.gather.close();
+                    let replacement = (self.open.as_mut().expect("open recovery response"))()
+                        .map_err(|_| error)?;
+                    self.clear_held();
+                    self.gather = replacement;
+                }
+            }
+        }
+        self.recovering = false;
+        if let Some(packet) = self.held.pop_front() {
+            self.memory
+                .stmt_tracker()
+                .consume(-(packet.data.len() as i64));
+            return Ok(Some(packet));
+        }
+        self.gather.next()
+    }
+}
+impl QueryResponse for MppRecoveryResponse {
+    fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        if self.closed {
+            return Ok(None);
+        }
+        let result = self.pull();
+        if result.is_err() || matches!(result, Ok(None)) {
+            self.close();
+        }
+        result
+    }
+    fn close(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.closed = true;
+        self.clear_held();
+        self.gather.close();
+        self.open = None;
+    }
+}
+impl Drop for MppRecoveryResponse {
     fn drop(&mut self) {
         self.close();
     }
@@ -1407,6 +1606,8 @@ mod mpp_read_batch_tests {
         Normal,
         RetryHeaders,
         RetryFirstPacket,
+        MemoryLimit,
+        TwoPackets,
         Unavailable,
         StallFirstPacket,
         Canceled,
@@ -1424,6 +1625,15 @@ mod mpp_read_batch_tests {
     }
     #[tonic::async_trait]
     impl Tikv for Service {
+        async fn is_alive(
+            &self,
+            _: tonic::Request<tidb_proto::mpp::IsAliveRequest>,
+        ) -> Result<tonic::Response<tidb_proto::mpp::IsAliveResponse>, tonic::Status> {
+            Ok(tonic::Response::new(tidb_proto::mpp::IsAliveResponse {
+                available: true,
+                ..Default::default()
+            }))
+        }
         async fn get_lock_wait_info(
             &self,
             _: tonic::Request<tidb_proto::kvrpcpb::GetLockWaitInfoRequest>,
@@ -1468,12 +1678,33 @@ mod mpp_read_batch_tests {
                         .await;
                     return;
                 }
+                if matches!(opening, Opening::MemoryLimit) && attempt == 0 {
+                    let _ = tx
+                        .send(Ok(MppDataPacket {
+                            error: Some(tidb_proto::mpp::Error {
+                                code: 1,
+                                msg: "Memory limit exceeded".into(),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }))
+                        .await;
+                    return;
+                }
                 let _ = tx
                     .send(Ok(MppDataPacket {
-                        data: first_packet,
+                        data: first_packet.clone(),
                         ..Default::default()
                     }))
                     .await;
+                if matches!(opening, Opening::TwoPackets) {
+                    let _ = tx
+                        .send(Ok(MppDataPacket {
+                            data: first_packet,
+                            ..Default::default()
+                        }))
+                        .await;
+                }
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 if fail_tail {
                     let _ = tx
@@ -1658,6 +1889,89 @@ mod mpp_read_batch_tests {
             self.runtime.block_on(self.task.take().unwrap()).unwrap();
         }
     }
+    #[test]
+    fn mpp_failure_batch_socket_recovery_reuses_fleet_and_cancels_old_gather() {
+        let fixture = Arc::new(Fixture::with_opening(
+            false,
+            false,
+            false,
+            b"new".to_vec(),
+            Opening::MemoryLimit,
+        ));
+        let memory = tidb_executor::StatementMemory::default();
+        let initial = fixture.open_with_memory(memory.clone()).unwrap();
+        let next_fixture = fixture.clone();
+        let next_memory = memory.clone();
+        let mut response = MppRecoveryResponse::new(
+            MppTaskResponses {
+                streams: [Box::new(initial) as Box<dyn MppTaskResponse>].into(),
+                node_count: 1,
+            },
+            true,
+            memory.clone(),
+            Box::new(move || {
+                assert_eq!(next_fixture.cancels.load(Ordering::SeqCst), 1);
+                let raw = next_fixture
+                    .open_with_memory(next_memory.clone())
+                    .map_err(QueryResponseError::Source)?;
+                Ok(MppTaskResponses {
+                    streams: [Box::new(raw) as Box<dyn MppTaskResponse>].into(),
+                    node_count: 1,
+                })
+            }),
+            Box::new(|nodes| {
+                assert_eq!(nodes, 1);
+                Ok(())
+            }),
+        );
+        assert_eq!(response.next().unwrap().unwrap().data.as_ref(), b"new");
+        assert!(response.next().unwrap().is_none());
+        assert_eq!(fixture.attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.connections.load(Ordering::SeqCst), 1);
+        assert_eq!(memory.bytes_consumed(), 0);
+    }
+
+    #[test]
+    fn mpp_failure_batch_socket_holder_transfers_packet_memory_once() {
+        let fixture =
+            Fixture::with_opening(false, false, false, b"raw".to_vec(), Opening::TwoPackets);
+        let memory = tidb_executor::StatementMemory::default();
+        let raw = fixture.open_with_memory(memory.clone()).unwrap();
+        let mut response = MppRecoveryResponse::new(
+            MppTaskResponses {
+                streams: [Box::new(raw) as Box<dyn MppTaskResponse>].into(),
+                node_count: 1,
+            },
+            true,
+            memory.clone(),
+            Box::new(|| panic!("no retry")),
+            Box::new(|_| panic!("no recovery")),
+        );
+        assert_eq!(response.next().unwrap().unwrap().data.as_ref(), b"raw");
+        assert_eq!(
+            memory.bytes_consumed(),
+            3,
+            "only the remaining held payload is charged"
+        );
+        response.close();
+        assert_eq!(memory.bytes_consumed(), 0);
+    }
+
+    #[test]
+    fn mpp_failure_batch_health_adapter_uses_existing_fleet() {
+        let fixture = Fixture::with_tail(false);
+        let mut response = fixture.open().unwrap();
+        let client = MppHealthClient(fixture.transport.lock().unwrap().clone());
+        assert!(tidb_txnkv::MppAliveClient::is_alive(
+            &client,
+            &fixture.address,
+            Duration::from_secs(2)
+        )
+        .unwrap());
+        assert_eq!(fixture.connections.load(Ordering::SeqCst), 1);
+        response.close();
+    }
+
     fn assert_opening_recovery(opening: Opening) {
         let fixture = Fixture::with_opening(false, false, false, b"first".to_vec(), opening);
         let mut response = fixture
@@ -2230,46 +2544,251 @@ mod compute_topology_batch_tests {
         assert!(compute_region_tasks(regions, &stores, DispatchPolicy::Invalid, 0).is_err());
     }
 
-    struct Rows {
-        rows: std::collections::VecDeque<Result<Vec<Datum>, StorageError>>,
+    #[test]
+    fn mpp_failure_batch_replacement_gather_keeps_query_and_snapshot() {
+        let statement = tidb_executor::remote_scan::PushdownStatementContext::default();
+        let (first, _) = mpp_task_metadata(123, &statement, "node-a");
+        let (retry, _) = mpp_task_metadata(123, &statement, "node-b");
+        assert_eq!(
+            (
+                first.start_ts,
+                first.query_ts,
+                first.local_query_id,
+                first.server_id
+            ),
+            (
+                retry.start_ts,
+                retry.query_ts,
+                retry.local_query_id,
+                retry.server_id
+            )
+        );
+        assert_ne!(first.gather_id, retry.gather_id);
+        assert_ne!(first.task_id, retry.task_id);
+    }
+
+    fn packet(value: u8) -> QueryResultSubset {
+        QueryResultSubset {
+            data: vec![value].into(),
+            runtime: None,
+        }
+    }
+    fn gather(
+        rows: Vec<Result<QueryResultSubset, QueryResponseError>>,
+        closed: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> MppTaskResponses {
+        MppTaskResponses {
+            streams: [Box::new(Packets {
+                rows: rows.into(),
+                closed,
+            }) as Box<dyn MppTaskResponse>]
+            .into(),
+            node_count: 2,
+        }
+    }
+    fn memory_error() -> QueryResponseError {
+        QueryResponseError::Source("Memory limit exceeded".into())
+    }
+
+    #[test]
+    fn mpp_failure_batch_discards_held_packets_and_closes_before_reopening() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let closed = Arc::new(AtomicUsize::new(0));
+        let old_closed = closed.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let recovery_calls = calls.clone();
+        let memory = tidb_executor::StatementMemory::default();
+        let mut response = MppRecoveryResponse::new(
+            gather(vec![Ok(packet(99)), Err(memory_error())], closed),
+            true,
+            memory.clone(),
+            Box::new(move || {
+                assert_eq!(old_closed.load(SeqCst), 1);
+                Ok(gather(
+                    vec![Ok(packet(1)), Ok(packet(2))],
+                    old_closed.clone(),
+                ))
+            }),
+            Box::new(move |nodes| {
+                assert_eq!(nodes, 2);
+                recovery_calls.fetch_add(1, SeqCst);
+                Ok(())
+            }),
+        );
+        assert_eq!(response.next().unwrap(), Some(packet(1)));
+        assert_eq!(memory.bytes_consumed(), 1);
+        assert_eq!(response.next().unwrap(), Some(packet(2)));
+        assert!(response.next().unwrap().is_none());
+        assert_eq!(calls.load(SeqCst), 1);
+        assert_eq!(memory.bytes_consumed(), 0);
+    }
+
+    #[test]
+    fn mpp_failure_batch_never_replays_delivered_packets_or_disabled_recovery() {
+        for enabled in [true, false] {
+            let mut response = MppRecoveryResponse::new(
+                gather(
+                    vec![Ok(packet(1)), Ok(packet(2)), Err(memory_error())],
+                    Arc::default(),
+                ),
+                enabled,
+                tidb_executor::StatementMemory::default(),
+                Box::new(|| panic!("must not replay delivered packets")),
+                Box::new(|_| panic!("must not recover after delivery")),
+            );
+            assert_eq!(response.next().unwrap(), Some(packet(1)));
+            assert_eq!(response.next().unwrap(), Some(packet(2)));
+            assert_eq!(response.next().unwrap_err(), memory_error());
+        }
+    }
+
+    #[test]
+    fn mpp_failure_batch_three_attempts_and_original_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let recoveries = calls.clone();
+        let mut response = MppRecoveryResponse::new(
+            gather(vec![Err(memory_error())], Arc::default()),
+            true,
+            tidb_executor::StatementMemory::default(),
+            Box::new(|| Ok(gather(vec![Err(memory_error())], Arc::default()))),
+            Box::new(move |_| {
+                recoveries.fetch_add(1, SeqCst);
+                Ok(())
+            }),
+        );
+        assert_eq!(response.next().unwrap_err(), memory_error());
+        assert_eq!(calls.load(SeqCst), 3);
+        for recovery_fails in [true, false] {
+            let memory = tidb_executor::StatementMemory::default();
+            let mut response = MppRecoveryResponse::new(
+                gather(vec![Ok(packet(5)), Err(memory_error())], Arc::default()),
+                true,
+                memory.clone(),
+                Box::new(|| Err(QueryResponseError::Source("replacement failed".into()))),
+                Box::new(move |_| {
+                    if recovery_fails {
+                        Err("autoscaler failed".into())
+                    } else {
+                        Ok(())
+                    }
+                }),
+            );
+            assert_eq!(response.next().unwrap_err(), memory_error());
+            assert_eq!(memory.bytes_consumed(), 0);
+        }
+    }
+
+    #[test]
+    fn mpp_failure_batch_nonrecoverable_errors_and_short_results() {
+        for error in [
+            QueryResponseError::Cancelled,
+            QueryResponseError::Sql {
+                code: 1317,
+                message: "Memory limit local kill".into(),
+            },
+            QueryResponseError::Source("memory limit lowercase is unrelated".into()),
+        ] {
+            let mut response = MppRecoveryResponse::new(
+                gather(vec![Err(error.clone())], Arc::default()),
+                true,
+                tidb_executor::StatementMemory::default(),
+                Box::new(|| panic!("terminal")),
+                Box::new(|_| panic!("terminal")),
+            );
+            assert_eq!(response.next().unwrap_err(), error);
+        }
+        for count in 0..=2 {
+            let memory = tidb_executor::StatementMemory::default();
+            let mut response = MppRecoveryResponse::new(
+                gather((0..count).map(|i| Ok(packet(i))).collect(), Arc::default()),
+                true,
+                memory.clone(),
+                Box::new(|| panic!("no failure")),
+                Box::new(|_| panic!("no failure")),
+            );
+            for i in 0..count {
+                assert_eq!(response.next().unwrap(), Some(packet(i)));
+            }
+            assert!(response.next().unwrap().is_none());
+            assert_eq!(memory.bytes_consumed(), 0);
+        }
+    }
+
+    #[test]
+    fn mpp_failure_batch_close_releases_retry_capabilities() {
+        let capability = Arc::new(());
+        let observer = Arc::downgrade(&capability);
+        let mut response = MppRecoveryResponse::new(
+            gather(vec![], Arc::default()),
+            true,
+            tidb_executor::StatementMemory::default(),
+            Box::new(move || {
+                let _borrow = &capability;
+                panic!("no retry")
+            }),
+            Box::new(|_| panic!("no failure")),
+        );
+        response.close();
+        assert!(observer.upgrade().is_none());
+        response.close();
+    }
+
+    #[test]
+    fn mpp_failure_batch_drop_releases_held_memory() {
+        let memory = tidb_executor::StatementMemory::default();
+        let mut response = MppRecoveryResponse::new(
+            gather(vec![Ok(packet(1)), Ok(packet(2))], Arc::default()),
+            true,
+            memory.clone(),
+            Box::new(|| panic!("no failure")),
+            Box::new(|_| panic!("no failure")),
+        );
+        response.next().unwrap();
+        assert_eq!(memory.bytes_consumed(), 1);
+        drop(response);
+        assert_eq!(memory.bytes_consumed(), 0);
+    }
+
+    struct Packets {
+        rows: std::collections::VecDeque<Result<QueryResultSubset, QueryResponseError>>,
         closed: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     }
-    impl PushdownRowStream for Rows {
-        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+    impl MppTaskResponse for Packets {
+        fn release_packet_memory(&mut self) {}
+    }
+    impl QueryResponse for Packets {
+        fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
             self.rows.pop_front().transpose()
         }
         fn close(&mut self) {
             self.closed
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
-        fn rows_returned(&self) -> u64 {
-            0
-        }
     }
     #[test]
     fn compute_topology_batch_fanout_error_closes_all_tasks() {
         let closed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let mut streams = MppTaskStreams {
+        let mut streams = MppTaskResponses {
             streams: [
-                Box::new(Rows {
-                    rows: [Ok(vec![Datum::Int(1)])].into(),
+                Box::new(Packets {
+                    rows: [Ok(packet(1))].into(),
                     closed: closed.clone(),
-                }) as Box<dyn PushdownRowStream>,
-                Box::new(Rows {
-                    rows: [Err(StorageError::Backend("failed".into()))].into(),
+                }) as Box<dyn MppTaskResponse>,
+                Box::new(Packets {
+                    rows: [Err(QueryResponseError::Source("failed".into()))].into(),
                     closed: closed.clone(),
                 }),
-                Box::new(Rows {
-                    rows: [Ok(vec![Datum::Int(3)])].into(),
+                Box::new(Packets {
+                    rows: [Ok(packet(3))].into(),
                     closed: closed.clone(),
                 }),
             ]
             .into(),
-            returned: 0,
+            node_count: 3,
         };
-        assert_eq!(streams.next_row().unwrap(), Some(vec![Datum::Int(1)]));
-        assert!(streams.next_row().is_err());
-        assert_eq!(streams.rows_returned(), 1);
+        assert_eq!(streams.next().unwrap(), Some(packet(1)));
+        assert!(streams.next().is_err());
         assert_eq!(closed.load(std::sync::atomic::Ordering::SeqCst), 3);
         streams.close();
         assert_eq!(closed.load(std::sync::atomic::Ordering::SeqCst), 3);

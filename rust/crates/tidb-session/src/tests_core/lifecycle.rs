@@ -616,3 +616,14 @@ fn compute_topology_batch_policy_reaches_statement_and_pushdown() {
     assert_eq!(request.tiflash_compute_dispatch_policy, "round_robin");
     assert_eq!(session.statement_context(false).tiflash_compute_dispatch_policy(), "consistent_hash");
 }
+
+#[test]
+fn mpp_failure_batch_fallback_policy_is_statement_owned() {
+    let mut session = Session::new();
+    session.run("SET tidb_allow_fallback_to_tikv = 'tiflash'").unwrap();
+    let request = tidb_executor::remote_scan::PushdownStatementContext::from_stmt(&session.statement_context(false));
+    assert!(request.allow_tiflash_fallback);
+    session.run("SET tidb_allow_fallback_to_tikv = ''").unwrap();
+    assert!(request.allow_tiflash_fallback);
+    assert!(!session.statement_context(false).allow_tiflash_fallback());
+}

@@ -516,6 +516,8 @@ pub struct PushdownStatementContext {
     pub mpp_server_id: u64,
     /// Validated session compute placement policy.
     pub tiflash_compute_dispatch_policy: String,
+    /// Go AllowFallbackToTiKV[TiFlash], retained for safe MPP recovery.
+    pub allow_tiflash_fallback: bool,
     /// Go's TryCopLiteWorker permits only one inline reader per statement.
     pub cop_lite_worker: Arc<std::sync::atomic::AtomicBool>,
     /// Physical scan plan ID used by Go `RuntimeStatsColl`.
@@ -584,6 +586,7 @@ impl Default for PushdownStatementContext {
             mpp_query_info: Arc::default(),
             mpp_server_id: 0,
             tiflash_compute_dispatch_policy: "consistent_hash".into(),
+            allow_tiflash_fallback: false,
             plan_id: 0,
             push_down_flags: 0,
             cop_lite_worker: Arc::default(),
@@ -618,6 +621,7 @@ impl PushdownStatementContext {
             mpp_query_info: ctx.mpp_query_info(),
             mpp_server_id: ctx.mpp_server_id(),
             tiflash_compute_dispatch_policy: ctx.tiflash_compute_dispatch_policy().into(),
+            allow_tiflash_fallback: ctx.allow_tiflash_fallback(),
             plan_id: 0,
             push_down_flags: ctx.push_down_flags(),
             cop_lite_worker: ctx.cop_lite_worker(),

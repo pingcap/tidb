@@ -585,6 +585,8 @@ impl ReadProcessShutdownStages for ProductionReadLifecycle {
     }
 
     fn shutdown_tikv_transport(&mut self) -> Result<(), String> {
+        // Probes borrow this fleet; join them before retiring its generation.
+        tidb_txnkv::global_mpp_failed_store_prober().stop();
         let transport =
             std::mem::replace(&mut self.transport, ProductionTransportLifecycle::Closed);
         match transport {

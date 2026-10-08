@@ -33,6 +33,8 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] Compose failed-node admission, joined process probing, statement fallback policy and two-packet/three-attempt gather recovery in one MPP batch. Retire decoded fanout ownership and its fixture. See [plan](mpp-failure-lifecycle-execplan.md) and [receipt](parity/current-audit/mpp-failure-lifecycle-validation.json). M04/M05/N03 remain partial for canonical PD cache, general coordinator/fragment and broader configuration/package obligations.
+
 - [x] Compose the complete tiflashcompute source boundary and connect process startup, statement policy and compute-node full-scan placement through the shared MPP fleet. See [plan](compute-topology-execplan.md) and [receipt](parity/current-audit/compute-topology-validation.json). M05 remains partial for cache/prober/coordinator integration.
 
 - [x] Migrate transaction/deadlock/lock-wait SQL text to shared selected summary readers and projected peer fallback; retire direct v1-only lookup. See [batch plan](digest-readers-execplan.md) and [receipt](parity/current-audit/digest-readers-validation.json). I01/I03/O18/N05 retain broader obligations.

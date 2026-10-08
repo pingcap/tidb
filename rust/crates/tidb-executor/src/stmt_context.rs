@@ -344,6 +344,8 @@ pub struct StmtContextSessionState {
     pub mpp_server_id: u64,
     /// Go session TiFlashComputeDispatchPolicy, snapshotted per statement.
     pub tiflash_compute_dispatch_policy: String,
+    /// Whether TiFlash errors may fall back to TiKV, disabling MPP recovery.
+    pub allow_tiflash_fallback: bool,
     /// Session advisory-lock ownership.
     pub advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     /// Statement-attempt executor-first-run latch.
@@ -385,6 +387,7 @@ impl Default for StmtContextSessionState {
             mpp_query_info: Arc::default(),
             mpp_server_id: 0,
             tiflash_compute_dispatch_policy: "consistent_hash".into(),
+            allow_tiflash_fallback: false,
             advisory_locks: Default::default(),
             before_executor_first_run: Arc::default(),
             breakpoint_notify_func: None,
@@ -414,6 +417,7 @@ pub struct StmtContextData {
     mpp_query_info: Arc<crate::MppQueryInfo>,
     mpp_server_id: u64,
     tiflash_compute_dispatch_policy: String,
+    allow_tiflash_fallback: bool,
     /// Go `StatementContext.CtxID`, unique for each newly created statement.
     context_id: u64,
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
@@ -1914,6 +1918,12 @@ impl StmtContext {
         Arc::clone(&self.mpp_query_info)
     }
 
+    /// The statement fallback policy that disables TiFlash gather recovery.
+    #[must_use]
+    pub fn allow_tiflash_fallback(&self) -> bool {
+        self.allow_tiflash_fallback
+    }
+
     /// The session compute placement policy captured for this statement.
     #[must_use]
     pub fn tiflash_compute_dispatch_policy(&self) -> &str {
@@ -1948,6 +1958,7 @@ impl StmtContext {
             mpp_query_info: session.mpp_query_info,
             mpp_server_id: session.mpp_server_id,
             tiflash_compute_dispatch_policy: session.tiflash_compute_dispatch_policy,
+            allow_tiflash_fallback: session.allow_tiflash_fallback,
             client_error_count: 0,
             client_warning_count: 0,
             context_id: NEXT_STATEMENT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),

@@ -16,7 +16,7 @@
 //! `pkg/store/copr/mpp_probe.go`.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -61,10 +61,17 @@ struct ProbeInner {
     wake: Condvar,
     wake_lock: Mutex<()>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    probes: Mutex<ProbeTasks>,
+    owners: AtomicUsize,
+}
+
+#[derive(Default)]
+struct ProbeTasks {
+    closed: bool,
+    handles: Vec<JoinHandle<()>>,
 }
 
 /// Go `MPPFailedStoreProber`.
-#[derive(Clone)]
 pub struct MppFailedStoreProber {
     inner: Arc<ProbeInner>,
 }
@@ -100,6 +107,8 @@ impl MppFailedStoreProber {
                 wake: Condvar::new(),
                 wake_lock: Mutex::new(()),
                 worker: Mutex::new(None),
+                probes: Mutex::default(),
+                owners: AtomicUsize::new(1),
             }),
         }
     }
@@ -158,21 +167,7 @@ impl MppFailedStoreProber {
     /// Starts one asynchronous detection for every currently failed store.
     /// Like Go's `scan`, the method does not wait for per-store probes.
     pub fn scan(&self) {
-        let stores = self
-            .inner
-            .stores
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for state in stores {
-            let inner = Arc::clone(&self.inner);
-            std::thread::Builder::new()
-                .name("tidb-mpp-probe".to_owned())
-                .spawn(move || detect_one(&inner, &state))
-                .expect("spawn MPP failed-store probe");
-        }
+        scan(&self.inner);
     }
 
     /// Go `Run`: starts at most one background scanner.
@@ -186,23 +181,24 @@ impl MppFailedStoreProber {
             return;
         }
         self.inner.stopped.store(false, SeqCst);
-        let prober = self.clone();
+        self.inner
+            .probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .closed = false;
+        let inner = Arc::clone(&self.inner);
         *worker = Some(
             std::thread::Builder::new()
                 .name("tidb-mpp-prober".to_owned())
                 .spawn(move || {
-                    while !prober.inner.stopped.load(SeqCst) {
-                        let guard = prober
-                            .inner
+                    while !inner.stopped.load(SeqCst) {
+                        let guard = inner
                             .wake_lock
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        let _ = prober
-                            .inner
-                            .wake
-                            .wait_timeout(guard, Duration::from_secs(1));
-                        if !prober.inner.stopped.load(SeqCst) {
-                            prober.scan();
+                        let _ = inner.wake.wait_timeout(guard, Duration::from_secs(1));
+                        if !inner.stopped.load(SeqCst) {
+                            scan(&inner);
                         }
                     }
                 })
@@ -210,19 +206,41 @@ impl MppFailedStoreProber {
         );
     }
 
-    /// Go `Stop`: cancels and joins the single background scanner.
+    /// Stops admission and joins the scanner and all outstanding store probes.
     pub fn stop(&self) {
-        self.inner.stopped.store(true, SeqCst);
-        self.inner.wake.notify_all();
-        if let Some(worker) = self
+        // Serialize Run/Stop through joining, so a replacement scanner cannot
+        // race the old generation's probe drain.
+        let mut worker = self
             .inner
             .worker
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         {
+            let _wake = self
+                .inner
+                .wake_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.inner.stopped.store(true, SeqCst);
+            self.inner.wake.notify_all();
+        }
+        if let Some(worker) = worker.take() {
             let _ = worker.join();
         }
+        let mut probes = self
+            .inner
+            .probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        probes.closed = true;
+        for probe in probes.handles.drain(..) {
+            let _ = probe.join();
+        }
+        self.inner
+            .stores
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     /// Number of failed-store entries, for diagnostics and tests.
@@ -242,11 +260,55 @@ impl MppFailedStoreProber {
     }
 }
 
+impl Clone for MppFailedStoreProber {
+    fn clone(&self) -> Self {
+        self.inner.owners.fetch_add(1, SeqCst);
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 impl Drop for MppFailedStoreProber {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.inner) == 1 {
+        if self.inner.owners.fetch_sub(1, SeqCst) == 1 {
             self.stop();
         }
+    }
+}
+
+fn scan(inner: &Arc<ProbeInner>) {
+    let mut probes = inner
+        .probes
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if probes.closed {
+        return;
+    }
+    let mut active = Vec::new();
+    for probe in probes.handles.drain(..) {
+        if probe.is_finished() {
+            let _ = probe.join();
+        } else {
+            active.push(probe);
+        }
+    }
+    probes.handles = active;
+    let stores = inner
+        .stores
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    for state in stores {
+        let inner = Arc::clone(inner);
+        probes.handles.push(
+            std::thread::Builder::new()
+                .name("tidb-mpp-probe".into())
+                .spawn(move || detect_one(&inner, &state))
+                .expect("spawn MPP failed-store probe"),
+        );
     }
 }
 
@@ -260,11 +322,11 @@ fn detect_one(inner: &Arc<ProbeInner>, state: &Arc<MppStoreState>) {
     {
         return;
     }
-    times.last_detect_time = Some(Instant::now());
     let available = state
         .client
         .is_alive(&state.address, inner.detect_timeout)
         .unwrap_or(false);
+    times.last_detect_time = Some(Instant::now());
     if available {
         times.recovery_time.get_or_insert_with(Instant::now);
     } else {
@@ -399,19 +461,92 @@ mod tests {
         );
         let client = Arc::new(MockClient(AtomicU8::new(0)));
         prober.add("store", client.clone());
-        prober.scan();
-        std::thread::sleep(Duration::from_millis(20));
+        let state = prober.inner.stores.lock().unwrap()["store"].clone();
+        detect_one(&prober.inner, &state);
         assert!(!prober.is_recovery("store", Duration::ZERO));
         client.0.store(2, SeqCst);
-        prober.scan();
-        std::thread::sleep(Duration::from_millis(20));
+        let state = prober.inner.stores.lock().unwrap()["store"].clone();
+        detect_one(&prober.inner, &state);
         assert!(prober.is_recovery("store", Duration::ZERO));
         assert!(!prober.is_recovery("store", Duration::from_secs(60)));
         client.0.store(1, SeqCst);
-        prober.scan();
-        std::thread::sleep(Duration::from_millis(20));
+        let state = prober.inner.stores.lock().unwrap()["store"].clone();
+        detect_one(&prober.inner, &state);
         assert!(!prober.is_recovery("store", Duration::ZERO));
         assert!(prober.is_recovery("missing", Duration::ZERO));
+    }
+
+    #[test]
+    fn mpp_failure_batch_stop_joins_active_detection() {
+        struct GatedClient {
+            entered: std::sync::mpsc::Sender<()>,
+            release: Mutex<std::sync::mpsc::Receiver<()>>,
+        }
+        impl MppAliveClient for GatedClient {
+            fn is_alive(&self, _: &str, _: Duration) -> Result<bool, String> {
+                self.entered.send(()).unwrap();
+                self.release.lock().unwrap().recv().unwrap();
+                Ok(true)
+            }
+        }
+        let (entered_tx, entered) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let prober = MppFailedStoreProber::default();
+        prober.add(
+            "blocked",
+            Arc::new(GatedClient {
+                entered: entered_tx,
+                release: Mutex::new(release_rx),
+            }),
+        );
+        prober.scan();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        let stopping = prober.clone();
+        let (done_tx, done) = std::sync::mpsc::channel();
+        let join = std::thread::spawn(move || {
+            stopping.stop();
+            done_tx.send(()).unwrap();
+        });
+        let returned_early = done.recv_timeout(Duration::from_millis(100)).is_ok();
+        release.send(()).unwrap();
+        join.join().unwrap();
+        assert!(
+            !returned_early,
+            "Stop returned while a probe still held the transport"
+        );
+    }
+
+    #[test]
+    fn mpp_failure_batch_cooldown_starts_after_detection() {
+        struct FinishedClient(Arc<Mutex<Option<Instant>>>);
+        impl MppAliveClient for FinishedClient {
+            fn is_alive(&self, _: &str, _: Duration) -> Result<bool, String> {
+                *self.0.lock().unwrap() = Some(Instant::now());
+                Ok(true)
+            }
+        }
+        let finished = Arc::new(Mutex::new(None));
+        let prober = MppFailedStoreProber::default();
+        prober.add("slow", Arc::new(FinishedClient(finished.clone())));
+        let state = prober.inner.stores.lock().unwrap()["slow"].clone();
+        detect_one(&prober.inner, &state);
+        assert!(
+            state.times.lock().unwrap().last_detect_time.unwrap()
+                >= finished.lock().unwrap().unwrap(),
+            "cooldown must begin after the RPC finishes"
+        );
+    }
+
+    #[test]
+    fn mpp_failure_batch_last_owner_drop_joins_scanner() {
+        let prober = MppFailedStoreProber::default();
+        let observer = Arc::downgrade(&prober.inner);
+        prober.run();
+        drop(prober);
+        assert!(
+            observer.upgrade().is_none(),
+            "scanner retained its own shutdown owner"
+        );
     }
 
     #[test]

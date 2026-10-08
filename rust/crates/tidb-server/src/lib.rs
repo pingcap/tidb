@@ -164,6 +164,8 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     tidb_util::traceevent::register_with_client_go();
     config.install_process_globals();
     initialize_compute_topology(&config.global_config)?;
+    tidb_txnkv::global_mpp_failed_store_prober().run();
+    let _mpp_prober_cleanup = MppProberCleanup;
     tidb_util::cgmon::start_cgroup_monitor();
     let _cgroup_monitor_cleanup = CgroupMonitorCleanup;
     initialize_temp_dir(&config)?;
@@ -210,6 +212,13 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         );
     }
     run_cluster_session_node_with_spill(config, spill_storage, memory_arbitrator.arbitrator())
+}
+
+struct MppProberCleanup;
+impl Drop for MppProberCleanup {
+    fn drop(&mut self) {
+        tidb_txnkv::global_mpp_failed_store_prober().stop();
+    }
 }
 
 fn initialize_compute_topology(
