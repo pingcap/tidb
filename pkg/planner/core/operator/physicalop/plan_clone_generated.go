@@ -332,6 +332,7 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 	cloned.IndexPlans = FlattenListPushDownPlan(cloned.IndexPlan)
 	cloned.OutputColumns = utilfuncp.CloneColumnsForPlanCache(op.OutputColumns, nil)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
+	cloned.LooseScan = op.LooseScan.CloneForPlanCache()
 	return cloned, true
 }
 

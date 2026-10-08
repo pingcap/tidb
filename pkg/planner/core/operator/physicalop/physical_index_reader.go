@@ -85,6 +85,21 @@ func (l *LooseScanInfo) Clone() *LooseScanInfo {
 	return cloned
 }
 
+// CloneForPlanCache clones the LooseScanInfo for the plan cache.
+func (l *LooseScanInfo) CloneForPlanCache() *LooseScanInfo {
+	if l == nil {
+		return nil
+	}
+	cloned := &LooseScanInfo{
+		PrefixCols: utilfuncp.CloneColumnsForPlanCache(l.PrefixCols, nil),
+		BatchSize:  l.BatchSize,
+	}
+	if l.NullSkipCol != nil {
+		cloned.NullSkipCol = utilfuncp.CloneColumnsForPlanCache([]*expression.Column{l.NullSkipCol}, nil)[0]
+	}
+	return cloned
+}
+
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexReader {
 	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
