@@ -57,6 +57,14 @@ func TestValidatePathExpr(t *testing.T) {
 		{`$[1 to last]`, true, 1},
 		{`$[1to3]`, false, 1},
 		{`$[last - 5 to last - 10]`, false, 1},
+		{`$[last to last]`, true, 1},
+		{`$[last ]`, true, 1},
+		{`$[last `, false, 0},
+		{`$[last  `, false, 0},
+		{"$[last\tto last]", true, 1},
+		{`$[last to]`, false, 0},
+		{`$[1 to]`, false, 0},
+		{`$[1 tox]`, false, 0},
 
 		{`$.\"escaped quotes\"[3][*].*.key3`, false, 0},
 		{`$.hello \"escaped quotes\" world[3][*].*.key3`, false, 0},
@@ -76,7 +84,7 @@ func TestValidatePathExpr(t *testing.T) {
 		{`$.ѿ`, false, 0},
 		{`$."ѿ"`, true, 1},
 		{"$.\"\\0\\", false, 0},
-		{`$.Ѡ`, false, 0}, // This test case is special, because Ѡ is 0xD1 0xA0 in UTF-8, and 0xA0 is a space character.
+		{`$.Ѡ`, false, 0}, // Ѡ is U+0460, and its lowest byte 0x60 is not a letter in MySQL.
 		{`$."Ѡ"`, true, 1},
 		{`$.µ`, true, 1},
 		// The expected results below are the same as MySQL 8.0, which checks

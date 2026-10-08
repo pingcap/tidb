@@ -431,12 +431,12 @@ func (s *jsonPathStream) tryParseArrayIndex() (jsonPathArrayIndex, bool) {
 			s.pos = recordPos
 			return 0, false
 		}
+		// Keep the whitespace after `last` if it's not followed by '-', so the
+		// caller can still check the end of the path and the " to " of a range.
+		lastEndPos := s.pos
 		s.skipWhiteSpace()
-		if s.exhausted() {
-			return jsonPathArrayIndexFromLast(0), true
-		}
-
-		if s.peek() != '-' {
+		if s.exhausted() || s.peek() != '-' {
+			s.pos = lastEndPos
 			return jsonPathArrayIndexFromLast(0), true
 		}
 		s.skip(1)
@@ -474,7 +474,11 @@ func parseJSONPathArray(s *jsonPathStream, p *JSONPathExpression) bool {
 		// try to read " to " and the end
 		if isJSONPathWhiteSpace(s.peek()) {
 			s.skipWhiteSpace()
-			if s.tryReadString(toStr) && isJSONPathWhiteSpace(s.peek()) {
+			if s.tryReadString(toStr) {
+				// `to` must be followed by whitespace, like MySQL.
+				if s.exhausted() || !isJSONPathWhiteSpace(s.peek()) {
+					return false
+				}
 				s.skipWhiteSpace()
 				if s.exhausted() {
 					return false
