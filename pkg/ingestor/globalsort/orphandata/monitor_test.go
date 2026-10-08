@@ -98,9 +98,20 @@ func newTestMonitor(t *testing.T, cfg Config) *testMonitor {
 	}
 }
 
+// orphanDataMetricName is the name of the metric the monitor publishes to.
+const orphanDataMetricName = "tidb_global_sort_orphan_data_size_bytes"
+
+// requireGauge asserts the orphan data size is the expected value.
 func requireGauge(t *testing.T, expected float64) {
 	t.Helper()
 	require.Equal(t, expected, testutil.ToFloat64(metrics.GlobalSortOrphanDataSize))
+}
+
+// requireGaugeAbsent asserts the orphan data size series is absent, i.e. it was
+// reset rather than set to a value.
+func requireGaugeAbsent(t *testing.T) {
+	t.Helper()
+	require.Zero(t, testutil.CollectAndCount(metrics.GlobalSortOrphanDataSize, orphanDataMetricName))
 }
 
 func requireNoCredentials(t *testing.T, logs *observer.ObservedLogs, values ...string) {
@@ -123,7 +134,7 @@ func requireNoCandidate(t *testing.T, logs *observer.ObservedLogs, candidate str
 
 func TestMonitor(t *testing.T) {
 	t.Cleanup(func() {
-		metrics.GlobalSortOrphanDataSize.Set(0)
+		metrics.GlobalSortOrphanDataSize.Reset()
 	})
 
 	t.Run("config dependencies", func(t *testing.T) {
@@ -168,7 +179,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("first gate has tasks", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		factoryCalls := 0
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return true, nil }),
@@ -188,7 +199,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("first gate query error", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		factoryCalls := 0
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, errors.New("first gate failed") }),
@@ -208,7 +219,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("empty URI does nothing", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		factoryCalls := 0
 		calls := 0
 		m := newTestMonitor(t, Config{
@@ -232,7 +243,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("invalid URI uses the default factory", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		const uri = "s3:///missing-bucket?access-key=invalid-ak&secret-access-key=invalid-sk&session-token=invalid-token"
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
@@ -248,7 +259,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("injected store creation error", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		const (
 			accessKey    = "create-ak-fragment"
 			secretKey    = "create+sk-fragment"
@@ -272,7 +283,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("malformed storage URI logs the error", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		const (
 			secret = "malformed-secret"
 			uri    = "s3://bucket/%zz?secret-access-key=" + secret
@@ -295,7 +306,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("configured empty store", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		store := &monitorStorage{Storage: objstore.NewMemStorage()}
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
@@ -357,7 +368,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("retained prefixes are not orphan data", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		store := &monitorStorage{
 			Storage: objstore.NewMemStorage(),
 			entries: []monitorWalkEntry{
@@ -409,7 +420,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("task appears at the second gate", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		const candidate = "candidate-prefix/"
 		store := &monitorStorage{
 			Storage: objstore.NewMemStorage(),
@@ -454,7 +465,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("second gate query error", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		store := &monitorStorage{
 			Storage: objstore.NewMemStorage(),
 			entries: []monitorWalkEntry{{path: "candidate-prefix/file", size: 41}},
@@ -483,7 +494,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("walk error", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		const uri = "azure://container/prefix?account-key=walk-account&sas-token=walk%2Bsas&encryption-key=walk-encryption"
 		store := &monitorStorage{
 			Storage: objstore.NewMemStorage(),
@@ -510,7 +521,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("canceled before first read", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		checks := 0
@@ -530,7 +541,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("walk returns cancellation", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
 		store := &monitorStorage{Storage: objstore.NewMemStorage()}
@@ -555,7 +566,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("cancellation during second read", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
 		store := &monitorStorage{
@@ -587,7 +598,7 @@ func TestMonitor(t *testing.T) {
 	})
 
 	t.Run("cancellation after the final gate still publishes", func(t *testing.T) {
-		metrics.GlobalSortOrphanDataSize.Set(37)
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
 		store := &monitorStorage{
@@ -617,4 +628,16 @@ func TestMonitor(t *testing.T) {
 		require.Len(t, m.logs.FilterMessage("global sort orphan data monitor success").All(), 1)
 		require.Empty(t, m.logs.FilterLevelExact(zap.WarnLevel).All())
 	})
+}
+
+func TestMonitorResetDeletesPublishedSize(t *testing.T) {
+	t.Cleanup(func() { metrics.GlobalSortOrphanDataSize.Reset() })
+
+	m := newTestMonitor(t, Config{})
+	metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
+	requireGauge(t, 37)
+
+	m.Reset()
+
+	requireGaugeAbsent(t)
 }
