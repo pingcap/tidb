@@ -502,6 +502,41 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	// The byte budget is kept for TiKV DAG requests.
 	require.Equal(t, uint64(4*1024*1024), req.Paging.PagingSizeBytes)
 
+	// A byte budget bounds a page but is not a read-size prediction, so RPCs
+	// sent before any page is observed carry no pre-charge hint. Cancel at the
+	// pre-send hook so this does not depend on a TiKV response.
+	req = &kv.Request{
+		Tp:          kv.ReqTypeDAG,
+		StoreType:   kv.TiKV,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(copr.BuildKeyRanges("a", "c"), nil),
+		Concurrency: 15,
+	}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	func() {
+		predictedReadBytes := make(chan uint64, 1)
+		hintCtx, cancelHint := context.WithTimeout(ctx, 5*time.Second)
+		defer cancelHint()
+		// Disable explicitly: the same failpoint is enabled again below with a test cleanup.
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(rpcReq *tikvrpc.Request) {
+			if _, ok := rpcReq.Req.(*coprocessor.Request); !ok {
+				return
+			}
+			select {
+			case predictedReadBytes <- rpcReq.PredictedReadBytes:
+			default:
+			}
+			cancelHint()
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"))
+		}()
+		hintResp := copClient.Send(hintCtx, req, vars, opt)
+		_, err := hintResp.Next(hintCtx)
+		require.ErrorIs(t, err, context.Canceled)
+		require.NoError(t, hintResp.Close())
+		require.Zero(t, <-predictedReadBytes)
+	}()
+
 	// byte-budget paging only applies to TiKV DAG requests; a non-DAG request
 	// drops the budget so req.Paging.PagingSizeBytes is the single source of truth.
 	req = &kv.Request{
