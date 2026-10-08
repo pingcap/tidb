@@ -233,11 +233,10 @@ func TestCreateMaterializedViewLogRollbackPurgeInfoFailureRollsBackMetadata(t *t
 		metaMut := meta.NewMutator(txn)
 		persistedMLog, err := metaMut.GetTable(dbInfo.ID, mlogID)
 		require.NoError(t, err)
-		require.NotNil(t, persistedMLog)
+		require.Nil(t, persistedMLog)
 		persistedBase, err := metaMut.GetTable(dbInfo.ID, baseTable.Meta().ID)
 		require.NoError(t, err)
-		require.NotNil(t, persistedBase.MaterializedViewBase)
-		require.Equal(t, mlogID, persistedBase.MaterializedViewBase.MLogID)
+		require.Nil(t, persistedBase.MaterializedViewBase)
 		return nil
 	}))
 
@@ -309,16 +308,15 @@ func TestCreateMaterializedViewLogRollbackUpdateSchemaVersionFailureRetries(t *t
 		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW LOG rollback retry")
 	}
 	require.NotZero(t, mlogID)
-	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).Check(testkit.Rows("1"))
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).Check(testkit.Rows("0"))
 	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
 		metaMut := meta.NewMutator(txn)
 		persistedMLog, err := metaMut.GetTable(dbInfo.ID, mlogID)
 		require.NoError(t, err)
-		require.NotNil(t, persistedMLog)
+		require.Nil(t, persistedMLog)
 		persistedBase, err := metaMut.GetTable(dbInfo.ID, baseTable.Meta().ID)
 		require.NoError(t, err)
-		require.NotNil(t, persistedBase.MaterializedViewBase)
-		require.Equal(t, mlogID, persistedBase.MaterializedViewBase.MLogID)
+		require.Nil(t, persistedBase.MaterializedViewBase)
 		return nil
 	}))
 
