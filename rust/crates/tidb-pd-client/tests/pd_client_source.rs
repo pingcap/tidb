@@ -22,11 +22,7 @@ use std::time::Duration;
 use prost::Message;
 use std::convert::Infallible;
 use std::task::{Context, Poll};
-use tidb_pd_client::{
-    PdClient, PdKeyRange, PdNodeState, PdStoreState, BATCH_SCAN_REGIONS_PATH, GET_MEMBERS_PATH,
-    GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH,
-    SCAN_REGIONS_PATH,
-};
+use tidb_pd_client::{PdClient, PdKeyRange, PdNodeState, PdStoreState};
 use tidb_proto::metapb;
 use tidb_proto::pdpb;
 use tidb_proto::test_pd_server::{Pd, PdServer};
@@ -793,13 +789,6 @@ fn unused_address() -> String {
 fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     // servicediscovery/service_discovery.go:960-994 getMembers.
     // client.go:714-764 GetRegion; client.go:1034-1091 GetStore.
-    assert_eq!(GET_MEMBERS_PATH, "/pdpb.PD/GetMembers");
-    assert_eq!(GET_REGION_PATH, "/pdpb.PD/GetRegion");
-    assert_eq!(GET_PREV_REGION_PATH, "/pdpb.PD/GetPrevRegion");
-    assert_eq!(GET_REGION_BY_ID_PATH, "/pdpb.PD/GetRegionByID");
-    assert_eq!(SCAN_REGIONS_PATH, "/pdpb.PD/ScanRegions");
-    assert_eq!(BATCH_SCAN_REGIONS_PATH, "/pdpb.PD/BatchScanRegions");
-    assert_eq!(GET_STORE_PATH, "/pdpb.PD/GetStore");
 
     let mut state = valid_state();
     let store = match state.stores.get_mut(&101).unwrap() {

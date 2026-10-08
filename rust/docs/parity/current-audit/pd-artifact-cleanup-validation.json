@@ -1,0 +1,392 @@
+{
+  "date": "2026-10-08",
+  "baseline": "5826ee36e1bc08f66bd20fa9f471256cb8b20f05",
+  "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+  "native_unchanged": "c594ea97615405e6180c3730e98c3611e781be7a",
+  "scope": "Retire nine unused PD method-path constants/eight self-comparison assertions, an obsolete automatic profiler target, detached transport experiments and nine superseded plans. No runtime algorithm, finding status or package acceptance change.",
+  "retired_files": [
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/preface_test.go.txt",
+      "lines": 72,
+      "bytes": 2234,
+      "sha256": "2d637e60150dc2b2670be6ae87f3e222a30f88c2cb8fe7704009c302c56406a8",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/preface_test.go.txt",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/h2-preface-review.md",
+      "lines": 141,
+      "bytes": 8142,
+      "sha256": "7e842c216ad572814d9bb0efd8eaefe0af7486c9597b6e2e40d4c3a7ca5db7b7",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/h2-preface-review.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/go-readiness.json",
+      "lines": 4,
+      "bytes": 87,
+      "sha256": "774844d272a180327b86333e00d1268a5b2399f8c226489d76870bf2f889fe46",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/go-readiness.json",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/h2-probe.Cargo.toml.txt",
+      "lines": 12,
+      "bytes": 286,
+      "sha256": "cc64481c2aed92f0cea1d6c1d2496d1585f1f02d3297aa1ec2aea7126fb88ba3",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/h2-probe.Cargo.toml.txt",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/h2-candidate-review.md",
+      "lines": 149,
+      "bytes": 8886,
+      "sha256": "e14f70871e53dc1f9a19d52cccafa366137092ac9231fec35009f9a05179e443",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/h2-candidate-review.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/h2_owner_probe.rs.txt",
+      "lines": 448,
+      "bytes": 16105,
+      "sha256": "4d1c6c5a1ce22593aa7c94ab382b1d88a2d3e37f80c723ea563ff2994f2d46f4",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/h2_owner_probe.rs.txt",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/h2-preface-owner.patch",
+      "lines": 118,
+      "bytes": 5010,
+      "sha256": "c10efe8353b343c866e6b2372aa136d73e394e8af9662c8ee7230fe7320cd3df",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/h2-preface-owner.patch",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/observations.json",
+      "lines": 18,
+      "bytes": 622,
+      "sha256": "051f8ea71504b6a9122839e604e62b1deefdfa6a684027541fc95d0cf503d47c",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/observations.json",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/h2-preface.patch",
+      "lines": 90,
+      "bytes": 3044,
+      "sha256": "a772b4ffef00c19cdd6114e1b566c44ee690fe8aad85893791278562d8d88919",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/h2-preface.patch",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/tonic_probe.rs.txt",
+      "lines": 44,
+      "bytes": 1767,
+      "sha256": "0ae18e46c43e7f358b25c7ed4cf80c3bd6a8ae5b0fdd932c3ff1bfee72e200b3",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/tonic_probe.rs.txt",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/probe_h2.py",
+      "lines": 163,
+      "bytes": 8144,
+      "sha256": "1897f69b1f98321e9962d6f9a8906c6f6fcc323e6bc86378cd55146c2058ed03",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/probe_h2.py",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/h2-inputs.json",
+      "lines": 74,
+      "bytes": 6505,
+      "sha256": "c191608ec646c3eeee367847ae974b351989f3e25924b05345ee3668fd8cb55f",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/h2-inputs.json",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/candidate-observations.json",
+      "lines": 35,
+      "bytes": 1276,
+      "sha256": "7584ccd43334023c9004a10d1b720de047480949b6ff66aa1e7cf243cc213e03",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/candidate-observations.json",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/h2-probe.Cargo.lock",
+      "lines": 341,
+      "bytes": 8616,
+      "sha256": "4ded5507e180193f090d858819196b6d92b8ef8f1c99a55a220a86fd707867d9",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/h2-probe.Cargo.lock",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/preface-observations.json",
+      "lines": 34,
+      "bytes": 1376,
+      "sha256": "c17c886165bf764a0152ca59833a82be29940e5ec0b20c8ffa6bb15154bf6eba",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/preface-observations.json",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/h2-readiness.patch",
+      "lines": 25,
+      "bytes": 844,
+      "sha256": "8582d9cc5ef1d772e388208dfd816251ab7f3d225a7b301b36dd4d1614460ee5",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/h2-readiness.patch",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/run.py",
+      "lines": 137,
+      "bytes": 6310,
+      "sha256": "1b7f14a91b94c623e2aeb778b7442bee0ec9f5705ff152a657300f584108db99",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/run.py",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/oracle_test.go.txt",
+      "lines": 290,
+      "bytes": 12452,
+      "sha256": "315d8fe70e4b95ec146ff80422b22237c6b2ab5d33dc8f2a006b2a97c765da93",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/oracle_test.go.txt",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/lifecycle_test.go.txt",
+      "lines": 105,
+      "bytes": 3781,
+      "sha256": "7e8c44dad9de5da3e702dae76623c2943be6d42016c7abd33182cede2e59a068",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/lifecycle_test.go.txt",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/pd-region-batch-execplan.md",
+      "lines": 85,
+      "bytes": 10255,
+      "sha256": "ddfa91fd1b579a12c5f388eee24c577493598545df93375298071468d136504e",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/pd-region-batch-execplan.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/pd-service-discovery-batch-execplan.md",
+      "lines": 80,
+      "bytes": 8575,
+      "sha256": "43b64aa9cb8f1648fa10096e3415e44f2bde181108da21c94e0822b0f88b51e1",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/pd-service-discovery-batch-execplan.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/pd-provider-bootstrap-batch-execplan.md",
+      "lines": 67,
+      "bytes": 6070,
+      "sha256": "215c5cbe6364673d863c34a64b61581604f855f4954d8a811552ab3e352e3a8d",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/pd-provider-bootstrap-batch-execplan.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/tso-proxy-batch-execplan.md",
+      "lines": 35,
+      "bytes": 4562,
+      "sha256": "3d3af415f04e855a772d63b438c4888220ddf2ea6a75d585b5a12294fcbe2841",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/tso-proxy-batch-execplan.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/tso-failure-batch-execplan.md",
+      "lines": 37,
+      "bytes": 4569,
+      "sha256": "5a291613e21203d987d52c717f954f0a28b7a42d11888d137040095f0fac9572",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/tso-failure-batch-execplan.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/tso-collection-batch-execplan.md",
+      "lines": 53,
+      "bytes": 5424,
+      "sha256": "58b491c76b34c577e39c8aae9114e6ae62c569eb9c937da8d743df892f8cc16f",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/tso-collection-batch-execplan.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/tso-completion-execplan.md",
+      "lines": 100,
+      "bytes": 5735,
+      "sha256": "8c6f830f29ebd5491aa28acba581a1453fed0fc0ecab9fe87670097db2eacd1e",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/tso-completion-execplan.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/pd-observation-execplan.md",
+      "lines": 55,
+      "bytes": 6487,
+      "sha256": "105b338445a9bc26a5de8cc0dd61ac42ce9a2bcec445618a0cc466658e94e809",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/pd-observation-execplan.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/pd-independent-observation-execplan.md",
+      "lines": 133,
+      "bytes": 6951,
+      "sha256": "023fbb50143d7e37708494ceab5844f040a0ca78249328311a784d726d9a8a16",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/pd-independent-observation-execplan.md",
+      "action": "remove"
+    },
+    {
+      "path": "rust/crates/tidb-pd-client/examples/tso_profile.rs",
+      "lines": 233,
+      "bytes": 8460,
+      "sha256": "037c53c868c8db1b547a52e77960fb0def5c2ca35c626674fd7f22c92d6efcfa",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/crates/tidb-pd-client/examples/tso_profile.rs",
+      "action": "remove"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/pd-grpcutil-contract/README.md",
+      "lines": 306,
+      "bytes": 18603,
+      "sha256": "60bc4915f020f267be8433fa59babeb8f56f480e8f15f0612841eab8476ff94a",
+      "archive": "https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/README.md",
+      "action": "replace with historical index"
+    }
+  ],
+  "review": {
+    "retired_files": 29,
+    "archive_hashes_verified": 30,
+    "dangling_links_to_retired_artifacts": [],
+    "constants_without_consumers": [
+      "GET_MEMBERS_PATH",
+      "GET_REGION_PATH",
+      "GET_PREV_REGION_PATH",
+      "GET_REGION_BY_ID_PATH",
+      "SCAN_REGIONS_PATH",
+      "BATCH_SCAN_REGIONS_PATH",
+      "GET_STORE_PATH",
+      "GET_GC_STATE_PATH",
+      "TSO_PATH"
+    ],
+    "go_artifacts_verified": [
+      "LICENSE",
+      "Makefile",
+      "clients/tso/client.go",
+      "clients/tso/stream.go",
+      "errs/errno.go",
+      "errs/errs.go",
+      "go.mod",
+      "go.sum",
+      "keyspace_client_test.go",
+      "meta_storage_client.go",
+      "metrics/metrics.go",
+      "pkg/circuitbreaker/circuit_breaker.go",
+      "pkg/circuitbreaker/circuit_breaker_test.go",
+      "pkg/retry/backoff.go",
+      "pkg/retry/backoff_test.go",
+      "pkg/retry/interval_retry.go",
+      "pkg/utils/grpcutil/grpcutil.go",
+      "pkg/utils/grpcutil/grpcutil_test.go",
+      "pkg/utils/testutil/check_env_dummy.go",
+      "pkg/utils/testutil/check_env_linux.go",
+      "pkg/utils/testutil/leak.go",
+      "pkg/utils/testutil/tempurl.go",
+      "pkg/utils/testutil/testutil.go",
+      "resource_manager_client_test.go",
+      "servicediscovery/resource_manager_service_discovery.go",
+      "servicediscovery/router_service_discovery.go",
+      "servicediscovery/service_discovery.go",
+      "servicediscovery/service_discovery_test.go",
+      "servicediscovery/tso_service_discovery.go"
+    ],
+    "preserved": [
+      "All active tidb-pd-client test functions; only one descriptive rename and eight constant self-comparisons removed",
+      "Prost field-number encoding assertions, real generated-client socket routing, stream retention, deadline/cancellation/TLS and joined-close coverage",
+      "Pinned upstream grpcutil original TestGetCallerID and shared Go testutil/platform obligations",
+      "Current shared production ServiceModeDiscovery/TsoDiscovery and current mode-scheduling receipt/plan",
+      "Original complete historical grpcutil source inventory, explicitly marked historical"
+    ],
+    "limits": [
+      "No runtime algorithm or generated protocol change",
+      "No package acceptance and no finding status changes",
+      "Retiring detached probes reduces manual workflow clutter, not default Cargo work; profiler removal removes one automatic example target",
+      "No measured wall-time speedup claim"
+    ],
+    "retained_cargo_targets": [
+      {
+        "name": "tidb_pd_client",
+        "kind": [
+          "lib"
+        ]
+      },
+      {
+        "name": "all",
+        "kind": [
+          "test"
+        ]
+      }
+    ]
+  },
+  "validation": {
+    "tests": {
+      "command": "cd rust && cargo test --locked -p tidb-pd-client --lib --test all -- --test-threads=1",
+      "summaries": [
+        {
+          "passed": 22,
+          "failed": 0,
+          "ignored": 1
+        },
+        {
+          "passed": 78,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "passed": 100,
+      "ignored": 1
+    },
+    "all_targets": {
+      "command": "cd rust && cargo check --locked -p tidb-pd-client -p tidb-server --all-targets",
+      "status": "passed"
+    },
+    "lint": {
+      "command": "make lint",
+      "status": "passed"
+    },
+    "format": "Changed-file rustfmt --check with skip_children=true passed; unrelated TLS test formatting remains unchanged.",
+    "review": "All 30 archived/replaced file hashes match the baseline; no remaining retired-constant consumers or links to removed local files; 29 pinned Go inventory artifacts verified."
+  },
+  "logs": {
+    "tests.log": {
+      "path": "/workspace/.cloud-setup/pd-artifact-cleanup/tests.log",
+      "sha256": "450a56670f6e83e89ae5d5686a061567766b2309564108b26d4ff858b6193956",
+      "bytes": 9640
+    },
+    "check.log": {
+      "path": "/workspace/.cloud-setup/pd-artifact-cleanup/check.log",
+      "sha256": "a00be43df4de3efab5ec4c714b49f3c3ba107644ed86db881590f3154396ff99",
+      "bytes": 115761
+    },
+    "lint.log": {
+      "path": "/workspace/.cloud-setup/pd-artifact-cleanup/lint.log",
+      "sha256": "2940ec5ab8c0c029de7e054749de7d6c30dd95de575095b6d9fecaf1c07826f8",
+      "bytes": 2164
+    },
+    "format.log": {
+      "path": "/workspace/.cloud-setup/pd-artifact-cleanup/format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "source-review.json": {
+      "path": "/workspace/.cloud-setup/pd-artifact-cleanup/source-review.json",
+      "sha256": "f605c7ace6a7f995e8bff5bf0b23d536156cac5b88cf7e1e22c1500fbd065bc5",
+      "bytes": 2520
+    }
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "publication": "Actual hook, fresh locked pre-push build, normal push/remote verification and saved draft are recorded after execution in /workspace/.cloud-setup/pd-artifact-cleanup/final-handoff.json.",
+  "limits": [
+    "Original Go tests and package obligations remain; detached custom oracles are recoverable from the immutable archive, not current validation.",
+    "No full Go suites, live multi-node TiKV/TiFlash, production TLS or measured performance claim.",
+    "Retiring the mock profiler removes one automatic example target. Detached harness/doc retirement does not reduce default Cargo test count. Active useful test functions remain."
+  ]
+}

@@ -20,7 +20,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use prost::Message;
-use tidb_pd_client::{PdClient, TSO_PATH};
+use tidb_pd_client::PdClient;
 use tidb_proto::pdpb;
 use tidb_proto::test_pd_server::{Pd, PdServer};
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
@@ -412,8 +412,7 @@ fn timestamp(physical: i64, logical: i64) -> pdpb::TsoResponse {
 }
 
 #[test]
-fn tso_wire_keeps_the_pinned_stream_path_and_field_numbers() {
-    assert_eq!(TSO_PATH, "/pdpb.PD/Tso");
+fn tso_wire_keeps_the_pinned_field_numbers() {
     let request = pdpb::TsoRequest {
         header: Some(pdpb::RequestHeader {
             cluster_id: CLUSTER_ID,

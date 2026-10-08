@@ -1,10 +1,12 @@
 # Structural parity audit: current evidence
 
+Latest cleanup: [PD artifact retirement](pd-artifact-cleanup-validation.json) removes nine unused method-path constants/eight self-comparison assertions, the obsolete loopback profiler, detached historical transport probes and nine completed plans. Actual wire/socket/TLS/lifecycle coverage remains. Historical source obligations and immutable archives are retained; no findings close.
+
 Latest connected repair: [PD mode/group/member scheduling](pd-mode-scheduling-validation.json) separates stalled mode RPCs from group refresh, cancels obsolete group lookups after provider changes and wakes membership on failed mode checks in both clients. All 159 grouped tests pass. P03/P06 remain partial; no whole-package closure.
 
 Previous connected repair: [independent PD/TSO observations](pd-independent-observation-validation.json) fixes failed-mode group refresh, native member/TSO scheduling and missing adapter periodic membership as one lifecycle batch. The former direct-client helper is removed after migration. P03/P06 remain partial; no broad or complete-package closure.
 
-Latest cleanup: [PD seed and historical-plan retirement](pd-seed-cleanup-validation.json) removes three unconsumed classifiers, their private two-case harness and five superseded PD documents. The former util/engine acceptance claim is withdrawn; Go source/test obligations and active transport coverage remain. No findings close.
+Previous cleanup: [PD seed and historical-plan retirement](pd-seed-cleanup-validation.json) removes three unconsumed classifiers, their private two-case harness and five superseded PD documents. The former util/engine acceptance claim is withdrawn; Go source/test obligations and active transport coverage remain. No findings close.
 
 Previous cleanup: [wire seed retirement](wire-seed-cleanup-validation.json) removes unused stream and transport wrappers, six redundant/disconnected cases and an always-skipped benchmark. The unique partition test stays in the request-builder suite. Historical VM performance evidence is archived in Git; no findings or package obligations close.
 
@@ -130,7 +132,7 @@ The repeated milestone summaries and stale count tables formerly copied into thi
 - [partition shortcut removal](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/partition-owner-removal-execplan.md)
 - [IMPORT shortcut removal](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/import-shortcut-removal-execplan.md)
 - [cluster fixture removal](https://github.com/pingcap/tidb/blob/8d92a6bab3d28e7c47b34dadecfc064273f1edf9/rust/docs/cluster-fixture-removal-execplan.md)
-- [PD preface ownership experiment](pd-grpcutil-contract/h2-preface-review.md)
+- [PD preface ownership experiment](https://github.com/pingcap/tidb/blob/5826ee36e1bc08f66bd20fa9f471256cb8b20f05/rust/docs/parity/current-audit/pd-grpcutil-contract/h2-preface-review.md)
 - [full-picture repair sequence](repair-sequence.md)
 - [PD deadline owner repair](pd-deadline-owner-repair.md)
 - [PD connection-context repair](pd-connectionctx-owner-repair.md)

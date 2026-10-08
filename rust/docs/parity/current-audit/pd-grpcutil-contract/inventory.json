@@ -5,7 +5,7 @@
     "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
     "package": "pkg/utils/grpcutil"
   },
-  "status": "complete source-boundary review; adapter/implementation/acceptance open; not a transcreation claim",
+  "status": "Historical 2026-10-01 snapshot only; retired runners/results are available in the immutable archive linked by README.md. Reinventory current sources before acceptance.",
   "package_files": [
     "pkg/utils/grpcutil/grpcutil.go",
     "pkg/utils/grpcutil/grpcutil_test.go"

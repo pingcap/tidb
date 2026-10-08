@@ -52,25 +52,6 @@ use worker::{bootstrap_members, run_worker};
 
 pub use failover::is_unimplemented;
 
-/// Exact method paths generated from the checked source projection.
-pub const GET_MEMBERS_PATH: &str = "/pdpb.PD/GetMembers";
-/// Exact key lookup method path.
-pub const GET_REGION_PATH: &str = "/pdpb.PD/GetRegion";
-/// Exact previous-region lookup method path.
-pub const GET_PREV_REGION_PATH: &str = "/pdpb.PD/GetPrevRegion";
-/// Exact region-by-ID method path.
-pub const GET_REGION_BY_ID_PATH: &str = "/pdpb.PD/GetRegionByID";
-/// Exact deprecated contiguous scan method path.
-pub const SCAN_REGIONS_PATH: &str = "/pdpb.PD/ScanRegions";
-/// Exact ordered batch scan method path.
-pub const BATCH_SCAN_REGIONS_PATH: &str = "/pdpb.PD/BatchScanRegions";
-/// Exact store lookup method path.
-pub const GET_STORE_PATH: &str = "/pdpb.PD/GetStore";
-/// Exact legacy PD timestamp-oracle stream method path.
-pub const TSO_PATH: &str = "/pdpb.PD/Tso";
-/// Exact GC-state lookup method path.
-pub const GET_GC_STATE_PATH: &str = "/pdpb.PD/GetGCState";
-
 enum WorkerCommand {
     RefreshMembers {
         reply: mpsc::Sender<Result<PdMemberSet, PdClientError>>,
