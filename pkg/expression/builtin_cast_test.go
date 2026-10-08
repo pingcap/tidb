@@ -941,13 +941,13 @@ func TestCastFuncSig(t *testing.T) {
 			sig = &builtinCastRealAsTimeSig{timeFunc}
 		case 1:
 			sig = &builtinCastDecimalAsTimeSig{timeFunc}
-		case 2:
+		case 2, 3:
 			sig = &builtinCastIntAsTimeSig{timeFunc}
-		case 3:
-			sig = &builtinCastStringAsTimeSig{timeFunc}
 		case 4:
-			sig = &builtinCastDurationAsTimeSig{timeFunc}
+			sig = &builtinCastStringAsTimeSig{timeFunc}
 		case 5:
+			sig = &builtinCastDurationAsTimeSig{timeFunc}
+		case 6:
 			sig = &builtinCastTimeAsTimeSig{timeFunc}
 		}
 		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
