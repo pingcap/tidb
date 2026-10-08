@@ -148,6 +148,46 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 }
 
+func TestSchedulerScheduleSubtasksToNodesWithEnoughSlots(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	schExt := schmock.NewMockExtension(ctrl)
+	task := proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:            1,
+			State:         proto.TaskStatePending,
+			Step:          proto.StepInit,
+			RequiredSlots: 3,
+			MaxNodeCount:  1,
+		},
+	}
+	sch := createScheduler(&task, true, taskMgr, ctrl)
+	sch.Extension = schExt
+	sch.slotMgr.updateCapacity(3)
+	sch.nodeMgr.nodes.Store(&[]proto.ManagedNode{{ID: "n1"}, {ID: "n2"}, {ID: "n3"}})
+
+	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, execIDs []string, _ proto.Step) ([][]byte, error) {
+			require.Len(t, execIDs, 1)
+			return [][]byte{[]byte(`{}`), []byte(`{}`)}, nil
+		})
+	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"n1": 3, "n2": 1}, nil)
+	var execIDs []string
+	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *proto.Task, _ proto.TaskState, _ proto.Step, subtasks []*proto.Subtask) error {
+			for _, st := range subtasks {
+				execIDs = append(execIDs, st.ExecID)
+			}
+			return nil
+		})
+	require.NoError(t, sch.Switch2NextStep())
+	require.Equal(t, []string{"n3", "n3"}, execIDs)
+	require.True(t, ctrl.Satisfied())
+}
+
 func TestGetEligibleNodes(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
