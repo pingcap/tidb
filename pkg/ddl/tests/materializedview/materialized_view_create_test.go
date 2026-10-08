@@ -211,6 +211,8 @@ func TestCreateMaterializedViewRollbackUpdateSchemaVersionFailureRetries(t *test
 	require.True(t, ok)
 	baseTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_create_mv_rollback_retry"))
 	require.NoError(t, err)
+	mlogTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("$mlog$t_create_mv_rollback_retry"))
+	require.NoError(t, err)
 
 	const buildErrFP = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr"
 	require.NoError(t, failpoint.Enable(buildErrFP, "return"))
@@ -265,22 +267,27 @@ func TestCreateMaterializedViewRollbackUpdateSchemaVersionFailureRetries(t *test
 		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW rollback retry")
 	}
 	require.NotZero(t, mviewID)
-	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mviewID)).Check(testkit.Rows("0"))
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mviewID)).Check(testkit.Rows("1"))
 	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
 		metaMut := meta.NewMutator(txn)
 		persistedMView, err := metaMut.GetTable(dbInfo.ID, mviewID)
 		require.NoError(t, err)
-		require.Nil(t, persistedMView)
+		require.NotNil(t, persistedMView)
 		persistedBase, err := metaMut.GetTable(dbInfo.ID, baseTable.Meta().ID)
 		require.NoError(t, err)
 		require.NotNil(t, persistedBase.MaterializedViewBase)
-		require.NotContains(t, persistedBase.MaterializedViewBase.MViewIDs, mviewID)
+		require.Contains(t, persistedBase.MaterializedViewBase.MViewIDs, mviewID)
+		persistedMLog, err := metaMut.GetTable(dbInfo.ID, mlogTable.Meta().ID)
+		require.NoError(t, err)
+		require.NotNil(t, persistedMLog.MaterializedViewLog)
+		require.Contains(t, persistedMLog.MaterializedViewLog.DependentMViewIDs, mviewID)
 		return nil
 	}))
 
 	releaseRetry()
 	require.Error(t, <-ddlErrCh)
 	tk.MustQuery("show tables like 'mv_create_rollback_retry'").Check(testkit.Rows())
+	tk.MustExec("drop materialized view log on t_create_mv_rollback_retry")
 }
 
 func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {

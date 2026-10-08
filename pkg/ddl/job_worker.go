@@ -69,33 +69,6 @@ var (
 	mockDDLErrOnce = int64(0)
 )
 
-// rollbackTxnError marks an error that must roll back the whole DDL transaction
-// before the job error is persisted.
-type rollbackTxnError struct {
-	cause error
-}
-
-func (e *rollbackTxnError) Error() string {
-	return e.cause.Error()
-}
-
-func (e *rollbackTxnError) Unwrap() error {
-	return e.cause
-}
-
-func (e *rollbackTxnError) Cause() error {
-	return e.cause
-}
-
-func newRollbackTxnError(err error) error {
-	return &rollbackTxnError{cause: err}
-}
-
-func isRollbackTxnError(err error) bool {
-	var target *rollbackTxnError
-	return goerrors.As(err, &target)
-}
-
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
 func GetWaitTimeWhenErrorOccurred() time.Duration {
 	return time.Duration(atomic.LoadInt64(&WaitTimeWhenErrorOccurred))
@@ -135,6 +108,12 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
+	// mustRollbackTxnOnError is set before a DDL step executes an internal SQL
+	// statement that can modify state in the DDL transaction. StmtCommit or
+	// StmtRollback can move prior metadata mutations out of the current statement
+	// buffer, so any error after that must discard the whole DDL transaction.
+	// Currently, only MView/MLog DDL paths use this mechanism.
+	mustRollbackTxnOnError bool
 	// DXF propagates add-index reorganization RU v2 through recordDistTaskRU ->
 	// reorgCtx.ru -> reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
 	// accountPendingReorgRU -> Job.RU, reading the workload from the task meta.
@@ -699,6 +678,7 @@ func (w *worker) transitOneJobStep(
 	jobCtx *jobContext,
 	jobW *model.JobW,
 ) (int64, error) {
+	jobCtx.mustRollbackTxnOnError = false
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.transitOneJobStep")
 	defer r.End()
@@ -793,9 +773,10 @@ func (w *worker) transitOneJobStep(
 	}
 
 	if runJobErr != nil {
-		if isRollbackTxnError(runJobErr) {
-			// rollbackTxnError always discards the mutations from this job step,
-			// including ones made while the job is already rolling back.
+		if jobCtx.mustRollbackTxnOnError {
+			// Internal SQL can commit or roll back its own statement buffer.
+			// Discard all mutations from this job step, including ones made while
+			// the job is already rolling back.
 			w.sess.Rollback()
 			txn, txnErr := w.prepareTxn(job)
 			if txnErr != nil {

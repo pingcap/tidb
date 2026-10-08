@@ -255,7 +255,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		// cleanup must roll back DROP DATABASE on failure. Refresh alerts are
 		// advisory state, so retaining stale alerts is preferable to blocking DDL.
 		if err = w.deleteCreateMaterializedViewRefreshInfos(jobCtx, mviewIDs); err != nil {
-			return ver, newRollbackTxnError(errors.Trace(err))
+			return ver, errors.Trace(err)
 		}
 		if err = w.deleteCreateMaterializedViewRefreshAlerts(jobCtx, mviewIDs); err != nil {
 			logutil.DDLLogger().Warn(
@@ -265,7 +265,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			)
 		}
 		if err = w.deleteMaterializedViewLogPurgeInfos(jobCtx, mlogIDs); err != nil {
-			return ver, newRollbackTxnError(errors.Trace(err))
+			return ver, errors.Trace(err)
 		}
 
 		// Split tables into multiple jobs to avoid too big records in the notifier.
