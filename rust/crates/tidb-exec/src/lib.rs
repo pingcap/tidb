@@ -52,6 +52,7 @@ pub mod cluster_stats_write;
 pub mod cluster_sysvar_load;
 pub mod cluster_sysvar_write;
 pub mod cluster_table_storage;
+pub mod tiflash_compute;
 pub mod tiflash_mpp_scan;
 pub mod tiflash_replica_manager;
 pub mod cop_scan;

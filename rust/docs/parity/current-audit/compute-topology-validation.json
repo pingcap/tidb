@@ -1,0 +1,283 @@
+{
+  "date": "2026-10-08",
+  "baseline": "e648074e15f4b05e8204aa5c6162eecd6972c366",
+  "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+  "native_head": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+  "native_changed": false,
+  "findings": [
+    "M01",
+    "M04",
+    "M05",
+    "N03"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "scope": "B07 topology owner, B05 startup/session policy and B01 shared-fleet MPP task fanout. M05 advances from absent owner to partial integration; broader MPP/cache/recovery obligations remain.",
+  "package_boundary": {
+    "go_package": "pkg/util/tiflashcompute",
+    "source_inventory": [
+      {
+        "path": "/workspace/.cloud-setup/go-master/pkg/util/tiflashcompute/BUILD.bazel",
+        "sha256": "5f6eecd9bc267eab94cf9d3628bbbf989e742a4b8e22f880de92593a371ba3c4",
+        "bytes": 528
+      },
+      {
+        "path": "/workspace/.cloud-setup/go-master/pkg/util/tiflashcompute/dispatch_policy.go",
+        "sha256": "e0fa637c302bfcf7106c7e2d825474cac7c182a22cdabfc7e6aa0ce8df73b872",
+        "bytes": 2045
+      },
+      {
+        "path": "/workspace/.cloud-setup/go-master/pkg/util/tiflashcompute/topo_fetcher.go",
+        "sha256": "64f7370c7288b832049815be3ae5d6babe5f01527857fb97eb672af224fe87d3",
+        "bytes": 11769
+      }
+    ],
+    "rust_owner": "rust/crates/tidb-exec/src/tiflash_compute.rs",
+    "mapping": {
+      "dispatch_policy.go": "DispatchPolicy",
+      "topo_fetcher.go": "TopoFetcher, global publication, MockTopoFetcher, AwsTopoFetcher, TestTopoFetcher, RecoveryType and HTTP/cache protocols",
+      "BUILD.bazel": "Existing tidb-exec Cargo target and dependencies; no Bazel or dependency changes"
+    },
+    "original_package_tests_fixtures_generated_platform_inputs": [],
+    "external_caller_obligations": [
+      "pkg/store/copr/batch_coprocessor_test.go::TestDispatchPolicyRR and TestTopoFetcherBackoff",
+      "pkg/executor/test/tiflashtest integration scenarios",
+      "pkg/executor/internal/mpp recovery coordinator and result holder"
+    ],
+    "acceptance": "Complete package source implementation with behavioral checks and live Go oracle. Full calling packages, platform sweeps and distributed integration are not accepted."
+  },
+  "changes": [
+    "Publish one process topology owner before either storage runner; fail unsupported GCP and missing identity early.",
+    "Preserve mock/AWS/test, fixed/nonfixed cache, signed monotonic timestamps, HTTP/JSON errors and recovery query contract.",
+    "Validate exact session/global policy and carry it through statement and pushdown snapshots.",
+    "Discover compute rather than classic nodes in disaggregated full scans; probe via existing fleet and group clipped regions by Go rendezvous hash or round robin.",
+    "Share one gather across node tasks and close all admitted streams on failure/drop; preserve canonical region leases, memory and SQL errors."
+  ],
+  "regressions": {
+    "command": "cd rust && cargo test --locked -p tidb-session --lib compute_topology_batch -- --test-threads=1",
+    "passed": 1,
+    "failed": 1,
+    "behavior": "Unfixed sysvar validation accepted uppercase/unknown policy; statement propagation baseline already passed after producer wiring. This is a behavioral baseline, not a claim all code was reverted.",
+    "log": {
+      "path": "/workspace/.cloud-setup/compute-topology-batch/before.log",
+      "sha256": "a250d23f6371dd73e4c56942852c4026d772e1c88210921d977f45fcf08c193c",
+      "bytes": 101100
+    }
+  },
+  "distinct_rust_cases": 65,
+  "validation": [
+    {
+      "command": "cd rust && cargo test --locked -p tidb-exec --lib tiflash_ -- --test-threads=1",
+      "passed": 62,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/compute-topology-batch/mpp.log",
+        "sha256": "72741ccb839a4d0d2960eb36224ebef8609df839c5e71bdefa70f80a11dbefd4",
+        "bytes": 120444
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-session --lib compute_topology_batch -- --test-threads=1",
+      "passed": 2,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/compute-topology-batch/after.log",
+        "sha256": "b83857a2cb4e1be16bf93431ad5ac672eea90cde266746208a9f5d07c423c42a",
+        "bytes": 99769
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib compute_topology_batch -- --test-threads=1",
+      "passed": 1,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/compute-topology-batch/startup.log",
+        "sha256": "2ee2c64eace3e010533a810a22f04092e8e91531f8baf558f5b8f05047a9de2a",
+        "bytes": 113539
+      }
+    }
+  ],
+  "go_oracle": {
+    "command": "cd /workspace/.cloud-setup/go-master && GOMAXPROCS=1 go run /workspace/.cloud-setup/compute-topology-batch/oracle.go",
+    "exit": 0,
+    "result": {
+      "calls": [
+        {
+          "error": "",
+          "topology": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "error": "",
+          "topology": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "error": "",
+          "topology": [
+            "scaled"
+          ]
+        },
+        {
+          "error": "[util:1815]Internal : parse timestamp of tiflash_compute topology failed",
+          "topology": null
+        },
+        {
+          "error": "",
+          "topology": null
+        }
+      ],
+      "paths": [
+        "/resume-and-get-topology?tidbclusterid=a+b%26c",
+        "/resume-and-get-topology?tidbclusterid=a+b%26c",
+        "/resume-and-get-topology?cn_cnt=2&recovery=MemLimit&tidbclusterid=a+b%26c",
+        "/resume-and-get-topology?tidbclusterid=a+b%26c",
+        "/resume-and-get-topology?tidbclusterid=a+b%26c"
+      ],
+      "policies": [
+        {
+          "error": "",
+          "input": "consistent_hash",
+          "policy": "consistent_hash"
+        },
+        {
+          "error": "",
+          "input": "round_robin",
+          "policy": "round_robin"
+        },
+        {
+          "error": "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got ROUND_ROBIN",
+          "input": "ROUND_ROBIN",
+          "policy": "invalid"
+        },
+        {
+          "error": "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got ",
+          "input": "",
+          "policy": "invalid"
+        }
+      ]
+    },
+    "source": {
+      "path": "/workspace/.cloud-setup/compute-topology-batch/oracle.go",
+      "sha256": "c9227c465f258a7fbb92ab2bb08f8a8a331122308f1f2d0daa068fccb58fae1d",
+      "bytes": 1328
+    },
+    "log": {
+      "path": "/workspace/.cloud-setup/compute-topology-batch/go-oracle.log",
+      "sha256": "f94e11c9e889c1a26e8cb36930572ef51dc3848d3b93e8d04daa54b0c81804e7",
+      "bytes": 5605
+    }
+  },
+  "check": {
+    "command": "cd rust && cargo check --locked -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/compute-topology-batch/check.log",
+      "sha256": "3806358b9ca9f06b1d267291b0b84afb9c0bd14aed64a7e6654880dc86e45097",
+      "bytes": 131753
+    }
+  },
+  "lint": {
+    "command": "make lint",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/compute-topology-batch/lint.log",
+      "sha256": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4",
+      "bytes": 2164
+    }
+  },
+  "build": {
+    "command": "cd rust && cargo build --locked -p tidb-server",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/compute-topology-batch/build.log",
+      "sha256": "00a513af5edefebfbfd35a1f0f56174b9825a70fd0346584241a3658cc877872",
+      "bytes": 109849
+    }
+  },
+  "live": {
+    "command": "source /workspace/.cloud-setup/env.sh && PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/compute-topology-batch/live.py",
+    "assertions": 13,
+    "exit": 0,
+    "receipt": {
+      "path": "/workspace/.cloud-setup/compute-topology-batch/live.json",
+      "sha256": "733f9518b817c010dbdfac4259a2c5e63ebb3d648a7255e44dd1d63ee4f944df",
+      "bytes": 1195
+    },
+    "binary_sha256": "a1e5d5935ef6089ea1d2d52bb79afb7a78a18b7bae4bdce213493f9cf3e711ee"
+  },
+  "self_review": {
+    "sources": [
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-exec/src/lib.rs",
+        "sha256": "5d2b0eba78ca5534ba575dd388d8a2e4a0a8e02c619fc8ff07883ee0b4380206",
+        "bytes": 4131
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+        "sha256": "46f436e0b73907560333e32eba9b16e1306719663948a1d1521b53e928f73b13",
+        "bytes": 88265
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-executor/src/remote_scan.rs",
+        "sha256": "ad34021c347e599d2ca36cc7594a0a1839bb403184d4198ba6e3bc8b13e55358",
+        "bytes": 153502
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-executor/src/stmt_context.rs",
+        "sha256": "ba3a72f5675e4515e60a1e7eeb1bba62078747afb6655fbb23c89c489c677cc4",
+        "bytes": 204072
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-server/src/lib.rs",
+        "sha256": "1a8e4698793937f2f846987af5ba8c82839bf81c5c3eafdadae9d3fa5c3b88cd",
+        "bytes": 19745
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-session/src/stmt_ctx.rs",
+        "sha256": "c14757ab3e53533508cc8f6be813169acc28c983f38c658fbfb038e83cbda04e",
+        "bytes": 106112
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-session/src/sysvar.rs",
+        "sha256": "18b75f99a9b446e83ede5cfb5b03c485771cd6f71703b9ba9d82e2686b2b6ec3",
+        "bytes": 146648
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-session/src/tests_core/lifecycle.rs",
+        "sha256": "434c36e5a3ce0a065facfe75acb2d02ce83a79aada796dbcb04d4f08689ee25f",
+        "bytes": 22164
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-exec/src/tiflash_compute.rs",
+        "sha256": "0a147226e855ad6d62f68adc689f08e7b164a44a3f9325d182dfc26346d2cabb",
+        "bytes": 23131
+      }
+    ],
+    "checks": [
+      "Cache only mutates after valid JSON/timestamp; stale replies cannot downgrade it.",
+      "Unsupported provider modes fail before SQL/storage admission.",
+      "HTTP 1815 identity and statement KILL identity cross the SQL boundary.",
+      "Probes/tasks borrow the existing fleet; no independent MPP transport runtime.",
+      "All full-scan tasks share one gather, retain unique task IDs and close outstanding streams on failure.",
+      "Failed-node cooldown, PD cache and coordinator recovery are explicit residuals."
+    ]
+  },
+  "publication": "Actual hook, fresh locked pre-push build and remote verification are finalized externally in /workspace/.cloud-setup/compute-topology-batch/final-handoff.json. No hook bypass or force push.",
+  "limits": [
+    "No full copr, executor/internal/mpp, planner/core or config package acceptance; no exhaustive re-audit of54 broader findings.",
+    "Automatic memory-limit query retry/result buffering is not composed; only the complete topology recovery API is implemented/tested.",
+    "Failed-node prober cooldown/lifecycle and canonical PD compute-store cache/invalidation remain unresolved.",
+    "MPP still refuses Selection, TopN, aggregation, index and ordered scans; complete physical fragments remain open.",
+    "No live multi-node TiKV/TiFlash, live autoscaler service, broad platform suite or benchmark validation. Generated RPC fixtures and retained transport tests do not establish distributed production behavior."
+  ]
+}

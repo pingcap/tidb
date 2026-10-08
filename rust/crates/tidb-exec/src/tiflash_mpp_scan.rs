@@ -17,7 +17,11 @@
 //! single-fragment table scan the planner builds for a forced TiFlash read
 //! (TableReader -> ExchangeSender(PassThrough) -> TableScan, mpp version 3).
 //!
-//! The flow per open scan is Go's dispatch choreography: pick a live TiFlash
+//! Disaggregated scans fetch compute topology, probe availability and group
+//! regions into one task per node using the validated session policy. All root
+//! tasks retain one gather and the existing cancellation/response lifetime.
+//!
+//! The classic flow per open scan is Go's dispatch choreography: pick a live TiFlash
 //! store (`GetAllStores` + the `engine=tiflash` label, `addTiFlashStoreInfo`),
 //! collect the table's record-range regions from PD
 //! (`constructMPPTasksImpl`'s region split), marshal the tree-form DAG with
@@ -152,7 +156,6 @@ impl TiFlashMppScanSource {
         if request.index.is_some() {
             return Err(refuse("index scans have no TiFlash path".to_owned()));
         }
-        let address = self.tiflash_store_address().map_err(refuse)?;
         let region_lease = self
             .regions
             .open_lease()
@@ -166,6 +169,166 @@ impl TiFlashMppScanSource {
             ));
         }
 
+        let config = tidb_config::config_tree::config::get_global_config();
+        let tasks = if config.disaggregated_tiflash {
+            let policy = crate::tiflash_compute::DispatchPolicy::parse(
+                &request.statement.tiflash_compute_dispatch_policy,
+            )
+            .map_err(refuse)?;
+            let stores = self
+                .compute_addresses(config.use_auto_scaler, &request.statement.memory)
+                .map_err(|error| {
+                    if request.statement.memory.check().is_err() {
+                        mpp_open_error(&request.statement.memory, error.message)
+                    } else {
+                        PushdownScannerError::Backend(StorageError::Sql(
+                            tidb_executor::MysqlError::new(error.code, error.message),
+                        ))
+                    }
+                })?;
+            compute_region_tasks(
+                regions,
+                &stores,
+                policy,
+                tidb_util::fastrand::uint64_n(stores.len() as u64) as usize,
+            )
+            .map_err(refuse)?
+        } else {
+            vec![(self.tiflash_store_address().map_err(refuse)?, regions)]
+        };
+        let (mut meta, receiver_meta) =
+            mpp_task_metadata(request.snapshot_ts, &request.statement, &tasks[0].0);
+        let mut streams = MppTaskStreams {
+            streams: std::collections::VecDeque::new(),
+            returned: 0,
+        };
+        for (index, (address, regions)) in tasks.into_iter().enumerate() {
+            if index != 0 {
+                meta.task_id = request.statement.mpp_query_info.alloc_task_id();
+            }
+            meta.address.clone_from(&address);
+            streams.streams.push_back(
+                self.open_task(
+                    request,
+                    address,
+                    regions,
+                    region_lease
+                        .open_lease()
+                        .map_err(|error| refuse(error.to_string()))?,
+                    meta.clone(),
+                    receiver_meta.clone(),
+                )?,
+            );
+        }
+        Ok(Box::new(streams))
+    }
+
+    fn compute_addresses(
+        &self,
+        auto_scaler: bool,
+        memory: &tidb_executor::StatementMemory,
+    ) -> Result<Vec<String>, crate::tiflash_compute::TopologyError> {
+        let mut budget = RegionBackoffBudget::new(std::time::Duration::from_secs(20));
+        loop {
+            mpp_memory_error(memory).map_err(|error| error.to_string())?;
+            let stores = if auto_scaler {
+                crate::tiflash_compute::global_topo_fetcher()
+                    .ok_or_else(|| {
+                        "TiFlash compute topology fetcher is not initialized".to_owned()
+                    })?
+                    .fetch_and_get_topo()?
+            } else {
+                self.pd
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .all_stores()
+                    .map_err(|error| error.to_string())?
+                    .into_iter()
+                    .filter(|store| {
+                        store.state == PdStoreState::Up
+                            && store
+                                .labels
+                                .iter()
+                                .any(|(key, value)| key == "engine" && value == "tiflash_compute")
+                    })
+                    .map(|store| store.address)
+                    .collect()
+            };
+            let was_empty = stores.is_empty();
+            let transport = self.transport.lock().expect("MPP transport lock").clone();
+            let alive = self.runtime.block_on(async {
+                let mut probes = tokio::task::JoinSet::new();
+                for address in stores {
+                    let transport = transport.clone();
+                    let memory = memory.clone();
+                    probes.spawn(async move {
+                        let Ok(mut connection) =
+                            connect_mpp_client(&address, &memory, &transport).await
+                        else {
+                            return None;
+                        };
+                        let response = mpp_setup(
+                            Some(&memory),
+                            Some(tidb_txnkv::DETECT_TIMEOUT_LIMIT),
+                            "detect compute node",
+                            Some(&connection.route),
+                            connection
+                                .client
+                                .is_alive(tidb_proto::mpp::IsAliveRequest::default()),
+                        )
+                        .await;
+                        response
+                            .is_ok_and(|response| response.into_inner().available)
+                            .then_some(address)
+                    });
+                }
+                let mut alive = Vec::new();
+                while let Some(result) = probes.join_next().await {
+                    mpp_memory_error(memory).map_err(|error| error.to_string())?;
+                    if let Some(address) = result.map_err(|error| error.to_string())? {
+                        alive.push(address);
+                    }
+                }
+                Ok::<_, String>(alive)
+            })?;
+            if !alive.is_empty() {
+                return Ok(alive);
+            }
+            let error = if was_empty {
+                "Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty"
+            } else {
+                "Cannot find proper topo to dispatch MPPTask: detect aliveness failed, no alive ComputeNode"
+            };
+            let delay = budget
+                .next_delay(RegionBackoffKind::TiFlashRpc)
+                .map_err(|_| error.to_owned())?;
+            let waited = self.runtime.block_on(mpp_setup(
+                Some(memory),
+                None,
+                "compute topology retry",
+                None,
+                async {
+                    tokio::time::sleep(delay).await;
+                    Ok(())
+                },
+            ));
+            budget.finish_wait(waited.is_ok());
+            waited.map_err(|error| error.to_string())?;
+        }
+    }
+
+    fn open_task(
+        &self,
+        request: &PushdownScanRequest,
+        address: String,
+        regions: Vec<tidb_proto::coprocessor::RegionInfo>,
+        region_lease: BackgroundRegionCache<PdRegionLoader>,
+        meta: TaskMeta,
+        receiver_meta: TaskMeta,
+    ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
+        let refuse = |reason: String| {
+            PushdownScannerError::Backend(StorageError::Backend(format!("tiflash mpp: {reason}")))
+        };
         // Go `appendMPPDispatchReq`: the root fragment's DAG carries the
         // exchange sender over the scan, every column as the output offset,
         // and TypeChunk encoding for the coordinator's own fragment.
@@ -190,9 +353,6 @@ impl TiFlashMppScanSource {
         for column in &mut columns {
             column.collation = tidb_datatype::rewrite_new_collation_id_if_needed(column.collation);
         }
-        let (meta, receiver_meta) =
-            mpp_task_metadata(request.snapshot_ts, &request.statement, &address);
-
         let scan_executor = Executor {
             tp: Some(ExecType::TypeTableScan as i32),
             tbl_scan: Some(TableScan {
@@ -375,6 +535,90 @@ impl TiFlashMppScanSource {
             returned: 0,
             exhausted: false,
         }))
+    }
+}
+
+// Go buildBatchCopTasksConsistentHash groups clipped regions in encounter order.
+fn compute_region_tasks(
+    regions: Vec<tidb_proto::coprocessor::RegionInfo>,
+    stores: &[String],
+    policy: crate::tiflash_compute::DispatchPolicy,
+    start: usize,
+) -> Result<Vec<(String, Vec<tidb_proto::coprocessor::RegionInfo>)>, String> {
+    use crate::tiflash_compute::DispatchPolicy;
+    if stores.is_empty() {
+        return Err("tiflash_compute node is unavailable".into());
+    }
+    let mut tasks: Vec<(String, Vec<tidb_proto::coprocessor::RegionInfo>)> = Vec::new();
+    for (index, region) in regions.into_iter().enumerate() {
+        let address = match policy {
+            DispatchPolicy::RoundRobin => {
+                stores[(start % stores.len() + index % stores.len()) % stores.len()].clone()
+            }
+            DispatchPolicy::ConsistentHash => {
+                let mut max_hash = 0;
+                let mut selected = String::new();
+                for store in stores {
+                    let hash = tidb_executor::shuffle::murmur3_sum32(
+                        format!("{store}-{}", region.region_id).as_bytes(),
+                    );
+                    if hash > max_hash {
+                        max_hash = hash;
+                        selected.clone_from(store);
+                    }
+                }
+                selected
+            }
+            DispatchPolicy::Invalid => return Err("unexpected dispatch policy 2".into()),
+        };
+        if let Some((_, grouped)) = tasks.iter_mut().find(|(store, _)| store == &address) {
+            grouped.push(region);
+        } else {
+            tasks.push((address, vec![region]));
+        }
+    }
+    Ok(tasks)
+}
+
+// All task streams share one gather. Closing any incomplete task cancels that
+// gather; close the rest before reporting failure or releasing this reader.
+struct MppTaskStreams {
+    streams: std::collections::VecDeque<Box<dyn PushdownRowStream>>,
+    returned: u64,
+}
+impl PushdownRowStream for MppTaskStreams {
+    fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+        while let Some(stream) = self.streams.front_mut() {
+            match stream.next_row() {
+                Ok(Some(row)) => {
+                    self.returned += 1;
+                    return Ok(Some(row));
+                }
+                Ok(None) => {
+                    stream.close();
+                    self.streams.pop_front();
+                }
+                Err(error) => {
+                    self.close();
+                    return Err(error);
+                }
+            }
+        }
+        Ok(None)
+    }
+    fn close(&mut self) {
+        for stream in &mut self.streams {
+            stream.close();
+        }
+        self.streams.clear();
+    }
+    fn rows_returned(&self) -> u64 {
+        self.returned
+    }
+}
+impl Drop for MppTaskStreams {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -1930,5 +2174,104 @@ mod mpp_read_batch_tests {
         remote.memory.stmt_tracker().consume(17);
         assert_eq!(memory.bytes_consumed(), 17);
         remote.memory.stmt_tracker().consume(-17);
+    }
+}
+
+#[cfg(test)]
+mod compute_topology_batch_tests {
+    use super::*;
+    use crate::tiflash_compute::DispatchPolicy;
+
+    #[test]
+    fn compute_topology_batch_region_grouping() {
+        let regions: Vec<_> = (1..=8)
+            .map(|region_id| tidb_proto::coprocessor::RegionInfo {
+                region_id,
+                ranges: vec![tidb_proto::coprocessor::KeyRange {
+                    start: vec![region_id as u8],
+                    end: vec![region_id as u8 + 1],
+                }],
+                ..Default::default()
+            })
+            .collect();
+        let stores = vec!["a:3930".into(), "b:3930".into(), "c:3930".into()];
+        let rr =
+            compute_region_tasks(regions.clone(), &stores, DispatchPolicy::RoundRobin, 1).unwrap();
+        assert_eq!(
+            rr.iter()
+                .map(|(a, rs)| (
+                    a.as_str(),
+                    rs.iter().map(|r| r.region_id).collect::<Vec<_>>()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("b:3930", vec![1, 4, 7]),
+                ("c:3930", vec![2, 5, 8]),
+                ("a:3930", vec![3, 6])
+            ]
+        );
+        let hash =
+            compute_region_tasks(regions.clone(), &stores, DispatchPolicy::ConsistentHash, 0)
+                .unwrap();
+        let reordered = compute_region_tasks(
+            regions.clone(),
+            &stores.iter().rev().cloned().collect::<Vec<_>>(),
+            DispatchPolicy::ConsistentHash,
+            0,
+        )
+        .unwrap();
+        assert_eq!(hash, reordered);
+        let mut flattened = hash.into_iter().flat_map(|(_, rs)| rs).collect::<Vec<_>>();
+        flattened.sort_by_key(|r| r.region_id);
+        assert_eq!(flattened, regions);
+        assert!(
+            compute_region_tasks(regions.clone(), &[], DispatchPolicy::ConsistentHash, 0).is_err()
+        );
+        assert!(compute_region_tasks(regions, &stores, DispatchPolicy::Invalid, 0).is_err());
+    }
+
+    struct Rows {
+        rows: std::collections::VecDeque<Result<Vec<Datum>, StorageError>>,
+        closed: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl PushdownRowStream for Rows {
+        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+            self.rows.pop_front().transpose()
+        }
+        fn close(&mut self) {
+            self.closed
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn rows_returned(&self) -> u64 {
+            0
+        }
+    }
+    #[test]
+    fn compute_topology_batch_fanout_error_closes_all_tasks() {
+        let closed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut streams = MppTaskStreams {
+            streams: [
+                Box::new(Rows {
+                    rows: [Ok(vec![Datum::Int(1)])].into(),
+                    closed: closed.clone(),
+                }) as Box<dyn PushdownRowStream>,
+                Box::new(Rows {
+                    rows: [Err(StorageError::Backend("failed".into()))].into(),
+                    closed: closed.clone(),
+                }),
+                Box::new(Rows {
+                    rows: [Ok(vec![Datum::Int(3)])].into(),
+                    closed: closed.clone(),
+                }),
+            ]
+            .into(),
+            returned: 0,
+        };
+        assert_eq!(streams.next_row().unwrap(), Some(vec![Datum::Int(1)]));
+        assert!(streams.next_row().is_err());
+        assert_eq!(streams.rows_returned(), 1);
+        assert_eq!(closed.load(std::sync::atomic::Ordering::SeqCst), 3);
+        streams.close();
+        assert_eq!(closed.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 }

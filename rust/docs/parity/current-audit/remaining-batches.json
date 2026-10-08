@@ -6,8 +6,8 @@
     "tracked": 86,
     "repaired": 32,
     "unresolved": 54,
-    "open": 25,
-    "partial": 29
+    "open": 24,
+    "partial": 30
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
   "evidence_limit": "N04 KILL routing/receiving repaired; I03/N05 retain other table/service and full-package residuals. Other roots retain dated evidence.",
@@ -572,17 +572,16 @@
   },
   "latest_repair": {
     "date": "2026-10-08",
-    "receipt": "peer-host-validation.json",
+    "receipt": "compute-topology-validation.json",
     "findings": [
-      "N04",
-      "I03",
-      "N05"
+      "M01",
+      "M04",
+      "M05",
+      "N03"
     ],
-    "repaired": [
-      "N04"
-    ],
+    "repaired": [],
     "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
     "client_rust": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
-    "scope": "Shared incoming TiDB peer/status ownership: KILL and process snapshots, HTTP/gRPC, cluster TLS/CN and joined shutdown. N04 repaired; I03/N05 remain partial. No full package acceptance."
+    "scope": "B07 topology owner, B05 startup/session policy and B01 shared-fleet MPP task fanout. M05 advances from absent owner to partial integration; broader MPP/cache/recovery obligations remain."
   }
 }

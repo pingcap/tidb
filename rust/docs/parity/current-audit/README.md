@@ -4,14 +4,14 @@ Latest cleanup: [shared diagnostic digest lookup](digest-readers-validation.json
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [shared diagnostic digest lookup](digest-readers-validation.json) migrates transactions, deadlocks and lock waits to selected v1/v2 current/history readers and local-first projected peer fallback. I01/I03/O18/N05 remain partial. Counts remain86 tracked,32 repaired,54 unresolved (25 open,29 partial); T02/M04 remain partial. Other roots retain carried evidence.
+Latest connected repair: [compute topology and placement](compute-topology-validation.json) composes autoscaler startup/cache/protocols, session policy and shared-fleet full-scan task fanout. M05 is now partial; M01 remains open and M04/N03 remain partial. Counts are86 tracked,32 repaired,54 unresolved (24 open,30 partial). Other roots retain carried evidence.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../digest-readers-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../compute-topology-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](digest-readers-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](compute-topology-validation.json): exact source/log identities and verification limits.
 
 Current Go comparison: `1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `02880abbab5ed89a4dc603a4ddc7935853870ea6`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
@@ -30,6 +30,8 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 Earlier implementation: [shared read consistency](read-consistency-batch-validation.json). Prior partition reorganization safety remains in place until its durable owner exists.
 
 ## Historical evidence
+
+- [Shared diagnostic digest lookup](digest-readers-validation.json)
 
 - [Cluster diagnostic readers](cluster-diagnostics-validation.json)
 

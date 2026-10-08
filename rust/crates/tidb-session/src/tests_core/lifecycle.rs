@@ -604,3 +604,15 @@ fn mpp_retry_scope_keeps_closed_attempts_and_defers_stream_completion() {
     session.end_external_mpp_query_scope(true);
     assert!(!Arc::ptr_eq(&owner, &session.mpp_query_info));
 }
+
+#[test]
+fn compute_topology_batch_policy_reaches_statement_and_pushdown() {
+    let mut session = Session::new();
+    session.run("SET tiflash_compute_dispatch_policy = 'round_robin'").unwrap();
+    let context = session.statement_context(false);
+    let request = tidb_executor::remote_scan::PushdownStatementContext::from_stmt(&context);
+    assert_eq!(request.tiflash_compute_dispatch_policy, "round_robin");
+    session.run("SET tiflash_compute_dispatch_policy = 'consistent_hash'").unwrap();
+    assert_eq!(request.tiflash_compute_dispatch_policy, "round_robin");
+    assert_eq!(session.statement_context(false).tiflash_compute_dispatch_policy(), "consistent_hash");
+}

@@ -783,6 +783,10 @@ impl SysVarDef {
         original: &str,
         lookup: Option<&dyn Fn(&str) -> Option<String>>,
     ) -> Result<Validated, ValidationError> {
+        if self.name == "tiflash_compute_dispatch_policy" {
+            tidb_exec::tiflash_compute::DispatchPolicy::parse(&validated.value)
+                .map_err(ValidationError::Refused)?;
+        }
         if let Some(lookup) = lookup {
             let conflict = match self.name {
                 "tidb_snapshot" if !validated.value.is_empty() => lookup("tidb_read_staleness")
@@ -2417,6 +2421,19 @@ mod tests {
 
     /// Transcreated from Go `TestTiDBBatchPendingTiFlashCount`: unsigned
     /// values accept non-negative integers and reject decimal input.
+    #[test]
+    fn compute_topology_batch_dispatch_policy_rejects_invalid_names() {
+        let sv = get_sys_var("tiflash_compute_dispatch_policy").unwrap();
+        for valid in ["consistent_hash", "round_robin"] {
+            assert_eq!(sv.validate(valid).unwrap().value, valid);
+        }
+        for invalid in ["ROUND_ROBIN", " consistent_hash", "random", ""] {
+            assert_eq!(sv.validate(invalid), Err(ValidationError::Refused(format!(
+                "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got {invalid}"
+            ))));
+        }
+    }
+
     #[test]
     fn batch_pending_tiflash_count_validation_matches_go() {
         let sv = get_sys_var("tidb_batch_pending_tiflash_count").unwrap();

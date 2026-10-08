@@ -3,7 +3,7 @@
 The [JSON batch map](remaining-batches.json) owns the allocation below; the
 [finding register](structural-findings.json) owns dispositions and detailed
 residuals. Current counts are 86 tracked, 32 repaired and 54 unresolved
-(25 open, 29 partial). Read [README.md](README.md) for the latest repair and
+(24 open, 30 partial). Read [README.md](README.md) for the latest repair and
 validation receipts. Older maintenance summaries are preserved in the
 [planning archive](https://github.com/pingcap/tidb/blob/9a319a5d6d78593e623a9db8e8aed1f750380507/rust/docs/parity/current-audit/remaining-batches.md).
 
@@ -131,3 +131,5 @@ Cluster summary batch: B09 I01/I03/O18 and the B05 N05 receiver now share five s
 Cluster diagnostics batch: B09 I01/I03 and B05 N05 now share five transaction/deadlock/memory/index consumers and fresh peer metadata. Counts and parent dispositions remain unchanged; other tables/operators, global SQL-digest retrieval and complete packages remain open. See [receipt](cluster-diagnostics-validation.json).
 
 Digest-reader batch: B09 I01/I03/O18 and B05 N05 share current/history SQL-text lookup and projected fallback across transactions, deadlocks and lock waits. Direct v1-only lookup is retired. Counts remain unchanged; full expression/builtin integration, lazy projection-aware retrieval, remote predicates and broader packages remain open. See [receipt](digest-readers-validation.json).
+
+Compute topology batch: B07 M05 now has the process topology owner and compute task placement; B05 N03 supplies startup and exact session policy, and B01 M04 supplies the shared fleet. M05 advances to partial. Canonical PD compute-cache invalidation, failed-node cooldown, safe coordinator recovery and complete fragment generation remain. See [receipt](compute-topology-validation.json).

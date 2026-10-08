@@ -1224,6 +1224,7 @@ impl Session {
         let session_state = tidb_executor::StmtContextSessionState {
             mpp_query_info: Arc::clone(&self.mpp_query_info),
             mpp_server_id: (self.server_id_getter)(),
+            tiflash_compute_dispatch_policy: self.vars.get_system("tiflash_compute_dispatch_policy").unwrap_or_else(|_| "consistent_hash".into()),
             advisory_locks: self.advisory_locks.clone(),
             before_executor_first_run: Arc::clone(&self.executor_first_run_breakpoint),
             breakpoint_notify_func: self.breakpoint_notify_func(),

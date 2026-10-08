@@ -342,6 +342,8 @@ pub struct StmtContextSessionState {
     pub mpp_query_info: Arc<crate::MppQueryInfo>,
     /// Current domain/server-info identity used when building MPP executors.
     pub mpp_server_id: u64,
+    /// Go session TiFlashComputeDispatchPolicy, snapshotted per statement.
+    pub tiflash_compute_dispatch_policy: String,
     /// Session advisory-lock ownership.
     pub advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     /// Statement-attempt executor-first-run latch.
@@ -382,6 +384,7 @@ impl Default for StmtContextSessionState {
         Self {
             mpp_query_info: Arc::default(),
             mpp_server_id: 0,
+            tiflash_compute_dispatch_policy: "consistent_hash".into(),
             advisory_locks: Default::default(),
             before_executor_first_run: Arc::default(),
             breakpoint_notify_func: None,
@@ -410,6 +413,7 @@ impl Default for StmtContextSessionState {
 pub struct StmtContextData {
     mpp_query_info: Arc<crate::MppQueryInfo>,
     mpp_server_id: u64,
+    tiflash_compute_dispatch_policy: String,
     /// Go `StatementContext.CtxID`, unique for each newly created statement.
     context_id: u64,
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
@@ -1910,6 +1914,12 @@ impl StmtContext {
         Arc::clone(&self.mpp_query_info)
     }
 
+    /// The session compute placement policy captured for this statement.
+    #[must_use]
+    pub fn tiflash_compute_dispatch_policy(&self) -> &str {
+        &self.tiflash_compute_dispatch_policy
+    }
+
     /// The domain/server-info ID captured by the session for this executor.
     #[must_use]
     pub fn mpp_server_id(&self) -> u64 {
@@ -1937,6 +1947,7 @@ impl StmtContext {
         Self(Arc::new(StmtContextData {
             mpp_query_info: session.mpp_query_info,
             mpp_server_id: session.mpp_server_id,
+            tiflash_compute_dispatch_policy: session.tiflash_compute_dispatch_policy,
             client_error_count: 0,
             client_warning_count: 0,
             context_id: NEXT_STATEMENT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),

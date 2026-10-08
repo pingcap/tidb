@@ -25,13 +25,15 @@ one package, but it retains one inventory, integration decision and receipt.
 Partial maintenance never accepts the enclosing package.
 
 The [finding register](parity/current-audit/structural-findings.json) records
-86 findings: 32 repaired and 54 unresolved (25 open, 29 partial). The
+86 findings: 32 repaired and 54 unresolved (24 open, 30 partial). The
 [batch map](parity/current-audit/remaining-batches.md) assigns every unresolved
 ID once across B01–B10. Counts describe the known register, not exhaustive
 semantic coverage. [README.md](parity/current-audit/README.md) indexes current
 and historical evidence; consult each receipt's actual limits.
 
 ## Progress
+
+- [x] Compose the complete tiflashcompute source boundary and connect process startup, statement policy and compute-node full-scan placement through the shared MPP fleet. See [plan](compute-topology-execplan.md) and [receipt](parity/current-audit/compute-topology-validation.json). M05 remains partial for cache/prober/coordinator integration.
 
 - [x] Migrate transaction/deadlock/lock-wait SQL text to shared selected summary readers and projected peer fallback; retire direct v1-only lookup. See [batch plan](digest-readers-execplan.md) and [receipt](parity/current-audit/digest-readers-validation.json). I01/I03/O18/N05 retain broader obligations.
 
@@ -275,14 +277,12 @@ correctness regression useless.
 ## Outcomes & Retrospective
 
 
-The latest TSO batch consolidates retained stream and timestamp completion owners
-across native and TiDB callers. Native76 and adapter76 selected Rust tests pass,
-as do affected all-target checks and repository lint. Native publication and
-maintained synchronization are verified; the actual TiDB hook and postcommit
-publication outcomes are recorded in the external final handoff named by the
-[current receipt](parity/current-audit/tso-completion-validation.json). P03/P06
-remain partial and other54 roots retain prior evidence. No complete package,
-live distributed behavior or performance result is newly accepted.
+The compute topology batch implements the configured owner and its startup,
+session-policy and scan-placement consumers together. Sixty-five grouped Rust
+cases, the current Go topology oracle, live SQL/startup probes, affected checking
+and lint pass. The recorded missing-owner allegation is superseded;54 broad
+findings remain because full coordinator/cache/fragment obligations are separate.
+No live multi-node TiKV/TiFlash or benchmark result is claimed.
 
 Revision note: replace copied history with current Cloud instructions and the
 B01–B10 queue; retain exact earlier plans for evidence and recovery.

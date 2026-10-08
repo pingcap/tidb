@@ -163,6 +163,7 @@ pub use wire_status::{
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     tidb_util::traceevent::register_with_client_go();
     config.install_process_globals();
+    initialize_compute_topology(&config.global_config)?;
     tidb_util::cgmon::start_cgroup_monitor();
     let _cgroup_monitor_cleanup = CgroupMonitorCleanup;
     initialize_temp_dir(&config)?;
@@ -209,6 +210,21 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         );
     }
     run_cluster_session_node_with_spill(config, spill_storage, memory_arbitrator.arbitrator())
+}
+
+fn initialize_compute_topology(
+    config: &tidb_config::config_tree::config::Config,
+) -> Result<(), RunConfiguredNodeError> {
+    if config.disaggregated_tiflash && config.use_auto_scaler {
+        tidb_exec::tiflash_compute::init_global_topo_fetcher(
+            &config.tiflash_compute_auto_scaler_type,
+            &config.tiflash_compute_auto_scaler_addr,
+            &config.auto_scaler_cluster_id,
+            config.is_tiflash_compute_fixed_pool,
+        )
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    }
+    Ok(())
 }
 
 // The process, rather than an individual session or store, owns these workers.
@@ -446,3 +462,27 @@ mod skip_grant_startup_tests {
 }
 
 mod cluster_topology;
+
+#[cfg(test)]
+mod compute_topology_batch_tests {
+    #[test]
+    fn compute_topology_batch_startup_gates_and_errors() {
+        let mut config = tidb_config::config_tree::config::Config::default();
+        config.tiflash_compute_auto_scaler_type = "gcp".into();
+        config.auto_scaler_cluster_id = "cluster".into();
+        config.tiflash_compute_auto_scaler_addr = "unused:1234".into();
+        config.disaggregated_tiflash = false;
+        config.use_auto_scaler = true;
+        assert!(super::initialize_compute_topology(&config).is_ok());
+        config.disaggregated_tiflash = true;
+        assert!(super::initialize_compute_topology(&config)
+            .unwrap_err().to_string().contains("not implemented yet(gcp)"));
+        config.use_auto_scaler = false;
+        assert!(super::initialize_compute_topology(&config).is_ok());
+        config.use_auto_scaler = true;
+        config.tiflash_compute_auto_scaler_type = "aws".into();
+        config.auto_scaler_cluster_id.clear();
+        assert!(super::initialize_compute_topology(&config)
+            .unwrap_err().to_string().contains("addr is empty"));
+    }
+}
