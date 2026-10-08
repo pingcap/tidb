@@ -1,0 +1,353 @@
+{
+  "date": "2026-10-08",
+  "scope": "Connected MPP initial-receive/retry/cancellation maintenance, sharing existing storage error and native backoff ownership; not complete package transcreation.",
+  "before": {
+    "tidb": "ccf3a3eaaf89a53f685513b50cb935cf538ac2ce",
+    "native": "02880abbab5ed89a4dc603a4ddc7935853870ea6"
+  },
+  "go_master": "9e298833cf87fe957f146f32d1f1a273356a5d22",
+  "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "native_changed": false,
+  "findings_rechecked": [
+    "T02",
+    "M04"
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "other_unresolved_evidence": "54 carried; not freshly revalidated",
+  "repairs": [
+    "Share ordinary RPC status/timeout projection through StoreRpcChannel; preserve MPP-specific cancellation policy without closing the process fleet.",
+    "Receive exactly one initial packet in setup and retry eligible header/initial-receive failures before exposing results.",
+    "Consume native BO_TIFLASH_RPC through existing RegionBackoffBudget, including interrupted/completed waits, exhaustion and storage error mapping.",
+    "Initial EOF is successful empty completion without gather cancellation; no reconnect/replay after a delivered packet.",
+    "Retain/account the initial packet and preserve SQL KILL/OOM cleanup; use one setup/tail deadline/cancellation helper."
+  ],
+  "removed": [
+    "Duplicate tail-receive timeout/cancellation polling loop.",
+    "String-only setup-error boundary and redundant connect-stream error wrapping."
+  ],
+  "retained_tests": "Existing socket/TLS/generation/late-error/memory tests remain. Existing quota test moves its assertion to initial receive and retains typed SQL8175/cleanup checks. No meaningful Go coverage is deleted.",
+  "baseline": {
+    "command": "cargo test --locked -p tidb-exec --lib -- mpp_recovery_ --test-threads=1",
+    "passed": 1,
+    "failed": 3,
+    "ignored": 0,
+    "failed_behaviors": [
+      "header failure canceled immediately",
+      "first receive error escaped setup without retry",
+      "empty initial EOF still canceled on close"
+    ],
+    "preserved_behavior": "Remote Canceled terminates without fleet retirement",
+    "log": {
+      "path": "/workspace/.cloud-setup/mpp-recovery-batch/before.log",
+      "bytes": 87304,
+      "sha256": "ecafa9c62aa2f9004a48f82e1de20d4ecf4d840caf87600e5ce583cf50829770"
+    }
+  },
+  "diagnostics": [
+    {
+      "description": "Initial final compilation found missing exhaustive StorageDriverError mapping for new TiFlashRpc category; added the existing TiFlashServerTimeout mapping.",
+      "log": {
+        "path": "/workspace/.cloud-setup/mpp-recovery-batch/after.log",
+        "bytes": 7050,
+        "sha256": "4a43fabff366e3f2a1c546e3ffd97d295f9c6a6fc5961c803aba6db13cb8f4de"
+      }
+    }
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked -p tidb-exec --lib -- tiflash_mpp_scan:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "result": "passed",
+      "log": {
+        "path": "/workspace/.cloud-setup/mpp-recovery-batch/final-tests.log",
+        "bytes": 87270,
+        "sha256": "8bf5a263a45fe334057a3b6768310b8893193aa195758de124aec7d5511a78fe"
+      },
+      "passed": 33,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "command": "cargo test --locked -p tidb-txnkv --lib -- rpc::unary::tests:: retry::tests:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "result": "passed",
+      "log": {
+        "path": "/workspace/.cloud-setup/mpp-recovery-batch/transport-tests.log",
+        "bytes": 6384,
+        "sha256": "f5d592be092bd7aeb8d1dba71091c229ad2bc8050516c6d28d79eda1f74353fb"
+      },
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-txnkv -p tidb-server --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "result": "passed",
+      "log": {
+        "path": "/workspace/.cloud-setup/mpp-recovery-batch/check.log",
+        "bytes": 123273,
+        "sha256": "62e1f55fc43a78657e5cb9df6c01ce7441b18b69feffc07696f68e4c3720717c"
+      }
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "result": "passed",
+      "log": {
+        "path": "/workspace/.cloud-setup/mpp-recovery-batch/lint.log",
+        "bytes": 2164,
+        "sha256": "a7eb796070b8114d1f73c2f3afaedbc4641c1058aa4b25a97d4468a4e2a0ac87"
+      }
+    }
+  ],
+  "rust_passes": 40,
+  "rust_failures": 0,
+  "rust_ignored": 0,
+  "format_and_diff": "Scoped rustfmt --edition 2021 --check on five changed Rust files and git diff --check passed.",
+  "validated_sources": {
+    "/workspace/tidb/rust/crates/tidb-exec/src/tiflash_mpp_scan.rs": "5d8266f9aaf03378688e47604968db7642a0505b1dd5738312b5b5bb105595c9",
+    "/workspace/tidb/rust/crates/tidb-txnkv/src/driver_error.rs": "f818f7622ab30639b2a68f25283b62510b47bc5fa86b01d8cd3afdca7f3317eb",
+    "/workspace/tidb/rust/crates/tidb-txnkv/src/retry.rs": "d8c7d948cd5f915164ddc3c8efdb6c0c67b1ea39ca04105bb2d282b5b40e3d4c",
+    "/workspace/tidb/rust/crates/tidb-txnkv/src/rpc/channel_pool.rs": "0b6a61b15e6354e376297e3e33821d4809c491b08bc01dc4fc543185b5891f87",
+    "/workspace/tidb/rust/crates/tidb-txnkv/src/rpc/unary.rs": "d98930847133f1f598d24a203e87924ce314329fefc4913cdb8a7463df343b9a"
+  },
+  "source_package_inventory": [
+    {
+      "package": "/workspace/.cloud-setup/go-master/pkg/store/copr",
+      "files": [
+        {
+          "path": "BUILD.bazel",
+          "sha256": "8f135399d50990eac80230f99845633b9090c393afc228ccd0f76930dde46788"
+        },
+        {
+          "path": "batch_coprocessor.go",
+          "sha256": "d39b7cef54938935e6be3a90cf494ffa317b111f1689219aeefe1d61161a4790"
+        },
+        {
+          "path": "batch_coprocessor_test.go",
+          "sha256": "1f307ffbc8aa86a7b48357b72067b41cb114bef9208cd70bd018e051fdb62f96"
+        },
+        {
+          "path": "batch_request_sender.go",
+          "sha256": "276eff2ff7c41a9fa66b1997a56b4f155d1137ff188969eebcd9a1c896e5b0c3"
+        },
+        {
+          "path": "copr_test/BUILD.bazel",
+          "sha256": "932dd1ae79413485b84bda46f3a363d20b26e06a0dde9367b4821ed025501fe8"
+        },
+        {
+          "path": "copr_test/coprocessor_test.go",
+          "sha256": "5e4cd96bb31a8272c05a25aaf0855d811c378e433a8a38cd66908b15347ecac8"
+        },
+        {
+          "path": "copr_test/main_test.go",
+          "sha256": "de1789293adc2816e29f1ddf72b133ac2028bcca341b077cc69219addd6b67d0"
+        },
+        {
+          "path": "coprocessor.go",
+          "sha256": "bb6caccce699aa4f37c53707fc9869f2f5803edd2f21ccdf7f95f8a200fc05fb"
+        },
+        {
+          "path": "coprocessor_cache.go",
+          "sha256": "df329738eb83cea9db8fa0ec22d8f2b24a1c88771983e0419e3c0be10214e64a"
+        },
+        {
+          "path": "coprocessor_cache_test.go",
+          "sha256": "c3613b44620349a5bba6247b5d244f62f5219453ba5774ca09c32d195bbc9787"
+        },
+        {
+          "path": "coprocessor_test.go",
+          "sha256": "1e46506a533ee3bb3f92160afbd436adb8d60afbba6f2a51e43da81ff7b5464f"
+        },
+        {
+          "path": "ema.go",
+          "sha256": "b554d37bb5d34a1480f89014eb424c810475aa0ace27eb178650dd6374183381"
+        },
+        {
+          "path": "ema_test.go",
+          "sha256": "83cc3c487376a893e4e816a6f45a927a9ce5dee515b70d321ca29571c3f50ab7"
+        },
+        {
+          "path": "key_ranges.go",
+          "sha256": "da8f4cb8ac8bc1b20d588606de12d9b6266841386a790d3d34ed274fc905ec73"
+        },
+        {
+          "path": "key_ranges_test.go",
+          "sha256": "04aea5f26af0fa9fc360b9bab7a9605bf842beb2d62289b4a70a124c161ab959"
+        },
+        {
+          "path": "main_test.go",
+          "sha256": "de6b5baa33392ec0ae1ee3b3fba9333cfa95a11ba14e4bccac8e6d76fa89a892"
+        },
+        {
+          "path": "metrics/BUILD.bazel",
+          "sha256": "e7ba86badd83c24cda56eafd3a5aa773b53838bc11ca7262d2c72f5e0a2adab6"
+        },
+        {
+          "path": "metrics/metrics.go",
+          "sha256": "d5be1725cb2acac2319037209a4de72bf77629b57a8b308400a083649e55f172"
+        },
+        {
+          "path": "mpp.go",
+          "sha256": "8f60476304bcaad0315c30977abf75ce0878a0f1621ef519466154279689eb5c"
+        },
+        {
+          "path": "mpp_probe.go",
+          "sha256": "d9f3a923d3214cb457a6e5812a6e1dfd2499158097542169898b343621e96eb2"
+        },
+        {
+          "path": "mpp_probe_test.go",
+          "sha256": "0d40af599f5fe002e045b40904a2168d863c84d4a2818400ce3399450a2f04b0"
+        },
+        {
+          "path": "range_diagnostics.go",
+          "sha256": "8109d5d8e14bf1dfef69f4c7d760bc7ef7b1d8138ed4cfe30f6ea95d83be27bf"
+        },
+        {
+          "path": "region_cache.go",
+          "sha256": "8944998fa050a0f7641fb9cde9092ef49fafe7c6ea0c970f6584f8900d96b703"
+        },
+        {
+          "path": "region_cache_test.go",
+          "sha256": "8d463176a019c4ee02f4ffc587132ae036678280cba01be640b79fd1f756cde4"
+        },
+        {
+          "path": "store.go",
+          "sha256": "f4040ede33e595043baf8efc57a6f6748072d67b40e7d46683863e55c41eff42"
+        }
+      ],
+      "accepted": false
+    },
+    {
+      "package": "/workspace/.cloud-setup/go-master/pkg/executor/internal/mpp",
+      "files": [
+        {
+          "path": "BUILD.bazel",
+          "sha256": "390de984270fad960994b8c9d068aae920f1e1fbdd708a2f43fe11646a6ee16a"
+        },
+        {
+          "path": "executor_with_retry.go",
+          "sha256": "4789e01d16f33525ce82b6939bdbed4f486b8a3f9dfb3e20e04442786829195d"
+        },
+        {
+          "path": "local_mpp_coordinator.go",
+          "sha256": "314508f5eb9ff1b73f55bc4f92bc2979be0a1d550e5a27e544949b41a2ae4150"
+        },
+        {
+          "path": "local_mpp_coordinator_test.go",
+          "sha256": "082c28c0197bcf2880670fef4e6237688e45ebe169015bb5e14aba76cf1d0e08"
+        },
+        {
+          "path": "recovery_handler.go",
+          "sha256": "f57d80386adb998efeaab0eb9c3242f8f8717aeb1be3f5e3bb4e4f1837b60125"
+        },
+        {
+          "path": "statement_ru_mpp_test.go",
+          "sha256": "aa4d2c64abae339586cb3040b0573a43dbad538ad9944ff9209cc5be7f8f68a0"
+        }
+      ],
+      "accepted": false
+    },
+    {
+      "package": "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/client-go/v2@v2.0.8-0.20260928031501-8edb23f6c7ee/internal/client",
+      "files": [
+        {
+          "path": "OWNERS",
+          "sha256": "c258cd9b48ab4d97180a984b7dba35e54d2785902cebabc09f9ad77d0a0a0bb6"
+        },
+        {
+          "path": "client.go",
+          "sha256": "2d1c4d3b15a3039bd59b18a150dcc9ffbfd40bb13859545a6dadb60cb4c3e31a"
+        },
+        {
+          "path": "client_async.go",
+          "sha256": "ae173c3bc9d206f70b33cea5fe0f843d3ff92df3748f2ad860f65ae8b0a05e55"
+        },
+        {
+          "path": "client_async_test.go",
+          "sha256": "0bad2c9781a4ff8d9d387318c9f259113d4e00c5beab6055589bbfd2cd439de3"
+        },
+        {
+          "path": "client_batch.go",
+          "sha256": "1bd61047646f9d5d146e750642b0e0f8f3f9d4e89d765fb2c71be36d593debc5"
+        },
+        {
+          "path": "client_batch_test.go",
+          "sha256": "11dc90ed6808624c5b28d49113b9d0d222479072875d21fc3994532c3a72e271"
+        },
+        {
+          "path": "client_collapse.go",
+          "sha256": "343a880fde53e725eb6c609eafbf853d7d12c61c1915600ec649f5a1c3961139"
+        },
+        {
+          "path": "client_fail_test.go",
+          "sha256": "57487c87a69a5cf5762064b5c0fb77f0473b5352927a250374e11bd0241b9bd7"
+        },
+        {
+          "path": "client_interceptor.go",
+          "sha256": "114690b7e027c68739352906bbb57ea21602c731249cea2eb64e16dcf3f47b5b"
+        },
+        {
+          "path": "client_interceptor_test.go",
+          "sha256": "da651c3f50ef7c1fd72c21bada33fda2d21cf0ef987e96c880a2d93e4d89c428"
+        },
+        {
+          "path": "client_test.go",
+          "sha256": "fe584a8e7cd76d1664c112768c3266ed536170122108c15369e0f0d6a7be0cde"
+        },
+        {
+          "path": "conn_batch.go",
+          "sha256": "8b3a47a159cb34a82f8309c36058775dbb89d86fbf8ed986f77a821d78cb1458"
+        },
+        {
+          "path": "conn_monitor.go",
+          "sha256": "fe59a40c30a23eca1bf15402bc094f1476c2fe9cbb7205693598099750f08004"
+        },
+        {
+          "path": "conn_pool.go",
+          "sha256": "51f792832e9e3486c19e3095d7ff306ff4e10d2ad364f9ec9b772ff92440f8bd"
+        },
+        {
+          "path": "legacy_codec.go",
+          "sha256": "4d347d4a9ad0cb9e2451d30dc4bebb35543185874ac314dd19d9b55b9b08aa95"
+        },
+        {
+          "path": "main_test.go",
+          "sha256": "428ec256f14e0d4da028b5e35d2078588f306d3d04a0bf66646bc0d96a28b2ac"
+        },
+        {
+          "path": "mockserver/mock_tikv_service.go",
+          "sha256": "04a517a353b368c25f4ffa23f45fd2167358287e7b8bf276df3902d4cf3c2585"
+        },
+        {
+          "path": "priority_queue.go",
+          "sha256": "5b45c52f1940027a9f41ac8aca4d88079bdbe6413ff506b3704eeb2a28f42878"
+        },
+        {
+          "path": "priority_queue_test.go",
+          "sha256": "f194df1dccd85b31567890d59e5a1692d211dc1a19124f11b154d66c33ccef0a"
+        }
+      ],
+      "accepted": false
+    }
+  ],
+  "source_package_acceptance": false,
+  "limits": [
+    "No full Go suites, live distributed TiFlash/TiKV, performance or complete package acceptance.",
+    "Region dispatch/recovery, replica/fragment planning, disaggregated compute-cache invalidation, region-cache/RequestSelector consolidation remain incomplete.",
+    "No native source/dependency changes or maintained sync needed in this batch.",
+    "No fresh-task restoration or environment Publish verification."
+  ],
+  "publication": {
+    "status": "Pending at tracked precommit freeze; actual hook and fresh pre-push locked server build remain mandatory.",
+    "final_receipt": "/workspace/.cloud-setup/mpp-recovery-batch/final-handoff.json"
+  },
+  "activation": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1"
+}

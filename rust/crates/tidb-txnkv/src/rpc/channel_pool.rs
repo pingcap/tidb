@@ -77,6 +77,30 @@ impl StoreRpcChannel {
         self.selected.physical_channel()
     }
 
+    /// Preserve the same status and timeout provenance as ordinary store RPCs.
+    pub fn rpc_error(
+        &self,
+        error: tonic::Status,
+        timeout: std::time::Duration,
+    ) -> DirectUnaryClientError {
+        super::unary::remote_grpc_error(
+            self.physical_channel().address(),
+            self.version(),
+            timeout,
+            error,
+        )
+    }
+
+    /// A local receive deadline must not be mistaken for remote gRPC Canceled.
+    pub fn timeout_error(&self, timeout: std::time::Duration) -> DirectUnaryClientError {
+        super::unary::timeout_error(
+            self.physical_channel().address(),
+            self.version(),
+            timeout,
+            "stream receive timed out",
+        )
+    }
+
     /// Monotonic generation selected by the process fleet.
     pub fn version(&self) -> u64 {
         self.selected.physical_channel().version()

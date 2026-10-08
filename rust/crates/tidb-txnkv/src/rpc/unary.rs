@@ -712,7 +712,7 @@ fn connection_error(
     ))
 }
 
-fn remote_grpc_error(
+pub(super) fn remote_grpc_error(
     address: &str,
     version: u64,
     timeout: Duration,
@@ -743,7 +743,7 @@ fn error_chain_contains_timeout(error: &(dyn std::error::Error + 'static)) -> bo
     false
 }
 
-fn timeout_error(
+pub(super) fn timeout_error(
     address: &str,
     version: u64,
     timeout: Duration,

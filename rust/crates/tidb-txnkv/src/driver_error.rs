@@ -179,6 +179,7 @@ impl StorageDriverError {
         use crate::retry::RegionBackoffKind;
         match kind {
             RegionBackoffKind::TikvRpc => Self::TiKvServerTimeout,
+            RegionBackoffKind::TiFlashRpc => Self::TiFlashServerTimeout,
             RegionBackoffKind::RegionMiss | RegionBackoffKind::RegionScheduling => {
                 Self::RegionUnavailable
             }

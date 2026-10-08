@@ -39,6 +39,8 @@ pub const REGION_RETRY_MAX_SLEEP: Duration = Duration::from_secs(20);
 pub enum RegionBackoffKind {
     /// TiKV RPC transport failure.
     TikvRpc,
+    /// TiFlash RPC transport failure, including MPP setup.
+    TiFlashRpc,
     /// Epoch cache miss or stale TiKV epoch.
     RegionMiss,
     /// Election, split, merge, or read-index scheduling.
@@ -70,9 +72,10 @@ pub enum RegionBackoffKind {
 }
 
 impl RegionBackoffKind {
-    const COUNT: usize = 14;
+    const COUNT: usize = 15;
     const ALL: [Self; Self::COUNT] = [
         Self::TikvRpc,
+        Self::TiFlashRpc,
         Self::RegionMiss,
         Self::RegionScheduling,
         Self::TikvServerBusy,
@@ -96,6 +99,7 @@ impl RegionBackoffKind {
     const fn config(self) -> RetryConfig {
         match self {
             Self::TikvRpc => retry::BO_TIKV_RPC,
+            Self::TiFlashRpc => retry::BO_TIFLASH_RPC,
             Self::RegionMiss => retry::BO_REGION_MISS,
             Self::RegionScheduling => retry::BO_REGION_SCHEDULING,
             Self::TikvServerBusy => retry::BO_TIKV_SERVER_BUSY,
@@ -394,6 +398,26 @@ mod tests {
                 ("regionMiss", 3, Duration::from_millis(6)),
                 ("tikvServerBusy", 1, Duration::ZERO),
             ]
+        );
+    }
+
+    #[test]
+    fn tiflash_wait_uses_native_jitter_budget_and_error_identity() {
+        let mut budget = RegionBackoffBudget::new(Duration::from_millis(1));
+        let delay = budget.next_delay(RegionBackoffKind::TiFlashRpc).unwrap();
+        assert!((Duration::from_millis(50)..Duration::from_millis(100)).contains(&delay));
+        budget.finish_wait(false);
+        assert_eq!(budget.total_sleep(), Duration::ZERO);
+        let delay = budget.next_delay(RegionBackoffKind::TiFlashRpc).unwrap();
+        assert!((Duration::from_millis(50)..Duration::from_millis(100)).contains(&delay));
+        budget.finish_wait(true);
+        let exhausted = budget
+            .next_delay(RegionBackoffKind::TiFlashRpc)
+            .unwrap_err();
+        assert_eq!(exhausted.kind, RegionBackoffKind::TiFlashRpc);
+        assert_eq!(
+            budget.runtime_stats().collect::<Vec<_>>(),
+            vec![("tiflashRPC", 2, delay)]
         );
     }
 

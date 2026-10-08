@@ -4,16 +4,16 @@ Latest cleanup: [shared TSO completion](tso-completion-validation.json) retires 
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [shared TSO completion](tso-completion-validation.json). Native and TiDB share retained-stream exchange, range allocation and pre-request ordering. Native ordering survives dispatcher replacement; TiDB removes duplicate arithmetic, stream wrappers and unsupported header rejection. P03/P06 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 54 findings retain prior evidence.
+Latest connected repair: [MPP recovery](mpp-recovery-validation.json). MPP shares storage transport error projection and the native TiFlash backoff budget; setup now includes the first receive. Transient setup/first-receive failures retry before delivery, cancellation stays terminal without retiring the shared fleet, and empty EOF completes without cancel. Shared setup/receive cancellation replaces the duplicate tail polling loop. T02/M04 remain partial; counts stay 86 tracked/30 repaired/56 unresolved (27 open,29 partial). Other 54 findings retain prior evidence.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../tso-completion-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../mpp-recovery-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](tso-completion-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](mpp-recovery-validation.json): exact source/log identities and verification limits.
 
-Current Go comparison: `7a3dacb52efe58d28db360ae8639d8838c376544`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `02880abbab5ed89a4dc603a4ddc7935853870ea6`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
+Current Go comparison: `9e298833cf87fe957f146f32d1f1a273356a5d22`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `02880abbab5ed89a4dc603a4ddc7935853870ea6`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
 A complete upstream package, including original tests, generated/platform/build inputs and fixtures, is the minimum acceptance unit. Search hits, a passing subset and retired Rust-only adapter tests do not discharge those obligations. The complete inventories are snapshots, not proof that every semantic mismatch is known.
 
@@ -30,6 +30,8 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 Earlier implementation: [shared read consistency](read-consistency-batch-validation.json). Prior partition reorganization safety remains in place until its durable owner exists.
 
 ## Historical evidence
+
+- [Shared TSO completion](tso-completion-validation.json)
 
 - [PD discovery observations](pd-observation-validation.json)
 

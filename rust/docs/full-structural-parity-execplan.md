@@ -33,6 +33,8 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] Maintain T02/M04 setup/first-receive recovery and shared storage error/backoff ownership; [plan](mpp-recovery-execplan.md) and [receipt](parity/current-audit/mpp-recovery-validation.json) record grouped validation.
+
 - [x] Consolidate P03/P06 retained TSO streams and completion/order ownership in both consumers; [batch plan](tso-completion-execplan.md) and [receipt](parity/current-audit/tso-completion-validation.json) track validation and publication.
 
 - [x] Maintain P03/P06 discovery observations, primaryless revision floors and stale-callee cache lookup retirement together; see [plan](pd-observation-execplan.md) and [receipt](parity/current-audit/pd-observation-validation.json). Complete transport/discovery packages remain partial; 56 broader findings remain unresolved.

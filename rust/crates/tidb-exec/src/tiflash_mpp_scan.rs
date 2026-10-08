@@ -307,7 +307,8 @@ impl TiFlashMppScanSource {
                     Some(&connection.route),
                     connection.client.dispatch_mpp_task(dispatch_request),
                 )
-                .await?;
+                .await
+                .map_err(|error| error.to_string())?;
                 let dispatch_response = response.into_inner();
                 if let Some(error) = &dispatch_response.error {
                     return Err(format!(
@@ -466,19 +467,53 @@ fn invalidate_mpp_retry_regions<L>(
 
 // Query RPCs retain the canonical killer; cleanup RPCs use Go's background
 // context but still honor the same physical scope retirement and deadline.
-async fn mpp_setup<T, E: std::fmt::Display>(
+// Keep transport provenance until the retry decision is made.
+// Statement cancellation and owner retirement have no remote RPC identity.
+#[derive(Debug)]
+struct MppSetupError {
+    message: String,
+    transport: Option<tidb_txnkv::rpc::DirectUnaryClientError>,
+}
+
+impl std::fmt::Display for MppSetupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl MppSetupError {
+    fn stopped(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            transport: None,
+        }
+    }
+
+    fn retryable(&self) -> bool {
+        use tidb_txnkv::rpc::{DirectUnaryClientError as Error, DirectUnaryGrpcCode};
+        matches!(
+            &self.transport,
+            Some(Error::Connection(_) | Error::Timeout { .. })
+        ) && self.transport.as_ref().and_then(Error::grpc_code)
+            != Some(DirectUnaryGrpcCode::Canceled)
+    }
+}
+
+async fn mpp_setup<T>(
     memory: Option<&tidb_executor::StatementMemory>,
     timeout: Option<std::time::Duration>,
     stage: &str,
     route: Option<&tidb_txnkv::rpc::StoreRpcChannel>,
-    future: impl std::future::Future<Output = Result<T, E>>,
-) -> Result<T, String> {
+    future: impl std::future::Future<Output = Result<T, tonic::Status>>,
+) -> Result<T, MppSetupError> {
     let check = || {
         if route.is_some_and(|route| route.is_closed()) {
-            return Err("tiflash mpp: shared transport generation closed".to_owned());
+            return Err(MppSetupError::stopped(
+                "tiflash mpp: shared transport generation closed",
+            ));
         }
         if let Some(memory) = memory {
-            mpp_memory_error(memory).map_err(|error| error.to_string())?;
+            mpp_memory_error(memory).map_err(|error| MppSetupError::stopped(error.to_string()))?;
         }
         Ok(())
     };
@@ -494,15 +529,24 @@ async fn mpp_setup<T, E: std::fmt::Display>(
     loop {
         tokio::select! {
             biased;
-            _ = &mut deadline => return Err(format!("tiflash mpp: {stage}: timed out")),
+            _ = &mut deadline => return Err(MppSetupError {
+                message: format!("tiflash mpp: {stage}: timed out"),
+                transport: route.map(|route| route.timeout_error(timeout.expect("armed deadline"))),
+            }),
             result = &mut future => {
                 check()?;
-                return result.map_err(|error| format!("tiflash mpp: {stage}: {error}"));
+                return result.map_err(|error| MppSetupError {
+                    message: format!("tiflash mpp: {stage}: {error}"),
+                    transport: route.map(|route| route.rpc_error(error, timeout.unwrap_or(MPP_RECEIVE_TIMEOUT))),
+                });
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => { check()?; }
         }
     }
 }
+
+// Go copr.TiFlashReadTimeoutUltraLong bounds each receive, not stream lifetime.
+const MPP_RECEIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
 
 #[derive(Clone)]
 struct MppRpcConnection {
@@ -537,35 +581,102 @@ async fn establish_mpp_response(
     runtime: std::sync::Arc<tokio::runtime::Handle>,
     memory: tidb_executor::StatementMemory,
 ) -> Result<MppQueryResponse, String> {
-    let response = mpp_setup(
-        Some(&memory),
-        None,
-        "connect stream",
-        Some(&connection.route),
-        connection
-            .client
-            .establish_mpp_connection(EstablishMppConnectionRequest {
-                sender_meta: Some(meta.clone()),
-                receiver_meta: Some(receiver_meta),
-            }),
-    )
-    .await;
-    match response {
-        Ok(response) => Ok(MppQueryResponse {
-            stream: Some(response.into_inner()),
-            connection: Some(connection.clone()),
-            runtime,
-            memory,
-            cancel_meta: cancel_task_meta(&meta),
-            held_bytes: 0,
-            receive_timeout: std::time::Duration::from_secs(3600),
-            region_lease: None,
-            completed: false,
-            closed: false,
-        }),
+    // This is the coordinator's effective CopNextMaxBackoff budget. Each
+    // reservation and completed/interrupted wait uses the native retry owner.
+    let mut backoff = RegionBackoffBudget::campaign_default();
+    let result = loop {
+        let attempt = async {
+            let response = mpp_setup(
+                Some(&memory),
+                None,
+                "connect stream",
+                Some(&connection.route),
+                connection
+                    .client
+                    .establish_mpp_connection(EstablishMppConnectionRequest {
+                        sender_meta: Some(meta.clone()),
+                        receiver_meta: Some(receiver_meta.clone()),
+                    }),
+            )
+            .await?;
+            let mut stream = response.into_inner();
+            // client-go getMPPStreamResponse receives once inside SendRequest.
+            // Only errors before this first packet belong to setup retry.
+            let first = mpp_setup(
+                Some(&memory),
+                Some(MPP_RECEIVE_TIMEOUT),
+                "first receive",
+                Some(&connection.route),
+                stream.message(),
+            )
+            .await?;
+            Ok::<_, MppSetupError>((stream, first))
+        }
+        .await;
+        match attempt {
+            Ok(response) => break Ok(response),
+            Err(error) => {
+                if !error.retryable() {
+                    break Err(error.to_string());
+                }
+                let delay = match backoff.next_delay(RegionBackoffKind::TiFlashRpc) {
+                    Ok(delay) => delay,
+                    Err(_) => break Err(error.to_string()),
+                };
+                let waited = mpp_setup(
+                    Some(&memory),
+                    None,
+                    "retry wait",
+                    Some(&connection.route),
+                    async {
+                        tokio::time::sleep(delay).await;
+                        Ok(())
+                    },
+                )
+                .await;
+                backoff.finish_wait(waited.is_ok());
+                if let Err(error) = waited {
+                    break Err(error.to_string());
+                }
+                // Select from the same process fleet for each SendRequest.
+                match connect_mpp_client(&connection.address, &memory, &connection.transport).await
+                {
+                    Ok(next) => *connection = next,
+                    Err(error) => break Err(error),
+                }
+            }
+        }
+    };
+    match result {
+        Ok((stream, first)) => {
+            let completed = first.is_none();
+            let held_bytes = first
+                .as_ref()
+                .map_or(0, |packet| packet.encoded_len() as i64);
+            memory.stmt_tracker().consume(held_bytes);
+            if let Err(error) = mpp_memory_error(&memory) {
+                memory.stmt_tracker().consume(-held_bytes);
+                drop(stream);
+                cancel_mpp_task(connection, cancel_task_meta(&meta)).await;
+                return Err(error.to_string());
+            }
+            Ok(MppQueryResponse {
+                stream: (!completed).then_some(stream),
+                first_packet: first,
+                connection: (!completed).then(|| connection.clone()),
+                runtime,
+                memory,
+                cancel_meta: cancel_task_meta(&meta),
+                held_bytes,
+                receive_timeout: MPP_RECEIVE_TIMEOUT,
+                region_lease: None,
+                completed,
+                closed: false,
+            })
+        }
         Err(error) => {
             cancel_mpp_task(connection, cancel_task_meta(&meta)).await;
-            Err(format!("tiflash mpp: connect stream: {error}"))
+            Err(error)
         }
     }
 }
@@ -645,6 +756,7 @@ fn mpp_memory_error(memory: &tidb_executor::StatementMemory) -> Result<(), Query
 /// packet queue is retained, and the canonical statement killer can interrupt
 /// a stalled message without waiting for another network packet.
 struct MppQueryResponse {
+    first_packet: Option<MppDataPacket>,
     stream: Option<tonic::Streaming<MppDataPacket>>,
     connection: Option<MppRpcConnection>,
     runtime: std::sync::Arc<tokio::runtime::Handle>,
@@ -679,24 +791,22 @@ impl MppQueryResponse {
         let Some(stream) = self.stream.as_mut() else {
             return Ok(None);
         };
-        let packet = self.runtime.block_on(async {
-            // Go's stream lease bounds each Recv; it is not a total query timeout.
-            let message = tokio::time::timeout(self.receive_timeout, stream.message());
-            tokio::pin!(message);
-            loop {
-                tokio::select! {
-                    packet = &mut message => return packet
-                        .map_err(|_| QueryResponseError::Source("tiflash mpp: stream receive timed out".to_owned()))?
-                        .map_err(|error| QueryResponseError::Source(format!("tiflash mpp: stream: {error}"))),
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
-                        mpp_memory_error(&self.memory)?;
-                        if self.connection.as_ref().is_some_and(|connection| connection.route.is_closed()) {
-                            return Err(QueryResponseError::Source("tiflash mpp: shared transport generation closed".to_owned()));
-                        }
-                    }
-                }
-            }
-        })?;
+        let packet = if let Some(first) = self.first_packet.take() {
+            Some(first)
+        } else {
+            self.runtime
+                .block_on(mpp_setup(
+                    Some(&self.memory),
+                    Some(self.receive_timeout),
+                    "stream receive",
+                    self.connection.as_ref().map(|connection| &connection.route),
+                    stream.message(),
+                ))
+                .map_err(|error| match mpp_memory_error(&self.memory) {
+                    Err(sql) => sql,
+                    Ok(()) => QueryResponseError::Source(error.to_string()),
+                })?
+        };
         let Some(packet) = packet else {
             self.completed = true;
             self.stream = None;
@@ -735,6 +845,7 @@ impl tidb_distsql::QueryResponse for MppQueryResponse {
             return;
         }
         self.closed = true;
+        self.first_packet = None;
         self.stream = None;
         self.release_packet();
         if let Some(mut connection) = self.connection.take() {
@@ -1046,8 +1157,22 @@ mod mpp_read_batch_tests {
         assert!(infos.is_empty(), "the gap has no requested rows");
     }
 
+    #[derive(Clone, Copy, Default)]
+    enum Opening {
+        #[default]
+        Normal,
+        RetryHeaders,
+        RetryFirstPacket,
+        Unavailable,
+        StallFirstPacket,
+        Canceled,
+        Empty,
+    }
+
     #[derive(Clone)]
     struct Service {
+        opening: Opening,
+        attempts: Arc<AtomicUsize>,
         cancels: Arc<AtomicUsize>,
         fail_tail: bool,
         stall_setup: bool,
@@ -1067,13 +1192,38 @@ mod mpp_read_batch_tests {
             _: tonic::Request<EstablishMppConnectionRequest>,
         ) -> Result<tonic::Response<tonic::codegen::BoxStream<MppDataPacket>>, tonic::Status>
         {
+            let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
+            match self.opening {
+                Opening::RetryHeaders if attempt == 0 => {
+                    return Err(tonic::Status::unavailable("opening unavailable"))
+                }
+                Opening::Unavailable => {
+                    return Err(tonic::Status::unavailable("still unavailable"))
+                }
+                Opening::Canceled => return Err(tonic::Status::cancelled("remote canceled")),
+                _ => {}
+            }
             if self.stall_setup {
                 std::future::pending::<()>().await;
             }
             let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let opening = self.opening;
             let fail_tail = self.fail_tail;
             let first_packet = self.first_packet.clone();
             tokio::spawn(async move {
+                if matches!(opening, Opening::Empty) {
+                    return;
+                }
+                if matches!(opening, Opening::StallFirstPacket) {
+                    tx.closed().await;
+                    return;
+                }
+                if matches!(opening, Opening::RetryFirstPacket) && attempt == 0 {
+                    let _ = tx
+                        .send(Err(tonic::Status::unavailable("first receive unavailable")))
+                        .await;
+                    return;
+                }
                 let _ = tx
                     .send(Ok(MppDataPacket {
                         data: first_packet,
@@ -1100,6 +1250,7 @@ mod mpp_read_batch_tests {
         }
     }
     struct Fixture {
+        attempts: Arc<AtomicUsize>,
         address: String,
         runtime: Arc<tokio::runtime::Runtime>,
         shutdown: Option<tokio::sync::oneshot::Sender<()>>,
@@ -1123,6 +1274,15 @@ mod mpp_read_batch_tests {
             tls: bool,
             stall_setup: bool,
             first_packet: Vec<u8>,
+        ) -> Self {
+            Self::with_opening(fail_tail, tls, stall_setup, first_packet, Opening::Normal)
+        }
+        fn with_opening(
+            fail_tail: bool,
+            tls: bool,
+            stall_setup: bool,
+            first_packet: Vec<u8>,
+            opening: Opening,
         ) -> Self {
             if tls {
                 // Configure the fixture through the same process TLS owner.
@@ -1172,7 +1332,10 @@ mod mpp_read_batch_tests {
                     std::num::NonZeroUsize::new(1).unwrap(),
                 )
                 .unwrap();
+            let attempts = Arc::new(AtomicUsize::new(0));
             let service = Service {
+                opening,
+                attempts: attempts.clone(),
                 cancels: Arc::clone(&cancels),
                 fail_tail,
                 stall_setup,
@@ -1209,6 +1372,7 @@ mod mpp_read_batch_tests {
                     .unwrap();
             });
             Self {
+                attempts,
                 address,
                 runtime,
                 shutdown: Some(shutdown),
@@ -1230,7 +1394,7 @@ mod mpp_read_batch_tests {
                     connect_mpp_client(&self.address, &memory, &self.transport.lock().unwrap())
                         .await?;
                 let response = tokio::time::timeout(
-                    Duration::from_millis(250),
+                    Duration::from_secs(2),
                     establish_mpp_response(
                         &mut client,
                         TaskMeta::default(),
@@ -1250,6 +1414,111 @@ mod mpp_read_batch_tests {
             self.runtime.block_on(self.task.take().unwrap()).unwrap();
         }
     }
+    fn assert_opening_recovery(opening: Opening) {
+        let fixture = Fixture::with_opening(false, false, false, b"first".to_vec(), opening);
+        let mut response = fixture
+            .open()
+            .expect("opening failure must recover before delivery");
+        assert_eq!(response.next().unwrap().unwrap().data.as_ref(), b"first");
+        assert_eq!(fixture.attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            fixture.cancels.load(Ordering::SeqCst),
+            0,
+            "retry canceled the live gather"
+        );
+        response.close();
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn mpp_recovery_retries_headers_before_delivery() {
+        assert_opening_recovery(Opening::RetryHeaders);
+    }
+
+    #[test]
+    fn mpp_recovery_retries_first_receive_before_delivery() {
+        assert_opening_recovery(Opening::RetryFirstPacket);
+    }
+
+    #[test]
+    fn mpp_recovery_remote_canceled_is_terminal_without_retiring_the_fleet() {
+        let fixture = Fixture::with_opening(false, false, false, Vec::new(), Opening::Canceled);
+        let route = fixture
+            .runtime
+            .block_on(
+                fixture
+                    .transport
+                    .lock()
+                    .unwrap()
+                    .store_rpc_channel(&fixture.address),
+            )
+            .unwrap();
+        assert!(fixture.open().is_err());
+        assert_eq!(
+            fixture.attempts.load(Ordering::SeqCst),
+            1,
+            "Canceled must not retry"
+        );
+        assert!(
+            !route.is_closed(),
+            "MPP cancellation does not own fleet retirement"
+        );
+        let next = fixture
+            .runtime
+            .block_on(
+                fixture
+                    .transport
+                    .lock()
+                    .unwrap()
+                    .store_rpc_channel(&fixture.address),
+            )
+            .unwrap();
+        assert_eq!(route.version(), next.version());
+        assert!(!next.is_closed());
+    }
+
+    #[test]
+    fn mpp_recovery_first_eof_is_success_without_cancel_or_reopen() {
+        let fixture = Fixture::with_opening(false, false, false, Vec::new(), Opening::Empty);
+        let mut response = fixture.open().unwrap();
+        response.close();
+        assert_eq!(fixture.attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            fixture.cancels.load(Ordering::SeqCst),
+            0,
+            "first EOF already completed the task"
+        );
+    }
+
+    #[test]
+    fn mpp_recovery_kill_interrupts_first_receive_and_retry_wait() {
+        for opening in [Opening::StallFirstPacket, Opening::Unavailable] {
+            let fixture = Fixture::with_opening(false, false, false, Vec::new(), opening);
+            let memory = tidb_executor::StatementMemory::default();
+            let killer = memory.sql_killer().clone();
+            let attempts = fixture.attempts.clone();
+            let thread = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(1);
+                while attempts.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+                killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+            });
+            let result = fixture.open_with_memory(memory.clone());
+            thread.join().unwrap();
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("KILL must terminate setup"),
+            };
+            assert!(matches!(mpp_open_error(&memory, error),
+                PushdownScannerError::Backend(StorageError::Sql(error)) if error.code == 1317));
+            assert_eq!(fixture.attempts.load(Ordering::SeqCst), 1);
+            assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
+            assert_eq!(memory.bytes_consumed(), 0);
+        }
+    }
+
     #[test]
     fn shared_mpp_fleet_preserves_round_robin_and_stale_generation_guards() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -1270,6 +1539,21 @@ mod mpp_read_batch_tests {
                     .collect::<Vec<_>>(),
                 vec![1, 2, 3, 1, 2, 3]
             );
+            let remote =
+                routes[0].rpc_error(tonic::Status::cancelled("remote"), Duration::from_secs(1));
+            assert_eq!(
+                remote.grpc_code(),
+                Some(tidb_txnkv::rpc::DirectUnaryGrpcCode::Canceled)
+            );
+            let local = routes[0].rpc_error(
+                tonic::Status::from_error(Box::new(tonic::TimeoutExpired(()))),
+                Duration::from_secs(1),
+            );
+            assert!(matches!(
+                local,
+                tidb_txnkv::rpc::DirectUnaryClientError::Timeout { .. }
+            ));
+            assert!(!local.requires_generation_close());
             transport.close_address_version(address, 1).unwrap();
             assert!(routes[0].is_closed());
             assert!(!routes[1].is_closed());
@@ -1359,7 +1643,7 @@ mod mpp_read_batch_tests {
         response.receive_timeout = Duration::from_millis(20);
         let started = std::time::Instant::now();
         assert!(
-            matches!(response.next(), Err(QueryResponseError::Source(message)) if message.contains("receive timed out"))
+            matches!(response.next(), Err(QueryResponseError::Source(message)) if message.contains("stream receive: timed out"))
         );
         assert!(started.elapsed() < Duration::from_millis(250));
         assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
@@ -1418,7 +1702,7 @@ mod mpp_read_batch_tests {
             let error = result
                 .expect("the RPC setup deadline must run")
                 .unwrap_err();
-            assert!(error.contains("timed out"), "{error}");
+            assert!(error.to_string().contains("timed out"), "{error}");
             assert!(
                 retired.await.is_err(),
                 "the expired operation retained its owner"
@@ -1475,6 +1759,11 @@ mod mpp_read_batch_tests {
         );
         assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
         assert_eq!(response.next().unwrap(), None);
+        assert_eq!(
+            fixture.attempts.load(Ordering::SeqCst),
+            1,
+            "late failure replayed delivered rows"
+        );
     }
 
     #[test]
@@ -1482,6 +1771,10 @@ mod mpp_read_batch_tests {
         let fixture = Fixture::with_tail(false);
         let memory = tidb_executor::StatementMemory::default();
         let mut response = fixture.open_with_memory(memory.clone()).unwrap();
+        assert!(
+            memory.bytes_consumed() > 0,
+            "setup's retained first packet is unaccounted"
+        );
         response.next().unwrap().unwrap();
         assert!(memory.bytes_consumed() > 0);
         assert_eq!(response.next().unwrap(), None);
@@ -1495,11 +1788,12 @@ mod mpp_read_batch_tests {
     fn quota_exceeded_is_a_typed_sql_failure_and_cleans_up() {
         let fixture = Fixture::new();
         let memory = tidb_executor::StatementMemory::new(2, tidb_executor::OomAction::Cancel, 42);
-        let mut response = fixture.open_with_memory(memory.clone()).unwrap();
-        assert!(matches!(
-            response.next(),
-            Err(QueryResponseError::Sql { code: 8175, .. })
-        ));
+        let error = match fixture.open_with_memory(memory.clone()) {
+            Err(error) => error,
+            Ok(_) => panic!("the first packet must be accounted before setup returns"),
+        };
+        assert!(matches!(mpp_open_error(&memory, error),
+            PushdownScannerError::Backend(StorageError::Sql(error)) if error.code == 8175));
         assert_eq!(memory.bytes_consumed(), 0);
         assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
     }
