@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-08",
+  "scope": "B01 P03/P06 existing-owner maintenance: TSO batches are sent and collected independently, so a granted RPC concurrency produces concurrent in-flight requests. Closes the residual the previous receipt recorded as unreachable; no broad finding or complete package closure.",
+  "baseline": {
+    "tidb": "06d245799c",
+    "native": "a380f747ae4182b9e7e4ba9aaa0f230140a49241",
+    "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+    "pd": "v0.0.0-20260805103528-afa43111d149"
+  },
+  "native_published": "2e58a8a629adb93ebe38ff42d39c7751e78707c4",
+  "before": {
+    "source_confirmed_defect": "Two couplings bounded the dispatcher at one outstanding batch regardless of the token pool. `run_discovered` pulled one request, called `TsoStreamSet::request` and awaited that response before the next send; `TsoStream::open_and_request` additionally waited for the first RESPONSE before the stream could be used, so even a pipelined caller blocked inside establishment. The per-route request channel also held one, against Go's `maxPendingRequestsInTSOStream = 64`.",
+    "reproduction": "A mock mode that reads every request and answers none shows the previous dispatcher sending exactly one batch: the discriminating test fails against it after a five-second timeout with `the server saw 1 request(s)`, and passes in 0.02s here. The failure was reproduced by reverting only the establishment split while keeping the test."
+  },
+  "go_owners": [
+    "pd/client/clients/tso/stream.go::processRequests: hands a batch to the stream and returns without waiting; the callback is queued in `pendingRequests`, sized by `maxPendingRequestsInTSOStream = 64`.",
+    "pd/client/clients/tso/stream.go recvLoop: owns the receiving half and completes batches as responses arrive, which is why send never blocks on a response.",
+    "pd/client/clients/tso/dispatcher.go::checkTSORPCConcurrency: sizes the token pool at twice the concurrency above 1, which only has meaning once more than one batch can be outstanding."
+  ],
+  "repairs": [
+    "`TsoStream::open` establishes without awaiting a response, keeping request-before-header order and Go's construction window, which ends when the stream opens so a later application error or EOF cannot retroactively admit a proxy.",
+    "A collector task owns the receiving half and publishes each response, Go's `recvLoop`. The dispatcher reads that channel, never the stream: a `select` drops its losing branches mid-poll, and cancelling a partially received message would lose the batch it answers. Retiring a stream aborts its collector.",
+    "The per-route request channel holds `MAX_PENDING_REQUESTS_IN_TSO_STREAM` (64).",
+    "`run_discovered` either takes a published response or accepts the next batch, tracking the outstanding count and ending outstanding batches when their route leaves the snapshot, when the picked route changes, or on a send/collect failure."
+  ],
+  "ordering_argument": "Pairing is positional in Go and stays positional here: a gRPC stream answers in the order it was asked, `pending` is pushed in the order batches are yielded by the collector, and `allocate_timestamps` pops the front. `TimestampTracker::accept` still checks each batch against the snapshot taken when that batch was queued, so ordering and the monotonic high-water mark do not depend on how many batches are in flight.",
+  "validation": {
+    "native_discriminating": "`concurrent_rpcs_put_a_second_batch_on_the_wire_before_the_first_answers` fails against the previous dispatcher and passes here; the second timestamp is requested only after the first reaches the server, because requesting both up front lets the collector merge them into one batch.",
+    "native_suite": "Full native lib suite at a fixed `--test-threads=4` on both sides: baseline 1586 passed/0 failed in 74.2s, this change 1587 passed/0 failed in 74.0s. The fixed thread count is required because several commit-timing tests (`TestSetCommitWaitUntilTSO`, `TestPipelinedCommit`, TTL-manager and txn-file cases) fail under unbounded contention independently of this change -- the same published commit produced 2 failures in 60s and 10 in 530s as machine load varied.",
+    "tidb": "`cargo build --locked -p tidb-server` green on the synced tree; `tidb-pd-client` + `tidb-txnkv` 778 of 779 passing. The one failure, `lock_resolver_source::caller_cancelled_status_rpc_is_typed_and_lite_cleanup_is_best_effort`, was verified failing identically with these changes stashed and is unrelated (region EpochNotMatch versus lock recovery).",
+    "sync": "`scripts/sync-tikv-client-rs.sh` synced the vendored copy to 2e58a8a629ad with all 4 maintained patches applied and protobuf regenerated (protoc 35.1). Remote master SHA verified as 2e58a8a629adb93ebe38ff42d39c7751e78707c4."
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "finding_disposition": "P03/P06 remain partial. The RPC-concurrency residual is now genuinely effective rather than only plumbed, and the independent send/collect halves that P03/P06 name are in place for the TSO stream. Request-queue and retry orchestration, readiness/prewarm, idle recovery, remaining group refresh scheduling, full primaryless group metadata publication and the package obligations are untouched. No finding closes and no count changes.",
+  "limits": [
+    "Concurrency is exercised against a single mock route; no live multi-node PD cluster, no throughput measurement, and Go's adaptive `goalBatchTime` division by concurrency is still not ported.",
+    "The retained coupled `TsoStream::open_and_request`/`TsoStreamSet::request` path is unchanged and still used by its existing callers; only the dispatcher pipelines.",
+    "Request queues/retry orchestration, readiness/prewarm, idle recovery, remaining group refresh scheduling and complete router/security/platform/package obligations remain open.",
+    "Full Go suites, live multi-node TiKV/TiFlash and production TLS were not run.",
+    "Other 52 unresolved findings retain carried evidence; no exhaustive re-audit or complete-package acceptance."
+  ]
+}

@@ -22,6 +22,13 @@ enum Reply {
     StallBody,
     StallHeaders,
     End,
+    /// Reads and counts every request that arrives but answers none.
+    ///
+    /// `StallBody` stalls BEFORE reading, so it cannot tell a client that
+    /// pipelines from one that waits: either way the server counts one
+    /// request. This keeps reading, so `received` reports exactly how many
+    /// batches the client was willing to have outstanding at once.
+    DrainRequests,
 }
 
 #[derive(Clone)]
@@ -362,6 +369,12 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
                         return None;
                     }
                     if matches!(service.reply, Reply::StallBody) {
+                        futures::future::pending::<()>().await;
+                    }
+                    if matches!(service.reply, Reply::DrainRequests) {
+                        while let Ok(Some(_)) = requests.message().await {
+                            service.received.fetch_add(1, Ordering::SeqCst);
+                        }
                         futures::future::pending::<()>().await;
                     }
                     let request = match first {
@@ -3522,5 +3535,97 @@ async fn cancellation_abandons_a_pending_token_reduction() {
         capacity.available_permits(),
         8,
         "the abandoned reduction left the pool as it stood"
+    );
+}
+
+/// A granted concurrency above 1 must put a second batch on the wire while the
+/// first is unanswered, which is what Go's separate send and collect loops do.
+///
+/// A dispatcher that awaited each response before the next send cannot do this
+/// however many tokens it holds, so the token accounting alone changes nothing
+/// without the split. The server reads every request and answers none, so
+/// `received` counts the batches the client was willing to leave outstanding.
+#[tokio::test]
+async fn concurrent_rpcs_put_a_second_batch_on_the_wire_before_the_first_answers() {
+    type Pending<'a> =
+        std::pin::Pin<&'a mut (dyn std::future::Future<Output = Result<Timestamp>> + Send)>;
+
+    /// Waits for the server's count without busy-spinning. The batches are
+    /// driven while this sleeps, and neither can finish because the server
+    /// answers nothing.
+    async fn reached(
+        server: &Server,
+        want: usize,
+        first: &mut Pending<'_>,
+        second: Option<&mut Pending<'_>>,
+    ) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut second = second;
+        while std::time::Instant::now() < deadline {
+            if server.service.received.load(Ordering::SeqCst) >= want {
+                return true;
+            }
+            match second.as_mut() {
+                Some(second) => {
+                    tokio::select! {
+                        _ = &mut *first => unreachable!("the server answers nothing"),
+                        _ = second.as_mut() => unreachable!("the server answers nothing"),
+                        () = tokio::time::sleep(Duration::from_millis(5)) => {}
+                    }
+                }
+                None => {
+                    tokio::select! {
+                        _ = &mut *first => unreachable!("the server answers nothing"),
+                        () = tokio::time::sleep(Duration::from_millis(5)) => {}
+                    }
+                }
+            }
+        }
+        server.service.received.load(Ordering::SeqCst) >= want
+    }
+
+    let server = Server::start(Reply::DrainRequests).await;
+    let channel = tonic::transport::Channel::from_shared(server.service.endpoint.clone())
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+    let route = crate::pd::service_discovery::TsoRoute {
+        endpoint: server.service.endpoint.clone(),
+        keyspace_id: 0,
+        group_id: None,
+        forwarded_host: None,
+    };
+    let options = Arc::new(crate::pd::opt::Options::new());
+    options.set_tso_client_rpc_concurrency(2);
+    let oracle = TimestampOracle::discovered(
+        1,
+        vec![(route, channel)],
+        crate::pd::service_discovery::TsoForwarding::default(),
+        options,
+        Duration::from_secs(30),
+        TimestampTracker::default(),
+    )
+    .unwrap();
+
+    let first = oracle.clone().get_timestamp();
+    tokio::pin!(first);
+    let mut first_dyn: Pending<'_> = first;
+    // Phase one drives only the first batch, so the second timestamp is asked
+    // for after the first is already on the wire. Requesting both up front
+    // would let the collector merge them into ONE batch -- correct batching,
+    // but it would prove nothing about concurrency.
+    assert!(
+        reached(&server, 1, &mut first_dyn, None).await,
+        "the first batch must reach the server"
+    );
+    let second = oracle.clone().get_timestamp();
+    tokio::pin!(second);
+    let mut second_dyn: Pending<'_> = second;
+    assert!(
+        reached(&server, 2, &mut first_dyn, Some(&mut second_dyn)).await,
+        "a granted concurrency of 2 must send a second batch while the first is \
+         unanswered; the server saw {} request(s)",
+        server.service.received.load(Ordering::SeqCst)
     );
 }

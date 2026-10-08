@@ -238,6 +238,29 @@ async fn run_discovered(
     use super::service_discovery::{pick_stream_route, TsoStreamSet};
     let mut streams = TsoStreamSet::default();
     tokio::pin!(requests);
+    // Go hands a batch to the stream and collects responses in a separate
+    // loop, so a second batch leaves while the first is unanswered whenever
+    // the RPC concurrency allows it. This is that shape: the select below
+    // either takes a published response or accepts the next batch, and every
+    // branch is cancellation-safe -- the response is read from the
+    // collector's channel, never from the stream, because the losing branches
+    // of a select are dropped mid-poll.
+    //
+    // Pairing stays positional, as in Go: a gRPC stream answers in the order
+    // it was asked, `pending` is pushed in the order batches are yielded, and
+    // `allocate_timestamps` pops the front. Ordering therefore does not depend
+    // on how many batches are outstanding.
+    let mut in_flight: usize = 0;
+    let mut current: Option<(super::service_discovery::TsoRoute, String)> = None;
+
+    // Ends every outstanding batch. Their responses can no longer be paired,
+    // so completing them is what Go does when its recv loop fails.
+    async fn abandon(pending: &Arc<Mutex<VecDeque<RequestGroup>>>) {
+        for group in pending.lock().await.drain(..) {
+            group.done.complete();
+        }
+    }
+
     loop {
         let snapshot = routes.borrow_and_update().clone();
         streams.retain_routes(
@@ -246,48 +269,94 @@ async fn run_discovered(
                 .map(|(route, _)| route.clone())
                 .collect::<Vec<_>>(),
         );
-        let request = tokio::select! {
-            biased;
-            changed = routes.changed() => { if changed.is_err() { return Err(Error::ContextCanceled); } continue; },
-            request = requests.next() => request.ok_or(Error::ContextCanceled)?,
-        };
-        let candidates = snapshot.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>();
-        let Some(route) = pick_stream_route(&candidates).cloned() else {
-            // Fail this collected batch; future batches can use newly healthy routes.
-            for group in pending.lock().await.drain(..) {
-                group.done.complete();
+        // A route that left the snapshot takes its outstanding batches with it.
+        if let Some((route, endpoint)) = current.clone() {
+            if !snapshot.iter().any(|(live, _)| live == &route) {
+                streams.remove(&endpoint);
+                abandon(&pending).await;
+                in_flight = 0;
+                current = None;
             }
-            continue;
+        }
+
+        enum Step {
+            Routes(bool),
+            Collected(Option<std::result::Result<TsoResponse, tonic::Status>>),
+            Accepted(Option<TsoRequest>),
+        }
+
+        let step = {
+            let collect = async {
+                match current.as_ref() {
+                    Some((_, endpoint)) if in_flight > 0 => streams.recv(endpoint).await,
+                    // Nothing outstanding: stay pending so the select waits on
+                    // the other branches rather than spinning.
+                    _ => std::future::pending().await,
+                }
+            };
+            tokio::pin!(collect);
+            tokio::select! {
+                biased;
+                changed = routes.changed() => Step::Routes(changed.is_ok()),
+                response = &mut collect => Step::Collected(response),
+                request = requests.next() => Step::Accepted(request),
+            }
         };
-        let endpoint = route.endpoint.clone();
-        let channel = snapshot
-            .iter()
-            .find(|(r, _)| r == &route)
-            .unwrap()
-            .1
-            .clone();
-        let exchange = streams.request(route.clone(), channel, request, &forwarding);
-        let response = {
-            tokio::pin!(exchange);
-            loop {
-                tokio::select! {
-                    biased;
-                    response = &mut exchange => break Some(response),
-                    changed = routes.changed() => {
-                        if changed.is_err() { return Err(Error::ContextCanceled); }
-                        if !routes.borrow().iter().any(|(current, _)| current == &route) {
-                            break None;
-                        }
+
+        match step {
+            Step::Routes(false) => return Err(Error::ContextCanceled),
+            Step::Routes(true) => continue,
+            Step::Collected(Some(Ok(response))) => {
+                in_flight -= 1;
+                allocate_timestamps(&response, &mut *pending.lock().await)?;
+            }
+            Step::Collected(Some(Err(_)) | None) => {
+                if let Some((_, endpoint)) = current.take() {
+                    streams.remove(&endpoint);
+                }
+                abandon(&pending).await;
+                in_flight = 0;
+            }
+            Step::Accepted(None) => return Err(Error::ContextCanceled),
+            Step::Accepted(Some(request)) => {
+                let candidates = snapshot.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>();
+                let Some(route) = pick_stream_route(&candidates).cloned() else {
+                    // Fail this collected batch; later batches can use newly
+                    // healthy routes.
+                    abandon(&pending).await;
+                    in_flight = 0;
+                    continue;
+                };
+                // Batches outstanding on another route cannot be answered by
+                // this one, so they end here rather than mispairing.
+                if let Some((previous, endpoint)) = current.clone() {
+                    if previous != route {
+                        streams.remove(&endpoint);
+                        abandon(&pending).await;
+                        in_flight = 0;
                     }
                 }
-            }
-        };
-        match response {
-            Some(Ok(response)) => allocate_timestamps(&response, &mut *pending.lock().await)?,
-            Some(Err(_)) | None => {
-                streams.remove(&endpoint);
-                for group in pending.lock().await.drain(..) {
-                    group.done.complete();
+                let endpoint = route.endpoint.clone();
+                let channel = snapshot
+                    .iter()
+                    .find(|(r, _)| r == &route)
+                    .expect("the picked route comes from this snapshot")
+                    .1
+                    .clone();
+                match streams
+                    .send(route.clone(), channel, request, &forwarding)
+                    .await
+                {
+                    Ok(()) => {
+                        current = Some((route, endpoint));
+                        in_flight += 1;
+                    }
+                    Err(_) => {
+                        streams.remove(&endpoint);
+                        abandon(&pending).await;
+                        in_flight = 0;
+                        current = None;
+                    }
                 }
             }
         }

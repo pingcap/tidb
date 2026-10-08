@@ -252,16 +252,103 @@ pub struct TsoStream {
     requests: tokio::sync::mpsc::Sender<pdpb::TsoRequest>,
     responses: TsoResponses,
     forwarding: TsoForwarding,
+    /// Responses published by the collector task, Go's `recvLoop`.
+    ///
+    /// The dispatcher waits on several events at once, so whatever it awaits
+    /// can be dropped mid-poll. Awaiting the stream directly would cancel a
+    /// partially received message and lose the batch it answers; a channel
+    /// receive is cancellation-safe, so the loop that owns the receiving half
+    /// runs in its own task and this is its output. Only the pipelined opener
+    /// installs one -- the legacy coupled exchange keeps reading the stream.
+    collected: Option<tokio::sync::mpsc::Receiver<Result<pdpb::TsoResponse, Status>>>,
+    collector: Option<tokio::task::JoinHandle<()>>,
 }
 
+impl Drop for TsoStream {
+    fn drop(&mut self) {
+        // Retiring a stream retires its collector; nothing else owns the
+        // receiving half, so the task would otherwise outlive the route.
+        if let Some(collector) = self.collector.take() {
+            collector.abort();
+        }
+    }
+}
+
+/// Go `maxPendingRequestsInTSOStream` (`pd/client/clients/tso/stream.go:243`).
+///
+/// Go sizes this generously because `processRequests` hands a batch to the
+/// stream and returns without waiting; the responses are collected by a
+/// separate loop, so requests queue here while earlier ones are still in
+/// flight. A capacity of one would serialize the exchange no matter what
+/// concurrency the dispatcher was granted.
+pub const MAX_PENDING_REQUESTS_IN_TSO_STREAM: usize = 64;
+
 impl TsoStream {
+    /// Opens the stream and hands over its first batch WITHOUT waiting for a
+    /// response, so the batch is collected by [`Self::recv`] like any other.
+    ///
+    /// The first request still precedes any response header, because a server
+    /// may withhold headers until it has one. Go's construction window also
+    /// ends when the stream opens, before `Recv`, so a later application error
+    /// or EOF cannot retroactively admit a proxy -- which is why success is
+    /// recorded here rather than after a response.
+    pub async fn open(
+        route: TsoRoute,
+        channel: Channel,
+        first: pdpb::TsoRequest,
+        forwarding: &TsoForwarding,
+    ) -> Result<Self, Status> {
+        let (requests, receiver) =
+            tokio::sync::mpsc::channel(MAX_PENDING_REQUESTS_IN_TSO_STREAM);
+        requests
+            .send(first)
+            .await
+            .map_err(|_| Status::unavailable("TSO request stream is closed"))?;
+        let responses = route
+            .open(
+                channel,
+                futures::stream::unfold(receiver, |mut receiver| async move {
+                    receiver.recv().await.map(|request| (request, receiver))
+                }),
+            )
+            .await
+            .map_err(|status| {
+                forwarding.record_error(&route, &status);
+                status
+            })?;
+        forwarding.record_success(&route);
+        // Go's `recvLoop` owns the receiving half and publishes each response
+        // as it arrives, so the dispatcher never polls the stream itself.
+        let (published, collected) =
+            tokio::sync::mpsc::channel(MAX_PENDING_REQUESTS_IN_TSO_STREAM);
+        let mut responses = responses;
+        let collector = tokio::spawn(async move {
+            while let Some(response) = responses.next().await {
+                if published.send(response).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Self {
+            route,
+            requests,
+            // The collector owns the stream; this placeholder keeps the field
+            // for the legacy coupled path that still reads it directly.
+            responses: Box::pin(futures::stream::empty()),
+            forwarding: forwarding.clone(),
+            collected: Some(collected),
+            collector: Some(collector),
+        })
+    }
+
     pub async fn open_and_request(
         route: TsoRoute,
         channel: Channel,
         first: pdpb::TsoRequest,
         forwarding: &TsoForwarding,
     ) -> Result<(Self, pdpb::TsoResponse), Status> {
-        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let (requests, receiver) =
+            tokio::sync::mpsc::channel(MAX_PENDING_REQUESTS_IN_TSO_STREAM);
         // Servers may withhold response headers until the first request.
         requests
             .send(first)
@@ -298,10 +385,45 @@ impl TsoStream {
                 route,
                 requests,
                 responses,
+                collected: None,
+                collector: None,
                 forwarding: forwarding.clone(),
             },
             response,
         ))
+    }
+
+    /// The stream's request sink, cloned so a caller can hand over a batch
+    /// without holding the stream itself across the send. Go's
+    /// `processRequests` likewise only needs the stream's sending half, and
+    /// the receiving half (`tonic::Streaming`) is not `Sync`, so borrowing the
+    /// whole stream across an await would make the dispatcher non-`Send`.
+    pub fn sender(&self) -> tokio::sync::mpsc::Sender<pdpb::TsoRequest> {
+        self.requests.clone()
+    }
+
+    /// Collects the next response, which is Go's `recvLoop`. A gRPC stream
+    /// delivers responses in the order its requests were sent, so the caller
+    /// pairs them with its own FIFO queue of in-flight batches.
+    pub async fn recv(&mut self) -> Result<pdpb::TsoResponse, Status> {
+        let result = match self.collected.as_mut() {
+            Some(collected) => collected
+                .recv()
+                .await
+                .unwrap_or_else(|| Err(Status::unavailable("TSO response stream is closed"))),
+            None => self
+                .responses
+                .next()
+                .await
+                .ok_or_else(|| Status::unavailable("TSO response stream is closed"))
+                .and_then(|response| response),
+        };
+        if self.route.forwarded_host.is_some() {
+            if let Err(status) = &result {
+                self.forwarding.record_error(&self.route, status);
+            }
+        }
+        result
     }
 
     pub async fn request(
@@ -349,6 +471,63 @@ impl TsoStreamSet {
     pub fn retain_routes(&mut self, routes: &[TsoRoute]) {
         self.streams
             .retain(|_, stream| routes.contains(&stream.route));
+    }
+
+    /// Sends one batch on the route's retained stream, opening the stream with
+    /// a coupled first exchange when there is none.
+    ///
+    /// Go establishes a stream by sending before any response header arrives
+    /// and reading that first response as part of setup, so the opening batch
+    /// is answered here; every later batch is handed over without waiting and
+    /// its response is collected by [`Self::recv`].
+    pub async fn send(
+        &mut self,
+        route: TsoRoute,
+        channel: Channel,
+        request: pdpb::TsoRequest,
+        forwarding: &TsoForwarding,
+    ) -> Result<(), Status> {
+        let endpoint = route.endpoint.clone();
+        let retained = self
+            .streams
+            .remove(&endpoint)
+            .filter(|stream| stream.route == route);
+        match retained {
+            Some(stream) => {
+                // Take the sink, put the stream straight back, then send. The
+                // stream is never borrowed across the await.
+                let sender = stream.sender();
+                let forwarded = stream.route.forwarded_host.is_some();
+                let stream_route = stream.route.clone();
+                self.streams.insert(endpoint.clone(), stream);
+                match sender.send(request).await {
+                    Ok(()) => Ok(()),
+                    Err(_) => {
+                        // A send failure retires the stream rather than
+                        // leaving a half-written one for the next batch.
+                        self.streams.remove(&endpoint);
+                        let status = Status::unavailable("TSO request stream is closed");
+                        if forwarded {
+                            forwarding.record_error(&stream_route, &status);
+                        }
+                        Err(status)
+                    }
+                }
+            }
+            None => {
+                let stream = TsoStream::open(route, channel, request, forwarding).await?;
+                self.streams.insert(endpoint, stream);
+                Ok(())
+            }
+        }
+    }
+
+    /// Collects the next response from the route's retained stream.
+    pub async fn recv(&mut self, endpoint: &str) -> Option<Result<pdpb::TsoResponse, Status>> {
+        match self.streams.get_mut(endpoint) {
+            Some(stream) => Some(stream.recv().await),
+            None => None,
+        }
     }
 
     pub async fn request(
