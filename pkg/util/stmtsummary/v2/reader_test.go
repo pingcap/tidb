@@ -683,6 +683,43 @@ func BenchmarkHistoryReaderDigestFilter(b *testing.B) {
 	b.Run("no-filter", func(b *testing.B) { benchmarkHistoryReaderRows(b, 0, false) })
 }
 
+func TestExtractDigestPrefix(t *testing.T) {
+	// Regular shape: digest is the fourth field and the large fields follow it, so a
+	// prefix scan must find the digest without touching the tail.
+	line := `{"begin":1672128520,"end":1672128521,"schema_name":"test","digest":"digest1","plan_digest":"p","normalized_sql":"select ?","sample_sql":"` +
+		strings.Repeat("s", 4096) + `"}`
+	digest, ok := extractDigestPrefix([]byte(line))
+	require.True(t, ok)
+	require.Equal(t, "digest1", digest)
+
+	// Whitespace-tolerant and digest-first shapes still work.
+	digest, ok = extractDigestPrefix([]byte(`{ "begin" : 1 , "digest" : "d1" , "end" : 2 }`))
+	require.True(t, ok)
+	require.Equal(t, "d1", digest)
+	digest, ok = extractDigestPrefix([]byte(`{"digest":"d2","begin":1}`))
+	require.True(t, ok)
+	require.Equal(t, "d2", digest)
+
+	// Escapes in earlier string fields don't confuse the scan.
+	digest, ok = extractDigestPrefix([]byte(`{"schema_name":"a\"b\u4e2d","digest":"d3"}`))
+	require.True(t, ok)
+	require.Equal(t, "d3", digest)
+
+	// Unknown shapes must report ok=false so the caller falls back to the full decode.
+	for _, bad := range []string{
+		`{"begin":1}`,                       // no digest key
+		`{"arr":[1,2],"digest":"d"}`,        // container value before digest
+		`{"digest":"a\"b"}`,                 // escaped digest value
+		`{"digest":null}`,                   // non-string digest
+		`{"digest" "d"}`,                    // missing colon
+		`"digest"`,                          // not an object
+		`{"begin":1672128520,"end":1672128`, // truncated
+	} {
+		_, ok = extractDigestPrefix([]byte(bad))
+		require.False(t, ok, bad)
+	}
+}
+
 func countOpenFileDescriptors() (int, bool) {
 	entries, err := os.ReadDir("/proc/self/fd")
 	if err != nil {

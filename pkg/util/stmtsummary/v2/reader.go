@@ -481,11 +481,128 @@ type stmtTinyRecord struct {
 	End   int64 `json:"end"`
 }
 
-// stmtDigestProbe decodes only the digest of a persisted line, for the parse worker's
-// pre-filter. It is kept separate from stmtTinyRecord so the timestamp-only paths
-// (file begin/end probing, scan stop checks) don't decode a digest they never use.
-type stmtDigestProbe struct {
-	Digest string `json:"digest"`
+// extractDigestPrefix extracts the digest value from the head of a persisted JSON
+// line. json.Marshal emits StmtRecord fields in declaration order, so begin, end,
+// schema name and digest precede the large fields (sample SQL, plans) and the scan
+// stops at the digest without reading the rest of the line. It reports ok=false when
+// the line doesn't follow the expected scalar-only shape — format drift across
+// versions, hand-edited files — and the caller must fall back to the full record
+// decode, which keeps results correct either way.
+func extractDigestPrefix(line []byte) (digest string, ok bool) {
+	i := skipJSONSpace(line, 0)
+	if i >= len(line) || line[i] != '{' {
+		return "", false
+	}
+	i = skipJSONSpace(line, i+1)
+	for {
+		if i >= len(line) {
+			return "", false
+		}
+		if line[i] == '}' {
+			// End of the object and the digest hasn't shown up in the scanned prefix.
+			return "", false
+		}
+		key, next, okKey := scanJSONString(line, i)
+		if !okKey {
+			return "", false
+		}
+		i = skipJSONSpace(line, next)
+		if i >= len(line) || line[i] != ':' {
+			return "", false
+		}
+		i = skipJSONSpace(line, i+1)
+		if string(key) == "digest" {
+			value, _, okValue := scanJSONString(line, i)
+			if !okValue || hasJSONEscape(value) {
+				// An escaped digest never occurs in records we write; treat anything
+				// else as unknown shape and fall back to the full decode.
+				return "", false
+			}
+			return string(value), true
+		}
+		next, okValue := skipJSONValue(line, i)
+		if !okValue {
+			return "", false
+		}
+		i = skipJSONSpace(line, next)
+		if i >= len(line) {
+			return "", false
+		}
+		if line[i] == ',' {
+			i = skipJSONSpace(line, i+1)
+		} else if line[i] != '}' {
+			return "", false
+		}
+	}
+}
+
+func skipJSONSpace(line []byte, i int) int {
+	for i < len(line) {
+		switch line[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+// scanJSONString reads a JSON string starting at the opening quote line[i]. It
+// returns the raw content between the quotes with escapes left as-is, the position
+// after the closing quote, and whether the string is well-formed.
+func scanJSONString(line []byte, i int) (content []byte, next int, ok bool) {
+	if i >= len(line) || line[i] != '"' {
+		return nil, 0, false
+	}
+	i++
+	start := i
+	for i < len(line) {
+		switch line[i] {
+		case '\\':
+			i += 2
+		case '"':
+			return line[start:i], i + 1, true
+		default:
+			i++
+		}
+	}
+	return nil, 0, false
+}
+
+func hasJSONEscape(content []byte) bool {
+	for _, c := range content {
+		if c == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+// skipJSONValue skips one JSON scalar (string, number or literal) and reports the
+// position after it. Containers are rejected so the caller falls back to the full
+// decode instead of replicating the parser.
+func skipJSONValue(line []byte, i int) (next int, ok bool) {
+	if i >= len(line) {
+		return 0, false
+	}
+	switch line[i] {
+	case '"':
+		_, next, ok = scanJSONString(line, i)
+		return next, ok
+	case '{', '[':
+		return 0, false
+	default:
+		start := i
+		for i < len(line) {
+			switch line[i] {
+			case ',', '}', ']', ' ', '\t', '\n', '\r':
+				return i, i > start
+			}
+			i++
+		}
+		return i, i > start
+	}
 }
 
 type stmtPersistedRecord struct {
@@ -850,10 +967,10 @@ func (w *stmtParseWorker) handleLines(
 	for _, line := range lines {
 		if w.checker.digests != nil {
 			// Cheap digest pre-filter: records whose digest cannot match skip the full
-			// unmarshal. The probe decodes the digest from the same JSON line, and persistent
-			// files already carry the digest key, so old files need no migration.
-			var probe stmtDigestProbe
-			if err := json.Unmarshal(line, &probe); err == nil && !w.checker.isDigestValid(probe.Digest) {
+			// unmarshal. The prefix scan reads only the head of each line — digest precedes
+			// the large fields — and falls back to the full decode when the expected shape
+			// doesn't match.
+			if digest, ok := extractDigestPrefix(line); ok && !w.checker.isDigestValid(digest) {
 				continue
 			}
 		}
