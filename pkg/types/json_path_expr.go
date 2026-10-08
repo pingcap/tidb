@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -541,16 +542,17 @@ func parseJSONPathMember(s *jsonPathStream, p *JSONPathExpression) bool {
 	return true
 }
 
+// isEcmascriptIdentifier follows `is_ecmascript_identifier` in MySQL's
+// sql-common/json_path.cc, which decides whether a key in a JSON path needs to
+// be quoted.
 func isEcmascriptIdentifier(s string) bool {
-	if s == "" {
+	if s == "" || !utf8.ValidString(s) {
 		return false
 	}
 
-	for i := range len(s) {
-		c := rune(s[i])
-
-		// accept Latin1 letter
-		if c <= unicode.MaxLatin1 && unicode.IsLetter(c) {
+	for i, c := range s {
+		// accept letter
+		if isJSONPathLetter(c) {
 			continue
 		}
 		// accept '$' and '_'
@@ -564,11 +566,11 @@ func isEcmascriptIdentifier(s string) bool {
 		}
 
 		// accept unicode combining mark
-		if unicode.Is(unicode.Mc, c) {
+		if isUnicodeCombiningMark(c) {
 			continue
 		}
 		// accept digit
-		if unicode.IsDigit(c) {
+		if isJSONPathDigit(c) {
 			continue
 		}
 		// accept unicode connector punctuation
@@ -583,6 +585,28 @@ func isEcmascriptIdentifier(s string) bool {
 		return false
 	}
 	return true
+}
+
+func isUnicodeCombiningMark(c rune) bool {
+	return 0x300 <= c && c <= 0x36F
+}
+
+// isJSONPathLetter follows `is_letter` in MySQL. MySQL checks the code point
+// with `my_isalpha(&my_charset_utf8mb4_bin, codepoint)`, which only looks up
+// the lowest byte of the code point in the ctype table of utf8mb4.
+func isJSONPathLetter(c rune) bool {
+	if isUnicodeCombiningMark(c) {
+		return false
+	}
+	b := byte(c)
+	return ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z') || (0x80 <= b && b <= 0xFE)
+}
+
+// isJSONPathDigit follows `is_digit` in MySQL, which also only checks the
+// lowest byte of the code point.
+func isJSONPathDigit(c rune) bool {
+	b := byte(c)
+	return '0' <= b && b <= '9'
 }
 
 // ParseJSONPathExpr parses a JSON path expression. Returns a JSONPathExpression

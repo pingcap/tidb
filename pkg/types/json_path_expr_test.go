@@ -79,6 +79,18 @@ func TestValidatePathExpr(t *testing.T) {
 		{`$.Ѡ`, false, 0}, // This test case is special, because Ѡ is 0xD1 0xA0 in UTF-8, and 0xA0 is a space character.
 		{`$."Ѡ"`, true, 1},
 		{`$.µ`, true, 1},
+		// The expected results below are the same as MySQL 8.0, which checks
+		// letters and digits by the lowest byte of the code point.
+		{`$.é`, true, 1},
+		{`$.ß`, true, 1},
+		{`$.α`, true, 1},
+		{`$.с`, true, 1},
+		{`$.aб`, true, 1},
+		{`$.б`, false, 0},
+		{`$.ÿ`, false, 0},
+		{`$.Ā`, false, 0},
+		{`$.你`, false, 0},
+		{`$."你"`, true, 1},
 	}
 
 	for _, test := range tests {

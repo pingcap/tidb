@@ -177,6 +177,19 @@ func TestQuoteString(t *testing.T) {
 		{raw: "3", quoted: `"3"`},
 		{raw: "hello, \"escaped quotes\" world", quoted: `"hello, \"escaped quotes\" world"`},
 		{raw: "你", quoted: `"你"`},
+		// The expected results below are the same as MySQL 8.0, which checks
+		// letters and digits by the lowest byte of the code point.
+		{raw: "é", quoted: `é`},
+		{raw: "ß", quoted: `ß`},
+		{raw: "α", quoted: `α`},
+		{raw: "с", quoted: `с`},
+		{raw: "б", quoted: `"б"`},
+		{raw: "aб", quoted: `aб`},
+		{raw: "ÿ", quoted: `"ÿ"`},
+		{raw: "Ā", quoted: `"Ā"`},
+		{raw: "😀", quoted: `"😀"`},
+		{raw: "a\u0301", quoted: "a\u0301"},
+		{raw: "\u0301", quoted: "\"\u0301\""},
 		{raw: "true", quoted: `true`},
 		{raw: "null", quoted: `null`},
 		{raw: `"`, quoted: `"\""`},
@@ -722,6 +735,33 @@ func TestBinaryJSONOpaque(t *testing.T) {
 		buf, err := test.bj.marshalTo(buf)
 		require.NoError(t, err)
 		require.Equal(t, string(buf), test.expectedOutput)
+	}
+}
+
+func TestMarshalFloatInContainer(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`["1234567e-0", 1.2345678e20]`, `["1234567e-0", 1.2345678e20]`},
+		{`["ae-0x", 1.5e-20]`, `["ae-0x", 1.5e-20]`},
+		{`{"e-0": 1e-20, "k": [1e20, -1.5e-20]}`, `{"e-0": 1e-20, "k": [1e20, -1.5e-20]}`},
+	}
+	for _, test := range tests {
+		j, err := ParseBinaryJSONFromString(test.input)
+		require.NoError(t, err)
+		require.Equal(t, test.expected, j.String())
+	}
+
+	// The float is rendered after the other content in the buffer, and the
+	// content before it should not affect the result.
+	for _, f := range []float64{1.2345678e20, 1.5e-20, -1e300, 5e-324} {
+		scalar := CreateBinaryJSON(f).String()
+		for n := range 30 {
+			prefix := strings.Repeat("x", n) + "e-0"
+			j := CreateBinaryJSON([]any{prefix, f})
+			require.Equal(t, fmt.Sprintf(`["%s", %s]`, prefix, scalar), j.String())
+		}
 	}
 }
 
