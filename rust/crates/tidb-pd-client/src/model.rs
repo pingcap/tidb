@@ -25,14 +25,14 @@ pub struct PdPeer {
     pub is_witness: bool,
 }
 
-/// One validated foreground PD membership snapshot.
+/// One accepted PD membership snapshot.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdMemberSet {
     /// Nonzero cluster identity shared by every accepted response.
     pub cluster_id: u64,
-    /// Normalized plaintext client URL reported for the PD leader.
+    /// Normalized client URL reported for the PD leader.
     pub leader_url: String,
-    /// Sorted, deduplicated normalized plaintext URLs for all PD members.
+    /// Sorted, deduplicated normalized client URLs for all PD members.
     pub member_urls: Vec<String>,
 }
 

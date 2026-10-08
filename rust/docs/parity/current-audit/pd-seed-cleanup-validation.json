@@ -1,0 +1,145 @@
+{
+  "baseline": "e1acd0501bdd1acdf85677f826c2813c367c4f36",
+  "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+  "date": "2026-10-08",
+  "retired_files": [
+    {
+      "path": "rust/crates/tidb-pd-client/src/engine.rs",
+      "lines": 58,
+      "sha256": "38ffaa3bcff149cda0323fa996ff9c3758549a235a83175ae444151b1c185f60",
+      "archive": "https://github.com/pingcap/tidb/blob/e1acd0501bdd1acdf85677f826c2813c367c4f36/rust/crates/tidb-pd-client/src/engine.rs"
+    },
+    {
+      "path": "rust/crates/tidb-pd-client/tests/engine_source.rs",
+      "lines": 72,
+      "sha256": "abfba6d5a4caa28970a54e0bf44bc7bbfaec534f93a31139cfccee5fcbc47f4c",
+      "archive": "https://github.com/pingcap/tidb/blob/e1acd0501bdd1acdf85677f826c2813c367c4f36/rust/crates/tidb-pd-client/tests/engine_source.rs"
+    },
+    {
+      "path": "rust/docs/pdclient-tso-parity-audit.md",
+      "lines": 51,
+      "sha256": "cd15a4a512569f3be09030f685e251f639cdff8c60e3189b55540132c42d7c2b",
+      "archive": "https://github.com/pingcap/tidb/blob/e1acd0501bdd1acdf85677f826c2813c367c4f36/rust/docs/pdclient-tso-parity-audit.md"
+    },
+    {
+      "path": "rust/docs/pd-availability-batch-execplan.md",
+      "lines": 129,
+      "sha256": "da30259bc4165a280c9e7b682239009aebbcba299a4ccfa7b8d47f988dd40e2d",
+      "archive": "https://github.com/pingcap/tidb/blob/e1acd0501bdd1acdf85677f826c2813c367c4f36/rust/docs/pd-availability-batch-execplan.md"
+    },
+    {
+      "path": "rust/docs/pd-bootstrap-policy-batch-execplan.md",
+      "lines": 44,
+      "sha256": "8eb15223712ede7732383159fd812ce83f64432de2a38b3119c86250259c4c00",
+      "archive": "https://github.com/pingcap/tidb/blob/e1acd0501bdd1acdf85677f826c2813c367c4f36/rust/docs/pd-bootstrap-policy-batch-execplan.md"
+    },
+    {
+      "path": "rust/docs/pd-forwarding-batch-execplan.md",
+      "lines": 56,
+      "sha256": "1e90e2076505b695f51b419bf774fa7a780c608ed8e104c152be31ad94c3ac50",
+      "archive": "https://github.com/pingcap/tidb/blob/e1acd0501bdd1acdf85677f826c2813c367c4f36/rust/docs/pd-forwarding-batch-execplan.md"
+    },
+    {
+      "path": "rust/docs/pd-channel-batch-execplan.md",
+      "lines": 69,
+      "sha256": "88361346c19a6dd2530f45a15cdec6ea2e88f96c1b8059ab26ac88b245fae79c",
+      "archive": "https://github.com/pingcap/tidb/blob/e1acd0501bdd1acdf85677f826c2813c367c4f36/rust/docs/pd-channel-batch-execplan.md"
+    },
+    {
+      "path": "rust/testport/receipts/util_engine.md",
+      "lines": 91,
+      "sha256": "e5429c3e3cd388ea97876378cc6a4b61d9b5035b594ea38ea0ebc167455b88da",
+      "archive": "https://github.com/pingcap/tidb/blob/e1acd0501bdd1acdf85677f826c2813c367c4f36/rust/testport/receipts/util_engine.md"
+    }
+  ],
+  "retired_cases": [
+    "TestIsTiFlashHTTPResp",
+    "TestIsTiFlashWriteHTTPResp"
+  ],
+  "reason": "All three adapter classifiers have zero production consumers across TiDB and native client; the private harness only exercises that disconnected seed. These are original Go cases, not useless Go behavior: package acceptance is withdrawn and restoration obligations retained.",
+  "retained": [
+    "Native store::endpoint classification and region-cache TiFlash filters/tests",
+    "SQL cluster_discovery classification and tests",
+    "PD socket/TLS/TSO/cancellation/ownership tests",
+    "Original Go pkg/util/engine source, tests and build obligations",
+    "PD channel/availability/bootstrap/forwarding validation JSON and current independent-observation plan"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "validation": {
+    "tests": {
+      "command": "cd rust && cargo test --locked -p tidb-pd-client --lib --test all -- --test-threads=1",
+      "initial": {
+        "passed": 95,
+        "failed": 2,
+        "ignored": 1,
+        "log": {
+          "path": "/workspace/.cloud-setup/pd-seed-cleanup/tests.log",
+          "sha256": "0d9647cff4057c9bdd11173b1c946281090811e3fa420566d60da41d6713bb08"
+        }
+      },
+      "recheck": {
+        "command": "cd rust && cargo test --locked -p tidb-pd-client --test all -- bootstrap_timeout_transport_non_retryable_header_and_zero_cluster_never_retry failed_active_endpoint_refreshes_through_survivor_for_region --test-threads=1",
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0,
+        "log": {
+          "path": "/workspace/.cloud-setup/pd-seed-cleanup/failed-cases-recheck.log",
+          "sha256": "3c78ce48736bf345188858fe6b634ef696cfceffaca65d8ed7637a32fdb6bc81"
+        }
+      },
+      "distinct_passed": 97,
+      "diagnosis": "Two existing loopback cases missed 20ms/50ms deadlines while all-target compilation ran. Both pass after compilation completes; both passed in the immediately preceding independent-observation batch. Tests and runtime call paths are byte-identical to baseline; no assertions or timeouts changed. This is timing sensitivity, not an initially green full run.",
+      "ignored": "Existing live-PD integration probe requires a PD server; not executed."
+    },
+    "all_targets": {
+      "command": "cd rust && cargo check --locked -p tidb-pd-client --all-targets",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-seed-cleanup/check.log",
+        "sha256": "38d928badca006946269f254b75ab151549d77b3d4bfbcdfa55e7cd11e52dd78"
+      }
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-seed-cleanup/lint.log",
+        "sha256": "058593636347b35990fefcdfdfa8ff404654200fa6fd84dd17da0b0e17393186"
+      }
+    },
+    "format": {
+      "changed_files_command": "rustfmt --check --config skip_children=true crates/tidb-pd-client/src/lib.rs crates/tidb-pd-client/src/model.rs crates/tidb-pd-client/tests/all.rs",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/pd-seed-cleanup/changed-fmt.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "package_format_probe": {
+        "command": "cargo fmt --package tidb-pd-client -- --check",
+        "exit": 1,
+        "reason": "Pre-existing import formatting in untouched tests/tls_handshake_source.rs; git diff confirms unchanged. No formatting churn introduced.",
+        "log": {
+          "path": "/workspace/.cloud-setup/pd-seed-cleanup/fmt.log",
+          "sha256": "e95e9e5c809cfc6e46c6413384b7db524d009d815be673dbf7e0a1ccacef8341"
+        }
+      }
+    },
+    "review": {
+      "path": "/workspace/.cloud-setup/pd-seed-cleanup/source-review.json",
+      "sha256": "4b692a47f3fae68d0f8f6dec6023d503eb430c1e782b6d8ae9ffb601eeb995e9"
+    },
+    "publication": "Actual commit hook, fresh locked server build, push and remote verification are recorded after commit in /workspace/.cloud-setup/pd-seed-cleanup/final-handoff.json; no future gate success asserted here."
+  },
+  "limits": [
+    "No finding closure, complete Go package acceptance, live multi-node test or performance claim.",
+    "Removed public seed APIs have no maintained production callers; external consumers are not verified.",
+    "Historical plan evidence remains at immutable Git URLs; their current validation JSON receipts remain tracked."
+  ],
+  "net_rust_source_lines_removed": 135
+}

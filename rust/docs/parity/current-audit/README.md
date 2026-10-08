@@ -2,7 +2,9 @@
 
 Latest connected repair: [independent PD/TSO observations](pd-independent-observation-validation.json) fixes failed-mode group refresh, native member/TSO scheduling and missing adapter periodic membership as one lifecycle batch. The former direct-client helper is removed after migration. P03/P06 remain partial; no broad or complete-package closure.
 
-Latest cleanup: [wire seed retirement](wire-seed-cleanup-validation.json) removes unused stream and transport wrappers, six redundant/disconnected cases and an always-skipped benchmark. The unique partition test stays in the request-builder suite. Historical VM performance evidence is archived in Git; no findings or package obligations close.
+Latest cleanup: [PD seed and historical-plan retirement](pd-seed-cleanup-validation.json) removes three unconsumed classifiers, their private two-case harness and five superseded PD documents. The former util/engine acceptance claim is withdrawn; Go source/test obligations and active transport coverage remain. No findings close.
+
+Previous cleanup: [wire seed retirement](wire-seed-cleanup-validation.json) removes unused stream and transport wrappers, six redundant/disconnected cases and an always-skipped benchmark. The unique partition test stays in the request-builder suite. Historical VM performance evidence is archived in Git; no findings or package obligations close.
 
 Previous cleanup: [row iterator retirement](row-iterator-cleanup-validation.json) removes the unused serial row-source API, duplicate channel container and two private harnesses (nine cases). Decoded rows now stay in the response owner; real chunk, error, layout and close coverage remains. Raw/chunk serial composition is still an unaccepted Go obligation.
 
@@ -10,16 +12,16 @@ Previous cleanup: [DistSQL carrier retirement](distsql-cleanup-validation.json) 
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [statement KV execution attribution](kv-exec-batch-validation.json) connects admission, ordinary reads, coprocessor workers and foreground MPP requests to one existing counter owner. It removes the unused boolean interceptor placeholder and generic wrapper while preserving useful Go counting assertions. O11/T02/O13 remain partial for broader profiling/write attribution/cache and package obligations. Counts remain 86 tracked, 32 repaired and 54 unresolved (24 open, 30 partial). Previous native compute-cache evidence remains in [its receipt](compute-cache-validation.json).
+Previous connected repair: [statement KV execution attribution](kv-exec-batch-validation.json) connects admission, ordinary reads, coprocessor workers and foreground MPP requests to one existing counter owner. It removes the unused boolean interceptor placeholder and generic wrapper while preserving useful Go counting assertions. O11/T02/O13 remain partial for broader profiling/write attribution/cache and package obligations. Counts remain 86 tracked, 32 repaired and 54 unresolved (24 open, 30 partial). Previous native compute-cache evidence remains in [its receipt](compute-cache-validation.json).
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../kv-exec-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../pd-independent-observation-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](kv-exec-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](pd-independent-observation-validation.json): exact source/log identities and verification limits.
 
-Current Go comparison: `ab37692e9ebef44a736cd7243deef6020067b743`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `de4c53c34f9fcf53e2e07cb928b6b4af890b02c0`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
+Current Go comparison: `ab37692e9ebef44a736cd7243deef6020067b743`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `203893b5a4a0ae74a86599cb1dfdc993f999f3ca`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
 A complete upstream package, including original tests, generated/platform/build inputs and fixtures, is the minimum acceptance unit. Search hits, a passing subset and retired Rust-only adapter tests do not discharge those obligations. The complete inventories are snapshots, not proof that every semantic mismatch is known.
 

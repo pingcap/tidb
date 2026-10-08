@@ -1,5 +1,7 @@
 # Remaining structural mismatches, maintained 2026-10-08
 
+Latest cleanup: [PD seed retirement](pd-seed-cleanup-validation.json) removes unused classifiers and their private harness, archives superseded PD plans, and withdraws the disconnected util/engine acceptance claim. All 54 unresolved finding dispositions remain unchanged.
+
 Latest connected repair: [native compute-cache ownership and MPP invalidation](compute-cache-validation.json) replaces bypassed PD discovery with the native owner and connects topology retries, dispatch, establishment and cancellation. T02/M04/M05 remain partial for broader cache/coordinator/package obligations. Counts remain 86 tracked, 32 repaired and 54 unresolved (24 open, 30 partial). Previous diagnostic projection evidence remains in [its receipt](digest-projection-validation.json).
 
 Earlier [outgoing peers](cluster-peer-validation.json), [AutoID ownership](auto-id-owner-validation.json), [planning cleanup](planning-history-cleanup-validation.json) and [shared read consistency](read-consistency-batch-validation.json) retain their dated evidence and limits. Historical counts are not the current queue.

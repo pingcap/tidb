@@ -304,3 +304,12 @@ Revision note: replace copied history with current Cloud instructions and the
 B01–B10 queue; retain exact earlier plans for evidence and recovery.
 
 Decision (2026-10-08): the retired row-source model never implemented Go serialSelectResults, whose NextRaw/Next compose raw responses/chunks and whose IntoIter is unimplemented. The response owner already validates layouts, decodes chunks and closes resources; remove its redundant generic row wrapper and fabricated error path. Complete serial composition remains unaccepted; 54 broader findings remain unresolved.
+
+
+Cleanup revision (2026-10-08): retire the unconsumed PD engine seed and its
+private harness together; withdraw its historical util/engine acceptance and
+retain all original Go obligations in the replacement receipt. Archive five
+superseded PD documents with immutable URLs and hashes. Active PD/TSO work
+continues from pd-independent-observation-execplan.md and P03/P06; this cleanup
+changes no finding disposition. Validation is grouped after all removals;
+see parity/current-audit/pd-seed-cleanup-validation.json for actual outcomes.

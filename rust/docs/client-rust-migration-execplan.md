@@ -569,7 +569,9 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       mechanical change to raise with the client-rust agent.
       **Keep regardless:** `etcd.rs` (1.2K -- TiDB Go uses
       `go.etcd.io/etcd/client/v3` directly, and this is already rewritten
-      onto the `etcd-client` crate) and `engine.rs` (`pkg/util/engine`).
+      onto the `etcd-client` crate). The disconnected `pkg/util/engine`
+      seed was retired on 2026-10-08; its original Go obligations remain in
+      `rust/testport/receipts/util_engine.md`.
       **`tidb-distsql` -- remove essentially nothing.** This is the
       correction that matters most. `pkg/store/copr` is TiDB's package, not
       client-go's: coprocessor task building, `copr_cache.rs`

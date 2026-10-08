@@ -1,13 +1,10 @@
-//! A bounded, foreground PD control-plane client.
+//! PD control-plane adapter with shared native discovery and channel ownership.
 //!
-//! This crate implements the source call chain needed to discover a plaintext
-//! PD member set, locate one region, and resolve its stores. A dedicated worker
-//! owns the Tokio runtime so the public synchronous API never nests a runtime
-//! owned by its caller. Membership refresh and direct endpoint failover happen
-//! only in the foreground and are bounded by the current member set.
+//! A dedicated worker owns the Tokio runtime behind the synchronous API.
+//! Membership, health and timestamp discovery run under the client lifetime;
+//! configured cluster security applies to foreground and background requests.
 
 mod client;
-mod engine;
 mod error;
 mod etcd;
 mod metrics;
@@ -20,7 +17,6 @@ pub use client::{
     GET_MEMBERS_PATH, GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH,
     SCAN_REGIONS_PATH, TSO_PATH,
 };
-pub use engine::{is_tiflash, is_tiflash_http_response, is_tiflash_write_http_response};
 pub use error::{PdClientError, PdClientShutdownError, PdOperation};
 pub use etcd::{
     EtcdClient, EtcdCreateOrGet, EtcdError, EtcdKeyValue, EtcdLeaseSession, EtcdWatchEvent,

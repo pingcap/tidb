@@ -15,7 +15,6 @@
 //! All topology-independent `tidb-pd-client` integration tests in one process.
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
-mod engine_source;
 mod pd_client_source;
 mod pd_worker_lifecycle_source;
 mod tls_handshake_source;

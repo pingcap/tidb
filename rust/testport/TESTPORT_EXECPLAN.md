@@ -3481,7 +3481,8 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   the fix with three `unused_must_use` errors and passes after removing the
   annotations. Current and exact detached Go tests, focused Rust tests,
   package checking, formatting, and diff checks pass. Updated
-  `receipts/util_engine.md`.
+  `receipts/util_engine.md`. Superseded on 2026-10-08: the disconnected
+  seed and harness are retired, and package acceptance is withdrawn.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/texttree` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 174
@@ -5700,7 +5701,8 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   supplemental Rust matrix with exactly the two Go source identities and
   their five cases each, and registered the package as a standalone Cargo
   test. Complete inventory and WIP gates are recorded in
-  `receipts/util_engine.md`.
+  `receipts/util_engine.md`. Superseded on 2026-10-08: the disconnected
+  seed and harness are retired, and package acceptance is withdrawn.
 - 2026-08-29: completed the pinned Go `pkg/util/cteutil` package (one
   production file, one source test, one test harness, and `BUILD.bazel`).
   Restored the explicit closed/open/reference-counted lifecycle in the

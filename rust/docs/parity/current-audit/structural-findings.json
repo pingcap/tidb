@@ -805,8 +805,8 @@
   },
   "latest_test_cleanup": {
     "date": "2026-10-08",
-    "receipt": "wire-seed-cleanup-validation.json",
-    "scope": "Remove unused stream/transport wire seeds, six cases, two harnesses and always-skipped cop_encode benchmark. Preserve unique partition/wire/ownership coverage; archive historical VM diary. No findings closed."
+    "receipt": "pd-seed-cleanup-validation.json",
+    "scope": "Retire three unconsumed PD engine classifiers, their two-case harness and five historical documents; withdraw disconnected util/engine acceptance. No finding changes."
   },
   "test_cleanup_history": [
     {
@@ -1278,6 +1278,11 @@
       "date": "2026-10-08",
       "receipt": "row-iterator-cleanup-validation.json",
       "scope": "Remove unused serial row sources and duplicate decoded-channel container; nine redundant/disconnected cases retired. Real protocol/close/cancellation coverage retained. No findings closed."
+    },
+    {
+      "date": "2026-10-08",
+      "receipt": "pd-seed-cleanup-validation.json",
+      "scope": "Retire three unconsumed PD engine classifiers, their two-case harness and five historical documents; withdraw disconnected util/engine acceptance. No finding changes."
     }
   ],
   "repair_history": [
