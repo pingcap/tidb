@@ -25,13 +25,15 @@ one package, but it retains one inventory, integration decision and receipt.
 Partial maintenance never accepts the enclosing package.
 
 The [finding register](parity/current-audit/structural-findings.json) records
-86 findings: 31 repaired and 55 unresolved (26 open, 29 partial). The
+86 findings: 31 repaired and 55 unresolved (25 open, 30 partial). The
 [batch map](parity/current-audit/remaining-batches.md) assigns every unresolved
 ID once across B01–B10. Counts describe the known register, not exhaustive
 semantic coverage. [README.md](parity/current-audit/README.md) indexes current
 and historical evidence; consult each receipt's actual limits.
 
 ## Progress
+
+- [x] Compose outgoing remote KILL and CLUSTER_PROCESSLIST through one discovered peer/RPC owner; retain inbound N05 hosting and full package residuals. See [batch plan](cluster-peer-execplan.md) and [receipt](parity/current-audit/cluster-peer-validation.json).
 
 - [x] Repair K01 allocator selection and shared AutoID client ownership across DML, DDL and SHOW; retain N05 service-hosting/election residual and full package limits. See [batch plan](auto-id-owner-execplan.md) and [receipt](parity/current-audit/auto-id-owner-validation.json).
 

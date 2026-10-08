@@ -3,7 +3,7 @@
 The [JSON batch map](remaining-batches.json) owns the allocation below; the
 [finding register](structural-findings.json) owns dispositions and detailed
 residuals. Current counts are 86 tracked, 31 repaired and 55 unresolved
-(26 open, 29 partial). Read [README.md](README.md) for the latest repair and
+(25 open, 30 partial). Read [README.md](README.md) for the latest repair and
 validation receipts. Older maintenance summaries are preserved in the
 [planning archive](https://github.com/pingcap/tidb/blob/9a319a5d6d78593e623a9db8e8aed1f750380507/rust/docs/parity/current-audit/remaining-batches.md).
 
@@ -123,3 +123,5 @@ Source owners: pkg/inference and full provider/batcher packages; Domain runtime,
 Completion: One provider/batcher/Domain/cache lifetime, configuration, errors, cancellation and joined close. One finding here represents a whole structural runtime, not a one-function fix.
 
 Integration dependencies: B02, B06.
+
+Peer batch update: N04/I03 now share outgoing discovery, generated coprocessor requests and SQL cancellation. I03 is partial. N05 inbound peer hosting is still the shared prerequisite for Rust-only cluster interoperability; no batch or package completion is claimed. See [receipt](cluster-peer-validation.json).

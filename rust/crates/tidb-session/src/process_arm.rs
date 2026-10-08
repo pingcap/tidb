@@ -115,13 +115,104 @@ impl Session {
             Ok((_, true)) => {
                 self.append_warning(crate::WarningLevel::Warning, 1105, "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID.".to_owned());
             }
-            Ok((_, false)) => {
-                // Remote routing still requires the remote RPC
-                // dispatch (N04); this registry only holds local connections.
-                registry.kill(target, kill.query);
+            Ok((id, false)) => {
+                if id.server_id == (self.server_id_getter)() {
+                    registry.kill(target, kill.query);
+                } else if let Err(error) = self.kill_remote_connection(id, kill.query) {
+                    self.append_warning(
+                        WarningLevel::Warning,
+                        1105,
+                        format!("KILL remote connection failed: {error}"),
+                    );
+                }
             }
         }
         Ok(Some(StmtOutput::Affected(0)))
+    }
+
+    fn kill_remote_connection(
+        &self,
+        id: tidb_util::globalconn::Gcid,
+        query: bool,
+    ) -> Result<(), String> {
+        if id.server_id == 0 {
+            return Err("Unexpected ZERO ServerID. Please file a bug to the TiDB Team".into());
+        }
+        let client = self
+            .cluster_peer
+            .as_ref()
+            .ok_or("TiDB peer RPC client is not installed")?;
+        let syncer = self
+            .server_info_syncer
+            .as_ref()
+            .ok_or("TiDB peer discovery is not installed")?;
+        let servers: Vec<_> = syncer.all_server_info()?.into_values().collect();
+        client.kill(
+            &servers,
+            id,
+            query,
+            &self.statement_context(false),
+            &self.session_time_zone(),
+        )
+    }
+
+    /// Local formatting and visibility stay with PROCESSLIST; discovered peers
+    /// execute the same cluster table with the originating user's identity.
+    pub(crate) fn cluster_process_list_table_rows(
+        &mut self,
+        columns: &[(String, FieldType)],
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let instance = self.cluster_instance_address();
+        let mut rows: Vec<_> = self
+            .process_list_table_rows()
+            .into_iter()
+            .map(|mut row| {
+                row.insert(0, Datum::Bytes(instance.clone().into_bytes()));
+                row
+            })
+            .collect();
+        let Some(syncer) = &self.server_info_syncer else {
+            return Ok(rows);
+        };
+        let local_id = syncer.local_server_info().static_info.id;
+        let discovered = syncer.all_server_info().map_err(DriverError::unsupported)?;
+        if !discovered
+            .values()
+            .any(|server| server.static_info.id == local_id && server.static_info.ip != "<nil>")
+        {
+            rows.clear();
+        }
+        let servers: Vec<_> = discovered
+            .into_values()
+            .filter(|server| server.static_info.id != local_id && server.static_info.ip != "<nil>")
+            .collect();
+        if servers.is_empty() {
+            return Ok(rows);
+        }
+        let client = self
+            .cluster_peer
+            .as_ref()
+            .ok_or_else(|| DriverError::unsupported("TiDB peer RPC client is not installed"))?;
+        let ctx = self.statement_context(false);
+        // Go carries Username/Hostname (the presented login), not AuthHostname.
+        let user = self
+            .login_user
+            .as_deref()
+            .and_then(|identity| identity.split_once('@'));
+        let result = client.scan(
+            &servers,
+            infoschema::memory_table_id("CLUSTER_PROCESSLIST").expect("registered memory table"),
+            columns,
+            user,
+            &ctx,
+            &self.session_time_zone(),
+            ctx.dist_sql_scan_concurrency() as usize,
+        )?;
+        for (code, message) in result.warnings {
+            self.append_warning(WarningLevel::Warning, code, message);
+        }
+        rows.extend(result.rows);
+        Ok(rows)
     }
 
     /// The rows of `SHOW [FULL] PROCESSLIST`.

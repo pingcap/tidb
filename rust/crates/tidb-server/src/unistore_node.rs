@@ -643,6 +643,12 @@ pub(crate) fn unistore_cluster_session_stack(
     )
     .with_cop_scans(cop_scans)
     .with_server_info(server_info)
+    .with_cluster_peer_client(Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
+        tidb_txnkv::rpc::TonicCoprocessorClient::with_security(Arc::new(
+            config.cluster_security.clone(),
+        ))
+        .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?,
+    )))
     .with_cluster_config_client(Arc::new(
         tidb_exec::cluster_config::ClusterConfigClient::new(&config.cluster_security)
             .map_err(|error| engine(SqlQueryError::unknown(error)))?,

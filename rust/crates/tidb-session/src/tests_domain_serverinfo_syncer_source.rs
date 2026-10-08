@@ -974,3 +974,21 @@ fn cluster_config_live_http_filters_roles_warnings_and_prepared_reads() {
         Err(DriverError::SpecificAccessDenied(_))
     ));
 }
+
+#[test]
+fn cluster_peer_batch_processlist_discovery_errors_are_not_hidden() {
+    let fake = Arc::new(FakeEtcd::default());
+    *fake.get_error.lock().unwrap() = Some("peer registry unavailable".into());
+    let mut session = crate::Session::new();
+    session.set_server_info_syncer(Arc::new(Syncer::new(
+        mock_server_info("local", "192.0.2.10", 4000),
+        Some(fake),
+    )));
+    let error = session
+        .run("SELECT * FROM information_schema.CLUSTER_PROCESSLIST")
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("peer registry unavailable"),
+        "{error}"
+    );
+}

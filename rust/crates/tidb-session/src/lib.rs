@@ -671,6 +671,7 @@ pub struct Session {
     server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
+    cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
     /// The domain identity getter shared with server-info publication.
     server_id_getter: Arc<dyn Fn() -> u64 + Send + Sync>,
     /// The cluster schema version this node follows, which `ADMIN SHOW DDL`
@@ -951,6 +952,7 @@ impl Session {
             server_info_syncer: None,
             cluster_topology: None,
             cluster_config: None,
+            cluster_peer: None,
             server_id_getter: Arc::new(|| 0),
             cluster_schema_version: None,
             workload_repository: None,
@@ -1305,6 +1307,14 @@ impl Session {
         client: Arc<tidb_exec::cluster_config::ClusterConfigClient>,
     ) {
         self.cluster_config = Some(client);
+    }
+
+    /// Installs the shared outgoing TiDB coprocessor capability.
+    pub fn set_cluster_peer_client(
+        &mut self,
+        client: Arc<tidb_exec::cluster_peer::ClusterPeerClient>,
+    ) {
+        self.cluster_peer = Some(client);
     }
 
     /// Installs process-owned topology and replica-read policy.

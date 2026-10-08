@@ -4,14 +4,14 @@ Latest cleanup: [shared TSO completion](tso-completion-validation.json) retires 
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [AutoID ownership](auto-id-owner-validation.json). The batch composes shared service discovery/recovery, eligible allocator selection, separate hidden-row counters, DML cancellation, SHOW and DDL rebasing/rename identity. K01's recorded selection defect is repaired; N05 explicitly retains missing AutoID service hosting/election. Counts: 86 tracked,31 repaired,55 unresolved (26 open,29 partial). T02/M04 remain partial; other carried findings were not freshly re-audited. No complete-package or live Go/TiKV acceptance.
+Latest connected repair: [outgoing cluster peers](cluster-peer-validation.json). Remote KILL and CLUSTER_PROCESSLIST now share discovery, transport, generated protocol and cancellation. I03 moves from open to partial; N04/N05 remain partial because inbound Rust peer hosting, other cluster tables and full package acceptance remain unresolved. Counts: 86 tracked,31 repaired,55 unresolved (25 open,30 partial). Prior [AutoID ownership](auto-id-owner-validation.json) evidence remains valid; T02/M04 remain partial. Other carried findings were not freshly re-audited.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../auto-id-owner-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../cluster-peer-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](auto-id-owner-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](cluster-peer-validation.json): exact source/log identities and verification limits.
 
 Current Go comparison: `1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `02880abbab5ed89a4dc603a4ddc7935853870ea6`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 

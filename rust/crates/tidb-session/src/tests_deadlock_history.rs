@@ -212,7 +212,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
     let StmtOutput::Rows { columns, rows } = session
         .run_with_columns(
             "SELECT DEADLOCK_ID, OCCUR_TIME, RETRYABLE, TRY_LOCK_TRX_ID, CURRENT_SQL_DIGEST, \
-             CURRENT_SQL_DIGEST_TEXT, KEY, KEY_INFO, TRX_HOLDING_LOCK \
+             CURRENT_SQL_DIGEST_TEXT, `KEY`, KEY_INFO, TRX_HOLDING_LOCK \
              FROM information_schema.DEADLOCKS",
         )
         .unwrap()

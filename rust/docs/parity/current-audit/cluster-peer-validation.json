@@ -1,0 +1,177 @@
+{
+  "date": "2026-10-08",
+  "baseline": {
+    "tidb_integration": "7b42eaabfa30f9b991b6d9977f78569a04d16a00",
+    "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+    "client_rust": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "findings": [
+    "N04",
+    "I03",
+    "N05"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 31,
+    "unresolved": 55,
+    "open": 25,
+    "partial": 30
+  },
+  "complete_package_acceptance": false,
+  "repairs": [
+    "Remote global connection IDs compare the live local identity before dispatch; remote IDs no longer enter the local registry.",
+    "Outgoing KILL and CLUSTER_PROCESSLIST share server discovery, generated DAG contracts and the process RPC fleet.",
+    "Remote process scans carry the presented identity, timezone, statement flags and column metadata, with bounded concurrent fanout.",
+    "Peer warnings and MySQL execution-error codes survive response decoding; SQL-killer cancellation interrupts an in-flight RPC.",
+    "Local process rows use the shared visibility/formatting owner and are included only if discovery publishes the local node."
+  ],
+  "cleanup": [
+    "Removed the unconditional local-only cluster process-list branch after migrating its caller.",
+    "Corrected one stale DEADLOCKS test query to quote reserved KEY; retained all behavior/privilege assertions."
+  ],
+  "regressions": {
+    "command": "cargo test --locked -p tidb-session --lib cluster_peer_batch -- --nocapture",
+    "before": {
+      "passed": 0,
+      "failed": 2,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-peer-batch/before-both.log",
+        "sha256": "8880da6a79ad15174fab6661cbb62b975da8657a3f8f290099a96e8565b3c7f1",
+        "bytes": 96639
+      }
+    },
+    "failure_details": [
+      "remote ID incorrectly incremented the local kill counter",
+      "cluster process list returned local rows despite discovery failure"
+    ]
+  },
+  "tests": [
+    {
+      "command": "cargo test --locked -p tidb-exec --test all cluster_peer_batch -- --nocapture",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-peer-batch/protocol.log",
+        "sha256": "96fec46cb0336b44b230018d8118e1ecafad2f446a6a2763c54ab69fe89b4eae",
+        "bytes": 86806
+      },
+      "coverage": [
+        "generated TypeKill and TableScan requests",
+        "unavailable IP and server-ID filtering",
+        "caller identity, flags, timezone, column IDs and output offsets",
+        "typed rows, warning codes, remote execution error and timeout warning",
+        "shared channel reuse and active SQL cancellation"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib process -- --nocapture",
+      "passed": 51,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-peer-batch/session-verified.log",
+        "sha256": "a5579d03d472e9b67509f2d3e80215bc64f3d4b3f9d3ce3617df468d8f4b3c70",
+        "bytes": 99800
+      }
+    }
+  ],
+  "distinct_rust_cases": 52,
+  "diagnosed_intermediate_failures": [
+    {
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-peer-batch/session.log",
+        "sha256": "6e789a6d3c15853e6e7741b7e3f193df193863d87cd886436f75bcb489d568f0",
+        "bytes": 100532
+      },
+      "cause": "stale test SQL used reserved KEY without quoting; corrected query, same assertions pass"
+    },
+    {
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-peer-batch/initial-live.json",
+        "sha256": "abff6b15208bbc72c2a4392361d5e5e5a527abe13bbeeb1af48aeb333729a6cb",
+        "bytes": 576
+      },
+      "cause": "new probe incorrectly expected error1317 for interrupted standalone SLEEP; live Go builtinSleepSig returns1; corrected probe passes"
+    }
+  ],
+  "sql": {
+    "command": "PYTHONPATH=/workspace/.cloud-setup/python python /workspace/.cloud-setup/cluster-peer-batch/live.py",
+    "receipt": {
+      "path": "/workspace/.cloud-setup/cluster-peer-batch/live.json",
+      "sha256": "e1ddbab78ae2ce5e56365b8065c97263749b5fe2c10d9d1666f0bdf0dbd75946",
+      "bytes": 738
+    },
+    "binary_sha256": "b42b23a9d145f53502e75cd834e0dae49784cd5dd18ef5721095ff5c38088ef4",
+    "checks": [
+      {
+        "name": "distinct global connection IDs",
+        "pass": true
+      },
+      {
+        "name": "cluster process list contains both local connections",
+        "pass": true
+      },
+      {
+        "name": "cluster process list uses status address",
+        "pass": true
+      },
+      {
+        "name": "status listener sees both SQL sessions",
+        "pass": true
+      },
+      {
+        "name": "local KILL QUERY interrupts statement",
+        "pass": true
+      },
+      {
+        "name": "KILL QUERY preserves session",
+        "pass": true
+      },
+      {
+        "name": "local KILL CONNECTION closes target",
+        "pass": true
+      }
+    ],
+    "server_exit": 0,
+    "scope": "real MySQL protocol against Rust unistore, two connections and status HTTP; no remote Go/TiKV deployment"
+  },
+  "checks": [
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-peer-batch/check.log",
+        "sha256": "968547170f8cc3440e44383ceba4cebb31c489586558b71ba8ce5a30014c49f4",
+        "bytes": 123285
+      }
+    },
+    {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-peer-batch/lint.log",
+        "sha256": "a7eb796070b8114d1f73c2f3afaedbc4641c1058aa4b25a97d4468a4e2a0ac87",
+        "bytes": 2164
+      }
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-peer-batch/build.log",
+        "sha256": "9f793a453872da6a71bd0db0d99c0d704e07dced6530be2df978d8a95a343caf",
+        "bytes": 105155
+      }
+    }
+  ],
+  "publication": "Actual precommit hook, fresh prepush locked build and verified remote SHA are recorded after this receipt in /workspace/.cloud-setup/cluster-peer-batch/final-handoff.json; this field alone is not publication evidence.",
+  "limitations": [
+    "Rust does not host the inbound TiKV coprocessor peer service (N05); outgoing requests need a compatible service on remote peers.",
+    "Other cluster memory tables and full distributed memory accounting remain unresolved.",
+    "The generated-protocol test service is not a live Go TiDB deployment. No real multi-node TiKV, full Go suites, TLS interoperability, complete-package or performance acceptance.",
+    "T02/M04 remain partial and other carried findings were not all freshly re-audited."
+  ],
+  "self_review": "Reviewed both startup paths, discovery/local inclusion, identity and privileges, global-ID routing, Go transport warnings, typed response errors, cancellation and borrowed transport ownership. No native/vendor/dependency/lockfile changes. Removed unrelated formatting churn."
+}

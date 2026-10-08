@@ -2994,3 +2994,11 @@ fn collations_rows() -> Vec<Vec<Datum>> {
         })
         .collect()
 }
+
+/// Shared stable ID for outgoing memory-table scans and local catalog metadata.
+pub(crate) fn memory_table_id(name: &str) -> Option<i64> {
+    INFORMATION_SCHEMA_TABLE_IDS
+        .iter()
+        .find(|(_, table)| table.eq_ignore_ascii_case(name))
+        .map(|(offset, _)| ((1_i64 << 62) | 1) + offset)
+}

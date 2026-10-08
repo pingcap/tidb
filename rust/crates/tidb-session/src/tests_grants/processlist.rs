@@ -716,3 +716,33 @@ fn cluster_lifecycle_batch_auto_analyze_kill_requires_connection_admin() {
     assert!(matches!(denied, Err(DriverError::KillAccessDenied)));
     allowed.unwrap();
 }
+
+#[test]
+fn cluster_peer_batch_remote_id_never_uses_local_registry() {
+    let registry = process::ProcessRegistry::default();
+    let target = Arc::new(KillCounter::default());
+    let mut session = Session::new();
+    session.server_id_getter = Arc::new(|| 1);
+    let remote = tidb_util::globalconn::Gcid {
+        server_id: 2,
+        local_conn_id: 42,
+        is_64bits: false,
+    }
+    .to_conn_id();
+    session.attach_process(
+        remote,
+        registry.register(
+            remote,
+            String::new(),
+            String::new(),
+            String::new(),
+            Some(target.clone()),
+        ),
+    );
+    session.run(&format!("KILL QUERY {remote}")).unwrap();
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(session
+        .warnings()
+        .iter()
+        .any(|w| w.message.starts_with("KILL remote connection failed:")));
+}

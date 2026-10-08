@@ -472,6 +472,11 @@ pub(crate) fn run_cluster_session_node_with_spill(
     .with_server_info(Arc::clone(&server_info))
     .with_server_identity(server_identity)
     .with_cluster_topology(cluster_topology)
+    .with_cluster_peer_client(Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
+        authority.store_rpc_opener().ok_or_else(|| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown("store RPC owner is closed"))
+        })?,
+    )))
     .with_cluster_config_client(Arc::new(
         tidb_exec::cluster_config::ClusterConfigClient::new(&config.cluster_security)
             .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,

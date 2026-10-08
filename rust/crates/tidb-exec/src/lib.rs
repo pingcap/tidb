@@ -32,6 +32,7 @@ pub mod catalog_reload;
 pub mod catalog_watch;
 pub mod cluster_account_write;
 pub mod cluster_config;
+pub mod cluster_peer;
 pub mod cluster_discovery;
 mod cluster_http;
 pub mod cluster_analyze;

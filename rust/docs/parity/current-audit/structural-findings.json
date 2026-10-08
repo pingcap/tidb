@@ -11,8 +11,8 @@
     "tracked": 86,
     "unresolved": 55,
     "repaired": 31,
-    "open": 26,
-    "partial": 29
+    "open": 25,
+    "partial": 30
   },
   "findings": [
     {
@@ -314,12 +314,12 @@
     },
     {
       "id": "I03",
-      "status": "open",
+      "status": "partial",
       "group": "Runtime information-schema providers",
-      "finding": "**Still open:** CLUSTER_PROCESSLIST still retrieves only local process rows. Their identity now correctly comes from local server info and the status port, with IPv6 formatting and textual DDL ID under SEM; arbitrary-peer selection, SQL-port decoration and swallowed discovery failure are removed. Other cluster tables still lack remote retrieval. This repairs local rendering, not the missing fanout owner.",
-      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs::materialize_information_schema_catalog`; `lib.rs::cluster_instance_address`; [metadata validation](metadata-policy-batch-validation.json)",
-      "go_owner": "`pkg/infoschema/cluster.go`, `pkg/executor/table_reader.go`, `pkg/store/copr/coprocessor.go::buildTiDBMemCopTasks`: discover and dispatch to peers or DDL owner, with cancellation and memory tracking. Multi-node fanout not exercised.",
-      "review_basis": "Cloud metadata batch from 580d205b2fee771224d5750b85a0adf2b7856135 against refreshed Go master93a01d31f6 and unchanged native19a56cc. Five grouped session regressions and real MySQL/unistore failures establish the repaired boundary. See metadata-policy-batch-validation.json for exact results and remaining obligations. Other54 unresolved IDs retain prior evidence."
+      "finding": "**Partially repaired:** CLUSTER_PROCESSLIST now uses shared discovery and bounded outgoing coprocessor fanout, carrying the presented user identity, statement flags and timezone. Local row formatting/visibility remains shared with PROCESSLIST; local rows are included only when discovery publishes this node. Remote rows, warning codes and execution errors are decoded through shared contracts; SQL kill signals cancel active requests. Discovery failures are no longer hidden. Inbound Rust TiDB peer service hosting (N05), other cluster-table consumers, full memory accounting and live multi-node interoperability remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs::materialize_information_schema_catalog`; `lib.rs::cluster_instance_address`; [metadata validation](metadata-policy-batch-validation.json); `tidb-exec/src/cluster_peer.rs`; `tidb-session/src/process_arm.rs`; `tidb-server/src/cluster_session_node/{mod,boot}.rs`; `unistore_node.rs`; [peer validation](cluster-peer-validation.json)",
+      "go_owner": "`pkg/store/copr/coprocessor.go::buildTiDBMemCopTasks,handleTiDBSendReqErr`; `pkg/executor/builder.go`, `table_reader.go`, `coprocessor.go`; `pkg/planner/core/pb_to_plan.go`. Full cluster-table retrieval and pkg/server hosting remain incomplete.",
+      "review_basis": "Cloud peer batch from 7b42eaabfa30f9b991b6d9977f78569a04d16a00 against Go master 1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d. Two regressions fail before repair. Generated-service wire and grouped session validation recorded in cluster-peer-validation.json. Outgoing repairs are not inbound hosting or complete-package acceptance; other carried findings were not freshly re-audited."
     },
     {
       "id": "T01",
@@ -730,17 +730,17 @@
       "id": "N04",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P2; partially repaired:** local KILL now follows live global/compatible configuration, authorizes known targets before numeric warnings, protects restricted users under SEM, and preserves CONNECTION_ID() and absent-manager execution paths. The duplicate ID decoder is removed in favor of globalconn. Internal auto-analyze IDs now require SUPER or CONNECTION_ADMIN before execution/config warnings. Remote server-ID comparison/discovery/TiPB dispatch remains unresolved; local maintenance does not complete cluster KILL. Local internal-task dispatch now reaches the running ANALYZE SQL killer through the shared process owner, without locking its executing session. Both SQL KILL QUERY and KILL CONNECTION interrupt system tasks without closing pooled sessions. Tracking/untracking reset the current cancellation generation, preserve task identity and retire publication on completion/error; ID conflicts are rejected. Remote cluster KILL remains unresolved.",
-      "rust_evidence": "`rust/crates/tidb-session/src/process_arm.rs::kill_stmt`; `identity.rs::target_has_dynamic_privilege`; `privilege/registry_ops.rs::has_dynamic_priv_with_default_roles`; `tidb-util/src/globalconn/mod.rs::parse_conn_id`; [validation](process-administration-batch-validation.json); [identity/protection batch](cluster-lifecycle-batch-validation.json); `tidb-session/src/process.rs`; `tidb-server/src/cluster_session_node/{mod,statistics,boot}.rs`; `tidb-executor/src/mem_quota.rs`; [internal process validation](internal-process-batch-validation.json)",
+      "finding": "**P2; partially repaired:** local KILL now follows live global/compatible configuration, authorizes known targets before numeric warnings, protects restricted users under SEM, and preserves CONNECTION_ID() and absent-manager execution paths. The duplicate ID decoder is removed in favor of globalconn. Internal auto-analyze IDs now require SUPER or CONNECTION_ADMIN before execution/config warnings. Remote IDs now compare the live local server ID and route through discovered peer status addresses using generated TiPB TypeKill DAGs and the shared RPC fleet. Zero-ID/discovery failures retain Go warning behavior; statement cancellation reaches active RPCs. Local internal-task dispatch now reaches the running ANALYZE SQL killer through the shared process owner, without locking its executing session. Both SQL KILL QUERY and KILL CONNECTION interrupt system tasks without closing pooled sessions. Tracking/untracking reset the current cancellation generation, preserve task identity and retire publication on completion/error; ID conflicts are rejected. Inbound Rust peer KILL handling remains blocked on N05 service hosting; live multi-node and complete-package acceptance remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-session/src/process_arm.rs::kill_stmt`; `identity.rs::target_has_dynamic_privilege`; `privilege/registry_ops.rs::has_dynamic_priv_with_default_roles`; `tidb-util/src/globalconn/mod.rs::parse_conn_id`; [validation](process-administration-batch-validation.json); [identity/protection batch](cluster-lifecycle-batch-validation.json); `tidb-session/src/process.rs`; `tidb-server/src/cluster_session_node/{mod,statistics,boot}.rs`; `tidb-executor/src/mem_quota.rs`; [internal process validation](internal-process-batch-validation.json); `tidb-exec/src/cluster_peer.rs`; `tidb-session/src/process_arm.rs`; `tidb-server/src/cluster_session_node/{mod,boot}.rs`; `unistore_node.rs`; [peer validation](cluster-peer-validation.json)",
       "go_owner": "`pkg/executor/simple.go::executeKillStmt` honors EnableGlobalKill, compares ServerID and invokes `killRemoteConn` with TiPB Kill. Compose configuration, server discovery, authorization and remote dispatch. O01's server-ID lease is a prerequisite, not a substitute. No two-node KILL test was run. Local policy follows planner/core/planbuilder.go KillStmt and appendVisitInfoIsRestrictedUser before executor/simple.go configuration/parsing gates. Internal ownership follows pkg/domain/domain.go::SysProcesses, pkg/server/server.go::ShowProcessList/GetInternalSessionStartTSList/kill, pkg/session/session.go restricted execution and pkg/domain/infosync/info.go::ReportMinStartTS.",
-      "review_basis": "Cloud internal-process batch from 42d7c7960f7ede39f4d91a74d8bb4685811b71d0 against freshly fetched Go master b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Original restricted-execution regression fails before repair; source-linked lifecycle and real unistore SQL KILL cases validate the shared consumers afterward. See internal-process-batch-validation.json for exact results. Parent remains partial; other53 unresolved roots are carried evidence, not freshly reproduced."
+      "review_basis": "Cloud peer batch from 7b42eaabfa30f9b991b6d9977f78569a04d16a00 against Go master 1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d. Two regressions fail before repair. Generated-service wire and grouped session validation recorded in cluster-peer-validation.json. Outgoing repairs are not inbound hosting or complete-package acceptance; other carried findings were not freshly re-audited."
     },
     {
       "id": "N05",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P2; partially repaired:** /settings now applies eleven existing controls through shared process settings and internal-session GLOBAL writes in both stores. GET /settings and /config read current canonical configuration. Form parsing preserves body/query precedence, first values and Go field order; later failures return400 while retaining earlier effects. Fragmented/content-length/chunked bodies are consumed before mutation. The captured startup configuration and blanket POST refusal are removed. Transaction-summary capacity and minimum duration now update canonical configuration and the shared process recorder, preserving Go bounds and ordered partial errors; zero capacity clears retained history. Startup installs the same policy before either store starts. Broader administrative handlers, HTTP/TLS/shutdown behavior and complete package/platform/test obligations remain unaccepted. Re-review explicitly confirms that Rust status serving does not host/elect Go's AutoID gRPC service. The composed K01 client requires an external compatible leader; Rust-only TiKV service hosting and its shutdown/security lifecycle remain unresolved.",
-      "rust_evidence": "`tidb-server/src/http_settings.rs`; `http_request.rs`; `http_status.rs`; `cluster_session_node/settings.rs`; both production startup paths; [validation](runtime-settings-batch-validation.json); `tidb-exec/src/txn_summary.rs`; `tidb-session/src/process.rs`, `observation.rs`, `dispatch.rs`; `tidb-server/src/cluster_session_node`; `http_settings.rs`; [transaction observation validation](transaction-observation-batch-validation.json); [AutoID validation](auto-id-owner-validation.json)",
+      "finding": "**P2; partially repaired:** /settings now applies eleven existing controls through shared process settings and internal-session GLOBAL writes in both stores. GET /settings and /config read current canonical configuration. Form parsing preserves body/query precedence, first values and Go field order; later failures return400 while retaining earlier effects. Fragmented/content-length/chunked bodies are consumed before mutation. The captured startup configuration and blanket POST refusal are removed. Transaction-summary capacity and minimum duration now update canonical configuration and the shared process recorder, preserving Go bounds and ordered partial errors; zero capacity clears retained history. Startup installs the same policy before either store starts. Broader administrative handlers, HTTP/TLS/shutdown behavior and complete package/platform/test obligations remain unaccepted. Re-review explicitly confirms that Rust status serving does not host/elect Go's AutoID gRPC service. The composed K01 client requires an external compatible leader; Rust-only TiKV service hosting and its shutdown/security lifecycle remain unresolved. Rust status serving also lacks the inbound TiKV coprocessor service needed by peer KILL and cluster memory scans. The outgoing N04/I03 client now reuses the production fleet but does not close this hosting/lifecycle gap.",
+      "rust_evidence": "`tidb-server/src/http_settings.rs`; `http_request.rs`; `http_status.rs`; `cluster_session_node/settings.rs`; both production startup paths; [validation](runtime-settings-batch-validation.json); `tidb-exec/src/txn_summary.rs`; `tidb-session/src/process.rs`, `observation.rs`, `dispatch.rs`; `tidb-server/src/cluster_session_node`; `http_settings.rs`; [transaction observation validation](transaction-observation-batch-validation.json); [AutoID validation](auto-id-owner-validation.json); [peer validation](cluster-peer-validation.json)",
       "go_owner": "`pkg/server/handler/tikvhandler/tikv_handler.go::SettingsHandler.ServeHTTP`, `pkg/server/handler/util.go::WriteError`, and `pkg/server/http_status.go` routing; global transaction controls use session GlobalVarsAccessor. Full administrative and HTTP server ownership remains required. Transaction history follows pkg/session/txninfo/summary.go, pkg/session/txn.go, session.go::Close, infoschema_reader.go::setDataForTrxSummary, cmd/tidb-server/main.go and tikvhandler settings. AutoID hosting follows pkg/server/http_status.go::setupAutoIDService and pkg/autoid_service.",
       "review_basis": "Cloud transaction observation batch from 0faf5c205ea7caf399b48bac482bb9b6e98f7696 against fetched Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Five of eight expanded baseline wire assertions fail; all ten final assertions pass. 80 distinct Rust cases, affected all-target checks, lint and locked server build pass. Actual commit-hook and recovery/draft evidence follow in the external final handoff. The sampled baseline physical-TS control already passed; no reproduced timestamp bug or lock leak is claimed. Other53 unresolved roots retain earlier evidence. Parent remains partial; no package acceptance."
     },
@@ -793,14 +793,15 @@
   "review_receipt": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-08",
-    "receipt": "auto-id-owner-validation.json",
+    "receipt": "cluster-peer-validation.json",
     "findings": [
-      "K01",
+      "N04",
+      "I03",
       "N05"
     ],
     "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
     "client_rust": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
-    "scope": "K01 allocator selection/composition repair across table, transport, DML/DDL and SHOW consumers; N05 service-hosting residual explicit. No complete-package acceptance."
+    "scope": "Shared outgoing TiDB peer ownership across remote KILL and CLUSTER_PROCESSLIST; inbound N05 hosting explicitly remains open. No complete-package acceptance."
   },
   "latest_test_cleanup": {
     "date": "2026-10-08",
@@ -2097,6 +2098,18 @@
       "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
       "client_rust": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
       "scope": "K01 allocator selection/composition repair across table, transport, DML/DDL and SHOW consumers; N05 service-hosting residual explicit. No complete-package acceptance."
+    },
+    {
+      "date": "2026-10-08",
+      "receipt": "cluster-peer-validation.json",
+      "findings": [
+        "N04",
+        "I03",
+        "N05"
+      ],
+      "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+      "client_rust": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+      "scope": "Shared outgoing TiDB peer ownership across remote KILL and CLUSTER_PROCESSLIST; inbound N05 hosting explicitly remains open. No complete-package acceptance."
     }
   ],
   "execution_batches": {

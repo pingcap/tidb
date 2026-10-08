@@ -1039,6 +1039,7 @@ pub struct ClusterSessionFactory {
     server_identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
+    cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
     /// Go's one process-wide `GlobalVarsAccessor`.
     global_vars: GlobalSysvars,
     /// The tables of the boot catalog no session can include, kept so the
@@ -1200,6 +1201,7 @@ impl ClusterSessionFactory {
             server_identity: None,
             cluster_topology: None,
             cluster_config: None,
+            cluster_peer: None,
             global_vars,
             boot_skipped,
             statistics_view: Arc::new(tidb_executor::driver::StatisticsView::new(Arc::new(
@@ -1985,6 +1987,15 @@ impl ClusterSessionFactory {
             tidb_domain::cluster_topology::ClusterTopology::new(Arc::clone(&syncer), None),
         ));
         self.server_info = Some(syncer);
+        self
+    }
+
+    /// Binds outgoing cluster administration to the process RPC owner.
+    pub fn with_cluster_peer_client(
+        mut self,
+        client: Arc<tidb_exec::cluster_peer::ClusterPeerClient>,
+    ) -> Self {
+        self.cluster_peer = Some(client);
         self
     }
 
@@ -3499,6 +3510,9 @@ impl ClusterSessionFactory {
         )));
         if let Some(syncer) = self.server_info.as_ref() {
             session.set_server_info_syncer(Arc::clone(syncer));
+        }
+        if let Some(client) = &self.cluster_peer {
+            session.set_cluster_peer_client(Arc::clone(client));
         }
         if let Some(client) = &self.cluster_config {
             session.set_cluster_config_client(Arc::clone(client));
