@@ -220,7 +220,7 @@ func getStmtTimestamp(ctx EvalContext) (now time.Time, err error) {
 }
 
 // DeriveMaterializedScheduleNextTime evaluates the runtime NEXT expression in
-// scheduleTimeZone. Runtime scheduling only depends on NEXT: when NEXT is
+// UTC. Runtime scheduling only depends on NEXT: when NEXT is
 // absent, callers should still clear stale persisted schedule state.
 func DeriveMaterializedScheduleNextTime(
 	kctx context.Context,
@@ -228,13 +228,9 @@ func DeriveMaterializedScheduleNextTime(
 	startExpr string,
 	nextExpr string,
 	scheduleSQLMode mysql.SQLMode,
-	scheduleTimeZone *time.Location,
 ) (*types.Time, bool, error) {
 	if evalSctx == nil {
 		return nil, false, errors.New("runtime materialized schedule eval session is unavailable")
-	}
-	if scheduleTimeZone == nil {
-		return nil, false, errors.New("runtime materialized schedule timezone is unavailable")
 	}
 	nextExpr = strings.TrimSpace(nextExpr)
 
@@ -244,7 +240,6 @@ func DeriveMaterializedScheduleNextTime(
 			evalSctx,
 			nextExpr,
 			scheduleSQLMode,
-			scheduleTimeZone,
 		)
 		if err != nil {
 			return nil, true, err
@@ -258,16 +253,13 @@ func DeriveMaterializedScheduleNextTime(
 }
 
 // MaterializedScheduleTimeToUnixSeconds converts a materialized schedule time
-// interpreted in scheduleTimeZone to Unix seconds for persisting in internal
+// interpreted in UTC to Unix seconds for persisting in internal
 // MV system tables.
-func MaterializedScheduleTimeToUnixSeconds(t *types.Time, scheduleTimeZone *time.Location) (*int64, error) {
+func MaterializedScheduleTimeToUnixSeconds(t *types.Time) (*int64, error) {
 	if t == nil {
 		return nil, nil
 	}
-	if scheduleTimeZone == nil {
-		return nil, errors.New("materialized schedule timezone is unavailable")
-	}
-	goTime, err := t.GoTime(scheduleTimeZone)
+	goTime, err := t.GoTime(time.UTC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -304,10 +296,10 @@ func evalMaterializedScheduleExprToDatetime(
 	evalSctx sessionctx.Context,
 	exprSQL string,
 	scheduleSQLMode mysql.SQLMode,
-	scheduleTimeZone *time.Location,
 ) (*types.Time, error) {
 	sessVars := evalSctx.GetSessionVars()
 	origSQLMode := sessVars.SQLMode
+	origNoBackslashEscaped := sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped)
 	origTypeFlags := sessVars.StmtCtx.TypeFlags()
 	origErrLevels := sessVars.StmtCtx.ErrLevels()
 	origTimeZone := sessVars.TimeZone
@@ -316,11 +308,11 @@ func evalMaterializedScheduleExprToDatetime(
 	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sessVars.SQLMode.HasNoBackslashEscapesMode())
 	sessVars.StmtCtx.SetTypeFlags(MaterializedScheduleTypeFlagsWithSQLMode(scheduleSQLMode))
 	sessVars.StmtCtx.SetErrLevels(MaterializedScheduleErrLevelsWithSQLMode(scheduleSQLMode))
-	sessVars.TimeZone = scheduleTimeZone
-	sessVars.StmtCtx.SetTimeZone(scheduleTimeZone)
+	sessVars.TimeZone = time.UTC
+	sessVars.StmtCtx.SetTimeZone(time.UTC)
 	defer func() {
 		sessVars.SQLMode = origSQLMode
-		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
+		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origNoBackslashEscaped)
 		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
 		sessVars.StmtCtx.SetErrLevels(origErrLevels)
 		sessVars.TimeZone = origTimeZone
@@ -331,7 +323,7 @@ func evalMaterializedScheduleExprToDatetime(
 		sessVars.StmtCtx.SetTimeZone(sessVars.Location())
 	}()
 
-	exprNode, err := generatedexpr.ParseExpression(exprSQL)
+	exprNode, err := generatedexpr.ParseExpressionWithSQLMode(exprSQL, scheduleSQLMode)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -354,12 +346,18 @@ func evalMaterializedScheduleExprToDatetime(
 		return nil, nil
 	}
 
-	targetTp := types.NewFieldType(mysql.TypeDatetime)
-	targetTp.SetDecimal(types.MaxFsp)
-	datetimeV, err := v.ConvertTo(evalCtx.TypeCtx(), targetTp)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if v.Kind() != types.KindMysqlTime {
+		return nil, errors.Errorf(
+			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
+			types.KindStr(v.Kind()),
+		)
 	}
-	t := datetimeV.GetMysqlTime()
+	t := v.GetMysqlTime()
+	if tp := t.Type(); tp != mysql.TypeDate && tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
+		return nil, errors.Errorf(
+			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
+			types.TypeStr(tp),
+		)
+	}
 	return &t, nil
 }

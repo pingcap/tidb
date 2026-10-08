@@ -75,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -6234,6 +6235,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if err != nil {
 			return nil, err
 		}
+		if err := mviewutil.CheckMaterializedViewSelect(v.Select); err != nil {
+			return nil, err
+		}
 		nodeW := resolve.NewNodeWWithCtx(v.Select, b.resolveCtx)
 		plan, err := b.Build(ctx, nodeW)
 		if err != nil {
@@ -6309,8 +6313,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, mlogName.L)
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP MATERIALIZED VIEW LOG", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName, mlogName.L, "", authErr)
 	case *ast.AlterMaterializedViewLogStmt:

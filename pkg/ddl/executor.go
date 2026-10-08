@@ -122,6 +122,7 @@ type Executor interface {
 		schemaName pmodel.CIStr,
 		shadowTableInfo *model.TableInfo,
 	) error
+	DropMaterializedViewShadowTable(ctx sessionctx.Context, schemaName, shadowName pmodel.CIStr) error
 	RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		ctx sessionctx.Context,
 		schemaID int64,
@@ -1170,7 +1171,6 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	var purgeMethod string
 	var purgeStartWith string
 	var purgeNext string
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	logAccumulationAlertRows, err := BuildMLogAccumulationAlertRows(s.AccumulationAlert)
 	if err != nil {
 		return err
@@ -1202,11 +1202,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		PurgeStartWith:           purgeStartWith,
 		PurgeNext:                purgeNext,
 		LogAccumulationAlertRows: logAccumulationAlertRows,
-		DefinitionSQLMode:        ctx.GetSessionVars().SQLMode,
-		PurgeScheduleTimeZone: model.TimeZoneLocation{
-			Name:   tzName,
-			Offset: tzOffset,
-		},
+		PurgeScheduleSQLMode:     ctx.GetSessionVars().SQLMode,
 	}
 
 	involvingSchemas := []model.InvolvingSchemaInfo{
@@ -4761,9 +4757,12 @@ const (
 	tableObject objectType = iota
 	viewObject
 	sequenceObject
+	materializedViewObject
+	materializedViewLogObject
+	materializedViewShadowObject
 )
 
-// dropTableObject provides common logic to DROP TABLE/VIEW/SEQUENCE.
+// dropTableObject provides common logic to drop table-like objects, views, and sequences.
 func (e *executor) dropTableObject(
 	ctx sessionctx.Context,
 	objects []*ast.TableName,
@@ -4784,18 +4783,28 @@ func (e *executor) dropTableObject(
 		fkCheck      bool
 	)
 	switch tableObjectType {
-	case tableObject:
+	case tableObject, materializedViewObject, materializedViewLogObject, materializedViewShadowObject:
 		dropExistErr = infoschema.ErrTableDropExists
-		jobType = model.ActionDropTable
 		objectIdents = make([]ast.Ident, len(objects))
-		fkCheck = ctx.GetSessionVars().ForeignKeyChecks
 		for i, tn := range objects {
 			objectIdents[i] = ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		}
-		for _, tn := range objects {
-			if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
-				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
+		if tableObjectType == tableObject {
+			jobType = model.ActionDropTable
+			fkCheck = ctx.GetSessionVars().ForeignKeyChecks
+			for _, tn := range objects {
+				if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
+					return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
+				}
 			}
+		}
+		switch tableObjectType {
+		case materializedViewObject:
+			jobType = model.ActionDropMaterializedView
+		case materializedViewLogObject:
+			jobType = model.ActionDropMaterializedViewLog
+		case materializedViewShadowObject:
+			jobType = model.ActionDropMaterializedViewShadow
 		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists
@@ -4829,12 +4838,15 @@ func (e *executor) dropTableObject(
 			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
 		}
 		switch tableObjectType {
-		case tableObject:
+		case tableObject, materializedViewObject, materializedViewLogObject, materializedViewShadowObject:
 			if !tableInfo.Meta().IsBaseTable() {
 				notExistTables = append(notExistTables, fullti.String())
 				continue
 			}
-			if !allowMaterializedViewRelated {
+			if tableObjectType == materializedViewShadowObject && tableInfo.Meta().MaterializedViewShadow == nil {
+				return dbterror.ErrWrongObject.GenWithStackByArgs(fullti.Schema, fullti.Name, "MATERIALIZED VIEW SHADOW TABLE")
+			}
+			if tableObjectType == tableObject && !allowMaterializedViewRelated {
 				if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), tableInfo.Meta(), "DROP TABLE"); err != nil {
 					return errors.Trace(err)
 				}
@@ -4872,17 +4884,9 @@ func (e *executor) dropTableObject(
 			}
 		}
 
-		involvingSchemas := []model.InvolvingSchemaInfo{{
-			Database: schema.Name.L,
-			Table:    tableInfo.Meta().Name.L,
-		}}
-		if tableObjectType == tableObject && tableInfo.Meta().MaterializedViewLog != nil {
-			if baseTbl, ok := is.TableByID(e.ctx, tableInfo.Meta().MaterializedViewLog.BaseTableID); ok {
-				involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
-					Database: schema.Name.L,
-					Table:    baseTbl.Meta().Name.L,
-				})
-			}
+		involvingSchemas, err := buildDropTableInvolvingSchemaInfo(e.ctx, is, schema.Name.L, tableInfo.Meta())
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		job := &model.Job{
@@ -4912,7 +4916,7 @@ func (e *executor) dropTableObject(
 		}
 
 		// unlock table after drop
-		if tableObjectType != tableObject {
+		if tableObjectType == viewObject || tableObjectType == sequenceObject {
 			continue
 		}
 		if !config.TableLockEnabled() {
@@ -4932,6 +4936,45 @@ func (e *executor) dropTableObject(
 		}
 	}
 	return nil
+}
+
+func buildDropTableInvolvingSchemaInfo(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemaName string,
+	tableInfo *model.TableInfo,
+) ([]model.InvolvingSchemaInfo, error) {
+	involvingSchemas := []model.InvolvingSchemaInfo{{Database: schemaName, Table: tableInfo.Name.L}}
+	if tableInfo.MaterializedViewLog != nil {
+		if baseTbl, ok := is.TableByID(ctx, tableInfo.MaterializedViewLog.BaseTableID); ok {
+			involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{Database: schemaName, Table: baseTbl.Meta().Name.L})
+		}
+	}
+	if tableInfo.MaterializedView != nil {
+		for _, baseTableID := range tableInfo.MaterializedView.BaseTableIDs {
+			baseTbl, ok := is.TableByID(ctx, baseTableID)
+			if !ok {
+				continue
+			}
+			involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{Database: schemaName, Table: baseTbl.Meta().Name.L})
+			baseMViewInfo := baseTbl.Meta().MaterializedViewBase
+			if baseMViewInfo == nil || baseMViewInfo.MLogID == 0 {
+				continue
+			}
+			mlogTbl, ok := is.TableByID(ctx, baseMViewInfo.MLogID)
+			if !ok {
+				return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, fmt.Sprintf("(Table ID %d)", baseMViewInfo.MLogID))
+			}
+			mlogInfo := mlogTbl.Meta().MaterializedViewLog
+			if mlogInfo == nil || mlogInfo.BaseTableID != baseTableID {
+				return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("drop materialized view: invalid materialized view log metadata")
+			}
+			if hasMaterializedViewID(mlogInfo.DependentMViewIDs, tableInfo.ID) {
+				involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{Database: schemaName, Table: mlogTbl.Meta().Name.L})
+			}
+		}
+	}
+	return involvingSchemas, nil
 }
 
 // DropTable will proceed even if some table in the list does not exists.
@@ -4962,6 +5005,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, "TRUNCATE TABLE"); err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.InjectCall("afterCheckTruncateTableMaterializedViewConstraints", tblInfo.ID)
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}

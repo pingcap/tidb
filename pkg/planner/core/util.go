@@ -441,31 +441,8 @@ func CheckMViewUpdatable(
 	return plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(aliasName, op)
 }
 
-// CheckMViewShadowReadable checks whether a user statement can directly read a materialized view
-// shadow table. Shadow tables are internal maintenance objects and are only visible to MV
-// maintenance sessions.
-func CheckMViewShadowReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
-	if tableInfo.MaterializedViewShadow == nil {
-		return nil
-	}
-	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
-	if err != nil {
-		return err
-	}
-	if allowMaintenance {
-		return nil
-	}
-	if sv.User == nil {
-		return nil
-	}
-	if aliasName == "" {
-		aliasName = tableInfo.Name.O
-	}
-	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", sv.User.AuthUsername, sv.User.AuthHostname, aliasName)
-}
-
 func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
-	if !sv.InMaterializedViewMaintenance {
+	if sv == nil || !sv.InMaterializedViewMaintenance {
 		return false, nil
 	}
 	// All MV maintenance work should uses internal sessions (restricted SQL).
@@ -477,12 +454,25 @@ func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
 	return true, nil
 }
 
-// CheckMViewReadable checks whether a read on a materialized view should be rejected because
-// its initial build is not ready yet.
+// CheckMViewReadable checks whether a read on an MV-related table should be rejected.
 func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
-	if tableInfo == nil || tableInfo.MaterializedView == nil {
+	if tableInfo == nil || (tableInfo.MaterializedView == nil && tableInfo.MaterializedViewShadow == nil) {
 		return nil
 	}
+	if tableInfo.MaterializedViewShadow != nil {
+		allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+		if err != nil {
+			return err
+		}
+		if allowMaintenance || sv == nil || sv.User == nil {
+			return nil
+		}
+		if aliasName == "" {
+			aliasName = tableInfo.Name.O
+		}
+		return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", sv.User.AuthUsername, sv.User.AuthHostname, aliasName)
+	}
+
 	initBuildState := tableInfo.MaterializedView.GetInitBuildState()
 	if initBuildState.IsReady() {
 		return nil

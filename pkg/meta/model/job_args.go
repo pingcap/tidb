@@ -320,10 +320,10 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 	return getOrDecodeArgs[*BatchCreateTableArgs](&BatchCreateTableArgs{}, job)
 }
 
-// DropTableArgs is the arguments for drop table/view/sequence job.
+// DropTableArgs is the arguments for table-like object, view, and sequence drop jobs.
 // when dropping multiple objects, each object will have a separate job
 type DropTableArgs struct {
-	// below fields are only for drop table.
+	// The following fields are only for DROP TABLE and materialized view drop jobs.
 	// when dropping multiple tables, the Identifiers is the same, but each drop-table
 	// runs in a separate job.
 	Identifiers []ast.Ident `json:"identifiers,omitempty"`
@@ -336,8 +336,9 @@ type DropTableArgs struct {
 }
 
 func (a *DropTableArgs) getArgsV1(job *Job) []any {
-	// only drop-table job has in args, drop view/sequence job has no args.
-	if job.Type == ActionDropTable {
+	// Only table-like drop jobs have submission arguments in V1.
+	switch job.Type {
+	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow:
 		return []any{a.Identifiers, a.FKCheck}
 	}
 	return nil
@@ -348,7 +349,8 @@ func (a *DropTableArgs) getFinishedArgsV1(*Job) []any {
 }
 
 func (a *DropTableArgs) decodeV1(job *Job) error {
-	if job.Type == ActionDropTable {
+	switch job.Type {
+	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow:
 		return job.decodeArgs(&a.Identifiers, &a.FKCheck)
 	}
 	return nil
@@ -724,11 +726,11 @@ func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
 
 // AlterMaterializedViewRefreshArgs is the arguments for ActionAlterMaterializedViewRefresh ddl.
 type AlterMaterializedViewRefreshArgs struct {
-	RefreshMethod                 string           `json:"refresh_method,omitempty"`
-	RefreshStartWith              string           `json:"refresh_start_with,omitempty"`
-	RefreshNext                   string           `json:"refresh_next,omitempty"`
-	RefreshScheduleTimeZone       TimeZoneLocation `json:"refresh_schedule_time_zone,omitempty"`
-	UpdateRefreshScheduleTimeZone bool             `json:"update_refresh_schedule_time_zone,omitempty"`
+	RefreshMethod          string        `json:"refresh_method,omitempty"`
+	RefreshStartWith       string        `json:"refresh_start_with,omitempty"`
+	RefreshNext            string        `json:"refresh_next,omitempty"`
+	UpdateRefreshSchedule  bool          `json:"update_refresh_schedule,omitempty"`
+	RefreshScheduleSQLMode mysql.SQLMode `json:"refresh_schedule_sql_mode,omitempty"`
 }
 
 func (a *AlterMaterializedViewRefreshArgs) getArgsV1(*Job) []any {
@@ -736,8 +738,8 @@ func (a *AlterMaterializedViewRefreshArgs) getArgsV1(*Job) []any {
 		a.RefreshMethod,
 		a.RefreshStartWith,
 		a.RefreshNext,
-		a.RefreshScheduleTimeZone,
-		a.UpdateRefreshScheduleTimeZone,
+		a.UpdateRefreshSchedule,
+		a.RefreshScheduleSQLMode,
 	}
 }
 
@@ -746,8 +748,8 @@ func (a *AlterMaterializedViewRefreshArgs) decodeV1(job *Job) error {
 		&a.RefreshMethod,
 		&a.RefreshStartWith,
 		&a.RefreshNext,
-		&a.RefreshScheduleTimeZone,
-		&a.UpdateRefreshScheduleTimeZone,
+		&a.UpdateRefreshSchedule,
+		&a.RefreshScheduleSQLMode,
 	))
 }
 
@@ -782,11 +784,11 @@ func GetAlterMaterializedViewAttributesArgs(job *Job) (*AlterMaterializedViewAtt
 
 // AlterMaterializedViewLogPurgeArgs is the arguments for ActionAlterMaterializedViewLogPurge ddl.
 type AlterMaterializedViewLogPurgeArgs struct {
-	PurgeMethod                 string           `json:"purge_method,omitempty"`
-	PurgeStartWith              string           `json:"purge_start_with,omitempty"`
-	PurgeNext                   string           `json:"purge_next,omitempty"`
-	PurgeScheduleTimeZone       TimeZoneLocation `json:"purge_schedule_time_zone,omitempty"`
-	UpdatePurgeScheduleTimeZone bool             `json:"update_purge_schedule_time_zone,omitempty"`
+	PurgeMethod          string        `json:"purge_method,omitempty"`
+	PurgeStartWith       string        `json:"purge_start_with,omitempty"`
+	PurgeNext            string        `json:"purge_next,omitempty"`
+	UpdatePurgeSchedule  bool          `json:"update_purge_schedule,omitempty"`
+	PurgeScheduleSQLMode mysql.SQLMode `json:"purge_schedule_sql_mode,omitempty"`
 }
 
 func (a *AlterMaterializedViewLogPurgeArgs) getArgsV1(*Job) []any {
@@ -794,8 +796,8 @@ func (a *AlterMaterializedViewLogPurgeArgs) getArgsV1(*Job) []any {
 		a.PurgeMethod,
 		a.PurgeStartWith,
 		a.PurgeNext,
-		a.PurgeScheduleTimeZone,
-		a.UpdatePurgeScheduleTimeZone,
+		a.UpdatePurgeSchedule,
+		a.PurgeScheduleSQLMode,
 	}
 }
 
@@ -804,8 +806,8 @@ func (a *AlterMaterializedViewLogPurgeArgs) decodeV1(job *Job) error {
 		&a.PurgeMethod,
 		&a.PurgeStartWith,
 		&a.PurgeNext,
-		&a.PurgeScheduleTimeZone,
-		&a.UpdatePurgeScheduleTimeZone,
+		&a.UpdatePurgeSchedule,
+		&a.PurgeScheduleSQLMode,
 	))
 }
 

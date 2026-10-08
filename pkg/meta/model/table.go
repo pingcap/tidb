@@ -809,11 +809,14 @@ type MaterializedViewInfo struct {
 	// DefinitionSQLMode is the SQL mode captured from CREATE MATERIALIZED VIEW session.
 	DefinitionSQLMode mysql.SQLMode `json:"definition_sql_mode"`
 
+	// RefreshScheduleSQLMode is the SQL mode used to parse and evaluate refresh schedule expressions.
+	RefreshScheduleSQLMode mysql.SQLMode `json:"refresh_schedule_sql_mode"`
+
+	// DefinitionDivPrecisionIncrement is the division precision captured from CREATE MATERIALIZED VIEW session.
+	DefinitionDivPrecisionIncrement int `json:"definition_div_precision_increment"`
+
 	// DefinitionTimeZone is the timezone captured from CREATE MATERIALIZED VIEW session.
 	DefinitionTimeZone TimeZoneLocation `json:"definition_time_zone"`
-
-	// RefreshScheduleTimeZone is the timezone used to evaluate refresh schedule expressions.
-	RefreshScheduleTimeZone TimeZoneLocation `json:"refresh_schedule_time_zone"`
 }
 
 // Clone clones MaterializedViewInfo.
@@ -854,6 +857,9 @@ type MaterializedViewLogInfo struct {
 	// BaseTableID is the table ID of the base table.
 	BaseTableID int64 `json:"base_table_id"`
 
+	// DependentMViewIDs lists materialized views that consume this log.
+	DependentMViewIDs []int64 `json:"dependent_mview_ids,omitempty"`
+
 	// Columns is the base table column list recorded in the log (user-specified columns).
 	Columns []model.CIStr `json:"columns"`
 
@@ -870,11 +876,8 @@ type MaterializedViewLogInfo struct {
 	// nil means the CREATE statement did not specify ALERT ROWS and runtime keeps alerting disabled by default.
 	LogAccumulationAlertRows *uint64 `json:"log_accumulation_alert_rows,omitempty"`
 
-	// DefinitionSQLMode is the SQL mode captured from CREATE MATERIALIZED VIEW LOG session.
-	DefinitionSQLMode mysql.SQLMode `json:"definition_sql_mode"`
-
-	// PurgeScheduleTimeZone is the timezone used to evaluate purge schedule expressions.
-	PurgeScheduleTimeZone TimeZoneLocation `json:"purge_schedule_time_zone"`
+	// PurgeScheduleSQLMode is the SQL mode used to parse and evaluate purge schedule expressions.
+	PurgeScheduleSQLMode mysql.SQLMode `json:"purge_schedule_sql_mode"`
 }
 
 const (
@@ -906,6 +909,7 @@ func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
 		return nil
 	}
 	ni := *i
+	ni.DependentMViewIDs = append([]int64(nil), i.DependentMViewIDs...)
 	ni.Columns = append([]model.CIStr(nil), i.Columns...)
 	if i.LogAccumulationAlertRows != nil {
 		rows := *i.LogAccumulationAlertRows

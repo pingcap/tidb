@@ -24,7 +24,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -3282,6 +3285,36 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverBasic(t *testing.T) {
 	tk.MustQuery("select ((select count(*) from mysql.gc_delete_range where job_id=" + jobID + ") + (select count(*) from mysql.gc_delete_range_done where job_id=" + jobID + ")) > 0").Check(testkit.Rows("1"))
 }
 
+func TestMaterializedViewRefreshCompleteOutOfPlaceUpdatesMLogDependencies(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_dep (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_dep (a, b)")
+	tk.MustExec("create materialized view mv_dep (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_dep group by a")
+
+	is := dom.InfoSchema()
+	oldMV, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_dep"))
+	require.NoError(t, err)
+	oldMVID := oldMV.Meta().ID
+
+	tk.MustExec("refresh materialized view mv_dep complete out of place")
+
+	is = dom.InfoSchema()
+	newMV, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_dep"))
+	require.NoError(t, err)
+	newMVID := newMV.Meta().ID
+	require.NotEqual(t, oldMVID, newMVID)
+	mlog, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_dep"))
+	require.NoError(t, err)
+	require.NotNil(t, mlog.Meta().MaterializedViewLog)
+	require.Contains(t, mlog.Meta().MaterializedViewLog.DependentMViewIDs, newMVID)
+	require.NotContains(t, mlog.Meta().MaterializedViewLog.DependentMViewIDs, oldMVID)
+
+	tk.MustExec("drop materialized view mv_dep")
+	tk.MustExec("drop materialized view log on t_dep")
+}
+
 func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailureRollsBackRefreshInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3314,8 +3347,93 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailureRollsBackRefresh
 	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
 	require.NoError(t, err)
 	require.Equal(t, oldMViewID, mvTable.Meta().ID)
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t"))
+	require.NoError(t, err)
+	require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
+	require.Equal(t, []int64{oldMViewID}, mlogTable.Meta().MaterializedViewLog.DependentMViewIDs)
 	tk.MustQuery("select MVIEW_ID from mysql.tidb_mview_refresh_info").Check(testkit.Rows(fmt.Sprintf("%d", oldMViewID)))
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+}
+
+func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverPublishEventErrorKeepsMetadataAtomic(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cutover_publish_error (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_cutover_publish_error (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_cutover_publish_error (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_cutover_publish_error group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_cutover_publish_error"))
+	require.NoError(t, err)
+	oldMViewID := mvTable.Meta().ID
+	tk.MustExec(fmt.Sprintf(
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, UPDATE_TIME) values (%d, 'test', 'mv_cutover_publish_error', 'warning', UTC_TIMESTAMP())",
+		oldMViewID,
+	))
+
+	originErrLimit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(0)
+	defer variable.SetDDLErrorCountLimit(originErrLimit)
+
+	const publishEventErrorFailpoint = "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError"
+	require.NoError(t, failpoint.Enable(publishEventErrorFailpoint, "1*return()"))
+	defer func() { _ = failpoint.Disable(publishEventErrorFailpoint) }()
+	tk.MustExec("insert into t_cutover_publish_error values (1, 10)")
+	err = tk.ExecToErr("refresh materialized view mv_cutover_publish_error complete out of place")
+	require.ErrorContains(t, err, "mock publish event error")
+	require.NoError(t, failpoint.Disable(publishEventErrorFailpoint))
+
+	is = dom.InfoSchema()
+	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_cutover_publish_error"))
+	require.NoError(t, err)
+	require.Equal(t, oldMViewID, mvTable.Meta().ID)
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldMViewID)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", oldMViewID)).Check(testkit.Rows("1"))
+
+	tk.MustExec("refresh materialized view mv_cutover_publish_error complete out of place")
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", oldMViewID)).Check(testkit.Rows("0"))
+}
+
+func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverKeepsTiFlashProgressUntilCommit(t *testing.T) {
+	const mockTiFlashStoreCountFailpoint = "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"
+	const cutoverBeforeCommitFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverBeforeCommitError"
+	require.NoError(t, failpoint.Enable(mockTiFlashStoreCountFailpoint, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(mockTiFlashStoreCountFailpoint))
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_tiflash_cutover (a int not null, b int not null)")
+	tk.MustExec("insert into t_tiflash_cutover values (1, 10), (2, 7)")
+	tk.MustExec("create materialized view log on t_tiflash_cutover (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_tiflash_cutover (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_tiflash_cutover group by a")
+	tk.MustExec("alter table mv_tiflash_cutover set tiflash replica 1")
+
+	mvTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_tiflash_cutover"))
+	require.NoError(t, err)
+	oldMViewID := mvTable.Meta().ID
+	infosync.UpdateTiFlashProgressCache(oldMViewID, 0.75)
+	_, exists := infosync.GetTiFlashProgressFromCache(oldMViewID)
+	require.True(t, exists)
+
+	originErrLimit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(0)
+	defer variable.SetDDLErrorCountLimit(originErrLimit)
+	require.NoError(t, failpoint.Enable(cutoverBeforeCommitFailpoint, "return"))
+	tk.MustExec("insert into t_tiflash_cutover values (3, 4)")
+	err = tk.ExecToErr("refresh materialized view mv_tiflash_cutover complete out of place")
+	require.ErrorContains(t, err, "error before commit")
+	require.NoError(t, failpoint.Disable(cutoverBeforeCommitFailpoint))
+
+	_, exists = infosync.GetTiFlashProgressFromCache(oldMViewID)
+	require.True(t, exists)
+
+	tk.MustExec("refresh materialized view mv_tiflash_cutover complete out of place")
+	_, exists = infosync.GetTiFlashProgressFromCache(oldMViewID)
+	require.False(t, exists)
 }
 
 func TestMaterializedViewRefreshCompleteOutOfPlaceShadowTableProtected(t *testing.T) {
@@ -3354,10 +3472,23 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceShadowTableProtected(t *testin
 		return shadowTableName != ""
 	}, 30*time.Second, 100*time.Millisecond)
 
-	err := tk.ExecToErr(fmt.Sprintf("insert into `%s` values (9, 9, 9)", shadowTableName))
+	tkUser := testkit.NewTestKit(t, store)
+	tkUser.MustExec("use test")
+	tkUser.Session().GetSessionVars().User = &auth.UserIdentity{AuthUsername: "test", AuthHostname: "%"}
+	err := tkUser.ExecToErr(fmt.Sprintf("insert into `%s` values (9, 9, 9)", shadowTableName))
 	require.ErrorContains(t, err, "not updatable")
-	err = tk.ExecToErr(fmt.Sprintf("alter table `%s` add column x int", shadowTableName))
+	err = tkUser.ExecToErr(fmt.Sprintf("alter table `%s` add column x int", shadowTableName))
 	require.ErrorContains(t, err, "ALTER TABLE on materialized view shadow table")
+	err = tkUser.ExecToErr(fmt.Sprintf("drop table `%s`", shadowTableName))
+	require.ErrorContains(t, err, "DROP TABLE on materialized view shadow table")
+	err = tkUser.ExecToErr(fmt.Sprintf(
+		"update t_shadow_guard n join `%s` s on n.a = s.a set n.b = s.s", shadowTableName,
+	))
+	require.ErrorContains(t, err, "SELECT command denied")
+	err = tkUser.ExecToErr(fmt.Sprintf(
+		"delete n from t_shadow_guard n join `%s` s on n.a = s.a", shadowTableName,
+	))
+	require.ErrorContains(t, err, "SELECT command denied")
 
 	require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
 	enabled = false
@@ -3439,6 +3570,21 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceBuildFailureCleansShadow(t *te
 		mviewID,
 	)).Check(testkit.Rows("failed complete out of place manual 1 1"))
 	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+	rows := tk.MustQuery("select job_id from mysql.tidb_ddl_history order by job_id desc limit 20").Rows()
+	var cleanupJobID string
+	for _, row := range rows {
+		id, parseErr := strconv.ParseInt(fmt.Sprint(row[0]), 10, 64)
+		if parseErr != nil {
+			continue
+		}
+		job, jobErr := ddl.GetHistoryJobByID(tk.Session(), id)
+		if jobErr == nil && job != nil && job.Type == model.ActionDropMaterializedViewShadow {
+			cleanupJobID = fmt.Sprint(id)
+			break
+		}
+	}
+	require.NotEmpty(t, cleanupJobID)
+	tk.MustQuery("select ((select count(*) from mysql.gc_delete_range where job_id=" + cleanupJobID + ") + (select count(*) from mysql.gc_delete_range_done where job_id=" + cleanupJobID + ")) > 0").Check(testkit.Rows("1"))
 	// Out-of-place build failure should not modify old MV serving table.
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 }

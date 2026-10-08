@@ -4204,7 +4204,7 @@ func TestMaterializedScheduleRuntimeEvalUsesScheduleSQLMode(t *testing.T) {
 	strictMode, err := mysql.GetSQLMode("STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO")
 	require.NoError(t, err)
 
-	nextExpr := "'2026-02-31 00:00:00'"
+	nextExpr := "CAST('2026-02-31' AS DATE)"
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMVMaintenance)
 	evalTK.MustExec("set @@session.sql_mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO'")
 	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTime(
@@ -4213,7 +4213,6 @@ func TestMaterializedScheduleRuntimeEvalUsesScheduleSQLMode(t *testing.T) {
 		"",
 		nextExpr,
 		allowInvalidDatesMode,
-		time.UTC,
 	)
 	require.NoError(t, err)
 	require.True(t, shouldUpdate)
@@ -4224,10 +4223,21 @@ func TestMaterializedScheduleRuntimeEvalUsesScheduleSQLMode(t *testing.T) {
 		ctx,
 		evalTK.Session(),
 		"",
-		nextExpr,
+		"'2026-02-31 00:00:00'",
 		strictMode,
-		time.UTC,
 	)
-	require.Error(t, err)
-	require.True(t, types.ErrWrongValue.Equal(err), "err %v", err)
+	require.ErrorContains(t, err, "expected DATE/DATETIME/TIMESTAMP")
+
+	dateExpr := "CAST('2026-02-28' AS DATE)"
+	nextAt, shouldUpdate, err = expression.DeriveMaterializedScheduleNextTime(
+		ctx,
+		evalTK.Session(),
+		"",
+		dateExpr,
+		strictMode,
+	)
+	require.NoError(t, err)
+	require.True(t, shouldUpdate)
+	require.NotNil(t, nextAt)
+	require.Equal(t, mysql.TypeDate, nextAt.Type())
 }

@@ -246,7 +246,7 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job, job
 // SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
 func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) error {
 	diff.TableID = job.TableID
-	if job.Type == model.ActionCreateMaterializedView && job.State == model.JobStateRollbackDone {
+	if (job.Type == model.ActionCreateMaterializedView || job.Type == model.ActionCreateMaterializedViewLog) && job.State == model.JobStateRollbackDone {
 		diff.OldTableID = job.TableID
 		diff.TableID = 0
 		return nil
@@ -258,6 +258,9 @@ func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx 
 			// should reload the existing table rather than treat it as a second create.
 			diff.OldTableID = job.TableID
 		}
+		return nil
+	}
+	if job.Type == model.ActionCreateMaterializedViewLog {
 		return nil
 	}
 	if job.Type != model.ActionCreateTable && job.Type != model.ActionCreateMaterializedViewShadow {
@@ -365,13 +368,13 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 		SetSchemaDiffForDropTablePartition(diff, job, jobCtx)
 	case model.ActionRecoverTable:
 		SetSchemaDiffForRecoverTable(diff, job, jobCtx)
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow:
 		SetSchemaDiffForDropTable(diff, job, jobCtx)
 	case model.ActionReorganizePartition:
 		SetSchemaDiffForReorganizePartition(diff, job, jobCtx)
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		SetSchemaDiffForPartitionModify(diff, job, jobCtx)
-	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewShadow:
+	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewLog, model.ActionCreateMaterializedViewShadow:
 		err = SetSchemaDiffForCreateTable(diff, job, jobCtx)
 	case model.ActionMViewRefreshOutOfPlaceCutover:
 		SetSchemaDiffForMViewRefreshOutOfPlaceCutover(diff, jobCtx)

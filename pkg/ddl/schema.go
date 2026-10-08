@@ -211,26 +211,28 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		mviewIDs := make([]int64, 0)
+		mlogIDs := make([]int64, 0)
 		for _, tblInfo := range tables {
 			if tblInfo.MaterializedView != nil {
-				if err = w.deleteCreateMaterializedViewRefreshInfo(jobCtx, tblInfo.ID); err != nil {
-					return ver, errors.Trace(err)
-				}
-				if err = w.deleteCreateMaterializedViewRefreshAlert(jobCtx, tblInfo.ID); err != nil {
-					logutil.DDLLogger().Warn(
-						"drop schema: failed to delete materialized view refresh alert",
-						zap.String("schemaName", job.SchemaName),
-						zap.String("tableName", tblInfo.Name.O),
-						zap.Int64("mviewID", tblInfo.ID),
-						zap.Error(err),
-					)
-				}
+				mviewIDs = append(mviewIDs, tblInfo.ID)
 			}
 			if tblInfo.MaterializedViewLog != nil {
-				if err = w.deleteMaterializedViewLogPurgeInfo(jobCtx, tblInfo.ID); err != nil {
-					return ver, errors.Trace(err)
-				}
+				mlogIDs = append(mlogIDs, tblInfo.ID)
 			}
+		}
+		if err = w.deleteCreateMaterializedViewRefreshInfos(jobCtx, mviewIDs); err != nil {
+			return ver, newRollbackTxnError(errors.Trace(err))
+		}
+		if err = w.deleteCreateMaterializedViewRefreshAlerts(jobCtx, mviewIDs); err != nil {
+			logutil.DDLLogger().Warn(
+				"drop schema: failed to delete materialized view refresh alerts",
+				zap.String("schemaName", job.SchemaName),
+				zap.Error(err),
+			)
+		}
+		if err = w.deleteMaterializedViewLogPurgeInfos(jobCtx, mlogIDs); err != nil {
+			return ver, newRollbackTxnError(errors.Trace(err))
 		}
 
 		err = metaMut.UpdateDatabase(dbInfo)

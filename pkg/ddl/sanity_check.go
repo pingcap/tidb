@@ -89,7 +89,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(args.AllDroppedTableIDs), nil
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow:
 		args, err := model.GetFinishedDropTableArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -260,6 +260,15 @@ func checkHistoryJobStmtType(jobType model.ActionType, st ast.StmtNode) bool {
 		return ok
 	case model.ActionCreateMaterializedViewShadow:
 		_, ok := st.(*ast.RefreshMaterializedViewStmt)
+		return ok
+	case model.ActionDropMaterializedView:
+		_, ok := st.(*ast.DropMaterializedViewStmt)
+		return ok
+	case model.ActionDropMaterializedViewLog:
+		_, ok := st.(*ast.DropMaterializedViewLogStmt)
+		return ok
+	case model.ActionDropMaterializedViewShadow:
+		_, ok := st.(*ast.DropTableStmt)
 		return ok
 	case model.ActionMViewRefreshOutOfPlaceCutover:
 		_, ok := st.(*ast.RefreshMaterializedViewStmt)

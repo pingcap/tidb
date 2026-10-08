@@ -181,6 +181,7 @@ go_library(
         "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/mock",
+        "//pkg/util/mviewutil",
         "//pkg/util/paging",
         "//pkg/util/parser",
         "//pkg/util/plancodec",

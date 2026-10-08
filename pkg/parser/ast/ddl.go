@@ -1716,8 +1716,8 @@ func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	if n.Attributes != "" {
-		ctx.WriteKeyWord(" ATTRIBUTES")
-		ctx.WritePlain("=")
+		ctx.WriteKeyWord(" ATTRIBUTES ")
+		ctx.WritePlain("= ")
 		ctx.WriteString(n.Attributes)
 	}
 	ctx.WriteKeyWord(" AS ")
@@ -1952,8 +1952,8 @@ func (n *AlterMaterializedViewAction) Restore(ctx *format.RestoreCtx) error {
 		}
 		return nil
 	case AlterMaterializedViewActionAttributes:
-		ctx.WriteKeyWord("ATTRIBUTES")
-		ctx.WritePlain("=")
+		ctx.WriteKeyWord("ATTRIBUTES ")
+		ctx.WritePlain("= ")
 		ctx.WriteString(n.Attributes)
 		return nil
 	default:

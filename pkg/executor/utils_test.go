@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -260,6 +261,25 @@ func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
 	plan = &mlogPurgeThrottlePlan{targetRate: 100000}
 	batch = plan.effectiveDeleteBatchSize(10000)
 	require.Equal(t, int64(10000), batch)
+
+	t.Run("throttle across row ID ranges", func(t *testing.T) {
+		tests := []struct {
+			name           string
+			batchCompleted bool
+			hasMoreRanges  bool
+			want           bool
+		}{
+			{name: "full batch", batchCompleted: true, want: true},
+			{name: "partial batch before another range", hasMoreRanges: true, want: true},
+			{name: "empty range before another range", hasMoreRanges: true, want: true},
+			{name: "partial final batch", want: false},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				require.Equal(t, tt.want, shouldThrottleMLogPurgeDeleteBatch(tt.batchCompleted, tt.hasMoreRanges))
+			})
+		}
+	})
 }
 
 func TestMLogPurgeAdaptiveBatchSizeReplannedAfterNoWait(t *testing.T) {
@@ -346,6 +366,23 @@ func TestApplyMLogPurgeDeleteTiFlashThreads(t *testing.T) {
 	require.Equal(t, int64(9), sessVars.TiFlashMaxThreads)
 	restore()
 	require.Equal(t, int64(9), sessVars.TiFlashMaxThreads)
+}
+
+func TestInitRefreshMaterializedViewSessionAppliesDefinitionDivPrecisionIncrement(t *testing.T) {
+	sessVars := variable.NewSessionVars(nil)
+	sessVars.DivPrecisionIncrement = 2
+	sessVars.TimeZone = time.UTC
+	sessVars.StmtCtx.SetTimeZone(time.UTC)
+
+	restore, err := initRefreshMaterializedViewSession(sessVars, &model.MaterializedViewInfo{
+		DefinitionDivPrecisionIncrement: 9,
+		DefinitionTimeZone:              model.TimeZoneLocation{Name: "UTC"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
+
+	restore()
+	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 }
 
 func TestMVTaskCancelControllerIsManualCancelRequested(t *testing.T) {

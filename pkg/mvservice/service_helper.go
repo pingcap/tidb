@@ -1017,17 +1017,12 @@ func deriveMVRefreshManualCancelNextTime(
 	if mviewMeta == nil || mviewMeta.MaterializedView == nil {
 		return nil, false, errors.New("materialized view metadata is invalid")
 	}
-	scheduleTimeZone, err := mviewMeta.MaterializedView.RefreshScheduleTimeZone.GetLocation()
-	if err != nil {
-		return nil, false, err
-	}
 	nextTime, shouldUpdate, err := deriveMaterializedScheduleNextTimeForManualCancel(
 		ctx,
 		sctx,
 		mviewMeta.MaterializedView.RefreshStartWith,
 		mviewMeta.MaterializedView.RefreshNext,
-		mviewMeta.MaterializedView.DefinitionSQLMode,
-		scheduleTimeZone,
+		mviewMeta.MaterializedView.RefreshScheduleSQLMode,
 	)
 	if err != nil {
 		return nil, false, err
@@ -1056,17 +1051,12 @@ func deriveMLogPurgeManualCancelNextTime(
 	if mlogMeta == nil || mlogMeta.MaterializedViewLog == nil {
 		return nil, false, errors.New("materialized view log metadata is invalid")
 	}
-	scheduleTimeZone, err := mlogMeta.MaterializedViewLog.PurgeScheduleTimeZone.GetLocation()
-	if err != nil {
-		return nil, false, err
-	}
 	nextTime, shouldUpdate, err := deriveMaterializedScheduleNextTimeForManualCancel(
 		ctx,
 		sctx,
 		mlogMeta.MaterializedViewLog.PurgeStartWith,
 		mlogMeta.MaterializedViewLog.PurgeNext,
-		mlogMeta.MaterializedViewLog.DefinitionSQLMode,
-		scheduleTimeZone,
+		mlogMeta.MaterializedViewLog.PurgeScheduleSQLMode,
 	)
 	if err != nil {
 		return nil, false, err
@@ -1087,7 +1077,6 @@ func deriveMaterializedScheduleNextTimeForManualCancel(
 	startExpr string,
 	nextExpr string,
 	scheduleSQLMode mysql.SQLMode,
-	scheduleTimeZone *time.Location,
 ) (*time.Time, bool, error) {
 	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTime(
 		ctx,
@@ -1095,7 +1084,6 @@ func deriveMaterializedScheduleNextTimeForManualCancel(
 		startExpr,
 		nextExpr,
 		scheduleSQLMode,
-		scheduleTimeZone,
 	)
 	if err != nil {
 		return nil, false, err
@@ -1103,7 +1091,7 @@ func deriveMaterializedScheduleNextTimeForManualCancel(
 	if !shouldUpdate || nextAt == nil {
 		return nil, shouldUpdate, nil
 	}
-	nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
+	nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt)
 	if err != nil {
 		return nil, false, err
 	}

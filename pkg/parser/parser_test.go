@@ -5355,7 +5355,7 @@ func TestMaterializedViewStatements(t *testing.T) {
 		{
 			"CREATE MATERIALIZED VIEW mv (a) SHARD_ROW_ID_BITS = 4 PRE_SPLIT_REGIONS = 2 REFRESH FAST ATTRIBUTES = 'x' AS SELECT 1",
 			true,
-			"CREATE MATERIALIZED VIEW `mv` (`a`) SHARD_ROW_ID_BITS = 4 PRE_SPLIT_REGIONS = 2 REFRESH FAST ATTRIBUTES='x' AS SELECT 1",
+			"CREATE MATERIALIZED VIEW `mv` (`a`) SHARD_ROW_ID_BITS = 4 PRE_SPLIT_REGIONS = 2 REFRESH FAST ATTRIBUTES = 'x' AS SELECT 1",
 		},
 		{
 			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST START WITH now() NEXT 300 AS SELECT 1",
@@ -5370,17 +5370,17 @@ func TestMaterializedViewStatements(t *testing.T) {
 		{
 			"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600' AS SELECT 1",
 			true,
-			"CREATE MATERIALIZED VIEW `mv` (`a`) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600' AS SELECT 1",
+			"CREATE MATERIALIZED VIEW `mv` (`a`) ATTRIBUTES = 'mview_alert_warning=300,mview_alert_overdue=600' AS SELECT 1",
 		},
 		{
 			"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600,mview_alert_refresh_failed=yes' AS SELECT 1",
 			true,
-			"CREATE MATERIALIZED VIEW `mv` (`a`) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600,mview_alert_refresh_failed=yes' AS SELECT 1",
+			"CREATE MATERIALIZED VIEW `mv` (`a`) ATTRIBUTES = 'mview_alert_warning=300,mview_alert_overdue=600,mview_alert_refresh_failed=yes' AS SELECT 1",
 		},
 		{
 			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST ATTRIBUTES='mview_alert_warning=300' AS SELECT 1",
 			true,
-			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST ATTRIBUTES='mview_alert_warning=300' AS SELECT 1",
+			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST ATTRIBUTES = 'mview_alert_warning=300' AS SELECT 1",
 		},
 		{
 			"CREATE MATERIALIZED VIEW LOG ON t (a,b)",
@@ -5450,17 +5450,17 @@ func TestMaterializedViewStatements(t *testing.T) {
 		{
 			"ALTER MATERIALIZED VIEW mv ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5'",
 			true,
-			"ALTER MATERIALIZED VIEW `mv` ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5'",
+			"ALTER MATERIALIZED VIEW `mv` ATTRIBUTES = 'mview_alert_warning=5,mview_alert_overdue=5'",
 		},
 		{
 			"ALTER MATERIALIZED VIEW mv ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5,mview_alert_refresh_failed=no'",
 			true,
-			"ALTER MATERIALIZED VIEW `mv` ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5,mview_alert_refresh_failed=no'",
+			"ALTER MATERIALIZED VIEW `mv` ATTRIBUTES = 'mview_alert_warning=5,mview_alert_overdue=5,mview_alert_refresh_failed=no'",
 		},
 		{
 			"ALTER MATERIALIZED VIEW mv REFRESH NEXT 300, ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=10'",
 			true,
-			"ALTER MATERIALIZED VIEW `mv` REFRESH NEXT 300, ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=10'",
+			"ALTER MATERIALIZED VIEW `mv` REFRESH NEXT 300, ATTRIBUTES = 'mview_alert_warning=5,mview_alert_overdue=10'",
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE IMMEDIATE",

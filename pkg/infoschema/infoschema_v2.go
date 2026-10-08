@@ -1704,6 +1704,10 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		return nil
 	}
 	tblInfo := table.Meta()
+	item, ok := b.infoschemaV2.searchTableItemByID(tableID)
+	if !ok {
+		return nil
+	}
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
@@ -1716,10 +1720,10 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	}
 
 	b.infoData.remove(tableItem{
-		dbName:        dbInfo.Name,
-		dbID:          dbInfo.ID,
-		tableName:     tblInfo.Name,
-		tableID:       tblInfo.ID,
+		dbName:        item.dbName,
+		dbID:          item.dbID,
+		tableName:     item.tableName,
+		tableID:       item.tableID,
 		schemaVersion: diff.Version,
 	})
 	affected = appendAffectedIDs(affected, tblInfo)

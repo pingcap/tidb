@@ -227,6 +227,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	sv := sessCtx.GetSessionVars()
 	rowEncoder := sv.RowEncoder.Enable
 	sqlMode := sv.SQLMode
+	divPrecisionIncrement := sv.DivPrecisionIncrement
 	var timezone *time.Location
 	if sv.TimeZone != nil {
 		// Copy the content of timezone instead of pointer because it may be changed.
@@ -240,6 +241,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv := usedSessCtx.GetSessionVars()
 		uv.RowEncoder.Enable = rowEncoder
 		uv.SQLMode = sqlMode
+		uv.DivPrecisionIncrement = divPrecisionIncrement
 		uv.TimeZone = timezone
 		uv.StmtCtx.SetTypeFlags(typeFlags)
 		uv.StmtCtx.SetErrLevels(errLevels)

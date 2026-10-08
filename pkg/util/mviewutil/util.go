@@ -18,8 +18,47 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
+
+// CheckMaterializedViewSelect checks the SELECT clauses that are not supported
+// by materialized views. It is called before the planner builds the SELECT so
+// unsupported clauses do not get reported as unrelated planner errors.
+func CheckMaterializedViewSelect(selectNode ast.ResultSetNode) error {
+	sel, ok := selectNode.(*ast.SelectStmt)
+	if !ok {
+		return nil
+	}
+	if sel.With != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support common table expressions")
+	}
+	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support locking clauses")
+	}
+	if sel.SelectIntoOpt != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support SELECT INTO")
+	}
+	if sel.From == nil || sel.From.TableRefs == nil || sel.From.TableRefs.Right != nil {
+		return nil
+	}
+	ts, ok := sel.From.TableRefs.Left.(*ast.TableSource)
+	if !ok {
+		return nil
+	}
+	tbl, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		return nil
+	}
+	if tbl.AsOf != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support AS OF")
+	}
+	if tbl.TableSample != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support TABLESAMPLE")
+	}
+	return nil
+}
 
 // FindVisibleIndexWithPrefixCoveringColumns returns the first public visible key layout
 // usable by MIN/MAX materialized-view refresh.

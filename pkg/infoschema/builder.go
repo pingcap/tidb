@@ -89,7 +89,9 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return applyDropResourceGroup(b, m, diff), nil
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return applyTruncateTableOrPartition(b, m, diff)
-	case model.ActionDropTable, model.ActionDropTablePartition:
+	case model.ActionDropTable, model.ActionDropTablePartition,
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		return applyDropTableOrPartition(b, m, diff)
 	case model.ActionRecoverTable:
 		return applyRecoverTable(b, m, diff)
@@ -154,6 +156,10 @@ func applyDropTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff
 			continue
 		}
 
+		if diff.Type == model.ActionDropTable || diff.Type == model.ActionDropTablePartition {
+			b.deleteBundle(b.infoSchema, opt.OldTableID)
+			continue
+		}
 		// Otherwise, it indicates an extra table updated in the same DDL transaction.
 		// Drop-table diffs don't apply affected opts by default, so reload the table
 		// metadata explicitly.
@@ -354,6 +360,35 @@ func applyDefaultAction(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]in
 }
 
 func applyMViewRefreshOutOfPlaceCutover(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		dbInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+		if !ok {
+			return nil, ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("(Schema ID %d)", diff.SchemaID))
+		}
+		oldTableID, newTableID := diff.OldTableID, diff.TableID
+		b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+
+		tblIDs := make([]int64, 0, 2)
+		if tableIDIsValid(oldTableID) {
+			tblIDs = applyDropTable(b, diff, dbInfo, oldTableID, tblIDs)
+		}
+		// The shadow table already exists when the cutover diff is applied. Drop
+		// its old name/index before recreating it with the MV metadata written by
+		// the cutover worker; otherwise InfoSchema v2 retains the shadow name.
+		if tableIDIsValid(newTableID) && newTableID != oldTableID {
+			tblIDs = applyDropTable(b, diff, dbInfo, newTableID, tblIDs)
+		}
+		if tableIDIsValid(newTableID) {
+			allocs, _ := allocByID(b, newTableID)
+			var err error
+			tblIDs, err = applyCreateTable(b, m, dbInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return b.applyAffectedOpts(m, tblIDs, diff, diff.Type)
+	}
+
 	roDBInfo, ok := b.infoSchema.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
@@ -406,7 +441,9 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 		// Since the cluster-index feature also has similar problem, we chose to prevent DDL execution during the upgrade process to avoid this issue.
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		oldTableID = diff.TableID
 
 		// Still keep the table in infoschema until when the state of table reaches StateNone. This is because
@@ -443,7 +480,8 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 		} else if tableIDIsValid(oldTableID) {
 			b.deleteBundle(b.infoSchema, oldTableID)
 		}
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		b.deleteBundle(b.infoSchema, oldTableID)
 	case model.ActionTruncateTable:
 		b.deleteBundle(b.infoSchema, oldTableID)
