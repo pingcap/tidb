@@ -481,29 +481,35 @@ type stmtTinyRecord struct {
 	End   int64 `json:"end"`
 }
 
-// extractDigestPrefix extracts the digest value from the head of a persisted JSON
-// line. json.Marshal emits StmtRecord fields in declaration order, so begin, end,
-// schema name and digest precede the large fields (sample SQL, plans) and the scan
-// stops at the digest without reading the rest of the line. It reports ok=false when
-// the line doesn't follow the expected scalar-only shape — format drift across
-// versions, hand-edited files — and the caller must fall back to the full record
-// decode, which keeps results correct either way.
-func extractDigestPrefix(line []byte) (digest string, ok bool) {
+// extractDigest returns the digest value of a persisted JSON line exactly as the
+// full decode would see it: top-level keys are walked in order and the LAST plain
+// "digest" value wins, matching encoding/json's duplicate-key behavior. Only keys
+// are examined — every other value is skipped byte-wise without decoding or
+// allocation. Anything not cheaply skippable (escaped keys, an escaped digest
+// value, malformed input) reports ok=false, and the caller falls back to the full
+// record decode, which keeps results identical in all cases.
+func extractDigest(line []byte) (digest string, ok bool) {
 	i := skipJSONSpace(line, 0)
 	if i >= len(line) || line[i] != '{' {
 		return "", false
 	}
 	i = skipJSONSpace(line, i+1)
+	found := false
+	var value string
 	for {
 		if i >= len(line) {
 			return "", false
 		}
 		if line[i] == '}' {
-			// End of the object and the digest hasn't shown up in the scanned prefix.
+			if found {
+				return value, true
+			}
+			// End of the object and no plain digest key was seen.
 			return "", false
 		}
 		key, next, okKey := scanJSONString(line, i)
-		if !okKey {
+		if !okKey || hasJSONEscape(key) {
+			// Escaped keys can't be compared cheaply; defer to the full decode.
 			return "", false
 		}
 		i = skipJSONSpace(line, next)
@@ -512,19 +518,20 @@ func extractDigestPrefix(line []byte) (digest string, ok bool) {
 		}
 		i = skipJSONSpace(line, i+1)
 		if string(key) == "digest" {
-			value, _, okValue := scanJSONString(line, i)
-			if !okValue || hasJSONEscape(value) {
-				// An escaped digest never occurs in records we write; treat anything
-				// else as unknown shape and fall back to the full decode.
+			v, next, okValue := scanJSONString(line, i)
+			if !okValue || hasJSONEscape(v) {
 				return "", false
 			}
-			return string(value), true
+			value, found = string(v), true
+			i = next
+		} else {
+			next, okValue := skipJSONValue(line, i)
+			if !okValue {
+				return "", false
+			}
+			i = next
 		}
-		next, okValue := skipJSONValue(line, i)
-		if !okValue {
-			return "", false
-		}
-		i = skipJSONSpace(line, next)
+		i = skipJSONSpace(line, i)
 		if i >= len(line) {
 			return "", false
 		}
@@ -579,9 +586,8 @@ func hasJSONEscape(content []byte) bool {
 	return false
 }
 
-// skipJSONValue skips one JSON scalar (string, number or literal) and reports the
-// position after it. Containers are rejected so the caller falls back to the full
-// decode instead of replicating the parser.
+// skipJSONValue skips one JSON value (string, number, literal, or a balanced
+// container with strings honored) and reports the position after it.
 func skipJSONValue(line []byte, i int) (next int, ok bool) {
 	if i >= len(line) {
 		return 0, false
@@ -591,6 +597,32 @@ func skipJSONValue(line []byte, i int) (next int, ok bool) {
 		_, next, ok = scanJSONString(line, i)
 		return next, ok
 	case '{', '[':
+		opening := line[i]
+		closing := byte('}')
+		if opening == '[' {
+			closing = ']'
+		}
+		depth := 0
+		for i < len(line) {
+			c := line[i]
+			if c == '"' {
+				_, next, ok = scanJSONString(line, i)
+				if !ok {
+					return 0, false
+				}
+				i = next
+				continue
+			}
+			if c == opening {
+				depth++
+			} else if c == closing {
+				depth--
+				if depth == 0 {
+					return i + 1, true
+				}
+			}
+			i++
+		}
 		return 0, false
 	default:
 		start := i
@@ -967,10 +999,10 @@ func (w *stmtParseWorker) handleLines(
 	for _, line := range lines {
 		if w.checker.digests != nil {
 			// Cheap digest pre-filter: records whose digest cannot match skip the full
-			// unmarshal. The prefix scan reads only the head of each line — digest precedes
-			// the large fields — and falls back to the full decode when the expected shape
-			// doesn't match.
-			if digest, ok := extractDigestPrefix(line); ok && !w.checker.isDigestValid(digest) {
+			// unmarshal. Only keys are walked — values are skipped byte-wise — and the
+			// last plain digest key wins, matching the full decode; anything not
+			// cheaply skippable falls back to the full decode.
+			if digest, ok := extractDigest(line); ok && !w.checker.isDigestValid(digest) {
 				continue
 			}
 		}

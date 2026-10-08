@@ -517,6 +517,40 @@ func TestHistoryReader(t *testing.T) {
 		}
 	}()
 
+	func() {
+		// Duplicate digest keys: the full decode keeps the last occurrence, and the
+		// pre-filter must agree — either by picking the same last value or by
+		// falling back to the full decode.
+		dupName := time.Unix(1672129480, 0).In(timeLocation).Format(logFileTimeFormat)
+		dupFile := "tidb-statements-" + dupName + ".log"
+		file, err := os.Create(dupFile)
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, os.Remove(dupFile))
+		}()
+		_, err = file.WriteString("{\"begin\":1672129470,\"end\":1672129480,\"digest\":\"digest2\",\"digest\":\"digest_dup_last\",\"exec_count\":50}\n")
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+
+		func() {
+			// The full decode resolves the duplicate-key record to digest_dup_last,
+			// so filtering for digest2 must still return only the two original rows.
+			reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, set.NewStringSet("digest2"), nil, 2)
+			require.NoError(t, err)
+			defer reader.Close()
+			rows := readAllRows(t, reader)
+			require.Len(t, rows, 2)
+		}()
+		func() {
+			reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, set.NewStringSet("digest_dup_last"), nil, 2)
+			require.NoError(t, err)
+			defer reader.Close()
+			rows := readAllRows(t, reader)
+			require.Len(t, rows, 1)
+			require.Equal(t, "digest_dup_last", rows[0][0].GetString())
+		}()
+	}()
+
 	t.Run("bounds open file descriptors", func(t *testing.T) {
 		restore := config.RestoreFunc()
 		defer restore()
@@ -683,39 +717,50 @@ func BenchmarkHistoryReaderDigestFilter(b *testing.B) {
 	b.Run("no-filter", func(b *testing.B) { benchmarkHistoryReaderRows(b, 0, false) })
 }
 
-func TestExtractDigestPrefix(t *testing.T) {
-	// Regular shape: digest is the fourth field and the large fields follow it, so a
-	// prefix scan must find the digest without touching the tail.
+func TestExtractDigest(t *testing.T) {
+	// Regular shape: digest is the fourth field and the large fields follow it, so
+	// the key walk never decodes any other value.
 	line := `{"begin":1672128520,"end":1672128521,"schema_name":"test","digest":"digest1","plan_digest":"p","normalized_sql":"select ?","sample_sql":"` +
 		strings.Repeat("s", 4096) + `"}`
-	digest, ok := extractDigestPrefix([]byte(line))
+	digest, ok := extractDigest([]byte(line))
 	require.True(t, ok)
 	require.Equal(t, "digest1", digest)
 
 	// Whitespace-tolerant and digest-first shapes still work.
-	digest, ok = extractDigestPrefix([]byte(`{ "begin" : 1 , "digest" : "d1" , "end" : 2 }`))
+	digest, ok = extractDigest([]byte(`{ "begin" : 1 , "digest" : "d1" , "end" : 2 }`))
 	require.True(t, ok)
 	require.Equal(t, "d1", digest)
-	digest, ok = extractDigestPrefix([]byte(`{"digest":"d2","begin":1}`))
+	digest, ok = extractDigest([]byte(`{"digest":"d2","begin":1}`))
 	require.True(t, ok)
 	require.Equal(t, "d2", digest)
 
 	// Escapes in earlier string fields don't confuse the scan.
-	digest, ok = extractDigestPrefix([]byte(`{"schema_name":"a\"b\u4e2d","digest":"d3"}`))
+	digest, ok = extractDigest([]byte(`{"schema_name":"a\"b\u4e2d","digest":"d3"}`))
 	require.True(t, ok)
 	require.Equal(t, "d3", digest)
 
+	// Container values are skipped without decoding.
+	digest, ok = extractDigest([]byte(`{"arr":[1,2,{"x":"y"}],"obj":{"k":"v"},"digest":"d4"}`))
+	require.True(t, ok)
+	require.Equal(t, "d4", digest)
+
+	// Duplicate keys: the full decode keeps the last one, and so does the scan.
+	digest, ok = extractDigest([]byte(`{"begin":1,"end":2,"digest":"miss","digest":"target"}`))
+	require.True(t, ok)
+	require.Equal(t, "target", digest)
+
 	// Unknown shapes must report ok=false so the caller falls back to the full decode.
 	for _, bad := range []string{
-		`{"begin":1}`,                       // no digest key
-		`{"arr":[1,2],"digest":"d"}`,        // container value before digest
-		`{"digest":"a\"b"}`,                 // escaped digest value
-		`{"digest":null}`,                   // non-string digest
-		`{"digest" "d"}`,                    // missing colon
-		`"digest"`,                          // not an object
-		`{"begin":1672128520,"end":1672128`, // truncated
+		`{"begin":1}`,                              // no digest key
+		`{"digest":"miss","di\u0067est":"target"}`, // escaped key: defer to the full decode
+		`{"digest":"a\"b"}`,                        // escaped digest value
+		`{"digest":null}`,                          // non-string digest
+		`{"digest" "d"}`,                           // missing colon
+		`"digest"`,                                 // not an object
+		`{"begin":1672128520,"end":1672128`,        // truncated
+		`{"arr":[1,2`,                              // truncated container
 	} {
-		_, ok = extractDigestPrefix([]byte(bad))
+		_, ok = extractDigest([]byte(bad))
 		require.False(t, ok, bad)
 	}
 }
