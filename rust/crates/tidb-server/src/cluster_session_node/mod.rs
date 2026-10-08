@@ -7166,17 +7166,9 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
-        match statement {
-            DdlStatement::DropTable { schema, table, .. } => self
-                .session
-                .validate_persistent_drop_references(&[(schema.clone(), table.clone())])
-                .map_err(map_error)?,
-            DdlStatement::DropTables { names, .. } => self
-                .session
-                .validate_persistent_drop_references(names)
-                .map_err(map_error)?,
-            _ => {}
-        }
+        self.session
+            .validate_persistent_ddl_references(statement)
+            .map_err(map_error)?;
         let report = self.ddl.execute(statement)?;
         // Go raises `job.Warning` on the session's own statement context, so
         // `SHOW WARNINGS` reports what the change did differently from what

@@ -169,8 +169,7 @@ fn build_fk_info(
         on_delete,
         on_update,
         state: SchemaState::PUBLIC,
-        // Go: `vardef.EnableForeignKey` defaults ON.
-        version: FK_VERSION1,
+        version: if tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) { FK_VERSION1 } else { 0 },
         ..FKInfo::default()
     })
 }
@@ -346,6 +345,9 @@ fn check_valid(
     fk_check: bool,
     in_owner: bool,
 ) -> Refusal<()> {
+    if !tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(());
+    }
     let schema_l = schema.to_lowercase();
     for fk in table.foreign_keys.iter_deref() {
         let fk = fk.read();
@@ -392,7 +394,8 @@ fn check_valid(
         for child in &database.tables {
             for fk in child.foreign_keys.iter_deref() {
                 let fk = fk.read();
-                if fk.ref_schema.lowercase() == schema_l
+                if fk.version >= FK_VERSION1
+                    && fk.ref_schema.lowercase() == schema_l
                     && fk.ref_table.lowercase() == table.name.lowercase()
                 {
                     check_table_foreign_key(table, child, &fk)?;

@@ -33,6 +33,7 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] Maintain N03/D11/E02 together through shared FK policy, metadata versions and persistent admission; see [current plan](fk-global-policy-execplan.md) and [receipt](parity/current-audit/fk-global-policy-validation.json). Broad counts remain56 unresolved; complete package/durable lifecycle obligations remain open.
 
 - [x] Restore clean Cloud checkouts at TiDB `9a319a5d6d78593e623a9db8e8aed1f750380507` and native `aa2c60f37481c2fe7f03997535d4f238ed485956`; refresh Go master at `7a3dacb52efe58d28db360ae8639d8838c376544`.
 - [x] Retain the latest [rename admission/publication repair](parity/current-audit/rename-owner-batch-validation.json) and [executor scaffolding cleanup](parity/current-audit/executor-scaffold-cleanup-validation.json), without expanding their acceptance claims.

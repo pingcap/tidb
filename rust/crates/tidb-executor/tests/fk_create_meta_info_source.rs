@@ -32,10 +32,10 @@
 //! `ref_schema`/`ref_table` name the parent. The tests below re-derive the
 //! parent half with the same scan over the catalog's public enumeration.
 //! Not carried (each noted where the Go assertion names it): the per-FK
-//! numeric `ID` and `State`/`Version` fields (the tier's constraints are
-//! always public), the `@@global.tidb_enable_foreign_key` switch (the tier
-//! has no global variable surface; the per-statement `foreign_key_checks`
-//! is the equivalent control), and `FKInfo.String`'s exact rendering.
+//! numeric `ID` and `State` fields (the tier's constraints are
+//! always public), and `FKInfo.String`'s exact rendering. `Version` and the
+//! process-global switch are covered by the isolated session FK policy suite;
+//! the session row-check switch is a separate control.
 
 use tidb_executor::ddl::{self, CreateTableSettings};
 use tidb_executor::{Catalog, FkAction, StmtContext, TableEntry};
@@ -110,7 +110,7 @@ fn ctx() -> StmtContext {
 //     MaxForeignKeyID counter) and an auto-created fk_1 index;
 //   * dropping test2 clears every referred entry that pointed into it.
 //
-// The FKInfo.String rendering legs and the ID/State/Version numeric fields
+// The FKInfo.String rendering legs and the ID/State numeric fields
 // have no carrier here (see the module doc).
 #[test]
 fn create_table_fk_meta_lands_on_both_sides() {

@@ -691,6 +691,8 @@ impl FkAction {
 /// its old ones silently starts checking the wrong columns.
 #[derive(Clone, Debug)]
 pub struct KvForeignKey {
+    /// Go `FKInfo.Version`: version zero retains metadata without active enforcement.
+    pub version: i64,
     /// The constraint name, which a violation reports.
     pub name: String,
     /// Go `FKInfo.Cols`: the referencing columns' NAMES in this table.

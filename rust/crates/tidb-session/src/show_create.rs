@@ -397,6 +397,9 @@ pub(super) fn show_create_table_text(
         if let Some(action) = referential_action_sql(foreign_key.on_update) {
             clause.push_str(&format!(" ON UPDATE {action}"));
         }
+        if foreign_key.version < tidb_model::table::FK_VERSION1 {
+            clause.push_str(" /* FOREIGN KEY INVALID */");
+        }
         clauses.push(clause);
     }
 

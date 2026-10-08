@@ -457,17 +457,41 @@ impl Session {
                 || self.split_local_temporary_drop(drop).0.names.is_empty()))
     }
 
-    /// Go checks references across the complete persistent DROP set before
-    /// submitting any target. This runs after the DDL implicit commit.
-    pub fn validate_persistent_drop_references(
+    /// Go's submitter validates persistent FK references after implicit commit.
+    /// These admission checks remain active when the global feature is OFF;
+    /// the gated worker rechecks cannot replace them.
+    pub fn validate_persistent_ddl_references(
         &mut self,
-        names: &[(String, String)],
+        statement: &tidb_exec::cluster_ddl::DdlStatement,
     ) -> Result<(), DriverError> {
-        if self.foreign_key_checks() {
-            // DDL uses the latest persistent schema, not the session's local
-            // overlay: a temporary child must not hide a referencing FK.
-            let catalog = self.lock_catalog()?;
-            tidb_executor::ddl::check_drop_table_references(&catalog, names)?;
+        use tidb_exec::cluster_ddl::DdlStatement;
+        // Use the shared persistent image, never a local temporary overlay.
+        let catalog = self.lock_catalog()?;
+        match statement {
+            DdlStatement::DropIndex { schema, table, index, .. } => {
+                tidb_executor::check_index_needed(&catalog, schema, table, index)?;
+            }
+            DdlStatement::DropTable { schema, table, .. } if self.foreign_key_checks() => {
+                tidb_executor::ddl::check_drop_table_references(
+                    &catalog, &[(schema.clone(), table.clone())],
+                )?;
+            }
+            DdlStatement::DropTables { names, .. } if self.foreign_key_checks() => {
+                tidb_executor::ddl::check_drop_table_references(&catalog, names)?;
+            }
+            DdlStatement::TruncateTable { schema, table } if self.foreign_key_checks() => {
+                if let Some(error) = tidb_executor::find_table_referred(
+                    &catalog, schema, table, &[(schema.clone(), table.clone())],
+                ) {
+                    return Err(error);
+                }
+            }
+            DdlStatement::DropDatabase { name, .. } if self.foreign_key_checks() => {
+                if let Some(error) = tidb_executor::find_database_referred(&catalog, name) {
+                    return Err(error);
+                }
+            }
+            _ => {}
         }
         Ok(())
     }

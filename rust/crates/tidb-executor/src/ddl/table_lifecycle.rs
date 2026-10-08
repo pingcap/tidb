@@ -187,7 +187,8 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, DriverError>
 /// Go's FK rename helper does no reference adjustment for an unchanged table
 /// name, including a schema-only move. Keep this independent of SQL FK checks.
 pub fn rename_changes_fk_reference(from_table: &str, to_table: &str) -> bool {
-    from_table.go_to_lower() != to_table.go_to_lower()
+    tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst)
+        && from_table.go_to_lower() != to_table.go_to_lower()
 }
 
 /// Runs a `RENAME TABLE`, validating each pair in written order and then

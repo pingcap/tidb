@@ -394,11 +394,18 @@ fn runtime_instance_value(globals: &GlobalSysvars, def: &'static SysVarDef) -> O
     }
 }
 
-/// Reads the process-wide auto-analyze products Go exposes through the
+/// Reads the process-wide products Go exposes through the
 /// GLOBAL getter hooks. The registry still owns validation and persistence;
-/// these atomics are the live scheduler-facing authority.
-fn runtime_auto_analyze_value(name: &str) -> Option<String> {
+/// these atomics are the live consumer-facing authority.
+fn runtime_global_value(name: &str) -> Option<String> {
     match name {
+        tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY => Some(
+            if tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
+                "ON".to_owned()
+            } else {
+                "OFF".to_owned()
+            },
+        ),
         tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE => Some(
             if tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst) {
                 "ON".to_owned()
@@ -607,7 +614,7 @@ impl GlobalSysvars {
             );
         }
         if self.publishes_runtime_settings {
-            if let Some(value) = runtime_auto_analyze_value(def.name) {
+            if let Some(value) = runtime_global_value(def.name) {
                 return Ok(value);
             }
         }
@@ -891,7 +898,7 @@ impl GlobalSysvars {
             if let Some(value) = runtime_instance_value(self, def) {
                 return Ok(value);
             }
-            if let Some(value) = runtime_auto_analyze_value(def.name) {
+            if let Some(value) = runtime_global_value(def.name) {
                 return Ok(value);
             }
         }
@@ -1002,6 +1009,9 @@ impl GlobalSysvars {
         }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE) {
             self.publish_ttl_job_enable();
+        }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY) {
+            self.publish_enable_foreign_key();
         }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL) {
             self.publish_enable_mdl();
@@ -1336,6 +1346,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE {
             self.publish_ttl_job_enable();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY {
+            self.publish_enable_foreign_key();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_MDL {
             self.publish_enable_mdl();
         }
@@ -1402,6 +1415,16 @@ impl GlobalSysvars {
                 value.eq_ignore_ascii_case("ON") || value == "1"
             });
         tidb_vardef::set_enable_mdl(enabled);
+    }
+
+    /// Publish only a committed live GLOBAL image, never a staged replacement.
+    fn publish_enable_foreign_key(&self) {
+        if self.publishes_runtime_settings {
+            tidb_vardef::ENABLE_FOREIGN_KEY.store(
+                self.global_bool_value(tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY, true),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
     }
 
     /// Publishes Go's `vardef.EnableTTLJob` process-wide switch from the
@@ -1720,6 +1743,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE {
             self.publish_ttl_job_enable();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY {
+            self.publish_enable_foreign_key();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_MDL {
             self.publish_enable_mdl();
         }
@@ -1894,6 +1920,7 @@ impl GlobalSysvars {
         // key while the owner waited on the per-job one -- blocking every DDL
         // in the cluster until that node was stopped.
         self.publish_enable_mdl();
+        self.publish_enable_foreign_key();
         if loaded_plan_replayer_retention {
             self.publish_plan_replayer_file_retention_time();
         }
@@ -1970,6 +1997,7 @@ impl GlobalSysvars {
         self.refresh_resolved();
         self.publish_require_secure_transport();
         self.publish_ttl_job_enable();
+        self.publish_enable_foreign_key();
         // Go's effective global value is ON when the row is absent.  The
         // live registry must publish that default after every cluster image
         // replacement; otherwise a node that bootstraps before the row is

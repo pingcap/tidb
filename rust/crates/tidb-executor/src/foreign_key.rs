@@ -194,7 +194,8 @@ pub(crate) fn referring(
             continue;
         };
         for foreign_key in child.foreign_keys() {
-            if foreign_key.ref_schema.eq_ignore_ascii_case(database)
+            if foreign_key.version >= tidb_model::table::FK_VERSION1
+                && foreign_key.ref_schema.eq_ignore_ascii_case(database)
                 && foreign_key.ref_table.eq_ignore_ascii_case(table)
             {
                 found.push((child_db, child_table, foreign_key));
@@ -826,7 +827,8 @@ pub(crate) fn rewrite_table_references(
             continue;
         };
         for foreign_key in std::sync::Arc::make_mut(table).foreign_keys_mut() {
-            if foreign_key.ref_schema.eq_ignore_ascii_case(from_database)
+            if foreign_key.version >= tidb_model::table::FK_VERSION1
+                && foreign_key.ref_schema.eq_ignore_ascii_case(from_database)
                 && foreign_key.ref_table.eq_ignore_ascii_case(from_table)
             {
                 foreign_key.ref_schema = to_database.to_owned();
@@ -1031,6 +1033,9 @@ pub(crate) fn rewrite_column_name(
             }
         }
     }
+    if !tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     let children: Vec<(String, String)> = referring(catalog, database, table)
         .into_iter()
         .map(|(db, tbl, _)| (db, tbl))
@@ -1072,10 +1077,10 @@ pub(crate) fn rewrite_column_name(
 ///   REFER to it (PARENT), exactly as Go's shared `checkFn` does.
 ///
 /// NOT gated by `foreign_key_checks`. Captured: with the session variable set
-/// to 0, `alter table t1 drop index idx1` is STILL 1553, because Go gates
-/// this check on the global `vardef.EnableForeignKey` rather than on the
-/// session switch that governs row-level checking.
-pub(crate) fn check_index_needed(
+/// to 0, `alter table t1 drop index idx1` is STILL 1553: Go's submitter
+/// performs this check independently of both switches. Only
+/// its worker recheck is gated by the global `vardef.EnableForeignKey`.
+pub fn check_index_needed(
     catalog: &Catalog,
     database: &str,
     table: &str,
@@ -1112,6 +1117,9 @@ pub(crate) fn check_index_needed(
     // own, resolved from their names into current offsets.
     let own: Vec<String> = kv.columns.iter().map(|c| c.name.clone()).collect();
     for foreign_key in kv.foreign_keys() {
+        if foreign_key.version < tidb_model::table::FK_VERSION1 {
+            continue;
+        }
         let Some(child) = child_offsets(&own, foreign_key) else {
             continue;
         };
@@ -1193,7 +1201,8 @@ pub(crate) fn is_table_referred(catalog: &Catalog, database: &str, table: &str) 
     !referring(catalog, database, table).is_empty()
 }
 
-pub(crate) fn find_table_referred(
+/// Go's submitter-side referred-key check, excluding the statement's targets.
+pub fn find_table_referred(
     catalog: &Catalog,
     database: &str,
     table: &str,

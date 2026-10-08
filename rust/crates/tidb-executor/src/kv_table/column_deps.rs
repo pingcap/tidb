@@ -151,6 +151,7 @@ mod tests {
     fn a_foreign_key_follows_its_columns_when_one_is_inserted_before_them() {
         let mut t = test_table();
         t.add_foreign_key(KvForeignKey {
+            version: tidb_model::table::FK_VERSION1,
             name: "fk_1".to_owned(),
             cols: vec!["s".to_owned()],
             ref_schema: "test".to_owned(),

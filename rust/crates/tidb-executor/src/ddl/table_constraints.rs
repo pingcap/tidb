@@ -619,6 +619,26 @@ pub(crate) fn build_foreign_key(
             });
         }
         child_generated_column_rules(columns, &cols, definition, &fk_name)?;
+        // Go buildFKInfo validates SET NULL against child nullability even
+        // when catalog validation is disabled or the parent is unresolved.
+        for offset in &cols {
+            let child_column = &columns[*offset];
+            if (matches!(
+                definition.reference.on_delete,
+                Some(tidb_ast::ReferentialAction::SetNull)
+            ) || matches!(
+                definition.reference.on_update,
+                Some(tidb_ast::ReferentialAction::SetNull)
+            )) && child_column
+                .field_type
+                .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+            {
+                return Err(DriverError::ForeignKeyColumnNotNull {
+                    column: child_column.name.clone(),
+                    constraint: fk_name.clone(),
+                });
+            }
+        }
         let self_reference = current_table.is_some_and(|table| {
             ref_schema.eq_ignore_ascii_case(database) && ref_table.eq_ignore_ascii_case(&table.name)
         });
@@ -632,7 +652,8 @@ pub(crate) fn build_foreign_key(
                         .name
                         .eq_ignore_ascii_case(parent_name)
                 });
-        if same_self_columns {
+        let enabled = tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst);
+        if enabled && same_self_columns {
             // Go resolves a self-reference against the table's in-flight
             // `TableInfo`, then rejects a constraint that writes back to the
             // same columns with ErrCannotAddForeign (1215).
@@ -670,21 +691,6 @@ pub(crate) fn build_foreign_key(
                     });
                 }
                 let child_column = &columns[*child_offset];
-                if (matches!(
-                    definition.reference.on_delete,
-                    Some(tidb_ast::ReferentialAction::SetNull)
-                ) || matches!(
-                    definition.reference.on_update,
-                    Some(tidb_ast::ReferentialAction::SetNull)
-                )) && child_column
-                    .field_type
-                    .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
-                {
-                    return Err(DriverError::ForeignKeyColumnNotNull {
-                        column: child_column.name.clone(),
-                        constraint: fk_name.clone(),
-                    });
-                }
                 let parent_column = &parent.columns[parent_offset];
                 let child_type = &child_column.field_type;
                 let parent_type = &parent_column.field_type;
@@ -720,11 +726,11 @@ pub(crate) fn build_foreign_key(
             }
             Ok(())
         };
-        if self_reference {
+        if enabled && self_reference {
             // The CREATE path has not published its table yet; use the
             // in-flight metadata snapshot as Go does for self-reference.
             validate_parent(current_table.expect("self-reference has current table"))?;
-        } else {
+        } else if enabled {
             // Go's owner check still rejects a partitioned relationship when
             // the parent exists even if `foreign_key_checks=0`; only an
             // unresolved parent is deferred by that switch.
@@ -768,6 +774,7 @@ pub(crate) fn build_foreign_key(
             }
         }
         Ok(KvForeignKey {
+            version: if enabled { tidb_model::table::FK_VERSION1 } else { 0 },
             name: fk_name,
             // The TABLE's spelling of each referencing column, which is what
             // the constraint is keyed by from here on -- an offset would be

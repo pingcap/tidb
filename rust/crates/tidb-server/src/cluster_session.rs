@@ -738,16 +738,16 @@ pub(crate) fn cluster_table(
     // Go `TableInfo.ForeignKeys` ride the loaded `TableInfo` into every
     // `tables.Table`: the planner's FK triggers (`physicalop/foreign_key.go`)
     // build their `FKCheck`/`FKCascade` EXPLAIN leaves from them and the FK
-    // check execs resolve parents through them. Only public, versioned keys
-    // take effect, matching Go's `fk.Version < 1` skip and the state gate in
-    // `buildOnDeleteOrUpdateFKTrigger`. Dropping them here made every
-    // foreign key a Go-created schema carried invisible to this node.
+    // check execs resolve parents through them. Retain public legacy keys too:
+    // metadata readers need them, while trigger planning and referred-key
+    // lookup apply Go's version gate at their own boundaries.
     for fk in table.foreign_keys.iter_deref() {
         let fk = fk.read();
-        if fk.version < 1 || fk.state != SchemaState::PUBLIC {
+        if fk.state != SchemaState::PUBLIC {
             continue;
         }
         kv_table.add_foreign_key(KvForeignKey {
+            version: fk.version,
             name: fk.name.original().to_owned(),
             cols: fk
                 .cols

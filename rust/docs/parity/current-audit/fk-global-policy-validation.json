@@ -1,0 +1,358 @@
+{
+  "date": "2026-10-08",
+  "baseline": {
+    "tidb": "ea3cea1cbf65d6385f6ef6a5da274b6c3d4bd1ac",
+    "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+    "native": "aa2c60f37481c2fe7f03997535d4f238ed485956",
+    "wire": {
+      "binary_sha256": "8aff0cc644181fc7b3bf419b0d9e77cadfe008cf152ccaf0da461441e34b1b8c",
+      "checks": [
+        {
+          "name": "existing version one DML remains enforced",
+          "sql": "INSERT INTO c_index VALUES (42)",
+          "rows": null,
+          "error": [
+            1452,
+            "Cannot add or update a child row: a foreign key constraint fails (`fk_batch`.`c_index`, CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `p_index` (`id`))"
+          ],
+          "passed": true
+        },
+        {
+          "name": "off permits unresolved parent",
+          "sql": "CREATE TABLE legacy(id INT, FOREIGN KEY fk(id) REFERENCES absent(id))",
+          "rows": null,
+          "error": [
+            1824,
+            "Failed to open the referenced table 'absent'"
+          ],
+          "passed": false
+        },
+        {
+          "name": "off permits incompatible parent",
+          "sql": "CREATE TABLE legacy_type(id BIGINT, FOREIGN KEY fk(id) REFERENCES p_index(id))",
+          "rows": null,
+          "error": [
+            3780,
+            "Referencing column 'id' and referenced column 'id' in foreign key constraint 'fk' are incompatible."
+          ],
+          "passed": false
+        },
+        {
+          "name": "off still validates child definition",
+          "sql": "CREATE TABLE invalid(id INT, FOREIGN KEY fk(missing) REFERENCES absent(id))",
+          "rows": null,
+          "error": [
+            1072,
+            "Key column 'missing' doesn't exist in table"
+          ],
+          "passed": true
+        },
+        {
+          "name": "off retains truncate admission",
+          "sql": "TRUNCATE TABLE p_trunc",
+          "rows": [],
+          "error": null,
+          "passed": false,
+          "expected_error_after_source_review": 1701
+        },
+        {
+          "name": "off retains index admission",
+          "sql": "ALTER TABLE p_index DROP INDEX ix",
+          "rows": [],
+          "error": null,
+          "passed": false,
+          "expected_error_after_source_review": 1553
+        },
+        {
+          "name": "off retains drop admission",
+          "sql": "DROP TABLE p_drop",
+          "rows": null,
+          "error": [
+            3730,
+            "Cannot drop table 'p_drop' referenced by a foreign key constraint 'fk' on table 'c_drop'."
+          ],
+          "passed": true,
+          "expected_error_after_source_review": 3730
+        },
+        {
+          "name": "off accepts rename",
+          "sql": "RENAME TABLE p_rename TO p_renamed",
+          "rows": [],
+          "error": null,
+          "passed": true
+        },
+        {
+          "name": "off leaves child reference unchanged",
+          "sql": "SELECT referenced_table_name FROM information_schema.key_column_usage WHERE table_schema='fk_batch' AND table_name='c_rename' AND constraint_name='fk'",
+          "rows": [
+            [
+              "p_renamed"
+            ]
+          ],
+          "error": null,
+          "passed": false
+        },
+        {
+          "name": "legacy constraint stays inactive after enabling",
+          "sql": "INSERT INTO legacy_type VALUES (9)",
+          "rows": null,
+          "error": [
+            1146,
+            "Table 'fk_batch.legacy_type' doesn't exist"
+          ],
+          "passed": false
+        },
+        {
+          "name": "legacy gets no supporting index",
+          "sql": "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema='fk_batch' AND table_name='legacy_type'",
+          "rows": [
+            [
+              0
+            ]
+          ],
+          "error": null,
+          "passed": true
+        },
+        {
+          "name": "on again validates parent",
+          "sql": "CREATE TABLE active(id INT, FOREIGN KEY fk(id) REFERENCES absent(id))",
+          "rows": null,
+          "error": [
+            1824,
+            "Failed to open the referenced table 'absent'"
+          ],
+          "passed": true
+        },
+        {
+          "name": "off retains database admission",
+          "sql": "DROP DATABASE fk_batch",
+          "rows": [],
+          "error": null,
+          "passed": false,
+          "expected_error_after_source_review": 3730
+        }
+      ],
+      "exit": 0,
+      "interpretation": "Original SQL observations retained. Four destructive-DDL expectations corrected after tracing Go submitter before gated worker rechecks; original receipt remains baseline-wire.json."
+    }
+  },
+  "findings": [
+    "N03",
+    "D11",
+    "E02"
+  ],
+  "dispositions": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "scope": [
+    "Live global publication/read/reset/load/replacement with staged-image isolation",
+    "Version-zero metadata in both builders and server loading; version-aware triggers/referred indexes and SHOW INVALID annotation",
+    "CREATE vs ALTER index policy and unconditional child definition checks",
+    "Existing-child validation on parent creation",
+    "Feature-gated table/column reference propagation",
+    "Shared persistent DROP/TRUNCATE/index/database submission checks"
+  ],
+  "cleanup": {
+    "removed": "Wrong serial missing-index ignored test and direct-executor rollback/cascade test plus unused render helpers",
+    "replacement": "Session-owned rollback/cascade assertions and CREATE/ALTER index assertions in isolated fk_global_policy suite",
+    "retained_obligations": "Go TestAddForeignKey2 concurrent index removal/owner recheck; TestAddForeignKey3 online intermediate-state behavior remain open."
+  },
+  "validation": {
+    "rust": {
+      "session": 97,
+      "executor": 34,
+      "metadata": 6,
+      "isolated": 1,
+      "total_distinct": 138,
+      "failed": 0,
+      "ignored": 0
+    },
+    "all_targets": "passed",
+    "server_build": "passed",
+    "wire": {
+      "binary_sha256": "d40d80d4a0bf3727dc7e51473e83ecb5c2f1aed09f6634c60e5fb835e9a7d557",
+      "checks": [
+        {
+          "name": "existing version one DML remains enforced",
+          "sql": "INSERT INTO c_index VALUES (42)",
+          "rows": null,
+          "error": [
+            1452,
+            "Cannot add or update a child row: a foreign key constraint fails (`fk_batch`.`c_index`, CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `p_index` (`id`))"
+          ],
+          "passed": true
+        },
+        {
+          "name": "off permits unresolved parent",
+          "sql": "CREATE TABLE legacy(id INT, FOREIGN KEY fk(id) REFERENCES absent(id))",
+          "rows": [],
+          "error": null,
+          "passed": true
+        },
+        {
+          "name": "off permits incompatible parent",
+          "sql": "CREATE TABLE legacy_type(id BIGINT, FOREIGN KEY fk(id) REFERENCES p_index(id))",
+          "rows": [],
+          "error": null,
+          "passed": true
+        },
+        {
+          "name": "off still validates child definition",
+          "sql": "CREATE TABLE invalid(id INT, FOREIGN KEY fk(missing) REFERENCES absent(id))",
+          "rows": null,
+          "error": [
+            1072,
+            "Key column 'missing' doesn't exist in table"
+          ],
+          "passed": true
+        },
+        {
+          "name": "off retains truncate admission",
+          "sql": "TRUNCATE TABLE p_trunc",
+          "rows": null,
+          "error": [
+            1701,
+            "Cannot truncate a table referenced in a foreign key constraint (`fk_batch`.`c_trunc` CONSTRAINT `fk`)"
+          ],
+          "passed": true
+        },
+        {
+          "name": "off retains index admission",
+          "sql": "ALTER TABLE p_index DROP INDEX ix",
+          "rows": null,
+          "error": [
+            1553,
+            "Cannot drop index 'ix': needed in a foreign key constraint"
+          ],
+          "passed": true
+        },
+        {
+          "name": "off retains drop admission",
+          "sql": "DROP TABLE p_drop",
+          "rows": null,
+          "error": [
+            3730,
+            "Cannot drop table 'p_drop' referenced by a foreign key constraint 'fk' on table 'c_drop'."
+          ],
+          "passed": true
+        },
+        {
+          "name": "off accepts rename",
+          "sql": "RENAME TABLE p_rename TO p_renamed",
+          "rows": [],
+          "error": null,
+          "passed": true
+        },
+        {
+          "name": "off leaves child reference unchanged",
+          "sql": "SELECT referenced_table_name FROM information_schema.key_column_usage WHERE table_schema='fk_batch' AND table_name='c_rename' AND constraint_name='fk'",
+          "rows": [
+            [
+              "p_rename"
+            ]
+          ],
+          "error": null,
+          "passed": true
+        },
+        {
+          "name": "legacy metadata remains visible with Go INVALID marker",
+          "sql": "SHOW CREATE TABLE legacy_type",
+          "rows": [
+            [
+              "legacy_type",
+              "CREATE TABLE `legacy_type` (\n  `id` bigint DEFAULT NULL,\n  CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `p_index` (`id`) /* FOREIGN KEY INVALID */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+            ]
+          ],
+          "error": null,
+          "passed": true
+        },
+        {
+          "name": "legacy constraint stays inactive after enabling",
+          "sql": "INSERT INTO legacy_type VALUES (9)",
+          "rows": [],
+          "error": null,
+          "passed": true
+        },
+        {
+          "name": "legacy gets no supporting index",
+          "sql": "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema='fk_batch' AND table_name='legacy_type'",
+          "rows": [
+            [
+              0
+            ]
+          ],
+          "error": null,
+          "passed": true
+        },
+        {
+          "name": "on again validates parent",
+          "sql": "CREATE TABLE active(id INT, FOREIGN KEY fk(id) REFERENCES absent(id))",
+          "rows": null,
+          "error": [
+            1824,
+            "Failed to open the referenced table 'absent'"
+          ],
+          "passed": true
+        },
+        {
+          "name": "off retains database admission",
+          "sql": "DROP DATABASE fk_batch",
+          "rows": null,
+          "error": [
+            3730,
+            "Cannot drop table 'p_drop' referenced by a foreign key constraint 'fk' on table 'child'."
+          ],
+          "passed": true
+        }
+      ],
+      "exit": 0
+    },
+    "lint": "passed"
+  },
+  "commands": [
+    "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1",
+    "cd rust && cargo test --locked -p tidb-session --lib -- fk foreign_key --test-threads=1",
+    "cd rust && cargo test --locked -p tidb-session --test fk_global_policy",
+    "cd rust && cargo test --locked -p tidb-executor --test all -- fk foreign_key",
+    "cd rust && cargo test --locked -p tidb-exec --test all -- fk foreign_key rename_owner_batch",
+    "cd rust && cargo check --locked -p tidb-session -p tidb-exec -p tidb-executor -p tidb-server --all-targets",
+    "make lint",
+    "cd rust && cargo build --locked -p tidb-server",
+    "PYTHONPATH=/workspace/.cloud-setup/python python /workspace/.cloud-setup/fk-global-batch/wire.py"
+  ],
+  "diagnostics": [
+    "First wire launch omitted activation and overflowed the known default thread stack; correct env.sh activation rerun supplies behavioral baseline.",
+    "Initial isolated run used intermediate source and failed; final isolated suite passes.",
+    "Expanded executor selection exposed a direct-runner rollback assertion outside the session transaction owner. Its correct session regression passes; discarded ignored serial index surrogate contradicted Go CreateForeignKey.",
+    "Baseline actual SQL results are preserved unchanged; four expectations were corrected after tracing submission before worker rechecks. Reviewed baseline has seven failed observations, including a downstream INSERT failure because its prerequisite CREATE failed."
+  ],
+  "limits": [
+    "Existing owner maintenance, not complete pkg/ddl or other package transcreation.",
+    "No full Go suite, live multi-node TiKV, owner-transfer/durable FK-state recovery, distributed locking/cascades, or performance benchmark.",
+    "Multi-action ALTER and broader FK/package obligations remain unresolved.",
+    "Other53 unresolved findings retain prior evidence; not freshly revalidated by this batch."
+  ],
+  "cloud_logs": "/workspace/.cloud-setup/fk-global-batch",
+  "publication_requirements": {
+    "actual_hook": "core.hooksPath=hooks; executable hooks/pre-commit runs cd rust && cargo build --locked -p tidb-server during normal commit",
+    "fresh_prepush": "Same locked build must pass immediately before normal push to pingcap/tidb:hparser-integration; verify remote SHA",
+    "result_receipt": "/workspace/.cloud-setup/fk-global-batch/final-handoff.json",
+    "native": "Unchanged; managed HTTPS read confirms aa2c60f37481c2fe7f03997535d4f238ed485956"
+  },
+  "log_sha256": {
+    "baseline-wire.json": "745cea2804ca0841d469e85d5e49b90e302c72d906cc0a27969ebcd8e86c54f7",
+    "baseline-reviewed.json": "6ae0aa3367a46d088d02a118e56a2bfcbabfca6576f24e89a81977fafa7f72cb",
+    "session-fk-tests.log": "a65857d370faa5eb65aa2fb02f91195010142e216d6ee67da202de0bed62257a",
+    "isolated-final.log": "b21f085e17ef90a5cc491c9671e50dddf0635dca2390447b86d9c8cd1058f0d1",
+    "executor-final.log": "ef9b0d2ad040cc86a2d4e28c9066f630c7313c25c00fb02d0991ff0631996409",
+    "metadata-final.log": "3f795b9e5e1c45aeb981190b93e9578fdb46d5a9b825129d33d1ac4de5fa469d",
+    "all-targets.log": "0ae9402a2f9669861b39c8a5c0f3c70f092c78fc8eabde4ee1734240d58c7d58",
+    "server-build.log": "d1a78d758c57ccddcaf7cb58752c92e40c07c60fc417d8ea7ea08c35f5342d2c",
+    "lint.log": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4",
+    "wire.json": "a1d9e36c343fcd3d34044fdb6f92712abba7aa29198863c4f53bb69b7cc7d5d3"
+  }
+}

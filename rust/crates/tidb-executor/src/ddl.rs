@@ -1878,6 +1878,11 @@ pub fn run_create_table_in(
             })?;
     }
     for foreign_key in foreign_keys {
+        if foreign_key.version < tidb_model::table::FK_VERSION1 {
+            table.allocate_foreign_key_id();
+            table.add_foreign_key(foreign_key);
+            continue;
+        }
         // Go `addForeignKeyIndex`: a foreign key needs an index on its
         // referencing columns, and TiDB adds one named after the constraint
         // UNLESS an existing key -- the clustered primary key included --
@@ -1984,7 +1989,7 @@ pub fn run_create_table_in(
     // is still in-flight, so validate against `table` before registration and
     // leave the catalog untouched on failure.
     // Local creation never submits a durable parent or repairs orphan FKs.
-    if temporary != tidb_model::TempTableType::LOCAL {
+    if temporary != tidb_model::TempTableType::LOCAL && tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
         for (child_database, child_name) in catalog.table_paths() {
             let Some(crate::TableEntry::Kv(child)) = catalog.get_in(&child_database, &child_name)
             else {
@@ -2003,7 +2008,8 @@ pub fn run_create_table_in(
                 })
                 .collect();
             for foreign_key in child.foreign_keys() {
-                if foreign_key.ref_schema.eq_ignore_ascii_case(&database)
+                if foreign_key.version >= tidb_model::table::FK_VERSION1
+                    && foreign_key.ref_schema.eq_ignore_ascii_case(&database)
                     && foreign_key.ref_table.eq_ignore_ascii_case(name)
                 {
                     table_constraints::validate_foreign_key_parent(

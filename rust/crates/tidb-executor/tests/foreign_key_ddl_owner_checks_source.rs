@@ -15,29 +15,11 @@
 //! Behavioral tests retained from Go. Removed documentary entries are
 //! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
-use tidb_datatype::Datum;
 use tidb_executor::driver::Catalog;
 use tidb_executor::{
-    admin_check, ddl, run_delete_on, run_insert_on, run_select_on, FkAction, KvTable, RowDecodeContext, StmtContext,
+    admin_check, ddl, run_insert_on, FkAction, KvTable, RowDecodeContext, StmtContext,
     TableEntry,
 };
-
-/// The text of a datum, however the codec chose to represent it.
-fn datum_text(value: &Datum) -> String {
-    match value {
-        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-        Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
-        Datum::Int(i) => i.to_string(),
-        Datum::UInt(u) => u.to_string(),
-        other => panic!("unexpected datum {other:?}"),
-    }
-}
-
-fn rows_text(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
-    rows.iter()
-        .map(|row| row.iter().map(datum_text).collect())
-        .collect()
-}
 
 /// The storage-backed table a test just built.
 fn kv_table(catalog: &Catalog, database: &str, name: &str) -> KvTable {
@@ -107,10 +89,8 @@ fn foreign_key_add_then_drop_constraint_round_trip() {
     // (update); the ported meta carries the same two actions.
     assert!(matches!(foreign_key.on_delete, FkAction::Cascade));
     assert!(matches!(foreign_key.on_update, FkAction::SetNull));
-    // The constraint's index support: Go's ALTER path refuses a constraint
-    // whose columns no index covers; the port carries an auto-created key
-    // named after the constraint instead (divergence, see the
-    // add_foreign_key_missing_index documentary below).
+    // Go CreateForeignKey auto-creates a supporting index when none covers
+    // the referencing columns.
     assert!(
         table
             .indexes()
@@ -295,123 +275,11 @@ fn drop_database_with_foreign_key_referred_reports_3730() {
     );
 }
 
-// --- TestAddForeignKey2 (pkg/ddl/foreign_key_test.go:334) ---
-//
-// Go races `alter table t2 add foreign key (b) references t1(id)` against a
-// concurrent `alter table t2 drop index b`, and requires the add to fail with
-// `Failed to add the foreign key constraint. Missing index for 'fk_1' foreign
-// key columns in the table 't2'` — the owner-side validation
-// (pkg/ddl/foreign_key.go:664-666 checkAddForeignKeyValidInOwner) refuses an
-// ADD whose referencing columns no index covers.
-//
-// go-parity-gap: this tier's ADD FOREIGN KEY auto-creates the covering index
-// (`ddl/alter_table.rs:914` add_foreign_key_action mirrors the CREATE TABLE
-// arm instead), so the Go refusal is not reproducible here.
-#[test]
-#[ignore = "go-parity-gap: ALTER ADD FOREIGN KEY auto-creates the covering index where Go refuses with the missing-index error"]
-fn add_foreign_key_missing_index_is_refused() {
-    let mut catalog = Catalog::default();
-    let ctx = StmtContext::for_query();
-    ddl::run_create_table_in(
-        "create table t1 (id int key, b int, index(b))",
-        &mut catalog,
-        "test",
-        ddl::CreateTableSettings::default(),
-        &ctx,
-    )
-    .unwrap();
-    ddl::run_create_table_in(
-        "create table t2 (id int key, b int, index(b))",
-        &mut catalog,
-        "test",
-        ddl::CreateTableSettings::default(),
-        &ctx,
-    )
-    .unwrap();
-    ddl::run_alter_table_in("alter table t2 drop index b", &mut catalog, "test", &ctx).unwrap();
-
-    let error = ddl::run_alter_table_in(
-        "alter table t2 add foreign key (b) references t1(id)",
-        &mut catalog,
-        "test",
-        &ctx,
-    )
-    .expect_err(
-        "Go: Failed to add the foreign key constraint. Missing index for 'fk_1' \
-         foreign key columns in the table 't2'",
-    );
-    assert!(
-        err_message(&error).contains("Failed to add the foreign key constraint"),
-        "{:?}",
-        err_message(&error)
-    );
-}
-
-// --- TestAddForeignKey3 (pkg/ddl/foreign_key_test.go:365) ---
-//
-// Go adds `foreign key (id) references t1(id) on delete cascade` over
-// populated tables and, while the job sits in StateWriteOnly and StateWrite-
-// Reorganization, probes `insert into t2 values (10, 10)` (orphan child) and
-// `delete from t1 where id = 1`: the insert must fail planner:1452 naming
-// `fk_1` at BOTH states, and the delete must fail planner:1451 — the
-// write-only constraint RESTRICTS the parent mutation without yet being
-// allowed to cascade. The serialized port below pins the public-constraint
-// behavior instead (no schema states exist here): the orphan insert is
-// refused exactly as Go refuses it, and the parent delete now CASCADES,
-// removing the child row with it — Go's public-state contract for the same
-// constraint.
-#[test]
-fn foreign_key_enforces_child_side_and_cascades_once_public() {
-    let mut catalog = Catalog::default();
-    let ctx = StmtContext::for_query();
-    ddl::run_create_table_in(
-        "create table t1 (id int key, b int, index(b))",
-        &mut catalog,
-        "test",
-        ddl::CreateTableSettings::default(),
-        &ctx,
-    )
-    .unwrap();
-    ddl::run_create_table_in(
-        "create table t2 (id int, b int, index(id), index(b))",
-        &mut catalog,
-        "test",
-        ddl::CreateTableSettings::default(),
-        &ctx,
-    )
-    .unwrap();
-    run_insert_on("insert into t1 values (1, 1), (2, 2), (3, 3)", &mut catalog, &ctx).unwrap();
-    run_insert_on("insert into t2 values (1, 1), (2, 2), (3, 3)", &mut catalog, &ctx).unwrap();
-
-    ddl::run_alter_table_in(
-        "alter table t2 add foreign key (id) references t1(id) on delete cascade",
-        &mut catalog,
-        "test",
-        &ctx,
-    )
-    .unwrap();
-
-    let error = run_insert_on("insert into t2 values (10, 10)", &mut catalog, &ctx)
-        .expect_err("orphan child row must be refused");
-    assert_eq!(err_code(&error), 1452);
-    // Go appends the rendered actions, `... REFERENCES `t1` (`id`) ON DELETE
-    // CASCADE` (planner:1452); this tier renders the constraint WITHOUT the
-    // action suffix, so the assertion pins the shared prefix and the missing
-    // suffix is a captured rendering divergence.
-    assert!(err_message(&error).starts_with(
-        "Cannot add or update a child row: a foreign key constraint fails \
-         (`test`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`id`) REFERENCES `t1` (`id`)"
-    ));
-
-    // The write-only-state 1451 halves of Go's probes need the schema-state
-    // machinery; the public constraint cascades the same delete.
-    run_delete_on("delete from t1 where id = 1", &mut catalog, &ctx)
-        .expect("a PUBLIC on-delete-cascade constraint removes the child rows with the parent");
-    let rows = run_select_on("select * from t1 order by id", &mut catalog, &ctx).unwrap();
-    assert_eq!(rows_text(&rows), vec![vec!["2", "2"], vec!["3", "3"]]);
-    let rows = run_select_on("select * from t2 order by id", &mut catalog, &ctx).unwrap();
-    assert_eq!(rows_text(&rows), vec![vec!["2", "2"], vec!["3", "3"]]);
-}
+// Go TestAddForeignKey2's concurrent index-removal/owner-recheck remains an
+// online-DDL obligation. Its old serial surrogate incorrectly expected ADD
+// to reject a missing index; Go CreateForeignKey auto-creates that index.
+// Public rejection/rollback/cascade coverage now runs through the session
+// owner in tidb-session/tests/fk_global_policy.rs, not a direct DML runner.
 
 // --- TestFix59705 (pkg/ddl/foreign_key_test.go:445) ---
 //

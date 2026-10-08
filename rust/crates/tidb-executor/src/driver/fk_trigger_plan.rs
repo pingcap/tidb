@@ -133,6 +133,9 @@ pub(crate) fn build_fk_triggers(
     }
     if let Some(TableEntry::Kv(table)) = catalog.get_in(&spec.database, &spec.table) {
         for fk in table.foreign_keys() {
+            if fk.version < tidb_model::table::FK_VERSION1 {
+                continue;
+            }
             if operator != "Insert"
                 && (operator != "Update" || !touches(&spec.updated_cols, &fk.cols))
             {

@@ -476,6 +476,9 @@ fn validate_alter_foreign_key_parent(
     child_table: &str,
     foreign_key: &KvForeignKey,
 ) -> Result<(), DriverError> {
+    if !tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(());
+    }
     let self_reference = foreign_key.ref_schema.eq_ignore_ascii_case(database)
         && foreign_key.ref_table.eq_ignore_ascii_case(child_table)
         && foreign_key.cols.len() == foreign_key.ref_cols.len()

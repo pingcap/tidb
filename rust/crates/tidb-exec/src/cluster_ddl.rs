@@ -8057,7 +8057,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // then the owner's `checkTableForeignKeyValidInOwner` +
             // `allocateFKIndexID` (create_table.go:87). This planner runs both
             // stages against the one snapshot it publishes from.
-            if !info.foreign_keys.is_empty() {
+            {
+                // A new parent also needs validation against existing children.
                 let fk_check = build.context.foreign_key_checks();
                 crate::foreign_key_build::check_table_foreign_keys_valid(
                     &catalog, schema, &info, fk_check,
@@ -10959,6 +10960,9 @@ fn plan_rename_tables(
             );
             for fk in table.foreign_keys.iter_deref() {
                 let fk = fk.read();
+                if fk.version < tidb_model::table::FK_VERSION1 {
+                    continue;
+                }
                 referred
                     .entry(table_name_key(
                         fk.ref_schema.lowercase(),

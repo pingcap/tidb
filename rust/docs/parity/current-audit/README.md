@@ -4,14 +4,14 @@ Latest cleanup: [current planning workflow](planning-history-cleanup-validation.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [rename admission and publication](rename-owner-batch-validation.json). D01/D11/E02/I04 share ordered RENAME/ALTER admission, FK metadata retention and peer catalog publication. Remove private source/destination checks and use original schema IDs for the direct multi-table transition. Seven Rust regressions and nine of18 live assertions fail on the baseline; exact final gates are in the receipt. Counts remain86 tracked/30 repaired/56 unresolved (27open,29partial). Complete durable DDL and package ownership remain open; other52 roots retain carried evidence.
+Latest connected repair: [shared FK policy and admission](fk-global-policy-validation.json). N03/D11/E02 now share the process switch, retained constraint versions, parent validation and rename policy. Persistent TRUNCATE/index/database submission reuses existing validators. Legacy metadata remains visible and inactive; existing version-one row checks remain enforced. Stale executor rollback and serial missing-index surrogates are replaced by session-owner coverage. Exact checks and limits are in the receipt. Counts remain86 tracked/30 repaired/56 unresolved (27open,29partial); complete packages and distributed/durable FK ownership remain open.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../rename-owner-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../fk-global-policy-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](rename-owner-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](fk-global-policy-validation.json): exact source/log identities and verification limits.
 
 Current Go comparison: `7a3dacb52efe58d28db360ae8639d8838c376544`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master remains `aa2c60f37481c2fe7f03997535d4f238ed485956`; maintained sync is unchanged in this batch. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
@@ -63,6 +63,7 @@ Earlier implementation: [shared read consistency](read-consistency-batch-validat
 
 The repeated milestone summaries and stale count tables formerly copied into this index are removed. The original receipts below and Git history retain their source pins and validation limits. Complete TiPB declaration before-images live in [tipb-mismatches-before.json](tipb-mismatches-before.json); other protocol before/after evidence lives in [protocol-projections.json](protocol-projections.json) and [protocol-contracts-after.json](protocol-contracts-after.json). These replace duplicated declaration tables, not the underlying obligations.
 
+- [rename admission/publication batch](rename-owner-batch-validation.json)
 - [shared PD/TSO discovery batch](pd-service-discovery-batch-validation.json)
 - [DML read/FK owner batch](dml-trigger-owner-batch-repair.md)
 - [shared-read removal](dml-interpreter-removal-repair.md)
