@@ -61,9 +61,7 @@ fn vector_constructor_and_dimension_rules_match_source() {
         (f32::NEG_INFINITY, "infinite value not allowed in vector"),
     ] {
         assert_eq!(
-            VectorFloat32::create(vec![value])
-                .unwrap_err()
-                .to_string(),
+            VectorFloat32::create(vec![value]).unwrap_err().to_string(),
             message
         );
     }
@@ -115,6 +113,7 @@ fn vector_text_parse_and_format_rules_match_source() {
         "[\"1\"]",
         "[[1]]",
         "[1,2,3]extra",
+        "[1,2,3,4.4]ddddddddddddfasfa",
         "[1] null",
     ] {
         assert_eq!(
@@ -126,8 +125,14 @@ fn vector_text_parse_and_format_rules_match_source() {
     let empty = VectorFloat32::parse("[]").unwrap();
     assert!(empty.is_zero_value());
     assert_eq!(empty.to_string(), "[]");
+    assert_eq!(empty.compare(&VectorFloat32::default()), Ordering::Equal);
+    assert_eq!(VectorFloat32::default().compare(&empty), Ordering::Equal);
     let ordinary = VectorFloat32::parse("[1.1, 2.2, 3.3]   ").unwrap();
     assert_eq!(ordinary.elements(), [1.1, 2.2, 3.3]);
+    assert_eq!(ordinary.len(), 3);
+    assert!(!ordinary.is_zero_value());
+    assert_eq!(ordinary.compare(&empty), Ordering::Greater);
+    assert_eq!(empty.compare(&ordinary), Ordering::Less);
     assert_eq!(ordinary.to_string(), "[1.1,2.2,3.3]");
 
     let maximum = VectorFloat32::parse("[3.4028234663852886e38]").unwrap();
@@ -146,15 +151,17 @@ fn vector_text_parse_and_format_rules_match_source() {
             format!("Invalid vector text: {text}")
         );
     }
-    assert_eq!(
-        VectorFloat32::parse("[1e-9999]").unwrap().elements(),
-        [0.0]
-    );
+    assert_eq!(VectorFloat32::parse("[1e-9999]").unwrap().elements(), [0.0]);
 
-    let signed_and_extreme =
-        VectorFloat32::parse("[-0,0,1e-45,3.4028234663852886e38]").unwrap();
-    assert_eq!(signed_and_extreme.elements()[0].to_bits(), (-0.0_f32).to_bits());
-    assert_eq!(signed_and_extreme.elements()[1].to_bits(), 0.0_f32.to_bits());
+    let signed_and_extreme = VectorFloat32::parse("[-0,0,1e-45,3.4028234663852886e38]").unwrap();
+    assert_eq!(
+        signed_and_extreme.elements()[0].to_bits(),
+        (-0.0_f32).to_bits()
+    );
+    assert_eq!(
+        signed_and_extreme.elements()[1].to_bits(),
+        0.0_f32.to_bits()
+    );
     assert_eq!(signed_and_extreme.elements()[2].to_bits(), 1);
     assert_eq!(signed_and_extreme.elements()[3], f32::MAX);
     assert_eq!(
@@ -229,9 +236,7 @@ fn vector_wire_format_and_decode_rules_match_source() {
     vector.serialize_to(&mut prefixed);
     assert_eq!(
         prefixed,
-        [
-            9, 8, 7, 2, 0, 0, 0, 0xcd, 0xcc, 0x8c, 0x3f, 0xcd, 0xcc, 0x0c, 0x40
-        ]
+        [9, 8, 7, 2, 0, 0, 0, 0xcd, 0xcc, 0x8c, 0x3f, 0xcd, 0xcc, 0x0c, 0x40]
     );
     assert_eq!(vector.serialized_size(), 12);
 
@@ -243,15 +248,15 @@ fn vector_wire_format_and_decode_rules_match_source() {
         assert!(deserialize_vector_float32(bytes).is_err());
     }
     assert_eq!(
-        peek_vector_float32(&[1, 0, 0, 0])
-            .unwrap_err()
-            .to_string(),
+        peek_vector_float32(&[1, 0, 0, 0]).unwrap_err().to_string(),
         "bad VectorFloat32 value (len=4, expected=8)"
     );
 
+    // Go TestVectorSerialize uses three elements, independently of the two-element wire layout.
+    let vector = VectorFloat32::parse("[1.1, 2.2, 3.3]").unwrap();
     let mut serialized = vector.serialize();
     serialized.extend_from_slice(&[1, 2, 3, 4]);
-    assert_eq!(peek_vector_float32(&serialized).unwrap(), 12);
+    assert_eq!(peek_vector_float32(&serialized).unwrap(), 16);
     let (round_trip, remaining) = deserialize_vector_float32(&serialized).unwrap();
     assert_eq!(round_trip, vector);
     assert_eq!(remaining, [1, 2, 3, 4]);
@@ -275,7 +280,9 @@ fn vector_wire_format_and_decode_rules_match_source() {
     assert_eq!(zero.compare(&nan), Ordering::Equal);
     assert_eq!(nan.compare(&nan), Ordering::Equal);
 
+    // Go TestVectorDeserializeOverflow: reject uint32 byte-size overflow in both APIs.
     for header in [0x4000_0000_u32, 0xffff_ffff] {
+        assert!(deserialize_vector_float32(&header.to_le_bytes()).is_err());
         assert_eq!(
             peek_vector_float32(&header.to_le_bytes())
                 .unwrap_err()
@@ -294,6 +301,18 @@ fn vector_clone_zero_and_memory_rules_match_source() {
     assert_eq!(zero.serialize(), [0, 0, 0, 0]);
     assert_eq!(zero.serialized_size(), 4);
     assert_eq!(zero.to_string(), "[]");
+    assert_eq!(zero.compare(&zero), Ordering::Equal);
+    let mut prefixed = vec![1, 2, 3];
+    zero.serialize_to(&mut prefixed);
+    assert_eq!(prefixed, [1, 2, 3, 0, 0, 0, 0]);
+    let serialized = zero.serialize();
+    let (round_trip, remaining) = deserialize_vector_float32(&serialized).unwrap();
+    assert!(remaining.is_empty());
+    assert!(round_trip.is_zero_value());
+    assert_eq!(round_trip.len(), 0);
+    assert_eq!(round_trip.to_string(), "[]");
+    assert_eq!(round_trip.compare(&zero), Ordering::Equal);
+    assert_eq!(zero.compare(&round_trip), Ordering::Equal);
 
     let mut original = VectorFloat32::must_create(vec![1.0, 2.0]);
     assert!(!original.is_zero_value());
@@ -311,4 +330,50 @@ fn vector_clone_zero_and_memory_rules_match_source() {
     if std::mem::size_of::<usize>() == 8 {
         assert_eq!(original.estimated_mem_usage(), 36);
     }
+}
+
+#[test]
+fn test_vector_datum() {
+    let datum = tidb_datatype::Datum::new_vector_float32(VectorFloat32::default());
+    let tidb_datatype::Datum::VectorFloat32(vector) = datum else {
+        panic!("expected vector datum")
+    };
+    assert_eq!(vector.len(), 0);
+    assert_eq!(vector.to_string(), "[]");
+    assert!(vector.is_zero_value());
+    assert_eq!(vector.compare(&VectorFloat32::default()), Ordering::Equal);
+    assert_eq!(VectorFloat32::default().compare(&vector), Ordering::Equal);
+}
+
+#[test]
+fn test_vector_compare() {
+    let parsed = VectorFloat32::parse("[1.1, 2.2, 3.3]").unwrap();
+    let other = VectorFloat32::parse("[-1.1, 4.2]").unwrap();
+    assert_eq!(parsed.compare(&other), Ordering::Greater);
+    assert_eq!(other.compare(&parsed), Ordering::Less);
+    let other = VectorFloat32::parse("[1.1, 4.2]").unwrap();
+    assert_eq!(parsed.compare(&other), Ordering::Less);
+    assert_eq!(other.compare(&parsed), Ordering::Greater);
+}
+
+#[test]
+fn vector_functions_cover_source_precision_errors_and_edge_cases() {
+    let left = VectorFloat32::must_create(vec![1.0, 2.0, 3.0]);
+    let right = VectorFloat32::must_create(vec![4.0, 5.0, 6.0]);
+    assert_eq!(left.l2_squared_distance(&right).unwrap(), 27.0);
+    assert_eq!(left.l2_distance(&right).unwrap(), 27_f64.sqrt());
+    assert_eq!(left.inner_product(&right).unwrap(), 32.0);
+    assert_eq!(left.negative_inner_product(&right).unwrap(), -32.0);
+    assert_eq!(left.l1_distance(&right).unwrap(), 9.0);
+    assert_eq!(left.add(&right).unwrap().elements(), [5.0, 7.0, 9.0]);
+    assert_eq!(right.sub(&left).unwrap().elements(), [3.0, 3.0, 3.0]);
+    assert_eq!(left.mul(&right).unwrap().elements(), [4.0, 10.0, 18.0]);
+    assert!(left.add(&VectorFloat32::must_create(vec![1.0])).is_err());
+    assert!(VectorFloat32::must_create(vec![f32::MAX])
+        .add(&VectorFloat32::must_create(vec![f32::MAX]))
+        .is_err());
+    assert!(VectorFloat32::default()
+        .cosine_distance(&VectorFloat32::default())
+        .unwrap()
+        .is_nan());
 }

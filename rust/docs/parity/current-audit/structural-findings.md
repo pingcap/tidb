@@ -4,7 +4,7 @@ Latest connected repair: [compute topology and placement](compute-topology-valid
 
 Earlier [outgoing peers](cluster-peer-validation.json), [AutoID ownership](auto-id-owner-validation.json), [planning cleanup](planning-history-cleanup-validation.json) and [shared read consistency](read-consistency-batch-validation.json) retain their dated evidence and limits. Historical counts are not the current queue.
 
-Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
+Current evidence and cleanup receipts are indexed in [README.md](README.md). [Datatype cleanup](datatype-cleanup-validation.json) consolidates duplicate vector/charset coverage and retires completed numeric plans without changing any finding disposition. [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
 
 The [JSON register](structural-findings.json) owns current dispositions. The [batch map](remaining-batches.md) assigns every unresolved ID once. Historical receipts retain their original source pins, results and unverified obligations. Finding repair is not complete Go package acceptance.
 

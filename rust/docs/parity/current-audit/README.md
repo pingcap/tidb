@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [MPP maintenance cleanup](mpp-cleanup-validation.json) removes eight superseded plans/summaries and four redundant tests, preserving historical JSON evidence and immutable Git links. Wire timeout, query/gather identity and buffered Drop assertions remain in stronger existing tests. One redundant recovery flag is removed; finding statuses are unchanged.
+Latest cleanup: [datatype test consolidation](datatype-cleanup-validation.json) removes six duplicate vector/charset cases and two completed numeric plans. Unique assertions and three moved cases remain in existing suites; historical evidence remains linked. Production behavior and finding statuses are unchanged.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
@@ -186,6 +186,6 @@ The PD channel batch migrates metadata, keyspace, discovery and TSO consumers to
 
 ## Shared JSON numeric conversion batch, 2026-10-05
 
-[Plan](../../json-numeric-batch-execplan.md) and [validation](json-numeric-batch-validation.json) maintain K03/X01 together against Go b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Four Rust regressions and six MySQL assertions fail before; 129 Rust cases and seven MySQL/unistore assertions pass after, with eleven existing neighboring tests ignored. Shared JSON numeric errors, warning order and scalar/vector conversion replace duplicated parsers. Counts remain 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial). Complete packages and the other 54 roots are not reaccepted. Actual hook and fresh pre-push locked build remain publication gates.
+[Plan](https://github.com/pingcap/tidb/blob/4dfb100d170fd6aa40007551f79d90ae90baca0b/rust/docs/json-numeric-batch-execplan.md) and [validation](json-numeric-batch-validation.json) maintain K03/X01 together against Go b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Four Rust regressions and six MySQL assertions fail before; 129 Rust cases and seven MySQL/unistore assertions pass after, with eleven existing neighboring tests ignored. Shared JSON numeric errors, warning order and scalar/vector conversion replace duplicated parsers. Counts remain 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial). Complete packages and the other 54 roots are not reaccepted. Actual hook and fresh pre-push locked build remain publication gates.
 
 The previous [compute topology package receipt](compute-topology-validation.json) retains its complete source inventory, Go oracle and original validation limits.

@@ -16,9 +16,9 @@
 
 use tidb_datatype::{
     add_charset, add_collation, count_valid_bytes, find_encoding, get_charset_info,
-    get_collation_by_name, get_default_collation, get_default_collation_legacy,
-    get_supported_charsets, get_supported_collations, remove_charset, valid_charset_and_collation,
-    CharsetInfo, CollationInfo, Encoding, TransformOp, PAD_NONE,
+    get_collation_by_id, get_collation_by_name, get_default_collation,
+    get_default_collation_legacy, get_supported_charsets, get_supported_collations, remove_charset,
+    valid_charset_and_collation, CharsetInfo, CollationInfo, Encoding, TransformOp, PAD_NONE,
     TIFLASH_SUPPORTED_CHARSETS,
 };
 
@@ -73,20 +73,25 @@ fn test_get_default_collation() {
     ] {
         assert_eq!(get_default_collation(charset).ok().as_deref(), expected);
     }
+    // Go TestGetDefaultCollation walks the full collation inventory, not
+    // GetSupportedCollations' binary-only compatibility list. This combined
+    // crate also initializes collate, which switches the Chinese defaults.
     let supported = get_supported_charsets();
-    let defaults: Vec<_> = get_supported_collations()
-        .into_iter()
-        .filter(|row| row.is_default)
-        .collect();
-    assert_eq!(supported.len(), defaults.len());
-    for charset in supported {
-        assert!(defaults.iter().any(|row| {
-            row.charset_name == charset.name && row.name == charset.default_collation
-        }));
+    let mut default_count = 0;
+    for charset in &supported {
+        for collation in charset.collations.values().filter(|row| row.is_default) {
+            assert_eq!(collation.charset_name, charset.name);
+            assert_eq!(collation.name, charset.default_collation);
+            assert_eq!(get_collation_by_name(&collation.name).unwrap(), *collation);
+            default_count += 1;
+        }
     }
+    assert_eq!(default_count, supported.len());
+    assert!(tidb_datatype::new_collation_enabled());
+    assert_eq!(get_default_collation("gbk").unwrap(), "gbk_chinese_ci");
     assert_eq!(
-        get_default_collation("gbk").ok().as_deref(),
-        Some("gbk_bin")
+        get_default_collation("gb18030").unwrap(),
+        "gb18030_chinese_ci"
     );
 }
 
@@ -144,7 +149,9 @@ fn test_valid_custom_charset() {
     });
     assert!(valid_charset_and_collation("custom", "custom_collation"));
     assert!(!valid_charset_and_collation("utf8", "utf8_invalid_ci"));
+    assert_eq!(get_collation_by_id(99_999).unwrap().sortlen, 8);
     remove_charset("custom");
+    assert!(get_charset_info("custom").is_err());
 }
 
 #[test]

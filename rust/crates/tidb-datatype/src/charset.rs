@@ -834,25 +834,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_registry_vectors() {
+    fn enabled_registry_defaults_and_full_inventory() {
         let _guard = REGISTRY_TEST_LOCK
             .lock()
             .expect("charset test lock poisoned");
-        for (charset, collation, expected) in [
-            ("utf8", "utf8_general_ci", true),
-            ("", "utf8_general_ci", true),
-            ("utf8mb4", "utf8mb4_bin", true),
-            ("latin1", "latin1_bin", true),
-            ("utf8", "utf8_invalid_ci", false),
-            ("utf16", "utf16_bin", false),
-            ("gb2312", "gb2312_chinese_ci", false),
-            ("UTF8", "UTF8_BIN", true),
-            ("UTF8MB4", "UTF8MB4_general_ci", true),
-            ("utf8mb3", "utf8mb3_unicode_ci", true),
-        ] {
-            assert_eq!(valid_charset_and_collation(charset, collation), expected);
-        }
-        assert_eq!(get_default_collation("utf8").unwrap(), "utf8_bin");
         // New collations are ENABLED: the Chinese charsets' defaults are the
         // `_chinese_ci` spellings (Go switchDefaultCollation(true); live
         // master SHOW CHARSET prints gbk_chinese_ci / gb18030_chinese_ci).
@@ -861,34 +846,9 @@ mod tests {
             get_default_collation("gb18030").unwrap(),
             "gb18030_chinese_ci"
         );
-        assert_eq!(get_charset_info("utf8mb3").unwrap().name, "utf8");
-        assert_eq!(
-            get_collation_by_name("non_exist").unwrap_err().to_string(),
-            "[ddl:1273]Unknown collation: 'non_exist'"
-        );
         for row in ALL_COLLATIONS {
             assert_eq!(get_collation_by_name(row.name).unwrap().id, row.id);
         }
-    }
-
-    #[test]
-    fn source_custom_charset_mutation() {
-        let _guard = REGISTRY_TEST_LOCK
-            .lock()
-            .expect("charset test lock poisoned");
-        add_charset(blank_charset("custom", "custom_collation", "Custom", 4));
-        add_collation(CollationInfo {
-            id: 99_999,
-            charset_name: "custom".to_owned(),
-            name: "custom_collation".to_owned(),
-            is_default: true,
-            sortlen: 8,
-            pad_attribute: PAD_NONE.to_owned(),
-        });
-        assert!(valid_charset_and_collation("custom", "custom_collation"));
-        assert_eq!(get_collation_by_id(99_999).unwrap().sortlen, 8);
-        remove_charset("custom");
-        assert!(get_charset_info("custom").is_err());
     }
 
     #[test]

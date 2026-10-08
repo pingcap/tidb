@@ -806,8 +806,8 @@
   },
   "latest_test_cleanup": {
     "date": "2026-10-08",
-    "receipt": "mpp-cleanup-validation.json",
-    "scope": "Four duplicate MPP cases consolidated into existing wire/identity/socket tests; eight superseded plans/summaries retired to immutable Git history; one redundant recovery field removed. Finding statuses unchanged."
+    "receipt": "datatype-cleanup-validation.json",
+    "scope": "Consolidate vector and charset coverage: remove six duplicate cases, preserve unique assertions and three moved cases, retire two completed numeric plans. Production behavior and finding statuses unchanged."
   },
   "test_cleanup_history": [
     {
@@ -1259,6 +1259,11 @@
       "receipt": "tso-completion-validation.json",
       "removed_adapter_tests": 5,
       "scope": "Remove duplicate arithmetic models and stale suffix-shift descriptions after moving meaningful completion/range coverage to shared native owner. Existing wire batch and lifecycle tests retained."
+    },
+    {
+      "date": "2026-10-08",
+      "receipt": "mpp-cleanup-validation.json",
+      "scope": "Four duplicate MPP cases consolidated into existing wire/identity/socket tests; eight superseded plans/summaries retired to immutable Git history; one redundant recovery field removed. Finding statuses unchanged."
     }
   ],
   "repair_history": [

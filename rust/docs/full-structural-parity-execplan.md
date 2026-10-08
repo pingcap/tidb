@@ -33,6 +33,8 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] Consolidate vector and charset tests into existing source-backed suites, preserving unique Go and Rust assertions while removing six duplicate cases and two completed numeric plans. See [datatype cleanup](parity/current-audit/datatype-cleanup-validation.json); all54 unresolved findings remain unchanged.
+
 - [x] Remove eight superseded MPP plans/summaries, consolidate four duplicate tests and remove redundant recovery state. Immutable links retain historical evidence; current MPP residuals and all54 unresolved findings stay unchanged. See [cleanup receipt](parity/current-audit/mpp-cleanup-validation.json).
 
 - [x] Compose failed-node admission, joined process probing, statement fallback policy and two-packet/three-attempt gather recovery in one MPP batch. Retire decoded fanout ownership and its fixture. See [plan](mpp-failure-lifecycle-execplan.md) and [receipt](parity/current-audit/mpp-failure-lifecycle-validation.json). M04/M05/N03 remain partial for canonical PD cache, general coordinator/fragment and broader configuration/package obligations.

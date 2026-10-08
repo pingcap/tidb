@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-08",
+  "baseline": "4dfb100d170fd6aa40007551f79d90ae90baca0b",
+  "retired_documents": [
+    {
+      "path": "rust/docs/json-numeric-batch-execplan.md",
+      "lines": 40,
+      "sha256": "c111b6fab7cc06806ff1bd88fda8c5ec9cc7363e0a47b07dbc28c9b33927d9f1",
+      "archive": "https://github.com/pingcap/tidb/blob/4dfb100d170fd6aa40007551f79d90ae90baca0b/rust/docs/json-numeric-batch-execplan.md"
+    },
+    {
+      "path": "rust/docs/numeric-production-batch-execplan.md",
+      "lines": 59,
+      "sha256": "3e0fa3db2a3b9055648d37c983c205ea1ac831f35b838c96fd888359253e68d7",
+      "archive": "https://github.com/pingcap/tidb/blob/4dfb100d170fd6aa40007551f79d90ae90baca0b/rust/docs/numeric-production-batch-execplan.md"
+    }
+  ],
+  "removed_duplicate_tests": 6,
+  "vector_unit_module_removed": true,
+  "preserved_cases_moved": 3,
+  "mapping": {
+    "test_vector_endianess": "vector_wire_format_and_decode_rules_match_source",
+    "test_zero_vector": "vector_clone_zero_and_memory_rules_match_source",
+    "test_vector_parse": "vector_text_parse_and_format_rules_match_source",
+    "test_vector_serialize": "vector_wire_format_and_decode_rules_match_source",
+    "test_vector_deserialize_overflow": "vector_wire_format_and_decode_rules_match_source",
+    "test_vector_datum": "test_vector_datum",
+    "test_vector_compare": "test_vector_compare"
+  },
+  "charset_migration": "Custom collation ID/sortlen and removal assertions move to test_valid_custom_charset. Duplicated validation table, UTF8 alias and error checks already live in original charset tests; enabled Chinese defaults and full inventory remain in the unit suite.",
+  "production_behavior_changed": false,
+  "go_master": "518bfd82dcf3efadfbd63f9faad9787b4247fabb",
+  "source_check": "Fresh master has no changes to pkg/types/vector.go, vector_test.go, pkg/parser/charset or pkg/util/collate since the 1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d export.",
+  "stale_check_repaired": "Charset TestGetDefaultCollation now checks every charset collation, as Go does, instead of the smaller supported binary-collation list; expected Chinese defaults follow collate initialization. The unchanged baseline fails (7 versus 5), poisoning three subsequent mutex users. No assertions disabled.",
+  "assertion_migration": "Zero-vector prefix/roundtrip/ordering, parse inputs/ordering, three-element serialization, both overflow APIs, custom collation ID and removal survive in existing tests. Datum, compare and arithmetic cases move unchanged in behavior. Historical port tables now point to current locations.",
+  "validation": {
+    "unit": {
+      "command": "cd rust && cargo test --locked -p tidb-datatype --lib --test all -- --test-threads=1",
+      "passed": 437,
+      "ignored": 0,
+      "log": {
+        "file": "/workspace/.cloud-setup/datatype-cleanup-batch/tests.log",
+        "sha256": "9c5f3deaf3c2efafe5772b78673f402dbe7583fc5f9deee9a1e95845be49d932"
+      },
+      "note": "Unit target passed; initial integration target exposed stale charset expectations and a byte-count typo introduced while merging. Both corrected before final integration validation."
+    },
+    "integration": {
+      "command": "cd rust && cargo test --locked -p tidb-datatype --test all -- --test-threads=1",
+      "passed": 70,
+      "ignored": 0,
+      "log": {
+        "file": "/workspace/.cloud-setup/datatype-cleanup-batch/tests-after.log",
+        "sha256": "bff2b44f89838c7733be192c573e515f619b2c7fe11977170a2954249fac09c8"
+      }
+    },
+    "charset_before": {
+      "file": "/workspace/.cloud-setup/datatype-cleanup-batch/charset-before.log",
+      "sha256": "e3a87e59835a10388e694357b1f033a579f161e4f7e40b06a45d5a84d865ed66"
+    },
+    "lint": {
+      "command": "make lint",
+      "log": {
+        "file": "/workspace/.cloud-setup/datatype-cleanup-batch/lint.log",
+        "sha256": "614fa8c8e4b42d39d9cde8cad5993c319195d3278961a86d2e15326315886a54"
+      }
+    },
+    "static": "Production prefixes byte-identical; all86 finding records unchanged; retired archive hashes and local link migration verified; git diff --check passed."
+  },
+  "limits": [
+    "Cleanup and test correction only; no production behavior change, complete package acceptance, live cluster check or performance claim.",
+    "Six fewer cases and one fewer unit module; no new harness. All54 unresolved findings remain unchanged."
+  ],
+  "publication": "Actual precommit locked server build and fresh locked build immediately before authorized push remain required. Final publication/checkpoint evidence: /workspace/.cloud-setup/datatype-cleanup-batch/final-handoff.json."
+}
