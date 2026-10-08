@@ -127,3 +127,5 @@ Integration dependencies: B02, B06.
 Peer host batch update: N04 is repaired after composing the generated receiver with the shared outgoing fleet and local process owner. I03/N05 now share incoming HTTP/gRPC, cluster TLS/CN and joined shutdown; other tables/operators, AutoID/other RPC hosts and full package acceptance remain open. See [receipt](peer-host-validation.json).
 
 Cluster summary batch: B09 I01/I03/O18 and the B05 N05 receiver now share five summary-table consumers, v1/v2 eviction admission and generated cluster schemas. Counts and parent dispositions are unchanged; other tables/operators and complete packages remain open. See [receipt](cluster-summary-validation.json).
+
+Cluster diagnostics batch: B09 I01/I03 and B05 N05 now share five transaction/deadlock/memory/index consumers and fresh peer metadata. Counts and parent dispositions remain unchanged; other tables/operators, global SQL-digest retrieval and complete packages remain open. See [receipt](cluster-diagnostics-validation.json).

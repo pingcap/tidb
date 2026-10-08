@@ -33,6 +33,8 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] Compose five cluster transaction/deadlock/memory/index readers with shared local owners, real process visibility and request-time catalog/collector metadata; retain I01/I03/N05 residuals. See [batch plan](cluster-diagnostics-execplan.md) and [receipt](parity/current-audit/cluster-diagnostics-validation.json).
+
 - [x] Compose five cluster summary readers with shared local schemas, eviction owners and peer transport; retain I01/I03/O18/N05 residuals. See [batch plan](cluster-summary-execplan.md) and [receipt](parity/current-audit/cluster-summary-validation.json).
 
 - [x] Compose incoming peer KILL/process scans with shared status HTTP/gRPC, cluster TLS/CN and joined shutdown. N04 repaired; I03/N05 retain broader obligations. See [batch plan](peer-host-execplan.md) and [receipt](parity/current-audit/peer-host-validation.json).

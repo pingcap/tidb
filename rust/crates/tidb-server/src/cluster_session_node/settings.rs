@@ -17,11 +17,35 @@ use super::*;
 
 impl ClusterSessionFactory {
     pub(crate) fn peer_service(&self) -> crate::peer_rpc::PeerService {
+        let catalog = Arc::clone(&self.catalog);
+        let stats = Arc::clone(&self.stats);
+        let auto_ids = Arc::clone(&self.auto_ids);
+        let index_usage = self.stats_usage.index_usage_collector();
+        let templates = Arc::clone(&self.session_kv_cache);
         crate::peer_rpc::PeerService::new(
             self.processes.clone(),
             self.privileges.clone(),
             self.server_info.clone(),
         )
+        .with_session_factory(Arc::new(move || {
+            let loaded = catalog.load();
+            let storage = detached_storage();
+            let mut templates = templates
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            templates.reuse(&loaded);
+            let built = cluster_session_catalog_with_templates(
+                &loaded,
+                &storage,
+                Some(&stats.load()),
+                auto_ids.as_ref(),
+                &storage,
+                Some(&mut templates),
+            );
+            let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+            session.set_index_usage_collector(Arc::clone(&index_usage));
+            session
+        }))
     }
 
     pub(crate) fn status_settings(self: &Arc<Self>) -> crate::http_settings::Settings {

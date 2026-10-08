@@ -3806,6 +3806,14 @@ const RESOURCE_GROUPS_COLUMNS: &[InfoColumn] = &[
 /// Go infoschema/cluster.go derives cluster schemas from their local owner.
 /// Only tables with composed local and peer readers are registered here.
 pub const CLUSTER_TABLES: &[(&str, &str)] = &[
+    ("CLUSTER_TIDB_TRX", "TIDB_TRX"),
+    ("CLUSTER_DEADLOCKS", "DEADLOCKS"),
+    ("CLUSTER_MEMORY_USAGE", "MEMORY_USAGE"),
+    (
+        "CLUSTER_MEMORY_USAGE_OPS_HISTORY",
+        "MEMORY_USAGE_OPS_HISTORY",
+    ),
+    ("CLUSTER_TIDB_INDEX_USAGE", "TIDB_INDEX_USAGE"),
     ("CLUSTER_PROCESSLIST", "PROCESSLIST"),
     ("CLUSTER_TRX_SUMMARY", "TRX_SUMMARY"),
     ("CLUSTER_STATEMENTS_SUMMARY", "STATEMENTS_SUMMARY"),

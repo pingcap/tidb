@@ -1,0 +1,164 @@
+{
+  "date": "2026-10-08",
+  "baseline": "8a14f89b5e138d5f03764b2de0177933dcd31c93",
+  "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+  "native_head": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+  "native_changed": false,
+  "findings": [
+    "I01",
+    "I03",
+    "N05"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 25,
+    "partial": 29
+  },
+  "complete_package_acceptance": false,
+  "scope": "Five cluster diagnostics share local SQL/peer readers, live process visibility, fresh metadata and the existing index collector. Parent findings remain partial; no complete-package acceptance.",
+  "go_sources": [
+    "pkg/infoschema/cluster.go",
+    "pkg/infoschema/tables.go",
+    "pkg/executor/infoschema_reader.go::tidbTrxTableRetriever.retrieve",
+    "pkg/executor/infoschema_reader.go::deadlocksTableRetriever.retrieve",
+    "pkg/executor/infoschema_reader.go::memtableRetriever.setDataForMemoryUsage,setDataForMemoryUsageOpsHistory",
+    "pkg/executor/infoschema_reader.go::memtableRetriever.setDataFromIndexUsage",
+    "pkg/executor/coprocessor.go"
+  ],
+  "changes": [
+    "Register five cluster schemas derived from existing local declarations.",
+    "Share local and received diagnostic readers, retiring duplicate dispatch branches.",
+    "Borrow real receiving process registry for live transaction visibility and retirement.",
+    "Borrow current catalog snapshots, shared catalog conversion cache and existing index collector only for schema-sensitive peer requests.",
+    "Preserve PROCESS admission, table visibility, generated codecs and existing transport/shutdown owners."
+  ],
+  "regressions": {
+    "command": "cd rust && cargo test --locked -p tidb-server --lib cluster_diagnostics_batch -- --test-threads=1",
+    "passed": 0,
+    "failed": 5,
+    "log": {
+      "path": "/workspace/.cloud-setup/cluster-diagnostics-batch/before.log",
+      "sha256": "bc02a7e7833e0489035cd58a4f3ac682958f5b78da56e2a38ef18ca924a45529",
+      "bytes": 110678
+    },
+    "failures": [
+      "Missing CLUSTER_TIDB_TRX SQL table",
+      "Missing CLUSTER_DEADLOCKS instead of PROCESS admission",
+      "Missing cluster memory schemas",
+      "Missing CLUSTER_TIDB_INDEX_USAGE SQL table",
+      "Receiver rejects diagnostic table scans"
+    ]
+  },
+  "validation": [
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib cluster_diagnostics_batch -- --test-threads=1",
+      "passed": 6,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-diagnostics-batch/after.log",
+        "sha256": "fb3570a278b1e5ec5119e868cd2c3f5b97f291a66a14dc36881deece3e21e503",
+        "bytes": 106152
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib cluster_summary_batch -- --test-threads=1",
+      "passed": 5,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-diagnostics-batch/summary-regressions.log",
+        "sha256": "429ca7096239d874ddadf04e976a73e856033399ed1504b7017743e617af44d8",
+        "bytes": 105673
+      }
+    },
+    {
+      "command": "cd rust && cargo test --locked -p tidb-server --lib peer_host_batch -- --test-threads=1",
+      "passed": 5,
+      "failed": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/cluster-diagnostics-batch/host-regressions.log",
+        "sha256": "50be17f8a8c7a548c4d11d8a991231d6dd6f1c31dd01aaa0572cd133c1d4bb46",
+        "bytes": 105668
+      }
+    }
+  ],
+  "distinct_rust_cases": 16,
+  "check": {
+    "command": "cd rust && cargo check --locked -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/cluster-diagnostics-batch/check.log",
+      "sha256": "16845f4e8667d1e814ac95aa2e341b2e198ca7fe812ea3eaedb94a7cae6b8d18",
+      "bytes": 117796
+    }
+  },
+  "lint": {
+    "command": "make lint",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/cluster-diagnostics-batch/lint.log",
+      "sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+      "bytes": 2164
+    }
+  },
+  "build": {
+    "command": "cd rust && cargo build --locked -p tidb-server",
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/cluster-diagnostics-batch/build.log",
+      "sha256": "42f0166ca2a3faa5520c226fe7fa6ad5bf21cf1f0e3e6d4845b72d611a0d1040",
+      "bytes": 105143
+    }
+  },
+  "live": {
+    "command": "source /workspace/.cloud-setup/env.sh && PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/cluster-diagnostics-batch/live.py",
+    "receipt": {
+      "path": "/workspace/.cloud-setup/cluster-diagnostics-batch/live.json",
+      "sha256": "332471f66e92f5d5d9ee27588ce7b6dba12a6ca3a6b5d1d94de6e76d04ce9722",
+      "bytes": 2207
+    },
+    "assertions": 21,
+    "exit": 0,
+    "binary_sha256": "8cf745c75b6629ec23b13454f2e4a14b869450aec74b7423025a4b1b776665a2"
+  },
+  "self_review": {
+    "sources": [
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-executor/src/driver/infoschema_meta.rs",
+        "sha256": "82d6914cefff6b69c424e9c957b880fb6233b88cdcb82981501b23fa8f18f033",
+        "bytes": 102987
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-session/src/dispatch.rs",
+        "sha256": "78840b867739827c4ff5f893aa2c5ac3594d05bd36916f0f6ed57f55ec913ebb",
+        "bytes": 158350
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-server/src/peer_rpc.rs",
+        "sha256": "1cad761bff0c7fab6f80366c27329573797df0a5b007dccffde38b1265a6e3f8",
+        "bytes": 52793
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-server/src/cluster_session_node/settings.rs",
+        "sha256": "20927719c4e77476432faccd49aeb3184fc7cdde2ea1dce7bb0ed4780102acd3",
+        "bytes": 4278
+      }
+    ],
+    "checks": [
+      "All local diagnostic callers migrated before removing duplicate branches.",
+      "No new runtime, client registration, catalog ownership cycle or protocol edits.",
+      "Catalog conversion cache reused; ordinary registry/counter/KILL requests skip catalog conversion.",
+      "Both storage startups use the same ClusterSessionFactory peer service.",
+      "Findings remain partial; tests and live probe do not imply complete package acceptance."
+    ]
+  },
+  "publication": "Actual hook, fresh locked pre-push build and remote verification are finalized in /workspace/.cloud-setup/cluster-diagnostics-batch/final-handoff.json. No bypass or force push.",
+  "limits": [
+    "No complete upstream Go package acceptance or exhaustive re-audit of remaining54 findings.",
+    "No live Go server or multi-node TiKV interoperability, broader platform suites or benchmarks.",
+    "Deadlock SQL-digest text still uses the existing local v1 lookup instead of complete Go global lookup.",
+    "Memory history reader reuse was checked; generating a real server-memory-limit kill event was not tested.",
+    "Injected deadlock/index samples verify shared readers and counters through a real status socket; live unistore probe separately verifies production catalog, transactions, visibility and DDL refresh."
+  ]
+}

@@ -1,17 +1,17 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [cluster summary readers](cluster-summary-validation.json) removes duplicated process/transaction cluster column declarations and migrates the stale unsupported-history assertion to the working query path. Meaningful original coverage remains. Earlier [shared TSO completion](tso-completion-validation.json) retains its cleanup receipt.
+Latest cleanup: [cluster diagnostics](cluster-diagnostics-validation.json) removes separate local diagnostic dispatch branches after routing local and cluster consumers through their shared owners. It adds no parallel harness or runtime. Earlier [cluster summary cleanup](cluster-summary-validation.json) retired duplicate column arrays and the stale history refusal assertion.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
-Latest connected repair: [cluster summary readers](cluster-summary-validation.json). Five statement/transaction summary tables now share local schemas, discovery, generated peer transport, row owners and v1/v2 admission. I01/I03/O18/N05 remain partial; N04 remains repaired. Counts:86 tracked,32 repaired,54 unresolved (25 open,29 partial). T02/M04 remain partial. Other carried findings were not freshly re-audited.
+Latest connected repair: [cluster diagnostics](cluster-diagnostics-validation.json) connects five transaction/deadlock/memory/index tables to shared local readers and peer RPCs, with live process visibility and fresh catalog/collector owners. I01/I03/N05 remain partial. Counts remain86 tracked,32 repaired,54 unresolved (25 open,29 partial); T02/M04 remain partial. Other roots retain carried evidence.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../cluster-summary-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../cluster-diagnostics-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](cluster-summary-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](cluster-diagnostics-validation.json): exact source/log identities and verification limits.
 
 Current Go comparison: `1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d`, freshly fetched for this batch. Derive external pins from its go.mod; client-go remains `v2.0.8-0.20260928031501-8edb23f6c7ee`. Native client master is `02880abbab5ed89a4dc603a4ddc7935853870ea6`; the maintained sync reapplies all four patches and regenerates protobuf bindings. Earlier optimizer, statistics, native TSO and other repairs retain the dated receipts indexed below.
 
@@ -30,6 +30,8 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 Earlier implementation: [shared read consistency](read-consistency-batch-validation.json). Prior partition reorganization safety remains in place until its durable owner exists.
 
 ## Historical evidence
+
+- [Cluster summary readers](cluster-summary-validation.json)
 
 - [Incoming peer host](peer-host-validation.json)
 

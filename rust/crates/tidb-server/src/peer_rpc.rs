@@ -24,6 +24,7 @@ type ReplyStream<T> = Pin<Box<dyn futures::Stream<Item = Result<T, tonic::Status
 /// Borrows the node's process and privilege owners; never redispatches to peers.
 #[derive(Clone)]
 pub struct PeerService {
+    session_factory: Arc<dyn Fn() -> Session + Send + Sync>,
     processes: ProcessRegistry,
     privileges: PrivilegeRegistry,
     server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
@@ -36,10 +37,21 @@ impl PeerService {
         server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     ) -> Self {
         Self {
+            session_factory: Arc::new(Session::new),
             processes,
             privileges,
             server_info,
         }
+    }
+
+    /// Supplies fresh metadata and the existing usage collector without retaining
+    /// a client connection, transaction, or the whole server session factory.
+    pub(crate) fn with_session_factory(
+        mut self,
+        factory: Arc<dyn Fn() -> Session + Send + Sync>,
+    ) -> Self {
+        self.session_factory = factory;
+        self
     }
 
     fn handle(&self, request: coprocessor::Request) -> coprocessor::Response {
@@ -71,7 +83,19 @@ impl PeerService {
                 SessionTimeZone::Fixed { name, offset_secs }
             }
         };
-        let mut session = Session::new();
+        // Only key/index diagnostics need a catalog snapshot. KILL and the
+        // registry/counter readers must not rebuild schema metadata.
+        let needs_catalog = executor.tp == Some(tipb::ExecType::TypeTableScan as i32)
+            && executor.tbl_scan.as_ref().is_some_and(|scan| {
+                ["CLUSTER_DEADLOCKS", "CLUSTER_TIDB_INDEX_USAGE"]
+                    .iter()
+                    .any(|name| scan.table_id == tidb_session::infoschema::memory_table_id(name))
+            });
+        let mut session = if needs_catalog {
+            (self.session_factory)()
+        } else {
+            Session::new()
+        };
         if let Some(user) = &dag.user {
             let name = user.user_name.as_deref().unwrap_or("");
             let host = user.user_host.as_deref().unwrap_or("");
@@ -328,6 +352,297 @@ mod tests {
             }],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn cluster_diagnostics_batch_transaction_sql() {
+        Session::new()
+            .run("SELECT * FROM information_schema.CLUSTER_TIDB_TRX")
+            .unwrap();
+    }
+
+    #[test]
+    fn cluster_diagnostics_batch_deadlock_admission() {
+        let mut session = Session::new();
+        session.set_user("diagnostic@%".into(), "diagnostic@localhost".into());
+        let error = session
+            .run("SELECT * FROM information_schema.CLUSTER_DEADLOCKS")
+            .unwrap_err();
+        assert!(
+            matches!(error, tidb_executor::DriverError::SpecificAccessDenied(ref privilege) if privilege == "PROCESS"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn cluster_diagnostics_batch_memory_sql() {
+        let mut session = Session::new();
+        let tidb_session::StmtResult::Rows(rows) = session
+            .run("SELECT MEMORY_TOTAL FROM information_schema.CLUSTER_MEMORY_USAGE")
+            .unwrap()
+        else {
+            panic!("expected rows")
+        };
+        assert_eq!(rows.len(), 1);
+        session
+            .run("SELECT * FROM information_schema.CLUSTER_MEMORY_USAGE_OPS_HISTORY")
+            .unwrap();
+    }
+
+    #[test]
+    fn cluster_diagnostics_batch_index_sql() {
+        let mut session = Session::new();
+        session.run("CREATE DATABASE diagnostic_batch").unwrap();
+        session
+            .run("CREATE TABLE diagnostic_batch.t (id INT PRIMARY KEY, v INT, KEY ix(v))")
+            .unwrap();
+        let tidb_session::StmtResult::Rows(rows) = session.run("SELECT INDEX_NAME FROM information_schema.CLUSTER_TIDB_INDEX_USAGE WHERE TABLE_SCHEMA='diagnostic_batch' AND TABLE_NAME='t'").unwrap() else { panic!("expected rows") };
+        assert!(
+            rows.iter()
+                .any(|row| row[0].as_raw_bytes() == Some(b"ix".as_slice())),
+            "{rows:?}"
+        );
+    }
+
+    #[test]
+    fn cluster_diagnostics_batch_generated_receiver() {
+        let service = PeerService::new(
+            ProcessRegistry::default(),
+            PrivilegeRegistry::default(),
+            None,
+        );
+        for table in [
+            "CLUSTER_TIDB_TRX",
+            "CLUSTER_DEADLOCKS",
+            "CLUSTER_MEMORY_USAGE",
+            "CLUSTER_MEMORY_USAGE_OPS_HISTORY",
+            "CLUSTER_TIDB_INDEX_USAGE",
+        ] {
+            let mut dag = scan(None, tipb::EncodeType::TypeDefault);
+            dag.executors[0].tbl_scan = Some(tipb::TableScan {
+                table_id: tidb_session::infoschema::memory_table_id(table),
+                columns: vec![tipb::ColumnInfo {
+                    column_id: Some(1),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            });
+            dag.output_offsets = vec![0];
+            let response = service.handle(request(dag));
+            assert!(
+                response.other_error.is_empty(),
+                "{table}: {}",
+                response.other_error
+            );
+        }
+    }
+
+    #[test]
+    fn cluster_diagnostics_batch_live_registry_catalog_and_collector() {
+        use tidb_executor::deadlock_history::{
+            DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY,
+        };
+        let processes = ProcessRegistry::default();
+        let _alice = processes.register(
+            41,
+            "diagnostic_alice".into(),
+            "127.0.0.1".into(),
+            "diagnostic_batch".into(),
+            None,
+        );
+        let _bob = processes.register(
+            42,
+            "diagnostic_bob".into(),
+            "127.0.0.1".into(),
+            "diagnostic_batch".into(),
+            None,
+        );
+        processes.transaction_started(41, 100 << 18);
+        processes.transaction_started(42, 200 << 18);
+        let privileges = PrivilegeRegistry::default();
+        privileges.create_user("diagnostic_alice", "%", "");
+        let mut producer = Session::new();
+        producer.run("CREATE DATABASE diagnostic_batch").unwrap();
+        let catalog = producer.shared_catalog();
+        let collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
+        collector.start_worker();
+        struct CloseCollector(Arc<tidb_stats_handle_usage_indexusage::Collector>);
+        impl Drop for CloseCollector {
+            fn drop(&mut self) {
+                self.0.close();
+            }
+        }
+        let _collector = CloseCollector(collector.clone());
+        let metadata = catalog.clone();
+        let counters = collector.clone();
+        let service = PeerService::new(processes.clone(), privileges.clone(), None)
+            .with_session_factory(Arc::new(move || {
+                let mut session = Session::with_catalog(metadata.clone());
+                session.set_index_usage_collector(counters.clone());
+                session
+            }));
+        // Construct the service first: subsequent DDL must be visible to it.
+        producer
+            .run("CREATE TABLE diagnostic_batch.t (id BIGINT PRIMARY KEY, v INT, KEY ix(v))")
+            .unwrap();
+        let (table_id, index_id) = {
+            let mut catalog = catalog.lock().unwrap();
+            let tidb_executor::TableEntry::Kv(table) =
+                catalog.table_mut_in("diagnostic_batch", "t").unwrap()
+            else {
+                panic!("KV table")
+            };
+            (
+                table.table_id,
+                table
+                    .indexes()
+                    .iter()
+                    .find(|index| index.name.eq_ignore_ascii_case("ix"))
+                    .unwrap()
+                    .id,
+            )
+        };
+        let mut updates = collector.spawn_session_collector();
+        updates.update(
+            table_id,
+            index_id,
+            tidb_stats_handle_usage_indexusage::new_sample(7, 11, 1, 1),
+        );
+        updates.flush();
+        GLOBAL_DEADLOCK_HISTORY.resize(10);
+        struct ClearHistory;
+        impl Drop for ClearHistory {
+            fn drop(&mut self) {
+                GLOBAL_DEADLOCK_HISTORY.clear();
+                GLOBAL_DEADLOCK_HISTORY.resize(0);
+            }
+        }
+        let _history = ClearHistory;
+        GLOBAL_DEADLOCK_HISTORY.push(DeadlockRecord {
+            occur_time: tidb_datatype::Time::new(
+                tidb_datatype::CoreTime::from_date(2026, 10, 8, 1, 2, 3, 0),
+                tidb_datatype::TimeType::Timestamp,
+                6,
+            )
+            .unwrap(),
+            id: 0,
+            is_retryable: false,
+            wait_chain: vec![WaitChainItem {
+                sql_digest: String::new(),
+                all_sql_digests: Vec::new(),
+                try_lock_txn: 10,
+                txn_holding_lock: 20,
+                key: tidb_tablecodec::table_key::encode_row_key_with_handle(
+                    table_id,
+                    &tidb_tablecodec::table_key::RecordHandle::Int(9),
+                ),
+            }],
+        });
+        let server = crate::http_status::start_status_listener_with_routes(
+            "127.0.0.1",
+            0,
+            Arc::new(crate::sql_node::ConnectionTracker::default()),
+            "test".into(),
+            "test".into(),
+            crate::http_status::StatusRoutes {
+                peer: Some(service),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut info = tidb_domain::serverinfo::ServerInfo::default();
+        info.static_info.ip = server.local_addr().ip().to_string();
+        info.static_info.status_port = server.local_addr().port() as usize;
+        let outbound = tidb_exec::cluster_peer::ClusterPeerClient::new(
+            tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap(),
+        );
+        let read = |table: &str| {
+            let columns = tidb_executor::driver::infoschema_meta::table_schema(table).unwrap();
+            let rows = outbound.scan(
+                &[info.clone()],
+                tidb_session::infoschema::memory_table_id(table).unwrap(),
+                &columns,
+                Some(("diagnostic_alice", "127.0.0.1")),
+                &tidb_executor::StmtContext::for_query(),
+                &SessionTimeZone::utc(),
+                1,
+            )?;
+            assert!(rows.warnings.is_empty(), "{:?}", rows.warnings);
+            Ok::<_, tidb_executor::DriverError>((columns, rows.rows))
+        };
+        let (columns, rows) = read("CLUSTER_TIDB_TRX").unwrap();
+        let id = columns
+            .iter()
+            .position(|(name, _)| name == "SESSION_ID")
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][id], Datum::UInt(41));
+        assert!(read("CLUSTER_DEADLOCKS")
+            .unwrap_err()
+            .to_string()
+            .contains("PROCESS"));
+        assert!(
+            read("CLUSTER_TIDB_INDEX_USAGE").unwrap().1.is_empty(),
+            "ungranted tables must stay hidden"
+        );
+        privileges.grant(
+            "diagnostic_alice",
+            "%",
+            tidb_session::privilege::GlobalPriv::Process.mask()
+                | tidb_session::privilege::GlobalPriv::Select.mask(),
+        );
+        assert_eq!(read("CLUSTER_TIDB_TRX").unwrap().1.len(), 2);
+        let (columns, rows) = read("CLUSTER_DEADLOCKS").unwrap();
+        let key = columns
+            .iter()
+            .position(|(name, _)| name == "KEY_INFO")
+            .unwrap();
+        assert!(rows[0][key]
+            .as_raw_bytes()
+            .unwrap()
+            .windows(b"diagnostic_batch".len())
+            .any(|part| part == b"diagnostic_batch"));
+        let (columns, rows) = read("CLUSTER_TIDB_INDEX_USAGE").unwrap();
+        let name = columns
+            .iter()
+            .position(|(name, _)| name == "INDEX_NAME")
+            .unwrap();
+        let count = columns
+            .iter()
+            .position(|(name, _)| name == "QUERY_TOTAL")
+            .unwrap();
+        let row = rows
+            .iter()
+            .find(|row| row[name].as_raw_bytes() == Some(b"ix".as_slice()))
+            .unwrap();
+        assert!(
+            matches!(row[count], Datum::Int(value) if value > 0)
+                || matches!(row[count], Datum::UInt(value) if value > 0),
+            "{row:?}"
+        );
+        producer
+            .run("ALTER TABLE diagnostic_batch.t RENAME INDEX ix TO fresh_ix")
+            .unwrap();
+        let (_, rows) = read("CLUSTER_TIDB_INDEX_USAGE").unwrap();
+        assert!(rows
+            .iter()
+            .any(|row| row[name].as_raw_bytes() == Some(b"fresh_ix".as_slice())));
+        assert_eq!(read("CLUSTER_MEMORY_USAGE").unwrap().1.len(), 1);
+        assert_eq!(
+            read("CLUSTER_MEMORY_USAGE_OPS_HISTORY").unwrap().1.len(),
+            tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER
+                .get_rows()
+                .len()
+        );
+        processes.transaction_finished(41);
+        assert_eq!(read("CLUSTER_TIDB_TRX").unwrap().1.len(), 1);
+        assert_eq!(
+            processes.snapshot().len(),
+            2,
+            "receiver must not register synthetic clients"
+        );
+        drop(outbound);
+        drop(server);
     }
 
     // Go executor/stmtsummary.go and infoschema_reader.go: the local and

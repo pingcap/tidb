@@ -702,10 +702,17 @@ impl Session {
                 .is_some()
             {
                 self.cluster_table_rows(&table_name, &columns)?
-            } else if table_name.eq_ignore_ascii_case("TIDB_INDEX_USAGE") {
-                let visibility = self.schema_visibility();
-                let collector = std::sync::Arc::clone(&self.index_usage_collector);
-                infoschema::tidb_index_usage_rows(&scratch, &visibility, collector.as_ref())
+            } else if [
+                "TIDB_INDEX_USAGE",
+                "TIDB_TRX",
+                "DEADLOCKS",
+                "MEMORY_USAGE",
+                "MEMORY_USAGE_OPS_HISTORY",
+            ]
+            .iter()
+            .any(|name| table_name.eq_ignore_ascii_case(name))
+            {
+                self.diagnostic_table_rows(&table_name.to_ascii_uppercase(), None)?
             } else if table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS")
                 || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY")
                 || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_HISTORY")
@@ -714,8 +721,6 @@ impl Session {
                 self.statement_summary_table_rows(&table_name, &columns, &self.session_time_zone())?
             } else if table_name.eq_ignore_ascii_case("TRX_SUMMARY") {
                 self.transaction_summary_table_rows(None)
-            } else if table_name.eq_ignore_ascii_case("TIDB_TRX") {
-                self.tidb_trx_table_rows()
             } else if table_name.eq_ignore_ascii_case("DATA_LOCK_WAITS") {
                 self.data_lock_waits_table_rows()?
             } else if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL")
@@ -723,10 +728,6 @@ impl Session {
                 || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST")
             {
                 self.client_errors_summary_table_rows(&table_name)?
-            } else if table_name.eq_ignore_ascii_case("MEMORY_USAGE") {
-                memory_usage_table_rows()
-            } else if table_name.eq_ignore_ascii_case("MEMORY_USAGE_OPS_HISTORY") {
-                tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
             } else if table_name.eq_ignore_ascii_case("TIKV_STORE_STATUS") {
                 // go's `TiKVStoreStatusRetriever` fails its PD fetch without
                 // a PD endpoint: the statement errors 1105 'pd http client
@@ -744,11 +745,6 @@ impl Session {
                         "denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`",
                     ),
                 )));
-            } else if table_name.eq_ignore_ascii_case("DEADLOCKS") {
-                if !self.has_process_privilege() {
-                    return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
-                }
-                self.deadlock_history_table_rows()?
             } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
                 self.user_privileges_table_rows()
             } else if table_name.eq_ignore_ascii_case("USER_ATTRIBUTES") {
@@ -870,7 +866,7 @@ impl Session {
     /// Go's receiving cluster table reader. It borrows live process/history
     /// owners without registering a synthetic connection or redispatching.
     pub fn local_cluster_table_rows(
-        &self,
+        &mut self,
         table_name: &str,
         registry: Option<&crate::process::ProcessRegistry>,
         zone: &tidb_datatype::SessionTimeZone,
@@ -886,16 +882,57 @@ impl Session {
                 }
             }
             "TRX_SUMMARY" => self.transaction_summary_table_rows(registry),
-            _ => {
+            "STATEMENTS_SUMMARY"
+            | "STATEMENTS_SUMMARY_HISTORY"
+            | "STATEMENTS_SUMMARY_EVICTED"
+            | "TIDB_STATEMENTS_STATS" => {
                 let columns = infoschema::table_schema(source).expect("registered summary source");
                 self.statement_summary_table_rows(source, &columns, zone)?
             }
+            _ => self.diagnostic_table_rows(source, registry)?,
         };
         let instance = self.cluster_instance_address();
         for row in &mut rows {
             row.insert(0, tidb_datatype::Datum::new_string(instance.as_str()));
         }
         Ok(rows)
+    }
+
+    /// Local and received diagnostics borrow the same data and admission owners.
+    fn diagnostic_table_rows(
+        &mut self,
+        source: &str,
+        registry: Option<&crate::process::ProcessRegistry>,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        Ok(match source {
+            "TIDB_TRX" => self.tidb_trx_table_rows(registry),
+            "DEADLOCKS" => {
+                if !self.has_process_privilege() {
+                    return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
+                }
+                self.deadlock_history_table_rows()?
+            }
+            "MEMORY_USAGE" => memory_usage_table_rows(),
+            "MEMORY_USAGE_OPS_HISTORY" => {
+                tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
+            }
+            "TIDB_INDEX_USAGE" => {
+                let visibility = self.schema_visibility();
+                let collector = std::sync::Arc::clone(&self.index_usage_collector);
+                self.with_catalog_mut(|catalog| {
+                    Ok(infoschema::tidb_index_usage_rows(
+                        catalog,
+                        &visibility,
+                        collector.as_ref(),
+                    ))
+                })?
+            }
+            _ => {
+                return Err(DriverError::unsupported(
+                    "unsupported local diagnostic table",
+                ))
+            }
+        })
     }
 
     fn transaction_summary_table_rows(
@@ -1041,11 +1078,16 @@ impl Session {
     }
 
     /// Pinned Go `tidbTrxTableRetriever.retrieve` for this node.
-    fn tidb_trx_table_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+    fn tidb_trx_table_rows(
+        &self,
+        registry: Option<&crate::process::ProcessRegistry>,
+    ) -> Vec<Vec<tidb_datatype::Datum>> {
         use chrono::{DateTime, Local};
         use tidb_datatype::{core_time_from_datetime, Collation, Datum, MysqlEnum, Time, TimeType};
 
-        let Some(process) = self.process.as_ref() else {
+        let Some(registry) =
+            registry.or_else(|| self.process.as_ref().map(|guard| guard.registry()))
+        else {
             return Vec::new();
         };
         let login_username = self
@@ -1053,8 +1095,7 @@ impl Session {
             .as_deref()
             .and_then(|identity| identity.split_once('@').map(|(user, _)| user));
         let has_process = self.has_process_privilege();
-        process
-            .registry()
+        registry
             .transaction_snapshot()
             .into_iter()
             .filter(|transaction| {
