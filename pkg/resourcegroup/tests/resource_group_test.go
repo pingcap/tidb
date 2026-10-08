@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -323,6 +324,34 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM UNLIMITED <nil> UTILIZATION_LIMIT=30"))
 	tk.MustExec("alter resource group `default` BACKGROUND=(task_types='br,ddl',utilization_limit=30)")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM UNLIMITED <nil> TASK_TYPES='br,ddl', UTILIZATION_LIMIT=30"))
+
+	t.Run("cancel alter after PD update", func(t *testing.T) {
+		tk.MustExec("create resource group cancel_rg RU_PER_SEC=1000 PRIORITY=LOW")
+		oldPDGroup, err := infosync.GetResourceGroup(context.Background(), "cancel_rg")
+		require.NoError(t, err)
+
+		tkCancel := testkit.NewTestKit(t, store)
+		var cancelOnce atomic.Bool
+		var jobID atomic.Int64
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+			if job.Type != model.ActionAlterResourceGroup || job.SchemaName != "cancel_rg" || !cancelOnce.CompareAndSwap(false, true) {
+				return
+			}
+			jobID.Store(job.ID)
+			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+		})
+
+		tk.MustGetErrCode("alter resource group cancel_rg RU_PER_SEC=1 PRIORITY=HIGH", mysql.ErrCancelledDDLJob)
+		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
+		require.NoError(t, err)
+		require.True(t, historyJob.IsCancelled())
+		tk.MustQuery("show create resource group cancel_rg").Check(testkit.Rows("cancel_rg CREATE RESOURCE GROUP `cancel_rg` RU_PER_SEC=1000, PRIORITY=LOW"))
+
+		currentPDGroup, err := infosync.GetResourceGroup(context.Background(), "cancel_rg")
+		require.NoError(t, err)
+		require.Equal(t, oldPDGroup.GetPriority(), currentPDGroup.GetPriority())
+		require.Equal(t, oldPDGroup.GetRUSettings().GetRU().GetSettings().GetFillRate(), currentPDGroup.GetRUSettings().GetRU().GetSettings().GetFillRate())
+	})
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
