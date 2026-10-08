@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [MPP failure lifecycle](mpp-failure-lifecycle-validation.json) removes decoded-row task concatenation and its obsolete fixture, transfers useful fanout assertions to raw responses, and replaces sleep-based prober vectors with synchronized/direct ownership checks.
+Latest cleanup: [MPP maintenance cleanup](mpp-cleanup-validation.json) removes eight superseded plans/summaries and four redundant tests, preserving historical JSON evidence and immutable Git links. Wire timeout, query/gather identity and buffered Drop assertions remain in stronger existing tests. One redundant recovery flag is removed; finding statuses are unchanged.
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 
@@ -90,8 +90,8 @@ The repeated milestone summaries and stale count tables formerly copied into thi
 - [transport/expression cleanup](transport-expression-empty-test-removal.md)
 - [admission-policy batch](admission-policy-batch-repair.md)
 - [account TLS batch](account-tls-policy-batch-repair.md)
-- [shared MPP lifecycle batch](shared-mpp-lifecycle-repair.md)
-- [MPP transport batch](mpp-transport-batch-repair.md)
+- [shared MPP lifecycle batch](https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/parity/current-audit/shared-mpp-lifecycle-repair.md)
+- [MPP transport batch](https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/parity/current-audit/mpp-transport-batch-repair.md)
 - [table-policy batch](table-policy-batch-repair.md)
 - [statement attribution batch](statement-attribution-batch-repair.md)
 - [exhaustive planner cleanup](planner-empty-module-removal.md)
@@ -99,7 +99,7 @@ The repeated milestone summaries and stale count tables formerly copied into thi
 - [cache/Apply batch](cache-apply-batch-repair.md)
 - [statement observation batch](statement-observation-batch-repair.md)
 - [DML policy batch](dml-policy-batch-repair.md)
-- [MPP read batch](mpp-read-batch-repair.md)
+- [MPP read batch](https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/parity/current-audit/mpp-read-batch-repair.md)
 - [TiFlash replica batch](tiflash-replica-batch-repair.md)
 - [shared cache batch](shared-cache-batch-repair.md)
 - [account history and locking-image repair](account-history-locking-repair.md)

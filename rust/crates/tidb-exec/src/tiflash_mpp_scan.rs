@@ -717,7 +717,6 @@ impl Drop for MppTaskResponses {
 // Once any response is exposed to SelectResponseIter, replay is permanently unsafe.
 struct MppRecoveryResponse {
     gather: MppTaskResponses,
-    enabled: bool,
     recovering: bool,
     attempts: u32,
     held: std::collections::VecDeque<QueryResultSubset>,
@@ -736,7 +735,6 @@ impl MppRecoveryResponse {
     ) -> Self {
         Self {
             gather,
-            enabled,
             recovering: enabled,
             attempts: 0,
             held: Default::default(),
@@ -755,7 +753,7 @@ impl MppRecoveryResponse {
     }
     fn pull(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         mpp_memory_error(&self.memory)?;
-        while self.enabled && self.recovering && self.held.len() < 2 {
+        while self.recovering && self.held.len() < 2 {
             match self.gather.next() {
                 Ok(Some(packet)) => {
                     self.memory.stmt_tracker().consume(packet.data.len() as i64);
@@ -1453,13 +1451,6 @@ mod dispatch_context_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn mpp_dispatch_task_timeout_matches_go() {
-        let wire = encode_dispatch_request(DispatchTaskRequest::default()).encode_to_vec();
-        let decoded = DispatchTaskRequest::decode(wire.as_slice()).unwrap();
-        assert_eq!(decoded.timeout, 60);
-    }
-
-    #[test]
     fn mpp_queries_share_statement_identity_and_allocate_gathers_and_tasks() {
         use tidb_executor::{remote_scan::PushdownStatementContext, StmtContext};
 
@@ -1467,7 +1458,9 @@ mod dispatch_context_tests {
         let first = PushdownStatementContext::from_stmt(&context);
         let second = PushdownStatementContext::from_stmt(&context.clone());
         let (a, receiver_a) = mpp_task_metadata(77, &first, "tiflash:3930");
-        let (b, receiver_b) = mpp_task_metadata(77, &second, "tiflash:3930");
+        let (b, receiver_b) = mpp_task_metadata(77, &second, "tiflash-other:3930");
+        assert_ne!(a.address, b.address);
+        assert_eq!(a.server_id, b.server_id);
         assert_eq!(a.local_query_id, b.local_query_id);
         assert_eq!(a.query_ts, b.query_ts);
         assert_eq!((a.gather_id, b.gather_id), (1, 2));
@@ -1541,6 +1534,9 @@ mod dispatch_context_tests {
             meta: Some(TaskMeta::default()),
             ..Default::default()
         });
+        let wire = request.encode_to_vec();
+        let request = DispatchTaskRequest::decode(wire.as_slice()).unwrap();
+        assert_eq!(request.timeout, 60);
         let meta = request.meta.unwrap();
         assert_eq!(meta.api_version(), tidb_proto::kvrpcpb::ApiVersion::V1);
         assert_eq!(
@@ -1953,7 +1949,7 @@ mod mpp_read_batch_tests {
             3,
             "only the remaining held payload is charged"
         );
-        response.close();
+        drop(response);
         assert_eq!(memory.bytes_consumed(), 0);
     }
 
@@ -2288,13 +2284,6 @@ mod mpp_read_batch_tests {
     }
 
     #[test]
-    fn stream_open_returns_before_tail_and_preserves_first_packet() {
-        let fixture = Fixture::new();
-        let mut response = fixture.open().expect("open must not drain the stream");
-        assert_eq!(response.next().unwrap().unwrap().data.as_ref(), b"first");
-        response.close();
-    }
-    #[test]
     fn early_close_and_drop_cancel_the_gather_once() {
         let fixture = Fixture::new();
         let mut response = fixture.open().unwrap();
@@ -2544,29 +2533,6 @@ mod compute_topology_batch_tests {
         assert!(compute_region_tasks(regions, &stores, DispatchPolicy::Invalid, 0).is_err());
     }
 
-    #[test]
-    fn mpp_failure_batch_replacement_gather_keeps_query_and_snapshot() {
-        let statement = tidb_executor::remote_scan::PushdownStatementContext::default();
-        let (first, _) = mpp_task_metadata(123, &statement, "node-a");
-        let (retry, _) = mpp_task_metadata(123, &statement, "node-b");
-        assert_eq!(
-            (
-                first.start_ts,
-                first.query_ts,
-                first.local_query_id,
-                first.server_id
-            ),
-            (
-                retry.start_ts,
-                retry.query_ts,
-                retry.local_query_id,
-                retry.server_id
-            )
-        );
-        assert_ne!(first.gather_id, retry.gather_id);
-        assert_ne!(first.task_id, retry.task_id);
-    }
-
     fn packet(value: u8) -> QueryResultSubset {
         QueryResultSubset {
             data: vec![value].into(),
@@ -2732,22 +2698,6 @@ mod compute_topology_batch_tests {
         response.close();
         assert!(observer.upgrade().is_none());
         response.close();
-    }
-
-    #[test]
-    fn mpp_failure_batch_drop_releases_held_memory() {
-        let memory = tidb_executor::StatementMemory::default();
-        let mut response = MppRecoveryResponse::new(
-            gather(vec![Ok(packet(1)), Ok(packet(2))], Arc::default()),
-            true,
-            memory.clone(),
-            Box::new(|| panic!("no failure")),
-            Box::new(|_| panic!("no failure")),
-        );
-        response.next().unwrap();
-        assert_eq!(memory.bytes_consumed(), 1);
-        drop(response);
-        assert_eq!(memory.bytes_consumed(), 0);
     }
 
     struct Packets {

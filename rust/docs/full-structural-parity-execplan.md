@@ -33,9 +33,11 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] Remove eight superseded MPP plans/summaries, consolidate four duplicate tests and remove redundant recovery state. Immutable links retain historical evidence; current MPP residuals and all54 unresolved findings stay unchanged. See [cleanup receipt](parity/current-audit/mpp-cleanup-validation.json).
+
 - [x] Compose failed-node admission, joined process probing, statement fallback policy and two-packet/three-attempt gather recovery in one MPP batch. Retire decoded fanout ownership and its fixture. See [plan](mpp-failure-lifecycle-execplan.md) and [receipt](parity/current-audit/mpp-failure-lifecycle-validation.json). M04/M05/N03 remain partial for canonical PD cache, general coordinator/fragment and broader configuration/package obligations.
 
-- [x] Compose the complete tiflashcompute source boundary and connect process startup, statement policy and compute-node full-scan placement through the shared MPP fleet. See [plan](compute-topology-execplan.md) and [receipt](parity/current-audit/compute-topology-validation.json). M05 remains partial for cache/prober/coordinator integration.
+- [x] Compose the complete tiflashcompute source boundary and connect process startup, statement policy and compute-node full-scan placement through the shared MPP fleet. See [plan](https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/compute-topology-execplan.md) and [receipt](parity/current-audit/compute-topology-validation.json). This historical batch left cache/prober/coordinator integration to later batches.
 
 - [x] Migrate transaction/deadlock/lock-wait SQL text to shared selected summary readers and projected peer fallback; retire direct v1-only lookup. See [batch plan](digest-readers-execplan.md) and [receipt](parity/current-audit/digest-readers-validation.json). I01/I03/O18/N05 retain broader obligations.
 
@@ -48,7 +50,7 @@ and historical evidence; consult each receipt's actual limits.
 
 - [x] Repair K01 allocator selection and shared AutoID client ownership across DML, DDL and SHOW; retain N05 service-hosting/election residual and full package limits. See [batch plan](auto-id-owner-execplan.md) and [receipt](parity/current-audit/auto-id-owner-validation.json).
 
-- [x] Maintain T02/M04 setup/first-receive recovery and shared storage error/backoff ownership; [plan](mpp-recovery-execplan.md) and [receipt](parity/current-audit/mpp-recovery-validation.json) record grouped validation.
+- [x] Maintain T02/M04 setup/first-receive recovery and shared storage error/backoff ownership; [plan](https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/mpp-recovery-execplan.md) and [receipt](parity/current-audit/mpp-recovery-validation.json) record grouped validation.
 
 - [x] Consolidate P03/P06 retained TSO streams and completion/order ownership in both consumers; [batch plan](tso-completion-execplan.md) and [receipt](parity/current-audit/tso-completion-validation.json) track validation and publication.
 

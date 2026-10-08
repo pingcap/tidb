@@ -1,0 +1,128 @@
+{
+  "date": "2026-10-08",
+  "baseline": "c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c",
+  "retired_documents": [
+    {
+      "path": "rust/docs/mpp-read-batch-execplan.md",
+      "lines": 49,
+      "sha256": "3770727fa79c90181b3def720fd9b1fc118b4e93f8fb2c044037ee3eea5ed305",
+      "archive": "https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/mpp-read-batch-execplan.md"
+    },
+    {
+      "path": "rust/docs/mpp-transport-batch-execplan.md",
+      "lines": 54,
+      "sha256": "b3e4fb9fae49578a3e092bed48238556f107f5a60756c170529a157d7ee934b6",
+      "archive": "https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/mpp-transport-batch-execplan.md"
+    },
+    {
+      "path": "rust/docs/shared-mpp-lifecycle-execplan.md",
+      "lines": 63,
+      "sha256": "4b3f5702494634b9b8c13133089c9164b41888f0243c9b5e36d3b3496897a2f9",
+      "archive": "https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/shared-mpp-lifecycle-execplan.md"
+    },
+    {
+      "path": "rust/docs/mpp-recovery-execplan.md",
+      "lines": 71,
+      "sha256": "7def8b2341cc647e24db75d6dbc611fd93ce42c6affc9c26f7d4ee7fd07e18ff",
+      "archive": "https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/mpp-recovery-execplan.md"
+    },
+    {
+      "path": "rust/docs/compute-topology-execplan.md",
+      "lines": 86,
+      "sha256": "a03ced5d5e605274315d393b6f72f2ba5c3b6949bdd4354f64e04125912b6b0e",
+      "archive": "https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/compute-topology-execplan.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/mpp-read-batch-repair.md",
+      "lines": 15,
+      "sha256": "805d4ad82b493094ce2b1a509644ae4e38a36ccc145f35c9287b5b057d495f9c",
+      "archive": "https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/parity/current-audit/mpp-read-batch-repair.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/mpp-transport-batch-repair.md",
+      "lines": 13,
+      "sha256": "a1b2330a54f563e0a7533ef1b6480d1f508444270bc95aefb55a82243bf59900",
+      "archive": "https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/parity/current-audit/mpp-transport-batch-repair.md"
+    },
+    {
+      "path": "rust/docs/parity/current-audit/shared-mpp-lifecycle-repair.md",
+      "lines": 11,
+      "sha256": "37faaadaba61fc2f74ff4f2cddc93a4f84eefe989af0ca209e2e0265a235f593",
+      "archive": "https://github.com/pingcap/tidb/blob/c6e0c90e6f5ee765aebec03a2dd61e667e2c0b0c/rust/docs/parity/current-audit/shared-mpp-lifecycle-repair.md"
+    }
+  ],
+  "removed_tests": [
+    {
+      "function": "mpp_dispatch_task_timeout_matches_go",
+      "lines": 7,
+      "sha256": "4eece55cdccb6f77a50e367da454f76e4b013b46d7497252931a95963487295e"
+    },
+    {
+      "function": "mpp_failure_batch_replacement_gather_keeps_query_and_snapshot",
+      "lines": 23,
+      "sha256": "6edd2654bb1d204a2849b76ef1192f0163fe0e73fcb49e8e6bbc7160dff2d635"
+    },
+    {
+      "function": "stream_open_returns_before_tail_and_preserves_first_packet",
+      "lines": 7,
+      "sha256": "dcad3fe5c2b44abebbf813010d4163c683370d7746237abf65dd3e0ffc4c5a5a"
+    },
+    {
+      "function": "mpp_failure_batch_drop_releases_held_memory",
+      "lines": 16,
+      "sha256": "23d213a30a7bafe202ae35e31aec2859b7539291d4bfda4c6835a7a320a962e9"
+    }
+  ],
+  "assertion_migration": {
+    "mpp_dispatch_task_timeout_matches_go": "classic_mpp_dispatch_uses_the_transactional_v1_codec retains protobuf roundtrip and timeout assertion",
+    "mpp_failure_batch_replacement_gather_keeps_query_and_snapshot": "mpp_queries_share_statement_identity_and_allocate_gathers_and_tasks covers distinct addresses, common server/query/snapshot and distinct gather/task IDs",
+    "stream_open_returns_before_tail_and_preserves_first_packet": "later_transport_error_preserves_first_packet_and_cancels already opens/pulls the first packet before the delayed failing tail",
+    "mpp_failure_batch_drop_releases_held_memory": "mpp_failure_batch_socket_holder_transfers_packet_memory_once now proves Drop releases a real buffered gRPC packet"
+  },
+  "production_removal": "MppRecoveryResponse.enabled duplicates the initial recovering flag; recovering never changes from false back to true. Remove the field and redundant branch.",
+  "rust_lines_before": 2796,
+  "rust_lines_after": 2746,
+  "rewritten_markdown_links": [
+    "rust/docs/full-structural-parity-execplan.md",
+    "rust/docs/parity/current-audit/README.md",
+    "rust/docs/parity/current-audit/structural-findings.md"
+  ],
+  "preserved": [
+    "Go semantic/error vectors and Rust resource/cancellation regressions",
+    "Canonical protocol generators and descriptor checks",
+    "Live runner path-ownership safety checks",
+    "All historical validation JSON, current residual findings and the current MPP failure lifecycle plan"
+  ],
+  "go_master": "1f819a0b4a6cc07f9a8ff07e6777761a770c6d3d",
+  "native_changed": false,
+  "finding_status_changes": [],
+  "validation": {
+    "command": "cd rust && cargo test --locked -p tidb-exec --lib tiflash_mpp_scan -- --test-threads=1",
+    "passed": 41,
+    "ignored": 0,
+    "exit": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/mpp-cleanup-batch/tests.log",
+      "sha256": "0206716c243864d01f382b244b97ce1b0d94e35ddd9065adf8ddced94ce8f294",
+      "bytes": 94757
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/mpp-cleanup-batch/lint.log",
+        "sha256": "2940ec5ab8c0c029de7e054749de7d6c30dd95de575095b6d9fecaf1c07826f8",
+        "bytes": 2164
+      }
+    },
+    "git_diff_check": "passed",
+    "historical_archive_hashes": "all eight verified against baseline Git objects",
+    "links": "no retired local Markdown destinations remain"
+  },
+  "limits": [
+    "No claim of faster compilation or benchmark improvement; four cases and one redundant socket fixture invocation removed.",
+    "No full Go/package or live multi-node validation; no broader finding closed.",
+    "Protocol generation/integrity checks, live runner ownership guards and real cancellation/cleanup regressions remain required."
+  ],
+  "publication": "The actual locked server precommit hook and fresh locked build immediately before push remain mandatory. Their final logs, remote SHA and saved checkpoint are in /workspace/.cloud-setup/mpp-cleanup-batch/final-handoff.json."
+}
