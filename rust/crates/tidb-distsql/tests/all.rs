@@ -36,7 +36,6 @@ mod direct_unary_retry_budget;
 mod direct_unary_store_not_match;
 mod direct_unary_store_selection;
 mod direct_unary_transport_failures;
-mod distsql_runtime_source;
 mod kv_request_source;
 mod mock_response_iteration_source;
 mod paging_source;

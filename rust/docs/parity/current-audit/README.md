@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Latest cleanup: [datatype test consolidation](datatype-cleanup-validation.json) removes six duplicate vector/charset cases and two completed numeric plans. Unique assertions and three moved cases remain in existing suites; historical evidence remains linked. Production behavior and finding statuses are unchanged.
+Latest cleanup: [DistSQL carrier retirement](distsql-cleanup-validation.json) removes nine redundant or disconnected-seed cases, two unused policy/metadata helper groups and the superseded laptop coprocessor audit. Two unique cases move unchanged to the unit owner; wide plan-ID coverage moves to the real query-dispatch test. Live behavior and finding statuses are unchanged. Earlier datatype cleanup remains in [its receipt](datatype-cleanup-validation.json).
 
 Use the [JSON register](structural-findings.json), [readable register](structural-findings.md) and [batch map](remaining-batches.md) for current dispositions and work allocation. Dated implementation and cleanup receipts remain indexed below and in the JSON repair/cleanup histories; they retain their original verification limits. Finding maintenance is not complete Go package acceptance.
 

@@ -17,7 +17,7 @@ documents. What follows is the part that predicts where the next one is.
 | Wire protocol (`pkg/server`) | [wire-protocol-divergence.md](wire-protocol-divergence.md) | 12 findings, 2 rank‑1 |
 | Sysvars / stmtctx | [architecture/sysvar-and-stmtctx-divergence.md](architecture/sysvar-and-stmtctx-divergence.md) | 14 findings; **948/948 names, 0 declarative divergences** |
 | Error catalogue (`pkg/errno`) | [error-code-parity.md](error-code-parity.md) | 15 findings; **1166 codes + 1164 messages + 244 SQLSTATEs equal** |
-| Coprocessor (`pkg/distsql`, `ToPB`) | [distsql-coprocessor-parity.md](distsql-coprocessor-parity.md) | 6 findings; **all 52 `ScalarFuncSig` numbers equal** |
+| Coprocessor (`pkg/distsql`, `ToPB`) | [distsql-coprocessor-parity.md](https://github.com/pingcap/tidb/blob/c8c4a43a78c2f737dbcdce0b305e5927084233ef/rust/docs/distsql-coprocessor-parity.md) | 6 findings; **all 52 `ScalarFuncSig` numbers equal** |
 | Catalog model JSON (`pkg/meta/model`) | [audits/catalog-model-json-parity.md](audits/catalog-model-json-parity.md) | 8 findings; **no field dropped on round trip; 82 `ActionType` ordinals equal** |
 | Two-phase commit (client-go) | [two-phase-commit-vs-client-go.md](two-phase-commit-vs-client-go.md) | 9 findings, 3 class-1; **14 behaviours equal** |
 | Builtin expressions (`pkg/expression`) | [expr-builtin-divergence-inventory.md](expr-builtin-divergence-inventory.md) | 7 findings; ~40 verified equal |

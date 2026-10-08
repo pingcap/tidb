@@ -1006,7 +1006,7 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
   framework and `store::client`/`store::command` transport, the same relation
   Go's `pkg/store/copr` has to client-go's sender.
   Evidence: research agent report on `tidb-distsql`, sections 4-6;
-  `rust/docs/distsql-coprocessor-parity.md`.
+  [historical coprocessor audit](https://github.com/pingcap/tidb/blob/c8c4a43a78c2f737dbcdce0b305e5927084233ef/rust/docs/distsql-coprocessor-parity.md).
 - Observation: `rust/docs/architecture/workspace.md` already documents
   `tidb-txnkv` as the single, deliberate authority for "PD/region/TiKV
   transport and transaction primitives" spanning `pkg/kv`, `pkg/store`,
@@ -1215,7 +1215,7 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
   (`tidb-distsql`) are in scope for replacement, not exempted. The documented
   parity fixes in `rust/docs/two-phase-commit-vs-client-go.md` (undetermined-
   commit/connection-close, and any other fixes recorded there) and
-  `rust/docs/distsql-coprocessor-parity.md` (pushdown-flags-from-StmtContext,
+  [historical coprocessor audit](https://github.com/pingcap/tidb/blob/c8c4a43a78c2f737dbcdce0b305e5927084233ef/rust/docs/distsql-coprocessor-parity.md) (pushdown-flags-from-StmtContext,
   warning-channel routing, and any other fixes recorded there) must be ported
   into the new client-rust-backed code paths as part of Phase 2/Phase 3, not
   silently dropped. Each ported fix gets a `Surprises & Discoveries` entry
@@ -1549,7 +1549,7 @@ equivalent (matching Go's `pkg/distsql`/`pkg/store/copr` being hand-rolled
 atop client-go's generic sender, not replaced by it).
 
 Explicitly re-derive and record in `Surprises & Discoveries` whether the two
-fixes in `rust/docs/distsql-coprocessor-parity.md` still hold after the
+fixes in [historical coprocessor audit](https://github.com/pingcap/tidb/blob/c8c4a43a78c2f737dbcdce0b305e5927084233ef/rust/docs/distsql-coprocessor-parity.md) still hold after the
 transport swap: `DAGRequest.flags` still sourced from
 `StmtContext::push_down_flags()`, and lock/region-error/warning routing still
 reaching the statement's own warning sink (`StmtContext::take_warnings`)
@@ -1623,7 +1623,7 @@ expects, and follow AGENTS.md's `Ready` verification profile
 
 Acceptance is behavioral, not just "compiles": for Phase 2/3, the specific
 scenarios in `rust/docs/two-phase-commit-vs-client-go.md` (undetermined
-commit) and `rust/docs/distsql-coprocessor-parity.md` (pushdown flags,
+commit) and [historical coprocessor audit](https://github.com/pingcap/tidb/blob/c8c4a43a78c2f737dbcdce0b305e5927084233ef/rust/docs/distsql-coprocessor-parity.md) (pushdown flags,
 warning routing) must be re-checked by source reading against the new
 client-rust-backed code paths (both documents were themselves produced by
 source reading, not automated tests, per their own text — the safest

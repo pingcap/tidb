@@ -1,0 +1,76 @@
+{
+  "baseline": "c8c4a43a78c2f737dbcdce0b305e5927084233ef",
+  "retired_files": [
+    {
+      "path": "rust/crates/tidb-distsql/tests/distsql_runtime_source.rs",
+      "lines": 192,
+      "sha256": "0ae0b1a51e5b9a23f3c7a393de86b293f7c6707cd5cceae6ab9aff32eda2a3ec",
+      "archive": "https://github.com/pingcap/tidb/blob/c8c4a43a78c2f737dbcdce0b305e5927084233ef/rust/crates/tidb-distsql/tests/distsql_runtime_source.rs"
+    },
+    {
+      "path": "rust/docs/distsql-coprocessor-parity.md",
+      "lines": 443,
+      "sha256": "b91fc503542b0f1f8f754f87e8e9ad5dc71b54c5e6c2afd93e31303de354e325",
+      "archive": "https://github.com/pingcap/tidb/blob/c8c4a43a78c2f737dbcdce0b305e5927084233ef/rust/docs/distsql-coprocessor-parity.md"
+    }
+  ],
+  "retired_seed_lines": 121,
+  "retired_seed_sha256": "441354801fecec1cf677ecc0ae292ba8799bcc565fb63837b3bad854f46c3db1",
+  "moved_cases": [
+    "source_mpp_result_preserves_store_and_runtime_plan_metadata",
+    "source_limiter_wait_stats_merge_total_and_max"
+  ],
+  "continuity": {
+    "DAG metadata, paging, analyze, checksum": "query_runtime_source.rs actual dispatch tests",
+    "plan IDs wider than i32": "query_runtime_source.rs::select_with_runtime_stats_keeps_plan_identity_on_the_live_iterator",
+    "streaming/required rows/chunk decoding": "mock_response_iteration_source.rs and select_result_source.rs",
+    "MPP metadata and limiter total/max": "distsql_runtime.rs unit owner; bodies moved unchanged",
+    "removed clone test": "derived Clone equality alone; no production behavior",
+    "retired unconsumed seeds": "no runtime callers; concrete encoding/endian consumers retained; Go TiFlash configuration/ABI-policy integration still unaccepted"
+  },
+  "retired_cases": [
+    "source_select_normal_preserves_dag_result_metadata",
+    "source_select_mem_tracker_and_paging_plumbing_is_explicit",
+    "source_select_normal_chunk_size_uses_alignment_gated_encoding",
+    "source_select_with_runtime_stats_preserves_plan_ids_and_root",
+    "source_select_result_runtime_stats_metadata_is_cloneable",
+    "source_analyze_result_sets_internal_stats_source",
+    "source_checksum_result_uses_general_sql_metadata",
+    "source_tiflash_conf_vars_preserve_source_order_and_unset_filtering",
+    "source_tiflash_spill_ratio_uses_go_special_float_spelling"
+  ],
+  "date": "2026-10-08",
+  "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+  "scope": "Remove unused source-shaped scaffolding and duplicated metadata assertions; live production callers and Go behavior are unchanged. No test gates removed and no parity finding/package accepted.",
+  "validation": {
+    "command": "cd rust && cargo test --locked -p tidb-distsql --lib --test all -- distsql_runtime:: query_runtime_source:: mock_response_iteration_source:: select_result_source:: --test-threads=1",
+    "passed": 34,
+    "failed": 0,
+    "ignored": 0,
+    "log": {
+      "path": "/workspace/.cloud-setup/distsql-cleanup/tests.log",
+      "sha256": "32970142cf1100b729d8571e683d533f6b80f3dcea721c20a66e378f46a86220"
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0,
+      "log": {
+        "path": "/workspace/.cloud-setup/distsql-cleanup/lint.log",
+        "sha256": "a7eb796070b8114d1f73c2f3afaedbc4641c1058aa4b25a97d4468a4e2a0ac87"
+      }
+    }
+  },
+  "net_rust_lines_removed": 282,
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 24,
+    "partial": 30
+  },
+  "limits": [
+    "No new Go behavior, full Go package acceptance, real TiKV/TiFlash or performance measurement.",
+    "Removed settings/chunk-policy leaves were unconsumed; full Go TiFlash metadata and ABI-policy integration remains unaccepted. Concrete DAG encoding/endian, streaming, protocol checks and Rust lifetime/cancellation regressions remain.",
+    "Normal precommit hook and fresh locked pre-push build are pending at receipt creation. Their final outcome is recorded in /workspace/.cloud-setup/distsql-cleanup/final-handoff.json."
+  ]
+}

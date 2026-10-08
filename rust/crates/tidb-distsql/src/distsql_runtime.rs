@@ -12,18 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed runtime contracts from `pkg/distsql/distsql.go`.
+//! Result metadata and statistics consumed by the live DistSQL request owners.
 //!
-//! This leaf preserves the result metadata and request-option decisions made
-//! around a DAG/MPP/ANALYZE/CHECKSUM send. Client transport, response streaming,
-//! protobuf encoding, memory trackers, and unsafe ABI checks stay explicit
-//! boundaries until their concrete protocol consumers are available.
+//! This module implements a subset of `pkg/distsql/distsql.go`. Chunk encoding
+//! and transport belong to their concrete request/response owners; complete
+//! TiFlash configuration propagation remains an unimplemented Go obligation.
 
 use std::collections::BTreeMap;
 
 use tidb_proto::ExecutorExecutionSummary;
 
-use crate::{DistSqlContext, RequestSource, StoreType};
+use crate::{RequestSource, StoreType};
 
 /// Result labels used by the source `selectResult` constructors.
 pub const DAG_RESULT_LABEL: &str = "dag";
@@ -271,6 +270,39 @@ mod tests {
         assert_eq!(stats.cop_count_and_rows(7), (2, 8));
         assert_eq!(stats.cop_count_and_rows(8), (0, 0));
     }
+
+    #[test]
+    fn source_mpp_result_preserves_store_and_runtime_plan_metadata() {
+        let metadata: SelectResultMetadata = mpp_result_metadata(2, vec![7], 8);
+        assert_eq!(metadata.label, MPP_RESULT_LABEL);
+        assert_eq!(metadata.sql_type, None);
+        assert_eq!(metadata.store_type, StoreType::TiFlash);
+        assert_eq!(metadata.cop_plan_ids, vec![7]);
+        assert_eq!(metadata.root_plan_id, Some(8));
+    }
+
+    #[test]
+    fn source_limiter_wait_stats_merge_total_and_max() {
+        let mut stats = SelectResultRuntimeStats::default();
+        assert!(LimiterWaitStats::default().is_zero());
+        stats.record_limiter_wait(5);
+        stats.record_limiter_wait(3);
+        assert_eq!(
+            stats.limiter_wait,
+            LimiterWaitStats {
+                total_ns: 8,
+                max_ns: 5
+            }
+        );
+
+        let mut additional = LimiterWaitStats::default();
+        additional.record(10);
+        additional.record(2);
+        stats.limiter_wait.merge(additional);
+        assert_eq!(stats.limiter_wait.total_ns, 20);
+        assert_eq!(stats.limiter_wait.max_ns, 10);
+        assert!(!stats.limiter_wait.is_zero());
+    }
 }
 
 /// Builds the DAG result metadata created by `Select`.
@@ -372,127 +404,6 @@ pub fn checksum_result_metadata(store_type: StoreType) -> SelectResultMetadata {
         dist_sql_concurrency: 0,
         cop_plan_ids: Vec::new(),
         root_plan_id: None,
-    }
-}
-
-/// One outgoing metadata key/value appended by TiFlash settings propagation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OutgoingMetadata {
-    /// Metadata key.
-    pub key: String,
-    /// Metadata value.
-    pub value: String,
-}
-
-/// TiFlash settings copied to outgoing gRPC metadata by `SetTiFlashConfVarsInContext`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TiFlashSettings {
-    /// Maximum TiFlash threads; `-1` means unset.
-    pub max_threads: i64,
-    /// External-join byte threshold; `-1` means unset.
-    pub max_bytes_before_external_join: i64,
-    /// External-group-by byte threshold; `-1` means unset.
-    pub max_bytes_before_external_group_by: i64,
-    /// External-sort byte threshold; `-1` means unset.
-    pub max_bytes_before_external_sort: i64,
-    /// Query memory quota per node.
-    pub max_query_memory_per_node: i64,
-    /// Automatic spill ratio.
-    pub query_spill_ratio: f64,
-    /// Whether the optimized hash join is selected.
-    pub hash_join_optimized: bool,
-}
-
-impl Default for TiFlashSettings {
-    fn default() -> Self {
-        Self {
-            max_threads: -1,
-            max_bytes_before_external_join: -1,
-            max_bytes_before_external_group_by: -1,
-            max_bytes_before_external_sort: -1,
-            max_query_memory_per_node: 0,
-            query_spill_ratio: 0.0,
-            hash_join_optimized: false,
-        }
-    }
-}
-
-/// Appends TiFlash settings in the source order.
-#[must_use]
-pub fn tiflash_conf_metadata(settings: TiFlashSettings) -> Vec<OutgoingMetadata> {
-    let mut metadata = Vec::new();
-    append_if_set(
-        &mut metadata,
-        "tidb_max_tiflash_threads",
-        settings.max_threads,
-    );
-    append_if_set(
-        &mut metadata,
-        "tidb_max_bytes_before_tiflash_external_join",
-        settings.max_bytes_before_external_join,
-    );
-    append_if_set(
-        &mut metadata,
-        "tidb_max_bytes_before_tiflash_external_group_by",
-        settings.max_bytes_before_external_group_by,
-    );
-    append_if_set(
-        &mut metadata,
-        "tidb_max_bytes_before_tiflash_external_sort",
-        settings.max_bytes_before_external_sort,
-    );
-    metadata.push(OutgoingMetadata {
-        key: "tiflash_mem_quota_query_per_node".to_owned(),
-        value: settings.max_query_memory_per_node.max(0).to_string(),
-    });
-    metadata.push(OutgoingMetadata {
-        key: "tiflash_query_spill_ratio".to_owned(),
-        value: format_go_float_f_shortest(settings.query_spill_ratio),
-    });
-    metadata.push(OutgoingMetadata {
-        key: "tiflash_use_hash_join_v2".to_owned(),
-        value: settings.hash_join_optimized.to_string(),
-    });
-    metadata
-}
-
-// `strconv.FormatFloat(value, 'f', -1, 64)` and Rust's shortest decimal
-// formatting agree for finite values, but Go spells positive infinity with an
-// explicit plus sign. Keep the wire metadata source-exact for all f64 inputs.
-fn format_go_float_f_shortest(value: f64) -> String {
-    if value.is_nan() {
-        "NaN".to_owned()
-    } else if value == f64::INFINITY {
-        "+Inf".to_owned()
-    } else if value == f64::NEG_INFINITY {
-        "-Inf".to_owned()
-    } else {
-        value.to_string()
-    }
-}
-
-fn append_if_set(metadata: &mut Vec<OutgoingMetadata>, key: &str, value: i64) {
-    if value != -1 {
-        metadata.push(OutgoingMetadata {
-            key: key.to_owned(),
-            value: value.to_string(),
-        });
-    }
-}
-
-/// Returns whether the chunk-RPC path can use the host memory layout.
-#[must_use]
-pub const fn can_use_chunk_rpc(context: &DistSqlContext, alignment_ok: bool) -> bool {
-    context.request.enable_chunk_rpc && alignment_ok
-}
-
-/// Selects the source DAG encoding policy.
-#[must_use]
-pub const fn set_encode_type(context: &DistSqlContext, alignment_ok: bool) -> EncodeType {
-    if can_use_chunk_rpc(context, alignment_ok) {
-        EncodeType::Chunk
-    } else {
-        EncodeType::Default
     }
 }
 

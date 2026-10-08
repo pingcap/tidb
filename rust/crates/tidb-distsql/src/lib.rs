@@ -76,10 +76,9 @@ pub use copr_cache::{
 pub use copr_cache_metrics::{copr_cache_metric_snapshot, CoprCacheMetricSnapshot};
 pub use coprocessor_request::CoprocessorRequestEnvelope;
 pub use distsql_runtime::{
-    analyze_request_source, analyze_result_metadata, can_use_chunk_rpc, checksum_result_metadata,
-    mpp_result_metadata, select_result_metadata, select_with_runtime_stats, set_encode_type,
-    system_endian, tiflash_conf_metadata, EncodeType, LimiterWaitStats, OutgoingMetadata,
-    SelectInput, SelectResultMetadata, SelectResultRuntimeStats, SystemEndian, TiFlashSettings,
+    analyze_request_source, analyze_result_metadata, checksum_result_metadata, mpp_result_metadata,
+    select_result_metadata, select_with_runtime_stats, system_endian, EncodeType, LimiterWaitStats,
+    SelectInput, SelectResultMetadata, SelectResultRuntimeStats, SystemEndian,
     ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE,
     INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL,
 };

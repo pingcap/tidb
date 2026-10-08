@@ -233,6 +233,7 @@ fn select_result_context_carries_the_statement_zone_into_default_decode() {
 fn select_with_runtime_stats_keeps_plan_identity_on_the_live_iterator() {
     // pkg/distsql/distsql_test.go:82 TestSelectWithRuntimeStats
     // pkg/distsql/distsql_test.go:106 TestSelectResultRuntimeStats
+    let beyond_i32 = (i32::MAX as isize) + 1;
     let request = request(StoreType::TiKv);
     let mut source = ResponseChannel::new();
     source
@@ -252,8 +253,8 @@ fn select_with_runtime_stats_keeps_plan_identity_on_the_live_iterator() {
             &request,
             input(),
             QueryResultContext::new(field_types(2), WarningCollector::new()),
-            vec![1, 2, 3],
-            4,
+            vec![1, 2, beyond_i32],
+            beyond_i32,
             true,
         )
         .expect("runtime-stat response");
@@ -262,8 +263,8 @@ fn select_with_runtime_stats_keeps_plan_identity_on_the_live_iterator() {
     let transport = runtime.into_transport();
     let dispatch = &transport.dispatches[0];
     assert_eq!(dispatch.operation, QueryOperation::SelectWithRuntimeStats);
-    assert_eq!(dispatch.result.cop_plan_ids, vec![1, 2, 3]);
-    assert_eq!(dispatch.result.root_plan_id, Some(4));
+    assert_eq!(dispatch.result.cop_plan_ids, vec![1, 2, beyond_i32]);
+    assert_eq!(dispatch.result.root_plan_id, Some(beyond_i32));
     assert_eq!(iter.result_metadata(), Some(&dispatch.result));
     assert_eq!(iter.runtime_stats().backoff_sleep_ns("regionMiss"), 9);
 }

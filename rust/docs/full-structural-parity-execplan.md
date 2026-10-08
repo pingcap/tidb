@@ -33,6 +33,7 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] 2026-10-08: retire the unused DistSQL metadata carrier, nine redundant/disconnected cases and unconsumed TiFlash/chunk-policy seeds; move two unique cases and the wide-ID assertion to existing owners, and archive the laptop-era audit. The 34 retained cases and lint pass. Required publication gates are recorded after execution in the external handoff; see [cleanup receipt](parity/current-audit/distsql-cleanup-validation.json).
 - [x] 2026-10-08: connect O11/T02/O13 statement KV execution counting across admission, ordinary reads, coprocessor workers and foreground MPP requests; retire the unused interceptor surrogates. See [batch plan](kv-exec-batch-execplan.md) and [receipt](parity/current-audit/kv-exec-batch-validation.json). No parent/package closure.
 - [x] 2026-10-08: connect T02/M04/M05 native compute discovery and MPP invalidation through one process cache owner; see [batch plan](compute-cache-batch-execplan.md) and [validation receipt](parity/current-audit/compute-cache-validation.json). Broader roots remain partial.
 
