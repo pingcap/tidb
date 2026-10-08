@@ -1378,3 +1378,22 @@ fn observation_batch_adapter_keeps_provider_after_invalid_mode_observations() {
         client.shutdown().unwrap();
     }
 }
+
+#[test]
+fn completion_batch_payload_does_not_require_pd_response_header() {
+    let mut absent = timestamp(40, 1);
+    absent.header = None;
+    let mut foreign = timestamp(40, 2);
+    foreign.header.as_mut().unwrap().cluster_id = 999;
+    let mut advisory = timestamp(40, 3);
+    advisory.header.as_mut().unwrap().error = Some(pdpb::Error {
+        r#type: pdpb::ErrorType::Unknown as i32,
+        message: "ignored by Go TSO adapter".into(),
+    });
+    let server = Server::start([absent, foreign, advisory].map(TsoReply::Response));
+    let client = PdClient::connect(&server.address, Duration::from_secs(1)).unwrap();
+    for logical in 1..=3 {
+        assert_eq!(client.get_timestamp().unwrap(), (40_u64 << 18) + logical);
+    }
+    assert_eq!(server.state.lock().unwrap().stream_opens, 1);
+}

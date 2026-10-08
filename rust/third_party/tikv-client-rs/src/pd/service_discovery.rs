@@ -325,6 +325,53 @@ impl TsoStream {
     }
 }
 
+/// Retained streams shared by both TSO dispatchers. An exchange temporarily
+/// owns its stream; dropping its future on deadline/cancellation retires that
+/// stream before a later caller can consume an abandoned response.
+#[derive(Default)]
+pub struct TsoStreamSet {
+    streams: std::collections::HashMap<String, TsoStream>,
+}
+
+impl TsoStreamSet {
+    pub fn is_empty(&self) -> bool {
+        self.streams.is_empty()
+    }
+    pub fn clear(&mut self) {
+        self.streams.clear();
+    }
+    pub fn remove(&mut self, endpoint: &str) {
+        self.streams.remove(endpoint);
+    }
+    pub fn retain_routes(&mut self, routes: &[TsoRoute]) {
+        self.streams
+            .retain(|_, stream| routes.contains(&stream.route));
+    }
+
+    pub async fn request(
+        &mut self,
+        route: TsoRoute,
+        channel: Channel,
+        request: pdpb::TsoRequest,
+        forwarding: &TsoForwarding,
+    ) -> Result<pdpb::TsoResponse, Status> {
+        let endpoint = route.endpoint.clone();
+        let retained = self
+            .streams
+            .remove(&endpoint)
+            .filter(|stream| stream.route == route);
+        let (stream, response) = match retained {
+            Some(mut stream) => {
+                let response = stream.request(request).await?;
+                (stream, response)
+            }
+            None => TsoStream::open_and_request(route, channel, request, forwarding).await?,
+        };
+        self.streams.insert(endpoint, stream);
+        Ok(response)
+    }
+}
+
 /// Shared Go tryConnectToTSO feedback. Local cancellation never enters this owner.
 #[derive(Clone, Debug, Default)]
 pub struct TsoForwarding {

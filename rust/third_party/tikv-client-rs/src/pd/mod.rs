@@ -11,6 +11,7 @@ pub mod metrics;
 pub mod opt;
 mod retry;
 mod timestamp;
+pub mod tso_batch;
 
 pub use self::client::PdRpcClient;
 pub use self::client::{get_store_liveness_timeout, set_store_liveness_timeout};

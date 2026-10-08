@@ -1,0 +1,185 @@
+{
+  "date": "2026-10-08",
+  "scope": "B01 P03/P06 shared retained streams and timestamp completion; existing-owner maintenance, no package acceptance",
+  "baseline": {
+    "tidb": "af1deb7164a0f6e67146a6906bda3cc68d57c67b",
+    "native": "8c98fb002aa27e45aa2eb782fc091d0c7dba0f4b",
+    "go_master": "7a3dacb52efe58d28db360ae8639d8838c376544",
+    "pd": "v0.0.0-20260805103528-afa43111d149",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "before": {
+    "native": {
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "reproduced": "Native returned (100,0) after (100,1). Later invalid-range cases in the same test were not reached."
+    },
+    "adapter": {
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "reproduced": "Valid timestamp with absent header rejected until timeout. Later header variants were not reached."
+    }
+  },
+  "repairs": [
+    "Shared retained stream collection removes the selected stream before exchange and reinserts only after success; dropping an exchange retires it while preserving healthy peers.",
+    "Shared batch allocator performs plain logical splitting, count checks and Rust range/composition validation before any completion. Physical overflow checks bits lost by shifting.",
+    "Shared ordering tracks the maximum accepted timestamp using pre-request snapshots; native Cluster carries it through replacement dispatchers.",
+    "Adapter ignores unused PD response header fields as Go stream adapters do.",
+    "Remove adapter private retained stream wrapper, arithmetic and five overlapping model tests with stale suffix-shift comments; retain wire batch tests and shared-owner range/order coverage.",
+    "Correct native fixture allocation lifetime: server sequence persists across streams and forwarding/group-move fixtures share the logical clock."
+  ],
+  "source_owners": [
+    "PD clients/tso/stream.go::pdTSOStreamAdapter.Recv/tsoTSOStreamAdapter.Recv/recvLoop",
+    "PD clients/tso/dispatcher.go::processRequests/checkMonotonicity/doneCollectedRequests",
+    "PD clients/tso/stream_test.go and dispatcher_test.go"
+  ],
+  "validation": [
+    {
+      "cwd": "/workspace/client-rust",
+      "command": "cargo --config /workspace/.cloud-setup/native-cargo.toml test --locked -p tikv-client --lib -- pd::timestamp::tests:: pd::tso_batch:: pd::service_discovery pd::errs:: --test-threads=1",
+      "log": "native-final.log",
+      "passed": 76,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "cwd": "/workspace/client-rust",
+      "command": "cargo --config /workspace/.cloud-setup/native-cargo.toml check --locked -p tikv-client --all-targets",
+      "log": "native-check.log",
+      "status": "passed"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked -p tidb-pd-client --lib --test all --no-fail-fast -- tso_source:: pd_client_source:: client::worker_lifecycle_tests:: --test-threads=1",
+      "log": "adapter-final.log",
+      "passed": 76,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo check --locked -p tidb-pd-client -p tidb-server --all-targets",
+      "log": "adapter-check.log",
+      "status": "passed"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "make lint",
+      "log": "lint.log",
+      "status": "passed"
+    }
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "limits": [
+    "P03/P06 remain partial; other 54 findings not re-audited.",
+    "Independent queues/retry orchestration, RPC concurrency, readiness/prewarm, idle/observation timing and whole-package obligations remain open.",
+    "Rust retains explicit malformed timestamp errors and terminal ordering error instead of Go panic. Native rejected requests currently observe existing cancellation/error plumbing.",
+    "Full Go suites, multi-node TiKV/PD, workload performance and fresh-task restoration unverified."
+  ],
+  "artifacts": {
+    "lint.log": {
+      "bytes": 2164,
+      "sha256": "2940ec5ab8c0c029de7e054749de7d6c30dd95de575095b6d9fecaf1c07826f8"
+    },
+    "native-final.log": {
+      "bytes": 7442,
+      "sha256": "426d764cbadfbd3f4f96fd5ed6f961eff587d5c7a92e493b144a423d91175d31"
+    },
+    "sync.log": {
+      "bytes": 1883,
+      "sha256": "4bb4123c15c5e38d56ac905e5fde3fba4c4f8f12ddc3da0b46f2a3a3949abc36"
+    },
+    "adapter-final.log": {
+      "bytes": 8491,
+      "sha256": "584f6871201852c17e5601d5e6515e455ba3ff2a80de10f15b9d6b066ff6d329"
+    },
+    "native-prepush-build.log": {
+      "bytes": 105999,
+      "sha256": "ee74d92a0b0f548d8d8c306a51b154d37b9e6ec1b72daafd343b4b670e0a30bb"
+    },
+    "native-commit.log": {
+      "bytes": 165,
+      "sha256": "8514bd16674c78ef727e069814061d0fa472b32b7f67c93db948c25df5b94df9"
+    },
+    "native-before.log": {
+      "bytes": 1015,
+      "sha256": "f83200e92b59fdcee8d1e03463e38efa9be914f33d8769f42c5bca5e6f751106"
+    },
+    "adapter-before.log": {
+      "bytes": 2179,
+      "sha256": "a4d9313543cce30d4452b7742263cee9ad4bcdb331989621484de10f53fd76e5"
+    },
+    "native-push.log": {
+      "bytes": 80,
+      "sha256": "176f5ebab4ff1026e4e235e0b605ddee830e66cbd8f746eaf57ac87a13eb1ef1"
+    },
+    "native-fixture-review.log": {
+      "bytes": 9748,
+      "sha256": "ef9800f082c1bbd48c5b79114194cbf76da209a43364bab37e11562380b1ca13"
+    },
+    "native-check.log": {
+      "bytes": 928,
+      "sha256": "8719b97713bb6d159a197ce9e31f64dccd184f1d2a563f41e2f5e3e86f51777a"
+    },
+    "native-first-check.log": {
+      "bytes": 1208,
+      "sha256": "9b5caec3a3902364c53e00d2a9648956d0c6000bd72af1e3d86a2313249194d3"
+    },
+    "adapter-check.log": {
+      "bytes": 111103,
+      "sha256": "a4a7e7015ac27416a4da3cca81d6a171341650192499a299336aa5cd0fddb551"
+    }
+  },
+  "publication": "Native normal push and remote SHA verified after fresh locked server build. TiDB hook and postcommit fresh build/push are pending at receipt freeze; final-handoff.json records their outcomes.",
+  "intermediate": [
+    {
+      "log": "native-first-check.log",
+      "outcome": "Compilation reported one missing tracker argument in a test-only run_tso caller; corrected."
+    },
+    {
+      "log": "native-fixture-review.log",
+      "passed": 72,
+      "failed": 4,
+      "reason": "Old leader/proxy fixtures restarted logical allocation across peer changes. Corrected shared server clock; production ordering checks unchanged."
+    }
+  ],
+  "native_published": "02880abbab5ed89a4dc603a4ddc7935853870ea6",
+  "validated_sources": {
+    "/workspace/client-rust/src/lib.rs": "d4339c91912a53942f60267aa3937218dbb89a466c8fa6cc6304e70e3f4266d2",
+    "/workspace/client-rust/src/pd/cluster.rs": "7fd2733f6fb1515f8146a44b2aafff50ef2269ccd7d5febc54ce344fdd903208",
+    "/workspace/client-rust/src/pd/mod.rs": "8fe3ed0a8f42c870ab59520d04366dc449d877f190bcbbe86f948be87e20f25e",
+    "/workspace/client-rust/src/pd/service_discovery.rs": "bbffc90b4af3837aa23b674f7252d5acba3664d291938ea15fad9307f7e95e4f",
+    "/workspace/client-rust/src/pd/timestamp.rs": "5c7e307fbf223caf3313402aee2eb366edff9fdc54e78ef0c85175a0cea83d7b",
+    "/workspace/client-rust/src/pd/timestamp_tests.rs": "89a9f836829675b69dcfce21263d8239a1b7eb697b78aab1d4ce851119f28c43",
+    "/workspace/client-rust/src/pd/tso_batch.rs": "092addb26696067b0e3bbf8bc906706642690f7439b67925f584b1542986bc1c",
+    "/workspace/tidb/rust/crates/tidb-pd-client/src/client/worker.rs": "aa1a3a5368a88977fb2cde37f8e1ecf1527c78fc79c15490194bd40b3f58a927",
+    "/workspace/tidb/rust/crates/tidb-pd-client/src/tso.rs": "2bc92f2ac1e870afdfc68989d2b7d2b93a83b536351172b2311b28d0f9e11d5b",
+    "/workspace/tidb/rust/crates/tidb-pd-client/tests/tso_source.rs": "e756893315fb311a9f4a20a9100659d76b5ad0aecac034ed74213f703abb4a05",
+    "/workspace/tidb/rust/third_party/tikv-client-rs/src/lib.rs": "d4339c91912a53942f60267aa3937218dbb89a466c8fa6cc6304e70e3f4266d2",
+    "/workspace/tidb/rust/third_party/tikv-client-rs/src/pd/cluster.rs": "7fd2733f6fb1515f8146a44b2aafff50ef2269ccd7d5febc54ce344fdd903208",
+    "/workspace/tidb/rust/third_party/tikv-client-rs/src/pd/mod.rs": "8fe3ed0a8f42c870ab59520d04366dc449d877f190bcbbe86f948be87e20f25e",
+    "/workspace/tidb/rust/third_party/tikv-client-rs/src/pd/service_discovery.rs": "25f8a6c2c3042e774018310a23e7ac8f14694827c0ae78f79bb257e9f24144eb",
+    "/workspace/tidb/rust/third_party/tikv-client-rs/src/pd/timestamp.rs": "5c7e307fbf223caf3313402aee2eb366edff9fdc54e78ef0c85175a0cea83d7b",
+    "/workspace/tidb/rust/third_party/tikv-client-rs/src/pd/timestamp_tests.rs": "89a9f836829675b69dcfce21263d8239a1b7eb697b78aab1d4ce851119f28c43",
+    "/workspace/tidb/rust/third_party/tikv-client-rs/src/pd/tso_batch.rs": "092addb26696067b0e3bbf8bc906706642690f7439b67925f584b1542986bc1c"
+  },
+  "removal_inventory": {
+    "rust/crates/tidb-pd-client/src/tso.rs": {
+      "before_lines": 593,
+      "after_lines": 116
+    },
+    "rust/crates/tidb-pd-client/src/client/worker.rs": {
+      "before_lines": 981,
+      "after_lines": 964
+    }
+  },
+  "sync": "All four maintained patches applied and protobuf bindings regenerated; generated bindings and dependency declarations unchanged."
+}

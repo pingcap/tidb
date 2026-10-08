@@ -264,6 +264,7 @@ pub use crate::pd::opt as pd_options;
 pub use crate::pd::region_service as pd_region_service;
 #[doc(inline)]
 pub use crate::pd::service_discovery as pd_service_discovery;
+pub use crate::pd::tso_batch as pd_tso_batch;
 #[doc(inline)]
 pub use crate::pd::PdClient;
 #[doc(inline)]

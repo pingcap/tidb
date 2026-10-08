@@ -33,6 +33,8 @@ and historical evidence; consult each receipt's actual limits.
 
 ## Progress
 
+- [x] Consolidate P03/P06 retained TSO streams and completion/order ownership in both consumers; [batch plan](tso-completion-execplan.md) and [receipt](parity/current-audit/tso-completion-validation.json) track validation and publication.
+
 - [x] Maintain P03/P06 discovery observations, primaryless revision floors and stale-callee cache lookup retirement together; see [plan](pd-observation-execplan.md) and [receipt](parity/current-audit/pd-observation-validation.json). Complete transport/discovery packages remain partial; 56 broader findings remain unresolved.
 
 - [x] Maintain N03/D11/E02 together through shared FK policy, metadata versions and persistent admission; see [current plan](fk-global-policy-execplan.md) and [receipt](parity/current-audit/fk-global-policy-validation.json). Broad counts remain56 unresolved; complete package/durable lifecycle obligations remain open.
@@ -260,11 +262,14 @@ correctness regression useless.
 ## Outcomes & Retrospective
 
 
-This cleanup changes planning documentation only. Source, executable tests,
-scripts, dependencies and every finding disposition remain unchanged. The
-[cleanup receipt](parity/current-audit/planning-history-cleanup-validation.json)
-records exact archive/link/allocation checks and the separate publication gates.
-No package, distributed behavior or performance improvement is newly accepted.
+The latest TSO batch consolidates retained stream and timestamp completion owners
+across native and TiDB callers. Native76 and adapter76 selected Rust tests pass,
+as do affected all-target checks and repository lint. Native publication and
+maintained synchronization are verified; the actual TiDB hook and postcommit
+publication outcomes are recorded in the external final handoff named by the
+[current receipt](parity/current-audit/tso-completion-validation.json). P03/P06
+remain partial and other54 roots retain prior evidence. No complete package,
+live distributed behavior or performance result is newly accepted.
 
 Revision note: replace copied history with current Cloud instructions and the
 B01–B10 queue; retain exact earlier plans for evidence and recovery.

@@ -58,6 +58,8 @@ struct PdServer {
     omit_metadata_header: Arc<std::sync::atomic::AtomicBool>,
     required_keyspace: Arc<AtomicUsize>,
     keyspace_loads: Arc<AtomicUsize>,
+    scripted_tso: Arc<std::sync::Mutex<VecDeque<TsoResponse>>>,
+    next_logical: Arc<AtomicUsize>,
     reply: Reply,
     tso_failure: Arc<std::sync::Mutex<Option<tonic::Code>>>,
     cluster_info_failure: Arc<std::sync::atomic::AtomicBool>,
@@ -352,8 +354,8 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
                 futures::future::pending::<()>().await;
             }
             let responses = futures::stream::unfold(
-                (requests, first, active, 0_i64, service),
-                |(mut requests, first, active, mut logical, service)| async move {
+                (requests, first, active, service),
+                |(mut requests, first, active, service)| async move {
                     if matches!(service.reply, Reply::End) {
                         return None;
                     }
@@ -369,14 +371,14 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
                             }
                             Ok(None) => return None,
                             Err(error) => {
-                                return Some((
-                                    Err(error),
-                                    (requests, None, active, logical, service),
-                                ))
+                                return Some((Err(error), (requests, None, active, service)))
                             }
                         },
                     };
-                    logical += i64::from(request.count);
+                    let logical = (service
+                        .next_logical
+                        .fetch_add(request.count as usize, Ordering::SeqCst)
+                        + request.count as usize) as i64;
                     let response = TsoResponse {
                         header: Some(ResponseHeader {
                             cluster_id: 42,
@@ -389,7 +391,13 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
                             suffix_bits: 0,
                         }),
                     };
-                    Some((Ok(response), (requests, None, active, logical, service)))
+                    let response = service
+                        .scripted_tso
+                        .lock()
+                        .unwrap()
+                        .pop_front()
+                        .unwrap_or(response);
+                    Some((Ok(response), (requests, None, active, service)))
                 },
             );
             Ok(tonic::Response::new(
@@ -467,6 +475,10 @@ impl Drop for Server {
 }
 impl Server {
     async fn start(reply: Reply) -> Self {
+        Self::start_with_clock(reply, Arc::default()).await
+    }
+
+    async fn start_with_clock(reply: Reply, next_logical: Arc<AtomicUsize>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let service = PdServer {
@@ -509,6 +521,8 @@ impl Server {
             omit_metadata_header: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             required_keyspace: Arc::new(AtomicUsize::new(0)),
             keyspace_loads: Arc::new(AtomicUsize::new(0)),
+            scripted_tso: Arc::default(),
+            next_logical,
             reply,
             tso_failure: Arc::default(),
             cluster_info_failure: Arc::default(),
@@ -618,7 +632,8 @@ async fn source_pd_concurrency_timestamp_wait_releases_cluster() {
 #[tokio::test]
 async fn source_pd_concurrency_replacement_during_metadata_request() {
     let first = Server::start(Reply::Timestamp).await;
-    let second = Server::start(Reply::Timestamp).await;
+    let second =
+        Server::start_with_clock(Reply::Timestamp, first.service.next_logical.clone()).await;
     second.service.region_id.store(2, Ordering::SeqCst);
     let client = metadata_client(&first).await;
     client.clone().get_timestamp().await.unwrap();
@@ -856,7 +871,8 @@ async fn source_connectionctx_metadata_refresh_reuses_healthy_tso() {
 #[tokio::test]
 async fn source_connectionctx_changed_leader_releases_old_stream() {
     let first = Server::start(Reply::Timestamp).await;
-    let second = Server::start(Reply::Timestamp).await;
+    let second =
+        Server::start_with_clock(Reply::Timestamp, first.service.next_logical.clone()).await;
     let mut cluster = first.cluster(Duration::from_secs(1)).await;
     cluster.get_timestamp().await.unwrap();
     *first.service.leader_urls.write().unwrap() = vec![second.service.endpoint.clone()];
@@ -1156,6 +1172,8 @@ async fn source_batch_discard_returns_rpc_token_before_request_completion() {
         requests,
         done,
         _permit: permit,
+        order: TimestampTracker::default(),
+        before_request: None,
     });
     assert!(response.await.is_err());
     assert_eq!(tokens.available_permits(), 1);
@@ -1245,6 +1263,7 @@ async fn source_pd_error_owner_reports_stream_eof() {
             Arc::new(crate::pd::opt::Options::new()),
             Duration::from_secs(2),
             Cancellation::default(),
+            TimestampTracker::default(),
         ),
     )
     .await
@@ -1491,7 +1510,8 @@ async fn source_pd_shutdown_cancels_metadata_and_discovery_without_reconnecting(
 #[tokio::test]
 async fn source_pd_shutdown_joins_retirement_after_interrupted_reconnect() {
     let first = Server::start(Reply::Timestamp).await;
-    let second = Server::start(Reply::Timestamp).await;
+    let second =
+        Server::start_with_clock(Reply::Timestamp, first.service.next_logical.clone()).await;
     let client = metadata_client(&first).await;
     client.clone().get_timestamp().await.unwrap();
     let old = client.tso_for_test().await;
@@ -1709,8 +1729,8 @@ impl tonic::server::StreamingService<tsopb::TsoRequest> for TsoServer {
         Box::pin(async move {
             let active = ActiveStream(service.dropped.clone());
             let stream = futures::stream::unfold(
-                (request.into_inner(), active, service, 0_i64),
-                |(mut requests, active, service, mut logical)| async move {
+                (request.into_inner(), active, service),
+                |(mut requests, active, service)| async move {
                     let request = requests.message().await.unwrap()?;
                     service.received.fetch_add(1, Ordering::SeqCst);
                     let header = request.header.unwrap();
@@ -1720,7 +1740,10 @@ impl tonic::server::StreamingService<tsopb::TsoRequest> for TsoServer {
                         service.endpoint.strip_prefix("http://").unwrap()
                     );
                     service.tso_headers.lock().unwrap().push(header.clone());
-                    logical += i64::from(request.count);
+                    let logical = (service
+                        .next_logical
+                        .fetch_add(request.count as usize, Ordering::SeqCst)
+                        + request.count as usize) as i64;
                     Some((
                         Ok(tsopb::TsoResponse {
                             header: Some(tsopb::ResponseHeader {
@@ -1735,7 +1758,7 @@ impl tonic::server::StreamingService<tsopb::TsoRequest> for TsoServer {
                                 suffix_bits: 0,
                             }),
                         }),
-                        (requests, active, service, logical),
+                        (requests, active, service),
                     ))
                 },
             );
@@ -1758,7 +1781,8 @@ fn api_mode(pd: &Server, tso: &Server) {
 async fn source_service_routes_keyspace_and_retires_on_group_move() {
     let pd = Server::start(Reply::Timestamp).await;
     let first = Server::start(Reply::Timestamp).await;
-    let second = Server::start(Reply::Timestamp).await;
+    let second =
+        Server::start_with_clock(Reply::Timestamp, first.service.next_logical.clone()).await;
     api_mode(&pd, &first);
     let client = metadata_client(&pd).await;
     let timestamp = client.clone().get_timestamp().await.unwrap();
@@ -2333,7 +2357,8 @@ async fn availability_pair_with_reply(
     reply: Reply,
 ) -> (Server, Server, Arc<RetryClient>) {
     let leader = Server::start(reply).await;
-    let follower = Server::start(Reply::Timestamp).await;
+    let follower =
+        Server::start_with_clock(Reply::Timestamp, leader.service.next_logical.clone()).await;
     if proxy {
         leader.service.health_status.store(2, Ordering::SeqCst);
     }
@@ -2629,7 +2654,8 @@ async fn tso_proxy_batch_healthy_follower_receives_logical_leader_metadata() {
 async fn tso_proxy_batch_microservice_group_and_health_retirement() {
     let pd = Server::start(Reply::Timestamp).await;
     let primary = Server::start(Reply::Timestamp).await;
-    let secondary = Server::start(Reply::Timestamp).await;
+    let secondary =
+        Server::start_with_clock(Reply::Timestamp, primary.service.next_logical.clone()).await;
     let group = tsopb::KeyspaceGroup {
         id: 7,
         members: vec![
@@ -3109,5 +3135,62 @@ async fn observation_batch_callee_mismatch_retires_only_stale_connection() {
             pd_connections
         );
     }
+    client.close().await;
+}
+
+#[tokio::test]
+async fn completion_batch_rejects_regression_and_invalid_timestamp_ranges() {
+    for (physical, logical) in [
+        (100, 0),
+        (-1, 2),
+        (100, -1),
+        (100, 1 << 18),
+        (1 << 46, 2),
+        (0, 0),
+    ] {
+        let server = Server::start(Reply::Timestamp).await;
+        let cluster = server.cluster(Duration::from_secs(2)).await;
+        let oracle = cluster.tso_for_test();
+        assert_eq!(oracle.clone().get_timestamp().await.unwrap().logical, 1);
+        server
+            .service
+            .scripted_tso
+            .lock()
+            .unwrap()
+            .push_back(TsoResponse {
+                count: 1,
+                timestamp: Some(Timestamp {
+                    physical,
+                    logical,
+                    suffix_bits: 0,
+                }),
+                ..Default::default()
+            });
+        assert!(
+            oracle.clone().get_timestamp().await.is_err(),
+            "accepted ({physical}, {logical})"
+        );
+        oracle.close().await;
+    }
+}
+
+#[tokio::test]
+async fn completion_batch_order_survives_dispatcher_replacement() {
+    let server = Server::start(Reply::Timestamp).await;
+    let client = metadata_client(&server).await;
+    let first = client.clone().get_timestamp().await.unwrap();
+    client.tso_for_test().await.close().await;
+    client.reconnect_for_test().await.unwrap();
+    server
+        .service
+        .scripted_tso
+        .lock()
+        .unwrap()
+        .push_back(TsoResponse {
+            count: 1,
+            timestamp: Some(first),
+            ..Default::default()
+        });
+    assert!(client.tso_for_test().await.get_timestamp().await.is_err());
     client.close().await;
 }

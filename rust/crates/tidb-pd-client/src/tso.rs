@@ -15,279 +15,58 @@
 use std::time::{Duration, Instant};
 
 use tidb_proto::pdpb;
-use tikv_client::pd_service_discovery::{TsoRoute, TsoStream};
+use tikv_client::pd_service_discovery::{TsoRoute, TsoStreamSet};
 use tokio::sync::watch;
 use tonic::transport::Channel;
 
 use crate::{PdClientError, PdOperation};
+pub(crate) use tikv_client::pd_tso_batch::{TimestampTracker, TsoBatch};
 
-/// Go `constants.RetryInterval` (client-go constants/constants.go:39).
-pub(crate) const TSO_RETRY_INTERVAL: Duration = Duration::from_millis(500);
-
-const PHYSICAL_SHIFT_BITS: u32 = 18;
-const MAX_LOGICAL: i64 = (1_i64 << PHYSICAL_SHIFT_BITS) - 1;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TimestampParts {
-    physical: i64,
-    logical: i64,
+pub(crate) fn batch_error(error: tikv_client::pd_tso_batch::BatchError) -> PdClientError {
+    PdClientError::InvalidTopology {
+        kind: error.kind,
+        message: error.message,
+    }
 }
 
-/// One PD Tso reply covering `count` consecutive timestamps.
-///
-/// Go boundary: `pd/client`'s `tso_dispatcher.go` -> `processRequests`, which
-/// treats the reply's `(physical, logical)` as the *last* timestamp of the
-/// batch and recovers the first with
-/// `firstLogical = AddLogical(logical, -(count-1), suffixBits)`. Waiter `i`
-/// then receives `(physical, AddLogical(firstLogical, i, suffixBits))`
-/// (`tso_batch_controller.go` -> `finishCollectedRequests`), so every waiter
-/// gets a distinct, increasing timestamp out of a single round trip.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TsoBatch {
-    physical: i64,
-    first_logical: i64,
-    suffix_bits: u32,
+pub(crate) fn request_batch(
+    streams: &mut TsoStreamSet,
+    runtime: &tokio::runtime::Runtime,
+    channel: Channel,
+    route: TsoRoute,
+    forwarding: &tikv_client::pd_service_discovery::TsoForwarding,
+    cluster_id: u64,
+    deadline: Instant,
+    shutdown: &watch::Receiver<bool>,
+    routes: &watch::Sender<Vec<TsoRoute>>,
     count: u32,
-}
-
-impl TsoBatch {
-    /// Returns the timestamp handed to the `index`-th waiter of this batch.
-    pub(crate) fn split(&self, index: u32) -> TimestampParts {
-        debug_assert!(index < self.count);
-        TimestampParts {
-            physical: self.physical,
-            logical: add_logical(self.first_logical, i64::from(index), self.suffix_bits),
-        }
-    }
-
-    /// The batch's last timestamp, the one PD actually reported.
-    pub(crate) fn last(&self) -> TimestampParts {
-        self.split(self.count - 1)
-    }
-}
-
-/// The pinned client-go (`dispatcher.go:461,483`) composes batch timestamps
-/// in PLAIN arithmetic: `firstLogical = result.logical - count + 1`, then
-/// `firstLogical + idx`. Its proto's suffix_bits field is never read, so the
-/// shift is dropped here too; the parameter stays for the call-shape parity.
-fn add_logical(logical: i64, count: i64, _suffix_bits: u32) -> i64 {
-    logical + count
-}
-
-impl TimestampParts {
-    fn from_response(
-        endpoint: &str,
-        expected_cluster_id: u64,
-        response: pdpb::TsoResponse,
-        expected_count: u32,
-    ) -> Result<TsoBatch, PdClientError> {
-        let header = response
-            .header
-            .as_ref()
-            .ok_or(PdClientError::MissingHeader(PdOperation::Tso))?;
-        if let Some(error) = &header.error {
-            return Err(PdClientError::HeaderError {
-                operation: PdOperation::Tso,
-                error_type: error.r#type,
-                message: error.message.clone(),
-            });
-        }
-        if header.cluster_id != expected_cluster_id {
-            return Err(PdClientError::ClusterMismatch {
-                operation: PdOperation::Tso,
-                expected: expected_cluster_id,
-                actual: header.cluster_id,
-            });
-        }
-        if response.count != expected_count {
-            return Err(invalid_tso(
-                "tso_count_mismatch",
-                format!(
-                    "PD Tso from {endpoint} returned count {}, expected {expected_count}",
-                    response.count
-                ),
-            ));
-        }
-        let timestamp = response.timestamp.ok_or_else(|| {
-            invalid_tso(
-                "missing_tso_timestamp",
-                format!("PD Tso from {endpoint} omitted its timestamp"),
-            )
-        })?;
-        if timestamp.physical < 0 {
-            return Err(invalid_tso(
-                "negative_tso_physical",
-                format!(
-                    "PD Tso from {endpoint} returned negative physical time {}",
-                    timestamp.physical
-                ),
-            ));
-        }
-        if !(0..=MAX_LOGICAL).contains(&timestamp.logical) {
-            return Err(invalid_tso(
-                "invalid_tso_logical",
-                format!(
-                    "PD Tso from {endpoint} returned logical time {} outside 0..={MAX_LOGICAL}",
-                    timestamp.logical
-                ),
-            ));
-        }
-        // PD reports the batch's LAST timestamp; walk back over the remaining
-        // `count - 1` slots to find the first one this batch owns.
-        let first_logical = add_logical(
-            timestamp.logical,
-            -i64::from(expected_count) + 1,
-            timestamp.suffix_bits,
-        );
-        if first_logical < 0 {
-            return Err(invalid_tso(
-                "invalid_tso_batch_range",
-                format!(
-                    "PD Tso from {endpoint} returned logical {} too small for a batch of {expected_count}",
-                    timestamp.logical
-                ),
-            ));
-        }
-        Ok(TsoBatch {
-            physical: timestamp.physical,
-            first_logical,
-            suffix_bits: timestamp.suffix_bits,
-            count: expected_count,
-        })
-    }
-
-    pub(crate) fn compose(self) -> Result<u64, PdClientError> {
-        let timestamp = u64::try_from(self.physical)
-            .ok()
-            .and_then(|physical| physical.checked_shl(PHYSICAL_SHIFT_BITS))
-            .and_then(|physical| physical.checked_add(self.logical as u64))
-            .ok_or_else(|| {
-                invalid_tso(
-                    "tso_overflow",
-                    format!(
-                        "PD Tso ({}, {}) does not fit the TiKV timestamp layout",
-                        self.physical, self.logical
-                    ),
-                )
-            })?;
-        if timestamp == 0 {
-            return Err(invalid_tso(
-                "zero_tso",
-                "PD Tso composed to zero".to_owned(),
-            ));
-        }
-        Ok(timestamp)
-    }
-
-    pub(crate) fn ensure_after(self, previous: Option<Self>) -> Result<(), PdClientError> {
-        if let Some(previous) = previous {
-            if self.physical < previous.physical
-                || (self.physical == previous.physical && self.logical <= previous.logical)
-            {
-                return Err(invalid_tso(
-                    "tso_fallback",
-                    format!(
-                        "PD Tso ({}, {}) is not after ({}, {})",
-                        self.physical, self.logical, previous.physical, previous.logical
-                    ),
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-pub(crate) struct RetainedTsoStream {
-    endpoint: String,
-    stream: TsoStream,
-}
-
-impl RetainedTsoStream {
-    pub(crate) fn open_and_request(
-        runtime: &tokio::runtime::Runtime,
-        channel: Channel,
-        route: TsoRoute,
-        forwarding: &tikv_client::pd_service_discovery::TsoForwarding,
-        cluster_id: u64,
-        deadline: Instant,
-        shutdown: &watch::Receiver<bool>,
-        routes: &watch::Sender<Vec<TsoRoute>>,
-        count: u32,
-    ) -> Result<(Self, TsoBatch), PdClientError> {
-        let endpoint = route.endpoint.as_str();
-        let timeout = remaining(deadline, endpoint)?;
-        let request = tso_request(cluster_id, count);
-        if *shutdown.borrow() {
-            return Err(PdClientError::Closed);
-        }
-        let mut cancellation = shutdown.clone();
-        let mut routes = routes.subscribe();
-        let response = runtime.block_on(async {
-            tokio::select! {
-                biased;
-                () = shutdown_requested(&mut cancellation) => None,
-                () = route_retired(&mut routes, &route) => Some(Ok(Err(tonic::Status::cancelled("TSO route retired")))),
-                response = tokio::time::timeout(timeout, async {
-                TsoStream::open_and_request(route.clone(), channel, request, forwarding).await
-                }) => Some(response),
-            }
-        });
-        let (stream, response) = match response {
-            Some(Ok(Ok(response))) => response,
-            Some(Ok(Err(status))) => return Err(map_status(endpoint, status)),
-            Some(Err(_)) => return Err(timeout_error(endpoint, timeout)),
-            None => return Err(PdClientError::Closed),
-        };
-        let timestamp = TimestampParts::from_response(endpoint, cluster_id, response, count)?;
-        Ok((
-            Self {
-                endpoint: endpoint.to_owned(),
-                stream,
+) -> Result<TsoBatch, PdClientError> {
+    let endpoint = route.endpoint.clone();
+    let timeout = remaining(deadline, &endpoint)?;
+    let request = pdpb::TsoRequest {
+        header: Some(pdpb::RequestHeader {
+            cluster_id,
+            ..Default::default()
+        }),
+        count,
+        dc_location: String::new(),
+    };
+    let mut cancellation = shutdown.clone();
+    let mut routes = routes.subscribe();
+    runtime.block_on(async {
+        tokio::select! {
+            biased;
+            () = shutdown_requested(&mut cancellation) => Err(PdClientError::Closed),
+            () = route_retired(&mut routes, &route) => Err(map_status(&endpoint, tonic::Status::cancelled("TSO route retired"))),
+            response = tokio::time::timeout(timeout, streams.request(route.clone(), channel, request, forwarding)) => {
+                match response {
+                    Ok(Ok(response)) => TsoBatch::from_response(&response, count).map_err(batch_error),
+                    Ok(Err(status)) => Err(map_status(&endpoint, status)),
+                    Err(_) => Err(timeout_error(&endpoint, timeout)),
+                }
             },
-            timestamp,
-        ))
-    }
-
-    pub(crate) fn route(&self) -> &TsoRoute {
-        &self.stream.route
-    }
-
-    pub(crate) fn request(
-        &mut self,
-        runtime: &tokio::runtime::Runtime,
-        cluster_id: u64,
-        deadline: Instant,
-        shutdown: &watch::Receiver<bool>,
-        routes: &watch::Sender<Vec<TsoRoute>>,
-        count: u32,
-    ) -> Result<TsoBatch, PdClientError> {
-        let timeout = remaining(deadline, &self.endpoint)?;
-        let request = tso_request(cluster_id, count);
-        let route = self.stream.route.clone();
-        if *shutdown.borrow() {
-            return Err(PdClientError::Closed);
         }
-        let mut cancellation = shutdown.clone();
-        let mut routes = routes.subscribe();
-        let response = runtime.block_on(async {
-            tokio::select! {
-                biased;
-                () = shutdown_requested(&mut cancellation) => None,
-                () = route_retired(&mut routes, &route) => Some(Ok(Err(tonic::Status::cancelled("TSO route retired")))),
-                response = tokio::time::timeout(timeout, async {
-                    self.stream.request(request).await
-                })
-                => Some(response),
-            }
-        });
-        let response = match response {
-            Some(Ok(Ok(response))) => response,
-            Some(Ok(Err(status))) => return Err(map_status(&self.endpoint, status)),
-            Some(Err(_)) => return Err(timeout_error(&self.endpoint, timeout)),
-            None => return Err(PdClientError::Closed),
-        };
-        TimestampParts::from_response(&self.endpoint, cluster_id, response, count)
-    }
+    })
 }
 
 async fn route_retired(routes: &mut watch::Receiver<Vec<TsoRoute>>, route: &TsoRoute) {
@@ -308,21 +87,8 @@ async fn shutdown_requested(shutdown: &mut watch::Receiver<bool>) {
     let _ = shutdown.changed().await;
 }
 
-fn tso_request(cluster_id: u64, count: u32) -> pdpb::TsoRequest {
-    pdpb::TsoRequest {
-        header: Some(pdpb::RequestHeader {
-            cluster_id,
-            ..Default::default()
-        }),
-        count,
-        dc_location: String::new(),
-    }
-}
-
 pub(crate) fn retry_delay(_retry_index: usize) -> Duration {
-    // Go's dispatcher waits `constants.RetryInterval` uniformly between
-    // attempts -- there is no free first retry.
-    TSO_RETRY_INTERVAL
+    Duration::from_millis(500)
 }
 
 pub(crate) fn remaining(deadline: Instant, endpoint: &str) -> Result<Duration, PdClientError> {
@@ -346,248 +112,5 @@ pub(crate) fn timeout_error(endpoint: &str, timeout: Duration) -> PdClientError 
         operation: PdOperation::Tso,
         endpoint: endpoint.to_owned(),
         timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
-    }
-}
-
-fn invalid_tso(kind: &'static str, message: String) -> PdClientError {
-    PdClientError::InvalidTopology { kind, message }
-}
-
-/// The suffix-bit arithmetic, pinned against an independently written model of
-/// the Go formula.
-///
-/// A default playground PD always reports `suffix_bits = 0`, so the shifting
-/// path below is unreachable from a default local cluster; these tests are the
-/// standing guard for it.
-///
-/// Non-zero `suffix_bits` is reachable, and it reaches the *global* TSO that
-/// TiDB requests — it is not a Local-TSO-only field. In PD (`pkg/tso`,
-/// v8.5.x) `GlobalTSOAllocator.GenerateTSO` ends with
-/// `globalTSOResp.Logical = calibrateLogical(logical, suffixBits)` and
-/// `globalTSOResp.SuffixBits = uint32(suffixBits)`, where
-/// `calibrateLogical(rawLogical, suffixBits) = rawLogical<<suffixBits + suffix`
-/// and `CalSuffixBits(maxSuffix) = ceil(log2(maxSuffix + 1))`. So the wire
-/// `logical` is already post-shift and carries the allocator's suffix in its
-/// low bits; `first_logical` recovered here is post-shift too.
-///
-/// To reproduce on a local cluster, every PD needs
-/// `enable-local-tso = true` plus a `zone` label naming its dc-location
-/// (PD's `ZoneLabel = "zone"`; `Labels` is the `[labels]` toml table):
-///
-/// ```toml
-/// enable-local-tso = true
-/// [labels]
-/// zone = "dc-1"
-/// ```
-///
-/// With one dc-location `maxSuffix = 1`, so `suffix_bits = 1`; two
-/// dc-locations give `2`. PD v8.5.7's `pd-server` still contains the whole
-/// path (`enable-local-tso`, `dc-location`, `CalSuffixBits`); the v9.0 nightly
-/// binary keeps `enable-local-tso`/`GetSuffixBits` but no longer contains any
-/// `dc-location` or `CalSuffixBits` symbol, so pin a v8.5.x PD when running
-/// this against a real cluster.
-#[cfg(test)]
-mod tests {
-    use super::{add_logical, TimestampParts, MAX_LOGICAL, PHYSICAL_SHIFT_BITS};
-    use tidb_proto::pdpb;
-
-    const CLUSTER_ID: u64 = 7;
-    const SUFFIX_WIDTHS: [u32; 5] = [0, 1, 2, 4, 8];
-
-    fn reply(physical: i64, last_logical: i64, suffix_bits: u32, count: u32) -> pdpb::TsoResponse {
-        pdpb::TsoResponse {
-            header: Some(pdpb::ResponseHeader {
-                cluster_id: CLUSTER_ID,
-                error: None,
-            }),
-            count,
-            timestamp: Some(pdpb::Timestamp {
-                physical,
-                logical: last_logical,
-                suffix_bits,
-            }),
-        }
-    }
-
-    /// Independent model of Go's composition, written from the *last* logical
-    /// PD reports rather than from a recovered first one, so it shares no
-    /// arithmetic with `TsoBatch`.
-    ///
-    /// `pd/client`'s `tsoutil.AddLogical` is
-    /// `logical + count<<suffixBits`; `tso_dispatcher.go` recovers
-    /// `firstLogical := AddLogical(result.logical, -int64(result.count)+1, result.suffixBits)`
-    /// and `tso_batch_controller.go` hands waiter `i`
-    /// `AddLogical(firstLogical, int64(i), suffixBits)`. Substituting one into
-    /// the other, waiter `i` of a `count`-wide batch owns
-    /// `last_logical - ((count - 1 - i) << suffixBits)`.
-    fn go_model_logical(last_logical: i64, suffix_bits: u32, count: u32, index: u32) -> i64 {
-        // The pinned client-go (dispatcher.go:461,483) composes in plain
-        // arithmetic; its proto's suffix_bits field is never read.
-        let _ = suffix_bits;
-        let steps_back = i64::from(count - 1 - index);
-        last_logical - steps_back
-    }
-
-    /// `client-go`'s `oracle.ComposeTS`: `uint64((physical << 18) + logical)`.
-    fn go_model_compose(physical: i64, logical: i64) -> u64 {
-        #[expect(clippy::cast_sign_loss, reason = "model mirrors Go's int64->uint64")]
-        {
-            ((physical << PHYSICAL_SHIFT_BITS) + logical) as u64
-        }
-    }
-
-    fn batch(physical: i64, last_logical: i64, suffix_bits: u32, count: u32) -> super::TsoBatch {
-        TimestampParts::from_response(
-            "model",
-            CLUSTER_ID,
-            reply(physical, last_logical, suffix_bits, count),
-            count,
-        )
-        .expect("batch fits the logical range")
-    }
-
-    #[test]
-    fn add_logical_is_plain_addition() {
-        // The pinned client-go (dispatcher.go:461,483) adds the count in
-        // plain arithmetic; the proto's suffix_bits field is never read.
-        for suffix_bits in SUFFIX_WIDTHS {
-            for logical in 0..64_i64 {
-                for count in -8..=8_i64 {
-                    assert_eq!(
-                        add_logical(logical, count, suffix_bits),
-                        logical + count,
-                        "add_logical({logical}, {count}, {suffix_bits})"
-                    );
-                }
-            }
-        }
-    }
-
-    /// Exhaustive over the whole small range: every reachable `(last_logical,
-    /// suffix_bits, count)` triple is split and compared timestamp by
-    /// timestamp against the model.
-    #[test]
-    fn every_batch_split_matches_the_go_model() {
-        const PHYSICAL: i64 = 1_700_000_000_000;
-        let mut checked = 0_u32;
-        for suffix_bits in SUFFIX_WIDTHS {
-            for last_logical in 0..256_i64 {
-                for count in 1..=8_u32 {
-                    let first = go_model_logical(last_logical, suffix_bits, count, 0);
-                    let parsed = TimestampParts::from_response(
-                        "model",
-                        CLUSTER_ID,
-                        reply(PHYSICAL, last_logical, suffix_bits, count),
-                        count,
-                    );
-                    if first < 0 {
-                        // The batch reaches below logical zero; PD cannot have
-                        // produced it and we must refuse rather than wrap.
-                        assert_eq!(
-                            parsed.expect_err("underflowing batch is refused").kind(),
-                            "invalid_tso_batch_range"
-                        );
-                        continue;
-                    }
-                    let batch = parsed.expect("in-range batch parses");
-                    let mut previous: Option<u64> = None;
-                    for index in 0..count {
-                        let parts = batch.split(index);
-                        let expected = go_model_logical(last_logical, suffix_bits, count, index);
-                        assert_eq!(
-                            parts,
-                            TimestampParts {
-                                physical: PHYSICAL,
-                                logical: expected,
-                            },
-                            "split({index}) of last={last_logical} suffix={suffix_bits} count={count}"
-                        );
-                        let composed = parts.compose().expect("composes");
-                        assert_eq!(composed, go_model_compose(PHYSICAL, expected));
-                        // Distinct and strictly monotonic within the batch.
-                        if let Some(previous) = previous {
-                            assert!(
-                                previous < composed,
-                                "batch went backwards at {index} (suffix={suffix_bits})"
-                            );
-                        }
-                        previous = Some(composed);
-                        checked += 1;
-                    }
-                    // The batch's last entry is exactly what PD reported.
-                    assert_eq!(
-                        batch.last(),
-                        TimestampParts {
-                            physical: PHYSICAL,
-                            logical: last_logical,
-                        }
-                    );
-                }
-            }
-        }
-        assert!(checked > 5_000, "the sweep must actually cover the space");
-    }
-
-    /// Regression guard: with `suffix_bits = 0` — the only value any local PD
-    /// has ever returned — the batch is the contiguous run this client has
-    /// always handed out. If this ever changes, every recorded expectation
-    /// built against a playground PD moved with it.
-    #[test]
-    fn suffix_bits_zero_keeps_the_contiguous_range() {
-        for last_logical in 0..256_i64 {
-            for count in 1..=8_u32 {
-                if last_logical < i64::from(count) - 1 {
-                    continue;
-                }
-                let batch = batch(5, last_logical, 0, count);
-                let logicals: Vec<i64> = (0..count).map(|i| batch.split(i).logical).collect();
-                let expected: Vec<i64> =
-                    (last_logical - i64::from(count) + 1..=last_logical).collect();
-                assert_eq!(logicals, expected);
-            }
-        }
-    }
-
-    /// Across suffix widths the batches share exactly one timestamp — the last
-    /// one, which is the value PD itself reported. Anything else coinciding
-    /// would mean two allocators could hand out the same timestamp.
-    #[test]
-    fn only_the_reported_timestamp_coincides_across_suffix_widths() {
-        // With plain arithmetic the suffix width is irrelevant: batches with
-        // the same reported timestamp and count are slot-for-slot identical
-        // across every width.
-        const LAST: i64 = 2_000;
-        const COUNT: u32 = 5;
-        for (a_index, a) in SUFFIX_WIDTHS.iter().enumerate() {
-            for b in &SUFFIX_WIDTHS[a_index + 1..] {
-                let left = batch(9, LAST, *a, COUNT);
-                let right = batch(9, LAST, *b, COUNT);
-                for i in 0..COUNT {
-                    assert_eq!(
-                        left.split(i),
-                        right.split(i),
-                        "suffix {a} slot {i} vs suffix {b} slot {i}"
-                    );
-                }
-            }
-        }
-    }
-
-    /// A logical part outside PD's 18-bit field is refused before any
-    /// arithmetic runs, so the shift can never carry into the physical part.
-    #[test]
-    fn out_of_range_logical_is_refused_for_every_suffix_width() {
-        for suffix_bits in SUFFIX_WIDTHS {
-            for logical in [-1, MAX_LOGICAL + 1] {
-                let error = TimestampParts::from_response(
-                    "model",
-                    CLUSTER_ID,
-                    reply(5, logical, suffix_bits, 1),
-                    1,
-                )
-                .expect_err("out-of-range logical is refused");
-                assert_eq!(error.kind(), "invalid_tso_logical");
-            }
-        }
     }
 }

@@ -16,6 +16,7 @@ use tonic::transport::Channel;
 
 use super::batch::Controller;
 use super::deadline::{DeadlineDone, Watcher};
+use super::tso_batch::{TimestampParts, TimestampTracker, TsoBatch};
 use crate::async_util::Cancellation;
 use crate::internal_err;
 #[cfg(test)]
@@ -67,6 +68,7 @@ impl TimestampOracle {
         forwarding: super::service_discovery::TsoForwarding,
         options: Arc<super::opt::Options>,
         timeout: Duration,
+        order: TimestampTracker,
     ) -> Result<Self> {
         let (sender, receiver) = tokio::sync::watch::channel(routes);
         let mut oracle = Self::with_transport(
@@ -74,6 +76,7 @@ impl TimestampOracle {
             Transport::Discovered(receiver, forwarding),
             options,
             timeout,
+            order,
         )?;
         Arc::get_mut(&mut oracle.inner).unwrap().routes = Some(sender);
         Ok(oracle)
@@ -100,6 +103,7 @@ impl TimestampOracle {
         transport: Transport,
         options: Arc<super::opt::Options>,
         timeout: Duration,
+        order: TimestampTracker,
     ) -> Result<Self> {
         let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
         let cancellation = Cancellation::default();
@@ -110,6 +114,7 @@ impl TimestampOracle {
             options,
             timeout,
             cancellation.clone(),
+            order,
         ));
         Ok(Self {
             inner: Arc::new(OracleInner {
@@ -132,6 +137,7 @@ impl TimestampOracle {
             Transport::Pd(pd_client.clone()),
             Arc::new(super::opt::Options::new()),
             timeout,
+            TimestampTracker::default(),
         )
     }
 
@@ -180,6 +186,7 @@ async fn run_tso(
     options: Arc<super::opt::Options>,
     timeout: Duration,
     cancellation: Cancellation,
+    order: TimestampTracker,
 ) -> Result<()> {
     let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
     let watcher = Watcher::new(&cancellation, DEADLINE_CAPACITY, "tso");
@@ -191,6 +198,7 @@ async fn run_tso(
         options,
         timeout,
         cancellation.clone(),
+        order,
     );
     let result = tokio::select! {
         _ = cancellation.cancelled() => Err(Error::ContextCanceled),
@@ -224,12 +232,17 @@ async fn run_discovered(
     pending: Arc<Mutex<VecDeque<RequestGroup>>>,
     forwarding: super::service_discovery::TsoForwarding,
 ) -> Result<()> {
-    use super::service_discovery::{pick_stream_route, TsoStream};
-    let mut streams = std::collections::HashMap::<String, TsoStream>::new();
+    use super::service_discovery::{pick_stream_route, TsoStreamSet};
+    let mut streams = TsoStreamSet::default();
     tokio::pin!(requests);
     loop {
         let snapshot = routes.borrow_and_update().clone();
-        streams.retain(|_, stream| snapshot.iter().any(|(route, _)| route == &stream.route));
+        streams.retain_routes(
+            &snapshot
+                .iter()
+                .map(|(route, _)| route.clone())
+                .collect::<Vec<_>>(),
+        );
         let request = tokio::select! {
             biased;
             changed = routes.changed() => { if changed.is_err() { return Err(Error::ContextCanceled); } continue; },
@@ -250,17 +263,7 @@ async fn run_discovered(
             .unwrap()
             .1
             .clone();
-        let exchange = async {
-            if let Some(stream) = streams.get_mut(&endpoint) {
-                stream.request(request).await
-            } else {
-                let (stream, response) =
-                    TsoStream::open_and_request(route.clone(), channel, request, &forwarding)
-                        .await?;
-                streams.insert(endpoint.clone(), stream);
-                Ok(response)
-            }
-        };
+        let exchange = streams.request(route.clone(), channel, request, &forwarding);
         let response = {
             tokio::pin!(exchange);
             loop {
@@ -295,6 +298,8 @@ struct RequestGroup {
     count: u32,
     requests: RequestBatch,
     done: DeadlineDone,
+    order: TimestampTracker,
+    before_request: Option<TimestampParts>,
 }
 
 // Go keeps each in-flight controller in its batchBufferPool until completion.
@@ -366,6 +371,7 @@ fn request_stream(
         Arc::new(super::opt::Options::new()),
         timeout,
         cancellation,
+        TimestampTracker::default(),
     )
 }
 
@@ -377,6 +383,7 @@ fn request_stream_with_options(
     options: Arc<super::opt::Options>,
     timeout: Duration,
     cancellation: Cancellation,
+    order: TimestampTracker,
 ) -> impl Stream<Item = TsoRequest> + Send + 'static {
     let pending_capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
     let batch_pool = Arc::new(StdMutex::new(Vec::new()));
@@ -386,6 +393,7 @@ fn request_stream_with_options(
         let batch_pool = batch_pool.clone();
         let watcher = watcher.clone();
         let options = options.clone();
+        let order = order.clone();
         let cancellation = cancellation.clone();
         async move {
             let prepare = async {
@@ -418,6 +426,8 @@ fn request_stream_with_options(
                     requests,
                     done,
                     _permit: permit,
+                    before_request: order.snapshot(),
+                    order,
                 });
                 Some(TsoRequest {
                     header: Some(RequestHeader {
@@ -446,27 +456,28 @@ fn allocate_timestamps(
         mut requests,
         done,
         _permit,
+        order,
+        before_request,
     } = pending_requests
         .pop_front()
         .ok_or_else(|| internal_err!("PD gives more TsoResponse than expected"))?;
     // Go completes the deadline on both successful and failed batch callbacks.
     done.complete();
-    let tail_ts = resp
-        .timestamp
-        .as_ref()
-        .ok_or_else(|| internal_err!("No timestamp in TsoResponse"))?;
-    if count != resp.count {
-        return Err(super::errs::ERR_TSO_LENGTH.error().with_stack().into());
-    }
+    let batch = TsoBatch::from_response(resp, count).map_err(|error| {
+        if error.kind == "tso_count_mismatch" {
+            Error::from(super::errs::ERR_TSO_LENGTH.error().with_stack())
+        } else {
+            internal_err!("{}: {}", error.kind, error.message)
+        }
+    })?;
+    order
+        .accept(batch, before_request)
+        .map_err(|error| internal_err!("{}: {}", error.kind, error.message))?;
     // Go doneCollectedRequests returns the token before request callbacks.
     drop(_permit);
     requests.finish_collected_requests(
         Some(&mut |index, request, _| {
-            let ts = Timestamp {
-                physical: tail_ts.physical,
-                logical: tail_ts.logical - (i64::from(resp.count) - 1 - index as i64),
-                suffix_bits: tail_ts.suffix_bits,
-            };
+            let ts = batch.timestamp(index as u32);
             let _ = request.send(ts);
         }),
         None,

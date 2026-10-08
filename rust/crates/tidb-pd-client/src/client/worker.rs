@@ -20,16 +20,17 @@
 //! and holds the retained TSO stream (`tso_client.go`) so a timestamp costs one
 //! stream round trip rather than one connection.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, RwLock};
 use std::time::{Duration, Instant};
+use tikv_client::pd_service_discovery::TsoStreamSet;
 
 use tidb_proto::pdpb;
 use tokio::sync::watch;
 
 use crate::tso::{
-    remaining as remaining_tso_time, retry_delay, timeout_error, RetainedTsoStream, TimestampParts,
-    TsoBatch,
+    batch_error, remaining as remaining_tso_time, request_batch, retry_delay, timeout_error,
+    TimestampTracker, TsoBatch,
 };
 
 /// Upper bound on waiters merged into one PD Tso round trip.
@@ -123,8 +124,8 @@ pub(super) fn run_worker(
     }
     let mut discovery_worker =
         DiscoveryWorker::start(&runtime, &clients, timeout, state.clone(), shutdown.clone());
-    let mut tso_stream = HashMap::<String, RetainedTsoStream>::new();
-    let mut last_timestamp = None;
+    let mut tso_stream = TsoStreamSet::default();
+    let last_timestamp = TimestampTracker::default();
     // Non-TSO commands displaced while draining the channel for TSO waiters.
     let mut deferred: VecDeque<WorkerCommand> = VecDeque::new();
     let mut collector = tikv_client::pd_batch::Controller::new(
@@ -158,7 +159,7 @@ pub(super) fn run_worker(
                         }
                         if let Ok(discovery) = clients.tso_discovery.try_lock() {
                             if let Some((routes, _, _, _, _)) = &discovery.route {
-                                tso_stream.retain(|_, stream| routes.contains(stream.route()));
+                                tso_stream.retain_routes(routes);
                             }
                         }
                         continue;
@@ -471,13 +472,13 @@ pub(super) fn run_worker(
                     },
                     &state,
                     &mut tso_stream,
-                    &mut last_timestamp,
+                    &last_timestamp,
                 );
                 collector.finish_collected_requests(
                     Some(&mut |index, (_, reply), _| {
-                        let one = result
-                            .clone()
-                            .and_then(|batch| batch.split(index as u32).compose());
+                        let one = result.clone().and_then(|batch| {
+                            batch.split(index as u32).compose().map_err(batch_error)
+                        });
                         let _ = reply.send(one);
                     }),
                     None,
@@ -578,8 +579,8 @@ pub(super) fn get_timestamps_with_retry(
     control: RpcControl<'_>,
     spec: TsoBatchSpec,
     state: &Arc<RwLock<PdSharedState>>,
-    stream: &mut HashMap<String, RetainedTsoStream>,
-    last_timestamp: &mut Option<TimestampParts>,
+    stream: &mut TsoStreamSet,
+    last_timestamp: &TimestampTracker,
 ) -> Result<TsoBatch, PdClientError> {
     let TsoBatchSpec { deadline, count } = spec;
     // Go's dispatcher retries EVERY processRequest failure until the context
@@ -601,7 +602,7 @@ pub(super) fn get_timestamps_with_retry(
                 control.shutdown,
                 stream.is_empty(),
             )?;
-            stream.retain(|_, stream| routes.contains(stream.route()));
+            stream.retain_routes(&routes);
             let route = tikv_client::pd_service_discovery::pick_stream_route(&routes)
                 .ok_or_else(|| PdClientError::Transport {
                     operation: PdOperation::Tso,
@@ -612,44 +613,26 @@ pub(super) fn get_timestamps_with_retry(
                 .clone();
             let endpoint = route.endpoint.clone();
             selected_endpoint = Some(endpoint.clone());
-            let batch = if let Some(retained) = stream.get_mut(&endpoint) {
-                match retained.request(
-                    runtime,
-                    snapshot.members.cluster_id,
-                    deadline,
-                    control.shutdown,
-                    &clients.tso_routes,
-                    count,
-                ) {
-                    Ok(batch) => batch,
-                    Err(error) => {
-                        stream.remove(&endpoint);
-                        return Err(error);
-                    }
-                }
-            } else {
-                let channel = {
-                    let _guard = runtime.enter();
-                    clients.channel(&endpoint)?
-                };
-                let (opened, timestamp) = RetainedTsoStream::open_and_request(
-                    runtime,
-                    channel,
-                    route,
-                    &clients.tso_forwarding,
-                    snapshot.members.cluster_id,
-                    deadline,
-                    control.shutdown,
-                    &clients.tso_routes,
-                    count,
-                )?;
-                stream.insert(endpoint, opened);
-                timestamp
+            let channel = {
+                let _guard = runtime.enter();
+                clients.channel(&endpoint)?
             };
-            // The first timestamp of the batch must still advance past the
-            // last one handed out; the rest advance by construction.
-            batch.split(0).ensure_after(*last_timestamp)?;
-            *last_timestamp = Some(batch.last());
+            let before_request = last_timestamp.snapshot();
+            let batch = request_batch(
+                stream,
+                runtime,
+                channel,
+                route,
+                &clients.tso_forwarding,
+                snapshot.members.cluster_id,
+                deadline,
+                control.shutdown,
+                &clients.tso_routes,
+                count,
+            )?;
+            last_timestamp
+                .accept(batch, before_request)
+                .map_err(batch_error)?;
             Ok(batch)
         })();
 

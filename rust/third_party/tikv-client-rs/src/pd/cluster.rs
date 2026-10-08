@@ -43,6 +43,7 @@ pub struct Cluster {
     // One timestamp dispatcher owns every admitted wire stream. Its lifetime
     // belong to the same manager used by Go TSO, independently of metadata RPCs.
     tso: Manager<TimestampOracle>,
+    tso_order: super::tso_batch::TimestampTracker,
     // Keep joins owned until completion, including when a reconnect/close future
     // is cancelled after publication. Requests never own stream retirement.
     retired_tso: Vec<Arc<ConnectionCtx<TimestampOracle>>>,
@@ -648,6 +649,7 @@ impl Cluster {
                 discovery.forwarding(),
                 self.connection.options.clone(),
                 timeout,
+                self.tso_order.clone(),
             )?;
             // Go's dispatcher releases canceled contexts before reconnecting.
             // A canceled same-URL entry must not reject its replacement.
@@ -714,9 +716,11 @@ fn tso_connection(
     forwarding: super::service_discovery::TsoForwarding,
     options: Arc<super::opt::Options>,
     timeout: Duration,
+    order: super::tso_batch::TimestampTracker,
 ) -> Result<Arc<ConnectionCtx<TimestampOracle>>> {
     let url = route.endpoint.clone();
-    let oracle = TimestampOracle::discovered(cluster_id, routes, forwarding, options, timeout)?;
+    let oracle =
+        TimestampOracle::discovered(cluster_id, routes, forwarding, options, timeout, order)?;
     let ctx = oracle.cancellation();
     let cancel = ctx.clone();
     Ok(Arc::new(ConnectionCtx::new(
@@ -825,6 +829,7 @@ impl Connection {
             .stream_routes(&discovery, &route, &members, timeout)
             .await?;
         let tso = Manager::new();
+        let tso_order = super::tso_batch::TimestampTracker::default();
         tso.store(
             &tso_connection(
                 id,
@@ -833,6 +838,7 @@ impl Connection {
                 discovery.forwarding(),
                 self.options.clone(),
                 timeout,
+                tso_order.clone(),
             )?,
             false,
         );
@@ -847,6 +853,7 @@ impl Connection {
             discovery,
             route,
             tso,
+            tso_order,
             retired_tso: Vec::new(),
         };
         cluster.update_region_members();
