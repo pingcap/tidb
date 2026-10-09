@@ -3339,10 +3339,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     // column the select list does not project becomes an
                     // auxiliary field (GO :2841 resolveFromPlan) -- that is
                     // what widens the schema for q99's order-by substr.
-                    if find_field_name(source_names, path).is_none() {
+                    let Some(source) = find_field_name(source_names, path) else {
                         return true;
-                    }
-                    if let Some(index) = Self::find_in_select_fields(node, &fields[..old_len]) {
+                    };
+                    // Go `resolveFromPlan`: reuse a select field only when its
+                    // column `colMatch`es the RESOLVED source name -- never an
+                    // alias spelled like it (`select b as a ... order by a+0`
+                    // sorts by the source `a`), and never a same-named column
+                    // of another table (`order by r.id` over `select l.id,
+                    // r.id` is `r.id`).
+                    if let Some(index) =
+                        Self::find_column_field(&source_names[source], &fields[..old_len])
+                    {
                         marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
                         return true;
                     }
@@ -3412,33 +3420,61 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         resolved
     }
 
+    /// Go `resolveFromSelectFields` over `SelectField.Match`
+    /// (`pkg/parser/ast/dml.go:847`), skipping auxiliary fields: a
+    /// table-qualified column never matches a select field -- it resolves from
+    /// the table source directly; an unqualified one matches a field's alias
+    /// when the field has one, otherwise a column field of that name, or a
+    /// function field whose text is that name (Go issue 7331).
     fn find_in_select_fields(expr: &Expr, fields: &[ProjectionField]) -> Option<usize> {
-        // GO matches ONLY ColumnNameExprs against the select list
-        // (`resolveFromSelectFields`, logical_plan_builder.go:2610): an
-        // expression order-by term never reuses a select field by textual
-        // equality -- it stays a sort-item expression whose operands resolve
-        // to projection columns or appended auxiliary fields (q99 trims,
-        // q89 does not).
         let Expr::Column(path) = expr else {
             return None;
         };
-        let name = path.last()?;
-        // 1. the alias.
-        if let Some(index) = fields.iter().position(|field| {
-            field
-                .alias
-                .as_deref()
-                .is_some_and(|a| a.eq_ignore_ascii_case(name))
-        }) {
-            return Some(index);
-        }
-        // 2. a select-list field that IS that column. GO's
-        // resolveFromSelectFields matches the field's ColumnExpr regardless of
-        // its AsName -- `select i_brand_id brand_id ... order by i_brand_id`
-        // (q19/q71) must bind the pass-through field, not append a duplicate
-        // auxiliary column.
+        let [name] = path.as_slice() else {
+            return None;
+        };
         fields.iter().position(|field| {
-            matches!(&field.expr, Expr::Column(p) if p.last().is_some_and(|c| c.eq_ignore_ascii_case(name)))
+            if field.hidden {
+                return false;
+            }
+            match field.alias.as_deref() {
+                Some(alias) => alias.eq_ignore_ascii_case(name),
+                None => match &field.expr {
+                    Expr::Column(column) => column
+                        .last()
+                        .is_some_and(|column| column.eq_ignore_ascii_case(name)),
+                    Expr::Func { .. } => field
+                        .text
+                        .as_deref()
+                        .is_some_and(|text| text.eq_ignore_ascii_case(name)),
+                    _ => false,
+                },
+            }
+        })
+    }
+
+    /// Go `resolveFromPlan`'s select-field reuse: a field whose expression is
+    /// a column that `colMatch`es the resolved source name -- each qualifier
+    /// the field spells must equal the source's, and the names must agree. A
+    /// pass-through field keeps its alias (`select i_brand_id brand_id ...
+    /// order by i_brand_id`, q19/q71) and is still reused rather than
+    /// duplicated by an auxiliary column.
+    fn find_column_field(source: &FieldName, fields: &[ProjectionField]) -> Option<usize> {
+        fields.iter().position(|field| {
+            let Expr::Column(path) = &field.expr else {
+                return false;
+            };
+            let (database, table, column) = match path.as_slice() {
+                [column] => (None, None, column),
+                [table, column] => (None, Some(table), column),
+                [database, table, column] => (Some(database), Some(table), column),
+                _ => return false,
+            };
+            column.eq_ignore_ascii_case(&source.names.column.lower)
+                && table.is_none_or(|table| table.eq_ignore_ascii_case(&source.names.table.lower))
+                && database.is_none_or(|database| {
+                    database.eq_ignore_ascii_case(&source.names.database.lower)
+                })
         })
     }
 
