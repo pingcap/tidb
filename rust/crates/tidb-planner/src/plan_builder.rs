@@ -609,6 +609,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     partition_processor_enabled: bool,
     /// Go `SessionVars.EnableAdvancedJoinHint` (`tidb_opt_advanced_join_hint`).
     pub advanced_join_hint: bool,
+    /// Go `SessionVars.PlannerSelectBlockAsName`: each derived table's alias
+    /// by its query block, which join-hint aliases read.
+    pub(crate) select_block_as_names: Rc<RefCell<std::collections::BTreeMap<i32, String>>>,
     /// Go `isSampling`: disables logical rewrites for TABLESAMPLE queries.
     pub is_sampling: bool,
     /// Go `curClause`.
@@ -1311,6 +1314,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             opt_flag: 0,
             partition_processor_enabled: true,
             advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
+            select_block_as_names: Rc::default(),
             is_sampling: false,
             cur_clause: ClauseCode::Unknow,
             qb_offset: Vec::new(),
@@ -1510,6 +1514,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             select_offset,
             self.source.current_database(),
             self.advanced_join_hint,
+            Rc::clone(&self.select_block_as_names),
         ));
         let current_index_merge_hints = index_merge_hints_from_plan(&current_plan_hints.borrow());
         let (current_index_hints, current_no_lookup_hints) =

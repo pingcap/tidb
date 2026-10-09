@@ -775,3 +775,35 @@ fn a_partitioned_inner_table_cannot_keep_order_for_an_index_join() {
     let explain = plan(&mut session, &format!("explain format='brief' {}", query("q")));
     assert!(explain.contains("IndexJoin"), "{explain}");
 }
+
+/// Go `ExtractTableAlias` gives an alias its own plan's query block -- the
+/// subquery's for `t2` below -- and its parent's only for a named derived
+/// table (`PlannerSelectBlockAsName`). Every alias took the join's block, so
+/// `TIDB_INLJ(t2@sel_2)` never matched the semi join's inner side.
+#[test]
+fn a_query_block_qualified_join_hint_matches_the_subquery_table() {
+    let mut session = Session::new();
+    for sql in [
+        "set @@tidb_opt_insubq_to_join_and_agg = 0",
+        "create table t1 (a int not null, b int not null, key a(a))",
+        "create table t2 (a int not null, b int not null, key a(a))",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let explain = plan(
+        &mut session,
+        "explain format='brief' select /*+ TIDB_INLJ(t2@sel_2) */ * from t1 where t1.a in (select t2.a from t2)",
+    );
+    assert!(
+        explain.contains("IndexJoin") && explain.contains("decided by [eq(test.t2.a, test.t1.a)]"),
+        "{explain}"
+    );
+    assert_eq!(row_text(session.run("show warnings")), Vec::<Vec<String>>::new());
+    // A named derived table belongs to the block around it.
+    let explain = plan(
+        &mut session,
+        "explain format='brief' select /*+ INL_JOIN(dt) */ * from t1 join (select a from t2) dt on t1.a = dt.a",
+    );
+    assert!(explain.contains("IndexJoin"), "{explain}");
+    assert_eq!(row_text(session.run("show warnings")), Vec::<Vec<String>>::new());
+}

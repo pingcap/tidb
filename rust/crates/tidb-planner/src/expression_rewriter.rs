@@ -1077,8 +1077,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             crate::plan_builder::from::set_preferred_join_type_and_order(
                 &mut join,
                 &self.env.join_hints,
-                &left_names,
-                &right_names,
+                (&left_names, outer.query_block_offset()),
+                (&right_names, inner.query_block_offset()),
                 self.env.ctx,
             );
         }
@@ -1929,8 +1929,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             crate::plan_builder::from::set_preferred_join_type_and_order(
                 &mut join,
                 &self.env.join_hints,
-                &left_names,
-                &right_names,
+                (&left_names, outer.query_block_offset()),
+                (&right_names, agg.query_block_offset()),
                 self.env.ctx,
             );
         }

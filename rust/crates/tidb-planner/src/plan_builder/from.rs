@@ -102,9 +102,6 @@
 //!   UPDATE and DELETE restore the merged child schema instead of the
 //!   coalesced one. With no DML builder the guard is constant-false, so the
 //!   coalesced schema always stands — which is the SELECT behaviour Go has.
-//! * `PlannerSelectBlockAsName` (`:551`) — DROPPED. It exists so
-//!   `leading()` hint GENERATION can name a derived table; nothing in this
-//!   crate generates hints.
 //! * `b.ctx.GetSessionVars().StmtCtx.ViewDepth` — DROPPED in favour of the
 //!   name-keyed stack, which is the guard that actually refuses recursion.
 //!   The depth counter's only other reader is the `ErrViewNoExplain`
@@ -209,6 +206,9 @@ pub struct HintedTable {
     pub db_name: String,
     /// Go `HintedTable.TblName.L`.
     pub table_name: String,
+    /// Go `HintedTable.SelectOffset`: the plan's own query block, or its
+    /// parent's when the block is a named derived table.
+    pub select_offset: i32,
 }
 
 /// Go `hint.PlanHints`' join half for the current query block.
@@ -226,6 +226,9 @@ pub struct JoinHints {
     pub(crate) current_db: String,
     /// Go `SessionVars.EnableAdvancedJoinHint`.
     pub(crate) advanced_join_hint: bool,
+    /// Go `SessionVars.PlannerSelectBlockAsName`: each derived table's
+    /// alias by its query block, shared with the builder that records them.
+    pub(crate) block_as_names: Rc<RefCell<BTreeMap<i32, String>>>,
 }
 
 impl JoinHints {
@@ -237,6 +240,7 @@ impl JoinHints {
         select_offset: i32,
         current_db: &str,
         advanced_join_hint: bool,
+        block_as_names: Rc<RefCell<BTreeMap<i32, String>>>,
     ) -> Self {
         let plan = canonical.borrow();
         let mut hints = Self::default();
@@ -278,7 +282,26 @@ impl JoinHints {
         hints.select_offset = select_offset;
         hints.current_db = current_db.to_ascii_lowercase();
         hints.advanced_join_hint = advanced_join_hint;
+        hints.block_as_names = block_as_names;
         hints
+    }
+
+    /// Go `ExtractTableAlias`'s query-block choice: "For sub-queries like
+    /// `(select * from t) t1`, t1 should belong to its surrounding select
+    /// block."
+    fn alias_select_offset(&self, plan_offset: i32) -> i32 {
+        if plan_offset != self.select_offset
+            && plan_offset >= 0
+            && self
+                .block_as_names
+                .borrow()
+                .get(&plan_offset)
+                .is_some_and(|name| !name.is_empty())
+        {
+            self.select_offset
+        } else {
+            plan_offset
+        }
     }
 
     /// Go `ExtractTableAlias`'s database fallback: an alias whose names carry
@@ -302,7 +325,7 @@ impl JoinHints {
             let table = tidb_hint::HintedTable {
                 database_name: self.alias_database(alias),
                 table_name: alias.table_name.clone(),
-                select_offset: self.select_offset,
+                select_offset: alias.select_offset,
                 ..tidb_hint::HintedTable::default()
             };
             let tables = [Some(&table)];
@@ -386,6 +409,7 @@ pub fn extract_table_alias(names: &[FieldName]) -> Option<HintedTable> {
     Some(HintedTable {
         db_name: first.names.database.lower.clone(),
         table_name: first.names.table.lower.clone(),
+        select_offset: 0,
     })
 }
 
@@ -398,14 +422,20 @@ pub fn extract_table_alias(names: &[FieldName]) -> Option<HintedTable> {
 pub fn set_preferred_join_type_and_order(
     join: &mut LogicalJoin,
     hints: &Rc<JoinHints>,
-    left_names: &[FieldName],
-    right_names: &[FieldName],
+    (left_names, left_offset): (&[FieldName], i32),
+    (right_names, right_offset): (&[FieldName], i32),
     ctx: &dyn tidb_expr::Columns,
 ) {
     use join_hint_flags as f;
 
-    let lhs = extract_table_alias(left_names);
-    let rhs = extract_table_alias(right_names);
+    let lhs = extract_table_alias(left_names).map(|alias| HintedTable {
+        select_offset: hints.alias_select_offset(left_offset),
+        ..alias
+    });
+    let rhs = extract_table_alias(right_names).map(|alias| HintedTable {
+        select_offset: hints.alias_select_offset(right_offset),
+        ..alias
+    });
     // Every arm is Go's: the symmetric hints set the same bit on the join and
     // on the side that named it; the index-join hints set the bit naming the
     // OTHER side as inner.
@@ -522,7 +552,7 @@ pub fn set_preferred_join_type_and_order(
                     .map(|alias| tidb_hint::HintedTable {
                         database_name: hints.alias_database(alias),
                         table_name: alias.table_name.clone(),
-                        select_offset: hints.select_offset,
+                        select_offset: alias.select_offset,
                         ..tidb_hint::HintedTable::default()
                     })
                     .collect::<Vec<_>>();
@@ -905,6 +935,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         }
 
+        // `:556` "TableName is not a select block": a derived table's block
+        // records its alias, which join-hint aliases read.
+        if let Some(first) = names.first() {
+            self.select_block_as_names
+                .borrow_mut()
+                .insert(plan.query_block_offset(), first.names.table.lower.clone());
+        }
+
         // `:530` The `AS dt(c1, c2, ...)` column list, harvested from
         // `driver/from.rs:1484` `rename_derived_columns` (whose
         // `ViewWrongList` error is this same one).
@@ -1095,11 +1133,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:900` "Set preferred join algorithm if some join hints is specified
         // by user."
         let join_hints = self.join_hints.clone();
+        let child_offset =
+            |index: usize, plan: &LogicalJoin| plan.base.children()[index].query_block_offset();
+        let (left_offset, right_offset) = (child_offset(0, &join_plan), child_offset(1, &join_plan));
         set_preferred_join_type_and_order(
             &mut join_plan,
             &join_hints,
-            &left_names,
-            &right_names,
+            (&left_names, left_offset),
+            (&right_names, right_offset),
             self.ctx,
         );
 
@@ -1278,11 +1319,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         })?;
 
         let join_hints = self.join_hints.clone();
+        let left_offset = apply.join.base.children()[0].query_block_offset();
+        let right_offset = apply.join.base.children()[1].query_block_offset();
         set_preferred_join_type_and_order(
             &mut apply.join,
             &join_hints,
-            &left_names,
-            &right_names,
+            (&left_names, left_offset),
+            (&right_names, right_offset),
             self.ctx,
         );
         Ok(LogicalPlan::Apply(apply))
@@ -1758,11 +1801,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `QBHintHandler` walk numbered from 1, so the body's blocks restart
         // the numbering its hints were resolved against.
         let outer_next_qb_offset = std::mem::replace(&mut self.next_qb_offset, 0);
+        // Go gives the body a fresh `PlannerSelectBlockAsName`.
+        let outer_block_as_names = std::mem::take(&mut self.select_block_as_names);
         let built = match query.as_ref() {
             QueryStmt::Select(select) => self.build_select(select).map(|(plan, _)| plan),
             QueryStmt::SetOpr(set_operation) => self.build_set_opr(set_operation),
         };
         self.next_qb_offset = outer_next_qb_offset;
+        self.select_block_as_names = outer_block_as_names;
         self.flush_hint_build_warnings();
         self.qb_hint_handler = outer_hint_handler;
         self.qb_hint_state = outer_hint_state;

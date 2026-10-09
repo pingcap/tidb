@@ -966,10 +966,16 @@ mod tests {
         });
         let first = controller.reserve_lookup(1).unwrap();
         let started = Instant::now();
+        // The released window admits whichever waiter wakes first, so take
+        // the reservations in arrival order rather than spawn order.
+        let (admitted, reservations) = std::sync::mpsc::channel();
         let mut threads = Vec::new();
         for _ in 0..2 {
             let controller = Arc::clone(&controller);
-            threads.push(thread::spawn(move || controller.reserve_lookup(1)));
+            let admitted = admitted.clone();
+            threads.push(thread::spawn(move || {
+                admitted.send(controller.reserve_lookup(1)).unwrap();
+            }));
         }
         let deadline = Instant::now() + Duration::from_secs(1);
         while controller.lock().lookup_admission_blocked.waiters < 2 {
@@ -980,10 +986,13 @@ mod tests {
             thread::yield_now();
         }
         controller.abort_lookup(first);
-        let one = threads.remove(0).join().unwrap().unwrap();
+        let one = reservations.recv().unwrap().unwrap();
         controller.abort_lookup(one);
-        let two = threads.remove(0).join().unwrap().unwrap();
+        let two = reservations.recv().unwrap().unwrap();
         controller.abort_lookup(two);
+        for thread in threads {
+            thread.join().unwrap();
+        }
         let snapshot = controller.snapshot();
         assert!(snapshot.lookup_admission_blocked > Duration::ZERO);
         assert!(snapshot.lookup_admission_blocked <= started.elapsed() + Duration::from_millis(50));
