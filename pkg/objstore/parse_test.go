@@ -596,6 +596,30 @@ func TestS3DefaultForceStylePath(t *testing.T) {
 	require.True(t, s.GetS3().ForcePathStyle)
 }
 
+func TestBackendOptionsRedacted(t *testing.T) {
+	opts := BackendOptions{}
+	opts.S3.AccessKey = "AKID"
+	opts.S3.SecretAccessKey = "SKEY"
+	opts.S3.SessionToken = "TOKEN"
+	opts.S3.Region = "us-east-1"
+	opts.Azblob.AccountKey = "AZKEY"
+	opts.Azblob.SASToken = "SAS"
+	opts.Azblob.EncryptionKey = "ENC"
+	opts.Azblob.AccountName = "account"
+
+	redacted := opts.Redacted()
+	require.Equal(t, RedactedValue, redacted.S3.AccessKey)
+	require.Equal(t, RedactedValue, redacted.S3.SecretAccessKey)
+	require.Equal(t, RedactedValue, redacted.S3.SessionToken)
+	require.Equal(t, RedactedValue, redacted.Azblob.AccountKey)
+	require.Equal(t, RedactedValue, redacted.Azblob.SASToken)
+	require.Equal(t, RedactedValue, redacted.Azblob.EncryptionKey)
+	require.Equal(t, "us-east-1", redacted.S3.Region)
+	require.Equal(t, "account", redacted.Azblob.AccountName)
+	require.Equal(t, "AKID", opts.S3.AccessKey)
+	require.Equal(t, BackendOptions{}.Redacted(), BackendOptions{})
+}
+
 func TestRedactURL(t *testing.T) {
 	cases := []struct {
 		raw      string

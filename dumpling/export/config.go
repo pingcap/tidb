@@ -299,18 +299,7 @@ func DefaultConfig() *Config {
 func (conf *Config) redacted() *Config {
 	c := *conf
 	c.OutputDirPath = objstore.RedactURL(c.OutputDirPath)
-	const mask = "xxxxxx"
-	maskIfSet := func(s *string) {
-		if *s != "" {
-			*s = mask
-		}
-	}
-	maskIfSet(&c.S3.AccessKey)
-	maskIfSet(&c.S3.SecretAccessKey)
-	maskIfSet(&c.S3.SessionToken)
-	maskIfSet(&c.Azblob.AccountKey)
-	maskIfSet(&c.Azblob.SASToken)
-	maskIfSet(&c.Azblob.EncryptionKey)
+	c.BackendOptions = c.BackendOptions.Redacted()
 	return &c
 }
 

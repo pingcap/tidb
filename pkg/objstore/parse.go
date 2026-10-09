@@ -36,6 +36,27 @@ type BackendOptions struct {
 	Azblob AzblobBackendOptions    `json:"azblob" toml:"azblob"`
 }
 
+// RedactedValue replaces a credential in redacted output. It is the same value
+// as the one ast.RedactURL uses.
+const RedactedValue = "xxxxxx"
+
+// Redacted returns a copy of the options with the credentials masked, so that
+// the options can be logged. The receiver is not modified.
+func (o BackendOptions) Redacted() BackendOptions {
+	mask := func(s *string) {
+		if *s != "" {
+			*s = RedactedValue
+		}
+	}
+	mask(&o.S3.AccessKey)
+	mask(&o.S3.SecretAccessKey)
+	mask(&o.S3.SessionToken)
+	mask(&o.Azblob.AccountKey)
+	mask(&o.Azblob.SASToken)
+	mask(&o.Azblob.EncryptionKey)
+	return o
+}
+
 // InvalidURLPlaceholder replaces a storage URL that cannot be parsed, because
 // such a URL cannot be reliably masked.
 const InvalidURLPlaceholder = "(invalid storage URL)"
