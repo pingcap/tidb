@@ -1637,8 +1637,13 @@ func restoreStream(
 		if restoreGCFunc, oldGCRatio, err = DisableGC(g, mgr.GetStorage()); err != nil {
 			return errors.Trace(err)
 		}
-		restoreRocksDBMaxBackgroundJobsFunc, oldRocksDBMaxBackgroundJobs, err = KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
-		return errors.Trace(err)
+		if cfg.RetainLatestMVCCVersion {
+			restoreRocksDBMaxBackgroundJobsFunc, oldRocksDBMaxBackgroundJobs, err = KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
 	}); err != nil {
 		return errors.Trace(err)
 	}
@@ -1657,17 +1662,22 @@ func restoreStream(
 			log.Warn("the original gc-ratio is negative, reset by default value 1.1", zap.String("old-gc-ratio", oldGCRatio))
 			oldGCRatio = utils.DefaultGcRatioVal
 		}
-		log.Info("start to restore tikv config",
-			zap.String("gc-ratio", oldGCRatio),
-			zap.String("max-background-jobs", oldRocksDBMaxBackgroundJobs))
+		restoreFields := []zap.Field{zap.String("gc-ratio", oldGCRatio)}
+		if oldRocksDBMaxBackgroundJobs != "" {
+			restoreFields = append(restoreFields, zap.String("max-background-jobs", oldRocksDBMaxBackgroundJobs))
+		}
+		log.Info("start to restore tikv config", restoreFields...)
 		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
 			if err := restoreGCFunc(oldGCRatio); err != nil {
 				log.Error("failed to restore gc", zap.Error(err))
 				return errors.Trace(err)
 			}
-			if err := restoreRocksDBMaxBackgroundJobsFunc(oldRocksDBMaxBackgroundJobs); err != nil {
-				log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
-				return errors.Trace(err)
+			// Only restore if we lowered it for retain-latest-mvcc-version.
+			if restoreRocksDBMaxBackgroundJobsFunc != nil {
+				if err := restoreRocksDBMaxBackgroundJobsFunc(oldRocksDBMaxBackgroundJobs); err != nil {
+					log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
+					return errors.Trace(err)
+				}
 			}
 			return nil
 		})
