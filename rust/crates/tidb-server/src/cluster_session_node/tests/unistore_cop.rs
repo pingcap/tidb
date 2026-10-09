@@ -10439,9 +10439,15 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
     );
     rows(&mut session, "SET autocommit=1");
     rows(&mut session, "SET tidb_snapshot='' ");
+    // A one-second staleness reads at @@timestamp - 1s, which Go's
+    // `GoTimeToTS` floors to the millisecond, and @@timestamp reaches the
+    // clock through a float64 (`math.Modf`): `<ts_ms>.925` arrives as
+    // .924999952s. A nominal 1ms margin can therefore floor to `ts`'s own
+    // millisecond, before the INSERT that committed in that millisecond.
+    // Two milliseconds always clear it.
     rows(
         &mut session,
-        &format!("SET timestamp={:.3}", (ts >> 18) as f64 / 1000.0 + 1.001),
+        &format!("SET timestamp={:.3}", (ts >> 18) as f64 / 1000.0 + 1.002),
     );
     rows(&mut session, "SET tidb_read_staleness=-1");
     assert_eq!(
