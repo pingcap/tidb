@@ -1013,11 +1013,11 @@ func (m *MydumperRuntime) adjustFilePath() error {
 			return common.ErrInvalidConfig.GenWithStack("`mydumper.data-source-dir` is not set")
 		}
 		if !common.IsDirExists(m.SourceDir) {
-			return common.ErrInvalidConfig.GenWithStack("'%s': `mydumper.data-source-dir` does not exist", objstore.RedactURL(m.SourceDir))
+			return common.ErrInvalidConfig.GenWithStack("'%s': `mydumper.data-source-dir` does not exist", m.SourceDir)
 		}
 		absPath, err := filepath.Abs(m.SourceDir)
 		if err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("covert data-source-dir '%s' to absolute path failed", objstore.RedactURL(m.SourceDir))
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("covert data-source-dir '%s' to absolute path failed", m.SourceDir)
 		}
 		u.Path = filepath.ToSlash(absPath)
 		u.Scheme = "file"
