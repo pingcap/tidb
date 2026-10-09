@@ -198,6 +198,14 @@ pub fn plan_statement(sql: &str) -> Option<PlanStatement> {
             "explain format = 'plan_tree' {explained}"
         )));
     }
+    // FORMAT = 'plan_cache' prints the row tree too, but plans through the
+    // non-prepared plan cache: what it caches and warns is what the
+    // statements after it read, so it runs as written.
+    if name == "plan_cache" {
+        return Some(PlanStatement::RunDefaultExplain(format!(
+            "explain format = 'plan_cache' {explained}"
+        )));
+    }
     Some(PlanStatement::RunDefaultExplain(format!(
         "explain {explained}"
     )))

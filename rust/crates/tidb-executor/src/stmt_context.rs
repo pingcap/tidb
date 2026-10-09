@@ -963,6 +963,13 @@ pub struct StmtContextData {
         Arc<Mutex<HashMap<i64, Option<Arc<crate::access_cost::TableStatistics>>>>>,
     /// Go `StmtCtx.SetSkipPlanCache`'s first reason.
     skip_plan_cache_reason: Arc<Mutex<Option<String>>>,
+    /// Go `PlanCacheTracker.cacheType`: whether a cached plan for this
+    /// statement comes from the non-prepared cache rather than a PREPARE.
+    non_prepared_plan_cache: bool,
+    /// Go `PlanCacheTracker.alwaysWarnSkipCache`: EXPLAIN FORMAT =
+    /// 'plan_cache' reports why the non-prepared cache was skipped.
+    always_warn_skip_plan_cache: bool,
+
     range_fallback: Arc<OnceLock<StatementRangeFallback>>,
     /// Go `StmtCtx.StatsLoad`: requests are started by
     /// `CollectPredicateColumnsPoint` and consumed later by
@@ -2188,6 +2195,9 @@ impl StmtContext {
             plan_replayer_capture_enabled: false,
             table_runtime_statistics: Arc::default(),
             skip_plan_cache_reason: Arc::default(),
+            non_prepared_plan_cache: false,
+            always_warn_skip_plan_cache: false,
+
             range_fallback: Arc::default(),
             pending_statistics_load: Arc::default(),
             block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
@@ -2820,12 +2830,35 @@ impl StmtContext {
         })
     }
 
+    /// Marks a statement planned for the non-prepared plan cache, Go's
+    /// `SetCacheType(SessionNonPrepared)`: a skip reason warns only under
+    /// EXPLAIN FORMAT = 'plan_cache' (see
+    /// [`Self::with_always_warn_skip_plan_cache`]).
+    #[must_use]
+    pub fn with_non_prepared_plan_cache(mut self) -> Self {
+        self.non_prepared_plan_cache = true;
+        self
+    }
+
+    /// Go `SetAlwaysWarnSkipCache(true)`, which EXPLAIN FORMAT = 'plan_cache'
+    /// sets so its non-prepared skip reasons warn.
+    #[must_use]
+    pub fn with_always_warn_skip_plan_cache(mut self) -> Self {
+        self.always_warn_skip_plan_cache = true;
+        self
+    }
+
     pub(crate) fn start_prepared_range_tracking(&self) {
         let state = self.statement_range_fallback();
         if !state.cache_started.swap(true, Ordering::AcqRel) {
+            state.tracker.set_cache_type(if self.non_prepared_plan_cache {
+                tidb_util::context::PlanCacheType::SessionNonPrepared
+            } else {
+                tidb_util::context::PlanCacheType::SessionPrepared
+            });
             state
                 .tracker
-                .set_cache_type(tidb_util::context::PlanCacheType::SessionPrepared);
+                .set_always_warn_skip_cache(self.always_warn_skip_plan_cache);
             state.tracker.set_force_plan_cache(
                 self.optimizer_fix_control
                     .get_bool_with_default(tidb_planner::fix_control::FIX_49736, false),
@@ -2838,14 +2871,22 @@ impl StmtContext {
         &self.statement_range_fallback().handler
     }
 
-    /// Go `StmtCtx.SetSkipPlanCache`.
+    /// Go `StmtCtx.SetSkipPlanCache`: the first reason is kept, and while
+    /// the statement is planned for a plan cache the tracker refuses the
+    /// cache and warns as Go's does ("skip prepared plan-cache: <reason>").
     pub fn set_skip_plan_cache(&self, reason: impl Into<String>) {
+        let reason = reason.into();
+        if let Some(state) = self.range_fallback.get() {
+            if state.cache_started.load(Ordering::Acquire) {
+                state.tracker.set_skip_plan_cache(&reason);
+            }
+        }
         let mut current = self
             .skip_plan_cache_reason
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if current.is_none() {
-            *current = Some(reason.into());
+            *current = Some(reason);
         }
     }
 

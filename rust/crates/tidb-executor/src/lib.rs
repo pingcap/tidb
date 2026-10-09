@@ -254,8 +254,8 @@ pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{
     brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt,
     explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt,
-    explain_delete_stmt, explain_insert_stmt, explain_select_stmt, explain_set_opr_stmt,
-    explain_update_stmt, process_plan_info, ExplainFormat,
+    explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt,
+    explain_set_opr_stmt, explain_update_stmt, process_plan_info, ExplainFormat,
 };
 pub use foreign_key::{check_index_needed, find_database_referred, find_table_referred};
 pub use hash_agg::{

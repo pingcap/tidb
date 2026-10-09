@@ -3572,7 +3572,12 @@ pub(crate) fn cached_physical_query_plan(
     if ctx.skip_plan_cache() {
         return Some((physical, false));
     }
-    tidb_planner::physical_plan_cache::plan_cacheable(&physical, cacheability).ok()?;
+    // Go `generateNewPlan`: an uncacheable physical plan still executes, and
+    // `SetSkipPlanCache` says why.
+    if let Err(reason) = tidb_planner::physical_plan_cache::plan_cacheable(&physical, cacheability) {
+        ctx.set_skip_plan_cache(reason);
+        return Some((physical, false));
+    }
     Some((physical, true))
 }
 

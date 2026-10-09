@@ -958,6 +958,15 @@ impl crate::Session {
         if !self.non_prepared_plan_cache_enabled() {
             return None;
         }
+        self.parameterize_non_prepared_select_or_refusal(stmt).ok()
+    }
+
+    /// [`Self::parameterize_non_prepared_select`] with Go
+    /// `NonPreparedPlanCacheableWithCtx`'s refusal reason.
+    pub(crate) fn parameterize_non_prepared_select_or_refusal(
+        &mut self,
+        stmt: &Stmt,
+    ) -> Result<ParameterizedSelect, Refusal> {
         // Go's unsupported counter increments only for checker-walk refusals
         // (cacheable=false after `Accept`); clause-level fast-check refusals
         // return their reason without touching any counter. The
@@ -978,8 +987,11 @@ impl crate::Session {
             value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
             _ => MAX_PARAM_NUM,
         };
-        let catalog = self.catalog.lock().ok()?;
-        match parameterize_select(
+        let catalog = self
+            .catalog
+            .lock()
+            .map_err(|_| Refusal::fast("the catalog is unavailable"))?;
+        parameterize_select(
             stmt,
             &catalog,
             &self.current_db,
@@ -987,18 +999,15 @@ impl crate::Session {
             self.non_prepared_plan_cache_for_dml_enabled(),
             string_collation,
             max_num_param,
-        ) {
-            Ok(parameterized) => Some(parameterized),
-            Err(refusal) => {
-                // Go `NonPreparedPlanCacheableWithCtx`'s unsupported counter:
-                // only checker-walk refusals count; clause-level fast-check
-                // refusals return their reason without touching the counter.
-                if refusal.counted {
-                    non_prep_plan_cache_unsupported_counter().inc();
-                }
-                None
+        )
+        .inspect_err(|refusal| {
+            // Go `NonPreparedPlanCacheableWithCtx`'s unsupported counter:
+            // only checker-walk refusals count; clause-level fast-check
+            // refusals return their reason without touching the counter.
+            if refusal.counted {
+                non_prep_plan_cache_unsupported_counter().inc();
             }
-        }
+        })
     }
 
     /// Go's DML switch: `EnableNonPreparedPlanCacheForDML`, true by default.
@@ -1104,7 +1113,7 @@ impl crate::Session {
         }
         // Go's miss arm re-plans; its miss counter records the replan.
         tidb_planner::metrics::plan_cache_miss_counter(true).inc();
-        let ctx = self.statement_context(false);
+        let ctx = self.statement_context(false).with_non_prepared_plan_cache();
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
             &self.physical_plan_cache,
@@ -1126,6 +1135,18 @@ impl crate::Session {
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         binding_sql: Option<&str>,
+    ) -> Option<tidb_executor::PreparedSelectExecution> {
+        self.bind_non_prepared_select_warning(parameterized, effective_statement, binding_sql, false)
+    }
+
+    /// [`Self::bind_non_prepared_select`]; `always_warn` is Go's
+    /// `SetAlwaysWarnSkipCache`, which EXPLAIN FORMAT = 'plan_cache' sets.
+    pub(crate) fn bind_non_prepared_select_warning(
+        &mut self,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        binding_sql: Option<&str>,
+        always_warn: bool,
     ) -> Option<tidb_executor::PreparedSelectExecution> {
         if !self.non_prepared_plan_cache_allowed(effective_statement) {
             return None;
@@ -1183,7 +1204,10 @@ impl crate::Session {
         }
         // Go's miss arm re-plans; its miss counter records the replan.
         tidb_planner::metrics::plan_cache_miss_counter(true).inc();
-        let ctx = self.statement_context(false);
+        let mut ctx = self.statement_context(false).with_non_prepared_plan_cache();
+        if always_warn {
+            ctx = ctx.with_always_warn_skip_plan_cache();
+        }
         let catalog = self.lock_catalog().ok()?;
         let execution = plan.bind_for_statement(
             &self.physical_plan_cache,
@@ -1203,7 +1227,7 @@ impl crate::Session {
         self.prev_found_in_plan_cache
     }
 
-    fn non_prepared_plan_cache_enabled(&self) -> bool {
+    pub(crate) fn non_prepared_plan_cache_enabled(&self) -> bool {
         self.session_bool("tidb_enable_non_prepared_plan_cache", false)
     }
 

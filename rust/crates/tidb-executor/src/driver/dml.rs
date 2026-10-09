@@ -2450,11 +2450,18 @@ impl PreparedDmlPlan {
             environment: environment.clone(),
             limit_values,
         };
-        let admitted = environment.admits(self.stmt_info);
+        let refusal = environment.refusal(self.stmt_info);
+        let admitted = refusal.is_none();
         let cached = match admitted.then(|| cache.get(&cache_key, &parameter_types)).flatten() {
             Some(CachedPhysicalPlan::Dml(plan)) => Some(plan),
             _ => None,
         };
+        // Go `GetPlanFromPlanCache` refuses with `SetSkipPlanCache`, which
+        // warns why.
+        if let (Some(reason), Some(ctx)) = (refusal, ctx) {
+            ctx.start_prepared_range_tracking();
+            ctx.set_skip_plan_cache(reason);
+        }
         if cached.is_none() {
             ctx?;
         }

@@ -65,6 +65,10 @@ pub enum ExplainFormat {
     /// Go's JSON plan report (`ExplainFormatJSON`): the row planner renders
     /// the plan tree as one JSON document per root.
     Json,
+    /// Go `ExplainFormatPlanCache`: the row format over the plan the
+    /// non-prepared plan cache gives the statement, with the reason it
+    /// skipped the cache as a warning.
+    PlanCache,
 }
 
 impl ExplainFormat {
@@ -89,6 +93,8 @@ impl ExplainFormat {
             Some(Self::CostTrace)
         } else if format.eq_ignore_ascii_case("json") {
             Some(Self::Json)
+        } else if format.eq_ignore_ascii_case("plan_cache") {
+            Some(Self::PlanCache)
         } else {
             None
         }
@@ -108,6 +114,7 @@ fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
         ExplainFormat::Hint => PlannerExplainFormat::Row,
         ExplainFormat::CostTrace => PlannerExplainFormat::CostTrace,
         ExplainFormat::Json => PlannerExplainFormat::Json,
+        ExplainFormat::PlanCache => PlannerExplainFormat::Row,
     }
 }
 
@@ -2807,6 +2814,20 @@ fn render_physical_query(
         runtime.as_ref(),
         &scalar_subqueries,
     )
+}
+
+/// Reports a plan the statement already has -- EXPLAIN FORMAT =
+/// 'plan_cache' over the plan the non-prepared cache gave it -- as EXPLAIN
+/// rows, executing nothing.
+pub fn explain_physical_plan(
+    physical: &PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let mut physical = physical.deep_clone();
+    crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
+    render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
 }
 
 /// Plans `select` and reports the plan as EXPLAIN rows, executing nothing:

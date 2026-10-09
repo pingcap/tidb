@@ -2208,3 +2208,52 @@ fn a_plan_reading_now_is_reused() {
     session.run("execute st using @a").unwrap();
     assert_eq!(last_plan_from_cache(&mut session), [["1"]]);
 }
+
+fn warnings(session: &mut Session) -> Vec<Vec<String>> {
+    row_text(session.run("show warnings"))
+}
+
+/// Go's `PlanCacheTracker.SetSkipPlanCache` warns why an EXECUTE skipped the
+/// prepared plan cache; the reason had been recorded silently.
+#[test]
+fn a_skipped_execute_says_why() {
+    let mut session = Session::new();
+    session.run("create table t (a int)").unwrap();
+    session.run("prepare l from 'select * from t limit ?'").unwrap();
+    session.run("set @n = 1").unwrap();
+    session.run("set tidb_enable_plan_cache_for_param_limit = off").unwrap();
+    session.run("execute l using @n").unwrap();
+    assert_eq!(
+        warnings(&mut session),
+        [[
+            "Warning",
+            "1105",
+            "skip prepared plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off",
+        ]]
+    );
+}
+
+/// Go `ExplainFormatPlanCache`: the statement is planned through the
+/// non-prepared plan cache, a refusal warns its reason, and a repeat hits.
+/// The format had been unknown.
+#[test]
+fn explain_format_plan_cache_plans_through_the_cache() {
+    let mut session = Session::new();
+    session.run("create table t (a int)").unwrap();
+    session.run("set tidb_enable_non_prepared_plan_cache = 1").unwrap();
+    session.run("explain format = 'plan_cache' select * from t where a = 1").unwrap();
+    let plan = row_text(session.run("explain format = 'plan_cache' select * from t where a = 1"));
+    assert!(plan.iter().any(|row| row[4] == "eq(test.t.a, 1)"), "{plan:?}");
+    assert_eq!(last_plan_from_cache(&mut session), [["1"]]);
+    session
+        .run("explain format = 'plan_cache' select * from (select * from t) tx")
+        .unwrap();
+    assert_eq!(
+        warnings(&mut session),
+        [[
+            "Warning",
+            "1105",
+            "skip non-prepared plan-cache: queries that have sub-queries are not supported",
+        ]]
+    );
+}

@@ -162,6 +162,12 @@ impl Session {
             self.drain_eval_warnings(&ctx);
             return Ok(Some(StmtOutput::Rows { columns, rows }));
         }
+        if format == tidb_executor::ExplainFormat::PlanCache {
+            if let Some(output) = self.explain_through_non_prepared_cache(target, &ctx, format)? {
+                self.drain_eval_warnings(&ctx);
+                return Ok(Some(output));
+            }
+        }
         let (columns, rows) = match target {
             Stmt::Query(query) => self.with_catalog_mut(|catalog| match &**query {
                 tidb_ast::QueryStmt::Select(select) => {
@@ -206,6 +212,63 @@ impl Session {
         // is executed on this path, so no evaluation warning can arrive that
         // Go, which also executes nothing, would not have raised.
         self.drain_eval_warnings(&ctx);
+        Ok(Some(StmtOutput::Rows { columns, rows }))
+    }
+
+    /// Go `buildExplain` for FORMAT = 'plan_cache': the statement is
+    /// optimized through the non-prepared plan cache (`OptimizeAstNode`, not
+    /// `OptimizeAstNodeNoCache`), and the plan it gets is the one reported.
+    /// A statement the cache refuses says why (`skip non-prepared
+    /// plan-cache: <reason>`, `getPlanFromNonPreparedPlanCache`) and is
+    /// planned as usual: `None` hands it to the ordinary EXPLAIN.
+    fn explain_through_non_prepared_cache(
+        &mut self,
+        target: &Stmt,
+        ctx: &tidb_executor::StmtContext,
+        format: tidb_executor::ExplainFormat,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        let Stmt::Query(query) = target else {
+            return Ok(None);
+        };
+        if !matches!(&**query, tidb_ast::QueryStmt::Select(_))
+            || !self.non_prepared_plan_cache_enabled()
+        {
+            return Ok(None);
+        }
+        let parameterized = match self.parameterize_non_prepared_select_or_refusal(target) {
+            Ok(parameterized) => parameterized,
+            Err(refusal) => {
+                self.append_warning(
+                    crate::WarningLevel::Warning,
+                    1105,
+                    format!("skip non-prepared plan-cache: {}", refusal.reason),
+                );
+                return Ok(None);
+            }
+        };
+        let Some(execution) = self.bind_non_prepared_select_warning(
+            &parameterized,
+            &parameterized.statement,
+            None,
+            true,
+        ) else {
+            return Ok(None);
+        };
+        for (level, code, message) in execution.take_planning_warnings() {
+            self.append_warning(crate::WarningLevel::from_executor(level), code, message);
+        }
+        // The cached plan's constants are this execute's parameters.
+        let ctx = ctx.clone().with_prepared_params(execution.parameters());
+        let rendered = execution.with_plan(|_, physical| {
+            self.with_catalog_mut(|catalog| {
+                tidb_executor::explain_physical_plan(physical, catalog, &ctx, format)
+            })
+        });
+        let Some(rendered) = rendered else {
+            return Ok(None);
+        };
+        let (columns, rows) = rendered?;
+        self.found_in_plan_cache = execution.cache_hit();
         Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 }
