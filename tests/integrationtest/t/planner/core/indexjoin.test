@@ -130,6 +130,24 @@ select /*+ INL_JOIN(a_t) */ tj1.c1, a_t.c1 from tj1 inner join (select c1 from t
 select /*+ HASH_JOIN(a_t) */ tj1.c1, a_t.c1 from tj1 inner join (select c1 from tj3 group by c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.c1;
 set @@sql_mode=default;
 
+# Case 2.1: UNSAFE - join key (c2) only appears inside a GROUP BY expression (c2 % 2) -> INL_JOIN hint should be rejected
+# The filler rows and batch size 1 put the two matching outer rows into different index join batches.
+drop table if exists tj6, tj7;
+create table tj6(c1 int, c2 int);
+create table tj7(c1 int, c2 int, key(c2));
+insert into tj6 values(1, 2);
+insert into tj6 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 200) select 0, 1001 from cte;
+insert into tj6 values(2, 4);
+insert into tj7 values(1, 2), (1, 4);
+set @@sql_mode='';
+set @@tidb_index_join_batch_size=1;
+explain format='plan_tree' select /*+ INL_JOIN(a_t) */ * from tj6 inner join (select c2, count(*) cnt from tj7 group by c2 % 2) a_t on tj6.c2 = a_t.c2;
+show warnings;
+select /*+ INL_JOIN(a_t) */ a_t.cnt from tj6 inner join (select c2, count(*) cnt from tj7 group by c2 % 2) a_t on tj6.c2 = a_t.c2 order by a_t.cnt;
+select /*+ HASH_JOIN(a_t) */ a_t.cnt from tj6 inner join (select c2, count(*) cnt from tj7 group by c2 % 2) a_t on tj6.c2 = a_t.c2 order by a_t.cnt;
+set @@tidb_index_join_batch_size=default;
+set @@sql_mode=default;
+
 # Case 3: SAFE - join key (c2) IS in GROUP BY (c2) -> INL_JOIN should work
 explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c2, count(*) cnt from tj2 group by c2) a_t on tj1.c2 = a_t.c2;
 select /*+ INL_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
