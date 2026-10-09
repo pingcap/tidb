@@ -257,6 +257,31 @@ func (r *Checker) CheckRuleKillAction() (string, bool) {
 	return "", false
 }
 
+// AfterExecutor checks whether the query exceeded its time-based threshold once
+// execution has finished. It is the final time-based detection path: the
+// in-flight paths (`BeforeCopRequest` on cop dispatch and `CheckThresholds` on
+// cop response) only fire while coprocessor requests are being issued, and the
+// expensive-query handler only samples the query on a coarse 100ms tick. A query
+// that overruns `EXEC_ELAPSED` after its last coprocessor request, and finishes
+// before the next tick, is missed by all of them. Checking once at completion
+// guarantees such a query is still marked and recorded.
+//
+// This only records the runaway; it cannot interrupt a query that has already
+// finished. The `markedByIdentifyInRunawaySettings` CAS in
+// `markRunawayByIdentifyInRunawaySettings` makes it a no-op when an earlier path
+// already marked the query.
+func (r *Checker) AfterExecutor() {
+	if r == nil || r.settings == nil || r.isMarkedByIdentifyInRunawaySettings() {
+		return
+	}
+	now := time.Now()
+	exceedCause := r.exceedsThresholds(now, nil, 0)
+	if exceedCause == "" {
+		return
+	}
+	r.markRunawayByIdentifyInRunawaySettings(&now, exceedCause)
+}
+
 func (r *Checker) markQuarantine(now *time.Time, exceedCause string) {
 	if r.settings == nil || r.settings.Watch == nil {
 		return
