@@ -56,14 +56,16 @@ fn resolve_index_hints_for_partition(
         has_affinity: source.has_affinity,
         ..Default::default()
     };
-    // Go re-runs getPossibleAccessPaths ONCE with the per-partition-filtered
-    // hint list. The resolved `index_hints` carry the partition scoping (the
-    // raw ast form does not), so pass only that list — feeding both makes the
-    // matcher apply every hint twice.
+    // Go `resolveOptimizeHint` re-runs `getPossibleAccessPaths` with the
+    // per-partition-filtered comment hints AND `ds.AstIndexHints`, the
+    // table-syntax `USE/FORCE/IGNORE INDEX` list, which has no partition
+    // scope. The two lists are disjoint (`index_hints` holds only comment
+    // hints), exactly as at the top-level resolution. Dropping the AST list
+    // put the table path back on every partition of `t USE INDEX (ia)`.
     let resolution = crate::access_path::apply_table_index_hints(
         &table,
         &source.public_enumerated_paths,
-        &[],
+        &source.ast_index_hints,
         &source.index_hints,
         true,
         source.force_no_index_lookup_push_down,
@@ -345,11 +347,6 @@ mod tests {
 
     #[test]
     fn ordinary_index_hints_are_resolved_per_static_partition() {
-        let ast_hint = |kind: tidb_ast::IndexHintKind, name: &str| tidb_ast::IndexHint {
-            kind,
-            scope: tidb_ast::IndexHintScope::All,
-            indexes: vec![name.to_owned()],
-        };
         let hinted = |name: &str, partitions: &[&str]| DataSourceIndexHint {
             kind: tidb_ast::IndexHintKind::Use,
             index_names: vec![name.to_owned()],
@@ -392,14 +389,10 @@ mod tests {
                 hinted("idx_p0", &["p0"]),
                 hinted("idx_p1", &["P1"]),
             ],
-            // Mirror the production flow: `apply_table_index_hints` matches
-            // from the raw AST hint list, so it must travel with the
-            // resolved list.
-            ast_index_hints: vec![
-                ast_hint(tidb_ast::IndexHintKind::Use, "idx_all"),
-                ast_hint(tidb_ast::IndexHintKind::Use, "idx_p0"),
-                ast_hint(tidb_ast::IndexHintKind::Use, "idx_p1"),
-            ],
+            // These are comment hints (`/*+ USE_INDEX(t, ...) */`), which
+            // live in `index_hints` only; `ast_index_hints` holds the
+            // table-syntax list, empty for this statement.
+            ast_index_hints: Vec::new(),
             isolation_read_engines_value: "tikv".to_owned(),
             tikv_in_isolation_read: true,
             ..DataSource::default()
@@ -418,5 +411,45 @@ mod tests {
             std::collections::BTreeSet::from([1, 3])
         );
         assert_eq!(source.index_hints.len(), 2);
+    }
+
+    /// Go `resolveAccessPaths` passes `ds.AstIndexHints` back into
+    /// `getPossibleAccessPaths` for each partition: a table-syntax
+    /// `t USE INDEX (ia)` keeps the table path out of every partition.
+    #[test]
+    fn table_syntax_index_hints_survive_per_partition_resolution() {
+        let mut source = DataSource {
+            table_name: "t".to_owned(),
+            indexes: vec![SourceIndex {
+                id: 1,
+                name: "ia".to_owned(),
+                ..SourceIndex::default()
+            }],
+            public_enumerated_paths: vec![
+                PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                },
+                PossiblePath::Index { index: 0 },
+            ],
+            ast_index_hints: vec![tidb_ast::IndexHint {
+                kind: tidb_ast::IndexHintKind::Use,
+                scope: tidb_ast::IndexHintScope::All,
+                indexes: vec!["ia".to_owned()],
+            }],
+            isolation_read_engines_value: "tikv".to_owned(),
+            tikv_in_isolation_read: true,
+            ..DataSource::default()
+        };
+
+        resolve_index_hints_for_partition(&mut source, "p0").expect("paths resolve");
+        assert_eq!(
+            source.enumerated_paths,
+            vec![PossiblePath::Index { index: 0 }]
+        );
+        assert_eq!(
+            source.forced_index_ids,
+            std::collections::BTreeSet::from([1])
+        );
     }
 }
