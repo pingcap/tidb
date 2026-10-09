@@ -17,7 +17,7 @@ package expression
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression/localfts"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -456,7 +456,7 @@ func TestLocalMatchAgainstNotFlashSupported(t *testing.T) {
 
 func localEvalInfoForTest() *LocalMatchAgainstEvalInfo {
 	return &LocalMatchAgainstEvalInfo{
-		AnalyzerConfig: localfts.AnalyzerConfig{
+		AnalyzerConfig: fulltext.AnalyzerConfig{
 			ParserType:           model.FullTextParserTypeStandardV1,
 			InnodbFtMinTokenSize: 3,
 			InnodbFtMaxTokenSize: 84,

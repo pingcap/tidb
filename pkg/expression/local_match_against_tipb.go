@@ -17,7 +17,7 @@ package expression
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/pkg/expression/localfts"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/expression/matchagainst"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tipb/go-tipb"
@@ -73,7 +73,7 @@ func BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search string, parserT
 // BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig carries the same analyzer settings
 // used by TiDB's Local MATCH evaluator to TiFlash. This extends only execution
 // parity; it does not change BOOLEAN MODE query semantics.
-func BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(search string, config localfts.AnalyzerConfig) (*tipb.LocalMatchAgainstBooleanQuery, error) {
+func BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(search string, config fulltext.AnalyzerConfig) (*tipb.LocalMatchAgainstBooleanQuery, error) {
 	query, err := BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search, config.ParserType, config.NgramTokenSize)
 	if err != nil {
 		return nil, err

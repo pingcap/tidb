@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
-	"github.com/pingcap/tidb/pkg/expression/localfts"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2390,7 +2390,7 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		return
 	}
 
-	config, err := localfts.AnalyzerConfigFromSessionVars(er.planCtx.builder.ctx.GetSessionVars(), indexInfo.FullTextInfo.ParserType)
+	config, err := fulltext.AnalyzerConfigFromSessionVars(er.planCtx.builder.ctx.GetSessionVars(), indexInfo.FullTextInfo.ParserType)
 	if err != nil {
 		er.err = err
 		return
@@ -2501,7 +2501,7 @@ func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(modifier ast
 		if matchingIndex == nil {
 			return nil, false
 		}
-		analyzerConfig, err := localfts.AnalyzerConfigFromSessionVars(sessVars, matchingIndex.FullTextInfo.ParserType)
+		analyzerConfig, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, matchingIndex.FullTextInfo.ParserType)
 		if err != nil || !localMatchAgainstTiFlashAnalyzerConfigSupportedForParser(sessVars, matchingIndex.FullTextInfo.ParserType) {
 			return nil, false
 		}
@@ -2555,7 +2555,7 @@ func tableHasPublicFTSIndexOnColumnWithParser(tblInfo *model.TableInfo, columnNa
 }
 
 func localMatchAgainstTiFlashAnalyzerConfigSupportedForParser(sessVars *variable.SessionVars, parserType model.FullTextParserType) bool {
-	config, err := localfts.AnalyzerConfigFromSessionVars(sessVars, parserType)
+	config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, parserType)
 	if err != nil || (config.InnodbFtEnableStopword &&
 		!localMatchAgainstTiFlashCollationSupported(config.StopwordCollation)) {
 		return false
@@ -2627,7 +2627,7 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 
 	if searchText.IsNull() {
 		// NULL search yields NULL in MySQL MATCH semantics
-		// (builtin_match_against.go evalReal returns isNull=true for NULL args), so we
+		// (builtin_fts.go evalReal returns isNull=true for NULL args), so we
 		// emit Constant(NULL) rather than Constant(0). This preserves
 		// three-valued logic under NOT — NOT NULL = NULL filters the row —
 		// and under IS NULL / IS NOT NULL. A literal Constant(0) would make

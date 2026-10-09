@@ -105,7 +105,7 @@ go_library(
         "//pkg/expression/aggregation",
         "//pkg/expression/exprctx",
         "//pkg/expression/expropt",
-        "//pkg/expression/localfts",
+        "//pkg/expression/fulltext",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/kv",

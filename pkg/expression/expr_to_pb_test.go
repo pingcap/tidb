@@ -22,7 +22,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/expression/localfts"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2024,7 +2024,7 @@ func TestLocalMatchAgainstBooleanQueryUsesVersionedPayload(t *testing.T) {
 	require.NoError(t, err)
 	sf := fn.(*ScalarFunction)
 	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
-	query, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+tidb -mysql", localfts.AnalyzerConfig{
+	query, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+tidb -mysql", fulltext.AnalyzerConfig{
 		ParserType:             model.FullTextParserTypeStandardV1,
 		InnodbFtMinTokenSize:   3,
 		InnodbFtMaxTokenSize:   84,

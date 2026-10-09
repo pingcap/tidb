@@ -19,7 +19,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/localfts"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -51,7 +51,7 @@ type builtinMysqlMatchAgainstSig struct {
 // boolean predicate positions, so relevance-score positions never receive a
 // 0/1 value.
 type LocalMatchAgainstEvalInfo struct {
-	AnalyzerConfig  localfts.AnalyzerConfig
+	AnalyzerConfig  fulltext.AnalyzerConfig
 	SelectivityTerm string
 	MatchNothing    bool
 }
@@ -94,8 +94,8 @@ func (info *LocalMatchAgainstEvalInfo) Clone() *LocalMatchAgainstEvalInfo {
 
 type localMatchAgainstEvalPlan struct {
 	search   string
-	query    *localfts.Query
-	analyzer localfts.Analyzer
+	query    *fulltext.Query
+	analyzer fulltext.Analyzer
 }
 
 func (b *builtinMysqlMatchAgainstSig) Clone() builtinFunc {
@@ -183,7 +183,7 @@ func MatchAgainstModifierSupportedByLocalNoScore(modifier ast.FulltextSearchModi
 
 // CompileLocalMatchAgainstQuery compiles a stable search argument at
 // plan time, surfacing syntax errors even for empty inputs or short-circuits.
-func CompileLocalMatchAgainstQuery(ctx EvalContext, sf *ScalarFunction, config localfts.AnalyzerConfig) (*localfts.Query, error) {
+func CompileLocalMatchAgainstQuery(ctx EvalContext, sf *ScalarFunction, config fulltext.AnalyzerConfig) (*fulltext.Query, error) {
 	sig, ok := sf.Function.(*builtinMysqlMatchAgainstSig)
 	if !ok {
 		return nil, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
@@ -195,7 +195,7 @@ func CompileLocalMatchAgainstQuery(ctx EvalContext, sf *ScalarFunction, config l
 	if err != nil || isNull {
 		return nil, err
 	}
-	return localfts.CompileBooleanQuery(search, config)
+	return fulltext.CompileBooleanQuery(search, config)
 }
 
 func (c *mysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -268,7 +268,7 @@ func (b *builtinMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row) (
 	if err != nil {
 		return 0, false, err
 	}
-	doc, err := localfts.BuildDocument(columns, plan.analyzer)
+	doc, err := fulltext.BuildDocument(columns, plan.analyzer)
 	if err != nil {
 		return 0, false, err
 	}
@@ -284,11 +284,11 @@ func (b *builtinMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search string) 
 	if b.localPlan != nil && b.localPlan.search == search {
 		return b.localPlan, nil
 	}
-	analyzer, err := localfts.GetAnalyzer(b.localEvalInfo.AnalyzerConfig)
+	analyzer, err := fulltext.GetAnalyzer(b.localEvalInfo.AnalyzerConfig)
 	if err != nil {
 		return nil, err
 	}
-	query, err := localfts.CompileBooleanQuery(search, b.localEvalInfo.AnalyzerConfig)
+	query, err := fulltext.CompileBooleanQuery(search, b.localEvalInfo.AnalyzerConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -308,18 +308,18 @@ func (b *builtinMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search string) 
 	return b.localPlan, nil
 }
 
-func (b *builtinMysqlMatchAgainstSig) evalLocalMatchColumns(ctx EvalContext, row chunk.Row) ([]localfts.ColumnInput, error) {
-	columns := make([]localfts.ColumnInput, 0, len(b.args)-1)
+func (b *builtinMysqlMatchAgainstSig) evalLocalMatchColumns(ctx EvalContext, row chunk.Row) ([]fulltext.ColumnInput, error) {
+	columns := make([]fulltext.ColumnInput, 0, len(b.args)-1)
 	for _, arg := range b.args[1:] {
 		text, isNull, err := arg.EvalString(ctx, row)
 		if err != nil {
 			return nil, err
 		}
 		if isNull {
-			columns = append(columns, localfts.ColumnInput{IsNull: true})
+			columns = append(columns, fulltext.ColumnInput{IsNull: true})
 			continue
 		}
-		columns = append(columns, localfts.ColumnInput{Text: text})
+		columns = append(columns, fulltext.ColumnInput{Text: text})
 	}
 	return columns, nil
 }
