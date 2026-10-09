@@ -184,7 +184,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
 
 pub(super) enum PreparedMerge<'a> {
     Union(super::index_merge_union::ConvergedUnionPath<'a>),
-    Intersection(&'a crate::access_path::index_merge::IntersectionIndexMergePath),
+    IndexMerge(&'a crate::access_path::index_merge::IndexMergePath),
 }
 
 pub(super) struct PreparedDataSourcePaths<'a> {
@@ -222,9 +222,12 @@ pub(super) fn prepare_access_paths<'a>(
                             merges.push(PreparedMerge::Union(path));
                         }
                     }
-                    crate::access_path::DerivedAccessPath::Intersection(path) => {
+                    // Go `isMatchPropForIndexMerge` refuses an order to an
+                    // intersection; a finished union keeps no order here
+                    // either, since its partials scan single element values.
+                    crate::access_path::DerivedAccessPath::IndexMerge(path) => {
                         if prop.is_sort_item_empty() {
-                            merges.push(PreparedMerge::Intersection(path));
+                            merges.push(PreparedMerge::IndexMerge(path));
                         }
                     }
                     crate::access_path::DerivedAccessPath::Ordinary(_) => {}

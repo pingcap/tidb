@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The ordinary-index AND/intersection slice of Go `generateIndexMergePath`.
+//! Go `convertToIndexMergeScan` for a finished index-merge path: the hinted
+//! ordinary-index intersection and the multi-valued index paths.
 
 use crate::find_best_task::dispatch::DispatchContext;
 use crate::find_best_task::index_merge_union::merge_scan_stats;
@@ -21,12 +22,12 @@ use crate::physical::PhysicalPlan;
 use crate::plan_base::PlanError;
 use crate::task::Task;
 
-/// Builds Go's hinted normal-index AND IndexMerge for usable ranges on at
-/// least two named indexes. Any conditions no partial range enforces remain
-/// as a Selection on the final table lookup.
-pub(super) fn build_prepared_intersection_index_merge_task(
+/// Builds the IndexMerge of a finished path: one partial plan per partial
+/// path, then the table lookup. Any conditions no partial range enforces
+/// remain as a Selection on the final table lookup.
+pub(super) fn build_prepared_index_merge_task(
     ds: &DataSource,
-    path: &crate::access_path::index_merge::IntersectionIndexMergePath,
+    path: &crate::access_path::index_merge::IndexMergePath,
     ctx: &DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
     let partials = &path.partials;
@@ -53,6 +54,9 @@ pub(super) fn build_prepared_intersection_index_merge_task(
         base.base.set_stats(Some(merge_scan_stats(ds, rows, ctx)));
         base.base
             .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns.clone())));
+        if let Some(reason) = &path.noncacheable_reason {
+            base.base.set_noncacheable_reason(reason);
+        }
         let mut partial_plan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
             base,
             table_id: ds.physical_table_id,
@@ -139,9 +143,18 @@ pub(super) fn build_prepared_intersection_index_merge_task(
             "Selection",
             ds.base.base.query_block_offset(),
         );
-        selection_base
-            .base
-            .set_stats(Some(merge_scan_stats(ds, output_rows, ctx)));
+        // Go `BuildIndexMergeTableScan`: the pushed filters' selectivity
+        // scales the lookup's rows.
+        let selectivity = crate::access_path::ordinary::filter_selectivity(
+            ds,
+            &table_filters,
+            &ctx.access_path_derivation_context(),
+        );
+        selection_base.base.set_stats(
+            table_scan
+                .stats_info()
+                .map(|stats| stats.scale_by_expect_cnt(selectivity * output_rows, ctx.skew_ratio)),
+        );
         selection_base.base.set_schema(Some(schema));
         selection_base.set_children(vec![table_scan]);
         PhysicalPlan::Selection(crate::physical::PhysicalSelection {
@@ -156,7 +169,8 @@ pub(super) fn build_prepared_intersection_index_merge_task(
     Ok(Task::Cop(crate::task::CopTask {
         table_plan: Some(Box::new(table_plan)),
         idx_merge_part_plans: partial_plans_raw,
-        idx_merge_is_intersection: true,
+        idx_merge_is_intersection: path.is_intersection,
+        idx_merge_access_mv_index: path.access_mv_index,
         index_plan_finished,
         stats_context: ctx.task_stats_context(ds, &root_task_conds),
         root_task_conds,

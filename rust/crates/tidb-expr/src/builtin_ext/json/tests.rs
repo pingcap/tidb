@@ -110,7 +110,16 @@ fn json_array_object_go_vectors() {
         ),
         j(r#"[null, "a", 3, "{\"a\": \"b\"}"]"#),
     );
-    assert_eq!(call("JSON_ARRAY", &[Datum::UInt(2)]), j("[2]"));
+    // Go `castIntAsJSON` keeps an unsigned argument a uint64 JSON value.
+    assert_eq!(
+        call("JSON_ARRAY", &[Datum::UInt(2)]),
+        Datum::Json(
+            tidb_datatype::BinaryJSON::from_typed_value(&tidb_datatype::BinaryJSONValue::Array(
+                vec![tidb_datatype::BinaryJSONValue::Uint64(2)]
+            ))
+            .unwrap()
+        )
+    );
     assert_eq!(call("JSON_ARRAY", &[Datum::Real(1.5)]), j("[1.5]"));
     // A `Datum::Bytes` is the chunk rewriter's spelling of the SAME SQL
     // string literal the row evaluator spells `Datum::String`, so it is
@@ -1876,7 +1885,10 @@ fn dispatch_typed_renders_binary_charset_arguments_as_opaque() {
         )
         .expect("JSON_ARRAY is owned")
         .expect("valid vector");
-        assert_eq!(got, j(expected));
+        // The element stays Go's Opaque value (`CreateBinaryJSONWithCheck`
+        // appends the cast's BinaryJSON as is); TiDB renders it as the
+        // captured string.
+        assert_eq!(rendered(got), expected);
     }
     // An ordinary (non-binary-charset) STRING datum is unaffected.
     let plain = dispatch_typed(
@@ -1896,7 +1908,7 @@ fn dispatch_typed_renders_binary_charset_arguments_as_opaque() {
     )
     .expect("JSON_OBJECT is owned")
     .expect("valid vector");
-    assert_eq!(object, j(r#"{"k": "base64:type15:YWI="}"#));
+    assert_eq!(rendered(object), r#"{"k": "base64:type15:YWI="}"#);
 
     // `JSON_INSERT('{}', '$.a', vb)`.
     let inserted = dispatch_typed(

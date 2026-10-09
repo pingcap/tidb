@@ -1798,7 +1798,7 @@ fn rewrite_leaf_compound(
                 .map(|field_type| field_type.eval_type());
             let connection = resolver.connection_charset_info();
             let mut coerced = Vec::with_capacity(args.len());
-            for argument in args {
+            for (position, argument) in args.into_iter().enumerate() {
                 let mut coerced_argument = match in_eval_type {
                     Some(EvalType::Int) => wrap_with_cast_as_int(argument, None)?,
                     Some(EvalType::Real) => wrap_with_cast_as_real(argument)?,
@@ -1811,7 +1811,17 @@ fn rewrite_leaf_compound(
                         wrap_with_cast_as_time(argument, FieldType::new(FieldTypeCode::Timestamp))?
                     }
                     Some(EvalType::Duration) => wrap_with_cast_as_duration(argument)?,
-                    Some(EvalType::Json) => wrap_with_cast_as_json(argument)?,
+                    // Go `inFunctionClass` then `DisableParseJSONFlag4Expr`
+                    // on every list argument: a string stays a JSON string.
+                    Some(EvalType::Json) => {
+                        let mut wrapped = wrap_with_cast_as_json(argument)?;
+                        if position > 0 {
+                            crate::expr_util::predicates::disable_parse_json_flag_4_expr(
+                                &mut wrapped,
+                            );
+                        }
+                        wrapped
+                    }
                     _ => argument,
                 };
                 // Go `BuildCastFunctionWithCheck` folds each newly-built cast
@@ -2045,10 +2055,12 @@ fn rewrite_leaf_compound(
                 rewrite_expr_resolved(expr, resolver)?,
                 rewrite_expr_resolved(array, resolver)?,
             ];
+            // Go's function name is `ast.JSONMemberOf` = "json_memberof",
+            // which EXPLAIN prints and TiKV push-down recognises.
             let ret_type =
-                builtin_return_type("json_member_of", &args).expect("JSON_MEMBER_OF is registered");
+                builtin_return_type("json_memberof", &args).expect("JSON_MEMBEROF is registered");
             Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("json_member_of"),
+                CiString::new("json_memberof"),
                 ret_type,
                 args,
             )))

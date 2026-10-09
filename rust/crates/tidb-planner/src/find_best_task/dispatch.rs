@@ -3381,6 +3381,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 let Some(source_index) = ds.indexes.get(*index) else {
                     continue 'paths;
                 };
+                // Go `convertToIndexScan`: "MVIndex is special since different
+                // index rows may return the same _row_id" -- a multi-valued
+                // index is read only through IndexMerge, never as an
+                // IndexReader/IndexLookUp or a PointGet (which would return a
+                // row once per array element and miss every empty array).
+                if source_index.is_multi_valued {
+                    continue 'paths;
+                }
                 let path_key = (std::ptr::from_ref(ds).addr(), source_index.id);
                 if partial_order.is_none() && ctx.forced_partial_order_paths.contains(&path_key) {
                     // The earlier match already proved this immutable path's
@@ -4338,8 +4346,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         let mut merge_task = match candidate {
             super::candidate_preparation::PreparedMerge::Union(path) =>
                 super::index_merge_union::build_converged_union_index_merge_task(ds, path, ctx)?,
-            super::candidate_preparation::PreparedMerge::Intersection(path) =>
-                super::index_merge_intersection::build_prepared_intersection_index_merge_task(ds, path, ctx)?,
+            super::candidate_preparation::PreparedMerge::IndexMerge(path) =>
+                super::index_merge_intersection::build_prepared_index_merge_task(ds, path, ctx)?,
         };
         if prop.task_tp == TaskType::Root {
             if let Task::Cop(cop) = &mut merge_task {

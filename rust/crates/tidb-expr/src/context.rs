@@ -346,6 +346,9 @@ pub enum JsonError {
     /// argument itself and returns this, so `BinaryJSON.Search`'s own
     /// `ErrJSONBadOneOrAllArg` is unreachable from SQL.
     InvalidContainsPathType,
+    /// `ErrJSONDocumentTooDeep` (3157): a built document nests past Go's
+    /// `maxJSONDepth` (100), which `CreateBinaryJSONWithCheck` refuses.
+    DocumentTooDeep,
 }
 
 impl JsonError {
@@ -370,6 +373,7 @@ impl JsonError {
             JsonError::InvalidPathArrayCell => 3165,
             JsonError::BadOneOrAllArg { .. } => 3154,
             JsonError::InvalidContainsPathType => 3150,
+            JsonError::DocumentTooDeep => 3157,
         }
     }
 
@@ -422,6 +426,7 @@ impl JsonError {
             JsonError::InvalidContainsPathType => {
                 "The second argument can only be either 'one' or 'all'.".to_owned()
             }
+            JsonError::DocumentTooDeep => "The JSON document exceeds the maximum depth.".to_owned(),
         }
     }
 }

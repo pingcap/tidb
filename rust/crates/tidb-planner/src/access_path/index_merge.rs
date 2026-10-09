@@ -76,6 +76,28 @@ pub(crate) enum Partial {
         rows: f64,
         keep_source_filter: bool,
     },
+    /// Go's MV alternative (`buildIntoAccessPath`'s MV arm): one partial path
+    /// per value over a multi-valued index, whose handles unite.
+    MvIndex {
+        index_pos: usize,
+        paths: Vec<IndexMergePartial>,
+        keep_source_filter: bool,
+    },
+}
+
+impl IndexMergePartial {
+    /// Go `CountAfterAccess`.
+    pub(crate) fn rows(&self) -> f64 {
+        self.path.count_after_access().unwrap_or(0.0)
+    }
+
+    /// The partial's filled ranges and filters.
+    pub(crate) fn filled(&self) -> &super::ordinary::FilledIndexPath {
+        self.path
+            .filled
+            .as_ref()
+            .expect("index merge partials are filled logical paths")
+    }
 }
 
 /// Logical access ranges and counts, prepared before physical path costing.
@@ -101,8 +123,11 @@ pub(crate) fn prepare_union_index_merge_paths(
     ctx: &AccessPathDerivationContext<'_>,
     use_plan_cache: bool,
 ) -> Result<Vec<UnionIndexMergePath>, PlanError> {
+    // Go `generateORIndexMerge` reads `indexMergeConds` = `AllConds`, so an
+    // OR list that cannot be pushed (`json_overlaps(...) or ...`) still builds
+    // an IndexMerge, the list itself staying in the Selection above.
     let mut paths = Vec::new();
-    for position in 0..ds.pushed_down_conds.len() {
+    for position in 0..ds.all_conds.len() {
         if let Some(path) =
             prepare_union_index_merge_path_for_or(ds, ctx, position, use_plan_cache)?
         {
@@ -121,14 +146,14 @@ fn prepare_union_index_merge_path_for_or(
     if ds.is_local_temporary {
         return Ok(None);
     }
-    let Some(Expression::ScalarFunction(or_func)) = ds.pushed_down_conds.get(or_position) else {
+    let Some(Expression::ScalarFunction(or_func)) = ds.all_conds.get(or_position) else {
         return Ok(None);
     };
     if or_func.func_name.lowercase() != "or" {
         return Ok(None);
     }
     let table_filters = ds
-        .pushed_down_conds
+        .all_conds
         .iter()
         .enumerate()
         .filter(|(position, _)| *position != or_position)
@@ -148,9 +173,41 @@ fn prepare_union_index_merge_path_for_or(
         for (index_pos, source_index) in ds.indexes.iter().enumerate() {
             if !enumerated_indexes[index_pos]
                 || source_index.is_columnar
-                || source_index.is_multi_valued
                 || !source_index.condition_expr_string.is_empty()
             {
+                continue;
+            }
+            if source_index.is_multi_valued {
+                if !index_merge_hint_allows(ds, &source_index.name) {
+                    continue;
+                }
+                // Go initUnfinishedPathsFromExpr, then handleTopLevelANDList,
+                // then buildIntoAccessPath, for an MV candidate.
+                let Some(mut unfinished) =
+                    super::mv_index::init_unfinished_mv_path(ds, ctx, index_pos, disjunct)
+                else {
+                    continue;
+                };
+                for filter in &table_filters {
+                    if let Some(item) =
+                        super::mv_index::init_unfinished_mv_path(ds, ctx, index_pos, filter)
+                    {
+                        unfinished.merge_and_item(item);
+                    }
+                }
+                if let Some((paths, keep_source_filter)) = super::mv_index::build_mv_alternative(
+                    ds,
+                    ctx,
+                    index_pos,
+                    &unfinished,
+                    use_plan_cache,
+                )? {
+                    branch.push(Partial::MvIndex {
+                        index_pos,
+                        paths,
+                        keep_source_filter,
+                    });
+                }
                 continue;
             }
             // Go models an int-clustered table's PRIMARY key AS the handle,
@@ -289,7 +346,7 @@ fn prepare_union_index_merge_path_for_or(
     let mut contain_mv_path = false;
     for partial in alternatives.iter().flatten() {
         match partial {
-            Partial::Index { index_pos, .. } => {
+            Partial::Index { index_pos, .. } | Partial::MvIndex { index_pos, .. } => {
                 if let Some(index) = ds.indexes.get(*index_pos) {
                     possible_ids.insert(index.id);
                     contain_mv_path |= index.is_multi_valued;
@@ -318,7 +375,7 @@ fn prepare_union_index_merge_path_for_or(
     Ok(Some(UnionIndexMergePath {
         alternatives,
         count_after_access: total_rows,
-        source_filter: ds.pushed_down_conds[or_position].clone(),
+        source_filter: ds.all_conds[or_position].clone(),
         table_filters,
         use_plan_cache,
     }))
@@ -329,10 +386,24 @@ pub(crate) fn estimate_union_access(
     selected: &[&Partial],
     ctx: &AccessPathDerivationContext<'_>,
 ) -> f64 {
+    // Go `estimateCountAfterAccessForIndexMergeOR`: with an MV partial the
+    // decided paths unite by `CalcTotalSelectivityForMVIdxPath`.
+    if selected
+        .iter()
+        .any(|partial| matches!(partial, Partial::MvIndex { .. }))
+    {
+        let rows = selected.iter().flat_map(|partial| match partial {
+            Partial::Index { rows, .. } | Partial::Table { rows, .. } => vec![*rows],
+            Partial::MvIndex { paths, .. } => paths.iter().map(IndexMergePartial::rows).collect(),
+        });
+        return ds.table_stats.as_ref().map_or(0.0, |stats| stats.row_count())
+            * super::mv_index::union_selectivity(ds, rows);
+    }
     let mut total_rows = selected
         .iter()
         .map(|partial| match partial {
             Partial::Index { rows, .. } | Partial::Table { rows, .. } => *rows,
+            Partial::MvIndex { paths, .. } => paths.iter().map(IndexMergePartial::rows).sum(),
         })
         .sum::<f64>();
     let access_branches = selected
@@ -346,6 +417,16 @@ pub(crate) fn estimate_union_access(
             Partial::Table { filled, .. } => {
                 tidb_expr::simple_expr::compose_cnf_condition(filled.detached.access_conds.clone())
             }
+            Partial::MvIndex { paths, .. } => tidb_expr::simple_expr::compose_dnf_condition(
+                paths
+                    .iter()
+                    .filter_map(|path| {
+                        tidb_expr::simple_expr::compose_cnf_condition(
+                            path.filled().detached.access_conds.clone(),
+                        )
+                    })
+                    .collect(),
+            ),
         })
         .collect::<Option<Vec<_>>>();
     if let Some(stats) = &ds.table_stats {
@@ -481,6 +562,34 @@ pub(crate) fn compare_alternatives(
                 *rows,
                 false,
             ),
+            // Go cmpAlternatives: every path must be empty or unique-point,
+            // and a multi-path alternative compares by its largest count.
+            Partial::MvIndex {
+                index_pos, paths, ..
+            } => {
+                let index = &ds.indexes[*index_pos];
+                let point = paths.iter().all(|path| {
+                    let ranges = &path.filled().detached.ranges;
+                    ranges.is_empty()
+                        || (index.unique
+                            && ranges.iter().all(|range| {
+                                range.is_point_non_nullable()
+                                    && range.high_val.len() == index.columns.len()
+                            }))
+                });
+                let rows = paths
+                    .iter()
+                    .map(|path| {
+                        let filled = path.filled();
+                        if filled.index_filters.is_empty() {
+                            path.rows()
+                        } else {
+                            filled.count_after_index.unwrap_or(0.0)
+                        }
+                    })
+                    .fold(0.0, f64::max);
+                (point, rows, index.global)
+            }
         };
         (point, rows, global)
     };
@@ -502,7 +611,7 @@ pub(crate) fn compare_alternatives(
 /// (`core/stats.go:425-447`): the appended handle is trimmed from `IdxCols`
 /// and each range pruned to the declared columns before
 /// `GetRowCountByIndexRanges`.
-fn estimate_partial_index_ranges(
+pub(super) fn estimate_partial_index_ranges(
     ds: &DataSource,
     source_index: &crate::plan_builder::catalog::SourceIndex,
     filled: &super::ordinary::FilledIndexPath,
@@ -539,24 +648,62 @@ fn estimate_partial_index_ranges(
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct IntersectionPartial {
+pub(crate) struct IndexMergePartial {
     pub(crate) index_pos: usize,
     pub(crate) path: super::IndexPathState,
 }
 
-/// A logically derived intersection candidate, before physical properties.
+/// Go's finished index-merge `AccessPath` (`PartialIndexPaths` set): the
+/// partials are fixed at logical derivation, unlike the OR alternatives of
+/// [`UnionIndexMergePath`] that converge only under physical properties.
 #[derive(Clone, Debug)]
-pub struct IntersectionIndexMergePath {
-    pub(crate) partials: Vec<IntersectionPartial>,
+pub struct IndexMergePath {
+    pub(crate) partials: Vec<IndexMergePartial>,
     pub(crate) count_after_access: f64,
     pub(crate) table_filters: Vec<Expression>,
+    /// Go `IndexMergeIsIntersection`.
+    pub(crate) is_intersection: bool,
+    /// Go `IndexMergeAccessMVIndex`.
+    pub(crate) access_mv_index: bool,
+    /// Go `NoncacheableReason`/`SetSkipPlanCache` for a path whose ranges
+    /// depend on parameter values.
+    pub(crate) noncacheable_reason: Option<String>,
 }
 
+/// Go `generateNormalIndexPartialPath4And`.
+pub(crate) fn generate_normal_index_partial_paths_for_and(
+    ds: &DataSource,
+    ctx: &AccessPathDerivationContext<'_>,
+    used_access: &mut std::collections::HashMap<Vec<u8>, Expression>,
+) -> Vec<IndexMergePartial> {
+    generate_and_index_merge_for_normal_index(ds, ctx, false, used_access)
+        .map(|path| path.partials)
+        .unwrap_or_default()
+}
+
+/// Go `generateANDIndexMerge4NormalIndex`: the hinted intersection over
+/// ordinary indexes. Composed with MV partials (`used_access` non-empty), a
+/// path whose access conditions an MV partial already covers is skipped and
+/// one path suffices.
 pub(crate) fn prepare_intersection_index_merge_path(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     use_plan_cache: bool,
-) -> Result<Option<IntersectionIndexMergePath>, PlanError> {
+) -> Result<Option<IndexMergePath>, PlanError> {
+    Ok(generate_and_index_merge_for_normal_index(
+        ds,
+        ctx,
+        use_plan_cache,
+        &mut std::collections::HashMap::new(),
+    ))
+}
+
+fn generate_and_index_merge_for_normal_index(
+    ds: &DataSource,
+    ctx: &AccessPathDerivationContext<'_>,
+    use_plan_cache: bool,
+    used_access: &mut std::collections::HashMap<Vec<u8>, Expression>,
+) -> Option<IndexMergePath> {
     use std::collections::HashSet;
     if ds.is_local_temporary
         || !ds
@@ -564,8 +711,9 @@ pub(crate) fn prepare_intersection_index_merge_path(
             .iter()
             .any(|hint| !hint.index_names.is_empty())
     {
-        return Ok(None);
+        return None;
     }
+    let composed_with_mv_index = !used_access.is_empty();
     let enumerated = enumerated_index_mask(ds);
     let mut partials = Vec::new();
     let mut final_filters = Vec::new();
@@ -588,6 +736,23 @@ pub(crate) fn prepare_intersection_index_merge_path(
         };
         if crate::ranger::types::has_full_range(&filled.detached.ranges, false) {
             continue;
+        }
+        if composed_with_mv_index {
+            // For `(1 member of a) and c = 1 and d = 2` over mv(c, a), idx(c)
+            // and idx(c, d), idx(c)'s access is already covered by the MV
+            // partial; idx(c, d) adds `d = 2`.
+            let access_hashes = filled
+                .detached
+                .access_conds
+                .iter()
+                .map(Expression::canonical_hash_code)
+                .collect::<Vec<_>>();
+            if access_hashes.iter().all(|hash| used_access.contains_key(hash)) {
+                continue;
+            }
+            for (hash, access) in access_hashes.into_iter().zip(&filled.detached.access_conds) {
+                used_access.entry(hash).or_insert_with(|| access.clone());
+            }
         }
         // Go clones ordinary paths and retains only pushable index filters.
         // A prefix recheck can occur in access conditions AND table filters;
@@ -622,10 +787,11 @@ pub(crate) fn prepare_intersection_index_merge_path(
             partial_filters.push(condition.clone());
         }
         final_filters.extend(not_covered);
-        partials.push(IntersectionPartial { index_pos, path });
+        partials.push(IndexMergePartial { index_pos, path });
     }
-    if partials.len() < 2 {
-        return Ok(None);
+    // Even a single normal path can be composed with MV partials.
+    if partials.is_empty() || (partials.len() == 1 && !composed_with_mv_index) {
+        return None;
     }
     final_filters.retain(|condition| covered.insert(condition.canonical_hash_code()));
     if tidb_expr::expr_util::predicates::maybe_over_optimized_4_plan_cache(
@@ -639,9 +805,12 @@ pub(crate) fn prepare_intersection_index_merge_path(
         .as_ref()
         .map_or(0.0, |stats| stats.row_count())
         * super::ordinary::filter_selectivity(ds, &partial_filters, ctx);
-    Ok(Some(IntersectionIndexMergePath {
+    Some(IndexMergePath {
         partials,
         count_after_access,
         table_filters: final_filters,
-    }))
+        is_intersection: true,
+        access_mv_index: false,
+        noncacheable_reason: None,
+    })
 }

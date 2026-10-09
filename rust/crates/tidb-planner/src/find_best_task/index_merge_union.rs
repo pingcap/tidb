@@ -55,6 +55,13 @@ fn partial_matches_order(
         return false;
     }
     match partial {
+        // Go `isMatchPropForIndexMerge`: every MV partial path must match,
+        // its equality on the array value fixing that key position.
+        Partial::MvIndex {
+            index_pos, paths, ..
+        } => paths
+            .iter()
+            .all(|path| index_partial_matches_order(ds, *index_pos, path.filled(), items)),
         Partial::Table { .. } => {
             ds.handle_is_int
                 && items.len() == 1
@@ -65,47 +72,56 @@ fn partial_matches_order(
         }
         Partial::Index {
             index_pos, filled, ..
-        } => {
-            let ranges = &filled.detached.ranges;
-            let index = &ds.indexes[*index_pos];
-            if ds.force_no_keep_order_index_ids.contains(&index.id) {
+        } => index_partial_matches_order(ds, *index_pos, filled, items),
+    }
+}
+
+/// Go `isMatchProp` over one index partial path: the sort columns follow
+/// the key after a prefix every range pins to one value.
+fn index_partial_matches_order(
+    ds: &DataSource,
+    index_pos: usize,
+    filled: &crate::access_path::ordinary::FilledIndexPath,
+    items: &[crate::physical_property::SortItem],
+) -> bool {
+    let ranges = &filled.detached.ranges;
+    let index = &ds.indexes[index_pos];
+    if ds.force_no_keep_order_index_ids.contains(&index.id) {
+        return false;
+    }
+    // Match the same normalized key layout used by ordinary ranges,
+    // including eligible appended handles after fixed declared keys.
+    let columns = &filled.columns;
+    let mut offset = 0;
+    for item in items {
+        let mut found = false;
+        while let Some((column, length)) = columns.get(offset) {
+            let position = offset;
+            offset += 1;
+            let full_length = *length < 0
+                || column
+                    .ret_type
+                    .as_ref()
+                    .is_some_and(|ty| ty.flen() == *length);
+            if full_length && column.unique_id == item.col.unique_id {
+                found = true;
+                break;
+            }
+            let fixed = ranges.first().and_then(|range| range.low_val.get(position));
+            if !fixed.is_some_and(|value| {
+                ranges.iter().all(|range| {
+                    range.low_val.get(position) == Some(value)
+                        && range.high_val.get(position) == Some(value)
+                })
+            }) {
                 return false;
             }
-            // Match the same normalized key layout used by ordinary ranges,
-            // including eligible appended handles after fixed declared keys.
-            let columns = &filled.columns;
-            let mut offset = 0;
-            for item in items {
-                let mut found = false;
-                while let Some((column, length)) = columns.get(offset) {
-                    let position = offset;
-                    offset += 1;
-                    let full_length = *length < 0
-                        || column
-                            .ret_type
-                            .as_ref()
-                            .is_some_and(|ty| ty.flen() == *length);
-                    if full_length && column.unique_id == item.col.unique_id {
-                        found = true;
-                        break;
-                    }
-                    let fixed = ranges.first().and_then(|range| range.low_val.get(position));
-                    if !fixed.is_some_and(|value| {
-                        ranges.iter().all(|range| {
-                            range.low_val.get(position) == Some(value)
-                                && range.high_val.get(position) == Some(value)
-                        })
-                    }) {
-                        return false;
-                    }
-                }
-                if !found {
-                    return false;
-                }
-            }
-            true
+        }
+        if !found {
+            return false;
         }
     }
+    true
 }
 
 #[cfg(test)]
@@ -174,7 +190,9 @@ pub(super) fn converge_union_index_merge_path<'a>(
         &ctx.access_path_derivation_context(),
     );
     let index_id = |partial: &Partial| match partial {
-        Partial::Index { index_pos, .. } => ds.indexes[*index_pos].id,
+        Partial::Index { index_pos, .. } | Partial::MvIndex { index_pos, .. } => {
+            ds.indexes[*index_pos].id
+        }
         Partial::Table { .. } => -1,
     };
     if ds.index_merge_hints.is_empty()
@@ -211,6 +229,18 @@ pub(super) fn converge_union_index_merge_path<'a>(
                         condition.canonical_hash_code() == filter.canonical_hash_code()
                     })
                 }
+                Partial::MvIndex {
+                    index_pos, paths, ..
+                } => paths.iter().all(|path| {
+                    crate::logical::data_source::index_covers_condition(
+                        ds,
+                        &ds.indexes[*index_pos],
+                        filter,
+                        ctx.opt_prefix_index_single_scan,
+                    ) && path.filled().detached.access_conds.iter().any(|condition| {
+                        condition.canonical_hash_code() == filter.canonical_hash_code()
+                    })
+                }),
                 Partial::Table { .. } => false,
             })
         })
@@ -226,6 +256,9 @@ pub(super) fn converge_union_index_merge_path<'a>(
                 keep_source_filter: true,
                 ..
             } | Partial::Table {
+                keep_source_filter: true,
+                ..
+            } | Partial::MvIndex {
                 keep_source_filter: true,
                 ..
             }
@@ -348,83 +381,43 @@ pub(super) fn build_converged_union_index_merge_task(
                 rows,
                 ..
             } => {
-                let ranges = &filled.detached.ranges;
-                let source_index = &ds.indexes[*index_pos];
-                let schema_columns = partial_index_schema(ds, source_index, ctx)?;
-                // Go GetScanRowSize prices the physical index schema once.
-                let cost_columns = schema_columns.clone();
-                let mut base = crate::physical::BasePhysicalPlan::new(
-                    ctx.allocator,
-                    "IndexRangeScan",
-                    ds.base.base.query_block_offset(),
-                );
-                base.base.set_stats(Some(merge_scan_stats(
+                let scan_rows =
+                    partial_rows(*rows, matched.matched(), false, !filled.index_filters.is_empty());
+                push_index_partial(
                     ds,
-                    partial_rows(
-                        *rows,
+                    ctx,
+                    *index_pos,
+                    filled,
+                    *rows,
+                    scan_rows,
+                    matched.matched(),
+                    desc,
+                    &mut partial_plans_raw,
+                )?;
+            }
+            // Go builds one partial scan per path of the MV alternative.
+            Partial::MvIndex {
+                index_pos, paths, ..
+            } => {
+                for path in paths {
+                    let filled = path.filled();
+                    let scan_rows = partial_rows(
+                        path.rows(),
                         matched.matched(),
                         false,
                         !filled.index_filters.is_empty(),
-                    ),
-                    ctx,
-                )));
-                base.base
-                    .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
-                partial_plans_raw.push(PhysicalPlan::IndexScan(
-                    crate::physical::PhysicalIndexScan {
-                        base,
-                        table_id: ds.physical_table_id,
-                        table_as_name: ds.table_as_name.clone(),
-                        dynamic_partition_access: ds.dynamic_partition_access.clone(),
-                        cost_columns,
-                        data_source_schema: ds.base.base.schema().cloned().map(Box::new),
-                        index_id: source_index.id,
-                        index_name: source_index.name.clone(),
-                        keep_order: matched.matched(),
+                    );
+                    push_index_partial(
+                        ds,
+                        ctx,
+                        *index_pos,
+                        filled,
+                        path.rows(),
+                        scan_rows,
+                        matched.matched(),
                         desc,
-                        ranges: ranges.clone(),
-                        range_rebuild: None,
-                        covering_ranges: Vec::new(),
-                        tikv_pushdown: None,
-                    },
-                ));
-                let global_partition_filter = super::dispatch::global_index_partition_filter(
-                    ds,
-                    source_index,
-                    partial_plans_raw.last().and_then(PhysicalPlan::schema),
-                );
-                if !filled.index_filters.is_empty() || global_partition_filter.is_some() {
-                    let scan = partial_plans_raw
-                        .pop()
-                        .expect("partial scan was just built");
-                    let mut base = crate::physical::BasePhysicalPlan::new(
-                        ctx.allocator,
-                        "Selection",
-                        ds.base.base.query_block_offset(),
-                    );
-                    base.base.set_schema(scan.schema().cloned());
-                    let ratio = if *rows > 0.0 {
-                        filled.count_after_index.unwrap_or(*rows) / rows
-                    } else {
-                        0.0
-                    };
-                    base.base.set_stats(
-                        scan.stats_info()
-                            .map(|stats| stats.scale(ratio, ctx.skew_ratio)),
-                    );
-                    base.set_children(vec![scan]);
-                    partial_plans_raw.push(PhysicalPlan::Selection(
-                        crate::physical::PhysicalSelection {
-                            base,
-                            conditions: filled
-                                .index_filters
-                                .iter()
-                                .cloned()
-                                .chain(global_partition_filter)
-                                .collect(),
-                            from_data_source: true,
-                        },
-                    ));
+                        &mut partial_plans_raw,
+                    )?;
                 }
             }
             Partial::Table { filled, rows, .. } => {
@@ -615,6 +608,89 @@ pub(super) fn build_converged_union_index_merge_task(
     }))
 }
 
+/// One index partial of a union: its IndexRangeScan, under a Selection for
+/// its index filters or a global index's partition filter.
+#[allow(clippy::too_many_arguments)]
+fn push_index_partial(
+    ds: &DataSource,
+    ctx: &DispatchContext<'_>,
+    index_pos: usize,
+    filled: &crate::access_path::ordinary::FilledIndexPath,
+    rows: f64,
+    scan_rows: f64,
+    matched: bool,
+    desc: bool,
+    partial_plans_raw: &mut Vec<PhysicalPlan>,
+) -> Result<(), PlanError> {
+    let ranges = &filled.detached.ranges;
+    let source_index = &ds.indexes[index_pos];
+    let schema_columns = partial_index_schema(ds, source_index, ctx)?;
+    // Go GetScanRowSize prices the physical index schema once.
+    let cost_columns = schema_columns.clone();
+    let mut base = crate::physical::BasePhysicalPlan::new(
+        ctx.allocator,
+        "IndexRangeScan",
+        ds.base.base.query_block_offset(),
+    );
+    base.base.set_stats(Some(merge_scan_stats(ds, scan_rows, ctx)));
+    base.base
+        .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
+    partial_plans_raw.push(PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
+        base,
+        table_id: ds.physical_table_id,
+        table_as_name: ds.table_as_name.clone(),
+        dynamic_partition_access: ds.dynamic_partition_access.clone(),
+        cost_columns,
+        data_source_schema: ds.base.base.schema().cloned().map(Box::new),
+        index_id: source_index.id,
+        index_name: source_index.name.clone(),
+        keep_order: matched,
+        desc,
+        ranges: ranges.clone(),
+        range_rebuild: None,
+        covering_ranges: Vec::new(),
+        tikv_pushdown: None,
+    }));
+    let global_partition_filter = super::dispatch::global_index_partition_filter(
+        ds,
+        source_index,
+        partial_plans_raw.last().and_then(PhysicalPlan::schema),
+    );
+    if !filled.index_filters.is_empty() || global_partition_filter.is_some() {
+        let scan = partial_plans_raw
+            .pop()
+            .expect("partial scan was just built");
+        let mut base = crate::physical::BasePhysicalPlan::new(
+            ctx.allocator,
+            "Selection",
+            ds.base.base.query_block_offset(),
+        );
+        base.base.set_schema(scan.schema().cloned());
+        let ratio = if rows > 0.0 {
+            filled.count_after_index.unwrap_or(rows) / rows
+        } else {
+            0.0
+        };
+        base.base.set_stats(
+            scan.stats_info()
+                .map(|stats| stats.scale(ratio, ctx.skew_ratio)),
+        );
+        base.set_children(vec![scan]);
+        partial_plans_raw.push(PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+            base,
+            conditions: filled
+                .index_filters
+                .iter()
+                .cloned()
+                .chain(global_partition_filter)
+                .collect(),
+            from_data_source: true,
+        }));
+    }
+    Ok(())
+}
+
+
 /// Go PhysicalIndexScan.InitSchema. The usable range prefix and the physical
 /// index row have different widths after pruning; restore the latter from
 /// immutable table metadata and retain the handle suffix's exact order.
@@ -653,7 +729,9 @@ pub(super) fn index_scan_schema(
                 .alloc();
             column
         };
-        columns.push(column);
+        // Go `InitSchema(path.FullIdxCols)`: an MV partial's ARRAY column is
+        // its element type, which is what the index key holds.
+        columns.push(crate::access_path::mv_index::unwrap_array_column(column));
     }
     let schema = ds.base.base.schema();
     if ds.is_common_handle {
@@ -837,6 +915,11 @@ mod tests {
             ))],
             ..Default::default()
         };
+        // Go's `AllConds` contains every pushed condition.
+        let ds = DataSource {
+            all_conds: ds.pushed_down_conds.clone(),
+            ..ds
+        };
         let allocator = crate::plan_base::PlanIdAllocator::new();
         let derivation = crate::access_path::AccessPathDerivationContext {
             opt_prefix_index_single_scan: true,
@@ -901,6 +984,7 @@ mod tests {
             only_b.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
                 tidb_ast::CiString::new("or"), ty.clone(), vec![eq_b(1), eq_b(2)],
             ))];
+            only_b.all_conds = only_b.pushed_down_conds.clone();
             only_b
         };
         assert!(crate::access_path::index_merge::prepare_union_index_merge_paths(&only_b, &derivation, false)
@@ -928,6 +1012,7 @@ mod tests {
         multiple_or.pushed_down_conds.push(Expression::ScalarFunction(ScalarFunction::new(
             tidb_ast::CiString::new("or"), ty.clone(), vec![eq_b(1), eq_b(2)],
         )));
+        multiple_or.all_conds = multiple_or.pushed_down_conds.clone();
         let candidates = crate::access_path::index_merge::prepare_union_index_merge_paths(&multiple_or, &derivation, false).unwrap();
         assert_eq!(candidates.len(), 2, "each top-level OR retains its own candidate");
         assert_ne!(candidates[0].source_filter.canonical_hash_code(), candidates[1].source_filter.canonical_hash_code());
@@ -1062,6 +1147,7 @@ mod tests {
             .base
             .set_stats(Some(crate::stats_info::StatsInfo::new(2.0, [])));
         ordinary_source.pushed_down_conds = vec![eq(1)];
+        ordinary_source.all_conds = ordinary_source.pushed_down_conds.clone();
         ordinary_source.index_merge_hints.clear();
         for index in &ordinary_source.indexes {
             ordinary_source
@@ -1127,6 +1213,7 @@ mod tests {
         let mut table_source = choices.clone();
         table_source.table_stats = Some(crate::stats_info::StatsInfo::new(1000.0, []));
         table_source.pushed_down_conds = vec![eq(1)];
+        table_source.all_conds = table_source.pushed_down_conds.clone();
         table_source.index_merge_hints.clear();
         table_source.indexes[0].primary = true;
         table_source.indexes[0].unique = true;

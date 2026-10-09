@@ -2545,6 +2545,22 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             if let Some(warning) = warning {
                                 self.eval_context.append_warning(1105, &warning);
                             }
+                            // Go `generateIndexMergePath`: merges built from
+                            // AllConds may see more filters than the stats
+                            // derived from PushedDownConds, so the largest
+                            // merge row count caps the DataSource's rows.
+                            if let (Some(max_rows), Ok((stats, _)), Some(table_stats)) = (
+                                paths.index_merge_max_count,
+                                result.as_mut(),
+                                source.table_stats.as_ref(),
+                            ) {
+                                if stats.row_count() > max_rows {
+                                    let scaled = table_stats
+                                        .scale_by_expect_cnt(max_rows, self.scale_ndv_skew_ratio);
+                                    source.base.base.set_stats(Some(scaled.clone()));
+                                    *stats = scaled;
+                                }
+                            }
                             source.derived_access_paths = Some(paths);
                         }
                         Err(error) => result = Err(error),

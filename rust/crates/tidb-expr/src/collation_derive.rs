@@ -727,7 +727,11 @@ fn compare_is_string(args: &[Expression]) -> bool {
 /// halves matter: the first feeds an enclosing function's aggregation, the
 /// second feeds this function's own evaluation.
 pub fn apply_derived_collation(expr: &mut Expression, ec: &ExprCollation) {
-    if let Some(ft) = ret_type_mut(expr) {
+    // Go keeps the derivation in the function's `collationInfo` and leaves
+    // `tp` as the function class built it. This port stamps it on the result
+    // type as well, except on an ARRAY result, whose type carries the
+    // ELEMENT's charset (`CAST(j AS CHAR(2) ARRAY)` counts characters).
+    if let Some(ft) = ret_type_mut(expr).filter(|ft| !ft.is_array()) {
         ft.set_charset_name(ec.charset.clone());
         ft.set_collation_name(ec.collation.clone());
     }

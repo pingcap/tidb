@@ -773,7 +773,12 @@ pub(crate) fn wrap_comparison_arguments(
             wrap_with_cast_as_time(expression, FieldType::new(FieldTypeCode::Timestamp))
         }
         EvalType::Duration => wrap_with_cast_as_duration(expression),
-        EvalType::Json => wrap_with_cast_as_json(expression),
+        // Go `generateCmpSigs`: "In compare, if we cast string to JSON, we
+        // shouldn't parse it" -- the flag is cleared on the wrapped operand.
+        EvalType::Json => wrap_with_cast_as_json(expression).map(|mut wrapped| {
+            crate::expr_util::predicates::disable_parse_json_flag_4_expr(&mut wrapped);
+            wrapped
+        }),
         EvalType::VectorFloat32 => wrap_with_cast_as_vector_float32(expression),
     };
     *arguments = arguments

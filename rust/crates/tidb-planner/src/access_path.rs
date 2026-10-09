@@ -31,6 +31,7 @@ use crate::{
 
 
 pub(crate) mod index_merge;
+pub(crate) mod mv_index;
 pub(crate) mod ordinary;
 
 /// Statement inputs to logical access-path derivation, independent of physical
@@ -109,8 +110,10 @@ pub enum DerivedAccessPath {
     Ordinary(PossiblePath),
     /// OR alternatives converge only when physical properties are known.
     Union(index_merge::UnionIndexMergePath),
-    /// AND partials retain residual predicates for table-side attachment.
-    Intersection(index_merge::IntersectionIndexMergePath),
+    /// A finished index merge (Go `PartialIndexPaths`): the hinted normal
+    /// intersection and the multi-valued index paths, whose residual
+    /// predicates attach on the table side.
+    IndexMerge(index_merge::IndexMergePath),
 }
 
 /// Go's post-derivation PossibleAccessPaths and their shared minimum selectivity.
@@ -122,6 +125,11 @@ pub struct DerivedAccessPaths {
     pub paths: Vec<DerivedAccessPath>,
     /// Includes merge estimates before ordered-index expected-count adjustment.
     pub min_selectivity: f64,
+    /// Go `generateIndexMergePath`'s `maxRowCount`: the largest index-merge
+    /// `CountAfterAccess`, present only when merges were built from more
+    /// conditions (`AllConds`) than the DataSource statistics saw
+    /// (`PushedDownConds`). The statistics are rescaled down to it.
+    pub index_merge_max_count: Option<f64>,
 }
 
 pub(crate) fn derive_access_paths(
@@ -181,6 +189,7 @@ pub(crate) fn derive_access_paths(
     // Go `generateIndexMergePath`'s warning, reported only for a hinted table
     // (which then loses its hints).
     let mut index_merge_warning = None;
+    let mut index_merge_max_count = None;
     // Go `generateIndexMergePath`: `(EnableIndexMerge || len(IndexMergeHints)
     // > 0) && !NoIndexMergeHint`.
     if !((index_merge_enabled || !source.index_merge_hints.is_empty()) && !no_index_merge_hint) {
@@ -191,8 +200,9 @@ pub(crate) fn derive_access_paths(
         index_merge_warning =
             Some("IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table.");
     } else {
-        // Go `generateOtherIndexMerge`'s `isPossibleIdxMerge`.
-        if source.pushed_down_conds.is_empty() || source.enumerated_paths.len() <= 1 {
+        // Go `generateOtherIndexMerge`'s `isPossibleIdxMerge`, over
+        // `indexMergeConds` (= `AllConds`).
+        if source.all_conds.is_empty() || source.enumerated_paths.len() <= 1 {
             index_merge_warning = Some(
                 "IndexMerge is inapplicable or disabled. No available filter or available index.",
             );
@@ -204,11 +214,49 @@ pub(crate) fn derive_access_paths(
         if let Some(path) =
             index_merge::prepare_intersection_index_merge_path(source, context, use_plan_cache)?
         {
-            merges.push(DerivedAccessPath::Intersection(path));
+            merges.push(DerivedAccessPath::IndexMerge(path));
         }
-        if !merges.is_empty() && !source.index_merge_hints.is_empty() {
-            paths.clear();
-            min_selectivity = 1.0;
+        // Go's second and third entry points read `AllConds`: an IndexMerge
+        // over one MV index, then an intersection composing MV and ordinary
+        // indexes.
+        for path in mv_index::generate_and_index_merge_for_mv_index(
+            source,
+            context,
+            &source.all_conds,
+            use_plan_cache,
+        )? {
+            merges.push(DerivedAccessPath::IndexMerge(path));
+        }
+        let composed = mv_index::generate_and_index_merge_for_composed_index(
+            source,
+            context,
+            &source.all_conds,
+            use_plan_cache,
+        )?;
+        if source.all_conds.len() > source.pushed_down_conds.len() {
+            index_merge_max_count = merges
+                .iter()
+                .map(|path| match path {
+                    DerivedAccessPath::Union(path) => path.count_after_access,
+                    DerivedAccessPath::IndexMerge(path) => path.count_after_access,
+                    DerivedAccessPath::Ordinary(_) => 0.0,
+                })
+                .chain(composed.iter().map(|path| path.count_after_access))
+                .reduce(f64::max);
+        }
+        if !source.index_merge_hints.is_empty() {
+            // A hinted composed path prunes every other path, merges
+            // included; otherwise the merges prune the ordinary paths.
+            if composed.is_some() {
+                merges.clear();
+            }
+            if composed.is_some() || !merges.is_empty() {
+                paths.clear();
+                min_selectivity = 1.0;
+            }
+        }
+        if let Some(path) = composed {
+            merges.push(DerivedAccessPath::IndexMerge(path));
         }
         if let Some(stats) = source
             .table_stats
@@ -222,7 +270,7 @@ pub(crate) fn derive_access_paths(
                     // Convergence later creates concrete PartialIndexPaths whose
                     // CountAfterAccess is used for physical conversion.
                     DerivedAccessPath::Union(_) => 0.0,
-                    DerivedAccessPath::Intersection(path) => path.count_after_access,
+                    DerivedAccessPath::IndexMerge(path) => path.count_after_access,
                     DerivedAccessPath::Ordinary(_) => unreachable!(),
                 };
                 min_selectivity = min_selectivity.min(rows / stats.row_count());
@@ -232,6 +280,8 @@ pub(crate) fn derive_access_paths(
             index_merge_warning = Some("IndexMerge is inapplicable");
         }
         paths.extend(merges);
+        // Go `cleanAccessPathForMVIndexHint`.
+        mv_index::clean_access_path_for_mv_index_hint(source, &mut paths);
     }
     let index_merge_warning = index_merge_warning
         .filter(|_| !source.index_merge_hints.is_empty())
@@ -244,6 +294,7 @@ pub(crate) fn derive_access_paths(
             table_path,
             paths,
             min_selectivity,
+            index_merge_max_count,
         },
         index_merge_warning,
     ))

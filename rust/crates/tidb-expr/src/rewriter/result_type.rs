@@ -1534,7 +1534,6 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         | "json_contains_path"
         | "json_length"
         | "json_depth"
-        | "json_member_of"
         | "json_memberof"
         | "json_overlaps"
         | "json_storage_free"

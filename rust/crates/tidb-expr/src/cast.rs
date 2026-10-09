@@ -357,26 +357,26 @@ pub(crate) fn eval_cast_json_as_array(
                 .array_get(position)
                 .map_err(json_eval_error)?
                 .ok_or(EvalError::Unsupported("a JSON array element is missing"))?;
-            values.push(convert_json_to_array_element(&item, &element)?);
+            values.push(array_element_json(convert_json_to_type(&item, &element)?)?);
         }
     } else {
-        values.push(convert_json_to_array_element(&json, &element)?);
+        values.push(array_element_json(convert_json_to_type(&json, &element)?)?);
     }
     tidb_datatype::BinaryJSON::from_typed_value(&tidb_datatype::BinaryJSONValue::Array(values))
         .map(Datum::Json)
         .map_err(json_eval_error)
 }
 
-/// Go `convertJSON2Tp`: one array element converted to `target`, or Go's
-/// `ErrInvalidJSONForFuncIndex` when its JSON type does not fit the target's
-/// evaluation type.
-fn convert_json_to_array_element(
+/// Go `ConvertJSON2Tp`: one JSON value converted to `target` under Go's
+/// `fakeSctx` (strict flags), as a multi-valued index stores it and as the
+/// planner turns a `json_contains`/`json_overlaps` element into a range point.
+/// A target whose evaluation type has no conversion, or a JSON value of the
+/// wrong type, is Go's `ErrInvalidJSONForFuncIndex`.
+pub fn convert_json_to_type(
     item: &tidb_datatype::BinaryJSON,
     target: &FieldType,
-) -> Result<tidb_datatype::BinaryJSONValue, EvalError> {
-    use tidb_datatype::{
-        BinaryJSONValue, JSON_TYPE_CODE_FLOAT64, JSON_TYPE_CODE_INT64, JSON_TYPE_CODE_UINT64,
-    };
+) -> Result<Datum, EvalError> {
+    use tidb_datatype::{JSON_TYPE_CODE_FLOAT64, JSON_TYPE_CODE_INT64, JSON_TYPE_CODE_UINT64};
     let code = item.type_code();
     match target.eval_type() {
         EvalType::String => {
@@ -391,9 +391,7 @@ fn convert_json_to_array_element(
             if produced.event.is_some() {
                 return Err(EvalError::Conversion(tidb_datatype::ERR_DATA_TOO_LONG.clone()));
             }
-            Ok(BinaryJSONValue::String(
-                String::from_utf8_lossy(&produced.value).into_owned(),
-            ))
+            Ok(Datum::new_string(produced.value))
         }
         EvalType::Int => {
             if code != JSON_TYPE_CODE_INT64 && code != JSON_TYPE_CODE_UINT64 {
@@ -410,9 +408,9 @@ fn convert_json_to_array_element(
                 return Err(EvalError::Conversion(tidb_datatype::ERR_OVERFLOW.clone()));
             }
             Ok(if unsigned {
-                BinaryJSONValue::Uint64(converted.value as u64)
+                Datum::UInt(converted.value as u64)
             } else {
-                BinaryJSONValue::Int64(converted.value)
+                Datum::Int(converted.value)
             })
         }
         EvalType::Real => {
@@ -426,7 +424,7 @@ fn convert_json_to_array_element(
             if converted.event.is_some() {
                 return Err(EvalError::Conversion(tidb_datatype::ERR_OVERFLOW.clone()));
             }
-            Ok(BinaryJSONValue::Float64(converted.value))
+            Ok(Datum::Real(converted.value))
         }
         EvalType::Datetime => {
             let expected = if target.code() == FieldTypeCode::Date {
@@ -437,20 +435,51 @@ fn convert_json_to_array_element(
             if code != expected {
                 return Err(invalid_json_for_func_index());
             }
-            let time = item.as_time(target.decimal()).map_err(json_eval_error)?;
-            Ok(BinaryJSONValue::Binary(tidb_datatype::BinaryJSON::from_time(time)))
+            let mut time = item.as_time(target.decimal()).map_err(json_eval_error)?;
+            if target.code() == FieldTypeCode::Date {
+                time.set_kind(tidb_datatype::TimeType::Date);
+                // Go: "Truncate hh:mm:ss part if the type is Date."
+                let core = time.core_time();
+                time.set_core_time(tidb_datatype::CoreTime::from_date(
+                    core.year() as u16,
+                    core.month(),
+                    core.day(),
+                    0,
+                    0,
+                    0,
+                    0,
+                ));
+            } else {
+                time.set_kind(tidb_datatype::TimeType::DateTime);
+            }
+            Ok(Datum::Time(time))
         }
         EvalType::Duration => {
             if code != JSON_TYPE_CODE_DURATION {
                 return Err(invalid_json_for_func_index());
             }
-            let duration = item.as_duration().map_err(json_eval_error)?;
-            Ok(BinaryJSONValue::Binary(tidb_datatype::BinaryJSON::from_duration(duration)))
+            Ok(Datum::Duration(item.as_duration().map_err(json_eval_error)?))
         }
-        _ => Err(EvalError::NotImplemented(
-            format!("CAS-ing data to array of {}", target.source_string()).into(),
-        )),
+        _ => Err(invalid_json_for_func_index()),
     }
+}
+
+/// `CreateBinaryJSON` over the Go value `convertJSON2Tp` returned.
+fn array_element_json(value: Datum) -> Result<tidb_datatype::BinaryJSONValue, EvalError> {
+    use tidb_datatype::BinaryJSONValue;
+    Ok(match value {
+        Datum::String(text) => {
+            BinaryJSONValue::String(String::from_utf8_lossy(text.bytes()).into_owned())
+        }
+        Datum::Int(value) => BinaryJSONValue::Int64(value),
+        Datum::UInt(value) => BinaryJSONValue::Uint64(value),
+        Datum::Real(value) => BinaryJSONValue::Float64(value),
+        Datum::Time(time) => BinaryJSONValue::Binary(tidb_datatype::BinaryJSON::from_time(time)),
+        Datum::Duration(duration) => {
+            BinaryJSONValue::Binary(tidb_datatype::BinaryJSON::from_duration(duration))
+        }
+        _ => return Err(EvalError::Unsupported("an array element of an unexpected type")),
+    })
 }
 
 /// Go `expression.ErrInvalidJSONForFuncIndex` (3903), raised without the

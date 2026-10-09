@@ -3684,6 +3684,7 @@ mod statistics_initialization_tests {
             table_path: None,
             paths: Vec::new(),
             min_selectivity: 0.01,
+            index_merge_max_count: None,
         });
         let context = crate::StmtContext::default();
         let mut initializer = InitStats {

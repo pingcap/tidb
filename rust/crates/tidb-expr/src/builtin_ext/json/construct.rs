@@ -26,8 +26,7 @@
 
 use serde_json::Value as Json;
 
-use super::text::format_json;
-use super::value::{binary_json_datum, json_argument, json_sql_string, parse_json, StringArgument};
+use super::value::{json_sql_string, parse_json};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 use tidb_datatype::FieldType;
@@ -95,9 +94,37 @@ pub(super) fn json_array(
     let values = vals
         .iter()
         .zip(arg_types.iter())
-        .map(|(v, ft)| json_argument(v, StringArgument::Value, ft.as_ref()))
+        .map(|(v, ft)| json_element(v, ft.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
-    binary_json_datum(Json::Array(values))
+    tidb_datatype::BinaryJSON::from_typed_value(&tidb_datatype::BinaryJSONValue::Array(values))
+        .map(Datum::Json)
+        .map_err(typed_json_error)
+}
+
+/// Go `CreateBinaryJSONWithCheck`'s refusals for a constructed document.
+fn typed_json_error(error: tidb_datatype::BinaryJSONError) -> EvalError {
+    match error {
+        tidb_datatype::BinaryJSONError::TooDeep => EvalError::Json(JsonError::DocumentTooDeep),
+        _ => EvalError::Unsupported("datum JSON conversion"),
+    }
+}
+
+/// One `JSON_ARRAY`/`JSON_OBJECT` value as Go builds it: the argument's own
+/// `castXAsJSON` signature with ParseToJSON cleared (`DisableParseJSONFlag4Expr`),
+/// and SQL NULL as JSON `null`. A DATE/DATETIME/TIME argument stays a JSON
+/// date/datetime/time value (`json_type` answers DATE), which a JSON text
+/// round trip cannot carry.
+fn json_element(
+    value: &Datum,
+    field_type: Option<&FieldType>,
+) -> Result<tidb_datatype::BinaryJSONValue, EvalError> {
+    if value.is_null() {
+        return Ok(tidb_datatype::BinaryJSONValue::Null);
+    }
+    match super::value::cast_as_json_value_typed(value, field_type)? {
+        Datum::Json(json) => Ok(tidb_datatype::BinaryJSONValue::Binary(json)),
+        _ => Err(EvalError::Unsupported("datum JSON conversion")),
+    }
 }
 
 /// `JSON_OBJECT(key, value [, key, value] ...)`, port of
@@ -114,7 +141,7 @@ pub(super) fn json_object(
             "JSON_OBJECT requires key/value pairs",
         ));
     }
-    let mut object = serde_json::Map::new();
+    let mut object = std::collections::BTreeMap::new();
     for (pair, types) in vals
         .as_chunks::<2>()
         .0
@@ -124,10 +151,12 @@ pub(super) fn json_object(
         let Some(key) = coerce_str(&pair[0])? else {
             return Err(EvalError::Json(JsonError::NullMemberName));
         };
-        let value = json_argument(&pair[1], StringArgument::Value, types[1].as_ref())?;
+        let value = json_element(&pair[1], types[1].as_ref())?;
         object.insert(key, value);
     }
-    binary_json_datum(Json::Object(object))
+    tidb_datatype::BinaryJSON::from_typed_value(&tidb_datatype::BinaryJSONValue::Object(object))
+        .map(Datum::Json)
+        .map_err(typed_json_error)
 }
 
 #[cfg(test)]

@@ -19,8 +19,10 @@ After this work, `create table ... index kj((cast(j as signed array)))` succeeds
 - [x] (2026-10-09) M1: DDL accepts MV key parts (hidden array column with binary collation, `IndexInfo.MVIndex` in the cluster builder, the local key-part source recorded by `KvTable::add_index`), with Go's validation errors (1235 more than one array part, 3756 primary key, 1235 element types, the cast outside an index).
 - [x] (2026-10-09) M2: `CAST(json AS T ARRAY)` evaluates as Go's `castJSONAsArrayFunctionSig` (`tidb_expr::cast::eval_cast_json_as_array`); the planner rebuilds a virtual column under Go's `allowBuildCastArray`.
 - [x] (2026-10-09) M3: DML index maintenance expands MV keys (`KvTable::indexed_value_tuples`, Go `getIndexedValue`) for INSERT, DELETE, UPDATE (remove all old keys, then create all new ones, as `rebuildUpdateRecordIndices` does), ADD INDEX backfill and unique conflict lookup; INSERT completes 3903/3752/3907 with the index name (Go `completeError`); ADMIN CHECK skips the count test and checks both directions per key (Go `CheckTableExec` for MV).
-- [ ] M4: Planner MV IndexMerge paths (`pkg/planner/core/indexmerge_path.go` MV half).
-- [ ] M5: Executor reads MV partial paths (IndexMerge handle de-duplication, JSON comparison for lookups).
+- [x] (2026-10-09) M4 (AND half): `rust/crates/tidb-planner/src/access_path/mv_index.rs` ports `generateANDIndexMerge4MVIndex`, `generateMVIndexMergePartialPaths4And`, `generateANDIndexMerge4ComposedIndex`, `buildPartialPaths4MVIndex`, `buildPartialPath4MVIndex`, `collectFilters4MVIndex`, `CollectFilters4MVIndexMutations`, `checkAccessFilter4IdxCol`, `jsonArrayExpr2Exprs`, `cleanAccessPathForMVIndexHint` and `CalcTotalSelectivityForMVIdxPath`; the finished-path builder takes Go's intersection/MV flags, and the DataSource rows are capped at the largest merge count (Go `generateIndexMergePath`).
+- [x] (2026-10-09) M4 (OR half): `initUnfinishedPathsFromExpr` cases 2-3, `mergeANDItemIntoUnfinishedIndexMergePath` and `buildIntoAccessPath`'s MV arm (`Partial::MvIndex`, one partial per value), MV alternatives in `cmpAlternatives`/`estimateCountAfterAccessForIndexMergeOR`, ordered MV unions (`isMatchPropForIndexMerge`), and OR merges over `AllConds`. `convertToIndexScan`'s refusal keeps an MV index out of ordinary IndexReader/IndexLookUp/PointGet reads.
+- [ ] Residue: a clustered common-handle PRIMARY partial in OR unions (`indexmerge_path`'s `MIN(col_37)` statement) is a non-MV gap of the union path.
+- [x] (2026-10-09) M5: the IndexMerge reader already reads MV partial paths correctly (union/intersection handle sets over element-value ranges); verified by the answers in `tests_multi_valued_index.rs`. `CompareIndexAndVal`'s array arm belongs to M6's ADMIN CHECK INDEX ranges.
 - [ ] M6: ADMIN CHECK TABLE/INDEX and ANALYZE over MV indexes.
 - [ ] M7: Enroll the MV topics that replay clean; record residue.
 
@@ -35,6 +37,9 @@ After this work, `create table ... index kj((cast(j as signed array)))` succeeds
 
 - Observation: two expression-layer gaps block M4's plan text. The port names `MEMBER OF` `json_member_of` and passes its arguments raw, where Go builds `json_memberof` through `newBaseBuiltinFuncWithTp(..., ETJson, ETJson)`, which wraps a non-JSON argument as `cast(x, json BINARY)` (recorded plans print `json_memberof(cast(1, json BINARY), test.t.j)`); `json_contains`/`json_overlaps` arguments likewise. Go's `checkAccessFilter4IdxCol` unwraps exactly that cast, so the MV access-filter match depends on it. Second, the port's array cast is a scalar function named `cast_array`; Go's `unwrapJSONCast` matches `FuncName == "cast"` with a JSON result, so M4's port must accept the port's name for the same node.
   Evidence: `grep -n json_member_of rust/crates/tidb-expr/src/rewriter.rs`; `tests/integrationtest/r/planner/core/indexmerge_path.result`.
+
+- Observation: three expression-layer bugs surfaced on the MV path and were fixed at their root rather than in the planner: a string-sourced JSON cast lacked Go's ParseToJSON flag (`castAsJSONFunctionClass`), so `'[1,2]'` became a JSON string wherever the port wraps a JSON cast; `JSON_ARRAY`/`JSON_OBJECT` built their values through a serde-JSON text round trip that cannot carry JSON DATE/DATETIME/TIME; and collation derivation overwrote an ARRAY result's element charset with `binary` (Go keeps derivation in `collationInfo`), making `CHAR(2) ARRAY` count bytes.
+  Evidence: `expression/multi_valued_index` OutOfDomain statements before the fix; `tidb-session` test `array_elements_keep_their_type`.
 
 ## Decision Log
 

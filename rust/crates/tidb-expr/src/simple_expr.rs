@@ -686,6 +686,15 @@ pub fn build_cast_function(
     }
     let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
     let source_eval_type = expr.static_type().map(FieldType::eval_type);
+    // Go `castAsJSONFunctionClass.getFunction`: a string source picks
+    // `builtinCastStringAsJSONSig` and marks its result ParseToJSON, so the
+    // text is parsed as a JSON document (`'[1, 2]'` is an array, not a JSON
+    // string) unless a caller later clears it (DisableParseJSONFlag4Expr).
+    if target.code() == FieldTypeCode::Json
+        && source_eval_type == Some(tidb_datatype::EvalType::String)
+    {
+        target.add_flags(FieldTypeFlags::PARSE_TO_JSON);
+    }
     let name = match target.code() {
         FieldTypeCode::Year => "cast_year",
         FieldTypeCode::Date | FieldTypeCode::NewDate => "cast_date",

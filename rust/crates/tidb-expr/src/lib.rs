@@ -333,6 +333,7 @@ mod builtin_ext;
 pub mod builtin_op;
 pub mod builtin_registry;
 mod cast;
+pub use cast::{convert_json_to_type, invalid_json_for_func_index};
 mod coerce;
 pub mod collation_derive;
 pub mod column;

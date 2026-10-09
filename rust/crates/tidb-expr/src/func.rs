@@ -508,12 +508,11 @@ pub(crate) fn eval_func_values(
     vals: &[Datum],
     ctx: &dyn Columns,
 ) -> Option<Result<Datum, EvalError>> {
-    // `JSON_MEMBER_OF`'s rewrite spells the signature `json_member_of`, which
-    // the registry knows (underscore-insensitively) as a registered builtin —
-    // so the registered-but-unimplemented fallback below would swallow it
-    // before the JSON family's own dispatch ever sees the name. Route it
-    // through that dispatch here, where the row evaluator lives.
-    if name.eq_ignore_ascii_case("json_member_of") || name.eq_ignore_ascii_case("json_memberof") {
+    // `json_memberof` is a registered builtin, so the registered-but-
+    // unimplemented fallback below would swallow it before the JSON family's
+    // own dispatch ever sees the name. Route it through that dispatch here,
+    // where the row evaluator lives.
+    if name.eq_ignore_ascii_case("json_memberof") {
         return Some(
             crate::builtin_ext::json::dispatch("JSON_MEMBER_OF", vals)
                 .unwrap_or_else(|| Err(EvalError::Unsupported("JSON_MEMBER_OF arity"))),
