@@ -1979,6 +1979,266 @@ func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
 
+func TestCreateMaterializedViewRollbackRefreshInfoFailureRollsBackMetadata(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_create_mv_rollback_atomic (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_create_mv_rollback_atomic (a, b) purge next date_add(now(), interval 1 hour)")
+
+	is := dom.InfoSchema()
+	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_create_mv_rollback_atomic"))
+	require.NoError(t, err)
+
+	const buildErrFP = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr"
+	const cleanupErrFP = "github.com/pingcap/tidb/pkg/ddl/mockDeleteCreateMaterializedViewRefreshInfoErr"
+	require.NoError(t, failpoint.Enable(buildErrFP, "return"))
+	require.NoError(t, failpoint.Enable(cleanupErrFP, `1*return("mock refresh info delete error")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(cleanupErrFP))
+		require.NoError(t, failpoint.Disable(buildErrFP))
+	}()
+
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	releaseRetry := func() {
+		select {
+		case <-allowRetry:
+		default:
+			close(allowRetry)
+		}
+	}
+	defer releaseRetry()
+	rollbackAttempts := 0
+	var mviewID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		if job.Type != model.ActionCreateMaterializedView || !job.IsRollingback() {
+			return
+		}
+		rollbackAttempts++
+		if rollbackAttempts != 2 {
+			return
+		}
+		mviewID = job.TableID
+		close(retryStarted)
+		<-allowRetry
+	})
+
+	tkInspect := testkit.NewTestKit(t, store)
+	tkInspect.MustExec("use test")
+	ddlErrCh := make(chan error, 1)
+	go func() {
+		ddlErrCh <- tk.ExecToErr("create materialized view mv_create_rollback_atomic (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_create_mv_rollback_atomic group by a")
+	}()
+
+	select {
+	case <-retryStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW rollback retry")
+	}
+	require.NotZero(t, mviewID)
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mviewID)).Check(testkit.Rows("1"))
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		persistedMView, err := metaMut.GetTable(dbInfo.ID, mviewID)
+		require.NoError(t, err)
+		require.NotNil(t, persistedMView)
+		persistedBase, err := metaMut.GetTable(dbInfo.ID, baseTable.Meta().ID)
+		require.NoError(t, err)
+		require.NotNil(t, persistedBase.MaterializedViewBase)
+		require.Contains(t, persistedBase.MaterializedViewBase.MViewIDs, mviewID)
+		return nil
+	}))
+
+	require.NoError(t, failpoint.Disable(cleanupErrFP))
+	releaseRetry()
+	require.Error(t, <-ddlErrCh)
+}
+
+func TestCreateMaterializedViewRollbackUpdateSchemaVersionFailureRetries(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_create_mv_rollback_retry (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_create_mv_rollback_retry (a, b) purge next date_add(now(), interval 1 hour)")
+
+	is := dom.InfoSchema()
+	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_create_mv_rollback_retry"))
+	require.NoError(t, err)
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_create_mv_rollback_retry"))
+	require.NoError(t, err)
+
+	const buildErrFP = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr"
+	require.NoError(t, failpoint.Enable(buildErrFP, "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(buildErrFP))
+	}()
+
+	var updateVersionErrOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion", func(job *model.Job, err *error) {
+		if job.Type == model.ActionCreateMaterializedView && job.IsRollbackDone() {
+			updateVersionErrOnce.Do(func() {
+				*err = fmt.Errorf("mock materialized view rollback schema version error")
+			})
+		}
+	})
+
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	releaseRetry := func() {
+		select {
+		case <-allowRetry:
+		default:
+			close(allowRetry)
+		}
+	}
+	defer releaseRetry()
+	rollbackAttempts := 0
+	var mviewID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		if job.Type != model.ActionCreateMaterializedView || !job.IsRollingback() {
+			return
+		}
+		rollbackAttempts++
+		if rollbackAttempts != 2 {
+			return
+		}
+		mviewID = job.TableID
+		close(retryStarted)
+		<-allowRetry
+	})
+
+	tkInspect := testkit.NewTestKit(t, store)
+	tkInspect.MustExec("use test")
+	ddlErrCh := make(chan error, 1)
+	go func() {
+		ddlErrCh <- tk.ExecToErr("create materialized view mv_create_rollback_retry (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_create_mv_rollback_retry group by a")
+	}()
+
+	select {
+	case <-retryStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW rollback retry")
+	}
+	require.NotZero(t, mviewID)
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mviewID)).Check(testkit.Rows("1"))
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		persistedMView, err := metaMut.GetTable(dbInfo.ID, mviewID)
+		require.NoError(t, err)
+		require.NotNil(t, persistedMView)
+		persistedBase, err := metaMut.GetTable(dbInfo.ID, baseTable.Meta().ID)
+		require.NoError(t, err)
+		require.NotNil(t, persistedBase.MaterializedViewBase)
+		require.Contains(t, persistedBase.MaterializedViewBase.MViewIDs, mviewID)
+		persistedMLog, err := metaMut.GetTable(dbInfo.ID, mlogTable.Meta().ID)
+		require.NoError(t, err)
+		require.NotNil(t, persistedMLog.MaterializedViewLog)
+		require.Contains(t, persistedMLog.MaterializedViewLog.DependentMViewIDs, mviewID)
+		return nil
+	}))
+
+	releaseRetry()
+	require.Error(t, <-ddlErrCh)
+	tk.MustQuery("show tables like 'mv_create_rollback_retry'").Check(testkit.Rows())
+	tk.MustExec("drop materialized view log on t_create_mv_rollback_retry")
+}
+
+func TestCreateMaterializedViewRollbackRechecksJobMetaAfterReopenTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_create_mv_recheck_job_meta (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_create_mv_recheck_job_meta (a, b) purge next date_add(now(), interval 1 hour)")
+
+	const buildErrFP = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr"
+	require.NoError(t, failpoint.Enable(buildErrFP, "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(buildErrFP))
+	}()
+
+	var updateVersionErrOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion", func(job *model.Job, err *error) {
+		if job.Type == model.ActionCreateMaterializedView && job.IsRollbackDone() {
+			updateVersionErrOnce.Do(func() {
+				*err = fmt.Errorf("mock materialized view rollback schema version error")
+			})
+		}
+	})
+
+	tkConcurrent := testkit.NewTestKit(t, store)
+	var expectedErrorCount int64
+	concurrentUpdateDone := make(chan struct{})
+	var concurrentUpdateOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError", func(job *model.Job) {
+		if job.Type != model.ActionCreateMaterializedView || !job.IsRollingback() {
+			return
+		}
+		concurrentUpdateOnce.Do(func() {
+			jobBytes, err := job.Encode(false)
+			require.NoError(t, err)
+			concurrentJob := &model.Job{}
+			require.NoError(t, concurrentJob.Decode(jobBytes))
+			concurrentJob.ErrorCount++
+			expectedErrorCount = concurrentJob.ErrorCount
+			updatedJobBytes, err := concurrentJob.Encode(false)
+			require.NoError(t, err)
+			tkConcurrent.MustExec(fmt.Sprintf(
+				"update mysql.tidb_ddl_job set job_meta = %s where job_id = %d",
+				ddlutil.WrapKey2String(updatedJobBytes), job.ID,
+			))
+			close(concurrentUpdateDone)
+		})
+	})
+
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	releaseRetry := func() {
+		select {
+		case <-allowRetry:
+		default:
+			close(allowRetry)
+		}
+	}
+	defer releaseRetry()
+	var retryOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionCreateMaterializedView || !job.IsRollingback() {
+			return
+		}
+		select {
+		case <-concurrentUpdateDone:
+		default:
+			return
+		}
+		if job.ErrorCount != expectedErrorCount {
+			return
+		}
+		retryOnce.Do(func() {
+			close(retryStarted)
+			<-allowRetry
+		})
+	})
+
+	ddlErrCh := make(chan error, 1)
+	go func() {
+		ddlErrCh <- tk.ExecToErr("create materialized view mv_create_recheck_job_meta (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_create_mv_recheck_job_meta group by a")
+	}()
+
+	select {
+	case <-retryStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW retry with concurrent job metadata")
+	}
+
+	releaseRetry()
+	require.Error(t, <-ddlErrCh)
+}
+
 func TestCreateMaterializedViewBuildContextCanceledRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2425,6 +2685,61 @@ func TestDropMaterializedViewRefreshInfoFailureRollsBackMetadata(t *testing.T) {
 	require.NoError(t, <-dropErrCh)
 }
 
+func TestDropMaterializedViewNotifyFailureRollsBackMetadata(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_drop_mv_notify_atomic (a int)")
+	tk.MustExec("create materialized view log on t_drop_mv_notify_atomic (a)")
+	tk.MustExec("create materialized view mv_drop_notify_atomic (a, cnt) as select a, count(1) from t_drop_mv_notify_atomic group by a")
+
+	mvTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_drop_notify_atomic"))
+	require.NoError(t, err)
+	mvID := mvTable.Meta().ID
+
+	const notifyErrFP = "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError"
+	require.NoError(t, failpoint.Enable(notifyErrFP, "1*return()"))
+	defer func() { require.NoError(t, failpoint.Disable(notifyErrFP)) }()
+
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	releaseRetry := func() {
+		select {
+		case <-allowRetry:
+		default:
+			close(allowRetry)
+		}
+	}
+	defer releaseRetry()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionDropMaterializedView || job.TableID != mvID || job.ErrorCount == 0 {
+			return
+		}
+		select {
+		case <-retryStarted:
+		default:
+			close(retryStarted)
+		}
+		<-allowRetry
+	})
+
+	tkInspect := testkit.NewTestKit(t, store)
+	tkInspect.MustExec("use test")
+	dropErrCh := make(chan error, 1)
+	go func() { dropErrCh <- tk.ExecToErr("drop materialized view mv_drop_notify_atomic") }()
+
+	select {
+	case <-retryStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for DROP MATERIALIZED VIEW retry")
+	}
+	tkInspect.MustQuery("show tables like 'mv_drop_notify_atomic'").Check(testkit.Rows("mv_drop_notify_atomic"))
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mvID)).Check(testkit.Rows("1"))
+
+	releaseRetry()
+	require.NoError(t, <-dropErrCh)
+}
+
 func TestDropMaterializedViewLogPurgeInfoFailureRollsBackMetadata(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2469,6 +2784,60 @@ func TestDropMaterializedViewLogPurgeInfoFailureRollsBackMetadata(t *testing.T) 
 
 	require.NoError(t, failpoint.Disable(cleanupErrFP))
 	close(allowRetry)
+	require.NoError(t, <-dropErrCh)
+}
+
+func TestDropMaterializedViewLogNotifyFailureRollsBackMetadata(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_drop_mlog_notify_atomic (a int)")
+	tk.MustExec("create materialized view log on t_drop_mlog_notify_atomic (a)")
+
+	mlogTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), model.MaterializedViewLogTableName(pmodel.NewCIStr("t_drop_mlog_notify_atomic")))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	const notifyErrFP = "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError"
+	require.NoError(t, failpoint.Enable(notifyErrFP, "1*return()"))
+	defer func() { require.NoError(t, failpoint.Disable(notifyErrFP)) }()
+
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	releaseRetry := func() {
+		select {
+		case <-allowRetry:
+		default:
+			close(allowRetry)
+		}
+	}
+	defer releaseRetry()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionDropMaterializedViewLog || job.TableID != mlogID || job.ErrorCount == 0 {
+			return
+		}
+		select {
+		case <-retryStarted:
+		default:
+			close(retryStarted)
+		}
+		<-allowRetry
+	})
+
+	tkInspect := testkit.NewTestKit(t, store)
+	tkInspect.MustExec("use test")
+	dropErrCh := make(chan error, 1)
+	go func() { dropErrCh <- tk.ExecToErr("drop materialized view log on t_drop_mlog_notify_atomic") }()
+
+	select {
+	case <-retryStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for DROP MATERIALIZED VIEW LOG retry")
+	}
+	tkInspect.MustQuery("show tables like '$mlog$t_drop_mlog_notify_atomic'").Check(testkit.Rows("$mlog$t_drop_mlog_notify_atomic"))
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).Check(testkit.Rows("1"))
+
+	releaseRetry()
 	require.NoError(t, <-dropErrCh)
 }
 
@@ -2539,6 +2908,75 @@ func TestDropDatabaseMViewInfoFailureRollsBackMetadata(t *testing.T) {
 		require.Nil(t, persistedDBInfo)
 		return nil
 	}))
+}
+
+func TestDropDatabaseNotifyFailureRollsBackMViewMetadata(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	const dbName = "mv_drop_db_notify_atomic"
+	tk.MustExec("create database " + dbName)
+	tk.MustExec("use " + dbName)
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create materialized view log on t (a)")
+	tk.MustExec("create materialized view mv (a, cnt) as select a, count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr(dbName))
+	require.True(t, ok)
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr("$mlog$t"))
+	require.NoError(t, err)
+	mvID := mvTable.Meta().ID
+	mlogID := mlogTable.Meta().ID
+
+	const notifyErrFP = "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError"
+	require.NoError(t, failpoint.Enable(notifyErrFP, "1*return()"))
+	defer func() { require.NoError(t, failpoint.Disable(notifyErrFP)) }()
+
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	releaseRetry := func() {
+		select {
+		case <-allowRetry:
+		default:
+			close(allowRetry)
+		}
+	}
+	defer releaseRetry()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionDropSchema || job.SchemaID != dbInfo.ID || job.ErrorCount == 0 {
+			return
+		}
+		select {
+		case <-retryStarted:
+		default:
+			close(retryStarted)
+		}
+		<-allowRetry
+	})
+
+	tkInspect := testkit.NewTestKit(t, store)
+	dropErrCh := make(chan error, 1)
+	go func() { dropErrCh <- tk.ExecToErr("drop database " + dbName) }()
+
+	select {
+	case <-retryStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for DROP DATABASE retry")
+	}
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mvID)).Check(testkit.Rows("1"))
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).Check(testkit.Rows("1"))
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		persistedDBInfo, err := meta.NewReader(txn).GetDatabase(dbInfo.ID)
+		require.NoError(t, err)
+		require.NotNil(t, persistedDBInfo)
+		return nil
+	}))
+
+	releaseRetry()
+	require.NoError(t, <-dropErrCh)
 }
 
 func TestDropDatabaseCleansMaterializedViewAndLogInfo(t *testing.T) {

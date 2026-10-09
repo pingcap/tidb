@@ -17,7 +17,6 @@ package ddl
 import (
 	"bytes"
 	"context"
-	goerrors "errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -66,22 +65,6 @@ var (
 	TestNotifyBeginTxnCh = make(chan struct{})
 )
 
-// rollbackTxnError marks an error that must roll back the whole DDL
-// transaction before the job error is persisted. This is needed when a
-// metadata change and maintenance-info cleanup must be atomic.
-type rollbackTxnError struct{ cause error }
-
-func (e *rollbackTxnError) Error() string { return e.cause.Error() }
-func (e *rollbackTxnError) Unwrap() error { return e.cause }
-func (e *rollbackTxnError) Cause() error  { return e.cause }
-
-func newRollbackTxnError(err error) error { return &rollbackTxnError{cause: err} }
-
-func isRollbackTxnError(err error) bool {
-	var target *rollbackTxnError
-	return goerrors.As(err, &target)
-}
-
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
 func GetWaitTimeWhenErrorOccurred() time.Duration {
 	return time.Duration(atomic.LoadInt64(&WaitTimeWhenErrorOccurred))
@@ -120,6 +103,12 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
+	// mustRollbackTxnOnError is set before a DDL step executes an internal SQL
+	// statement that can modify state in the DDL transaction. StmtCommit or
+	// StmtRollback can move prior metadata mutations out of the current statement
+	// buffer, so any error after that must discard the whole DDL transaction.
+	// Currently, only MView/MLog DDL paths use this mechanism.
+	mustRollbackTxnOnError bool
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -600,6 +589,7 @@ func (w *worker) transitOneJobStep(
 	jobW *model.JobW,
 	sysTblMgr systable.Manager,
 ) (int64, error) {
+	jobCtx.mustRollbackTxnOnError = false
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	job := jobW.Job
 	txn, err := w.prepareTxn(job)
@@ -612,15 +602,10 @@ func (w *worker) transitOneJobStep(
 	// time range of another concurrent job updates, such as 'cancel/pause' job
 	// or on owner change, overlap with us, we will report 'write conflict', but
 	// if they don't overlap, we query and check inside our txn to detect the conflict.
-	currBytes, err := sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
-	if err != nil {
+	if err = w.checkJobMetaUnchanged(jobCtx, jobW, sysTblMgr); err != nil {
 		// TODO maybe we can unify where to rollback, they are scatting around.
 		w.sess.Rollback()
 		return 0, err
-	}
-	if !bytes.Equal(currBytes, jobW.Bytes) {
-		w.sess.Rollback()
-		return 0, errors.New("job meta changed by others")
 	}
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
@@ -669,27 +654,37 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 
-	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
-		// If the running job meets an error
-		// and the job state is rolling back, it means that we have already handled this error.
-		// Some DDL jobs (such as adding indexes) may need to update the table info and the schema version,
-		// then shouldn't discard the KV modification.
-		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
-		// Otherwise, we should discard the KV modification when running job.
-		if isRollbackTxnError(runJobErr) {
+	if runJobErr != nil {
+		if jobCtx.mustRollbackTxnOnError {
+			// Internal SQL can commit or roll back its own statement buffer.
+			// Discard all mutations from this job step, including ones made while
+			// the job is already rolling back.
 			w.sess.Rollback()
+			failpoint.InjectCall("afterRollbackTxnForMustRollbackTxnOnError", job)
 			txn, txnErr := w.prepareTxn(job)
 			if txnErr != nil {
 				jobCtx.unlockSchemaVersion(job.ID)
 				return 0, txnErr
 			}
+			// Rollback ends the transaction checked above. Recheck in the new
+			// transaction so it does not overwrite a concurrent job update.
+			if txnErr = w.checkJobMetaUnchanged(jobCtx, jobW, sysTblMgr); txnErr != nil {
+				w.sess.Rollback()
+				jobCtx.unlockSchemaVersion(job.ID)
+				return 0, txnErr
+			}
 			jobCtx.metaMut = meta.NewMutator(txn)
-		} else {
+			schemaVer = 0
+		} else if !job.IsRollingback() && !job.IsRollbackDone() {
+			// If the running job meets an error and the job state is rolling back,
+			// the rollback path may have intentionally updated table info and the
+			// schema version. Keep those mutations unless the error explicitly
+			// requires the whole transaction to be rolled back.
 			w.sess.Reset()
+			// If error happens after updateSchemaVersion(), then the schemaVer is updated.
+			// Result in the retry duration is up to 2 * lease.
+			schemaVer = 0
 		}
-		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
-		// Result in the retry duration is up to 2 * lease.
-		schemaVer = 0
 	}
 
 	err = w.registerMDLInfo(job, schemaVer)
@@ -727,6 +722,17 @@ func (w *worker) transitOneJobStep(
 	}
 
 	return schemaVer, nil
+}
+
+func (w *worker) checkJobMetaUnchanged(jobCtx *jobContext, jobW *model.JobW, sysTblMgr systable.Manager) error {
+	currBytes, err := sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, jobW.Job.ID)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(currBytes, jobW.Bytes) {
+		return errors.New("job meta changed by others")
+	}
+	return nil
 }
 
 func (w *worker) checkBeforeCommit() error {
