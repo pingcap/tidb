@@ -3422,8 +3422,10 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 		targetScope := reorgInfo.ReorgMeta.TargetScope
 		maxNodeCnt := reorgInfo.ReorgMeta.MaxNodeCount
+		// Local-sort ingest clears local engine data on error, so it cannot safely auto pause.
+		// Global sort and transactional temp-index merge can resume without that local data.
 		task, err := handle.SubmitTaskWithExtraParams(ctx, taskKey, taskType, w.store.GetKeyspace(),
-			requiredSlots, targetScope, maxNodeCnt, proto.ExtraParams{PauseOnKVDiskFull: true}, metaData)
+			requiredSlots, targetScope, maxNodeCnt, proto.ExtraParams{PauseOnKVDiskFull: taskMeta.MergeTempIndex || len(taskMeta.CloudStorageURI) > 0}, metaData)
 		if err != nil {
 			return err
 		}

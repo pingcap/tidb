@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
@@ -505,6 +506,61 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
 		})
 	}
+}
+
+func TestGlobalSortAutoPauseOnKVDiskFull(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test uses the classic ingest disk-full failpoint")
+	}
+	testutil.ReduceCheckInterval(t)
+	server, cloudStorageURI := genServerWithStorage(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit")
+	tk.MustExec("create database addindexlit")
+	tk.MustExec("use addindexlit")
+	tk.MustExec("set global tidb_enable_dist_task = on")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = on")
+	tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s'", cloudStorageURI))
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_cloud_storage_uri = ''")
+		tk.MustExec("set global tidb_enable_dist_task = off")
+	})
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use addindexlit")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", func() {
+		tk2.MustExec("insert ignore into t values (4, 4)")
+	})
+
+	submitted := make(chan proto.ExtraParams, 4)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask", func(_ *int, params *proto.ExtraParams) {
+		submitted <- *params
+	})
+	const diskFullFailpoint = "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace"
+	testfailpoint.Enable(t, diskFullFailpoint, "return()")
+	err := tk.ExecToErr("alter table t add unique index idx(v)")
+	require.True(t, dbterror.ErrDDLAutoPausedByKVDiskFull.Equal(err), "unexpected error: %v", err)
+	require.True(t, (<-submitted).PauseOnKVDiskFull)
+	testfailpoint.Disable(t, diskFullFailpoint)
+
+	rows := tk.MustQuery("select job_id, job_meta from mysql.tidb_ddl_job").Rows()
+	require.Len(t, rows, 1)
+	job := model.Job{}
+	require.NoError(t, job.Decode([]byte(rows[0][1].(string))))
+	require.True(t, job.IsPausedBySystemForKVDiskFull())
+	tk.MustExec(fmt.Sprintf("admin resume ddl jobs %v", rows[0][0]))
+	require.Eventually(t, func() bool {
+		return tk.ExecToErr("admin check index t idx") == nil
+	}, 30*time.Second, 200*time.Millisecond)
+	require.True(t, (<-submitted).PauseOnKVDiskFull)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select id from t use index(idx) where v > 0 order by id").Check(testkit.Rows("1", "2", "3", "4"))
 }
 
 // When meeting a retryable error, the subtask/job should be idempotent.

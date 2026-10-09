@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	disttestutil "github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -44,9 +45,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
@@ -246,6 +249,71 @@ func TestBackfillingSchedulerTableRangeScanError(t *testing.T) {
 	tk.MustExec("admin check table t1")
 	tk.MustQuery("select id from t1 use index(idx) where v = 1").Check(testkit.Rows("1"))
 	tk.MustQuery("select id from t1 use index(idx) where v = 2").Check(testkit.Rows("2"))
+}
+
+func TestAddIndexDistLocalSortOnKVDiskFull(t *testing.T) {
+	disttestutil.ReduceCheckInterval(t)
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	oldURI := vardef.CloudStorageURI.Load()
+	vardef.CloudStorageURI.Store("")
+	t.Cleanup(func() { vardef.CloudStorageURI.Store(oldURI) })
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_dist_task = on")
+		tk.MustExec("set global tidb_ddl_enable_fast_reorg = on")
+		t.Cleanup(func() { tk.MustExec("set global tidb_enable_dist_task = off") })
+	}
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	submitted := make(chan proto.ExtraParams, 4)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask", func(_ *int, params *proto.ExtraParams) {
+		submitted <- *params
+	})
+	const diskFullFailpoint = "github.com/pingcap/tidb/pkg/ddl/beforeReadIndexStepExecRunSubtask"
+	diskFullErr := errdef.ErrKVDiskFull.GenWithStack("TiKV disk full")
+	testfailpoint.EnableCall(t, diskFullFailpoint, func(errP *error) { *errP = diskFullErr })
+	// Clean up a paused job as well, so this regression can run against the old behavior.
+	t.Cleanup(func() {
+		ctx := util.WithInternalSourceType(context.Background(), "backfill")
+		mgr, err := storage.GetDXFSvcTaskMgr()
+		require.NoError(t, err)
+		for _, row := range tk.MustQuery("select job_id from mysql.tidb_ddl_job").Rows() {
+			var jobID int64
+			_, err := fmt.Sscan(fmt.Sprint(row[0]), &jobID)
+			require.NoError(t, err)
+			task, err := mgr.GetTaskByKeyWithHistory(ctx, ddl.NewTaskKeyBuilder().Build(jobID))
+			require.NoError(t, err)
+			require.NoError(t, mgr.RevertTask(ctx, task.ID, task.State, diskFullErr))
+			tk.MustExec(fmt.Sprintf("admin resume ddl jobs %d", jobID))
+		}
+		require.Eventually(t, func() bool {
+			return len(tk.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()) == 0
+		}, 30*time.Second, 100*time.Millisecond)
+	})
+
+	err := tk.ExecToErr("alter table t add unique index idx(v)")
+	require.Error(t, err)
+	require.False(t, dbterror.ErrDDLAutoPausedByKVDiskFull.Equal(err), "unexpected error: %v", err)
+	require.ErrorContains(t, err, "TiKV disk full")
+	require.False(t, (<-submitted).PauseOnKVDiskFull)
+	tk.MustQuery("select job_id from mysql.tidb_ddl_job").Check(testkit.Rows())
+	tk.MustQuery("show index from t where Key_name = 'idx'").Check(testkit.Rows())
+
+	testfailpoint.Disable(t, diskFullFailpoint)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", func() {
+		tk2.MustExec("insert ignore into t values (3, 3)")
+	})
+	tk.MustExec("alter table t add unique index idx(v)")
+	require.False(t, (<-submitted).PauseOnKVDiskFull)
+	// The merge task has no cloud URI, but must retain disk-full auto pause.
+	require.True(t, (<-submitted).PauseOnKVDiskFull)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select id from t use index(idx) where v > 0 order by id").Check(testkit.Rows("1", "2", "3"))
 }
 
 func TestCalculateRegionBatch(t *testing.T) {
