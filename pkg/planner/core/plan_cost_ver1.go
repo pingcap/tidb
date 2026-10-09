@@ -107,8 +107,20 @@ func getPlanCostVer14PhysicalProjection(pp base.PhysicalPlan, taskType property.
 // getCost4PhysicalIndexLookUpReader computes cost of index lookup operator itself.
 func getCost4PhysicalIndexLookUpReader(pp base.PhysicalPlan, costFlag uint64) (cost float64) {
 	p := pp.(*physicalop.PhysicalIndexLookUpReader)
-	indexPlan, tablePlan := p.IndexPlan, p.TablePlan
-	ctx := p.SCtx()
+	cost, usePaging := getCost4IndexLookUpReader(indexLookUpCostInput{
+		ctx:         p.SCtx(),
+		indexPlan:   p.IndexPlan,
+		tablePlan:   p.TablePlan,
+		expectedCnt: p.ExpectedCnt,
+		keepOrder:   p.KeepOrder,
+	}, costFlag)
+	p.Paging = p.Paging || usePaging
+	return cost
+}
+
+func getCost4IndexLookUpReader(input indexLookUpCostInput, costFlag uint64) (cost float64, usePaging bool) {
+	indexPlan, tablePlan := input.indexPlan, input.tablePlan
+	ctx := input.ctx
 	sessVars := ctx.GetSessionVars()
 	// Add cost of building table reader executors. Handles are extracted in batch style,
 	// each handle is a range, the CPU cost of building copTasks should be:
@@ -118,9 +130,9 @@ func getCost4PhysicalIndexLookUpReader(pp base.PhysicalPlan, costFlag uint64) (c
 	idxCst := indexRows * sessVars.GetCPUFactor()
 	// if the expectCnt is below the paging threshold, using paging API, recalculate idxCst.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
-	if ctx.GetSessionVars().EnablePaging && p.ExpectedCnt > 0 && p.ExpectedCnt <= paging.Threshold {
-		p.Paging = true
-		pagingCst := calcPagingCost(ctx, p.IndexPlan, p.ExpectedCnt)
+	if sessVars.EnablePaging && input.expectedCnt > 0 && input.expectedCnt <= paging.Threshold {
+		usePaging = true
+		pagingCst := calcPagingCost(ctx, indexPlan, input.expectedCnt)
 		// prevent enlarging the cost because we take paging as a better plan,
 		// if the cost is enlarged, it'll be easier to go another plan.
 		idxCst = math.Min(idxCst, pagingCst)
@@ -144,11 +156,11 @@ func getCost4PhysicalIndexLookUpReader(pp base.PhysicalPlan, costFlag uint64) (c
 	tableRows := getCardinality(tablePlan, costFlag)
 	selectivity := tableRows / indexRows
 	batchSize = math.Min(indexLookupSize*selectivity, tableRows)
-	if p.KeepOrder && batchSize > 2 {
+	if input.keepOrder && batchSize > 2 {
 		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.GetCPUFactor()) / numTblWorkers
 		cost += sortCPUCost
 	}
-	return
+	return cost, usePaging
 }
 
 // getPlanCostVer14PhysicalIndexLookUpReader calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -158,53 +170,69 @@ func getPlanCostVer14PhysicalIndexLookUpReader(pp base.PhysicalPlan, _ property.
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
 	}
+	planCost, usePaging, err := getIndexLookUpReaderCostVer1(indexLookUpCostInput{
+		ctx:         p.SCtx(),
+		indexPlan:   p.IndexPlan,
+		tablePlan:   p.TablePlan,
+		expectedCnt: p.ExpectedCnt,
+		keepOrder:   p.KeepOrder,
+	}, option)
+	if err != nil {
+		return 0, err
+	}
+	p.PlanCost = planCost
+	p.Paging = p.Paging || usePaging
+	p.PlanCostInit = true
+	return p.PlanCost, nil
+}
 
-	p.PlanCost = 0
+func getIndexLookUpReaderCostVer1(input indexLookUpCostInput, option *costusage.PlanCostOption) (float64, bool, error) {
+	planCost := 0.0
 	// child's cost
-	for _, child := range []base.PhysicalPlan{p.IndexPlan, p.TablePlan} {
+	for _, child := range []base.PhysicalPlan{input.indexPlan, input.tablePlan} {
 		childCost, err := child.GetPlanCostVer1(property.CopMultiReadTaskType, option)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
-		p.PlanCost += childCost
+		planCost += childCost
 	}
 
 	// to keep compatible with the previous cost implementation, re-calculate table-scan cost by using index stats-count again (see copTask.finishIndexPlan).
 	// TODO: amend table-side cost here later
-	var tmp = p.TablePlan
+	var tmp = input.tablePlan
 	for len(tmp.Children()) > 0 {
 		tmp = tmp.Children()[0]
 	}
 	ts := tmp.(*physicalop.PhysicalTableScan)
 	tblCost, err := ts.GetPlanCostVer1(property.CopMultiReadTaskType, option)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	p.PlanCost -= tblCost
-	p.PlanCost += getCardinality(p.IndexPlan, costFlag) * ts.GetScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
+	planCost -= tblCost
+	planCost += getCardinality(input.indexPlan, option.CostFlag) * ts.GetScanRowSize() * input.ctx.GetSessionVars().GetScanFactor(ts.Table)
 
 	// index-side net I/O cost: rows * row-size * net-factor
-	netFactor := getTableNetFactor(p.TablePlan)
-	rowSize := cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.IndexPlan), p.IndexPlan.Schema().Columns, true, false)
-	p.PlanCost += getCardinality(p.IndexPlan, costFlag) * rowSize * netFactor
+	netFactor := getTableNetFactor(input.tablePlan)
+	rowSize := cardinality.GetAvgRowSize(input.ctx, physicalop.GetTblStats(input.indexPlan), input.indexPlan.Schema().Columns, true, false)
+	planCost += getCardinality(input.indexPlan, option.CostFlag) * rowSize * netFactor
 
 	// index-side net seek cost
-	p.PlanCost += estimateNetSeekCost(p.IndexPlan)
+	planCost += estimateNetSeekCost(input.indexPlan)
 
 	// table-side net I/O cost: rows * row-size * net-factor
-	tblRowSize := cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
-	p.PlanCost += getCardinality(p.TablePlan, costFlag) * tblRowSize * netFactor
+	tblRowSize := cardinality.GetAvgRowSize(input.ctx, physicalop.GetTblStats(input.tablePlan), input.tablePlan.Schema().Columns, false, false)
+	planCost += getCardinality(input.tablePlan, option.CostFlag) * tblRowSize * netFactor
 
 	// table-side seek cost
-	p.PlanCost += estimateNetSeekCost(p.TablePlan)
+	planCost += estimateNetSeekCost(input.tablePlan)
 
 	// consider concurrency
-	p.PlanCost /= float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
+	planCost /= float64(input.ctx.GetSessionVars().DistSQLScanConcurrency())
 
 	// lookup-cpu-cost in TiDB
-	p.PlanCost += p.GetCost(costFlag)
-	p.PlanCostInit = true
-	return p.PlanCost, nil
+	lookupCost, usePaging := getCost4IndexLookUpReader(input, option.CostFlag)
+	planCost += lookupCost
+	return planCost, usePaging, nil
 }
 
 // getPlanCostVer14PhysicalIndexReader calculates the cost of the plan if it has not been calculated yet and returns the cost.
