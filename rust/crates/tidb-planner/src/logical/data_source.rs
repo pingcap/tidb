@@ -369,9 +369,11 @@ impl DataSource {
         }
     }
 
-    /// Go `HandleColsToAppend`: the suffix ranger may use beyond a complete
-    /// declared secondary-index key. Missing declared columns or any duplicate
-    /// handle column suppress the entire suffix so its dimensions stay aligned.
+    /// Go `fillIndexPath`'s suffix (`stats.go:177-197`): a complete,
+    /// non-unique secondary key gains the signed integer handle, in the path
+    /// columns and in `HistColl.Idx2ColUniqueIDs`. A clustered common handle
+    /// is never appended there; Go extends with it only while matching a
+    /// sort property (`find_best_task.go:1105`).
     #[must_use]
     pub fn handle_cols_to_append(
         &self,
@@ -381,74 +383,22 @@ impl DataSource {
         if index.unique || index.primary || declared.len() != index.columns.len() {
             return Vec::new();
         }
-        if self.is_common_handle {
-            if self.common_handle_cols.is_empty()
-                || self.common_handle_cols.len() != self.common_handle_lens.len()
-                || index.global
-                || index.is_multi_valued
-                || index.is_columnar
-                || self.has_v0_new_collation_string_handle()
-                || self.common_handle_cols.iter().any(|handle| {
-                    declared
-                        .iter()
-                        .any(|(column, _)| column.unique_id == handle.unique_id)
-                })
-            {
-                return Vec::new();
-            }
-            return self
-                .common_handle_cols
-                .iter()
-                .cloned()
-                .zip(self.common_handle_lens.iter().copied())
-                .collect();
-        }
-        self.pk_handle_col_to_append(index, declared)
-            .map(|handle| (handle, tidb_datatype::UNSPECIFIED_LENGTH))
-            .into_iter()
-            .collect()
-    }
-
-    /// Go `fillIndexPath`'s suffix (`stats.go:177-197`): a complete,
-    /// non-unique secondary key gains the signed integer handle, in the path
-    /// columns and in `HistColl.Idx2ColUniqueIDs`. A common handle is never
-    /// appended there.
-    #[must_use]
-    pub fn pk_handle_col_to_append(
-        &self,
-        index: &crate::plan_builder::catalog::SourceIndex,
-        declared: &[(Column, i64)],
-    ) -> Option<Column> {
-        if index.unique || index.primary || declared.len() != index.columns.len() {
-            return None;
-        }
-        let handle = self
+        let Some(handle) = self
             .base
             .base
             .schema()
-            .and_then(|schema| self.get_pk_is_handle_col(schema))?;
+            .and_then(|schema| self.get_pk_is_handle_col(schema))
+        else {
+            return Vec::new();
+        };
         if handle.ret_type.as_ref().is_some_and(|ty| ty.is_unsigned())
             || declared.iter().any(|(column, _)| {
                 column.id == EXTRA_HANDLE_ID || column.unique_id == handle.unique_id
             })
         {
-            return None;
+            return Vec::new();
         }
-        Some(handle.clone())
-    }
-
-    /// Go `HasV0NewCollationStringHandle`: only non-binary strings use
-    /// unrestored collation weights in version-zero common handles.
-    #[must_use]
-    pub fn has_v0_new_collation_string_handle(&self) -> bool {
-        self.common_handle_version == 0
-            && tidb_datatype::new_collation_enabled()
-            && self.common_handle_cols.iter().any(|column| {
-                column.ret_type.as_ref().is_some_and(|ty| {
-                    ty.eval_type() == tidb_datatype::EvalType::String
-                        && !ty.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
-                })
-            })
+        vec![(handle.clone(), tidb_datatype::UNSPECIFIED_LENGTH)]
     }
 
     /// Usable leading index columns plus Go's eligible appended handle suffix.

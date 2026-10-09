@@ -769,11 +769,11 @@ fn can_skip_index_estimation(index: &KvIndex, table: &KvTable, ranges: &[IndexRa
     )
 }
 
-/// Go `DataSource.HandleColsToAppend`, reduced to the offsets needed by the
-/// statistics range walk. The planner bridge uses the same eligibility rules
-/// while it builds the actual estimate-only range columns.
+/// Go `fillIndexPath`'s suffix (`stats.go:177-197`) as table offsets: the
+/// signed integer handle after a complete non-unique index's declared key
+/// parts. A clustered common handle is never appended.
 fn appended_handle_offsets_for_index(index: &KvIndex, table: &KvTable) -> Vec<usize> {
-    if index.unique || index.clustered_primary || index.global {
+    if index.unique || index.clustered_primary {
         return Vec::new();
     }
     if index
@@ -783,32 +783,6 @@ fn appended_handle_offsets_for_index(index: &KvIndex, table: &KvTable) -> Vec<us
     {
         return Vec::new();
     }
-
-    let common_handle = table.common_handle_offsets();
-    if !common_handle.is_empty() {
-        if table.mv_key_part_source(index.id).is_some()
-            || common_handle
-                .iter()
-                .any(|offset| index.column_offsets.contains(offset))
-        {
-            return Vec::new();
-        }
-        if table.common_handle_version() == 0
-            && tidb_datatype::new_collation_enabled()
-            && common_handle.iter().any(|offset| {
-                table.columns.get(*offset).is_some_and(|column| {
-                    column.field_type.eval_type() == tidb_datatype::EvalType::String
-                        && !column
-                            .field_type
-                            .has_flag(tidb_datatype::FieldTypeFlags::BINARY)
-                })
-            })
-        {
-            return Vec::new();
-        }
-        return common_handle.to_vec();
-    }
-
     let Some(handle_offset) = table.pk_handle_offset() else {
         return Vec::new();
     };
@@ -819,6 +793,22 @@ fn appended_handle_offsets_for_index(index: &KvIndex, table: &KvTable) -> Vec<us
         return Vec::new();
     }
     vec![handle_offset]
+}
+
+/// Go `pruneEstimateRange` (`core/stats.go:450-469`): each range cut to its
+/// first `keep_columns` columns, its exclusivity kept and no union taken, the
+/// ranges `detachCondAndBuildRangeForPath` estimates once an appended handle
+/// follows the declared index columns.
+pub(crate) fn prune_estimate_ranges(ranges: &[IndexRange], keep_columns: usize) -> Vec<IndexRange> {
+    ranges
+        .iter()
+        .map(|range| IndexRange {
+            low: range.low[..keep_columns.min(range.low.len())].to_vec(),
+            high: range.high[..keep_columns.min(range.low.len())].to_vec(),
+            low_exclusive: range.low_exclusive,
+            high_exclusive: range.high_exclusive,
+        })
+        .collect()
 }
 
 /// Index key columns represented by these ranges: declared columns, followed
@@ -859,107 +849,6 @@ pub(crate) fn index_range_row_count(
     Ok(
         index_row_count_with_options(index, table, ranges, stats, realtime, trigger_load, options)?
             .est,
-    )
-}
-
-#[cfg(test)]
-fn index_row_count_with_appended_handle_columns(
-    index: &KvIndex,
-    table: &KvTable,
-    ranges: &[tidb_planner::ranger::types::Range],
-    appended_handle_offsets: &[usize],
-    stats: Option<&TableStatistics>,
-    realtime: f64,
-    trigger_load: bool,
-) -> Result<RowEstimate, tidb_planner::cardinality::row_count_estimator::EstimationError> {
-    index_row_count_with_appended_handle_columns_and_options(
-        index,
-        table,
-        ranges,
-        appended_handle_offsets,
-        stats,
-        realtime,
-        trigger_load,
-        EstimatorOptions::default(),
-    )
-}
-
-/// Go `core/stats.go:detachCondAndBuildRangeForPath` when the physical index
-/// key has handle columns after the declared index columns. The index
-/// histogram only covers the declared prefix; estimate that prefix first,
-/// then apply Go's damped handle selectivities using the full ranges.
-pub(crate) fn index_row_count_with_appended_handle_columns_and_options(
-    index: &KvIndex,
-    table: &KvTable,
-    ranges: &[tidb_planner::ranger::types::Range],
-    appended_handle_offsets: &[usize],
-    stats: Option<&TableStatistics>,
-    realtime: f64,
-    trigger_load: bool,
-    options: EstimatorOptions,
-) -> Result<RowEstimate, tidb_planner::cardinality::row_count_estimator::EstimationError> {
-    let declared_columns = index.column_offsets.len();
-    tidb_planner::cardinality::estimate_index_path_ranges(
-        ranges,
-        declared_columns,
-        declared_columns + appended_handle_offsets.len(),
-        realtime,
-        |ranges| {
-            let ranges = ranges
-                .iter()
-                .map(|range| IndexRange {
-                    low: range.low_val.clone(),
-                    high: range.high_val.clone(),
-                    low_exclusive: range.low_exclude,
-                    high_exclusive: range.high_exclude,
-                })
-                .collect::<Vec<_>>();
-            index_row_count_with_options(
-                index,
-                table,
-                &ranges,
-                stats,
-                realtime,
-                trigger_load,
-                options.clone(),
-            )
-        },
-        |dimension, ranges| {
-            let column = table
-                .columns
-                .get(appended_handle_offsets[dimension - declared_columns])?;
-            let stats = stats.filter(|stats| !stats.pseudo)?;
-            if trigger_load {
-                queue_column_stats_load_if_invalid(
-                    table,
-                    stats,
-                    column.id,
-                    stats.columns.get(&column.id),
-                );
-            }
-            let column_stats = stats.column_for_estimation(column.id)?;
-            let bounds = ranges
-                .iter()
-                .map(|range| {
-                    ColumnRange::new(
-                        range.low_val[0].clone(),
-                        range.high_val[0].clone(),
-                        range.low_exclude,
-                        range.high_exclude,
-                    )
-                })
-                .collect::<Vec<_>>();
-            get_row_count_by_column_ranges(
-                Some(column_stats),
-                &bounds,
-                ranges.first()?.collators[0],
-                realtime as i64,
-                stats.modify_count,
-                false,
-                &options,
-            )
-            .ok()
-        },
     )
 }
 
@@ -1909,7 +1798,6 @@ fn selectivity_of_conjuncts_with_path_context(
             defaults.estimator_options.clone(),
         )?
         .est;
-        if stats.is_some_and(|stats| stats.row_count == 5400) {}
         nodes.push(StatsNode {
             selectivity: (row_count / realtime).clamp(0.0, 1.0),
             partial_cover: is_dnf && !built.residual.is_empty(),
@@ -5493,245 +5381,6 @@ mod index_async_load_queue_tests {
                 .est,
             15.0
         );
-    }
-
-    /// Go `AdjustRowCountForAppendedHandleColumns`: an equality on the
-    /// declared index prefix remains the base estimate, while the appended
-    /// signed handle's own histogram damps the estimate for its range.
-    #[test]
-    fn appended_handle_range_damps_the_declared_index_prefix_estimate() {
-        let mut table = queue_test_table(vec![long_column("a", 1), long_column("id", 2)]);
-        table.set_pk_handle_offset(1);
-        let index = KvIndex {
-            id: 7,
-            name: "idx_a".to_owned(),
-            comment: String::new(),
-            unique: false,
-            column_offsets: vec![0],
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
-            visible: true,
-            global: false,
-            global_index_version: 0,
-            clustered_primary: false,
-        };
-        table.add_index(index.clone(), false);
-
-        let column_stats = |id, ndv, upper| ColumnStats {
-            histogram: Histogram {
-                id,
-                ndv,
-                last_update_version: 1,
-                buckets: vec![tidb_stats::Bucket {
-                    count: 1_000,
-                    repeat: 1,
-                    ndv,
-                    lower_bound: Datum::Int(1),
-                    upper_bound: Datum::Int(upper),
-                }],
-                ..Histogram::default()
-            },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
-        };
-        let mut topn = tidb_stats::cmsketch::TopN::new(1);
-        topn.append(&tidb_codec::encode_key(&[Datum::Int(1)]).unwrap(), 100);
-        topn.sort();
-        let index_stats = IndexStats {
-            histogram: Histogram {
-                id: 7,
-                ndv: 9,
-                last_update_version: 1,
-                buckets: vec![tidb_stats::Bucket {
-                    count: 900,
-                    repeat: 1,
-                    ndv: 9,
-                    lower_bound: Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(2)]).unwrap()),
-                    upper_bound: Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(100)]).unwrap()),
-                }],
-                ..Histogram::default()
-            },
-            topn: Some(topn),
-            cms: None,
-            stats_ver: 2,
-            num_columns: 1,
-            unique: false,
-        };
-        let mut stats = TableStatistics::new(
-            1_000,
-            0,
-            BTreeMap::from([
-                (1, column_stats(1, 10, 1_000)),
-                (2, column_stats(2, 1_000, 1_000)),
-            ]),
-            BTreeMap::from([(7, index_stats)]),
-        );
-        stats.pseudo = false;
-        stats.cache_pseudo = false;
-        for id in [1, 2] {
-            stats
-                .column_load_status
-                .insert(id, tidb_stats::StatsLoadedStatus::full_load());
-        }
-        stats
-            .index_load_status
-            .insert(7, tidb_stats::StatsLoadedStatus::full_load());
-
-        let invalid_prefix = IndexRange {
-            low: vec![Datum::Int(1)],
-            high: vec![Datum::Raw(vec![1])],
-            low_exclusive: false,
-            high_exclusive: false,
-        };
-        assert!(matches!(
-            index_row_count(
-                &index,
-                &table,
-                &[invalid_prefix],
-                Some(&stats),
-                1_000.0,
-                false
-            ),
-            Err(
-                tidb_planner::cardinality::row_count_estimator::EstimationError::Codec(
-                    tidb_codec::CodecError::InvalidEncoding("unsupported raw datum")
-                )
-            )
-        ));
-        let invalid_appended = tidb_planner::ranger::types::Range {
-            low_val: vec![Datum::Raw(vec![1]), Datum::Int(1)],
-            high_val: vec![Datum::Raw(vec![1]), Datum::Int(100)],
-            collators: vec![tidb_datatype::Collation::Binary; 2],
-            low_exclude: false,
-            high_exclude: false,
-        };
-        for statistics in [Some(&stats), None] {
-            assert!(matches!(
-                index_row_count_with_appended_handle_columns(
-                    &index,
-                    &table,
-                    std::slice::from_ref(&invalid_appended),
-                    &[1],
-                    statistics,
-                    1_000.0,
-                    false
-                ),
-                Err(
-                    tidb_planner::cardinality::row_count_estimator::EstimationError::Codec(
-                        tidb_codec::CodecError::InvalidEncoding("unsupported raw datum")
-                    )
-                )
-            ));
-        }
-
-        // Go ignores a failed suffix union after successfully estimating the prefix.
-        let invalid_suffix = tidb_planner::ranger::types::Range {
-            low_val: vec![Datum::Int(1), Datum::Raw(vec![1])],
-            high_val: vec![Datum::Int(2), Datum::Raw(vec![1])],
-            collators: vec![tidb_datatype::Collation::Binary; 2],
-            low_exclude: false,
-            high_exclude: false,
-        };
-        let suffix_fallback = index_row_count_with_appended_handle_columns(
-            &index,
-            &table,
-            &[invalid_suffix],
-            &[1],
-            Some(&stats),
-            1_000.0,
-            false,
-        )
-        .unwrap();
-        let prefix_only = index_row_count(
-            &index,
-            &table,
-            &[IndexRange {
-                low: vec![Datum::Int(1)],
-                high: vec![Datum::Int(2)],
-                low_exclusive: false,
-                high_exclusive: false,
-            }],
-            Some(&stats),
-            1_000.0,
-            false,
-        )
-        .unwrap();
-        assert_eq!(
-            (
-                suffix_fallback.est,
-                suffix_fallback.min_est,
-                suffix_fallback.max_est
-            ),
-            (prefix_only.est, prefix_only.min_est, prefix_only.max_est)
-        );
-
-        let prefix_range = IndexRange {
-            low: vec![Datum::Int(1)],
-            high: vec![Datum::Int(1)],
-            low_exclusive: false,
-            high_exclusive: false,
-        };
-        let prefix = index_row_count(
-            &index,
-            &table,
-            &[prefix_range],
-            Some(&stats),
-            1_000.0,
-            false,
-        )
-        .unwrap();
-        let full_range = tidb_planner::ranger::types::Range {
-            low_val: vec![Datum::Int(1), Datum::Int(1)],
-            high_val: vec![Datum::Int(1), Datum::Int(100)],
-            collators: vec![
-                table.columns[0].field_type.collation(),
-                table.columns[1].field_type.collation(),
-            ],
-            low_exclude: false,
-            high_exclude: false,
-        };
-        let adjusted = index_row_count_with_appended_handle_columns(
-            &index,
-            &table,
-            &[full_range],
-            &[1],
-            Some(&stats),
-            1_000.0,
-            false,
-        )
-        .unwrap();
-
-        assert!(prefix.est > 1.0, "prefix estimate={:?}", prefix);
-        assert!(
-            adjusted.est < prefix.est,
-            "handle range should lower the estimate: prefix={prefix:?}, adjusted={adjusted:?}"
-        );
-        assert_eq!(adjusted.max_est, prefix.max_est);
-        assert!(adjusted.min_est <= adjusted.est);
-
-        let full_points = [10, 11].map(|handle| tidb_planner::ranger::types::Range {
-            low_val: vec![Datum::Int(1), Datum::Int(handle)],
-            high_val: vec![Datum::Int(1), Datum::Int(handle)],
-            collators: vec![
-                table.columns[0].field_type.collation(),
-                table.columns[1].field_type.collation(),
-            ],
-            low_exclude: false,
-            high_exclude: false,
-        });
-        let point_estimate = index_row_count_with_appended_handle_columns(
-            &index,
-            &table,
-            &full_points,
-            &[1],
-            Some(&stats),
-            1_000.0,
-            false,
-        )
-        .unwrap();
-        assert!(point_estimate.est <= 2.0, "{point_estimate:?}");
-        assert!(point_estimate.max_est <= 2.0, "{point_estimate:?}");
     }
 
     /// Go `IndexStatsIsInvalid` (`pkg/statistics/index.go:132`): estimating

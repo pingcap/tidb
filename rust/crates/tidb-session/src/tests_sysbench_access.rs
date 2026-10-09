@@ -443,33 +443,31 @@ fn the_handle_range_corpus_matches_go() {
         );
     }
 
-    // Go chooses the same complete non-covering-index path for the mixed
-    // predicate. A fresh pseudo-statistics capture from the Go server is:
+    // The mixed predicate under pseudo statistics, as Go prints it:
     //
     // ```text
-    // IndexLookUp                 33.33  root
-    // |-IndexRangeScan(Build)     33.33  range:(4 0,4 +inf]
-    // `-TableRowIDScan(Probe)     33.33
+    // TableReader        33.33    root
+    // `-Projection       33.33    cop[tikv]
+    //   `-Selection      33.33    cop[tikv]  eq(test.sbtest1.k, 4)
+    //     `-TableRangeScan 3333.33 cop[tikv] range:(0,+inf]
     // ```
     //
-    // Compare both children: the row probe is the deepest node, while the
-    // appended-handle range belongs to the index build side. Master retains
-    // a root projection above this lookup; operator IDs are not significant.
+    // `k_1`'s path estimates its range pruned to the declared `k`
+    // (`pruneEstimateRange`), so the handle range wins. Operator IDs are not
+    // significant.
     let rows = row_text(session.run("EXPLAIN SELECT c FROM sbtest1 WHERE id > 0 AND k = 4"));
-    let lookup = rows
+    let scan = rows
         .iter()
-        .position(|row| row[0].contains("IndexLookUp_"))
-        .expect("the mixed predicate uses a non-covering index lookup");
-    let lookup_rows = &rows[lookup..lookup + 3];
-    assert!(lookup_rows[0][0].contains("IndexLookUp_"));
-    assert_eq!(lookup_rows[0][1], "33.33");
-    assert!(lookup_rows[1][0].contains("IndexRangeScan_"));
-    assert!(lookup_rows[1][0].ends_with("(Build)"));
-    assert_eq!(lookup_rows[1][1], "33.33");
-    assert!(lookup_rows[1][4].starts_with("range:(4 0,4 +inf]"));
-    assert!(lookup_rows[2][0].contains("TableRowIDScan_"));
-    assert!(lookup_rows[2][0].ends_with("(Probe)"));
-    assert_eq!(lookup_rows[2][1], "33.33");
+        .find(|row| row[0].contains("TableRangeScan_"))
+        .unwrap_or_else(|| panic!("the mixed predicate reads the handle range: {rows:?}"));
+    assert_eq!(scan[1], "3333.33", "{rows:?}");
+    assert!(scan[4].starts_with("range:(0,+inf]"), "{rows:?}");
+    let selection = rows
+        .iter()
+        .find(|row| row[0].contains("Selection_"))
+        .unwrap_or_else(|| panic!("k = 4 stays a filter: {rows:?}"));
+    assert_eq!(selection[1], "33.33", "{rows:?}");
+    assert!(selection[4].contains("eq(test.sbtest1.k, 4)"), "{rows:?}");
 }
 
 /// The sysbench WRITE shapes, as the source row of their plan.

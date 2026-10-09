@@ -166,8 +166,14 @@ pub fn selectivity(
             } else {
                 (covered_mask(&remained, &detached.access_conds), false, 0)
             };
-        let estimate =
-            get_row_count_by_index_ranges(ctx, coll, index_id, &detached.ranges, &index_columns)?;
+        let estimate = get_row_count_by_index_ranges(
+            coll,
+            index_id,
+            &detached.ranges,
+            &index_columns,
+            ctx.options,
+        )?
+        .est;
         nodes.push(StatsNode {
             selectivity: estimate / realtime,
             partial_cover,
@@ -460,18 +466,25 @@ fn find_prefix_of_index(columns: &[Column], index_column_ids: &[i64]) -> Vec<Col
     prefix
 }
 
-/// Go `GetRowCountByIndexRanges(sctx, coll, idxID, ranges, idxCols).Est`.
-fn get_row_count_by_index_ranges(
-    ctx: &SelectivityContext<'_>,
+/// Go `GetRowCountByIndexRanges(sctx, coll, idxID, ranges, idxCols)`.
+pub fn get_row_count_by_index_ranges(
     coll: &HistColl,
     index_id: i64,
     ranges: &[IndexRangeDatums],
     index_columns: &[Column],
-) -> Result<f64, EstimationError> {
+    options: &EstimatorOptions,
+) -> Result<super::row_count_column::RowEstimate, EstimationError> {
     let mut stats = coll.index_estimation_stats(index_id);
-    // `hasColumnStats` and the partial-statistics estimate read `idxCols`,
-    // the matched prefix, not every declared column.
-    stats.columns.truncate(index_columns.len());
+    // `hasColumnStats`, the partial-statistics estimate and the virtual-column
+    // check read `idxCols`; an index the collection does not hold still has
+    // them.
+    stats.columns = index_columns
+        .iter()
+        .map(|column| {
+            coll.histogram_for_estimation(column.unique_id)
+                .map(AsRef::as_ref)
+        })
+        .collect();
     let recursive = coll
         .index_columns(index_id)
         .iter()
@@ -486,7 +499,7 @@ fn get_row_count_by_index_ranges(
         .iter()
         .map(|column| column.virtual_expr.is_some())
         .collect::<Vec<_>>();
-    Ok(get_index_row_count(&stats, &virtual_columns, &recursive, ranges, ctx.options)?.est)
+    get_index_row_count(&stats, &virtual_columns, &recursive, ranges, options)
 }
 
 /// Go `GetSelectivityByFilter`: a single-column filter evaluated over the

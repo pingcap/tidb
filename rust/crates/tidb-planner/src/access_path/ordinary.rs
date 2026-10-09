@@ -124,8 +124,6 @@ pub(crate) fn fill_ordinary_index_paths(
         let mut filled = fill_index_path(
             source, index, &source.pushed_down_conds, context, prefix_single_scan,
         )?;
-        let columns = &filled.columns;
-        let detached = &filled.detached;
         let index_filters = &filled.index_filters;
         // Go adjusts access rows before computing CountAfterIndex, preserving
         // the old count as the lower risk bound. Both ordinary and cloned
@@ -144,17 +142,9 @@ pub(crate) fn fill_ordinary_index_paths(
                         } else {
                             estimate.est
                         };
-                        let appended = columns.len() > index.columns.len()
-                            && detached.ranges.iter().any(|range| {
-                                range.low_val.len() > index.columns.len()
-                                    || range.high_val.len() > index.columns.len()
-                            });
-                        estimate.est = if appended {
-                            filtered.row_count()
-                        } else {
-                            (filtered.row_count() / crate::cost_factors::SELECTION_FACTOR)
-                                .min(table.row_count())
-                        };
+                        estimate.est = (filtered.row_count()
+                            / crate::cost_factors::SELECTION_FACTOR)
+                            .min(table.row_count());
                         estimate.max_est = estimate.max_est.max(estimate.est);
                     }
                 }
@@ -287,6 +277,29 @@ pub(crate) fn detach_table_path(
         min_count_after_access: 0.0,
         max_count_after_access: 0.0,
     })
+}
+
+/// Go `pruneEstimateRange` (`core/stats.go:450-469`): each range cut to its
+/// first `keep_columns` columns, its exclusivity kept and no union taken, the
+/// ranges `detachCondAndBuildRangeForPath` estimates once an appended handle
+/// follows the declared index columns.
+pub(crate) fn prune_estimate_range(
+    ranges: &[crate::ranger::Range],
+    keep_columns: usize,
+) -> Vec<crate::ranger::Range> {
+    ranges
+        .iter()
+        .map(|range| {
+            let width = keep_columns.min(range.low_val.len());
+            crate::ranger::Range {
+                low_val: range.low_val[..width].to_vec(),
+                high_val: range.high_val[..width].to_vec(),
+                collators: range.collators[..width.min(range.collators.len())].to_vec(),
+                low_exclude: range.low_exclude,
+                high_exclude: range.high_exclude,
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn fill_table_path(

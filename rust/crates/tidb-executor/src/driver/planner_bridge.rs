@@ -1396,9 +1396,8 @@ fn record_used_item_stats_status(
     );
 }
 
-/// Go `DataSource.HandleColsToAppend`: the handle suffix physically present
-/// after a non-unique index's declared key parts, in key order and with the
-/// range lengths used by `fillIndexPath`.
+/// Go `fillIndexPath`'s suffix as table offsets: the signed integer handle
+/// after a complete non-unique index's declared key parts.
 fn handle_columns_to_append(
     source: &tidb_planner::logical::DataSource,
     source_index: &tidb_planner::plan_builder::catalog::SourceIndex,
@@ -1429,12 +1428,8 @@ fn handle_columns_to_append(
         })
         .collect::<Vec<_>>();
     let appended = source.handle_cols_to_append(source_index, &declared);
-    let expected_offsets = if source.is_common_handle {
-        table.common_handle_offsets().to_vec()
-    } else {
-        table.pk_handle_offset().into_iter().collect()
-    };
-    if appended.len() != expected_offsets.len() || (source.is_common_handle && index.global) {
+    let expected_offsets = table.pk_handle_offset().into_iter().collect::<Vec<_>>();
+    if appended.len() != expected_offsets.len() {
         return Vec::new();
     }
     appended
@@ -1878,8 +1873,8 @@ impl InitStats<'_> {
                 // fillIndexPath's extension of the initial retained-index map,
                 // which only ever appends the integer handle.
                 if columns.len() == index.columns.len() {
-                    columns.extend(source.pk_handle_col_to_append(index, &declared)
-                        .map(|column| column.unique_id));
+                    columns.extend(source.handle_cols_to_append(index, &declared)
+                        .into_iter().map(|(column, _)| column.unique_id));
                 }
                 (!columns.is_empty()).then_some((index.id, columns))
             })
@@ -2326,46 +2321,20 @@ impl InitStats<'_> {
                     index.id,
                     true,
                 );
-                let estimate = (if appended_handle_columns.is_empty() {
-                    crate::access_cost::index_row_count_with_options(
-                        index,
-                        table,
+                // Go `detachCondAndBuildRangeForPath`: the estimate ranges
+                // drop the appended handle dimensions (`pruneEstimateRange`).
+                let estimate = crate::access_cost::index_row_count_with_options(
+                    index,
+                    table,
+                    &crate::access_cost::prune_estimate_ranges(
                         &built.ranges,
-                        statistics,
-                        row_count,
-                        false,
-                        self.context.optimizer_cost_env().session.estimator_options.clone(),
-                    )
-                } else {
-                    let ranges = built
-                        .ranges
-                        .iter()
-                        .map(|range| tidb_planner::ranger::types::Range {
-                            low_val: range.low.clone(),
-                            high_val: range.high.clone(),
-                            collators: columns
-                                .iter()
-                                .take(range.low.len())
-                                .map(|column| column.field_type.collation())
-                                .collect(),
-                            low_exclude: range.low_exclusive,
-                            high_exclude: range.high_exclusive,
-                        })
-                        .collect::<Vec<_>>();
-                    crate::access_cost::index_row_count_with_appended_handle_columns_and_options(
-                        index,
-                        table,
-                        &ranges,
-                        &appended_handle_columns
-                            .iter()
-                            .map(|(offset, _)| *offset)
-                            .collect::<Vec<_>>(),
-                        statistics,
-                        row_count,
-                        false,
-                        self.context.optimizer_cost_env().session.estimator_options.clone(),
-                    )
-                })
+                        index.column_offsets.len(),
+                    ),
+                    statistics,
+                    row_count,
+                    false,
+                    self.context.optimizer_cost_env().session.estimator_options.clone(),
+                )
                 .map_err(estimation_error)?;
                 for (offset, _) in &appended_handle_columns {
                     if let Some(column) = table.columns.get(*offset) {
@@ -2533,8 +2502,6 @@ impl InitStats<'_> {
                     else {
                         continue;
                     };
-                    let appended_handle_columns =
-                        handle_columns_to_append(source, index, metadata, table);
                     let prefix = source.index_range_columns(index);
                     if prefix.is_empty() {
                         continue;
@@ -2561,36 +2528,22 @@ impl InitStats<'_> {
                                     tidb_planner::plan_base::PlanError::unsupported_type(message),
                             }
                         })?;
-                    let estimate = if appended_handle_columns.is_empty() {
-                        let ranges = built
-                            .ranges
-                            .iter()
-                            .map(|range| crate::kv_table::IndexRange {
-                                low: range.low_val.clone(),
-                                high: range.high_val.clone(),
-                                low_exclusive: range.low_exclude,
-                                high_exclusive: range.high_exclude,
-                            })
-                            .collect::<Vec<_>>();
-                        crate::access_cost::index_row_count_with_options(
-                            metadata, table, &ranges, statistics, row_count, false,
-                            self.context.optimizer_cost_env().session.estimator_options.clone(),
-                        )
-                    } else {
-                        crate::access_cost::index_row_count_with_appended_handle_columns_and_options(
-                            metadata,
-                            table,
-                            &built.ranges,
-                            &appended_handle_columns
-                                .iter()
-                                .map(|(offset, _)| *offset)
-                                .collect::<Vec<_>>(),
-                            statistics,
-                            row_count,
-                            false,
-                            self.context.optimizer_cost_env().session.estimator_options.clone(),
-                        )
-                    }
+                    let ranges = built
+                        .ranges
+                        .iter()
+                        .map(|range| crate::kv_table::IndexRange {
+                            low: range.low_val.clone(),
+                            high: range.high_val.clone(),
+                            low_exclusive: range.low_exclude,
+                            high_exclusive: range.high_exclude,
+                        })
+                        .collect::<Vec<_>>();
+                    let ranges =
+                        crate::access_cost::prune_estimate_ranges(&ranges, metadata.column_offsets.len());
+                    let estimate = crate::access_cost::index_row_count_with_options(
+                        metadata, table, &ranges, statistics, row_count, false,
+                        self.context.optimizer_cost_env().session.estimator_options.clone(),
+                    )
                     .map_err(estimation_error)?;
                     source
                         .derived_index_paths

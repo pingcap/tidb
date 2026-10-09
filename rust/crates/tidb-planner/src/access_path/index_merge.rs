@@ -485,153 +485,44 @@ pub(crate) fn compare_alternatives(
         })
 }
 
+/// Go `detachCondAndBuildRangeForPath`'s `CountAfterAccess`
+/// (`core/stats.go:425-447`): the appended handle is trimmed from `IdxCols`
+/// and each range pruned to the declared columns before
+/// `GetRowCountByIndexRanges`.
 fn estimate_partial_index_ranges(
     ds: &DataSource,
     source_index: &crate::plan_builder::catalog::SourceIndex,
     filled: &super::ordinary::FilledIndexPath,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<f64, PlanError> {
-    use crate::cardinality::row_count_estimator::{get_row_count_by_column_ranges, ColumnRange};
-    let hist = ds.table_stats.as_ref().and_then(|stats| stats.hist_coll());
-    crate::cardinality::estimate_index_path_ranges(
-        &filled.detached.ranges,
-        source_index.columns.len(),
-        filled.columns.len(),
-        ds.table_stats
-            .as_ref()
-            .map_or(0.0, |stats| stats.row_count()),
-        |ranges| estimate_partial_index_prefix(ds, source_index, filled, ctx, ranges),
-        |dimension, ranges| {
-            let hist = hist.filter(|hist| !hist.pseudo())?;
-            let column = hist.histogram_for_estimation(filled.columns[dimension].0.unique_id)?;
-            let bounds = ranges
-                .iter()
-                .map(|range| {
-                    ColumnRange::new(
-                        range.low_val[0].clone(),
-                        range.high_val[0].clone(),
-                        range.low_exclude,
-                        range.high_exclude,
-                    )
-                })
-                .collect::<Vec<_>>();
-            get_row_count_by_column_ranges(
-                Some(column),
-                &bounds,
-                ranges.first()?.collators[0],
-                hist.realtime_count(),
-                hist.modify_count(),
-                false,
-                &ctx.estimator_options,
-            )
-            .ok()
-        },
+    let declared = source_index.columns.len();
+    let ranges = &super::ordinary::prune_estimate_range(&filled.detached.ranges, declared);
+    let Some(hist) = ds.table_stats.as_ref().and_then(|stats| stats.hist_coll()) else {
+        // Go's table always carries a collection; a profile without one
+        // keeps the pseudo rate.
+        return Ok(crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
+            ranges,
+            ds.table_stats
+                .as_ref()
+                .map_or(ranges.len() as f64, |stats| stats.row_count()),
+            source_index.unique.then_some(source_index.columns.len()),
+        ));
+    };
+    let columns = filled
+        .columns
+        .iter()
+        .take(declared)
+        .map(|(column, _)| column.clone())
+        .collect::<Vec<_>>();
+    crate::cardinality::selectivity::get_row_count_by_index_ranges(
+        hist,
+        source_index.id,
+        ranges,
+        &columns,
+        &ctx.estimator_options,
     )
     .map(|estimate| estimate.est)
     .map_err(|error| PlanError::internal_coded(error.to_string()))
-}
-
-fn estimate_partial_index_prefix(
-    ds: &DataSource,
-    source_index: &crate::plan_builder::catalog::SourceIndex,
-    filled: &super::ordinary::FilledIndexPath,
-    ctx: &AccessPathDerivationContext<'_>,
-    ranges: &[crate::ranger::Range],
-) -> Result<
-    crate::cardinality::row_count_column::RowEstimate,
-    crate::cardinality::row_count_estimator::EstimationError,
-> {
-    use crate::cardinality::row_count_estimator::{
-        get_index_row_count, get_index_row_count_with_partial_stats,
-    };
-    let stats = ds.table_stats.as_ref();
-    let pseudo = || {
-        crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
-            ranges,
-            stats.map_or(ranges.len() as f64, |stats| stats.row_count()),
-            source_index.unique.then_some(source_index.columns.len()),
-        )
-    };
-    let Some(hist) = stats
-        .and_then(|stats| stats.hist_coll())
-        .filter(|hist| !hist.pseudo())
-    else {
-        return Ok(crate::cardinality::row_count_column::RowEstimate::default_est(pseudo()));
-    };
-    let index_id = source_index.id;
-    let ids = filled
-        .columns
-        .iter()
-        .take(source_index.columns.len())
-        .map(|(column, _)| column.unique_id)
-        .collect::<Vec<_>>();
-    let columns = ids
-        .iter()
-        .map(|id| {
-            hist.histogram_for_estimation(*id)
-                .map(|column| column.as_ref())
-        })
-        .collect::<Vec<_>>();
-    let Some(_index) = hist
-        .index_histogram(index_id)
-        .filter(|index| index.total_row_count() != 0.0)
-    else {
-        if columns
-            .iter()
-            .any(|column| column.is_some_and(|column| column.total_row_count() != 0.0))
-        {
-            let columns = columns
-                .iter()
-                .zip(&filled.columns)
-                .map(|(stats, (column, _))| {
-                    (
-                        *stats,
-                        column
-                            .ret_type
-                            .as_ref()
-                            .map_or(tidb_datatype::Collation::Binary, |ty| ty.collation()),
-                    )
-                })
-                .collect::<Vec<_>>();
-            if let Some(estimate) = get_index_row_count_with_partial_stats(
-                &columns,
-                ranges,
-                hist.realtime_count(),
-                hist.modify_count(),
-                &ctx.estimator_options,
-            )? {
-                return Ok(estimate);
-            }
-        }
-        return Ok(crate::cardinality::row_count_column::RowEstimate::default_est(pseudo()));
-    };
-    let context = hist.index_estimation_stats(index_id);
-    let recursive = hist
-        .index_columns(index_id)
-        .iter()
-        .map(|id| {
-            hist.index_ids_for_column(*id)
-                .iter()
-                .map(|candidate| hist.index_estimation_stats(*candidate))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    let virtual_columns = ids
-        .iter()
-        .map(|id| {
-            ds.table_columns
-                .iter()
-                .find(|column| column.unique_id == *id)
-                .is_some_and(|column| column.virtual_expr.is_some())
-        })
-        .collect::<Vec<_>>();
-    get_index_row_count(
-        &context,
-        &virtual_columns,
-        &recursive,
-        ranges,
-        &ctx.estimator_options,
-    )
 }
 
 #[derive(Clone, Debug)]

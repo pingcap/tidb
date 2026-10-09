@@ -5457,8 +5457,10 @@ mod tests {
         }
     }
 
+    /// Go `fillIndexPath` appends only the signed integer handle; a clustered
+    /// common handle never extends a secondary index path.
     #[test]
-    fn version_zero_binary_common_handle_keeps_its_index_suffix() {
+    fn a_common_handle_is_never_appended_to_an_index_path() {
         use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
         let ty = FieldType::new(FieldTypeCode::LongLong);
         let declared = tidb_expr::column::Column::new(1, ty);
@@ -5480,19 +5482,15 @@ mod tests {
             }],
             ..Default::default()
         };
-        let mut prefix = vec![(declared, -1)];
-        let suffix = source.handle_cols_to_append(&index, &prefix);
-        prefix.extend(suffix);
-        assert_eq!(prefix.len(), 2);
-        assert_eq!(prefix[1].1, 3);
+        let prefix = vec![(declared, -1)];
+        assert!(source.handle_cols_to_append(&index, &prefix).is_empty());
     }
 
     #[test]
-    fn a_secondary_index_range_reaches_common_handle_columns() {
-        // Go's `fillIndexPath` appends the complete clustered common handle
-        // to a non-unique secondary index.  A tuple comparison therefore
-        // becomes one lexicographic range per deciding handle column rather
-        // than stopping after the declared `a` key part.
+    fn a_secondary_index_range_stops_at_its_declared_column() {
+        // Go's `fillIndexPath` never appends a clustered common handle, so a
+        // tuple comparison ranges over the declared `a` key part alone;
+        // Go prints `range:[1,+inf]` for this shape.
         use crate::access_path::PossiblePath;
         use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
@@ -5577,23 +5575,25 @@ mod tests {
         });
         let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
 
-        let scan = match task.plan().expect("physical plan") {
-            PhysicalPlan::IndexLookUpReader(reader) => match reader.index_plan.as_deref() {
-                Some(PhysicalPlan::IndexScan(scan)) => scan,
-                other => panic!("expected an index scan child, got {other:?}"),
-            },
-            PhysicalPlan::IndexReader(reader) => match reader.index_plan.as_deref() {
-                Some(PhysicalPlan::IndexScan(scan)) => scan,
-                other => panic!("expected an index scan child, got {other:?}"),
-            },
+        // The rest of the tuple filters the index side above the scan.
+        let index_plan = match task.plan().expect("physical plan") {
+            PhysicalPlan::IndexLookUpReader(reader) => reader.index_plan.as_deref(),
+            PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref(),
             other => panic!("expected an index reader, got {other:?}"),
+        };
+        let scan = match index_plan {
+            Some(PhysicalPlan::Selection(selection)) => match selection.base.children() {
+                [PhysicalPlan::IndexScan(scan)] => scan,
+                other => panic!("expected an index scan under the filter, got {other:?}"),
+            },
+            other => panic!("expected an index-side filter, got {other:?}"),
         };
         let rendered = scan
             .ranges
             .iter()
             .map(crate::ranger::types::Range::to_display_string)
             .collect::<Vec<_>>();
-        assert_eq!(rendered, ["(1 2 3,1 2 +inf]", "(1 2,1 +inf]", "(1,+inf]",]);
+        assert_eq!(rendered, ["[1,+inf]"]);
     }
 
     #[test]
