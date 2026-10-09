@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -295,9 +296,28 @@ func DefaultConfig() *Config {
 	}
 }
 
-// String returns dumpling's config in json format
+// redacted returns a shallow copy of conf with storage credentials masked.
+func (conf *Config) redacted() *Config {
+	c := *conf
+	c.OutputDirPath = ast.RedactURL(c.OutputDirPath)
+	const mask = "xxxxxx"
+	maskIfSet := func(s *string) {
+		if *s != "" {
+			*s = mask
+		}
+	}
+	maskIfSet(&c.S3.AccessKey)
+	maskIfSet(&c.S3.SecretAccessKey)
+	maskIfSet(&c.S3.SessionToken)
+	maskIfSet(&c.Azblob.AccountKey)
+	maskIfSet(&c.Azblob.SASToken)
+	maskIfSet(&c.Azblob.EncryptionKey)
+	return &c
+}
+
+// String returns dumpling's config in json format with credentials redacted.
 func (conf *Config) String() string {
-	cfg, err := json.Marshal(conf)
+	cfg, err := json.Marshal(conf.redacted())
 	if err != nil && conf.Logger != nil {
 		conf.Logger.Error("fail to marshal config to json", zap.Error(err))
 	}
