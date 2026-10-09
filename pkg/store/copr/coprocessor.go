@@ -1800,17 +1800,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	}
 
 	var result *copTaskResult
-<<<<<<< HEAD
 	if worker.req.Paging.Enable ||
 		copResp.GetRange() != nil { // For next-gen, the storage may return paging range even if paging is not enabled.
-		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
-=======
-	// For next-gen, the storage may return paging range even if paging is not
-	// enabled. coprocessor have a max_resp_size to control the response size,
-	// the default is 32MiB
-	if worker.req.Paging.Enable || copResp.GetRange() != nil {
 		result, err = worker.handleCopPagingResult(bo, lockHints, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
->>>>>>> ead9d38239a (store: back off when TiKV ignores cop lock hints (#71446))
 	} else {
 		// Handles the response for non-paging copTask.
 		result, err = worker.handleCopResponse(bo, lockHints, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
@@ -1882,29 +1874,8 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
-<<<<<<< HEAD
-func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
-	result, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
-=======
-// pagingResponseReadBytes returns the MVCC bytes basis the EMA observes.
-// Mirrors client-go's resourcecontrol.MakeResponseInfo so the EMA learns
-// the same quantity PD bills against.
-func pagingResponseReadBytes(pbResp *coprocessor.Response) uint64 {
-	if pbResp == nil {
-		return 0
-	}
-	if scanDetail := pbResp.GetExecDetailsV2().GetScanDetailV2(); scanDetail != nil {
-		if clientgoconfig.NextGen {
-			return max(scanDetail.GetTotalVersionsSize(), scanDetail.GetProcessedVersionsSize())
-		}
-		return scanDetail.GetProcessedVersionsSize()
-	}
-	return 0
-}
-
 func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, lockHints *requestLockHints, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
 	result, err := worker.handleCopResponse(bo, lockHints, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
->>>>>>> ead9d38239a (store: back off when TiKV ignores cop lock hints (#71446))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2344,11 +2315,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 		}
 		//TODO: handle locks in batch
 		if lockErr := batchResp.GetLocked(); lockErr != nil {
-<<<<<<< HEAD
-			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
-=======
 			if err := worker.handleLockErr(bo, lockHints, lockErr, task); err != nil {
->>>>>>> ead9d38239a (store: back off when TiKV ignores cop lock hints (#71446))
 				return batchRespList, nil, err
 			}
 			task.meetLockFallback = true
@@ -2470,7 +2437,7 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockHints *request
 	}
 	// A successful resolver call has backed off if any lock matched its hints.
 	// Unhinted locks must leave that backoff available for later children.
-	for _, lock := range locks {
+	for _, lock := range resolveLocksOpts.Locks {
 		_, resolved := resolveLocksOpts.LockHintsInRequest.Resolved[lock.TxnID]
 		_, committed := resolveLocksOpts.LockHintsInRequest.Committed[lock.TxnID]
 		if resolved || committed {
