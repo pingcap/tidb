@@ -115,6 +115,16 @@ CREATE TABLE t1 (f1 INT CHECK (f1 = default(f1)));
 CREATE TABLE t1 (id INT CHECK (id != (SELECT 1)));
 -- error 3815
 CREATE TABLE t1 (a int check(a in (SELECT COALESCE(NULL, 1, 1))));
+-- error 1111
+CREATE TABLE t1 (a INT CHECK (MAX(a) > 0));
+-- error 1111
+CREATE TABLE t1 (a INT, CHECK (COUNT(a) > 0));
+-- error 3593
+CREATE TABLE t1 (a INT CHECK (RANK() OVER (ORDER BY a) > 0));
+-- error 3593
+CREATE TABLE t1 (a INT, CHECK (RANK() OVER (ORDER BY a) > 0));
+-- error 1111
+CREATE TABLE t1 (a INT, b INT, CHECK (GROUPING(a) > 0));
 
 # TestUnsupportedCheckConstraintsExprWhenAlterTable
 drop table if exists t;
@@ -208,6 +218,12 @@ ALTER TABLE t1 ADD CHECK (f1 = default(f1));
 ALTER TABLE t1 ADD CHECK (f3 != (SELECT 1));
 -- error 3815
 ALTER TABLE t1 ADD check (f3 in (SELECT COALESCE(NULL, 1, 1)));
+-- error 1111
+ALTER TABLE t1 ADD CHECK (SUM(f3) > 0);
+-- error 3593
+ALTER TABLE t1 ADD CHECK (RANK() OVER (ORDER BY f3) > 0);
+-- error 1111
+ALTER TABLE t1 ADD CHECK (GROUPING(f3) > 0);
 
 # TestNameInCreateTableLike
 drop table if exists t, s;
