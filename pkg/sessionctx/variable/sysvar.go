@@ -554,6 +554,14 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.ProcessGeneralLog.Load()), nil
 	}},
+	// offline_mode is instance scoped so that a single TiDB server can be drained
+	// out of a load balancer rotation without affecting the rest of the cluster.
+	{Scope: vardef.ScopeInstance, Name: vardef.OfflineMode, Value: vardef.Off, Type: vardef.TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		vardef.EnableOfflineMode.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableOfflineMode.Load()), nil
+	}},
 	// NOTE: The trace-event switch is experimental. It is subject to changes.
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBTraceEvent, Hidden: kerneltype.IsClassic(), Value: vardef.DefTiDBTraceEvent, Type: vardef.TypeStr, IsSensitive: true,
 		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
@@ -2862,10 +2870,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableNoopFuncs, Value: vardef.DefTiDBEnableNoopFuncs, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, vardef.Warn}, Depended: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		// The behavior is very weird if someone can turn TiDBEnableNoopFuncs OFF, but keep any of the following on:
-		// TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly, SQLAutoIsNull
+		// TxReadOnly, TransactionReadOnly, SuperReadOnly, serverReadOnly, SQLAutoIsNull
 		// To prevent this strange position, prevent setting to OFF when any of these sysVars are ON of the same scope.
 		if normalizedValue == vardef.Off {
-			for _, potentialIncompatibleSysVar := range []string{vardef.TxReadOnly, vardef.TransactionReadOnly, vardef.OfflineMode, vardef.SuperReadOnly, vardef.ReadOnly, vardef.SQLAutoIsNull} {
+			for _, potentialIncompatibleSysVar := range []string{vardef.TxReadOnly, vardef.TransactionReadOnly, vardef.SuperReadOnly, vardef.ReadOnly, vardef.SQLAutoIsNull} {
 				val, _ := vars.GetSystemVar(potentialIncompatibleSysVar) // session scope
 				if scope == vardef.ScopeGlobal {                         // global scope
 					var err error

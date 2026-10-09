@@ -828,6 +828,7 @@ const (
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrMaxExecTimeExceeded                                   = 3024
 	ErrAggregateOrderNonAggQuery                             = 3029
+	ErrServerOfflineMode                                     = 3032
 	ErrUserLockWrongName                                     = 3057
 	ErrUserLockDeadlock                                      = 3058
 	ErrIncorrectType                                         = 3064

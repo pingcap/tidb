@@ -553,14 +553,10 @@ func TestReadOnlyNoop(t *testing.T) {
 	}
 
 	// For global scope
-	for _, name := range []string{vardef.TxReadOnly, vardef.TransactionReadOnly, vardef.OfflineMode, vardef.SuperReadOnly, vardef.ReadOnly} {
+	for _, name := range []string{vardef.TxReadOnly, vardef.TransactionReadOnly, vardef.SuperReadOnly, vardef.ReadOnly} {
 		sv := GetSysVar(name)
 		val, err := sv.Validate(vars, "on", vardef.ScopeGlobal)
-		if name == vardef.OfflineMode {
-			require.Equal(t, "[variable:1235]function OFFLINE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
-		} else {
-			require.Equal(t, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
-		}
+		require.Equal(t, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
 		require.Equal(t, "OFF", val)
 		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableNoopFuncs, "ON"))
 		_, err = sv.Validate(vars, "on", vardef.ScopeGlobal)
