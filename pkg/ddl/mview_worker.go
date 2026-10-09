@@ -140,10 +140,15 @@ func (w *worker) rollbackCreateMaterializedViewLog(jobCtx *jobContext, job *mode
 		return ver, errors.Trace(err)
 	}
 
+	// The rollback schema diff needs RollbackDone, but an update failure must
+	// leave the job retryable.
+	prevState, prevSchemaState := job.State, job.SchemaState
 	job.State = model.JobStateRollbackDone
 	job.SchemaState = model.StateNone
 	ver, err = updateSchemaVersion(jobCtx, job, extraInfos...)
 	if err != nil {
+		job.State = prevState
+		job.SchemaState = prevSchemaState
 		return ver, errors.Trace(err)
 	}
 	return ver, nil
@@ -374,10 +379,15 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 	if err := w.deleteCreateMaterializedViewRefreshAlert(jobCtx, job.TableID); err != nil {
 		logutil.DDLLogger().Warn("create materialized view rollback: failed to delete refresh alert", zap.String("schemaName", job.SchemaName), zap.String("tableName", mviewTableInfo.Name.O), zap.Int64("mviewID", job.TableID), zap.Error(err))
 	}
+	// The rollback schema diff needs RollbackDone, but an update failure must
+	// leave the job retryable.
+	prevState, prevSchemaState := job.State, job.SchemaState
 	job.State = model.JobStateRollbackDone
 	job.SchemaState = model.StateNone
 	ver, err = updateSchemaVersion(jobCtx, job, extraInfos...)
 	if err != nil {
+		job.State = prevState
+		job.SchemaState = prevSchemaState
 		return ver, errors.Trace(err)
 	}
 	var mlogTableIDs []int64
@@ -768,6 +778,7 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 		return errors.Trace(err)
 	}
 	lastSuccess := time.Now().Unix()
+	jobCtx.mustRollbackTxnOnError = true
 	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mviewTableInfo.ID, readTS, &lastSuccess, next, shouldUpdate))
 }
 
@@ -790,6 +801,7 @@ func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, ml
 	if err != nil {
 		return errors.Trace(err)
 	}
+	jobCtx.mustRollbackTxnOnError = true
 	return errors.Trace(execCreateMaterializedViewLogPurgeInfoUpsert(ctx, w.sess, mlogTableInfo.ID, next, shouldUpdate))
 }
 
@@ -834,6 +846,7 @@ func (w *worker) deleteMaterializedViewLogPurgeInfos(jobCtx *jobContext, mlogIDs
 		for i, id := range batch {
 			args[i] = id
 		}
+		jobCtx.mustRollbackTxnOnError = true
 		/* #nosec G202: only the placeholder count is dynamic; IDs are escaped by sqlescape. */
 		_, err := w.sess.Execute(ctx,
 			sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
@@ -916,6 +929,7 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfos(jobCtx *jobContext, mv
 		for i, id := range batch {
 			args[i] = id
 		}
+		jobCtx.mustRollbackTxnOnError = true
 		/* #nosec G202: only the placeholder count is dynamic; IDs are escaped by sqlescape. */
 		_, err := w.sess.Execute(ctx,
 			sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
@@ -962,6 +976,7 @@ func (w *worker) deleteCreateMaterializedViewRefreshAlerts(jobCtx *jobContext, m
 			err = errors.New(val.(string))
 		})
 		if err == nil {
+			jobCtx.mustRollbackTxnOnError = true
 			/* #nosec G202: only the placeholder count is dynamic; IDs are escaped by sqlescape. */
 			_, err = w.sess.Execute(ctx,
 				sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
