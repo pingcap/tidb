@@ -311,6 +311,7 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int)")
 
+<<<<<<< HEAD
 	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t1", L: "t1"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
@@ -330,6 +331,135 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 			tk.MustExec("set session tidb_redact_log=on")
 			output[i].Redact = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+=======
+		tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t1", L: "t1"})
+		require.NoError(t, err)
+		// Set the hacked TiFlash replica for explain tests.
+		tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+		var input []string
+		var output []struct {
+			SQL    string
+			Plan   []string
+			Redact []string
+		}
+		integrationSuiteData := GetIntegrationSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				tk.MustExec("set global tidb_redact_log=off")
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				tk.MustExec("set global tidb_redact_log=on")
+				output[i].Redact = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			})
+			tk.MustExec("set global tidb_redact_log=off")
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			tk.MustExec("set global tidb_redact_log=on")
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Redact...))
+		}
+	})
+}
+
+func TestFixControl43817(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`use test`)
+		tk.MustExec(`create table t1 (a int)`)
+		tk.MustExec(`create table t2 (a int)`)
+		tk.MustQuery(`select * from t1 where t1.a > (select max(a) from t2)`).Check(testkit.Rows()) // no error
+		tk.MustExec(`set tidb_opt_fix_control="43817:on"`)
+		tk.MustContainErrMsg(`select * from t1 where t1.a > (select max(a) from t2)`, "evaluate non-correlated sub-queries during optimization phase is not allowed by fix-control 43817")
+		tk.MustExec(`set tidb_opt_fix_control="43817:off"`)
+		tk.MustQuery(`select * from t1 where t1.a > (select max(a) from t2)`).Check(testkit.Rows()) // no error
+	})
+}
+
+func TestFixControl45132(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`use test`)
+		tk.MustExec(`create table t (a int, b int, key(a))`)
+		values := make([]string, 0, 101)
+		for range 100 {
+			values = append(values, "(1, 1)")
+		}
+		values = append(values, "(2, 2)") // count(1) : count(2) == 100 : 1
+		tk.MustExec(`insert into t values ` + strings.Join(values, ","))
+		for range 7 {
+			tk.MustExec(`insert into t select * from t`)
+		}
+		tk.MustExec(`analyze table t`)
+		// the cost model prefers to use TableScan instead of IndexLookup to avoid double requests.
+		tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
+
+		tk.MustExec(`set @@tidb_opt_fix_control = "45132:99"`)
+		tk.MustExec(`analyze table t`)
+		tk.EventuallyMustIndexLookup(`select * from t where a=2`) // index lookup
+
+		tk.MustExec(`set @@tidb_opt_fix_control = "45132:500"`)
+		tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
+
+		tk.MustExec(`set @@tidb_opt_fix_control = "45132:0"`)
+		tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
+	})
+}
+
+func TestTiFlashExtraColumnPrune(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+		tk.MustExec("set @@tidb_enforce_mpp = on")
+		tk.MustExec("drop table if exists t1;")
+		tk.MustExec("create table t1(c1 int, c2 int)")
+
+		tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t1", L: "t1"})
+		require.NoError(t, err)
+		// Set the hacked TiFlash replica for explain tests.
+		tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		integrationSuiteData := GetIntegrationSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		}
+	})
+}
+
+func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		// The following tests are flaky, we add it in unit test to have more chance to debug the issue.
+		tk.MustExec(`use test`)
+		tk.MustExec(`drop table if exists t`)
+		tk.MustExec(`create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signed array))));`)
+		tk.MustExec(`insert into t value(1,1,1, '{"b":[1,2,3,4]}');`)
+		tk.MustExec(`insert into t value(2,2,2, '{"b":[3,4,5,6]}');`)
+		tk.MustExec(`set tidb_analyze_version=2;`)
+		tk.MustExec(`analyze table t all columns;`)
+		tk.MustQuery("explain format = 'plan_tree' select * from t use index (iad) where a = 1;").Check(testkit.Rows(
+			"TableReader root  data:Selection",
+			"└─Selection cop[tikv]  eq(test.t.a, 1)",
+			"  └─TableFullScan cop[tikv] table:t keep order:false",
+		))
+		tk.MustQuery("explain format = 'plan_tree' select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
+			"IndexMerge root  type: union",
+			"├─IndexRangeScan(Build) cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false",
+			"└─TableRowIDScan(Probe) cop[tikv] table:t keep order:false",
+		))
+	})
+}
+
+func TestIntegrationRegression(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		defer config.RestoreFunc()()
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Status.RecordQPSbyDB = true
+>>>>>>> 22fd1ac756e (planner: discount equality-bound clustered-key prefix in index pruning (#69726))
 		})
 		tk.MustExec("set session tidb_redact_log=off")
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
@@ -443,6 +573,7 @@ func TestIssue52023(t *testing.T) {
 		(PARTITION P0 VALUES LESS THAN (_binary 0x03),
 		PARTITION P4 VALUES LESS THAN (_binary 0xc0),
 		PARTITION PMX VALUES LESS THAN (MAXVALUE))`)
+<<<<<<< HEAD
 	tk.MustExec(`insert into t values (0x5)`)
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("\u0005"))
@@ -535,4 +666,66 @@ func TestIssue56915(t *testing.T) {
 		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false, stats:partial[j:unInitialized]",
 		"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
+=======
+		tk.MustExec(`insert into t_issue52023 values (0x5)`)
+		tk.MustExec(`analyze table t_issue52023`)
+		tk.MustQuery(`select * from t_issue52023`).Check(testkit.Rows("\u0005"))
+		tk.MustQuery(`select * from t_issue52023 where a = 0x5`).Check(testkit.Rows("\u0005"))
+		tk.MustQuery(`select * from t_issue52023 where a = 5`).Check(testkit.Rows())
+		tk.MustQuery(`select * from t_issue52023 where a IN (5,55)`).Check(testkit.Rows())
+		tk.MustQuery(`select * from t_issue52023 where a IN (0x5,55)`).Check(testkit.Rows("\u0005"))
+		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a = 0x5`).Check(testkit.Rows("Point_Get root table:t_issue52023, partition:P4, clustered index:PRIMARY(a) "))
+		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a = 5`).Check(testkit.Rows(""+
+			"TableReader root partition:all data:Selection",
+			"└─Selection cop[tikv]  eq(cast(test.t_issue52023.a, double BINARY), 5)",
+			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
+		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a IN (5,55)`).Check(testkit.Rows(""+
+			"TableReader root partition:all data:Selection",
+			"└─Selection cop[tikv]  or(eq(cast(test.t_issue52023.a, double BINARY), 5), eq(cast(test.t_issue52023.a, double BINARY), 55))",
+			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
+		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a IN (0x5,55)`).Check(testkit.Rows(""+
+			"TableReader root partition:all data:Selection",
+			"└─Selection cop[tikv]  or(eq(test.t_issue52023.a, \"0x05\"), eq(cast(test.t_issue52023.a, double BINARY), 55))",
+			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
+
+		// issue:56915
+		tk.MustExec(`drop table if exists t_issue56915`)
+		tk.MustExec(`create table t_issue56915(a int, b int, j json, index ia(a), index mvi( (cast(j as signed array)), a, b) );`)
+		tk.MustExec(`insert into t_issue56915 value(1,1,'[1,2,3,4,5]');`)
+		tk.MustExec(`insert into t_issue56915 value(1,1,'[1,2,3,4,5]');`)
+		tk.MustExec(`insert into t_issue56915 value(1,1,'[1,2,3,4,5]');`)
+		tk.MustExec(`insert into t_issue56915 value(1,1,'[1,2,3,4,5]');`)
+		tk.MustExec(`insert into t_issue56915 value(1,1,'[6]');`)
+		tk.MustExec(`analyze table t_issue56915 all columns;`)
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:56915 */ * from t_issue56915 where a = 1 and 6 member of (j);").Check(testkit.Rows(
+			"IndexMerge root  type: union",
+			"├─IndexRangeScan(Build) cop[tikv] table:t_issue56915, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false",
+			"└─TableRowIDScan(Probe) cop[tikv] table:t_issue56915 keep order:false",
+		))
+
+		// issue:63290
+		tk.MustExec("drop table if exists t1, t2, t3")
+		tk.MustExec("create table t1 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec("create table t2 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec("create table t3 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec(`insert into t1 values (1, 1, 1)`)
+		tk.MustExec(`insert into t3 values (1, 1, 1)`)
+		tk.MustExec(`analyze table t1, t2, t3`)
+
+		// Cartesian Join t1 and t3 first, then join t2.
+		tk.MustQuery(`explain format='plan_tree' select /* issue:63290 */ /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Check(testkit.Rows(
+			`Projection root  1->Column`,
+			`└─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t3.b, test.t2.b)`,
+			`  ├─HashJoin(Build) root  CARTESIAN inner join`,
+			`  │ ├─IndexReader(Build) root  index:IndexFullScan`,
+			`  │ │ └─IndexFullScan cop[tikv] table:t3, index:b(b) keep order:false`,
+			`  │ └─IndexReader(Probe) root  index:IndexFullScan`,
+			`  │   └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false`,
+			`  └─IndexLookUp(Probe) root  `,
+			`    ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))`,
+			`    │ └─IndexRangeScan cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo`,
+			`    └─Selection(Probe) cop[tikv]  not(isnull(test.t2.b))`,
+			`      └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
+	})
+>>>>>>> 22fd1ac756e (planner: discount equality-bound clustered-key prefix in index pruning (#69726))
 }
