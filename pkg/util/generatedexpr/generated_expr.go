@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
@@ -58,9 +59,23 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 // of `ColumnInfo` is a string field, so we need to parse
 // it into ast.ExprNode. This function is for that.
 func ParseExpression(expr string) (node ast.ExprNode, err error) {
+	return parseExpression(expr, nil)
+}
+
+// ParseExpressionWithSQLMode parses an expression with the SQL mode that was
+// active when it was persisted.
+func ParseExpressionWithSQLMode(expr string, sqlMode mysql.SQLMode) (node ast.ExprNode, err error) {
+	return parseExpression(expr, &sqlMode)
+}
+
+func parseExpression(expr string, sqlMode *mysql.SQLMode) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := charset.GetDefaultCharsetAndCollate()
-	stmts, _, err := parser.New().ParseSQL(expr,
+	p := parser.New()
+	if sqlMode != nil {
+		p.SetSQLMode(*sqlMode)
+	}
+	stmts, _, err := p.ParseSQL(expr,
 		parser.CharsetConnection(charset),
 		parser.CollationConnection(collation))
 	if err == nil {

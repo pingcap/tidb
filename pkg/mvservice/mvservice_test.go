@@ -658,7 +658,7 @@ func TestMVServiceCollectRefreshAlertTasksByAlertLevel(t *testing.T) {
 
 	now := mvsNow()
 
-	warnTask := &mv{
+	warnTask := &mviewTask{
 		ID:              101,
 		nextRefresh:     now.Add(-2 * time.Minute),
 		lastSuccessTime: now.Add(-40 * time.Second),
@@ -666,7 +666,7 @@ func TestMVServiceCollectRefreshAlertTasksByAlertLevel(t *testing.T) {
 		alertOverdueSec: 120,
 	}
 
-	overdueTask := &mv{
+	overdueTask := &mviewTask{
 		ID:              102,
 		nextRefresh:     now.Add(-2 * time.Minute),
 		lastSuccessTime: now.Add(-70 * time.Second),
@@ -675,7 +675,7 @@ func TestMVServiceCollectRefreshAlertTasksByAlertLevel(t *testing.T) {
 	}
 	overdueTask.orderTs = maxNextScheduleTs // simulate running task
 
-	disabledTask := &mv{
+	disabledTask := &mviewTask{
 		ID:              103,
 		nextRefresh:     now.Add(-2 * time.Minute),
 		lastSuccessTime: now.Add(-5 * time.Minute),
@@ -708,19 +708,19 @@ func TestMVServiceRefreshAlertScanInterval(t *testing.T) {
 
 	now := mvsNow()
 
-	svc.mvRefreshMu.Lock()
-	if svc.mvRefreshMu.pending == nil {
-		svc.mvRefreshMu.pending = make(map[int64]mvItem)
+	svc.mviewRefreshMu.Lock()
+	if svc.mviewRefreshMu.pending == nil {
+		svc.mviewRefreshMu.pending = make(map[int64]mviewTaskItem)
 	}
-	task := &mv{
+	task := &mviewTask{
 		ID:              1,
 		nextRefresh:     now.Add(-2 * time.Minute),
 		lastSuccessTime: now.Add(-2 * time.Minute),
 		alertWarningSec: 30,
 	}
 	task.orderTs = task.nextRefresh.UnixMilli()
-	svc.mvRefreshMu.pending[task.ID] = svc.mvRefreshMu.prio.Push(task)
-	svc.mvRefreshMu.Unlock()
+	svc.mviewRefreshMu.pending[task.ID] = svc.mviewRefreshMu.prio.Push(task)
+	svc.mviewRefreshMu.Unlock()
 
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
@@ -738,7 +738,7 @@ func TestMVServiceRefreshAlertScanInterval(t *testing.T) {
 func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T) {
 	type step struct {
 		atOffset        time.Duration
-		beforeCollect   func(task *mv, now time.Time)
+		beforeCollect   func(task *mviewTask, now time.Time)
 		expectedCount   int
 		expectedID      int64
 		expectedOverdue bool
@@ -747,7 +747,7 @@ func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T
 	}
 	type testCase struct {
 		name  string
-		task  *mv
+		task  *mviewTask
 		steps []step
 	}
 
@@ -755,7 +755,7 @@ func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T
 	testCases := []testCase{
 		{
 			name: "dedup_on_same_tso",
-			task: &mv{
+			task: &mviewTask{
 				ID:                 201,
 				nextRefresh:        now.Add(-2 * time.Minute),
 				lastSuccessReadTSO: 123456,
@@ -767,7 +767,7 @@ func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T
 				{atOffset: 10 * time.Second, expectedCount: 0, warningCount: 1, overdueCount: 0},
 				{
 					atOffset: 20 * time.Second,
-					beforeCollect: func(task *mv, now time.Time) {
+					beforeCollect: func(task *mviewTask, now time.Time) {
 						task.lastSuccessReadTSO = 223456
 						task.lastSuccessTime = now.Add(-2 * time.Minute)
 					},
@@ -777,7 +777,7 @@ func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T
 		},
 		{
 			name: "dedup_by_alert_level",
-			task: &mv{
+			task: &mviewTask{
 				ID:                 202,
 				nextRefresh:        now.Add(-2 * time.Minute),
 				lastSuccessReadTSO: 123456,
@@ -829,7 +829,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
 
 	now := mvsNow()
 
-	warnTask := &mv{
+	warnTask := &mviewTask{
 		ID:                 301,
 		schemaName:         "test",
 		mviewName:          "mv_warn",
@@ -840,7 +840,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
 		alertOverdueSec:    120,
 	}
 
-	overdueTask := &mv{
+	overdueTask := &mviewTask{
 		ID:                 302,
 		schemaName:         "test",
 		mviewName:          "mv_overdue",
@@ -851,7 +851,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
 		alertOverdueSec:    60,
 	}
 
-	healthyTask := &mv{
+	healthyTask := &mviewTask{
 		ID:                 303,
 		schemaName:         "test",
 		mviewName:          "mv_healthy",
@@ -861,7 +861,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
 		alertWarningSec:    30,
 		alertOverdueSec:    60,
 	}
-	helper.fetchViews = map[int64]*mv{
+	helper.fetchViews = map[int64]*mviewTask{
 		warnTask.ID:    warnTask,
 		overdueTask.ID: overdueTask,
 		healthyTask.ID: healthyTask,
@@ -922,16 +922,16 @@ func TestMVServiceBuildMVRefreshTasksDoesNotClearRemovedAlertStates(t *testing.T
 	defer svc.closeTaskExecutors()
 
 	now := mvsNow()
-	m := &mv{
+	m := &mviewTask{
 		ID:          401,
 		nextRefresh: now.Add(time.Minute),
 	}
 	m.orderTs = m.nextRefresh.UnixMilli()
 
-	svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
+	svc.buildMViewRefreshTasks(map[int64]*mviewTask{m.ID: m})
 	require.Equal(t, int32(0), helper.syncRefreshAlertCalls.Load())
 
-	svc.buildMVRefreshTasks(map[int64]*mv{})
+	svc.buildMViewRefreshTasks(map[int64]*mviewTask{})
 	require.Equal(t, int32(0), helper.syncRefreshAlertCalls.Load())
 }
 
@@ -942,7 +942,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksResyncsWhenLastSuccessReadTSOChanges(
 	setRefreshAlertCleanupOwnerForTest(svc, 10)
 
 	now := mvsNow()
-	task := &mv{
+	task := &mviewTask{
 		ID:                 501,
 		schemaName:         "test",
 		mviewName:          "mv_warn",
@@ -952,7 +952,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksResyncsWhenLastSuccessReadTSOChanges(
 		alertWarningSec:    30,
 	}
 	task.orderTs = task.nextRefresh.UnixMilli()
-	helper.fetchViews = map[int64]*mv{task.ID: task}
+	helper.fetchViews = map[int64]*mviewTask{task.ID: task}
 
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
@@ -973,7 +973,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksSkipsUnresolvedMetadata(t *testing.T)
 	setRefreshAlertCleanupOwnerForTest(svc, 10)
 
 	now := mvsNow()
-	task := &mv{
+	task := &mviewTask{
 		ID:                 601,
 		nextRefresh:        now.Add(-2 * time.Minute),
 		lastSuccessReadTSO: 12345,
@@ -982,7 +982,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksSkipsUnresolvedMetadata(t *testing.T)
 		metadataUnresolved: true,
 	}
 	task.orderTs = task.nextRefresh.UnixMilli()
-	helper.fetchViews = map[int64]*mv{task.ID: task}
+	helper.fetchViews = map[int64]*mviewTask{task.ID: task}
 
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
@@ -999,7 +999,7 @@ func TestMVServiceBuildMVRefreshTasksDoesNotDeleteAlertsOnTemporaryMetadataMiss(
 	setRefreshAlertCleanupOwnerForTest(svc, 10)
 
 	now := mvsNow()
-	existing := &mv{
+	existing := &mviewTask{
 		ID:                     602,
 		nextRefresh:            now.Add(-2 * time.Minute),
 		schemaName:             "test",
@@ -1013,7 +1013,7 @@ func TestMVServiceBuildMVRefreshTasksDoesNotDeleteAlertsOnTemporaryMetadataMiss(
 	}
 	existing.orderTs = existing.nextRefresh.UnixMilli()
 	addMVRefreshAlertTasksForTest(svc, existing)
-	helper.fetchViews = map[int64]*mv{
+	helper.fetchViews = map[int64]*mviewTask{
 		existing.ID: {
 			ID:                 existing.ID,
 			nextRefresh:        existing.nextRefresh,
@@ -1028,9 +1028,9 @@ func TestMVServiceBuildMVRefreshTasksDoesNotDeleteAlertsOnTemporaryMetadataMiss(
 	require.Equal(t, int32(0), helper.syncRefreshAlertCalls.Load())
 	require.Equal(t, int32(1), helper.cleanupStaleRefreshAlertCalls.Load())
 
-	svc.mvRefreshAlertMu.Lock()
-	preserved, ok := svc.mvRefreshAlertMu.pending[existing.ID]
-	svc.mvRefreshAlertMu.Unlock()
+	svc.mviewRefreshAlertMu.Lock()
+	preserved, ok := svc.mviewRefreshAlertMu.pending[existing.ID]
+	svc.mviewRefreshAlertMu.Unlock()
 	require.True(t, ok)
 	require.NotNil(t, preserved)
 	require.True(t, preserved.alertStateInitialized)
@@ -1054,8 +1054,8 @@ func TestMVServiceMaybeLogRefreshAlertTasksSkipsCleanupWhenNotOwner(t *testing.T
 
 func TestMVServiceRefreshAlertCheckerOwnersScanGlobalTasks(t *testing.T) {
 	now := mvsNow()
-	newTask := func() *mv {
-		return &mv{
+	newTask := func() *mviewTask {
+		return &mviewTask{
 			ID:                 701,
 			schemaName:         "test",
 			mviewName:          "mv_overdue",
@@ -1104,7 +1104,7 @@ func TestMVServiceRefreshAlertCheckerOwnersScanGlobalTasks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			task := newTask()
 			helper := &mockMVServiceHelper{
-				fetchViews: map[int64]*mv{task.ID: task},
+				fetchViews: map[int64]*mviewTask{task.ID: task},
 			}
 			svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 			defer svc.closeTaskExecutors()
@@ -1166,7 +1166,7 @@ func TestMVServiceRefreshAlertCheckerOwnerSingleServer(t *testing.T) {
 
 func TestMVServiceMaybeScanMVLogAccumulationAlertsFiltersUnownedTasks(t *testing.T) {
 	helper := &mockMVServiceHelper{
-		fetchAccumulationTasks: map[int64]*mvLogAccumulationTask{
+		fetchAccumulationTasks: map[int64]*mlogAccumulationTask{
 			101: {schemaName: "test", mlogName: "mlog_101", alertRows: 1000},
 			102: {schemaName: "test", mlogName: "mlog_102", alertRows: 1000},
 		},
@@ -1196,7 +1196,7 @@ func TestMVServiceMaybeScanMVLogAccumulationAlertsFiltersUnownedTasks(t *testing
 	require.Equal(t, int32(1), helper.fetchAccumulationTaskCalls.Load())
 
 	svc.nextMVLogAccumulationScanMillis.Store(0)
-	helper.fetchAccumulationTasks = map[int64]*mvLogAccumulationTask{
+	helper.fetchAccumulationTasks = map[int64]*mlogAccumulationTask{
 		101: {schemaName: "test", mlogName: "mlog_101", alertRows: 1000},
 		102: {schemaName: "test", mlogName: "mlog_102", alertRows: 1000},
 	}
@@ -1215,7 +1215,7 @@ func TestMVServiceMaybeScanMVLogAccumulationAlertsFiltersUnownedTasks(t *testing
 
 func TestMVServiceMaybeScanMVLogAccumulationAlertsPreservesLastValueOnError(t *testing.T) {
 	helper := &mockMVServiceHelper{
-		fetchAccumulationTasks: map[int64]*mvLogAccumulationTask{
+		fetchAccumulationTasks: map[int64]*mlogAccumulationTask{
 			101: {schemaName: "test", mlogName: "mlog_101", alertRows: 1000},
 		},
 		fetchAccumulationRowCounts: map[int64]uint64{
@@ -1246,7 +1246,7 @@ func TestMVServiceMaybeScanMVLogAccumulationAlertsPreservesLastValueOnError(t *t
 
 func TestMVServiceMaybeScanMVLogAccumulationAlertsUsesStrictGreaterThan(t *testing.T) {
 	helper := &mockMVServiceHelper{
-		fetchAccumulationTasks: map[int64]*mvLogAccumulationTask{
+		fetchAccumulationTasks: map[int64]*mlogAccumulationTask{
 			101: {schemaName: "test", mlogName: "mlog_101", alertRows: 50},
 		},
 		fetchAccumulationRowCounts: map[int64]uint64{
@@ -1271,7 +1271,7 @@ func TestMVServiceMaybeScanMVLogAccumulationAlertsUsesStrictGreaterThan(t *testi
 
 func TestMVServiceMaybeScanMVLogAccumulationAlertsAsyncAndNonOverlapping(t *testing.T) {
 	helper := &mockMVServiceHelper{
-		fetchAccumulationTasks: map[int64]*mvLogAccumulationTask{
+		fetchAccumulationTasks: map[int64]*mlogAccumulationTask{
 			101: {schemaName: "test", mlogName: "mlog_101", alertRows: 1000},
 		},
 		fetchAccumulationRowCounts: map[int64]uint64{
@@ -1409,7 +1409,7 @@ func (h *fullChainMVServiceHelper) setPending(logs map[int64]time.Time, mvs map[
 	}
 }
 
-func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
+func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mlogPurgeTask, error) {
 	h.fetchLogsCalls.Add(1)
 	if h.fetchLogsErr != nil {
 		return nil, h.fetchLogsErr
@@ -1417,9 +1417,9 @@ func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogPurge(context.Context, basic.
 
 	h.pendingMu.RLock()
 	defer h.pendingMu.RUnlock()
-	ret := make(map[int64]*mvLog, len(h.pendingLogs))
+	ret := make(map[int64]*mlogPurgeTask, len(h.pendingLogs))
 	for id, next := range h.pendingLogs {
-		logTask := &mvLog{
+		logTask := &mlogPurgeTask{
 			ID:        id,
 			nextPurge: next,
 		}
@@ -1429,15 +1429,15 @@ func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogPurge(context.Context, basic.
 	return ret, nil
 }
 
-func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogAccumulationTasks(context.Context, basic.SessionPool) (map[int64]*mvLogAccumulationTask, error) {
+func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogAccumulationTasks(context.Context, basic.SessionPool) (map[int64]*mlogAccumulationTask, error) {
 	h.fetchAccumulationTaskCalls.Add(1)
 	if h.fetchAccumulationTasksErr != nil {
 		return nil, h.fetchAccumulationTasksErr
 	}
 	if h.fetchAccumulationTasks == nil {
-		return map[int64]*mvLogAccumulationTask{}, nil
+		return map[int64]*mlogAccumulationTask{}, nil
 	}
-	ret := make(map[int64]*mvLogAccumulationTask, len(h.fetchAccumulationTasks))
+	ret := make(map[int64]*mlogAccumulationTask, len(h.fetchAccumulationTasks))
 	for id, task := range h.fetchAccumulationTasks {
 		if task == nil {
 			ret[id] = nil
@@ -1449,7 +1449,7 @@ func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogAccumulationTasks(context.Con
 	return ret, nil
 }
 
-func (h *fullChainMVServiceHelper) LoadTiDBMVLogAccumulationRowCounts(_ context.Context, _ basic.SessionPool, tasks map[int64]*mvLogAccumulationTask) (map[int64]uint64, error) {
+func (h *fullChainMVServiceHelper) LoadTiDBMVLogAccumulationRowCounts(_ context.Context, _ basic.SessionPool, tasks map[int64]*mlogAccumulationTask) (map[int64]uint64, error) {
 	h.fetchAccumulationRowCountCalls.Add(1)
 	if h.fetchAccumulationRowCountsErr != nil {
 		return nil, h.fetchAccumulationRowCountsErr
@@ -1463,15 +1463,15 @@ func (h *fullChainMVServiceHelper) LoadTiDBMVLogAccumulationRowCounts(_ context.
 	return ret, nil
 }
 
-func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogAnalyzeTasks(context.Context, basic.SessionPool) (map[int64]*mvLogAnalyzeTask, error) {
+func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogAnalyzeTasks(context.Context, basic.SessionPool) (map[int64]*mlogAnalyzeTask, error) {
 	h.fetchAnalyzeTaskCalls.Add(1)
 	if h.fetchAnalyzeTasksErr != nil {
 		return nil, h.fetchAnalyzeTasksErr
 	}
 	if h.fetchAnalyzeTasks == nil {
-		return map[int64]*mvLogAnalyzeTask{}, nil
+		return map[int64]*mlogAnalyzeTask{}, nil
 	}
-	ret := make(map[int64]*mvLogAnalyzeTask, len(h.fetchAnalyzeTasks))
+	ret := make(map[int64]*mlogAnalyzeTask, len(h.fetchAnalyzeTasks))
 	for id, task := range h.fetchAnalyzeTasks {
 		if task == nil {
 			ret[id] = nil
@@ -1483,13 +1483,13 @@ func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogAnalyzeTasks(context.Context,
 	return ret, nil
 }
 
-func (h *fullChainMVServiceHelper) AnalyzeMVLog(_ context.Context, _ basic.SessionPool, mvLogID int64) error {
+func (h *fullChainMVServiceHelper) AnalyzeMVLog(_ context.Context, _ basic.SessionPool, mlogID int64) error {
 	h.analyzeMLogCalls.Add(1)
-	h.lastAnalyzeID = mvLogID
+	h.lastAnalyzeID = mlogID
 	return h.analyzeMLogErr
 }
 
-func (h *fullChainMVServiceHelper) LoadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
+func (h *fullChainMVServiceHelper) LoadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mviewTask, error) {
 	h.fetchViewCalls.Add(1)
 	if h.fetchViewsErr != nil {
 		return nil, h.fetchViewsErr
@@ -1497,9 +1497,9 @@ func (h *fullChainMVServiceHelper) LoadAllTiDBMVRefresh(context.Context, basic.S
 
 	h.pendingMu.RLock()
 	defer h.pendingMu.RUnlock()
-	ret := make(map[int64]*mv, len(h.pendingMVs))
+	ret := make(map[int64]*mviewTask, len(h.pendingMVs))
 	for id, next := range h.pendingMVs {
-		mvTask := &mv{
+		mvTask := &mviewTask{
 			ID:          id,
 			nextRefresh: next,
 		}
@@ -1509,18 +1509,18 @@ func (h *fullChainMVServiceHelper) LoadAllTiDBMVRefresh(context.Context, basic.S
 	return ret, nil
 }
 
-func (h *fullChainMVServiceHelper) RefreshMV(_ context.Context, _ basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
-	h.lastRefreshID = mvID
-	emitInt64(h.refreshSignal, mvID)
+func (h *fullChainMVServiceHelper) RefreshMV(_ context.Context, _ basic.SessionPool, mviewID int64) (nextRefresh time.Time, err error) {
+	h.lastRefreshID = mviewID
+	emitInt64(h.refreshSignal, mviewID)
 	if h.refreshErr != nil {
 		return time.Time{}, h.refreshErr
 	}
 	return h.refreshNext, nil
 }
 
-func (h *fullChainMVServiceHelper) PurgeMVLog(_ context.Context, _ basic.SessionPool, mvLogID int64) (nextPurge time.Time, err error) {
-	h.lastPurgeID = mvLogID
-	emitInt64(h.purgeSignal, mvLogID)
+func (h *fullChainMVServiceHelper) PurgeMVLog(_ context.Context, _ basic.SessionPool, mlogID int64) (nextPurge time.Time, err error) {
+	h.lastPurgeID = mlogID
+	emitInt64(h.purgeSignal, mlogID)
 	if h.purgeErr != nil {
 		return time.Time{}, h.purgeErr
 	}
@@ -1544,13 +1544,13 @@ func (*fullChainMVServiceHelper) CleanupStaleMVRefreshAlerts(context.Context, ba
 }
 
 func pendingTaskCounts(svc *MVService) (mvLogCount int, mvCount int) {
-	svc.mvLogPurgeMu.Lock()
-	mvLogCount = len(svc.mvLogPurgeMu.pending)
-	svc.mvLogPurgeMu.Unlock()
+	svc.mlogPurgeMu.Lock()
+	mvLogCount = len(svc.mlogPurgeMu.pending)
+	svc.mlogPurgeMu.Unlock()
 
-	svc.mvRefreshMu.Lock()
-	mvCount = len(svc.mvRefreshMu.pending)
-	svc.mvRefreshMu.Unlock()
+	svc.mviewRefreshMu.Lock()
+	mvCount = len(svc.mviewRefreshMu.pending)
+	svc.mviewRefreshMu.Unlock()
 	return mvLogCount, mvCount
 }
 
@@ -1619,14 +1619,14 @@ func (h *mvServiceTestHarness) waitFetchCycleSince(logCalls, viewCalls int32) {
 	}, testEventuallyWait, testEventuallyTick)
 }
 
-func (h *mvServiceTestHarness) waitRefreshTask(mvID int64) {
+func (h *mvServiceTestHarness) waitRefreshTask(mviewID int64) {
 	h.t.Helper()
-	waitInt64SignalReal(h.t, h.helper.refreshSignal, mvID, testEventuallyWait, "refresh task")
+	waitInt64SignalReal(h.t, h.helper.refreshSignal, mviewID, testEventuallyWait, "refresh task")
 }
 
-func (h *mvServiceTestHarness) waitPurgeTask(mvLogID int64) {
+func (h *mvServiceTestHarness) waitPurgeTask(mlogID int64) {
 	h.t.Helper()
-	waitInt64SignalReal(h.t, h.helper.purgeSignal, mvLogID, testEventuallyWait, "purge task")
+	waitInt64SignalReal(h.t, h.helper.purgeSignal, mlogID, testEventuallyWait, "purge task")
 }
 
 func (h *mvServiceTestHarness) assertNoPending() {

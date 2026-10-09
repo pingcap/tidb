@@ -309,7 +309,20 @@ func (d *Checker) DropMaterializedView(ctx sessionctx.Context, stmt *ast.DropMat
 
 // DropMaterializedViewLog implements the DDL interface.
 func (d *Checker) DropMaterializedViewLog(ctx sessionctx.Context, stmt *ast.DropMaterializedViewLogStmt) error {
-	return d.realExecutor.DropMaterializedViewLog(ctx, stmt)
+	err := d.realExecutor.DropMaterializedViewLog(ctx, stmt)
+	if err != nil || d.closed.Load() {
+		return err
+	}
+	if err := d.tracker.DropMaterializedViewLog(ctx, stmt); err != nil {
+		panic(err)
+	}
+	schemaName := stmt.Table.Schema
+	if schemaName.O == "" {
+		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	d.checkTableInfo(ctx, schemaName, model.MaterializedViewLogTableName(stmt.Table.Name))
+	d.checkTableInfo(ctx, schemaName, stmt.Table.Name)
+	return nil
 }
 
 // AlterMaterializedView implements the DDL interface.
@@ -332,6 +345,11 @@ func (d *Checker) CreateMaterializedViewShadowTable(
 	return d.realExecutor.CreateMaterializedViewShadowTable(ctx, schemaID, schemaName, shadowTableInfo)
 }
 
+// DropMaterializedViewShadowTable implements the DDL interface.
+func (d *Checker) DropMaterializedViewShadowTable(ctx sessionctx.Context, schemaName, shadowName pmodel.CIStr) error {
+	return d.realExecutor.DropMaterializedViewShadowTable(ctx, schemaName, shadowName)
+}
+
 // RefreshMaterializedViewCompleteOutOfPlaceCutover implements the DDL interface.
 func (d *Checker) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 	ctx sessionctx.Context,
@@ -344,8 +362,8 @@ func (d *Checker) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 	expectedOldMViewRevision *uint64,
 	expectedLastSuccessReadTSO uint64,
 	expectedLastSuccessReadTSONull bool,
-	nextTime *string,
-	shouldUpdateNextTime bool,
+	nextRefreshUnixSeconds *int64,
+	shouldUpdateNextRefreshUnixSeconds bool,
 ) error {
 	return d.realExecutor.RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		ctx,
@@ -358,8 +376,8 @@ func (d *Checker) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		expectedOldMViewRevision,
 		expectedLastSuccessReadTSO,
 		expectedLastSuccessReadTSONull,
-		nextTime,
-		shouldUpdateNextTime,
+		nextRefreshUnixSeconds,
+		shouldUpdateNextRefreshUnixSeconds,
 	)
 }
 

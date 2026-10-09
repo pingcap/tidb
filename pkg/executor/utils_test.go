@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -228,7 +229,7 @@ func (m *mockSQLExecutor) ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.Re
 func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testing.T) {
 	exec := &mockSQLExecutor{}
 	lastPurgedTSO := uint64(200)
-	nextTime := "2026-03-08 00:00:00"
+	nextPurgeUnixSeconds := int64(1_772_928_000)
 
 	require.NoError(
 		t,
@@ -237,7 +238,7 @@ func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testi
 			exec,
 			int64(123),
 			&lastPurgedTSO,
-			&nextTime,
+			&nextPurgeUnixSeconds,
 			true,
 		),
 	)
@@ -248,8 +249,8 @@ func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testi
 	require.Contains(t, exec.calls[0].sql, "LAST_PURGED_TSO IS NULL OR LAST_PURGED_TSO < %?")
 	require.Equal(t, []any{uint64(200), int64(123), uint64(200)}, exec.calls[0].args)
 
-	require.Contains(t, exec.calls[1].sql, "NEXT_TIME = %?")
-	require.Equal(t, []any{"2026-03-08 00:00:00", int64(123)}, exec.calls[1].args)
+	require.Contains(t, exec.calls[1].sql, "NEXT_PURGE_UNIX_SECONDS = %?")
+	require.Equal(t, []any{int64(1_772_928_000), int64(123)}, exec.calls[1].args)
 }
 
 func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
@@ -260,6 +261,25 @@ func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
 	plan = &mlogPurgeThrottlePlan{targetRate: 100000}
 	batch = plan.effectiveDeleteBatchSize(10000)
 	require.Equal(t, int64(10000), batch)
+
+	t.Run("throttle across row ID ranges", func(t *testing.T) {
+		tests := []struct {
+			name           string
+			batchCompleted bool
+			hasMoreRanges  bool
+			want           bool
+		}{
+			{name: "full batch", batchCompleted: true, want: true},
+			{name: "partial batch before another range", hasMoreRanges: true, want: true},
+			{name: "empty range before another range", hasMoreRanges: true, want: true},
+			{name: "partial final batch", want: false},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				require.Equal(t, tt.want, shouldThrottleMLogPurgeDeleteBatch(tt.batchCompleted, tt.hasMoreRanges))
+			})
+		}
+	})
 }
 
 func TestMLogPurgeAdaptiveBatchSizeReplannedAfterNoWait(t *testing.T) {
@@ -348,6 +368,23 @@ func TestApplyMLogPurgeDeleteTiFlashThreads(t *testing.T) {
 	require.Equal(t, int64(9), sessVars.TiFlashMaxThreads)
 }
 
+func TestInitRefreshMaterializedViewSessionAppliesDefinitionDivPrecisionIncrement(t *testing.T) {
+	sessVars := variable.NewSessionVars(nil)
+	sessVars.DivPrecisionIncrement = 2
+	sessVars.TimeZone = time.UTC
+	sessVars.StmtCtx.SetTimeZone(time.UTC)
+
+	restore, err := initRefreshMaterializedViewSession(sessVars, &model.MaterializedViewInfo{
+		DefinitionDivPrecisionIncrement: 9,
+		DefinitionTimeZone:              model.TimeZoneLocation{Name: "UTC"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
+
+	restore()
+	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
+}
+
 func TestMVTaskCancelControllerIsManualCancelRequested(t *testing.T) {
 	controller := newMVTaskCancelController(context.Background())
 	require.False(t, controller.isManualCancelRequested())
@@ -364,7 +401,6 @@ func TestDeriveMLogPurgeThrottleDeadline(t *testing.T) {
 			context.Background(),
 			nil,
 			nil,
-			nil,
 			false,
 			"test",
 			"t",
@@ -377,20 +413,19 @@ func TestDeriveMLogPurgeThrottleDeadline(t *testing.T) {
 
 	t.Run("pick earlier between next time and hardcoded purge planning budget", func(t *testing.T) {
 		baseNow := time.Now().UTC()
-		nextTime := baseNow.Add(90 * time.Second)
+		nextPurgeUnixSeconds := baseNow.Add(90 * time.Second)
 
 		deadline, err := deriveMLogPurgeThrottleDeadline(
 			context.Background(),
 			nil,
 			nil,
-			nil,
 			false,
 			"test",
 			"t",
-			&nextTime,
+			&nextPurgeUnixSeconds,
 		)
 		require.NoError(t, err)
 		require.NotNil(t, deadline)
-		require.WithinDuration(t, nextTime, *deadline, time.Second)
+		require.WithinDuration(t, nextPurgeUnixSeconds, *deadline, time.Second)
 	})
 }

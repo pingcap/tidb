@@ -111,13 +111,16 @@ const (
 	ActionAlterTablePartitioning          ActionType = 71
 	ActionRemovePartitioning              ActionType = 72
 	ActionAddVectorIndex                  ActionType = 73
-	ActionCreateMaterializedViewLog       ActionType = 74
-	ActionCreateMaterializedView          ActionType = 75
-	ActionAlterMaterializedViewRefresh    ActionType = 76
-	ActionAlterMaterializedViewLogPurge   ActionType = 77
-	ActionAlterMaterializedViewAttributes ActionType = 78
-	ActionMViewRefreshOutOfPlaceCutover   ActionType = 79
-	ActionCreateMaterializedViewShadow    ActionType = 80
+	ActionCreateMaterializedViewLog       ActionType = 85
+	ActionCreateMaterializedView          ActionType = 86
+	ActionDropMaterializedViewLog         ActionType = 87
+	ActionDropMaterializedView            ActionType = 88
+	ActionAlterMaterializedViewRefresh    ActionType = 89
+	ActionAlterMaterializedViewLogPurge   ActionType = 90
+	ActionAlterMaterializedViewAttributes ActionType = 91
+	ActionMViewRefreshOutOfPlaceCutover   ActionType = 92
+	ActionCreateMaterializedViewShadow    ActionType = 93
+	ActionDropMaterializedViewShadow      ActionType = 94
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -132,6 +135,9 @@ var ActionMap = map[ActionType]string{
 	ActionAlterMaterializedViewAttributes: "alter materialized view attributes",
 	ActionMViewRefreshOutOfPlaceCutover:   "refresh materialized view complete out-of-place cutover",
 	ActionCreateMaterializedViewShadow:    "create materialized view shadow table",
+	ActionDropMaterializedViewLog:         "drop materialized view log",
+	ActionDropMaterializedView:            "drop materialized view",
+	ActionDropMaterializedViewShadow:      "drop materialized view shadow table",
 	ActionCreateTables:                    "create tables",
 	ActionDropTable:                       "drop table",
 	ActionAddColumn:                       "add column",
@@ -873,6 +879,7 @@ func (job *Job) IsRollbackable() bool {
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
+		ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow,
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
 	case ActionTruncateTablePartition:

@@ -305,7 +305,6 @@ func rollingbackCreateMaterializedView(_ *jobContext, job *model.Job) (ver int64
 		job.State = model.JobStateRollingback
 		return ver, dbterror.ErrCancelledDDLJob
 	default:
-		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
 	}
 }
@@ -658,7 +657,9 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackDropColumn(jobCtx, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(w.sess.Session(), jobCtx, job)
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		err = rollingbackDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = rollingbackDropTablePartition(jobCtx, job)

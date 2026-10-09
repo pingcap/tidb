@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -218,25 +219,28 @@ func getStmtTimestamp(ctx EvalContext) (now time.Time, err error) {
 	return ctx.CurrentTime()
 }
 
-// DeriveMaterializedScheduleNextTimeUTC evaluates the runtime NEXT expression and
-// returns the next execution time in UTC. Runtime scheduling only depends on NEXT:
-// when NEXT is absent, callers should still update NEXT_TIME to NULL to clear
-// stale schedule state.
-func DeriveMaterializedScheduleNextTimeUTC(
+// DeriveMaterializedScheduleNextTime evaluates the runtime NEXT expression in
+// UTC. Runtime scheduling only depends on NEXT: when NEXT is
+// absent, callers should still clear stale persisted schedule state.
+func DeriveMaterializedScheduleNextTime(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
-	templateSctx sessionctx.Context,
 	startExpr string,
 	nextExpr string,
 	scheduleSQLMode mysql.SQLMode,
 ) (*types.Time, bool, error) {
-	if evalSctx == nil || templateSctx == nil {
+	if evalSctx == nil {
 		return nil, false, errors.New("runtime materialized schedule eval session is unavailable")
 	}
 	nextExpr = strings.TrimSpace(nextExpr)
 
 	if nextExpr != "" {
-		nextAt, err := evalMaterializedScheduleExprToDatetimeUTC(kctx, evalSctx, templateSctx, nextExpr, scheduleSQLMode)
+		nextAt, err := evalMaterializedScheduleExprToDatetime(
+			kctx,
+			evalSctx,
+			nextExpr,
+			scheduleSQLMode,
+		)
 		if err != nil {
 			return nil, true, err
 		}
@@ -248,29 +252,67 @@ func DeriveMaterializedScheduleNextTimeUTC(
 	return nil, true, nil
 }
 
-func evalMaterializedScheduleExprToDatetimeUTC(
+// MaterializedScheduleTimeToUnixSeconds converts a materialized schedule time
+// interpreted in UTC to Unix seconds for persisting in internal
+// MV system tables.
+func MaterializedScheduleTimeToUnixSeconds(t *types.Time) (*int64, error) {
+	if t == nil {
+		return nil, nil
+	}
+	goTime, err := t.GoTime(time.UTC)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	unixSeconds := goTime.Unix()
+	return &unixSeconds, nil
+}
+
+// MaterializedScheduleTypeFlagsWithSQLMode derives the type conversion flags
+// used to build and evaluate materialized view schedule expressions.
+func MaterializedScheduleTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
+	return types.StrictFlags.
+		WithTruncateAsWarning(!mode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(mode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!mode.HasStrictMode() || mode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
+}
+
+// MaterializedScheduleErrLevelsWithSQLMode derives the error levels used to
+// build and evaluate materialized view schedule expressions.
+func MaterializedScheduleErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
+	return errctx.LevelMap{
+		errctx.ErrGroupTruncate:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupBadNull:   errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupNoDefault: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupDividedByZero: errctx.ResolveErrLevel(
+			!mode.HasErrorForDivisionByZeroMode(),
+			!mode.HasStrictMode(),
+		),
+	}
+}
+
+func evalMaterializedScheduleExprToDatetime(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
-	templateSctx sessionctx.Context,
 	exprSQL string,
 	scheduleSQLMode mysql.SQLMode,
 ) (*types.Time, error) {
 	sessVars := evalSctx.GetSessionVars()
-	templateVars := templateSctx.GetSessionVars()
 	origSQLMode := sessVars.SQLMode
+	origNoBackslashEscaped := sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped)
 	origTypeFlags := sessVars.StmtCtx.TypeFlags()
 	origErrLevels := sessVars.StmtCtx.ErrLevels()
 	origTimeZone := sessVars.TimeZone
 	origStmtTimeZone := sessVars.StmtCtx.TimeZone()
 	sessVars.SQLMode = scheduleSQLMode
 	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sessVars.SQLMode.HasNoBackslashEscapesMode())
-	sessVars.StmtCtx.SetTypeFlags(templateVars.StmtCtx.TypeFlags())
-	sessVars.StmtCtx.SetErrLevels(templateVars.StmtCtx.ErrLevels())
+	sessVars.StmtCtx.SetTypeFlags(MaterializedScheduleTypeFlagsWithSQLMode(scheduleSQLMode))
+	sessVars.StmtCtx.SetErrLevels(MaterializedScheduleErrLevelsWithSQLMode(scheduleSQLMode))
 	sessVars.TimeZone = time.UTC
 	sessVars.StmtCtx.SetTimeZone(time.UTC)
 	defer func() {
 		sessVars.SQLMode = origSQLMode
-		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
+		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origNoBackslashEscaped)
 		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
 		sessVars.StmtCtx.SetErrLevels(origErrLevels)
 		sessVars.TimeZone = origTimeZone
@@ -281,7 +323,7 @@ func evalMaterializedScheduleExprToDatetimeUTC(
 		sessVars.StmtCtx.SetTimeZone(sessVars.Location())
 	}()
 
-	exprNode, err := generatedexpr.ParseExpression(exprSQL)
+	exprNode, err := generatedexpr.ParseExpressionWithSQLMode(exprSQL, scheduleSQLMode)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -304,12 +346,18 @@ func evalMaterializedScheduleExprToDatetimeUTC(
 		return nil, nil
 	}
 
-	targetTp := types.NewFieldType(mysql.TypeDatetime)
-	targetTp.SetDecimal(types.MaxFsp)
-	datetimeV, err := v.ConvertTo(evalCtx.TypeCtx(), targetTp)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if v.Kind() != types.KindMysqlTime {
+		return nil, errors.Errorf(
+			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
+			types.KindStr(v.Kind()),
+		)
 	}
-	t := datetimeV.GetMysqlTime()
+	t := v.GetMysqlTime()
+	if tp := t.Type(); tp != mysql.TypeDate && tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
+		return nil, errors.Errorf(
+			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
+			types.TypeStr(tp),
+		)
+	}
 	return &t, nil
 }

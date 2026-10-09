@@ -138,7 +138,7 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
 		syncMLogColumnsAfterAddColumn(tblInfo)
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -160,11 +160,11 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 func refreshMLogAddedColumnFromBase(
 	t *meta.Mutator,
 	job *model.Job,
-	mlogTblInfo *model.TableInfo,
+	mlogTableInfo *model.TableInfo,
 	columnInfo *model.ColumnInfo,
 	colFromArgs *model.ColumnInfo,
 ) error {
-	if mlogTblInfo == nil || mlogTblInfo.MaterializedViewLog == nil || colFromArgs == nil {
+	if mlogTableInfo == nil || mlogTableInfo.MaterializedViewLog == nil || colFromArgs == nil {
 		return nil
 	}
 	if columnInfo != nil {
@@ -175,7 +175,7 @@ func refreshMLogAddedColumnFromBase(
 		}
 	}
 
-	baseTblInfo, err := t.GetTable(job.SchemaID, mlogTblInfo.MaterializedViewLog.BaseTableID)
+	baseTblInfo, err := t.GetTable(job.SchemaID, mlogTableInfo.MaterializedViewLog.BaseTableID)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -75,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -3933,12 +3934,12 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return nil, plannererrors.ErrNoDB
 	}
 
-	mvTbl, err := b.is.TableByName(ctx, pmodel.NewCIStr(dbName), viewName.Name)
+	mviewTable, err := b.is.TableByName(ctx, pmodel.NewCIStr(dbName), viewName.Name)
 	if err != nil {
 		return nil, err
 	}
-	mvInfo := mvTbl.Meta()
-	if mvInfo == nil || mvInfo.MaterializedView == nil {
+	mviewInfo := mviewTable.Meta()
+	if mviewInfo == nil || mviewInfo.MaterializedView == nil {
 		return nil, errors.Errorf("table %s.%s is not a materialized view", dbName, viewName.Name.O)
 	}
 
@@ -4004,7 +4005,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 
 	switch mode {
 	case ast.RefreshMaterializedViewModeFast:
-		res, err := mview.Build(b.ctx, b.is, mvInfo, mview.BuildOptions{FromTS: fromTS, ToTS: toTS}, nil)
+		res, err := mview.Build(b.ctx, b.is, mviewInfo, mview.BuildOptions{FromTS: fromTS, ToTS: toTS}, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -4151,7 +4152,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		}.Init(b.ctx)
 		return plan, nil
 	case ast.RefreshMaterializedViewModeCompleteDeltaApply:
-		diffRes, err := mview.BuildCompleteDiffSource(b.ctx, b.is, mvInfo)
+		diffRes, err := mview.BuildCompleteDiffSource(b.ctx, b.is, mviewInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -4180,7 +4181,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		}
 		return MViewCompleteDeltaApply{
 			Source:                   sourcePlan,
-			MVTableID:                mvInfo.ID,
+			MVTableID:                mviewInfo.ID,
 			MVColumnCount:            diffRes.MVColumnCount,
 			OpColID:                  diffRes.OpColOffset,
 			MarkerMVOffset:           diffRes.MarkerMVOffset,
@@ -6309,6 +6310,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if err != nil {
 			return nil, err
 		}
+		if err := mviewutil.CheckMaterializedViewSelect(v.Select); err != nil {
+			return nil, err
+		}
 		nodeW := resolve.NewNodeWWithCtx(v.Select, b.resolveCtx)
 		plan, err := b.Build(ctx, nodeW)
 		if err != nil {
@@ -6384,8 +6388,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, mlogName.L)
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP MATERIALIZED VIEW LOG", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName, mlogName.L, "", authErr)
 	case *ast.AlterMaterializedViewLogStmt:

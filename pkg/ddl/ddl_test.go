@@ -142,31 +142,145 @@ func TestIsCreateMaterializedViewBaseCheckCancelledErr(t *testing.T) {
 	require.False(t, isCreateMaterializedViewBaseCheckCancelledErr(fmt.Errorf("retry later")))
 }
 
+func TestSetSchemaDiffForCreateMaterializedViewLogRollback(t *testing.T) {
+	diff := &model.SchemaDiff{}
+	job := &model.Job{
+		Type:    model.ActionCreateMaterializedViewLog,
+		State:   model.JobStateRollbackDone,
+		TableID: 123,
+	}
+
+	require.NoError(t, SetSchemaDiffForCreateTable(diff, job, nil))
+	require.Equal(t, int64(123), diff.OldTableID)
+	require.Zero(t, diff.TableID)
+}
+
+func TestUpdateMaterializedViewBaseInfoOnCreateMissingBaseTable(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		require.NoError(t, metaMut.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}))
+
+		job := &model.Job{SchemaID: 1}
+		createdTable := &model.TableInfo{
+			ID: 2,
+			MaterializedView: &model.MaterializedViewInfo{
+				BaseTableIDs: []int64{123},
+			},
+		}
+		_, err := updateMaterializedViewBaseInfoOnCreate(&jobContext{metaMut: metaMut}, job, createdTable)
+		require.True(t, infoschema.ErrTableNotExists.Equal(err))
+		require.Equal(t, model.JobStateCancelled, job.State)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestRollingbackCreateMaterializedViewCannotCancelKeepsState(t *testing.T) {
+	job := &model.Job{
+		ID:          42,
+		Version:     model.JobVersion2,
+		Type:        model.ActionCreateMaterializedView,
+		State:       model.JobStateCancelling,
+		SchemaState: model.StatePublic,
+	}
+	job.FillArgs(&model.CreateMaterializedViewArgs{TableInfo: &model.TableInfo{ID: 1}})
+
+	_, err := rollingbackCreateMaterializedView(nil, job)
+	require.True(t, dbterror.ErrCannotCancelDDLJob.Equal(err))
+	require.Equal(t, model.JobStateCancelling, job.State)
+}
+
+type delRangeExecWrapperForTest struct {
+	rewrite  map[int64]int64
+	params   []any
+	sql      string
+	consumed int
+}
+
+func (*delRangeExecWrapperForTest) UpdateTSOForJob() error { return nil }
+
+func (w *delRangeExecWrapperForTest) PrepareParamsList(_ int) {
+	w.params = nil
+}
+
+func (w *delRangeExecWrapperForTest) RewriteTableID(tableID int64) (int64, bool) {
+	rewrittenID, ok := w.rewrite[tableID]
+	return rewrittenID, ok
+}
+
+func (w *delRangeExecWrapperForTest) AppendParamsList(jobID, elemID int64, startKey, endKey string) {
+	w.params = append(w.params, jobID, elemID, startKey, endKey)
+}
+
+func (w *delRangeExecWrapperForTest) ConsumeDeleteRange(_ context.Context, sql string) error {
+	w.sql = sql
+	w.consumed++
+	return nil
+}
+
+func TestDoBatchDeleteTablesRangeSkipsRewrittenIDs(t *testing.T) {
+	tests := []struct {
+		name          string
+		tableIDs      []int64
+		rewrite       map[int64]int64
+		expectedRows  int
+		expectedComma bool
+	}{
+		{name: "all IDs skipped", tableIDs: []int64{1, 2}, rewrite: map[int64]int64{}, expectedRows: 0},
+		{name: "first ID kept", tableIDs: []int64{1, 2}, rewrite: map[int64]int64{1: 11}, expectedRows: 1},
+		{name: "second ID kept", tableIDs: []int64{1, 2}, rewrite: map[int64]int64{2: 22}, expectedRows: 1},
+		{name: "both IDs kept", tableIDs: []int64{1, 2}, rewrite: map[int64]int64{1: 11, 2: 22}, expectedRows: 2, expectedComma: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrapper := &delRangeExecWrapperForTest{rewrite: tt.rewrite}
+			err := doBatchDeleteTablesRange(context.Background(), wrapper, 100, tt.tableIDs, &elementIDAlloc{}, "test")
+			require.NoError(t, err)
+			require.Equal(t, tt.expectedRows > 0, wrapper.consumed > 0)
+			if tt.expectedRows == 0 {
+				require.Empty(t, wrapper.params)
+				return
+			}
+			require.Len(t, wrapper.params, tt.expectedRows*4)
+			require.Equal(t, tt.expectedComma, strings.Contains(wrapper.sql, insertDeleteRangeSQLValue+","+insertDeleteRangeSQLValue))
+			require.False(t, strings.HasSuffix(wrapper.sql, ","))
+		})
+	}
+}
+
 func TestBuildCreateMaterializedViewRefreshInfoUpsertSQL(t *testing.T) {
 	compactSQL := func(sql string) string {
 		return strings.Join(strings.Fields(sql), " ")
 	}
 
-	lastSuccessEndTime := "2026-01-02 03:04:05.123456"
-	sqlNoUpdate := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, nil, false))
-	require.NotContains(t, sqlNoUpdate, "NEXT_TIME")
-	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_TIME)")
-	require.Contains(t, sqlNoUpdate, "LAST_SUCCESS_ENDTIME")
-	require.Contains(t, sqlNoUpdate, lastSuccessEndTime)
+	lastSuccessRefreshEndUnixSeconds := int64(1_767_312_304)
+	sqlNoUpdate := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, nil, false))
+	require.NotContains(t, sqlNoUpdate, "NEXT_REFRESH_UNIX_SECONDS")
+	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
+	require.Contains(t, sqlNoUpdate, "LAST_SUCCESS_REFRESH_END_UNIX_SECONDS")
+	require.Contains(t, sqlNoUpdate, "1767312304")
 
 	sqlPrewrite := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, nil, nil, false))
-	require.NotContains(t, sqlPrewrite, lastSuccessEndTime)
+	require.NotContains(t, sqlPrewrite, "1767312304")
 	require.Contains(t, sqlPrewrite, "NULL")
 
-	next := "2026-01-02 03:04:05"
-	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, &next, true))
-	require.Contains(t, sqlWithValue, "NEXT_TIME")
-	require.Contains(t, sqlWithValue, "VALUES(NEXT_TIME)")
-	require.Contains(t, sqlWithValue, "2026-01-02 03:04:05")
+	nextRefreshUnixSeconds := int64(1_767_312_305)
+	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, &nextRefreshUnixSeconds, true))
+	require.Contains(t, sqlWithValue, "NEXT_REFRESH_UNIX_SECONDS")
+	require.Contains(t, sqlWithValue, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
+	require.Contains(t, sqlWithValue, "1767312305")
 
-	sqlWithNull := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, nil, true))
-	require.Contains(t, sqlWithNull, "NEXT_TIME")
-	require.Contains(t, sqlWithNull, "VALUES(NEXT_TIME)")
+	sqlWithNull := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, nil, true))
+	require.Contains(t, sqlWithNull, "NEXT_REFRESH_UNIX_SECONDS")
+	require.Contains(t, sqlWithNull, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
 	require.Contains(t, sqlWithNull, ", NULL)")
 }
 
@@ -176,18 +290,18 @@ func TestBuildCreateMaterializedViewLogPurgeInfoUpsertSQL(t *testing.T) {
 	}
 
 	sqlNoUpdate := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, nil, false))
-	require.NotContains(t, sqlNoUpdate, "NEXT_TIME")
-	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_TIME)")
+	require.NotContains(t, sqlNoUpdate, "NEXT_PURGE_UNIX_SECONDS")
+	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
 
-	next := "2026-01-02 03:04:05"
-	sqlWithValue := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, &next, true))
-	require.Contains(t, sqlWithValue, "NEXT_TIME")
-	require.Contains(t, sqlWithValue, "VALUES(NEXT_TIME)")
-	require.Contains(t, sqlWithValue, "2026-01-02 03:04:05")
+	nextPurgeUnixSeconds := int64(1_767_312_305)
+	sqlWithValue := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, &nextPurgeUnixSeconds, true))
+	require.Contains(t, sqlWithValue, "NEXT_PURGE_UNIX_SECONDS")
+	require.Contains(t, sqlWithValue, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
+	require.Contains(t, sqlWithValue, "1767312305")
 
 	sqlWithNull := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, nil, true))
-	require.Contains(t, sqlWithNull, "NEXT_TIME")
-	require.Contains(t, sqlWithNull, "VALUES(NEXT_TIME)")
+	require.Contains(t, sqlWithNull, "NEXT_PURGE_UNIX_SECONDS")
+	require.Contains(t, sqlWithNull, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
 	require.Contains(t, sqlWithNull, ", NULL)")
 }
 
@@ -692,6 +806,7 @@ func TestCheckHistoryJobStmtType(t *testing.T) {
 	createMViewStmt := parseStmt("create materialized view mv (a, c) as select a, count(1) from t group by a")
 	createMLogStmt := parseStmt("create materialized view log on t (a)")
 	refreshMViewStmt := parseStmt("refresh materialized view mv complete out of place")
+	dropTableStmt := parseStmt("drop table t")
 	createDBStmt := parseStmt("create database test")
 	createPolicyStmt := parseStmt("create placement policy p followers=1")
 
@@ -707,6 +822,8 @@ func TestCheckHistoryJobStmtType(t *testing.T) {
 
 	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewShadow, refreshMViewStmt))
 	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewShadow, createTableStmt))
+	require.True(t, checkHistoryJobStmtType(model.ActionDropMaterializedViewShadow, dropTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionDropMaterializedViewShadow, createTableStmt))
 
 	require.True(t, checkHistoryJobStmtType(model.ActionCreateSchema, createDBStmt))
 	require.False(t, checkHistoryJobStmtType(model.ActionCreateSchema, createTableStmt))
@@ -716,6 +833,16 @@ func TestCheckHistoryJobStmtType(t *testing.T) {
 
 	require.True(t, checkHistoryJobStmtType(model.ActionCreateTables, createTableStmt))
 	require.False(t, checkHistoryJobStmtType(model.ActionCreateTables, createMLogStmt))
+}
+
+func TestReplaceMaterializedViewID(t *testing.T) {
+	ids, replaced := replaceMaterializedViewID([]int64{10, 20}, 30, 40)
+	require.False(t, replaced)
+	require.Equal(t, []int64{10, 20}, ids)
+
+	ids, replaced = replaceMaterializedViewID([]int64{10, 20, 10}, 10, 30)
+	require.True(t, replaced)
+	require.Equal(t, []int64{30, 20}, ids)
 }
 
 func TestBuildCreateMaterializedViewImportSQLNoAsOfTimestamp(t *testing.T) {

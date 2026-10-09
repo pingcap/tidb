@@ -241,7 +241,7 @@ func TestNonPartitionedTableValidateAndPrepareRetriesNotReadyMV(t *testing.T) {
 			return false
 		}
 		return mvTable.Meta().MaterializedView != nil &&
-			mvTable.Meta().MaterializedView.GetInitBuildState() == metamodel.MVInitBuildBuilding
+			mvTable.Meta().MaterializedView.GetInitBuildState() == metamodel.MViewInitBuildBuilding
 	}, 30*time.Second, 100*time.Millisecond)
 
 	mvTable, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("mv_not_ready"))

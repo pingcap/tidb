@@ -320,10 +320,10 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 	return getOrDecodeArgs[*BatchCreateTableArgs](&BatchCreateTableArgs{}, job)
 }
 
-// DropTableArgs is the arguments for drop table/view/sequence job.
+// DropTableArgs is the arguments for table-like object, view, and sequence drop jobs.
 // when dropping multiple objects, each object will have a separate job
 type DropTableArgs struct {
-	// below fields are only for drop table.
+	// The following fields are only for DROP TABLE and materialized view drop jobs.
 	// when dropping multiple tables, the Identifiers is the same, but each drop-table
 	// runs in a separate job.
 	Identifiers []ast.Ident `json:"identifiers,omitempty"`
@@ -336,8 +336,9 @@ type DropTableArgs struct {
 }
 
 func (a *DropTableArgs) getArgsV1(job *Job) []any {
-	// only drop-table job has in args, drop view/sequence job has no args.
-	if job.Type == ActionDropTable {
+	// Only table-like drop jobs have submission arguments in V1.
+	switch job.Type {
+	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow:
 		return []any{a.Identifiers, a.FKCheck}
 	}
 	return nil
@@ -348,7 +349,8 @@ func (a *DropTableArgs) getFinishedArgsV1(*Job) []any {
 }
 
 func (a *DropTableArgs) decodeV1(job *Job) error {
-	if job.Type == ActionDropTable {
+	switch job.Type {
+	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow:
 		return job.decodeArgs(&a.Identifiers, &a.FKCheck)
 	}
 	return nil
@@ -724,17 +726,31 @@ func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
 
 // AlterMaterializedViewRefreshArgs is the arguments for ActionAlterMaterializedViewRefresh ddl.
 type AlterMaterializedViewRefreshArgs struct {
-	RefreshMethod    string `json:"refresh_method,omitempty"`
-	RefreshStartWith string `json:"refresh_start_with,omitempty"`
-	RefreshNext      string `json:"refresh_next,omitempty"`
+	RefreshMethod          string        `json:"refresh_method,omitempty"`
+	RefreshStartWith       string        `json:"refresh_start_with,omitempty"`
+	RefreshNext            string        `json:"refresh_next,omitempty"`
+	UpdateRefreshSchedule  bool          `json:"update_refresh_schedule,omitempty"`
+	RefreshScheduleSQLMode mysql.SQLMode `json:"refresh_schedule_sql_mode,omitempty"`
 }
 
 func (a *AlterMaterializedViewRefreshArgs) getArgsV1(*Job) []any {
-	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext}
+	return []any{
+		a.RefreshMethod,
+		a.RefreshStartWith,
+		a.RefreshNext,
+		a.UpdateRefreshSchedule,
+		a.RefreshScheduleSQLMode,
+	}
 }
 
 func (a *AlterMaterializedViewRefreshArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.decodeArgs(&a.RefreshMethod, &a.RefreshStartWith, &a.RefreshNext))
+	return errors.Trace(job.decodeArgs(
+		&a.RefreshMethod,
+		&a.RefreshStartWith,
+		&a.RefreshNext,
+		&a.UpdateRefreshSchedule,
+		&a.RefreshScheduleSQLMode,
+	))
 }
 
 // GetAlterMaterializedViewRefreshArgs gets the args for ActionAlterMaterializedViewRefresh.
@@ -768,17 +784,31 @@ func GetAlterMaterializedViewAttributesArgs(job *Job) (*AlterMaterializedViewAtt
 
 // AlterMaterializedViewLogPurgeArgs is the arguments for ActionAlterMaterializedViewLogPurge ddl.
 type AlterMaterializedViewLogPurgeArgs struct {
-	PurgeMethod    string `json:"purge_method,omitempty"`
-	PurgeStartWith string `json:"purge_start_with,omitempty"`
-	PurgeNext      string `json:"purge_next,omitempty"`
+	PurgeMethod          string        `json:"purge_method,omitempty"`
+	PurgeStartWith       string        `json:"purge_start_with,omitempty"`
+	PurgeNext            string        `json:"purge_next,omitempty"`
+	UpdatePurgeSchedule  bool          `json:"update_purge_schedule,omitempty"`
+	PurgeScheduleSQLMode mysql.SQLMode `json:"purge_schedule_sql_mode,omitempty"`
 }
 
 func (a *AlterMaterializedViewLogPurgeArgs) getArgsV1(*Job) []any {
-	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext}
+	return []any{
+		a.PurgeMethod,
+		a.PurgeStartWith,
+		a.PurgeNext,
+		a.UpdatePurgeSchedule,
+		a.PurgeScheduleSQLMode,
+	}
 }
 
 func (a *AlterMaterializedViewLogPurgeArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.decodeArgs(&a.PurgeMethod, &a.PurgeStartWith, &a.PurgeNext))
+	return errors.Trace(job.decodeArgs(
+		&a.PurgeMethod,
+		&a.PurgeStartWith,
+		&a.PurgeNext,
+		&a.UpdatePurgeSchedule,
+		&a.PurgeScheduleSQLMode,
+	))
 }
 
 // GetAlterMaterializedViewLogPurgeArgs gets the args for ActionAlterMaterializedViewLogPurge.
@@ -789,14 +819,14 @@ func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPu
 // RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs is the arguments for
 // ActionMViewRefreshOutOfPlaceCutover ddl.
 type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
-	OldMViewID                     int64   `json:"old_mview_id,omitempty"`
-	ShadowTableID                  int64   `json:"shadow_table_id,omitempty"`
-	BuildReadTSO                   uint64  `json:"build_read_tso,omitempty"`
-	ExpectedOldMViewRevision       *uint64 `json:"expected_old_mview_revision,omitempty"`
-	ExpectedLastSuccessReadTSO     uint64  `json:"expected_last_success_read_tso,omitempty"`
-	ExpectedLastSuccessReadTSONull bool    `json:"expected_last_success_read_tso_null,omitempty"`
-	NextTime                       *string `json:"next_time,omitempty"`
-	ShouldUpdateNextTime           bool    `json:"should_update_next_time,omitempty"`
+	OldMViewID                         int64   `json:"old_mview_id,omitempty"`
+	ShadowTableID                      int64   `json:"shadow_table_id,omitempty"`
+	BuildReadTSO                       uint64  `json:"build_read_tso,omitempty"`
+	ExpectedOldMViewRevision           *uint64 `json:"expected_old_mview_revision,omitempty"`
+	ExpectedLastSuccessReadTSO         uint64  `json:"expected_last_success_read_tso,omitempty"`
+	ExpectedLastSuccessReadTSONull     bool    `json:"expected_last_success_read_tso_null,omitempty"`
+	NextRefreshUnixSeconds             *int64  `json:"next_refresh_unix_seconds,omitempty"`
+	ShouldUpdateNextRefreshUnixSeconds bool    `json:"should_update_next_refresh_unix_seconds,omitempty"`
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) []any {
@@ -806,8 +836,8 @@ func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) [
 		a.BuildReadTSO,
 		a.ExpectedLastSuccessReadTSO,
 		a.ExpectedLastSuccessReadTSONull,
-		a.NextTime,
-		a.ShouldUpdateNextTime,
+		a.NextRefreshUnixSeconds,
+		a.ShouldUpdateNextRefreshUnixSeconds,
 		a.ExpectedOldMViewRevision,
 	}
 }
@@ -819,8 +849,8 @@ func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job
 		&a.BuildReadTSO,
 		&a.ExpectedLastSuccessReadTSO,
 		&a.ExpectedLastSuccessReadTSONull,
-		&a.NextTime,
-		&a.ShouldUpdateNextTime,
+		&a.NextRefreshUnixSeconds,
+		&a.ShouldUpdateNextRefreshUnixSeconds,
 		&a.ExpectedOldMViewRevision,
 	))
 }

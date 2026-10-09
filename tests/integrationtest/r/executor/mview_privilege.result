@@ -306,7 +306,7 @@ GRANT USAGE ON *.* TO 'u_mlog_select'@'%'
 alter materialized view log on mview_privilege_test.t_revoke_ddl purge next date_add(now(), interval 1 hour);
 Error 1142 (42000): ALTER command denied to user 'u_mlog_select'@'%' for table '$mlog$t_revoke_ddl'
 drop materialized view log on mview_privilege_test.t_revoke_ddl;
-Error 1142 (42000): DROP command denied to user 'u_mlog_select'@'%' for table '$mlog$t_revoke_ddl'
+Error 1142 (42000): DROP MATERIALIZED VIEW LOG command denied to user 'u_mlog_select'@'%' for table 't_revoke_ddl'
 drop user if exists 'u_role'@'%';
 drop role if exists r_operate;
 drop user if exists 'u_show_mv'@'%';

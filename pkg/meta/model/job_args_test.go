@@ -597,9 +597,11 @@ func TestGetModifyTableCommentArgs(t *testing.T) {
 
 func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 	inArgs := &AlterMaterializedViewRefreshArgs{
-		RefreshMethod:    "FAST",
-		RefreshStartWith: "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
-		RefreshNext:      "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		RefreshMethod:          "FAST",
+		RefreshStartWith:       "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		RefreshNext:            "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		RefreshScheduleSQLMode: mysql.ModePipesAsConcat,
+		UpdateRefreshSchedule:  true,
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -645,9 +647,11 @@ func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
 
 func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 	inArgs := &AlterMaterializedViewLogPurgeArgs{
-		PurgeMethod:    "DEFERRED",
-		PurgeStartWith: "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
-		PurgeNext:      "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		PurgeMethod:          "DEFERRED",
+		PurgeStartWith:       "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		PurgeNext:            "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		PurgeScheduleSQLMode: mysql.ModeNoBackslashEscapes,
+		UpdatePurgeSchedule:  true,
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -660,36 +664,36 @@ func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 }
 
 func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
-	nextTime := "2026-03-24 12:34:56.123456"
+	nextRefreshUnixSeconds := int64(1_774_355_696)
 	expectedOldMViewRevision := uint64(505)
 	testCases := []*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
 		{
-			OldMViewID:                     101,
-			ShadowTableID:                  202,
-			BuildReadTSO:                   303,
-			ExpectedOldMViewRevision:       &expectedOldMViewRevision,
-			ExpectedLastSuccessReadTSO:     404,
-			ExpectedLastSuccessReadTSONull: false,
-			NextTime:                       &nextTime,
-			ShouldUpdateNextTime:           true,
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       303,
+			ExpectedOldMViewRevision:           &expectedOldMViewRevision,
+			ExpectedLastSuccessReadTSO:         404,
+			ExpectedLastSuccessReadTSONull:     false,
+			NextRefreshUnixSeconds:             &nextRefreshUnixSeconds,
+			ShouldUpdateNextRefreshUnixSeconds: true,
 		},
 		{
-			OldMViewID:                     101,
-			ShadowTableID:                  202,
-			BuildReadTSO:                   303,
-			ExpectedLastSuccessReadTSO:     0,
-			ExpectedLastSuccessReadTSONull: true,
-			NextTime:                       nil,
-			ShouldUpdateNextTime:           true,
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       303,
+			ExpectedLastSuccessReadTSO:         0,
+			ExpectedLastSuccessReadTSONull:     true,
+			NextRefreshUnixSeconds:             nil,
+			ShouldUpdateNextRefreshUnixSeconds: true,
 		},
 		{
-			OldMViewID:                     101,
-			ShadowTableID:                  202,
-			BuildReadTSO:                   303,
-			ExpectedLastSuccessReadTSO:     0,
-			ExpectedLastSuccessReadTSONull: true,
-			NextTime:                       nil,
-			ShouldUpdateNextTime:           false,
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       303,
+			ExpectedLastSuccessReadTSO:         0,
+			ExpectedLastSuccessReadTSONull:     true,
+			NextRefreshUnixSeconds:             nil,
+			ShouldUpdateNextRefreshUnixSeconds: false,
 		},
 	}
 

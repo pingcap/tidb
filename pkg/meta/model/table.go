@@ -724,34 +724,34 @@ func (i *MaterializedViewBaseInfo) Clone() *MaterializedViewBaseInfo {
 	return &ni
 }
 
-// MVInitBuildState records the initial-build state of a materialized view.
+// MViewInitBuildState records the initial-build state of a materialized view.
 //
-// Keep MVInitBuildReady as the zero value for compatibility with existing clusters,
+// Keep MViewInitBuildReady as the zero value for compatibility with existing clusters,
 // whose persisted materialized view metadata does not contain this field.
-type MVInitBuildState byte
+type MViewInitBuildState byte
 
 const (
-	// MVInitBuildReady means the MV is ready for normal query and refresh.
-	MVInitBuildReady MVInitBuildState = iota
-	// MVInitBuildDeferred means the MV exists but its initial build has not started yet.
-	MVInitBuildDeferred
-	// MVInitBuildBuilding means the MV initial build is currently in progress.
-	MVInitBuildBuilding
+	// MViewInitBuildReady means the MV is ready for normal query and refresh.
+	MViewInitBuildReady MViewInitBuildState = iota
+	// MViewInitBuildDeferred means the MV exists but its initial build has not started yet.
+	MViewInitBuildDeferred
+	// MViewInitBuildBuilding means the MV initial build is currently in progress.
+	MViewInitBuildBuilding
 )
 
 // IsReady returns whether the initial build state allows normal query and refresh.
-func (s MVInitBuildState) IsReady() bool {
-	return s == MVInitBuildReady
+func (s MViewInitBuildState) IsReady() bool {
+	return s == MViewInitBuildReady
 }
 
 // String implements fmt.Stringer.
-func (s MVInitBuildState) String() string {
+func (s MViewInitBuildState) String() string {
 	switch s {
-	case MVInitBuildReady:
+	case MViewInitBuildReady:
 		return "ready"
-	case MVInitBuildDeferred:
+	case MViewInitBuildDeferred:
 		return "deferred"
-	case MVInitBuildBuilding:
+	case MViewInitBuildBuilding:
 		return "building"
 	default:
 		return fmt.Sprintf("unknown(%d)", byte(s))
@@ -759,11 +759,11 @@ func (s MVInitBuildState) String() string {
 }
 
 // AccessErrorMessage returns the user-facing error message for a non-ready MV access.
-func (s MVInitBuildState) AccessErrorMessage(objectName string) string {
+func (s MViewInitBuildState) AccessErrorMessage(objectName string) string {
 	switch s {
-	case MVInitBuildDeferred:
+	case MViewInitBuildDeferred:
 		return fmt.Sprintf("materialized view %s is not ready: initial build has not completed", objectName)
-	case MVInitBuildBuilding:
+	case MViewInitBuildBuilding:
 		return fmt.Sprintf("materialized view %s initial build is in progress", objectName)
 	default:
 		return ""
@@ -779,7 +779,7 @@ type MaterializedViewInfo struct {
 
 	// InitBuildState controls whether the MV is ready for normal query/refresh.
 	// Zero value means ready for backward compatibility with legacy persisted metadata.
-	InitBuildState MVInitBuildState `json:"init_build_state,omitempty"`
+	InitBuildState MViewInitBuildState `json:"init_build_state,omitempty"`
 
 	// SQLContent is the SELECT statement in CREATE MATERIALIZED VIEW.
 	SQLContent string `json:"sql_content"`
@@ -809,6 +809,12 @@ type MaterializedViewInfo struct {
 	// DefinitionSQLMode is the SQL mode captured from CREATE MATERIALIZED VIEW session.
 	DefinitionSQLMode mysql.SQLMode `json:"definition_sql_mode"`
 
+	// RefreshScheduleSQLMode is the SQL mode used to parse and evaluate refresh schedule expressions.
+	RefreshScheduleSQLMode mysql.SQLMode `json:"refresh_schedule_sql_mode"`
+
+	// DefinitionDivPrecisionIncrement is the division precision captured from CREATE MATERIALIZED VIEW session.
+	DefinitionDivPrecisionIncrement int `json:"definition_div_precision_increment"`
+
 	// DefinitionTimeZone is the timezone captured from CREATE MATERIALIZED VIEW session.
 	DefinitionTimeZone TimeZoneLocation `json:"definition_time_zone"`
 }
@@ -824,9 +830,9 @@ func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
 }
 
 // GetInitBuildState returns the effective initial-build state.
-func (i *MaterializedViewInfo) GetInitBuildState() MVInitBuildState {
+func (i *MaterializedViewInfo) GetInitBuildState() MViewInitBuildState {
 	if i == nil {
-		return MVInitBuildReady
+		return MViewInitBuildReady
 	}
 	return i.InitBuildState
 }
@@ -851,6 +857,9 @@ type MaterializedViewLogInfo struct {
 	// BaseTableID is the table ID of the base table.
 	BaseTableID int64 `json:"base_table_id"`
 
+	// DependentMViewIDs lists materialized views that consume this log.
+	DependentMViewIDs []int64 `json:"dependent_mview_ids,omitempty"`
+
 	// Columns is the base table column list recorded in the log (user-specified columns).
 	Columns []model.CIStr `json:"columns"`
 
@@ -867,8 +876,8 @@ type MaterializedViewLogInfo struct {
 	// nil means the CREATE statement did not specify ALERT ROWS and runtime keeps alerting disabled by default.
 	LogAccumulationAlertRows *uint64 `json:"log_accumulation_alert_rows,omitempty"`
 
-	// DefinitionSQLMode is the SQL mode captured from CREATE MATERIALIZED VIEW LOG session.
-	DefinitionSQLMode mysql.SQLMode `json:"definition_sql_mode"`
+	// PurgeScheduleSQLMode is the SQL mode used to parse and evaluate purge schedule expressions.
+	PurgeScheduleSQLMode mysql.SQLMode `json:"purge_schedule_sql_mode"`
 }
 
 const (
@@ -900,6 +909,7 @@ func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
 		return nil
 	}
 	ni := *i
+	ni.DependentMViewIDs = append([]int64(nil), i.DependentMViewIDs...)
 	ni.Columns = append([]model.CIStr(nil), i.Columns...)
 	if i.LogAccumulationAlertRows != nil {
 		rows := *i.LogAccumulationAlertRows
