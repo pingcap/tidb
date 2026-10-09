@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -748,7 +749,7 @@ func verifyCheckpoint(cfg *config.Config, taskCp *checkpoints.TaskCheckpoint) er
 
 		errorFmt := "config '%s' value '%s' different from checkpoint value '%s'. You may set 'check-requirements = false' to skip this check or " + retryUsage
 		if cfg.Mydumper.SourceDir != taskCp.SourceDir {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "mydumper.data-source-dir", cfg.Mydumper.SourceDir, taskCp.SourceDir)
+			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "mydumper.data-source-dir", ast.RedactURL(cfg.Mydumper.SourceDir), ast.RedactURL(taskCp.SourceDir))
 		}
 
 		if cfg.TikvImporter.Backend == config.BackendLocal && cfg.TikvImporter.SortedKVDir != taskCp.SortedKVDir {
