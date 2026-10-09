@@ -29,7 +29,7 @@ import (
 func TestCreateStorage(t *testing.T) {
 	_, err := ParseBackend("1invalid:", nil)
 	require.Error(t, err)
-	require.Regexp(t, "parse storage URL failed: first path segment in URL cannot contain colon", err.Error())
+	require.Regexp(t, "parse storage URL failed: invalid format", err.Error())
 
 	_, err = ParseBackend("net:storage", nil)
 	require.Error(t, err)
@@ -618,6 +618,7 @@ func TestParseRawURLErrorDoesNotLeakURL(t *testing.T) {
 	for _, raw := range []string{
 		"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY",
 		"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY",
+		"s3://AKID:SKEY/bucket/prefix",
 	} {
 		_, err := ParseRawURL(raw)
 		require.Error(t, err)
