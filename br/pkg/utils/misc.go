@@ -59,14 +59,18 @@ const (
 
 // IsTypeCompatible checks whether type target is compatible with type src
 // they're compatible if
-// - same null/not null and unsigned flag(maybe we can allow src not null flag, target null flag later)
+// - same unsigned flag
+// - not-null is compatible: src NOT NULL can restore into target nullable
+//   (e.g. old bind_info.create_time), but not the reverse
 // - have same evaluation type
 // - target's flen and decimal should be bigger or equals to src's
 // - elements in target is superset of elements in src if they're enum or set type
 // - same charset and collate if they're string types
 func IsTypeCompatible(src types.FieldType, target types.FieldType) (typeEq, collateEq bool) {
 	collateEq = src.GetCollate() == target.GetCollate()
-	if mysql.HasNotNullFlag(src.GetFlag()) != mysql.HasNotNullFlag(target.GetFlag()) {
+	// Backup NOT NULL data can always fit a nullable cluster column; the reverse
+	// may introduce NULLs into a NOT NULL column, so reject that direction.
+	if !mysql.HasNotNullFlag(src.GetFlag()) && mysql.HasNotNullFlag(target.GetFlag()) {
 		return false, collateEq
 	}
 	if mysql.HasUnsignedFlag(src.GetFlag()) != mysql.HasUnsignedFlag(target.GetFlag()) {
