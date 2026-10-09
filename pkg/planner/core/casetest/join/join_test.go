@@ -455,3 +455,60 @@ func TestIssue70757IndexJoinInnerIndexSelection(t *testing.T) {
 	plan.CheckContain("table:i, index:idx_k(k)")
 	plan.CheckNotContain("table:i, index:idx_c(c)")
 }
+
+func TestIndexJoinInnerRowCountIgnoresFiltersImpliedByOuter(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table o (ns bigint not null, id bigint not null, primary key (ns, id) clustered)")
+	tk.MustExec(`create table i (
+		nsid bigint not null,
+		sjid bigint not null,
+		oid bigint not null,
+		primary key (oid) clustered,
+		key nsid_sjid (nsid, sjid))`)
+	const (
+		namespaces = 200
+		rowsPerNS  = 20
+	)
+	outerValues := make([]string, 0, namespaces*2)
+	innerValues := make([]string, 0, namespaces*rowsPerNS)
+	for ns := range namespaces {
+		for n := range rowsPerNS {
+			id := ns*rowsPerNS + n
+			innerValues = append(innerValues, fmt.Sprintf("(%d, %d, %d)", ns, id, id))
+			if n%10 == 0 {
+				outerValues = append(outerValues, fmt.Sprintf("(%d, %d)", ns, id))
+			}
+		}
+	}
+	tk.MustExec("insert into o values " + strings.Join(outerValues, ","))
+	tk.MustExec("insert into i values " + strings.Join(innerValues, ","))
+	tk.MustExec("analyze table o, i all columns")
+
+	probeEstRows := func(query string) float64 {
+		rows := tk.MustQuery("explain format='brief' " + query).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "IndexRangeScan") && strings.Contains(row[3].(string), "table:i") {
+				est, err := strconv.ParseFloat(row[1].(string), 64)
+				require.NoError(t, err)
+				return est
+			}
+		}
+		require.FailNow(t, "no index range scan on the probe side", "%v", rows)
+		return 0
+	}
+
+	// Issue 71411: with join keys kept, `i.nsid = 7` and `i.sjid <= 150` are derived for the probe side
+	// but the range is built from the join keys, so both stay as index filters. Every probing outer
+	// row already satisfies the same predicates, so they must not be divided out of the per-probe row
+	// count as if they were independent of the join keys (which inflated the estimate ~200x here).
+	implied := `select /*+ inl_join(i) */ o.id, i.oid from o left join i on i.nsid = o.ns and i.sjid = o.id
+		where o.ns = 7 and o.id <= 150 order by o.id desc limit 1`
+	require.LessOrEqual(t, probeEstRows(implied), 2.0)
+
+	// A probe-side filter that the outer side does not guarantee still scales the scan estimate:
+	// the outer rows are not restricted to ns = 7, so most probes read rows that the filter rejects.
+	notImplied := `select /*+ inl_join(i) */ o.id, i.oid from o left join i on i.nsid = o.ns and i.sjid = o.id and i.nsid = 7`
+	require.Greater(t, probeEstRows(notImplied), 2.0)
+}
