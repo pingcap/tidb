@@ -1444,6 +1444,14 @@ fn stats_notifier_uses_a_real_internal_transaction_like_go() {
         .parse::<u64>()
         .expect("stats version is unsigned");
     rows(&mut client, "DELETE FROM mysql.tidb_ddl_notifier");
+    // The event row is deleted only once every registered handler has
+    // processed it. With no auto-analyze worker running (stats lease zero),
+    // the priority queue is never initialized, and Go's
+    // `AnalysisPriorityQueue.HandleDDLEvent` answers `ErrNotReadyRetryLater`
+    // while `RunAutoAnalyze` is on, keeping the row. With auto-analyze off it
+    // ignores the event, which leaves only the statistics subscriber under
+    // test.
+    rows(&mut client, "SET GLOBAL tidb_enable_auto_analyze = OFF");
 
     let pool: Arc<dyn SessionPool> = Arc::new(ClusterNotifierSessionPool::new(
         factory.advanced_sys_session_pool(),
@@ -1478,7 +1486,8 @@ fn stats_notifier_uses_a_real_internal_transaction_like_go() {
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "stats notifier did not commit the subscriber mutation and clean up the event"
+            "stats notifier did not commit the subscriber mutation and clean up the event: \
+             pending {pending:?}, version {version} (before {version_before})"
         );
         std::thread::sleep(Duration::from_millis(10));
     };
@@ -5557,8 +5566,10 @@ fn tidb_servers_info_reports_this_node() {
     // The port the node was configured with, as an integer column.
     assert_eq!(row[2], "0", "the fixture binds an ephemeral port");
     assert_eq!(row[3], "10080", "the default status port");
-    // The lease travels as text, and the version pair is the build's.
-    assert!(row[4].ends_with("ms"), "LEASE is text: {}", row[4]);
+    // Go fills LEASE with the configured lease text verbatim
+    // (`serverinfo.ServerInfo.Lease: cfg.Lease`); the fixture keeps Go's
+    // default, `DefSchemaLease.String()`. The version pair is the build's.
+    assert_eq!(row[4], "45s", "LEASE is the configured text");
     assert!(!row[5].is_empty(), "VERSION is reported");
     // No labels are configured, which renders as the empty string rather
     // than a stray separator (Go `BuildStringFromLabels`).
