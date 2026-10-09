@@ -523,6 +523,36 @@ pub fn classify_pseudo_predicate(
     }
 }
 
+/// Go `pseudoSelectivity(sctx, coll, exprs)` over the planner `HistColl`:
+/// the branch `Selectivity` takes past 63 conditions or when the collection
+/// holds neither columns nor indexes (`selectivity.go:69-73`).
+#[must_use]
+pub fn hist_coll_pseudo_selectivity(
+    hist_coll: &crate::stats_info::HistColl,
+    conditions: &[tidb_expr::expression::Expression],
+    selectivity_factor: f64,
+) -> f64 {
+    let resolve = |unique_id: i64| hist_coll.column_info(unique_id).cloned();
+    let predicates: Vec<PseudoPredicate> = conditions
+        .iter()
+        .map(|condition| classify_pseudo_predicate(condition, &resolve))
+        .collect();
+    let indexes: Vec<PseudoIndex> = hist_coll
+        .index_infos()
+        .iter()
+        .map(|info| PseudoIndex {
+            unique: info.unique,
+            column_lower_names: info.column_lower_names.clone(),
+        })
+        .collect();
+    pseudo_selectivity(
+        &predicates,
+        &indexes,
+        hist_coll.realtime_count(),
+        selectivity_factor,
+    )
+}
+
 /// Go `deriveStatsByFilter` (`core/stats.go`), the UNANALYZED-table slice:
 /// `Selectivity` over a collection with no column and no index statistics
 /// takes the `pseudoSelectivity` path unconditionally (`selectivity.go:69`),

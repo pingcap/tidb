@@ -1849,6 +1849,18 @@ impl InitStats<'_> {
                 .unwrap_or_default();
             (column.unique_id, status)
         }).collect::<Vec<_>>();
+        // Go `HistColl.Columns`/`Indices` membership: `PseudoTable` holds
+        // every public, non-hidden column and every public index; a stored
+        // table holds what it analyzed.
+        let pseudo_collection = statistics.is_none_or(|statistics| statistics.pseudo);
+        let index_in_collection = |index: &tidb_planner::plan_builder::catalog::SourceIndex| {
+            match statistics {
+                Some(statistics) if !pseudo_collection => {
+                    statistics.indexes.contains_key(&index.id)
+                }
+                _ => index.is_public,
+            }
+        };
         // GenerateHistCollFromColumnInfo builds every index map from retained
         // payloads, including invalid/evicted ones. A schema-only index must
         // not become the first V1 suffix candidate, and a missing mapped
@@ -1856,17 +1868,18 @@ impl InitStats<'_> {
         let index_columns = source
             .indexes
             .iter()
+            .filter(|index| index_in_collection(index))
             .filter_map(|index| {
-                statistics?.indexes.get(&index.id)?;
                 let declared = source.declared_index_columns(index)
                     .into_iter().map_while(|column| column).collect::<Vec<_>>();
                 let mut columns = declared.iter().map(|(column, _)| column.unique_id)
                     .collect::<Vec<_>>();
                 // This snapshot is consumed after path preparation. Mirror
-                // fillIndexPath's extension of the initial retained-index map.
+                // fillIndexPath's extension of the initial retained-index map,
+                // which only ever appends the integer handle.
                 if columns.len() == index.columns.len() {
-                    columns.extend(source.handle_cols_to_append(index, &declared)
-                        .into_iter().map(|(column, _)| column.unique_id));
+                    columns.extend(source.pk_handle_col_to_append(index, &declared)
+                        .map(|column| column.unique_id));
                 }
                 (!columns.is_empty()).then_some((index.id, columns))
             })
@@ -1999,6 +2012,53 @@ impl InitStats<'_> {
                 Some((index.id, (columns, ndv)))
             })
             .collect::<Vec<_>>();
+        // Go `HistColl.Columns`' and `Indices`' `Info`, which the
+        // selectivity estimators read.
+        let column_infos = source
+            .columns
+            .iter()
+            .zip(
+                source
+                    .base
+                    .base
+                    .schema()
+                    .into_iter()
+                    .flat_map(|schema| &schema.columns),
+            )
+            .filter(|(metadata, column)| match statistics {
+                Some(statistics) if !pseudo_collection => {
+                    statistics.columns.contains_key(&metadata.id)
+                }
+                _ => !column.is_hidden,
+            })
+            .map(|(metadata, column)| {
+                (
+                    column.unique_id,
+                    tidb_planner::cardinality::pseudo::PseudoColumn {
+                        lower_name: tidb_hack::go_to_lower(&metadata.name),
+                        unique_key_flag: column.ret_type.as_ref().is_some_and(|field_type| {
+                            field_type.flags() & tidb_datatype::FieldTypeFlags::UNIQUE_KEY != 0
+                        }),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let index_infos = source
+            .indexes
+            .iter()
+            .filter(|index| index_in_collection(index))
+            .map(|index| tidb_planner::stats_info::HistCollIndexInfo {
+                id: index.id,
+                unique: index.unique,
+                mv_index: index.is_multi_valued,
+                column_lower_names: index
+                    .columns
+                    .iter()
+                    .map(|column| tidb_hack::go_to_lower(&column.name))
+                    .collect(),
+                column_lengths: index.columns.iter().map(|column| column.length).collect(),
+            })
+            .collect::<Vec<_>>();
         source.table_stats = Some(
             StatsInfo::new(row_count, ndvs)
                 .with_hist_coll(
@@ -2009,6 +2069,12 @@ impl InitStats<'_> {
                     )
                     .with_histograms(histograms)
                     .with_column_load_status(column_load_status)
+                    .with_index_load_status(statistics.into_iter().flat_map(|statistics| {
+                        statistics
+                            .index_load_status
+                            .iter()
+                            .map(|(id, status)| (*id, *status))
+                    }))
                     .with_index_histograms(index_histograms)
                     .with_column_index_ids(column_index_ids)
                     .with_index_columns(index_columns)
@@ -2021,7 +2087,8 @@ impl InitStats<'_> {
                     .with_modify_count(statistics.map_or(0, |statistics| statistics.modify_count))
                     .with_pk_is_handle(source.handle_is_int)
                     .with_index_ndvs(index_ndvs)
-                    .with_initialized_ndvs(initialized_column_ndvs, initialized_index_ndvs),
+                    .with_initialized_ndvs(initialized_column_ndvs, initialized_index_ndvs)
+                    .with_column_and_index_infos(column_infos, index_infos),
                 )
                 .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |statistics| {
                     if statistics.pseudo || statistics.stats_ver <= 0 {

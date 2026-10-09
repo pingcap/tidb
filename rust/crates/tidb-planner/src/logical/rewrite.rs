@@ -34,7 +34,7 @@ use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expr_util::normal_form::{expr_from_schema, split_cnf_items};
-use tidb_expr::expr_util::predicates::{contains, is_mutable_effects_expr};
+use tidb_expr::expr_util::predicates::is_mutable_effects_expr;
 use tidb_expr::expr_util::substitute::{SubstituteOptions, column_substitute};
 use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_expr::schema::Schema;
@@ -150,98 +150,6 @@ fn all_join_leaf_schemas(node: &LogicalPlan) -> Vec<Schema> {
     }
 }
 
-/// Histogram-backed `Selectivity` for the equality shapes whose complete
-/// inputs already live in [`StatsInfo`]. Go's `Selectivity` estimates a
-/// column/constant equality through the loaded histogram (bucket `Repeat` /
-/// bucket NDV / uniform fallback), and an IN list as the sum of its point
-/// estimates. When the collection carries the loaded histograms this port now
-/// takes the same route; without them it falls back to one value out of the
-/// column NDV. Returning `None` keeps genuinely pseudo tables on
-/// `pseudoSelectivity`; it must not overwrite loaded NDVs with the pseudo
-/// 1/1000 equality rate.
-/// The selectivity of `conditions`, all on `column`, as the ranger's ranges
-/// against the column's histogram (Go `Selectivity` through
-/// `BuildColumnRange` and `GetRowCountByColumnRanges`). `None` when the
-/// ranger cannot turn every condition into an access range or the table has
-/// no histogram collection.
-fn column_ranges_selectivity(
-    table_stats: &StatsInfo,
-    column: &tidb_expr::column::Column,
-    conditions: &[Expression],
-    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
-) -> Option<Result<f64, crate::cardinality::row_count_estimator::EstimationError>> {
-    let field_type = column.ret_type.as_ref()?;
-    let hist = table_stats.hist_coll()?;
-    // Go Selectivity checks which predicates constrain this column before
-    // calling BuildColumnRange. A nested calculation mentioning one column
-    // (for example id + 1 > 2) is not a range on that column.
-    let access = crate::ranger::detacher::extract_access_conditions_for_column(
-        conditions, column, true,
-    );
-    if access.len() != conditions.len() {
-        return None;
-    }
-    let built = match crate::ranger::ranger::build_column_range_in(
-        conditions,
-        field_type,
-        crate::ranger::checker::UNSPECIFIED_LENGTH,
-        0,
-        evaluate,
-    ) {
-        Ok(built) => built,
-        Err(error) => return Some(Err(error.into())),
-    };
-    if !built.remained_conds.is_empty() || built.access_conds.is_empty() {
-        return None;
-    }
-    let ranges = built
-        .ranges
-        .iter()
-        .map(|range| {
-            crate::cardinality::row_count_estimator::ColumnRange::new(
-                range.low_val[0].clone(),
-                range.high_val[0].clone(),
-                range.low_exclude,
-                range.high_exclude,
-            )
-        })
-        .collect::<Vec<_>>();
-    let is_handle = hist.pk_is_handle()
-        && hist
-            .column(column.unique_id)
-            .is_some_and(|stats| stats.is_handle);
-    let estimate = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
-        hist.histogram_for_estimation(column.unique_id).map(|stats| stats.as_ref()),
-        &ranges,
-        field_type.collation(),
-        hist.realtime_count(),
-        hist.modify_count(),
-        is_handle,
-        options,
-    );
-    Some(estimate.map(|estimate| (estimate.est / table_stats.row_count()).min(1.0)))
-}
-
-/// GO `ranger.BuildColumnRange(accessConds, ..., cols[0].RetType, ...)`
-/// (`selectivity.go:821`): `Selectivity` prices eq/nulleq/in through column
-/// ranges whose constants the ranger has CONVERTED to the estimated column's
-/// type before encoding. A raw int `-7` against decimal(5,2) TopN keys misses
-/// the TopN and falls to the uniform 1/realtime estimate (q91:
-/// eq(ca_gmt_offset, -7) → 1.7e-6 vs go's 0.10477).
-fn convert_constant_to_column_type(
-    value: tidb_datatype::Datum,
-    column: &tidb_expr::column::Column,
-) -> tidb_datatype::Datum {
-    let Some(field_type) = column.ret_type.as_ref() else {
-        return value;
-    };
-    match value.convert_to(field_type, tidb_datatype::ConversionFlags::default()) {
-        Ok(converted) => converted.value,
-        Err(_) => value,
-    }
-}
-
 pub(crate) fn analyzed_filter_selectivity(
     table_stats: &StatsInfo,
     conditions: &[Expression],
@@ -258,8 +166,12 @@ pub(crate) fn analyzed_filter_selectivity_with_options(
     conditions: &[Expression],
     options: &crate::cardinality::row_count_estimator::EstimatorOptions,
 ) -> Option<f64> {
-    try_analyzed_filter_selectivity_with_options(table_stats, conditions, options)
-        .unwrap_or(Some(crate::cost_factors::SELECTION_FACTOR))
+    analyzed_filter_selectivity_with_evaluator(
+        table_stats,
+        conditions,
+        options,
+        &crate::ranger::points::evaluate_static,
+    )
 }
 
 pub(crate) fn analyzed_filter_selectivity_in(
@@ -267,11 +179,24 @@ pub(crate) fn analyzed_filter_selectivity_in(
     conditions: &[Expression],
     context: &crate::access_path::AccessPathDerivationContext<'_>,
 ) -> Option<f64> {
-    analyzed_filter_selectivity_with_evaluator(
+    // The derivation context carries the statement's own snapshot of these
+    // session variables.
+    let options = crate::cardinality::row_count_estimator::EstimatorOptions {
+        selectivity_factor: context.selectivity_factor,
+        range_max_size: context.range_max_size,
+        opt_prefix_index_single_scan: context.opt_prefix_index_single_scan,
+        ..context.estimator_options.clone()
+    };
+    filter_selectivity(
         table_stats,
         conditions,
-        &context.estimator_options,
-        context.expression_evaluator,
+        &crate::cardinality::selectivity::SelectivityContext {
+            range_fallback_handler: context.range_fallback_handler,
+            ..crate::cardinality::selectivity::SelectivityContext::new(
+                &options,
+                context.expression_evaluator,
+            )
+        },
     )
 }
 
@@ -282,717 +207,27 @@ pub fn analyzed_filter_selectivity_with_evaluator(
     options: &crate::cardinality::row_count_estimator::EstimatorOptions,
     evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
 ) -> Option<f64> {
-    try_analyzed_filter_selectivity_in(table_stats, conditions, options, evaluate)
-        .unwrap_or(Some(crate::cost_factors::SELECTION_FACTOR))
-}
-
-fn try_analyzed_filter_selectivity_with_options(
-    table_stats: &StatsInfo,
-    conditions: &[Expression],
-    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
-) -> Result<Option<f64>, crate::cardinality::row_count_estimator::EstimationError> {
-    try_analyzed_filter_selectivity_in(
+    filter_selectivity(
         table_stats,
         conditions,
-        options,
-        &crate::ranger::points::evaluate_static,
+        &crate::cardinality::selectivity::SelectivityContext::new(options, evaluate),
     )
 }
 
-fn try_analyzed_filter_selectivity_in(
+/// Go `deriveStatsByFilter`'s `cardinality.Selectivity` over the source's
+/// `HistColl`; an estimation error falls back to `cost.SelectionFactor`.
+/// `None` only for a profile without a collection, which Go never builds
+/// for a table.
+fn filter_selectivity(
     table_stats: &StatsInfo,
     conditions: &[Expression],
-    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
-) -> Result<Option<f64>, crate::cardinality::row_count_estimator::EstimationError> {
-    if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
-        eprintln!(
-            "[AFSEL] enter conds={} ndvs_empty={} row_count={}",
-            conditions.len(),
-            table_stats.col_ndvs().is_empty(),
-            table_stats.row_count()
-        );
-    }
-    if table_stats.col_ndvs().is_empty() {
-        return Ok(None);
-    }
-    if table_stats.row_count() == 0.0 || conditions.is_empty() {
-        return Ok(Some(1.0));
-    }
-
-    let mut selectivity_total = 1.0_f64;
-    let mut recognized = false;
-    // Go `Selectivity` runs every condition on one column through the
-    // ranger together (`ExtractAccessConditionsForColumn` and
-    // `BuildColumnRange` over the whole list), so `l_shipdate >= a AND
-    // l_shipdate < b` is one range against the histogram rather than two
-    // estimates multiplied as if independent; the product put TPC-H Q15's
-    // three-month window at 27% of lineitem instead of 3.8%, and the row
-    // count chose a hash join over Go's index hash join.
-    let mut handled = vec![false; conditions.len()];
-    let mut per_column: Vec<(i64, Vec<usize>)> = Vec::new();
-    for (index, condition) in conditions.iter().enumerate() {
-        let Expression::ScalarFunction(function) = condition else {
-            continue;
-        };
-        if !matches!(function.func_name.lowercase(), "lt" | "le" | "gt" | "ge") {
-            continue;
-        }
-        let columns = tidb_expr::simple_expr::extract_columns(condition);
-        if columns.len() != 1 {
-            continue;
-        }
-        let unique_id = columns[0].unique_id;
-        match per_column
-            .iter_mut()
-            .find(|(column, _)| *column == unique_id)
-        {
-            Some((_, indices)) => indices.push(index),
-            None => per_column.push((unique_id, vec![index])),
-        }
-    }
-    for (_, indices) in per_column
-        .into_iter()
-        .filter(|(_, indices)| indices.len() >= 2)
-    {
-        let column = tidb_expr::simple_expr::extract_columns(&conditions[indices[0]]).remove(0);
-        let group: Vec<Expression> = indices
-            .iter()
-            .map(|&index| conditions[index].clone())
-            .collect();
-        if let Some(selectivity) =
-            column_ranges_selectivity(table_stats, &column, &group, options, evaluate)
-                .transpose()?
-        {
-            selectivity_total *= selectivity;
-            recognized = true;
-            for &index in &indices {
-                handled[index] = true;
-            }
-        }
-    }
-    for (index, condition) in conditions.iter().enumerate() {
-        if handled[index] {
-            continue;
-        }
-        let Expression::ScalarFunction(function) = condition else {
-            selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
-            continue;
-        };
-        // Go `Selectivity` estimates every single-column condition through
-        // the ranger, so a DNF over one column (`n_name = 'INDIA' OR n_name =
-        // 'JAPAN'`, which join predicate push-down derives from TPC-H Q7's
-        // two-table DNF) becomes point ranges against the histogram instead
-        // of the 0.8 default; that default made the planner build Q7's
-        // orders join from 1.5M orders rather than the 144,734-row side.
-        // `isnull` and the join-rewrite's derived `not(isnull)` are the same
-        // story: Go routes them through `buildFromNot`/`isNull` points and
-        // `GetRowCountByColumnRanges` answers from the histogram's null
-        // count, while the 0.8 fallback scaled an ANALYZEd null-free side to
-        // 80% of its rows and flipped Go's join-order choice.
-        // Go `Selectivity` prices `ne` through the ranger as well: the
-        // not-equal decomposes into the two open point ranges around the
-        // constant and answers `(NDV-1)/NDV` from the histogram. Without
-        // this arm a combined filter (TPC-H Q16's `ne(p_brand) AND
-        // not(like(p_type,...)) AND in(p_size,...)`) fell to the 0.8
-        // default for the ne while its isolated estimate was exact.
-        if matches!(
-            function.func_name.lowercase(),
-            "lt" | "le" | "gt" | "ge" | "ne" | "or" | "isnull" | "not"
-        ) {
-            let columns = tidb_expr::simple_expr::extract_columns(condition);
-            if columns.len() == 1 {
-                if let Some(selectivity) = column_ranges_selectivity(
-                    table_stats,
-                    &columns[0],
-                    std::slice::from_ref(condition),
-                    options,
-                    evaluate,
-                )
-                .transpose()?
-                {
-                    selectivity_total *= selectivity;
-                    recognized = true;
-                    continue;
-                }
-            }
-            // Go `Selectivity`'s notCoveredDNF arm (`selectivity.go:331-380`):
-            // a multi-column DNF the ranger cannot merge prices under the
-            // independence assumption, `sel(A ∪ B) = sel(A) + sel(B) −
-            // sel(A)·sel(B)`, each disjunct recursively estimated over its
-            // CNF items. TPC-H Q19's part selection (`or(and(eq(p_brand),
-            // in(p_container), le(p_size)), ...)` behind `ge(p_size, 1)`)
-            // estimated at the 0.8 default (8M rows) where Go prices
-            // 23,965 through this path.
-            if function.func_name.lowercase() == "or" && columns.len() > 1 {
-                if let Some(selectivity) =
-                    dnf_independence_selectivity(table_stats, condition, options, evaluate)?
-                {
-                    selectivity_total *= selectivity;
-                    recognized = true;
-                    continue;
-                }
-            }
-        }
-        // GO `Selectivity` routes col = col through the ranger: with no
-        // constant to range on the ranger answers the FULL range, i.e.
-        // selectivity 1 — a column equals itself for every non-null row
-        // (q41's eq(i_manufact, i_manufact) self-comparison; the port's
-        // generic 0.8 fallback inflated the DNF by ×4.9).
-        if matches!(function.func_name.lowercase(), "eq" | "nulleq")
-            && matches!(
-                function.args.as_slice(),
-                [Expression::Column(_), Expression::Column(_)]
-            )
-        {
-            recognized = true;
-            continue;
-        }
-        let (column, values) = match (function.func_name.lowercase(), function.args.as_slice()) {
-            ("eq" | "nulleq", [Expression::Column(column), value @ Expression::Constant(_)]) => (
-                column,
-                vec![convert_constant_to_column_type(
-                    evaluate(value).map_err(crate::ranger::points::PointBuilderError::Eval)?,
-                    column,
-                )],
-            ),
-            ("eq" | "nulleq", [value @ Expression::Constant(_), Expression::Column(column)]) => (
-                column,
-                vec![convert_constant_to_column_type(
-                    evaluate(value).map_err(crate::ranger::points::PointBuilderError::Eval)?,
-                    column,
-                )],
-            ),
-            ("in", [Expression::Column(column), values @ ..])
-                if !values.is_empty()
-                    && values
-                        .iter()
-                        .all(|value| matches!(value, Expression::Constant(_))) =>
-            {
-                (
-                    column,
-                    values
-                        .iter()
-                        .map(|value| {
-                            evaluate(value)
-                                .map(|value| convert_constant_to_column_type(value, column))
-                                .map_err(crate::ranger::points::PointBuilderError::Eval)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-            }
-            // Go `GetSelectivityByFilter` -> `GetStrMatchSelectivity`: a
-            // single-column LIKE estimates from the column's sampled values.
-            // Without a usable histogram sample Go falls back to
-            // `GetStrMatchDefaultSelectivity` (0.1), NOT the generic 0.8
-            // `SelectionFactor`; the latter kept a `p_name LIKE 'green%'`
-            // source at 80% of its rows and flipped a downstream join.
-            (
-                "like",
-                [Expression::Column(column), pattern @ Expression::Constant(_), rest @ ..],
-            ) if rest
-                .iter()
-                .all(|argument| matches!(argument, Expression::Constant(_))) =>
-            {
-                // Go prices a prefix-convertible LIKE through the ranger's
-                // range path first; a pattern the ranges cannot answer
-                // (`%dim%`, a contains shape) falls to TopN-assisted
-                // evaluation and only then the 0.1 default.
-                let pattern =
-                    evaluate(pattern).map_err(crate::ranger::points::PointBuilderError::Eval)?;
-                let escape = escape_from_constant(rest.first(), evaluate)?;
-                let selectivity =
-                    histogram_prefix_range_selectivity(table_stats, column, &pattern, options)
-                        .transpose()?
-                        .or_else(|| {
-                            stats_negate_like_selectivity(
-                                table_stats,
-                                column,
-                                &pattern,
-                                escape,
-                                false,
-                            )
-                        })
-                        .unwrap_or(DEFAULT_STRING_MATCH_SELECTIVITY);
-                selectivity_total *= selectivity;
-                recognized = true;
-                continue;
-            }
-            // Go's leftover classification (`selectivity.go:421-433`): a
-            // negated string match (NOT LIKE / NOT REGEXP) is covered by
-            // `GetNegateStrMatchDefaultSelectivity()` = 1 - the string-match
-            // default (0.1), NOT the generic 0.8 factor; `c not like '%a%'`
-            // on the unanalyzed fixture prints 9000.00 in Go. Before that
-            // fallback, Go's `notCoveredNegateStrMatch` arm first runs
-            // `GetSelectivityByFilter` — with the shipped
-            // `tidb_default_string_match_selectivity = 0`, TopN-assisted
-            // estimation evaluates the whole negated filter against the
-            // stats-ver-2 TopN values and histogram bounds; only an
-            // unusable collection keeps the 0.9 default. TPC-H Q13's
-            // `not(like(o_comment, '%pending%deposits%'))` estimates
-            // 99.6% from TopN in Go, not 90%.
-            ("not", [inner @ Expression::ScalarFunction(negated)]) => {
-                let lowered = negated.func_name.lowercase();
-                if lowered == "like" || lowered == "regexp" {
-                    let stats_based = match negated.args.as_slice() {
-                        [Expression::Column(column), pattern @ Expression::Constant(_), rest @ ..]
-                            if rest
-                                .iter()
-                                .all(|argument| matches!(argument, Expression::Constant(_))) =>
-                        {
-                            if lowered == "like" {
-                                let pattern = evaluate(pattern)
-                                    .map_err(crate::ranger::points::PointBuilderError::Eval)?;
-                                let escape = escape_from_constant(rest.first(), evaluate)?;
-                                stats_negate_like_selectivity(
-                                    table_stats,
-                                    column,
-                                    &pattern,
-                                    escape,
-                                    true,
-                                )
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
-                    };
-                    selectivity_total *=
-                        stats_based.unwrap_or(1.0 - DEFAULT_STRING_MATCH_SELECTIVITY);
-                } else {
-                    selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
-                }
-                recognized = true;
-                continue;
-            }
-            _ => {
-                selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
-                continue;
-            }
-        };
-        if let Some(histogram_selectivity) =
-            histogram_point_selectivity(table_stats, column, &values, options).transpose()?
-        {
-            if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
-                eprintln!(
-                    "[sel-debug] point name={} vals={} sel={histogram_selectivity}",
-                    function.func_name,
-                    values.len()
-                );
-            }
-            selectivity_total *= histogram_selectivity;
-            recognized = true;
-            continue;
-        }
-        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
-            let ndv = table_stats.col_ndv(column.unique_id);
-            eprintln!(
-                "[sel-debug] point-fallback name={} vals={} ndv={ndv}",
-                function.func_name,
-                values.len(),
-            );
-        }
-        // Go `GetRowCountByColumnRanges` on a column whose statistics are
-        // invalid answers from `getPseudoRowCountByColumnRanges`: every point
-        // range costs `tableRowCount / pseudoEqualRate`, capped at the table.
-        // The column NDV is not consulted. The ranger's points are distinct,
-        // and `=`/`IN` build no point for NULL (only `<=>` does).
-        let null_safe = function.func_name.lowercase() == "nulleq";
-        let mut points: Vec<&tidb_datatype::Datum> = Vec::new();
-        for value in &values {
-            if (null_safe || !matches!(value, tidb_datatype::Datum::Null))
-                && !points.contains(&value)
-            {
-                points.push(value);
-            }
-        }
-        selectivity_total *=
-            (points.len() as f64 / crate::cardinality::pseudo::PSEUDO_EQUAL_RATE).min(1.0);
-        recognized = true;
-    }
-    if recognized {
-        Ok(Some(
-            selectivity_total.max(1.0 / table_stats.row_count().max(1.0)),
-        ))
-    } else {
-        Ok(Some(selectivity_total))
-    }
-}
-
-/// Go `GetStrMatchDefaultSelectivity`: the fallback used when a LIKE has no
-/// usable histogram sample.
-const DEFAULT_STRING_MATCH_SELECTIVITY: f64 = 0.1;
-
-/// Go `Selectivity`'s notCoveredDNF arm (`selectivity.go:331-380`): a
-/// multi-column DNF prices under the independence assumption,
-/// `sel(A ∪ B) = sel(A) + sel(B) − sel(A)·sel(B)`, each disjunct
-/// recursively estimated over its CNF items. `None` when any referenced
-/// column lacks statistics or the DNF flattens to a single item — Go
-/// skips those to the ranger/default paths.
-fn dnf_independence_selectivity(
-    table_stats: &StatsInfo,
-    condition: &Expression,
-    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
-) -> Result<Option<f64>, crate::cardinality::row_count_estimator::EstimationError> {
-    let items = flatten_boolean_conditions(condition, "or");
-    if items.len() <= 1 {
-        return Ok(None);
-    }
-    // Go skips the whole DNF when any referenced column has no stats
-    // (`continue OUTER`), leaving the condition to the string-match/
-    // generic defaults.
-    for column in tidb_expr::simple_expr::extract_columns(condition) {
-        if table_stats.col_ndv(column.unique_id) <= 0.0 {
-            return Ok(None);
-        }
-    }
-    // Go skips the whole DNF when any referenced column has no stats
-    // (`continue OUTER`), leaving the condition to the string-match/
-    // generic defaults.
-    for column in tidb_expr::simple_expr::extract_columns(condition) {
-        if table_stats.col_ndv(column.unique_id) <= 0.0 {
-            return Ok(None);
-        }
-    }
-    // Go `MergeDNFItems4Col` (`ranger/detacher.go:1191`): single-column
-    // range-buildable DNF items group by column and re-compose into one DNF
-    // per column, so an `a in (...) or a in (...)` prices ONCE through the
-    // column's ranges instead of product-pairing every disjunct (TPC-DS
-    // q41's eight-branch category/color/units/size DNF estimated 4.9x Go).
-    // The composed single-column DNF re-enters the estimator through the
-    // single-column `or` arm, which answers from the histogram without
-    // recursing here.
-    let mut merged: Vec<Expression> = Vec::new();
-    let mut col2items: std::collections::BTreeMap<i64, Vec<Expression>> = Default::default();
-    for item in &items {
-        let cols = tidb_expr::simple_expr::extract_columns(item);
-        if cols.len() != 1 {
-            merged.push(item.clone());
-            continue;
-        }
-        let checker = crate::ranger::checker::ConditionChecker {
-            checker_col: Some(&cols[0]),
-            length: tidb_datatype::UNSPECIFIED_LENGTH,
-            opt_prefix_index_single_scan: false,
-        };
-        let (is_access, _) = checker.check(item);
-        if !is_access {
-            merged.push(item.clone());
-            continue;
-        }
-        col2items
-            .entry(cols[0].unique_id)
-            .or_default()
-            .push(item.clone());
-    }
-    for group in col2items.into_values() {
-        if let Some(composed) = tidb_expr::simple_expr::compose_dnf_condition(group.clone()) {
-            merged.push(composed);
-        } else {
-            merged.extend(group);
-        }
-    }
-    let mut selectivity = 0.0_f64;
-    for item in &merged {
-        let cnf = flatten_boolean_conditions(item, "and");
-        let cur = try_analyzed_filter_selectivity_in(table_stats, &cnf, options, evaluate)?
-            .unwrap_or(crate::cost_factors::SELECTION_FACTOR);
-        selectivity = selectivity + cur - selectivity * cur;
-    }
-    Ok((selectivity != 0.0).then_some(selectivity))
-}
-
-/// Go `FlattenDNFConditions`/`FlattenCNFConditions`: flattens the nested
-/// `or` (resp. `and`) scalar functions into their connected leaves; any
-/// other expression is its own single leaf.
-fn flatten_boolean_conditions(condition: &Expression, connector: &str) -> Vec<Expression> {
-    if let Expression::ScalarFunction(function) = condition {
-        if function.func_name.lowercase() == connector {
-            let mut items = Vec::new();
-            for argument in &function.args {
-                items.extend(flatten_boolean_conditions(argument, connector));
-            }
-            return items;
-        }
-    }
-    vec![condition.clone()]
-}
-
-/// Go `newBuildFromPatternLike`'s wildcard case (`pkg/util/ranger/points.go:718-856`):
-/// a `prefix%` LIKE becomes the half-open range `[prefix, successor(prefix))`,
-/// where the successor increments the last byte carrying upward (all-`0xFF`
-/// overflows to `MaxValue`). Rows are then answered by the same
-/// `GetRowCountByColumnRanges` the comparison ranges use, so a prefix
-/// pattern interpolates inside the straddling bucket instead of counting
-/// whole buckets.
-fn histogram_prefix_range_selectivity(
-    table_stats: &StatsInfo,
-    column: &tidb_expr::column::Column,
-    pattern: &tidb_datatype::Datum,
-    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
-) -> Option<Result<f64, crate::cardinality::row_count_estimator::EstimationError>> {
-    let pattern = match pattern {
-        tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-        tidb_datatype::Datum::String(string) => {
-            String::from_utf8_lossy(string.bytes()).into_owned()
-        }
-        _ => return None,
-    };
-    let prefix = pattern.strip_suffix('%')?;
-    if prefix.is_empty() || prefix.contains('%') || prefix.contains('_') {
-        return None;
-    }
-    let hist_coll = table_stats.hist_coll()?;
-    let column_stats = hist_coll.histogram_for_estimation(column.unique_id)?;
-    if column_stats.histogram.buckets.is_empty() {
-        return None;
-    }
-    let realtime = hist_coll.realtime_count();
-    if realtime <= 0 {
-        return None;
-    }
-    let mut low = prefix.as_bytes().to_vec();
-    let mut high = low.clone();
-    let mut carried = false;
-    for byte in high.iter_mut().rev() {
-        *byte = byte.wrapping_add(1);
-        if *byte != 0 {
-            carried = true;
-            break;
-        }
-    }
-    let high = if carried {
-        tidb_datatype::Datum::Bytes(high)
-    } else {
-        tidb_datatype::Datum::MaxValue
-    };
-    let ranges = vec![crate::cardinality::row_count_estimator::ColumnRange::new(
-        tidb_datatype::Datum::Bytes(low),
-        high,
-        false,
-        true,
-    )];
-    let is_handle = hist_coll.pk_is_handle()
-        && hist_coll
-            .column(column.unique_id)
-            .is_some_and(|stats| stats.is_handle);
-    let estimate = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
-        Some(column_stats),
-        &ranges,
-        tidb_datatype::Collation::Utf8Mb4Bin,
-        realtime,
-        hist_coll.modify_count(),
-        is_handle,
-        options,
-    );
-    Some(estimate.map(|estimate| (estimate.est / table_stats.row_count()).min(1.0)))
-}
-
-/// Go `GetSelectivityByFilter`'s string-match arm: a single-column
-/// (NOT) LIKE evaluated against the stats-ver-2 TopN values (weighted by
-/// their counts) and the histogram's bucket bounds (upper bounds weighted
-/// by `Repeat`, lower bounds as uniform samples of the non-TopN
-/// remainder), plus the NULL partition. `negated` selects whether a value
-/// is selected by matching (`false`, plain LIKE) or by not matching
-/// (`true`, NOT LIKE). Returns `None` when the collection carries no
-/// stats-ver-2 histogram so the caller keeps the string-match default.
-fn stats_negate_like_selectivity(
-    table_stats: &StatsInfo,
-    column: &tidb_expr::column::Column,
-    pattern: &tidb_datatype::Datum,
-    escape: Option<u8>,
-    negated: bool,
+    ctx: &crate::cardinality::selectivity::SelectivityContext<'_>,
 ) -> Option<f64> {
-    let pattern_bytes = match pattern {
-        tidb_datatype::Datum::Bytes(bytes) => bytes.clone(),
-        tidb_datatype::Datum::String(string) => string.bytes().to_vec(),
-        _ => return None,
-    };
     let hist_coll = table_stats.hist_coll()?;
-    let column_stats = hist_coll.histogram_for_estimation(column.unique_id)?;
-    if column_stats.stats_ver != 2 {
-        return None;
-    }
-    let realtime = hist_coll.realtime_count();
-    if realtime <= 0 {
-        return None;
-    }
-    let hist_not_null = column_stats.histogram.not_null_count();
-    let topn_total = column_stats
-        .topn
-        .as_ref()
-        .map_or(0.0, |topn| topn.total_count() as f64);
-    let null_count = column_stats.histogram.null_count as f64;
-    let total_cnt = hist_not_null + topn_total + null_count;
-    if total_cnt <= 0.0 {
-        return None;
-    }
-
-    // A value is selected when its match outcome equals the filter's
-    // polarity: plain LIKE selects matching values, NOT LIKE selects
-    // non-matching ones. Non-string values can never match a LIKE pattern,
-    // so NOT LIKE always keeps them.
-    let filter_keeps = |value: &tidb_datatype::Datum| -> Option<bool> {
-        let text = match value {
-            tidb_datatype::Datum::Bytes(bytes) => bytes.as_slice(),
-            tidb_datatype::Datum::String(string) => string.bytes(),
-            _ => return Some(negated),
-        };
-        let matches = tidb_expr::like_match_with_collation(
-            text,
-            &pattern_bytes,
-            escape,
-            tidb_datatype::Collation::Utf8Mb4Bin,
-        );
-        Some(matches != negated)
-    };
-
-    // TopN arm: each entry is one encoded value; decode then evaluate.
-    let mut topn_selected = 0.0_f64;
-    if let Some(topn) = &column_stats.topn {
-        for entry in topn.entries() {
-            let (_, value) = tidb_codec::decode_one(&entry.encoded).ok()?;
-            if filter_keeps(&value)? {
-                topn_selected += entry.count as f64;
-            }
-        }
-    }
-    let topn_sel = topn_selected / total_cnt;
-
-    // Histogram arm: upper bounds carry their bucket's `Repeat` rows;
-    // lower bounds act as random samples regarded equally.
-    let mut repeat_total = 0.0_f64;
-    let mut repeat_selected = 0.0_f64;
-    let mut lower_bound_matches = 0.0_f64;
-    for bucket in &column_stats.histogram.buckets {
-        repeat_total += bucket.repeat as f64;
-        if filter_keeps(&bucket.upper_bound)? {
-            repeat_selected += bucket.repeat as f64;
-        }
-        if filter_keeps(&bucket.lower_bound)? {
-            lower_bound_matches += 1.0;
-        }
-    }
-    let hist_sel = if hist_not_null > 0.0 {
-        let bucket_count = column_stats.histogram.buckets.len() as f64;
-        let upper_bounds_ratio = (repeat_total / hist_not_null).min(1.0);
-        let lower_bounds_ratio = 1.0 - upper_bounds_ratio;
-        let upper_bounds_sel = if repeat_total > 0.0 {
-            repeat_selected / repeat_total
-        } else {
-            0.0
-        };
-        let lower_bounds_sel = if bucket_count > 0.0 {
-            lower_bound_matches / bucket_count
-        } else {
-            0.0
-        };
-        (lower_bounds_sel * lower_bounds_ratio + upper_bounds_sel * upper_bounds_ratio)
-            * (hist_not_null / total_cnt)
-    } else {
-        0.0
-    };
-
-    // `like(NULL, ...)` and its negation both evaluate to NULL, which a
-    // filter drops, so the NULL partition is never selected.
-    let null_sel = 0.0;
-
-    Some(topn_sel + hist_sel + null_sel)
-}
-
-/// Go reads the LIKE escape as `expression.ConstInt`'s value; the escape
-/// argument is optional and non-integer values yield `None` (the matcher
-/// then defaults to backslash, as Go's default escape does).
-fn escape_from_constant(
-    constant: Option<&Expression>,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
-) -> Result<Option<u8>, crate::ranger::points::PointBuilderError> {
-    match constant {
-        Some(value @ Expression::Constant(_)) => Ok(match evaluate(value).map_err(crate::ranger::points::PointBuilderError::Eval)? {
-            tidb_datatype::Datum::Int(value) => Some(value as u8),
-            _ => None,
-        }),
-        _ => Ok(None),
-    }
-}
-
-/// Go `cardinality.Selectivity`'s equality arm over the loaded histogram:
-/// `getRowCountByColumnRanges` on the closed point ranges of `values`,
-/// divided by the source's row count.
-///
-/// `None` when the collection carries no histogram for this column, which is
-/// every profile built without a catalog and every pseudo collection; the
-/// caller then keeps the NDV approximation.
-fn histogram_point_selectivity(
-    table_stats: &StatsInfo,
-    column: &tidb_expr::column::Column,
-    values: &[tidb_datatype::Datum],
-    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
-) -> Option<Result<f64, crate::cardinality::row_count_estimator::EstimationError>> {
-    let hist_coll = table_stats.hist_coll()?;
-    let column_stats = hist_coll.histogram_for_estimation(column.unique_id);
-    if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
-        eprintln!(
-            "[HISTPNT] uid={} gate={:?}",
-            column.unique_id,
-            column_stats.as_ref().map(|c| (
-                c.total_row_count(),
-                c.histogram.ndv,
-                c.histogram.buckets.len(),
-                c.topn.is_some()
-            ))
-        );
-    }
-    let column_stats = column_stats?;
-    // Go `getColumnRowCount` answers IN/point lists for a TopN-only column
-    // (stats ver2 persists no histogram buckets for low-NDV columns) from
-    // the TopN counts; rejecting an empty histogram here demoted TPC-H
-    // Q16's in(p_size) to the NDV ratio (0.16) while Go interpolates the
-    // TopN counts (0.15964). Only an empty VALUES list stays rejected.
-    if values.is_empty() {
-        return None;
-    }
-    let realtime = hist_coll.realtime_count();
-    if realtime <= 0 {
-        return None;
-    }
-    let ranges = values
-        .iter()
-        .cloned()
-        .map(crate::cardinality::row_count_estimator::ColumnRange::point)
-        .collect::<Vec<_>>();
-    // Go's `Selectivity` passes `pkIsHandle=true` only when the ESTIMATED
-    // column is the single integer handle (`colStats.IsHandle`); a common
-    // handle's key columns are ordinary columns here, and a heap table's
-    // synthetic `_tidb_rowid` is not one of its stored columns at all.
-    let column_is_handle = hist_coll.pk_is_handle()
-        && hist_coll
-            .column(column.unique_id)
-            .is_some_and(|row_size| row_size.is_handle);
-    let estimate = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
-        Some(column_stats.as_ref()),
-        &ranges,
-        tidb_datatype::Collation::Binary,
-        realtime,
-        hist_coll.modify_count(),
-        column_is_handle,
-        options,
-    );
-    Some(estimate.map(|estimate| (estimate.est / table_stats.row_count()).min(1.0)))
-}
-
-fn covered_condition_mask(conditions: &[Expression], access: &[Expression]) -> u64 {
-    conditions
-        .iter()
-        .enumerate()
-        .fold(0_u64, |mask, (offset, condition)| {
-            if contains(access, condition) {
-                mask | (1_u64 << offset)
-            } else {
-                mask
-            }
-        })
+    Some(
+        crate::cardinality::selectivity::selectivity(ctx, hist_coll, conditions)
+            .unwrap_or(crate::cost_factors::SELECTION_FACTOR),
+    )
 }
 
 /// Go `LogicalJoin.getProj`: make a child projection that initially exposes
@@ -1313,282 +548,6 @@ fn update_join_equal_conditions_in_plan(
         }
         _ => Ok(false),
     }
-}
-
-/// Go `cardinality.Selectivity` over the pseudo column/index histograms that
-/// `statistics.PseudoTable` creates. This is intentionally distinct from
-/// `pseudoSelectivity`: that coarse fallback is used only when the histogram
-/// collection has no columns/indexes (or more than 63 predicates). A normal
-/// unanalyzed table still builds ranges, so `k >= 1 AND k <= 3` is one
-/// bounded range (`1/pseudoBetweenRate`), not two unrelated `1/3` guesses.
-pub(crate) fn pseudo_range_filter_selectivity(
-    source: &super::data_source::DataSource,
-    table_stats: &StatsInfo,
-    conditions: &[Expression],
-    schema: &Schema,
-    context: &crate::access_path::AccessPathDerivationContext<'_>,
-    selectivity_factor: f64,
-) -> Option<f64> {
-    if conditions.is_empty() || table_stats.row_count() == 0.0 {
-        return Some(1.0);
-    }
-    if conditions.len() > 63 {
-        return None;
-    }
-
-    use crate::selectivity_greedy::{get_usable_sets_by_greedy, StatsNode, StatsNodeType};
-    let rows = table_stats.row_count();
-    let mut nodes = Vec::new();
-    for column in &schema.columns {
-        let field_type = column.ret_type.as_ref()?;
-        let (access, _) =
-            crate::ranger::detacher::detach_conds_for_column(conditions, column, true);
-        if access.is_empty() {
-            continue;
-        }
-        let range_result = crate::ranger::ranger::build_column_range_in(
-            &access,
-            field_type,
-            crate::ranger::checker::UNSPECIFIED_LENGTH,
-            context.range_max_size,
-            context.expression_evaluator,
-        )
-        .ok()?;
-        if !range_result.remained_conds.is_empty() {
-            if let Some(handler) = context.range_fallback_handler {
-                handler.record_range_fallback(context.range_max_size);
-            }
-        }
-        let mask = covered_condition_mask(conditions, &range_result.access_conds);
-        if mask == 0 {
-            continue;
-        }
-        // Go `Selectivity` marks the handle column `PkType` and estimates it
-        // with `GetRowCountByColumnRanges(..., pkIsHandle=true)`
-        // (`planner/cardinality/selectivity.go:123`,
-        // `row_count_column.go:47`): a pseudo point range on an integer
-        // handle is ONE row, not `RealtimeCount / pseudoEqualRate`. The
-        // generic column estimate made a fixed primary-key lookup cost ten
-        // rows, which in turn reordered the join group away from Go's plan.
-        let is_int_handle = source.handle_is_int
-            && source
-                .handle_cols
-                .iter()
-                .any(|handle| handle.unique_id == column.unique_id);
-        let count = if is_int_handle {
-            crate::ranger::stats_bridge::pseudo_count_by_int_ranges(
-                &range_result.ranges,
-                rows,
-                // Go GetRowCountByColumnRanges dispatches on the first low
-                // datum's kind. Column ranges retain MinNotNull sentinels,
-                // unlike the typed bounds produced by the table ranger.
-                !matches!(range_result.ranges.first().and_then(|range| range.low_val.first()),
-                    Some(tidb_datatype::Datum::Int(_))),
-            )
-        } else {
-            crate::ranger::stats_bridge::pseudo_count_by_column_ranges(&range_result.ranges, rows)
-        };
-        let kind = if is_int_handle
-            || source
-                .handle_cols
-                .iter()
-                .any(|handle| handle.unique_id == column.unique_id)
-        {
-            StatsNodeType::PrimaryKey
-        } else {
-            StatsNodeType::Column
-        };
-        nodes.push(StatsNode {
-            selectivity: count / rows,
-            ..StatsNode::new(kind, column.unique_id, mask as i64, 1)
-        });
-    }
-
-    for index in source
-        .indexes
-        .iter()
-        .filter(|index| index.is_public && !index.is_multi_valued && !index.is_columnar)
-    {
-        let resolved = index
-            .columns
-            .iter()
-            .map_while(|index_column| {
-                source
-                    .schema_column_for_index_column(index_column)
-                    .cloned()
-                    .map(|column| (column, index_column.length))
-            })
-            .collect::<Vec<_>>();
-        if resolved.is_empty() {
-            continue;
-        }
-        let index_columns = resolved
-            .iter()
-            .map(|(column, _)| column.clone())
-            .collect::<Vec<_>>();
-        let lengths = resolved
-            .iter()
-            .map(|(_, length)| *length)
-            .collect::<Vec<_>>();
-        let detached = context
-            .detach_index_range(conditions, &index_columns, &lengths)
-            .ok()?;
-        let mask = if detached.is_dnf_cond && !detached.access_conds.is_empty() {
-            1
-        } else {
-            covered_condition_mask(conditions, &detached.access_conds)
-        };
-        if mask == 0 {
-            continue;
-        }
-        let unique_columns =
-            (index.unique && resolved.len() == index.columns.len()).then_some(index.columns.len());
-        let count = crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
-            &detached.ranges,
-            rows,
-            unique_columns,
-        );
-        nodes.push(StatsNode {
-            selectivity: count / rows,
-            partial_cover: detached.is_dnf_cond && !detached.remained_conds.is_empty(),
-            min_access_conditions_for_dnf: i32::try_from(detached.min_access_conds_for_dnf_cond)
-                .unwrap_or(i32::MAX),
-            ..StatsNode::new(
-                StatsNodeType::Index,
-                index.id,
-                mask as i64,
-                index.columns.len(),
-            )
-        });
-    }
-
-    // Share Go's full/partial DNF and minimum-access tie breaks with the
-    // executor's statistics path.
-    let mut remaining = (1_u64 << conditions.len()) - 1;
-    let mut selectivity = 1.0_f64;
-    for node in get_usable_sets_by_greedy(&mut nodes) {
-        remaining &= !(node.mask as u64);
-        selectivity *= node.selectivity;
-        if node.partial_cover {
-            selectivity *= selectivity_factor;
-        }
-    }
-    // Go Selectivity recursively estimates uncovered multi-column DNF even
-    // when the histograms are pseudo. Synthetic NDVs are not equality rates.
-    for (offset, condition) in conditions.iter().enumerate() {
-        if remaining & (1_u64 << offset) == 0 {
-            continue;
-        }
-        let Expression::ScalarFunction(function) = condition else {
-            continue;
-        };
-        if function.func_name.lowercase() != "or" {
-            continue;
-        }
-        if tidb_expr::simple_expr::extract_columns(condition)
-            .iter()
-            .any(|column| {
-                table_stats.hist_coll().is_none_or(|hist| {
-                    // Pseudo profiles retain column identities in ColNDVs, but
-                    // omit their empty histogram payloads. Test membership, not
-                    // the synthetic NDV value, just as Go tests GetCol != nil.
-                    !(hist.pseudo() && table_stats.col_ndvs().contains_key(&column.unique_id))
-                        && hist.column(column.unique_id).is_none()
-                        && hist.histogram(column.unique_id).is_none()
-                })
-            })
-        {
-            continue;
-        }
-        let items = crate::ranger::detacher::merge_dnf_items_4_col(
-            &flatten_boolean_conditions(condition, "or"),
-            true,
-        );
-        if items.len() <= 1 {
-            continue;
-        }
-        let mut dnf_selectivity = 0.0;
-        for item in items {
-            if matches!(item, Expression::CorrelatedColumn(_)) {
-                continue;
-            }
-            let cnf = flatten_boolean_conditions(&item, "and");
-            let cur = pseudo_range_filter_selectivity(
-                source,
-                table_stats,
-                &cnf,
-                schema,
-                context,
-                selectivity_factor,
-            )
-            .unwrap_or(selectivity_factor);
-            dnf_selectivity = dnf_selectivity + cur - dnf_selectivity * cur;
-        }
-        if dnf_selectivity != 0.0 {
-            selectivity *= dnf_selectivity;
-            remaining &= !(1_u64 << offset);
-        }
-    }
-    if remaining != 0 {
-        // Go applies the minimum over the still-uncovered conditions' kinds
-        // ONCE (`selectivity.go:421-433`): a (non-negated) LIKE/REGEXP
-        // charges `GetStrMatchDefaultSelectivity()` (0.1), its NEGATION
-        // charges `GetNegateStrMatchDefaultSelectivity()` (1 - 0.1 = 0.9),
-        // and any other shape charges the selectivity factor (0.8). The
-        // negated arm is what `c not like '%a%'` takes on the unanalyzed
-        // fixture: Go prints 9000.00, not 8000.00.
-        let mut min_selectivity = 1.0_f64;
-        let mut has_other = false;
-        for (offset, condition) in conditions.iter().enumerate() {
-            if remaining & (1_u64 << offset) == 0 {
-                continue;
-            }
-            match uncovered_string_match_kind(condition) {
-                UncoveredStringMatch::Plain => {
-                    min_selectivity = min_selectivity.min(DEFAULT_STRING_MATCH_SELECTIVITY);
-                }
-                UncoveredStringMatch::Negated => {
-                    min_selectivity = min_selectivity.min(1.0 - DEFAULT_STRING_MATCH_SELECTIVITY);
-                }
-                UncoveredStringMatch::None => has_other = true,
-            }
-        }
-        if has_other {
-            min_selectivity = min_selectivity.min(selectivity_factor);
-        }
-        selectivity *= min_selectivity;
-    }
-    Some(selectivity.max(1.0 / rows.max(1.0)))
-}
-
-/// Which leftover arm one uncovered condition charges. `Go Selectivity`'s
-/// tail names two string-match shapes beside the generic factor:
-/// `like`/`regexp` (0.1) and their negations (0.9).
-enum UncoveredStringMatch {
-    Plain,
-    Negated,
-    None,
-}
-
-fn uncovered_string_match_kind(condition: &Expression) -> UncoveredStringMatch {
-    let name = |function: &tidb_expr::expression::ScalarFunction| {
-        function.func_name.lowercase().to_string()
-    };
-    if let Expression::ScalarFunction(function) = condition {
-        let lowered = name(function);
-        if lowered == "like" || lowered == "regexp" {
-            return UncoveredStringMatch::Plain;
-        }
-        if lowered == "not" && function.args.len() == 1 {
-            if let Expression::ScalarFunction(inner) = &function.args[0] {
-                let inner_lowered = name(inner);
-                if inner_lowered == "like" || inner_lowered == "regexp" {
-                    return UncoveredStringMatch::Negated;
-                }
-            }
-        }
-    }
-    UncoveredStringMatch::None
 }
 
 /// Replaces `node`'s OWN schema, when it has one.
@@ -3190,22 +2149,11 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             range_fallback_handler: self.range_fallback_handler,
                             expression_evaluator: &evaluate,
                         };
-                        let range_selectivity = if op.table_scan_penalty.pseudo_stats {
-                            pseudo_range_filter_selectivity(
-                                op,
-                                &table_stats,
-                                &op.pushed_down_conds,
-                                &self_schema,
-                                &derivation,
-                                self.selectivity_factor,
-                            )
-                        } else {
-                            analyzed_filter_selectivity_in(
-                                &table_stats,
-                                &op.pushed_down_conds,
-                                &derivation,
-                            )
-                        };
+                        let range_selectivity = analyzed_filter_selectivity_in(
+                            &table_stats,
+                            &op.pushed_down_conds,
+                            &derivation,
+                        );
                         let stats = range_selectivity.map_or_else(
                             || {
                                 crate::cardinality::pseudo::derive_stats_by_filter_pseudo(
@@ -3721,11 +2669,18 @@ mod analyzed_filter_selectivity_tests {
                 args,
             ))
         };
+        // Table columns carry their `ColumnInfo.ID`, which `Selectivity`
+        // sorts and deduplicates on.
+        let column = |id| {
+            let mut column = Column::new(id, FieldType::new(FieldTypeCode::LongLong));
+            column.id = id;
+            column
+        };
         let equality = |id, datum| {
             scalar(
                 "eq",
                 vec![
-                    Expression::Column(Column::new(id, FieldType::new(FieldTypeCode::LongLong))),
+                    Expression::Column(column(id)),
                     Expression::Constant(Constant::new(
                         datum,
                         FieldType::new(FieldTypeCode::LongLong),
@@ -3734,16 +2689,30 @@ mod analyzed_filter_selectivity_tests {
             )
         };
         let valid = equality(7, Datum::Int(1));
-        let invalid = equality(8, Datum::Raw(vec![1]));
-        let cnf = vec![valid.clone(), invalid.clone()];
-        assert!(
-            super::try_analyzed_filter_selectivity_with_options(
-                &stats,
-                &cnf,
-                &EstimatorOptions::default()
+        // An `IN` constant that cannot be evaluated fails range construction
+        // (`points.go:641-644`); a comparison would only build no point.
+        let invalid = {
+            let mut missing = Constant::new(Datum::Null, FieldType::new(FieldTypeCode::LongLong));
+            missing.param_marker = Some(tidb_expr::constant::ParamMarker { order: 0 });
+            scalar(
+                "in",
+                vec![
+                    Expression::Column(column(8)),
+                    Expression::Constant(missing),
+                ],
             )
-            .is_err()
+        };
+        let cnf = vec![valid.clone(), invalid.clone()];
+        let options = EstimatorOptions::default();
+        let ctx = crate::cardinality::selectivity::SelectivityContext::new(
+            &options,
+            &crate::ranger::points::evaluate_static,
         );
+        let hist = stats.hist_coll().unwrap();
+        let estimate = |exprs: &[Expression]| {
+            crate::cardinality::selectivity::selectivity(&ctx, hist, exprs)
+        };
+        assert!(estimate(&cnf).is_err());
         assert_eq!(analyzed_filter_selectivity(&stats, &cnf), Some(0.8));
         let dnf = scalar(
             "or",
@@ -3755,17 +2724,14 @@ mod analyzed_filter_selectivity_tests {
                 ),
             ],
         );
-        assert!(
-            super::try_analyzed_filter_selectivity_with_options(
-                &stats,
-                &[dnf.clone()],
-                &EstimatorOptions::default()
-            )
-            .is_err()
-        );
+        // Inside a DNF, Go swallows a failing item's error and charges it
+        // `SelectivityFactor` (`selectivity.go:365-368`), so the DNF still
+        // estimates and only a top-level failure falls back.
+        let dnf_selectivity = estimate(std::slice::from_ref(&dnf)).unwrap();
+        let valid_selectivity = estimate(std::slice::from_ref(&valid)).unwrap();
         assert_eq!(
             analyzed_filter_selectivity(&stats, &[valid, dnf]),
-            Some(0.8)
+            Some(valid_selectivity * dnf_selectivity)
         );
     }
 
@@ -3823,11 +2789,20 @@ mod analyzed_filter_selectivity_tests {
     #[test]
     fn range_with_metadata_only_statistics_uses_range_estimator() {
         let rows = 6_001_215;
-        let stats = StatsInfo::new(rows as f64, [(7, 1_500_000.0)]).with_hist_coll(HistColl::new(
-            false,
-            rows,
-            [],
-        ));
+        // The column is in `HistColl.Columns` without buckets; an EMPTY
+        // collection would take `pseudoSelectivity` instead.
+        let stats = StatsInfo::new(rows as f64, [(7, 1_500_000.0)]).with_hist_coll(
+            HistColl::new(false, rows, []).with_column_and_index_infos(
+                [(
+                    7,
+                    crate::cardinality::pseudo::PseudoColumn {
+                        lower_name: "l_orderkey".to_owned(),
+                        unique_key_flag: false,
+                    },
+                )],
+                [],
+            ),
+        );
         let condition = Expression::ScalarFunction(ScalarFunction::new(
             tidb_ast::CiString::new("lt"),
             FieldType::new(FieldTypeCode::Tiny),
@@ -4303,9 +3278,12 @@ mod analyzed_filter_selectivity_tests {
             )])
             .with_modify_count(0);
         let table_stats = StatsInfo::new(128.0, [(unique_id, 3.0)]).with_hist_coll(hist_coll);
+        // Built as the rewriter builds it: the escape argument and the
+        // derived collation decide whether the ranger accepts the pattern.
         let like = |pattern: &str| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new("like"),
+            tidb_expr::new_function::new_function(
+                &tidb_expr::NoColumns,
+                "like",
                 FieldType::new(FieldTypeCode::LongLong),
                 vec![
                     Expression::Column(Column::new(unique_id, varchar())),
@@ -4313,8 +3291,13 @@ mod analyzed_filter_selectivity_tests {
                         Datum::Bytes(pattern.as_bytes().to_vec()),
                         varchar(),
                     )),
+                    Expression::Constant(Constant::new(
+                        Datum::Int(i64::from(b'\\')),
+                        FieldType::new(FieldTypeCode::LongLong),
+                    )),
                 ],
-            ))
+            )
+            .unwrap()
         };
 
         // One bucket's bounds start with `green`; its single row over 128.
@@ -4341,8 +3324,20 @@ mod analyzed_filter_selectivity_tests {
             "an empty histogram sample prices the out-of-range tail: {selectivity}"
         );
 
-        // Without a histogram the pattern answers the 0.1 default.
-        let bare = StatsInfo::new(128.0, [(unique_id, 3.0)]);
+        // A collection without the column gives it no node, and the
+        // uncovered pattern answers the 0.1 string-match default.
+        let bare = StatsInfo::new(128.0, [(unique_id, 3.0)]).with_hist_coll(
+            HistColl::new(false, 128, []).with_column_and_index_infos(
+                [(
+                    unique_id + 1,
+                    crate::cardinality::pseudo::PseudoColumn {
+                        lower_name: "other".to_owned(),
+                        unique_key_flag: false,
+                    },
+                )],
+                [],
+            ),
+        );
         let selectivity = analyzed_filter_selectivity(&bare, &[like("green%")]).expect("analyzed");
         assert!(
             (selectivity - 0.1).abs() < 1e-12,
@@ -4379,7 +3374,8 @@ mod access_path_context_tests {
     #[test]
     fn logical_range_derivation_uses_current_statement_parameters() {
         let allocator = crate::plan_base::PlanIdAllocator::new();
-        let ty = FieldType::new(FieldTypeCode::LongLong);
+        let mut ty = FieldType::new(FieldTypeCode::LongLong);
+        ty.add_flags(tidb_datatype::FieldTypeFlags::PRI_KEY);
         let mut column = tidb_expr::column::Column::new(1, ty.clone());
         column.id = 1;
         column.ret_type = Some(ty.clone());
@@ -4399,7 +3395,22 @@ mod access_path_context_tests {
             handle_is_int: true,
             handle_cols: vec![column.clone()],
             table_columns: vec![column.clone()],
-            table_stats: Some(StatsInfo::new(10_000.0, [(1, 10_000.0)])),
+            // Go `initStats` attaches `PseudoTable`'s collection, whose
+            // handle column is `IsHandle`.
+            table_stats: Some(StatsInfo::new(10_000.0, [(1, 10_000.0)]).with_hist_coll(
+                crate::stats_info::HistColl::new(true, 10_000, [])
+                    .with_pk_is_handle(true)
+                    .with_column_and_index_infos(
+                        [(
+                            1,
+                            crate::cardinality::pseudo::PseudoColumn {
+                                lower_name: "id".to_owned(),
+                                unique_key_flag: false,
+                            },
+                        )],
+                        [],
+                    ),
+            )),
             pushed_down_conds: vec![bound("ge", 0), bound("le", 1)],
             ..Default::default()
         };
@@ -4431,7 +3442,11 @@ mod access_path_context_tests {
         use crate::stats_info::HistColl;
         let allocator = crate::plan_base::PlanIdAllocator::new();
         let ty = FieldType::new(FieldTypeCode::LongLong);
-        let columns = [1, 2].map(|id| tidb_expr::column::Column::new(id, ty.clone()));
+        let columns = [1, 2].map(|id| {
+            let mut column = tidb_expr::column::Column::new(id, ty.clone());
+            column.id = id;
+            column
+        });
         let histogram = std::sync::Arc::new(ColumnStats {
             histogram: tidb_stats::Histogram {
                 ndv: 10,
@@ -4526,8 +3541,9 @@ mod access_path_context_tests {
                 );
             }
         }
-        // A failure in a nested DNF must reach the outer estimator fallback,
-        // rather than multiplying a branch fallback by the preceding filter.
+        // A comparison whose constant cannot be evaluated builds no point
+        // (`points.go:340`), so that DNF item is an empty range charged the
+        // one-row floor, combined under the independence assumption.
         let valid = predicates(0)[0][0].clone();
         let mut missing = Constant::new(Datum::Null, ty.clone());
         missing.param_marker = Some(ParamMarker { order: 2 });
@@ -4538,9 +3554,12 @@ mod access_path_context_tests {
                 Expression::Constant(missing),
             ],
         );
+        let valid_selectivity = estimate(vec![valid.clone()]) / 100.0;
+        let floor = 1.0 / 100.0;
+        let dnf_selectivity = valid_selectivity + floor - valid_selectivity * floor;
         assert_eq!(
             estimate(vec![valid.clone(), scalar("or", vec![valid, invalid])]),
-            80.0
+            100.0 * valid_selectivity * dnf_selectivity
         );
     }
 }

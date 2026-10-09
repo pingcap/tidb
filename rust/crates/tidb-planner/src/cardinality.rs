@@ -25,6 +25,7 @@ pub mod pseudo;
 pub mod row_count_column;
 pub mod row_count_estimator;
 pub mod row_size;
+pub mod selectivity;
 pub mod uniform;
 
 /// Maximum number of columns considered by exponential backoff.

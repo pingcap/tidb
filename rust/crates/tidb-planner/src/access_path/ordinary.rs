@@ -43,24 +43,8 @@ pub(crate) fn filter_selectivity(
     let Some(stats) = &source.table_stats else {
         return crate::cost_factors::SELECTION_FACTOR;
     };
-    let ratio = if stats
-        .hist_coll()
-        .is_none_or(crate::stats_info::HistColl::pseudo)
-    {
-        source.base.base.schema().and_then(|schema| {
-            crate::logical::rewrite::pseudo_range_filter_selectivity(
-                source,
-                stats,
-                conditions,
-                schema,
-                context,
-                context.selectivity_factor,
-            )
-        })
-    } else {
-        crate::logical::rewrite::analyzed_filter_selectivity_in(stats, conditions, context)
-    };
-    ratio.unwrap_or(crate::cost_factors::SELECTION_FACTOR)
+    crate::logical::rewrite::analyzed_filter_selectivity_in(stats, conditions, context)
+        .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
 }
 
 /// Derive the range, physical key layout and filter partition together.

@@ -403,22 +403,38 @@ impl DataSource {
                 .zip(self.common_handle_lens.iter().copied())
                 .collect();
         }
-        let Some(handle) = self
+        self.pk_handle_col_to_append(index, declared)
+            .map(|handle| (handle, tidb_datatype::UNSPECIFIED_LENGTH))
+            .into_iter()
+            .collect()
+    }
+
+    /// Go `fillIndexPath`'s suffix (`stats.go:177-197`): a complete,
+    /// non-unique secondary key gains the signed integer handle, in the path
+    /// columns and in `HistColl.Idx2ColUniqueIDs`. A common handle is never
+    /// appended there.
+    #[must_use]
+    pub fn pk_handle_col_to_append(
+        &self,
+        index: &crate::plan_builder::catalog::SourceIndex,
+        declared: &[(Column, i64)],
+    ) -> Option<Column> {
+        if index.unique || index.primary || declared.len() != index.columns.len() {
+            return None;
+        }
+        let handle = self
             .base
             .base
             .schema()
-            .and_then(|schema| self.get_pk_is_handle_col(schema))
-        else {
-            return Vec::new();
-        };
+            .and_then(|schema| self.get_pk_is_handle_col(schema))?;
         if handle.ret_type.as_ref().is_some_and(|ty| ty.is_unsigned())
             || declared.iter().any(|(column, _)| {
                 column.id == EXTRA_HANDLE_ID || column.unique_id == handle.unique_id
             })
         {
-            return Vec::new();
+            return None;
         }
-        vec![(handle.clone(), tidb_datatype::UNSPECIFIED_LENGTH)]
+        Some(handle.clone())
     }
 
     /// Go `HasV0NewCollationStringHandle`: only non-binary strings use

@@ -3026,22 +3026,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         table_stats
                         .as_ref()
                         .and_then(|stats| {
-                            if ds.table_scan_penalty.pseudo_stats {
-                                crate::logical::rewrite::pseudo_range_filter_selectivity(
-                                    ds,
-                                    stats,
-                                    &residual_table_filters,
-                                    ds.base.base.schema()?,
-                                    &ctx.access_path_derivation_context(),
-                                    ctx.selectivity_factor,
-                                )
-                            } else {
-                                crate::logical::rewrite::analyzed_filter_selectivity_in(
-                                    stats,
-                                    &residual_table_filters,
-                                    &ctx.access_path_derivation_context(),
-                                )
-                            }
+                            crate::logical::rewrite::analyzed_filter_selectivity_in(
+                                stats,
+                                &residual_table_filters,
+                                &ctx.access_path_derivation_context(),
+                            )
                         })
                         .filter(|value| *value > 0.0)
                         .unwrap_or(crate::cost_factors::SELECTION_FACTOR)

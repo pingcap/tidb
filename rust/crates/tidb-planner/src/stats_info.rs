@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::cardinality::ndv::GroupNdv;
+use crate::cardinality::pseudo::PseudoColumn;
 use crate::cardinality::row_count_estimator::{ColumnStats, IndexRowCounts, IndexStats};
 use crate::cardinality::row_size::RowSizeColumnStats;
 
@@ -44,6 +45,8 @@ pub struct HistColl {
     histograms: BTreeMap<i64, Arc<ColumnStats>>,
     /// Original column validity state, separate from retained histogram metadata.
     column_load_status: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
+    /// Index load states, keyed by index ID.
+    index_load_status: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
     /// Go `HistColl.Indices`, keyed by index ID, for correlated-range counts.
     index_histograms: BTreeMap<i64, Arc<IndexStats>>,
     /// Go `HistColl.ColUniqueID2IdxIDs`, sorted by index ID as generated.
@@ -63,6 +66,29 @@ pub struct HistColl {
     /// Go `HistColl.Indices`' `(column unique ids, NDV)` per loaded index,
     /// which `getGroupNDVs` matches against a source's asked column groups.
     index_ndvs: BTreeMap<i64, (Vec<i64>, f64)>,
+    /// Go `HistColl.Columns`' `col.Info`, keyed by planner unique ID, as
+    /// `pseudoSelectivity`'s `coll.GetCol` reads it: every public column of
+    /// a `PseudoTable`, the stored ones otherwise.
+    column_infos: BTreeMap<i64, PseudoColumn>,
+    /// Go `HistColl.Indices`' `idx.Info`, for every index the collection
+    /// holds: every public index of a `PseudoTable`, the stored ones
+    /// otherwise.
+    index_infos: Vec<HistCollIndexInfo>,
+}
+
+/// Go `statistics.Index.Info`, the subset the planner's estimators read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistCollIndexInfo {
+    /// `idx.Info.ID`.
+    pub id: i64,
+    /// `idx.Info.Unique`.
+    pub unique: bool,
+    /// `idx.Info.MVIndex`.
+    pub mv_index: bool,
+    /// `idx.Info.Columns[i].Name.L`, in index order.
+    pub column_lower_names: Vec<String>,
+    /// `idx.Info.Columns[i].Length`, in index order.
+    pub column_lengths: Vec<i64>,
 }
 
 impl PartialEq for HistColl {
@@ -135,6 +161,7 @@ impl HistColl {
             columns: columns.into_iter().collect(),
             histograms: BTreeMap::new(),
             column_load_status: BTreeMap::new(),
+            index_load_status: BTreeMap::new(),
             index_histograms: BTreeMap::new(),
             column_index_ids: BTreeMap::new(),
             index_columns: BTreeMap::new(),
@@ -143,7 +170,102 @@ impl HistColl {
             modify_count: 0,
             pk_is_handle: false,
             index_ndvs: BTreeMap::new(),
+            column_infos: BTreeMap::new(),
+            index_infos: Vec::new(),
         }
+    }
+
+    /// Attaches Go `HistColl.Columns`' and `Indices`' `Info` metadata.
+    #[must_use]
+    pub fn with_column_and_index_infos(
+        mut self,
+        columns: impl IntoIterator<Item = (i64, PseudoColumn)>,
+        indexes: impl IntoIterator<Item = HistCollIndexInfo>,
+    ) -> Self {
+        self.column_infos = columns.into_iter().collect();
+        self.index_infos = indexes.into_iter().collect();
+        self
+    }
+
+    /// Go `coll.GetCol(colID).Info`, when the collection holds the column.
+    #[must_use]
+    pub fn column_info(&self, unique_id: i64) -> Option<&PseudoColumn> {
+        self.column_infos.get(&unique_id)
+    }
+
+    /// Go `coll.Indices`' `Info`, in collection order.
+    #[must_use]
+    pub fn index_infos(&self) -> &[HistCollIndexInfo] {
+        &self.index_infos
+    }
+
+    /// Go `coll.GetIdx(id).Info`, when the collection holds the index.
+    #[must_use]
+    pub fn index_info(&self, index_id: i64) -> Option<&HistCollIndexInfo> {
+        self.index_infos.iter().find(|info| info.id == index_id)
+    }
+
+    /// Preserves catalog index load states, keyed by index ID.
+    #[must_use]
+    pub fn with_index_load_status(
+        mut self,
+        statuses: impl IntoIterator<Item = (i64, tidb_stats::StatsLoadedStatus)>,
+    ) -> Self {
+        self.index_load_status = statuses.into_iter().collect();
+        self
+    }
+
+    /// Go `coll.GetCol(uniqueID).IsFullLoad()`.
+    #[must_use]
+    pub fn column_is_full_load(&self, unique_id: i64) -> bool {
+        self.column_load_status
+            .get(&unique_id)
+            .is_some_and(|status| status.is_full_load())
+    }
+
+    /// Go `coll.GetIdx(id).IsFullLoad()`.
+    #[must_use]
+    pub fn index_is_full_load(&self, index_id: i64) -> bool {
+        self.index_load_status
+            .get(&index_id)
+            .is_some_and(|status| status.is_full_load())
+    }
+
+    /// Go `coll.GetCol(uniqueID) != nil`.
+    #[must_use]
+    pub fn has_column(&self, unique_id: i64) -> bool {
+        self.column_infos.contains_key(&unique_id)
+            || self.columns.contains_key(&unique_id)
+            || self.histograms.contains_key(&unique_id)
+    }
+
+    /// Go `coll.ForEachIndexImmutable`'s index IDs, sorted as `Selectivity`
+    /// stabilizes them.
+    #[must_use]
+    pub fn index_ids(&self) -> Vec<i64> {
+        let mut ids: Vec<i64> = self
+            .index_infos
+            .iter()
+            .map(|info| info.id)
+            .chain(self.index_columns.keys().copied())
+            .chain(self.index_histograms.keys().copied())
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
+    /// Go `coll.ColNum() == 0 && coll.IdxNum() == 0`. Every map here is a
+    /// view of `Columns` or `Indices`, so any non-empty one means the
+    /// collection holds something.
+    #[must_use]
+    pub fn has_no_column_or_index(&self) -> bool {
+        self.column_infos.is_empty()
+            && self.index_infos.is_empty()
+            && self.columns.is_empty()
+            && self.histograms.is_empty()
+            && self.index_histograms.is_empty()
+            && self.index_columns.is_empty()
     }
 
     /// Attaches the loaded column histograms, keyed by planner unique id.
@@ -264,6 +386,9 @@ impl HistColl {
             .get(&index_id)
             .copied()
             .unwrap_or_default();
+        if let Some(info) = self.index_info(index_id) {
+            stats.unique_columns = info.unique.then_some(info.column_lower_names.len());
+        }
         stats
     }
 

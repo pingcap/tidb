@@ -226,6 +226,24 @@ impl Session {
                         !value
                             .eq_ignore_ascii_case(tidb_vardef::tidb_vars::OPT_OBJECTIVE_DETERMINATE)
                     }),
+                selectivity_factor: self.vars.selectivity_factor(),
+                default_str_match_selectivity: self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_DEFAULT_STR_MATCH_SELECTIVITY)
+                    .ok()
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DEFAULT_STR_MATCH_SELECTIVITY as f64),
+                range_max_size: number(
+                    tidb_vardef::tidb_vars::TIDB_OPT_RANGE_MAX_SIZE,
+                    tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_SIZE as f64,
+                ) as i64,
+                opt_prefix_index_single_scan: self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_OPT_PREFIX_INDEX_SINGLE_SCAN)
+                    .ok()
+                    .map_or(tidb_vardef::defaults::DEF_TIDB_OPT_PREFIX_INDEX_SINGLE_SCAN, |value| {
+                        value.eq_ignore_ascii_case("ON") || value == "1"
+                    }),
             };
         env.session.correlation_options =
             tidb_planner::cardinality::cross_estimation::CorrelationOptions {

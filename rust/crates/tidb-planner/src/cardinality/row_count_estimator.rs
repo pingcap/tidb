@@ -138,6 +138,47 @@ pub struct EstimatorOptions {
     pub risk_range_skew_ratio: f64,
     /// False under `OptObjectiveDeterminate`, which bans modify-count use.
     pub allow_use_modify_count: bool,
+    /// Go `SessionVars.SelectivityFactor` (`tidb_opt_selectivity_factor`),
+    /// the ceiling `pseudoSelectivity` starts its `minFactor` from.
+    pub selectivity_factor: f64,
+    /// Go `SessionVars.DefaultStrMatchSelectivity`
+    /// (`tidb_default_string_match_selectivity`).
+    pub default_str_match_selectivity: f64,
+    /// Go `SessionVars.RangeMaxSize` (`tidb_opt_range_max_size`), the
+    /// ranger's memory quota while `Selectivity` builds ranges.
+    pub range_max_size: i64,
+    /// Go `RangerContext.OptPrefixIndexSingleScan`
+    /// (`tidb_opt_prefix_index_single_scan`).
+    pub opt_prefix_index_single_scan: bool,
+}
+
+impl EstimatorOptions {
+    /// Go `SessionVars.EnableEvalTopNEstimationForStrMatch`.
+    #[must_use]
+    pub fn enable_eval_top_n_estimation_for_str_match(&self) -> bool {
+        self.default_str_match_selectivity == 0.0
+    }
+
+    /// Go `SessionVars.GetStrMatchDefaultSelectivity`: 0 selects 0.1 and
+    /// enables TopN-assisted estimation.
+    #[must_use]
+    pub fn str_match_default_selectivity(&self) -> f64 {
+        if self.default_str_match_selectivity == 0.0 {
+            0.1
+        } else {
+            self.default_str_match_selectivity
+        }
+    }
+
+    /// Go `SessionVars.GetNegateStrMatchDefaultSelectivity`.
+    #[must_use]
+    pub fn negate_str_match_default_selectivity(&self) -> f64 {
+        if self.default_str_match_selectivity == tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR {
+            tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR
+        } else {
+            1.0 - self.str_match_default_selectivity()
+        }
+    }
 }
 
 impl Default for EstimatorOptions {
@@ -151,6 +192,11 @@ impl Default for EstimatorOptions {
             risk_eq_skew_ratio: 0.0,
             risk_range_skew_ratio: 0.0,
             allow_use_modify_count: true,
+            selectivity_factor: tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR,
+            default_str_match_selectivity:
+                tidb_vardef::defaults::DEF_TIDB_DEFAULT_STR_MATCH_SELECTIVITY as f64,
+            range_max_size: tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_SIZE,
+            opt_prefix_index_single_scan: tidb_vardef::defaults::DEF_TIDB_OPT_PREFIX_INDEX_SINGLE_SCAN,
         }
     }
 }
@@ -1306,6 +1352,10 @@ pub struct IndexEstimationStats<'a> {
     pub row_counts: IndexRowCounts,
     /// IndexInfo conditions controlling full-range short-circuiting.
     pub policy: super::index_range_policy::IndexRangePolicy,
+    /// Go `len(idx.Info.Columns)` when `idx.Info.Unique`: the collection
+    /// knows every index's metadata, histogram or not, and the pseudo
+    /// estimate caps a full unique-key point at one row.
+    pub unique_columns: Option<usize>,
 }
 
 /// An alternate leading-column index uses the same estimation context.
@@ -1334,6 +1384,7 @@ impl<'a> IndexEstimationStats<'a> {
             Vec::new()
         };
         Self {
+            unique_columns: index.filter(|index| index.unique).map(|index| index.num_columns),
             index,
             columns,
             column_ndvs,
@@ -1409,10 +1460,7 @@ pub fn get_index_row_count(
             crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
                 ranges,
                 stats.row_counts.table_realtime as f64,
-                stats
-                    .index
-                    .filter(|index| index.unique)
-                    .map(|index| index.num_columns),
+                stats.unique_columns,
             ),
         ));
     };

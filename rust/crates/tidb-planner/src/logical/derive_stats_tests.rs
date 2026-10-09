@@ -71,6 +71,60 @@ fn stated_source(
     LogicalPlan::DataSource(source)
 }
 
+/// Go `initStats` attaches `PseudoTable`'s collection to an unanalyzed
+/// source: every public column and index, with `Idx2ColUniqueIDs` mapped
+/// onto the source schema.
+fn attach_pseudo_collection(op: &mut DataSource) {
+    let schema = op.base.base.schema().expect("source schema").columns.clone();
+    let profile = op.table_stats.take().expect("table stats");
+    let rows = profile.row_count();
+    let columns = op
+        .columns
+        .iter()
+        .zip(&schema)
+        .map(|(metadata, column)| {
+            (
+                column.unique_id,
+                crate::cardinality::pseudo::PseudoColumn {
+                    lower_name: metadata.name.to_lowercase(),
+                    unique_key_flag: false,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let index_columns = op
+        .indexes
+        .iter()
+        .map(|index| {
+            let ids = index
+                .columns
+                .iter()
+                .map_while(|column| op.schema_column_for_index_column(column))
+                .map(|column| column.unique_id)
+                .collect::<Vec<_>>();
+            (index.id, ids)
+        })
+        .collect::<Vec<_>>();
+    let index_infos = op
+        .indexes
+        .iter()
+        .map(|index| crate::stats_info::HistCollIndexInfo {
+            id: index.id,
+            unique: index.unique,
+            mv_index: index.is_multi_valued,
+            column_lower_names: index.columns.iter().map(|c| c.name.to_lowercase()).collect(),
+            column_lengths: index.columns.iter().map(|c| c.length).collect(),
+        })
+        .collect::<Vec<_>>();
+    op.table_stats = Some(
+        StatsInfo::new(rows, profile.col_ndvs().iter().map(|(id, ndv)| (*id, *ndv))).with_hist_coll(
+            crate::stats_info::HistColl::new(true, rows as i64, [])
+                .with_index_columns(index_columns)
+                .with_column_and_index_infos(columns, index_infos),
+        ),
+    );
+}
+
 fn derive(plan: &mut LogicalPlan) -> Result<(StatsInfo, bool), crate::plan_base::PlanError> {
     plan.recursive_derive_stats(&[])
 }
@@ -448,6 +502,7 @@ fn a_pushed_equality_charges_gos_pseudo_rate() {
         is_not_null: false,
     }];
     op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
+    attach_pseudo_collection(op);
 
     let (stats, _) = derive(&mut source).expect("an unanalyzed equality derives");
     assert!(
@@ -478,6 +533,7 @@ fn two_pseudo_bounds_form_one_column_range() {
         Expression::ScalarFunction(comparison_condition_to_constant("ge", 1, 1)),
         Expression::ScalarFunction(comparison_condition_to_constant("le", 1, 3)),
     ];
+    attach_pseudo_collection(op);
 
     let (stats, _) = derive(&mut source).expect("an unanalyzed bounded range derives");
     assert!(
@@ -536,6 +592,7 @@ fn pseudo_column_range_quota_changes_statistics_cover() {
             Expression::ScalarFunction(comparison_condition_to_constant("ge", 1, 1)),
             Expression::ScalarFunction(comparison_condition_to_constant("le", 1, 3)),
         ];
+        attach_pseudo_collection(op);
         let mut context = super::rule_tests::test_context(&allocator);
         context.range_max_size = quota;
         let (stats, _) = source
@@ -590,6 +647,7 @@ fn partial_dnf_index_range_preserves_logical_statistics_cover() {
         FieldType::new(FieldTypeCode::Long),
         vec![branch(1), branch(3)],
     ))];
+    attach_pseudo_collection(op);
     for (factor, expected) in [(0.8, 16.0), (0.25, 5.0)] {
         let mut plan = source.clone();
         let mut context = super::rule_tests::test_context(&allocator);
