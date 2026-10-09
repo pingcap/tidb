@@ -77,6 +77,7 @@ pub mod hint_updatable_vars;
 pub mod keydecoder;
 pub mod label_delivery;
 pub mod mdl_info_load;
+pub mod meta_txn;
 pub mod multi_statement_transaction;
 pub mod mysql_bootstrap;
 pub mod mysql_system_tables;

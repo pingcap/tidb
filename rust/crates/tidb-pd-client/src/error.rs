@@ -39,6 +39,8 @@ pub enum PdOperation {
     ExternalTimestamp,
     /// Publish PD global configuration.
     StoreGlobalConfig,
+    /// Resource-group metadata, Go `ResourceManagerClient.ListResourceGroups`.
+    ListResourceGroups,
 }
 
 impl std::fmt::Display for PdOperation {
@@ -56,6 +58,7 @@ impl std::fmt::Display for PdOperation {
             Self::GetGcState => formatter.write_str("GetGCState"),
             Self::ExternalTimestamp => formatter.write_str("ExternalTimestamp"),
             Self::StoreGlobalConfig => formatter.write_str("StoreGlobalConfig"),
+            Self::ListResourceGroups => formatter.write_str("ListResourceGroups"),
         }
     }
 }

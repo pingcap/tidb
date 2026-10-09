@@ -22,9 +22,12 @@ use std::time::Duration;
 use prost::Message;
 use std::convert::Infallible;
 use std::task::{Context, Poll};
-use tidb_pd_client::{PdClient, PdKeyRange, PdNodeState, PdStoreState};
+use tidb_pd_client::{
+    PdClient, PdClientError, PdKeyRange, PdNodeState, PdOperation, PdStoreState,
+};
 use tidb_proto::metapb;
 use tidb_proto::pdpb;
+use tidb_proto::resource_manager as rmpb;
 use tidb_proto::test_pd_server::{Pd, PdServer};
 use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
 
@@ -105,6 +108,8 @@ struct State {
     gc_state_requests: Vec<pdpb::GetGcStateRequest>,
     global_config: Reply<pdpb::StoreGlobalConfigResponse>,
     global_config_requests: Vec<pdpb::StoreGlobalConfigRequest>,
+    resource_groups: Reply<rmpb::ListResourceGroupsResponse>,
+    resource_group_requests: Vec<rmpb::ListResourceGroupsRequest>,
 }
 
 #[derive(Clone)]
@@ -381,6 +386,65 @@ struct HealthResponse {
     #[prost(int32, tag = "1")]
     status: i32,
 }
+#[tonic::async_trait]
+impl rmpb::resource_manager_server::ResourceManager for MockPd {
+    async fn list_resource_groups(
+        &self,
+        request: tonic::Request<rmpb::ListResourceGroupsRequest>,
+    ) -> Result<tonic::Response<rmpb::ListResourceGroupsResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.resource_group_requests.push(request.into_inner());
+            state.resource_groups.clone()
+        };
+        reply.send().await
+    }
+
+    async fn get_resource_group(
+        &self,
+        _request: tonic::Request<rmpb::GetResourceGroupRequest>,
+    ) -> Result<tonic::Response<rmpb::GetResourceGroupResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("not part of this fixture"))
+    }
+
+    async fn add_resource_group(
+        &self,
+        _request: tonic::Request<rmpb::PutResourceGroupRequest>,
+    ) -> Result<tonic::Response<rmpb::PutResourceGroupResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("not part of this fixture"))
+    }
+
+    async fn modify_resource_group(
+        &self,
+        _request: tonic::Request<rmpb::PutResourceGroupRequest>,
+    ) -> Result<tonic::Response<rmpb::PutResourceGroupResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("not part of this fixture"))
+    }
+
+    async fn delete_resource_group(
+        &self,
+        _request: tonic::Request<rmpb::DeleteResourceGroupRequest>,
+    ) -> Result<tonic::Response<rmpb::DeleteResourceGroupResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("not part of this fixture"))
+    }
+
+    type AcquireTokenBucketsStream = std::pin::Pin<
+        Box<
+            dyn tonic::codegen::tokio_stream::Stream<
+                    Item = Result<rmpb::TokenBucketsResponse, tonic::Status>,
+                >
+                + Send,
+        >,
+    >;
+
+    async fn acquire_token_buckets(
+        &self,
+        _request: tonic::Request<tonic::Streaming<rmpb::TokenBucketsRequest>>,
+    ) -> Result<tonic::Response<Self::AcquireTokenBucketsStream>, tonic::Status> {
+        Err(tonic::Status::unimplemented("not part of this fixture"))
+    }
+}
+
 #[derive(Clone)]
 struct HealthServer(MockPd);
 impl tonic::server::NamedService for HealthServer {
@@ -447,7 +511,12 @@ impl Server {
             runtime.block_on(async move {
                 let server = tonic::transport::Server::builder()
                     .add_service(HealthServer(service.clone()))
-                    .add_service(PdServer::new(service))
+                    .add_service(PdServer::new(service.clone()))
+                    // Go's classic deployment serves the ResourceManager from
+                    // the PD server itself, on the same connection.
+                    .add_service(rmpb::resource_manager_server::ResourceManagerServer::new(
+                        service,
+                    ))
                     .serve_with_shutdown(address, async {
                         let _ = shutdown_rx.await;
                     });
@@ -735,6 +804,8 @@ fn valid_state() -> State {
         gc_state_requests: Vec::new(),
         global_config: Reply::Value(pdpb::StoreGlobalConfigResponse::default()),
         global_config_requests: Vec::new(),
+        resource_groups: Reply::Value(rmpb::ListResourceGroupsResponse::default()),
+        resource_group_requests: Vec::new(),
         routing_metadata: Vec::new(),
     }
 }
@@ -2597,4 +2668,84 @@ fn pd_forwarding_batch_leader_required_region_is_forwarded() {
         Err(tidb_pd_client::PdClientError::Closed)
     ));
     assert!(leader.state.lock().unwrap().region_requests.is_empty());
+}
+
+
+/// Go `(*client).ListResourceGroups` (`pd/client/resource_manager_client.go:111-135`):
+/// the request carries `WithRuStats` and ALWAYS a keyspace -- the configured
+/// one, or `NullKeyspaceID` (0xFFFFFFFF) for the null keyspace, which Go sets
+/// explicitly rather than leaving unset. The groups come back as PD sent them.
+#[test]
+fn list_resource_groups_sends_gos_request_and_returns_the_groups() {
+    let mut fixture = valid_state();
+    fixture.resource_groups = Reply::Value(rmpb::ListResourceGroupsResponse {
+        error: None,
+        groups: vec![
+            rmpb::ResourceGroup {
+                name: "default".into(),
+                ..Default::default()
+            },
+            rmpb::ResourceGroup {
+                name: "rg1".into(),
+                ..Default::default()
+            },
+        ],
+    });
+    let server = Server::start(fixture);
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let groups = client.list_resource_groups(None, true).unwrap();
+    assert_eq!(
+        groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(),
+        ["default", "rg1"]
+    );
+    client.list_resource_groups(Some(7), false).unwrap();
+
+    let state = server.state.lock().unwrap();
+    assert_eq!(state.resource_group_requests.len(), 2);
+    let null_keyspace = &state.resource_group_requests[0];
+    assert!(null_keyspace.with_ru_stats);
+    assert_eq!(
+        null_keyspace.keyspace_id,
+        Some(rmpb::KeyspaceIdValue {
+            keyspace: Some(rmpb::keyspace_id_value::Keyspace::Value(0xFFFF_FFFF)),
+        }),
+        "Go sends NullKeyspaceID explicitly for the null keyspace"
+    );
+    let configured = &state.resource_group_requests[1];
+    assert!(!configured.with_ru_stats);
+    assert_eq!(
+        configured.keyspace_id,
+        Some(rmpb::KeyspaceIdValue {
+            keyspace: Some(rmpb::keyspace_id_value::Keyspace::Value(7)),
+        })
+    );
+}
+
+/// An application error in the response body is Go's
+/// `ErrClientListResourceGroup` carrying the server's message; no groups are
+/// returned beside it.
+#[test]
+fn a_resource_manager_error_is_returned_with_the_servers_message() {
+    let mut fixture = valid_state();
+    fixture.resource_groups = Reply::Value(rmpb::ListResourceGroupsResponse {
+        error: Some(rmpb::Error {
+            message: "resource manager is not ready".into(),
+        }),
+        groups: vec![rmpb::ResourceGroup::default()],
+    });
+    let server = Server::start(fixture);
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    match client.list_resource_groups(None, true) {
+        Err(PdClientError::HeaderError {
+            operation,
+            message,
+            ..
+        }) => {
+            assert_eq!(operation, PdOperation::ListResourceGroups);
+            assert_eq!(message, "resource manager is not ready");
+        }
+        other => panic!("expected the server's error, got {other:?}"),
+    }
 }

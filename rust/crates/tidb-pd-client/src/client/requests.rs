@@ -338,6 +338,64 @@ pub(super) fn get_all_stores(
     Ok(response.stores)
 }
 
+/// Go `NullKeyspaceID` (`pd/client/constants/constants.go:28`).
+const NULL_KEYSPACE_ID: u32 = 0xFFFF_FFFF;
+
+/// Go `(*client).ListResourceGroups` (`pd/client/resource_manager_client.go:111-135`).
+///
+/// Go reaches the ResourceManager through `resourceManagerReadClient`: the
+/// microservice discovery connection when one exists, otherwise the PD
+/// server connection. Classic deployments have no separate discovery, so the
+/// PD endpoint failover already chose is the connection Go uses.
+///
+/// The request always carries a keyspace, as Go's does: the configured one,
+/// or `NullKeyspaceID` for the null keyspace -- which the server would also
+/// infer from an UNSET field, but Go sets it explicitly. A ResourceManager
+/// response carries no `pdpb` header, so there is no cluster identity to
+/// validate; an application error in the body is Go's
+/// `ErrClientListResourceGroup` with the server's message.
+pub(super) fn list_resource_groups(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    endpoint: &str,
+    timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
+    keyspace_id: Option<u32>,
+    with_ru_stats: bool,
+) -> Result<Vec<tidb_proto::resource_manager::ResourceGroup>, PdClientError> {
+    use tidb_proto::resource_manager::{
+        keyspace_id_value::Keyspace, resource_manager_client::ResourceManagerClient,
+        KeyspaceIdValue, ListResourceGroupsRequest,
+    };
+    let channel = {
+        let _guard = runtime.enter();
+        clients.channel(endpoint)?
+    };
+    let mut client = ResourceManagerClient::new(channel);
+    let response = block_on_rpc(
+        runtime,
+        timeout,
+        shutdown,
+        PdOperation::ListResourceGroups,
+        client.list_resource_groups(ListResourceGroupsRequest {
+            with_ru_stats,
+            keyspace_id: Some(KeyspaceIdValue {
+                keyspace: Some(Keyspace::Value(keyspace_id.unwrap_or(NULL_KEYSPACE_ID))),
+            }),
+        }),
+    );
+    let response = map_rpc_result(response, PdOperation::ListResourceGroups, endpoint, timeout)?
+        .into_inner();
+    if let Some(error) = response.error {
+        return Err(PdClientError::HeaderError {
+            operation: PdOperation::ListResourceGroups,
+            error_type: 0,
+            message: error.message,
+        });
+    }
+    Ok(response.groups)
+}
+
 pub(super) fn get_gc_state(
     runtime: &tokio::runtime::Runtime,
     clients: &mut PdChannelCache,

@@ -194,6 +194,9 @@ pub(super) fn run_worker(
                 WorkerCommand::GetAllStores { reply } => {
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
+                WorkerCommand::ListResourceGroups { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
                 WorkerCommand::GetTimestamp { reply, .. } => {
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
@@ -427,6 +430,22 @@ pub(super) fn run_worker(
                     timeout,
                     &state,
                     &shutdown,
+                );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::ListResourceGroups {
+                keyspace_id,
+                with_ru_stats,
+                reply,
+            } => {
+                let result = super::failover::list_resource_groups_with_failover(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    &state,
+                    &shutdown,
+                    keyspace_id,
+                    with_ru_stats,
                 );
                 let _ = reply.send(result);
             }

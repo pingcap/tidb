@@ -737,8 +737,13 @@ pub fn generate_sql(stats: &RuStats) -> Result<Option<String>, RuStatsError> {
     let mut count = 0usize;
     for g in &latest.stats {
         let Some(consumption) = g.ru_consumption else {
-            // boundary: Go logs "group ru consumption statistics data is
-            // empty" with the group's name and id, then skips it.
+            // Go warns with the group's name and id, then skips it
+            // (`ru_stats.go:274-276`). A fresh cluster's `default` group has
+            // no consumption yet, so this is the line such a round logs.
+            eprintln!(
+                "{{\"level\":\"warn\",\"msg\":\"group ru consumption statistics data is empty\",\"name\":\"{}\",\"id\":{}}}",
+                g.name, g.id
+            );
             continue;
         };
         let mut ru = consumption.total();
@@ -778,6 +783,55 @@ mod tests {
     use chrono_tz::Tz;
 
     use super::*;
+
+    /// Go's loop works only on the DDL owner but computes the same next wake
+    /// either way (`ru_stats.go:73-109`): a non-owner holds the boundary and
+    /// takes over on the next one after ownership moves.
+    #[test]
+    fn a_non_owner_round_writes_nothing_and_keeps_the_boundary() {
+        let local = Tz::UTC;
+        let at = Utc
+            .with_ymd_and_hms(2026, 10, 8, 13, 30, 0)
+            .unwrap()
+            .with_timezone(&local);
+        let mut writer = RuStatsWriter::new(default_and_test_groups(), at, local);
+        let now = move || at;
+        let mut slept = Vec::new();
+        let wait = request_units_writer_round(&mut writer, &now, false, |d| slept.push(d));
+        assert!(writer.deps.statements.borrow().is_empty(), "a non-owner issues no SQL");
+        assert!(slept.is_empty(), "a non-owner never enters the retry sleep");
+        // The 24h boundary at 13:30 UTC is that day's 00:00; the next wake is
+        // the following midnight, 10h30m away.
+        assert_eq!(wait, std::time::Duration::from_secs(10 * 3600 + 30 * 60));
+    }
+
+    /// Go retries `DoWriteRUStatistics` a second apart and stops once the count
+    /// exceeds `maxRetryCount`, then still returns the aligned wait.
+    #[test]
+    fn an_owner_round_retries_a_failing_write_up_to_gos_bound() {
+        let local = Tz::UTC;
+        let at = Utc
+            .with_ymd_and_hms(2026, 10, 8, 6, 0, 0)
+            .unwrap()
+            .with_timezone(&local);
+        // Populated groups make the writer issue statements; failing from the
+        // first one makes every attempt fail.
+        let deps = MockDeps {
+            exec_err_after: Some(0),
+            ..default_and_test_groups()
+        };
+        let mut writer = RuStatsWriter::new(deps, at, local);
+        let now = move || at;
+        let mut slept = Vec::new();
+        let wait = request_units_writer_round(&mut writer, &now, true, |d| slept.push(d));
+        assert_eq!(
+            slept.len(),
+            MAX_RETRY_COUNT as usize,
+            "one sleep between each of Go's attempts"
+        );
+        assert!(slept.iter().all(|d| *d == std::time::Duration::from_secs(1)));
+        assert_eq!(wait, std::time::Duration::from_secs(18 * 3600));
+    }
 
     /// Upstream `ru_stats_test.go` is testkit-bound: `TestWriteRUStatistics`
     /// needs `testkit.CreateMockStoreAndDomain`, a bootstrapped
@@ -1407,4 +1461,81 @@ mod tests {
         let last = at(tz, 2024, 5, 1, 0, 0, 0);
         assert_eq!(next_wakeup(&last), at(tz, 2024, 5, 2, 0, 0, 0));
     }
+}
+
+/// Go `Domain.requestUnitsWriterLoop`'s body, one round
+/// (`pkg/domain/ru_stats.go:67-110`).
+///
+/// [`RuStatsWriter`] could always produce a day's rows, but nothing called it
+/// on a schedule, so a live server never wrote `mysql.request_unit_by_group`.
+/// The node's RU statistics worker drives this, and Go's loop is exactly that:
+/// a round, then a select between the exit signal and the next boundary.
+///
+/// Go's order, preserved: take the round's start, derive the last expected
+/// boundary from it, and only on the DDL owner retry `DoWriteRUStatistics` up
+/// to [`MAX_RETRY_COUNT`] times a second apart, re-stamping `StartTime` per
+/// attempt, then try `GCOutdatedRecords` once and warn rather than fail the
+/// round. The returned wait is `lastTime + interval` measured from now, so the
+/// loop holds its wall-clock boundary instead of drifting by its own runtime.
+/// A non-owner does no work and waits the same amount, so it takes over on the
+/// next boundary after ownership moves.
+///
+/// `now` supplies the round's wall clock, which is how a test drives a
+/// boundary without waiting a day; production passes `chrono::Local::now`.
+pub fn request_units_writer_round<D, Tz, N>(
+    writer: &mut RuStatsWriter<D, Tz>,
+    now: &N,
+    is_owner: bool,
+    mut sleep: impl FnMut(std::time::Duration),
+) -> std::time::Duration
+where
+    D: RuStatsDeps,
+    Tz: TimeZone,
+    N: Fn() -> DateTime<Tz>,
+{
+    let start = now();
+    let started = std::time::Instant::now();
+    let last_time = get_last_expected_time(&start, writer.interval, &writer.local);
+    if is_owner {
+        let mut count: i32 = 0;
+        // The loop's value is the last write error, or `None` once a write
+        // succeeds -- what Go's Info log reports as `zap.Error(err)`.
+        let last_error = loop {
+            // Go re-stamps StartTime on every attempt.
+            writer.start_time = now();
+            match writer.do_write_ru_statistics() {
+                Ok(()) => break None,
+                Err(error) => {
+                    eprintln!(
+                        "{{\"level\":\"error\",\"msg\":\"failed to insert request_unit_by_group data\",\"retry\":{count},\"error\":\"{error}\"}}"
+                    );
+                    count += 1;
+                    if count > MAX_RETRY_COUNT {
+                        break Some(error);
+                    }
+                    sleep(std::time::Duration::from_secs(1));
+                }
+            }
+        };
+        // Go attempts the GC once per owned round and only warns on failure.
+        if let Err(error) = writer.gc_outdated_records(&last_time) {
+            eprintln!(
+                "{{\"level\":\"warn\",\"msg\":\"[ru_stats] gc outdated rows failed, will try next time\",\"error\":\"{error}\"}}"
+            );
+        }
+        // Go logs every owned round's outcome at Info (`ru_stats.go:97-98`),
+        // including the last write error when the retries ran out.
+        eprintln!(
+            "{{\"level\":\"info\",\"msg\":\"[ru_stats] finish write ru historical data\",\"end_time\":\"{}\",\"interval\":\"{}\",\"cost_ms\":{},\"error\":{}}}",
+            last_time.fixed_offset().format(GO_DATE_TIME_LAYOUT),
+            writer.interval,
+            started.elapsed().as_millis(),
+            last_error.map_or_else(|| "null".to_owned(), |error| format!("\"{error}\""))
+        );
+    }
+    // Go: nextTime := lastTime.Add(ruStatsInterval); dur := time.Until(nextTime).
+    next_wakeup(&last_time)
+        .signed_duration_since(now())
+        .to_std()
+        .unwrap_or(std::time::Duration::ZERO)
 }

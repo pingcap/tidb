@@ -91,6 +91,11 @@ enum WorkerCommand {
     GetAllStores {
         reply: mpsc::Sender<Result<Vec<tidb_proto::metapb::Store>, PdClientError>>,
     },
+    ListResourceGroups {
+        keyspace_id: Option<u32>,
+        with_ru_stats: bool,
+        reply: mpsc::Sender<Result<Vec<tidb_proto::resource_manager::ResourceGroup>, PdClientError>>,
+    },
     GetTimestamp {
         deadline: Instant,
         reply: mpsc::Sender<Result<u64, PdClientError>>,
@@ -675,6 +680,28 @@ impl PdClient {
         self.shared
             .commands
             .send(WorkerCommand::GetAllStores { reply })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Go `ResourceManagerClient.ListResourceGroups(ctx, pd.WithRUStats)`.
+    ///
+    /// `keyspace_id` is `None` for the null keyspace, as for
+    /// [`Self::get_gc_state`]. `with_ru_stats` asks the server to attach each
+    /// group's consumption, which is what Go's RU statistics writer reads.
+    pub fn list_resource_groups(
+        &self,
+        keyspace_id: Option<u32>,
+        with_ru_stats: bool,
+    ) -> Result<Vec<tidb_proto::resource_manager::ResourceGroup>, PdClientError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(WorkerCommand::ListResourceGroups {
+                keyspace_id,
+                with_ru_stats,
+                reply,
+            })
             .map_err(|_| PdClientError::Closed)?;
         response.recv().unwrap_or(Err(PdClientError::Closed))
     }

@@ -453,6 +453,37 @@ pub(super) fn get_all_stores_with_failover(
     )
 }
 
+/// Lists resource groups through the same endpoint failover as every other
+/// foreground PD read.
+pub(super) fn list_resource_groups_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
+    keyspace_id: Option<u32>,
+    with_ru_stats: bool,
+) -> Result<Vec<tidb_proto::resource_manager::ResourceGroup>, PdClientError> {
+    foreground_with_failover(
+        runtime,
+        clients,
+        timeout,
+        state,
+        shutdown,
+        |runtime, clients, endpoint, _cluster_id| {
+            super::requests::list_resource_groups(
+                runtime,
+                clients,
+                endpoint,
+                timeout,
+                shutdown,
+                keyspace_id,
+                with_ru_stats,
+            )
+        },
+    )
+}
+
 pub(super) fn refresh_membership(
     runtime: &tokio::runtime::Runtime,
     clients: &mut PdChannelCache,

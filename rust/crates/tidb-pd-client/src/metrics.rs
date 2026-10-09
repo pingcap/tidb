@@ -64,10 +64,12 @@ pub fn observe_cmd(operation: PdOperation, seconds: f64, succeeded: bool) {
             &metrics.cmd_failed_duration_get_gc_state,
         ),
         // Native TSO owns its command and stream timing. Go does not time
-        // StoreGlobalConfig with these command collectors.
-        PdOperation::Tso | PdOperation::StoreGlobalConfig | PdOperation::ExternalTimestamp => {
-            return
-        }
+        // StoreGlobalConfig, nor any ResourceManager RPC
+        // (`pd/client/resource_manager_client.go`), with these collectors.
+        PdOperation::Tso
+        | PdOperation::StoreGlobalConfig
+        | PdOperation::ExternalTimestamp
+        | PdOperation::ListResourceGroups => return,
     };
     total.observe(seconds);
     if !succeeded {

@@ -48,6 +48,9 @@ pub use tikv_client_kvproto::metapb;
 /// Complete PD control-plane contracts shared with the native client.
 pub use tikv_client_kvproto::pdpb;
 
+/// PD ResourceManager messages and client, Go `rmpb`.
+pub use tikv_client_kvproto::resource_manager;
+
 /// Complete PD test service with generated default UNIMPLEMENTED handlers.
 /// Requests, responses and the production client use the native package.
 pub mod test_pd_server {

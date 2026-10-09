@@ -3,7 +3,7 @@
 The [JSON batch map](remaining-batches.json) owns the allocation below; the
 [finding register](structural-findings.json) owns dispositions and detailed
 residuals. Current counts are 86 tracked, 32 repaired and 54 unresolved
-(24 open, 30 partial). Read [README.md](README.md) for the latest repair and
+(23 open, 31 partial). Read [README.md](README.md) for the latest repair and
 validation receipts. Older maintenance summaries are preserved in the
 [planning archive](https://github.com/pingcap/tidb/blob/9a319a5d6d78593e623a9db8e8aed1f750380507/rust/docs/parity/current-audit/remaining-batches.md).
 

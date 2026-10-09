@@ -207,6 +207,53 @@ pub trait RawTransaction {
     ) -> Result<()>;
 }
 
+/// Go `meta.NewMutator(txn)` borrows its transaction: the caller keeps it and
+/// commits it afterwards, which is how `kv.RunInNewTxn`'s callback uses one.
+/// `Mutator::new` takes its transaction by value, so a borrowed transaction is
+/// itself a transaction.
+impl<T: RawTransaction + ?Sized> RawTransaction for &mut T {
+    fn start_ts(&self) -> u64 {
+        (**self).start_ts()
+    }
+
+    fn configure_meta_mutator(&mut self) {
+        (**self).configure_meta_mutator();
+    }
+
+    fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        (**self).get(key)
+    }
+
+    fn set(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+        (**self).set(key, value)
+    }
+
+    fn delete(&mut self, key: &[u8]) -> Result<()> {
+        (**self).delete(key)
+    }
+
+    fn scan_prefix(&mut self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        (**self).scan_prefix(prefix)
+    }
+
+    fn reverse_scan_prefix(
+        &mut self,
+        prefix: &[u8],
+        upper_inclusive: Option<&[u8]>,
+    ) -> Result<Box<dyn RawKvIterator>> {
+        (**self).reverse_scan_prefix(prefix, upper_inclusive)
+    }
+
+    fn iterate_range(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        visit: &mut RawRangeVisitor<'_>,
+    ) -> Result<()> {
+        (**self).iterate_range(start, end, visit)
+    }
+}
+
 /// Snapshot capabilities used by Go `IterAllTables`.
 pub trait MetaSnapshot: RawTransaction + Send {
     /// Applies Go's internal metadata request-source options. A storage

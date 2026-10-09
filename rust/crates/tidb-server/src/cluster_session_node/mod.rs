@@ -363,6 +363,7 @@ mod boot;
 mod ddl;
 mod ddl_notifier;
 mod record_set;
+mod ru_stats_writer;
 pub(crate) mod schema_lease;
 pub(crate) mod schema_sync;
 mod statistics;
@@ -1095,6 +1096,8 @@ pub struct ClusterSessionFactory {
     ddl_notifier: std::sync::OnceLock<Arc<tidb_ddl_notifier::DdlNotifier>>,
     /// Go `analyzeJobsCleanupWorker`, installed after stable `Arc` ownership.
     analyze_jobs_cleanup_worker: std::sync::OnceLock<AnalyzeJobsCleanupWorker>,
+    /// Go `Domain.requestUnitsWriterLoop`.
+    ru_stats_writer: std::sync::OnceLock<ru_stats_writer::RuStatsWriterWorker>,
     /// Go `autoAnalyzeWorker`, installed after stable `Arc` ownership.
     auto_analyze_worker: std::sync::OnceLock<AutoAnalyzeWorker>,
     /// Go Domain's capacity-16 historical-statistics mailbox.
@@ -1221,6 +1224,7 @@ impl ClusterSessionFactory {
             advanced_sys_session_pool: std::sync::OnceLock::new(),
             ddl_notifier: std::sync::OnceLock::new(),
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
+            ru_stats_writer: std::sync::OnceLock::new(),
             auto_analyze_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
@@ -1542,6 +1546,37 @@ impl ClusterSessionFactory {
         let _ = self
             .analyze_jobs_cleanup_worker
             .set(AnalyzeJobsCleanupWorker::start(self, lease));
+    }
+
+    /// Starts Go `Domain.requestUnitsWriterLoop` (`pkg/domain/domain.go:830`)
+    /// over this node's PD ResourceManager, meta store and internal-session
+    /// pool. Go starts it unconditionally beside the other domain loops; it
+    /// needs a PD client, so a node without one (the embedded store) has no
+    /// ResourceManager to read and starts nothing.
+    pub(crate) fn start_ru_stats_writer<C, L, P>(
+        self: &Arc<Self>,
+        pd: tidb_pd_client::PdClient,
+        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>>,
+        keyspace_id: Option<u32>,
+        timeout: Duration,
+    ) where
+        C: tidb_txnkv::transaction::StoreWriteClient + 'static,
+        L: tidb_txnkv::transaction::StoreWriteLoader + 'static,
+        P: tidb_txnkv::transaction::StorePdCapability,
+    {
+        if self.ru_stats_writer.get().is_some() {
+            return;
+        }
+        let deps = ru_stats_writer::ClusterRuStatsDeps::new(
+            pd,
+            opener,
+            self.advanced_sys_session_pool(),
+            keyspace_id,
+            timeout,
+        );
+        let _ = self
+            .ru_stats_writer
+            .set(ru_stats_writer::RuStatsWriterWorker::start(self, deps));
     }
 
     /// Starts pinned Go `autoAnalyzeWorker`. Like Go, only a positive stats

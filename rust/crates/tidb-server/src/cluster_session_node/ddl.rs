@@ -71,6 +71,17 @@ pub trait ClusterDdl: Send + Sync {
     /// refreshing would answer the next statement from a catalog it knows to
     /// be stale.
     fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `do.DDL().OwnerManager().IsOwner()`: whether this node owns the DDL
+    /// job queue right now.
+    ///
+    /// The domain's cluster-wide writers consult this on every round rather
+    /// than once, because ownership moves while a server runs. A DDL that has
+    /// not started owns nothing, which is also what Go answers before
+    /// `ddl.Start`, so that is the default.
+    fn is_owner(&self) -> bool {
+        false
+    }
 }
 
 const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
@@ -2054,7 +2065,10 @@ mod schema_sync_tests {
             false,
         )
         .unwrap();
-        assert!(!ddl.is_owner(), "run-ddl=false must not campaign");
+        assert!(
+            !ClusterDdl::is_owner(&ddl),
+            "run-ddl=false must not campaign"
+        );
         ddl.update_replica_status(7, true).unwrap();
         let published = catalog.load();
         assert_eq!(published.schema_version, 2);
@@ -2156,6 +2170,10 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    fn is_owner(&self) -> bool {
+        self.owner.is_owner()
+    }
+
     fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
         let drop_list = match statement {
             DdlStatement::DropTables { names, if_exists } => Some((names, *if_exists, false)),

@@ -552,6 +552,17 @@ pub(crate) fn run_cluster_session_node_with_spill(
     factory.start_auto_analyze_worker(config.stats_lease);
     factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
     factory.start_historical_stats_worker();
+    // Go `Domain.Start` runs `requestUnitsWriterLoop` beside the other domain
+    // loops (`pkg/domain/domain.go:830`). This node serves the null keyspace,
+    // which the ResourceManager request names as Go's `NullKeyspaceID`.
+    if let Some(pd) = authority.pd_client() {
+        factory.start_ru_stats_writer(
+            pd,
+            Arc::new(authority.transaction_opener()),
+            None,
+            TRANSACTION_RPC_TIMEOUT,
+        );
+    }
     let workload_etcd = crate::real_tikv_node::connect_schema_notifier(&config);
     let workload_store = workload_etcd
         .as_ref()

@@ -11,8 +11,8 @@
     "tracked": 86,
     "repaired": 32,
     "unresolved": 54,
-    "open": 24,
-    "partial": 30
+    "open": 23,
+    "partial": 31
   },
   "findings": [
     {
@@ -397,17 +397,17 @@
       "id": "O05",
       "status": "open",
       "group": "Domain and process services",
-      "finding": "Native resource-control callbacks exist but TiDB never installs a controller. Rust sysvars publish flags only. Resource-group names on requests do not implement PD token admission, settlement or runaway policy.",
+      "finding": "Native resource-control callbacks exist but TiDB never installs a controller. Rust sysvars publish flags only. Resource-group names on requests do not implement PD token admission, settlement or runaway policy. `PdClient::list_resource_groups` now reaches the PD ResourceManager (Go `ListResourceGroups`), the first ResourceManager capability; token admission, settlement and runaway policy remain absent.",
       "rust_evidence": "`rust/third_party/tikv-client-rs/src/resource_control.rs:323`, `:345`, `rust/crates/tidb-session/src/vars.rs:1315`; no Rust-crate caller of `set_resource_control_interceptor`",
       "go_owner": "`pkg/domain/runaway.go::initResourceGroupsController` constructs/starts the PD controller and runaway manager, then calls `tikv.SetResourceControlInterceptor`. Preserve native hooks and wire the actual owner.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. There is still no Rust-crate production caller of set_resource_control_interceptor; domain startup does not compose the PD resource controller and runaway integration. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
     },
     {
       "id": "O06",
-      "status": "open",
+      "status": "partial",
       "group": "Domain and process services",
-      "finding": "RU statistics helpers have no production writer-loop caller, owner gating or scheduled shutdown in the server. The existence of RuStatsWriter alone does not populate/expire the history.",
-      "rust_evidence": "`rust/crates/tidb-domain/src/ru_stats.rs:34`, `:442`, `rust/crates/tidb-server/src/cluster_session_node/boot.rs`",
+      "finding": "**P2; partially repaired:** Go `Domain.requestUnitsWriterLoop` now runs on the node: the writer is started at boot, consults the DDL owner every round, and is interrupted and joined at shutdown, over production dependencies -- the PD ResourceManager (`ListResourceGroups`), `RUStats` through `RunInNewTxn` + `meta.NewMutator` on a live TiKV transaction, meta resource groups, and `ExecRCRestrictedSQL` through the domain's internal-session pool. Observed live as DDL owner: the round completed with no error and, on a cluster with no consumption, wrote no rows, which is Go's answer. Non-empty rows need RU consumption reported to PD by a resource-group controller (O05). Recorded divergences: only read/write request units are persisted per group; the window start is computed on a fixed offset; `RUStats` end times are stored in UTC.",
+      "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/ru_stats_writer.rs::{ClusterRuStatsDeps,RuStatsWriterWorker}`; `tidb-domain/src/ru_stats.rs::request_units_writer_round`; `tidb-exec/src/meta_txn.rs::{MetaTxn,MetaTxnStorage}`; `tidb-pd-client/src/client/requests.rs::list_resource_groups`; `ClusterDdl::is_owner`; [RU statistics pipeline validation](ru-stats-pipeline-validation.json)",
       "go_owner": "`pkg/domain/ru_stats.go::requestUnitsWriterLoop`, `pkg/domain/domain.go` startup. Shares O05's controller dependency but has a separate persistence/maintenance responsibility.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. RuStatsWriter is still constructed only in source tests; startup does not run the owner-gated request-unit persistence/retention loop. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
     },
@@ -793,15 +793,14 @@
   "review_receipt": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-08",
-    "receipt": "tso-pipelining-validation.json",
+    "receipt": "ru-stats-pipeline-validation.json",
     "findings": [
-      "P03",
-      "P06"
+      "O06",
+      "O05"
     ],
     "repaired": 0,
     "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
-    "client_rust": "2e58a8a629adb93ebe38ff42d39c7751e78707c4",
-    "scope": "TSO batches are sent and collected independently, so a granted RPC concurrency produces concurrent in-flight requests. Both findings stay partial; no count changes."
+    "scope": "Go's RU statistics writer runs on the node over real storage, observed live as DDL owner. O06 open -> partial; O05 gains ListResourceGroups and stays open."
   },
   "latest_test_cleanup": {
     "date": "2026-10-08",
@@ -2302,6 +2301,16 @@
       "integration_start": "06d245799c",
       "client_rust": "2e58a8a629adb93ebe38ff42d39c7751e78707c4",
       "receipt": "tso-pipelining-validation.json"
+    },
+    {
+      "ids": [
+        "O06",
+        "O05"
+      ],
+      "statuses": "O06 open -> partial; O05 open",
+      "scope": "RU statistics writer loop, PD ResourceManager list, real-TiKV meta transaction, DDL owner gate.",
+      "integration_start": "6e4273a8e0",
+      "receipt": "ru-stats-pipeline-validation.json"
     }
   ],
   "execution_batches": {

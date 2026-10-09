@@ -689,3 +689,166 @@ pub(crate) fn unistore_cluster_session_stack(
         _read_authority: read_authority,
     })
 }
+
+/// [`tidb_exec::meta_txn`] against real (embedded) storage: Go's
+/// `kv.Transaction` memory-buffer contract, `meta.NewMutator(txn)`, and
+/// `kv.RunInNewTxn`'s retry on a write conflict.
+#[cfg(test)]
+mod meta_txn_tests {
+    use super::*;
+    use tidb_exec::meta_txn::MetaTxnStorage;
+    use tidb_meta::transaction::{Mutator, RawTransaction};
+    use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};
+
+    /// The whole embedded stack. The opener borrows the read authority's
+    /// background cache and the PD oracle, so all three must live as long as
+    /// any transaction -- dropping the first two closes cache admission.
+    struct Stack {
+        _read_authority: SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
+        _pd: InProcessPd,
+        opener: InProcessOpener,
+    }
+
+    fn stack() -> Stack {
+        let (read_authority, pd, opener) = in_process_write_stack().expect("embedded write stack");
+        Stack {
+            _read_authority: read_authority,
+            _pd: pd,
+            opener,
+        }
+    }
+
+    /// A write is visible to the same transaction before commit, absent from
+    /// every other transaction until then, and durable after it -- Go's memory
+    /// buffer in front of the snapshot.
+    #[test]
+    fn writes_read_back_before_commit_and_persist_after_it() {
+        let stack = stack();
+        let opener = &stack.opener;
+        let mut storage = MetaTxnStorage::new(opener, IN_PROCESS_TIMEOUT);
+
+        let mut writer = storage.begin().unwrap();
+        writer.set(b"mt/a".to_vec(), b"1".to_vec()).unwrap();
+        assert_eq!(writer.get(b"mt/a").unwrap(), Some(b"1".to_vec()));
+
+        let mut peer = storage.begin().unwrap();
+        assert_eq!(peer.get(b"mt/a").unwrap(), None, "uncommitted writes stay private");
+        NewTxnTransaction::rollback(&mut peer).unwrap();
+
+        NewTxnTransaction::commit(&mut writer).unwrap();
+        let mut reader = storage.begin().unwrap();
+        assert_eq!(reader.get(b"mt/a").unwrap(), Some(b"1".to_vec()));
+        NewTxnTransaction::rollback(&mut reader).unwrap();
+    }
+
+    /// A scan merges the buffer over the snapshot: a buffered set appears, a
+    /// buffered delete hides a committed key, and the order is byte order.
+    #[test]
+    fn scans_merge_the_buffer_over_the_snapshot() {
+        let stack = stack();
+        let opener = &stack.opener;
+        let mut storage = MetaTxnStorage::new(opener, IN_PROCESS_TIMEOUT);
+        let mut seed = storage.begin().unwrap();
+        seed.set(b"ms/1".to_vec(), b"one".to_vec()).unwrap();
+        seed.set(b"ms/3".to_vec(), b"three".to_vec()).unwrap();
+        NewTxnTransaction::commit(&mut seed).unwrap();
+
+        let mut txn = storage.begin().unwrap();
+        txn.set(b"ms/2".to_vec(), b"two".to_vec()).unwrap();
+        txn.delete(b"ms/3").unwrap();
+        assert_eq!(
+            txn.scan_prefix(b"ms/").unwrap(),
+            vec![
+                (b"ms/1".to_vec(), b"one".to_vec()),
+                (b"ms/2".to_vec(), b"two".to_vec()),
+            ]
+        );
+        NewTxnTransaction::rollback(&mut txn).unwrap();
+
+        // The rollback discarded both buffered changes.
+        let mut after = storage.begin().unwrap();
+        assert_eq!(
+            after.scan_prefix(b"ms/").unwrap(),
+            vec![
+                (b"ms/1".to_vec(), b"one".to_vec()),
+                (b"ms/3".to_vec(), b"three".to_vec()),
+            ]
+        );
+        NewTxnTransaction::rollback(&mut after).unwrap();
+    }
+
+    /// The point of the adapter: Go's ported `meta.Mutator` round-trips a meta
+    /// structure through real storage. `SetRUStats` then `GetRUStats` is the
+    /// pair the RU statistics writer depends on.
+    #[test]
+    fn the_meta_mutator_round_trips_ru_stats_through_real_storage() {
+        use tidb_meta::transaction::{DailyRuStats, GroupRuStats, RuConsumption, RuStats};
+        let stack = stack();
+        let opener = &stack.opener;
+        let mut storage = MetaTxnStorage::new(opener, IN_PROCESS_TIMEOUT);
+        let stats = RuStats {
+            latest: Some(Box::new(DailyRuStats {
+                end_time: chrono::DateTime::parse_from_rfc3339("2026-10-08T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+                stats: Some(vec![GroupRuStats {
+                    id: 3,
+                    name: "rg1".to_owned(),
+                    ru_consumption: Some(RuConsumption::default()),
+                }]),
+            })),
+            previous: None,
+        };
+        run_in_new_txn(&RunInNewTxnContext::default(), &mut storage, true, |txn| {
+            Mutator::new(&mut *txn).set_ru_stats(Some(&stats))?;
+            Ok(())
+        })
+        .unwrap();
+
+        let mut read = storage.begin().unwrap();
+        let loaded = Mutator::new(&mut read).ru_stats().unwrap();
+        assert_eq!(loaded, Some(stats));
+        NewTxnTransaction::rollback(&mut read).unwrap();
+    }
+
+    /// Go `kv.RunInNewTxn` retries a write conflict and only that: a peer that
+    /// commits the same key between this attempt's read and its commit makes
+    /// the first attempt lose, and the retry re-reads and wins.
+    #[test]
+    fn run_in_new_txn_retries_a_write_conflict() {
+        let stack = stack();
+        let opener = &stack.opener;
+        let mut storage = MetaTxnStorage::new(opener, IN_PROCESS_TIMEOUT);
+        let mut seed = storage.begin().unwrap();
+        seed.set(b"mc/k".to_vec(), b"0".to_vec()).unwrap();
+        NewTxnTransaction::commit(&mut seed).unwrap();
+
+        let mut attempts = 0;
+        let peer_opener = opener;
+        run_in_new_txn(&RunInNewTxnContext::default(), &mut storage, true, |txn| {
+            attempts += 1;
+            let current = txn.get(b"mc/k")?.unwrap_or_default();
+            if attempts == 1 {
+                // A peer commits the same key after this attempt read it.
+                let mut peer_storage = MetaTxnStorage::new(peer_opener, IN_PROCESS_TIMEOUT);
+                let mut peer = peer_storage.begin().unwrap();
+                peer.set(b"mc/k".to_vec(), b"peer".to_vec()).unwrap();
+                NewTxnTransaction::commit(&mut peer).unwrap();
+            }
+            let mut next = current.clone();
+            next.extend_from_slice(b"+");
+            txn.set(b"mc/k".to_vec(), next)?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(attempts, 2, "the conflicted attempt retried once");
+
+        let mut read = storage.begin().unwrap();
+        assert_eq!(
+            read.get(b"mc/k").unwrap(),
+            Some(b"peer+".to_vec()),
+            "the retry re-read the peer's value before writing"
+        );
+        NewTxnTransaction::rollback(&mut read).unwrap();
+    }
+}

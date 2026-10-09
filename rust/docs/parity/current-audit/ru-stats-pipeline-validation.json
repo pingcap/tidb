@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-08",
+  "scope": "B08/B03 O06 (with the first O05 ResourceManager capability): Go `Domain.requestUnitsWriterLoop` runs on the node over real dependencies. Closes O06's three named gaps -- no production writer-loop caller, no owner gating, no scheduled shutdown -- and supplies the data source and meta persistence that made a caller impossible. No complete-package acceptance.",
+  "baseline": {
+    "tidb": "6e4273a8e0",
+    "go_master": "ab37692e9ebef44a736cd7243deef6020067b743",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+    "pd": "v0.0.0-20260805103528-afa43111d149"
+  },
+  "before": {
+    "source_confirmed_defect": "`tidb_domain::ru_stats::RuStatsWriter` ported Go's writer, but nothing ran it and nothing could: there was no production `RuStatsDeps`, no PD ResourceManager client to supply its data, and no transaction under Go's ported `meta.Mutator` (127 methods, only ever run over `MemoryTransaction`) or `kv.RunInNewTxn` (only over test storages). A live server therefore never wrote or expired `mysql.request_unit_by_group`.",
+    "reproduction": "Reader searches: no production impl of `RuStatsDeps`, `tidb_meta::transaction::RawTransaction`, `NewTxnStorage` or `NewTxnTransaction`; no ResourceManager call in `tidb-pd-client`; no caller of the writer."
+  },
+  "go_owners": [
+    "pkg/domain/ru_stats.go:67-110 `requestUnitsWriterLoop`: skip in tests, then per round take the start, derive the last expected boundary, and only on `do.DDL().OwnerManager().IsOwner()` retry `DoWriteRUStatistics` up to `maxRetryCount` (10) a second apart, try `GCOutdatedRecords` once, log the outcome at Info, and wait until `lastTime + interval` or `do.exit`.",
+    "pd/client/resource_manager_client.go:91-135 `resourceManagerReadClient` and `ListResourceGroups`: the discovery connection when one exists, otherwise the PD server connection; the request always carries a keyspace (`NullKeyspaceID` for the null keyspace); a body error is `ErrClientListResourceGroup` with the server's message.",
+    "pkg/kv/txn.go:107-175 `RunInNewTxn`: callback errors retry immediately when retryable, commit errors retry with `BackOff(i)`, both only for `IsTxnRetryableError` (`pkg/kv/error.go:82-92`: ErrTxnRetryable, ErrWriteConflict, ErrWriteConflictInTiDB).",
+    "pkg/resourcegroup/runaway/record.go:391-406 `ExecRCRestrictedSQL`: a pooled internal session, `ExecOptionUseCurSession`, `InternalTxnOthers`."
+  ],
+  "repairs": [
+    "`tidb-pd-client`: `PdClient::list_resource_groups(keyspace, with_ru_stats)` over the existing worker and endpoint failover, with the `resource_manager` protos re-exported from `tidb-proto`. Go does not time ResourceManager RPCs with the PD command collectors, so neither does this.",
+    "`tidb-exec/src/meta_txn.rs`: `MetaTxn`, a live TiKV transaction with Go's memory-buffer contract -- writes buffer locally, reads consult the buffer first, scans merge it over the snapshot, commit turns it into mutations -- implementing both `tidb_meta::RawTransaction` and `NewTxnTransaction`; `MetaTxnStorage` is `kv.Storage.Begin` per attempt. A commit rolled back by a write conflict is retryable; everything else is terminal, matching `IsTxnRetryableError`.",
+    "`tidb-meta`: a borrowed transaction is a transaction (`impl RawTransaction for &mut T`), because Go's `meta.NewMutator(txn)` borrows the transaction a `RunInNewTxn` callback later commits.",
+    "`ClusterDdl::is_owner`, defaulting to Go's answer before `ddl.Start` (false) and overridden by the real DDL with its owner manager -- the gate Go's writer uses, not the stats owner.",
+    "`cluster_session_node/ru_stats_writer.rs`: the production `RuStatsDeps` (PD ResourceManager, meta resource groups, `RUStats` through `RunInNewTxn` + `meta.NewMutator`, and `ExecRCRestrictedSQL` through the domain's advanced internal-session pool) and `RuStatsWriterWorker`, started at boot beside the other domain workers and joined on shutdown.",
+    "`tidb_domain::ru_stats::request_units_writer_round`: Go's loop body, with Go's Info outcome log, which the earlier port omitted."
+  ],
+  "fidelity_notes": [
+    "Go persists the whole `rmpb.Consumption` per group in the `RUStats` meta key; the writer's type carries only the read and write request units, which are the only fields the daily totals use. A Go node reading this node's key sees zero for the remaining consumption fields.",
+    "`tidb-meta` serializes `DailyRUStats.EndTime` as UTC and deserializes any offset into UTC, whereas Go's `time.Time` JSON keeps the offset. Comparison behaviour is unaffected -- Go's `!=` on a JSON-decoded time also differs from `time.Local` by Location -- but the stored text differs from a Go writer's. Recorded, not changed here.",
+    "`configure_meta_mutator` records Go's `PriorityHigh`/`DiskFullOpt_AllowedOnAlmostFull` request; the live transaction exposes neither knob yet.",
+    "`generate_sql` derives the window start as `latest.end_time - 24h` on a fixed offset. Go does the same subtraction on a `time.Time` whose Location is `time.Local` for a freshly fetched day, so on the day after a DST change Go's start lands an hour off midnight where this one does not. Recorded, not changed: matching it needs the zone carried in the writer's type.",
+    "Go's warning for a group with no consumption had been reduced to a comment; it is now emitted, which is why a fresh cluster's round logs one line for `default`."
+  ],
+  "validation": {
+    "live_cluster": "TiUP playground v9.0.0-beta.2.pre-nightly with PD + TiKV only, so this node is the sole DDL owner. On boot the writer ran Go's first round as owner and logged `[ru_stats] finish write ru historical data` with end_time `2026-10-08 00:00:00` (the local daily boundary), cost 16ms, error null: the PD ResourceManager RPC, the `RUStats` meta persistence through `RunInNewTxn` + `meta.NewMutator`, and the `ExecRCRestrictedSQL` probe all succeeded on real storage. `mysql.request_unit_by_group` stayed empty, which is Go's answer for this cluster: PD's only group, `default`, carries no `ru_stats` yet, and Go's `generateSQL` skips a group with nil consumption and runs no SQL when nothing remains (`ru_stats.go:259-300`).",
+    "pd_client": "tidb-pd-client 102/102, including the ResourceManager request (with_ru_stats, explicit NullKeyspaceID and a configured keyspace) and the body-error path against a real gRPC ResourceManager service served on the PD connection.",
+    "meta_txn": "Four integration tests against the embedded store: writes visible to their own transaction before commit and private from peers until then; scans merging the buffer over the snapshot; Go's `meta.Mutator` round-tripping `RUStats` through real storage; and `RunInNewTxn` losing a first attempt to a peer's commit of the same key, then re-reading the peer's value and committing on top of it.",
+    "domain": "tidb-domain RU-stats tests 23/23, including the non-owner round (no SQL, same boundary) and the owner round's retry bound (11 attempts, 10 one-second sleeps).",
+    "server": "tidb-server `ru_stats_writer` conversion tests pass. The full tidb-server run fails 13 tests and hangs 7 on this tree; each was rerun on an isolated build of the parent commit 6e4273a8e0 with a fixed thread count and fails or hangs identically there, so none is attributable to this change.",
+    "build": "`cargo build --locked -p tidb-server` green before each commit."
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 32,
+    "unresolved": 54,
+    "open": 23,
+    "partial": 31
+  },
+  "finding_disposition": "O06 moves from open to partial. Its three named gaps are closed and observed on a live cluster: the writer is started at boot, gates on the DDL owner every round, and is interrupted and joined at shutdown, over a real data source. It stays partial because no non-empty row has been observed -- rows need PD-side RU consumption, which a resource-group controller reports and which this node does not yet have (O05) -- and because of the fidelity notes recorded here. O05 gains its first ResourceManager capability (`ListResourceGroups`) but stays open: token admission, settlement and runaway policy are untouched.",
+  "limits": [
+    "No non-empty `mysql.request_unit_by_group` row has been observed live; that needs RU consumption reported to PD by a resource-group controller (O05).",
+    "`resource_group_by_name` opens one meta read per group per round, where Go consults the in-memory info schema; correct, and negligible at a daily cadence over a handful of groups.",
+    "The keyspace is the null keyspace; a keyspace-scoped deployment is not exercised.",
+    "Full Go suites, multi-node clusters and production TLS were not run; no complete-package acceptance."
+  ]
+}
