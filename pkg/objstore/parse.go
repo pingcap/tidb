@@ -65,11 +65,9 @@ func ParseRawURL(rawURL string) (*url.URL, error) {
 	rawURL = strings.ReplaceAll(rawURL, "+", "%2B")
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		// url.Error carries the whole URL, which may contain credentials.
-		if urlErr, ok := err.(*url.Error); ok {
-			err = urlErr.Err
-		}
-		return nil, errors.Errorf("parse storage URL failed: %v", err)
+		// Neither url.Error nor its inner reason can be put into the error:
+		// they carry the whole URL or fragments of it, which may be credentials.
+		return nil, errors.New("parse storage URL failed: invalid format")
 	}
 	return u, nil
 }
