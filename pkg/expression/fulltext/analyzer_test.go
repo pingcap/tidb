@@ -34,6 +34,15 @@ func TestPreserveUnderscoreTokenize(t *testing.T) {
 	}, tokens)
 }
 
+func TestPreserveUnderscoreTokenizeUnicodeProtocol(t *testing.T) {
+	tokens := PreserveUnderscoreTokenize("foo🙃bar foo👁bar foo𞤀bar foo𝟙bar foo\U0002EBF0bar foo\xffbar")
+	want := []string{"foo", "bar", "foo", "bar", "foo𞤀bar", "foo𝟙bar", "foo", "bar", "foo", "bar"}
+	require.Len(t, tokens, len(want))
+	for i, text := range want {
+		require.Equal(t, Token{Text: text, Position: i}, tokens[i])
+	}
+}
+
 func TestAnalyzeStandardV1(t *testing.T) {
 	sctx := newFulltextTestContext(t)
 

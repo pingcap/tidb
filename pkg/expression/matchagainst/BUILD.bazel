@@ -8,6 +8,7 @@ go_library(
         "ngram_boolean_tokenizer.go",
         "standard_boolean_parser.go",
         "standard_boolean_tokenizer.go",
+        "token_chars.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/expression/matchagainst",
     visibility = ["//visibility:public"],
@@ -22,6 +23,7 @@ go_test(
     srcs = [
         "ngram_boolean_parser_test.go",
         "standard_boolean_parser_test.go",
+        "token_chars_test.go",
     ],
     embed = [":matchagainst"],
     flaky = False,

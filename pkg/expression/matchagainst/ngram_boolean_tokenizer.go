@@ -14,8 +14,6 @@
 
 package matchagainst
 
-import "unicode"
-
 type ngramTokType uint8
 
 const (
@@ -68,7 +66,7 @@ func newNgramScanState(input string) *ngramScanState {
 }
 
 func isNgramWordChar(ch rune) bool {
-	return unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_'
+	return IsLocalMatchTokenRune(ch)
 }
 
 func isNgramUnsupportedOp(ch rune) bool {

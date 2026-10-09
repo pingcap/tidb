@@ -20,9 +20,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
+	"github.com/pingcap/tidb/pkg/expression/matchagainst"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -339,7 +339,7 @@ func runeAtByte(text string, offset int) (rune, int) {
 }
 
 func isTokenChar(ch rune) bool {
-	return unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_'
+	return matchagainst.IsLocalMatchTokenRune(ch)
 }
 
 func lengthFilter(tokens []Token, minLen, maxLen int) []Token {

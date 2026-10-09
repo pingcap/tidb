@@ -53,6 +53,7 @@ func TestBooleanMatchTiFlashE2E(t *testing.T) {
 	t.Run("ngram", f.testNgram)
 	t.Run("collations", f.testCollations)
 	t.Run("review_regressions", f.testReviewRegressions)
+	t.Run("token_semantics", f.testTokenSemantics)
 }
 
 // Run this separately against a freshly bootstrapped old-collation cluster.
@@ -440,6 +441,56 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func (f *fixture) testTokenSemantics(t *testing.T) {
+	f.t = t
+	rows := []string{
+		"VALUES (1, 'foo only')", "VALUES (2, 'bar only')", "VALUES (3, 'foo bar')",
+		"VALUES (4, 'baz foo')", "VALUES (5, 'baz bar')", "VALUES (6, 'baz qux')",
+		"VALUES (7, 'foo🙃bar')", "VALUES (8, 'foo👁bar')", "VALUES (9, 'foo𞤀bar')",
+		"VALUES (10, 'foo𝟙bar')", "VALUES (11, '𞤀bar')", "VALUES (12, 'foobar')",
+		"VALUES (13, 'foo\U0002EBF0bar')",
+	}
+	f.makePair("token_standard", `CREATE TABLE %s (id INT PRIMARY KEY, body TEXT COLLATE utf8mb4_bin,
+		FULLTEXT INDEX ft_body(body))`, rows)
+	for _, tc := range []matchCase{
+		{"split_optional", "MATCH(body) AGAINST('foo.bar' IN BOOLEAN MODE)", []int{1, 2, 3, 4, 5, 7, 8, 13}},
+		{"split_required", "MATCH(body) AGAINST('+foo.bar' IN BOOLEAN MODE)", []int{3, 7, 8, 13}},
+		{"split_excluded", "MATCH(body) AGAINST('baz -foo.bar' IN BOOLEAN MODE)", []int{6}},
+		{"emoji_delimiter", "MATCH(body) AGAINST('+foo' IN BOOLEAN MODE)", []int{1, 3, 4, 7, 8, 13}},
+		{"emoji_in_query", "MATCH(body) AGAINST('+foo🙃bar' IN BOOLEAN MODE)", []int{3, 7, 8, 13}},
+		{"phrase_delimiters", `MATCH(body) AGAINST('+"foo bar"' IN BOOLEAN MODE)`, []int{3, 7, 8, 13}},
+		{"unicode_letter", "MATCH(body) AGAINST('+𞤀bar' IN BOOLEAN MODE)", []int{11}},
+		{"unicode_number", "MATCH(body) AGAINST('+foo𝟙bar' IN BOOLEAN MODE)", []int{10}},
+		{"newer_unicode_is_delimiter", "MATCH(body) AGAINST('+foo\U0002EBF0bar' IN BOOLEAN MODE)", []int{3, 7, 8, 13}},
+	} {
+		f.check("token_standard", tc)
+	}
+	var size int
+	must(t, f.db.QueryRowContext(context.Background(), "SELECT @@global.ngram_token_size").Scan(&size))
+	if size != 2 && size != 3 {
+		t.Logf("skip Unicode NGRAM cases: token size %d, require 2 or 3", size)
+		return
+	}
+	f.makePair("token_ngram", `CREATE TABLE %s (id INT PRIMARY KEY, body TEXT COLLATE utf8mb4_bin,
+		FULLTEXT INDEX ft_body(body) WITH PARSER NGRAM)`, rows)
+	for _, conn := range []*sql.Conn{f.native, f.local} {
+		f.exec(conn, "SET SESSION innodb_ft_enable_stopword=OFF")
+	}
+	defer func() {
+		for _, conn := range []*sql.Conn{f.native, f.local} {
+			f.exec(conn, "SET SESSION innodb_ft_enable_stopword=ON")
+		}
+	}()
+	for _, tc := range []matchCase{
+		{"ngram_unicode_letter", "MATCH(body) AGAINST('+𞤀bar' IN BOOLEAN MODE)", []int{9, 11}},
+		{"ngram_unicode_number", "MATCH(body) AGAINST('+foo𝟙bar' IN BOOLEAN MODE)", []int{10}},
+		{"ngram_no_cross_delimiter", "MATCH(body) AGAINST('+foob' IN BOOLEAN MODE)", []int{12}},
+		{"ngram_phrase_delimiters", `MATCH(body) AGAINST('+"foo bar"' IN BOOLEAN MODE)`, []int{3, 7, 8, 13}},
+	} {
+		f.check("token_ngram", tc)
 	}
 }
 
