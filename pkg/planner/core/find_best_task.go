@@ -3088,11 +3088,6 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 }
 
 func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) base.Task {
-	if ds.TableInfo.GetPartitionInfo() != nil && ds.PartitionDefIdx == nil && !prop.IsSortItemEmpty() {
-		// TODO: Support ordered reads across partitions by sorting handles together with
-		// their physical IDs, and comparing local index keys without the partition prefix.
-		return base.InvalidTask
-	}
 	// For batch point get, we don't try to satisfy the sort property with an extra merge sort,
 	// so only PropMatched is allowed.
 	if !prop.IsSortItemEmpty() && candidate.matchPropResult != property.PropMatched {
