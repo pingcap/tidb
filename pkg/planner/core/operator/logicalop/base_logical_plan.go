@@ -292,6 +292,14 @@ func (p *BaseLogicalPlan) SetChild(i int, child base.LogicalPlan) {
 	p.children[i] = child
 }
 
+// ResetTaskMap drops the physical tasks cached by FindBestTask, so the plan can
+// be physically optimized again after it is rewritten.
+func (p *BaseLogicalPlan) ResetTaskMap() {
+	p.taskMap = make(map[string]base.Task)
+	p.taskMapBak = nil
+	p.taskMapBakTS = nil
+}
+
 // RollBackTaskMap implements LogicalPlan.<20th> interface.
 func (p *BaseLogicalPlan) RollBackTaskMap(ts uint64) {
 	if !p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
