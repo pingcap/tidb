@@ -31,6 +31,13 @@ import (
 )
 
 func TestFindBestTaskSuite(t *testing.T) {
+	t.Run("PointGetSchema", func(t *testing.T) {
+		ds := &logicalop.DataSource{Columns: []*model.ColumnInfo{model.NewExtraPhysTblIDColInfo()}}
+		require.False(t, isPointGetConvertableSchema(ds, false))
+		require.True(t, isPointGetConvertableSchema(ds, true))
+		ds.Columns = append(ds.Columns, &model.ColumnInfo{ID: 1, State: model.StateWriteOnly})
+		require.False(t, isPointGetConvertableSchema(ds, true))
+	})
 	t.Run("TestCostOverflow", testCostOverflow)
 	t.Run("TestEnforcedProperty", testEnforcedProperty)
 	t.Run("TestHintCannotFitProperty", testHintCannotFitProperty)

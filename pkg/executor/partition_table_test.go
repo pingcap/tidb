@@ -120,6 +120,143 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 	tk.MustQuery(queryOnePartition).Check(testkit.Rows(fmt.Sprintf("%v", -1)))
 }
 
+func TestPartitionBatchPointGetDirtyTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	for _, rowFormat := range []int{1, 2} {
+		for _, clustered := range []string{"clustered", "nonclustered"} {
+			for _, txnMode := range []string{"optimistic", "pessimistic"} {
+				t.Run(fmt.Sprintf("format%d/%s/%s", rowFormat, clustered, txnMode), func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+					tk.MustExec(fmt.Sprintf("set tidb_row_format_version=%d", rowFormat))
+					tk.MustExec("drop table if exists t_dirty")
+					tk.MustExec(fmt.Sprintf(`create table t_dirty(k int not null, p int not null, v int,
+						primary key(k,p) %s, unique key uk(k) global)
+						partition by range(p) (partition p0 values less than(10),
+						partition p1 values less than(20), partition p2 values less than maxvalue)`, clustered))
+					tk.MustExec("insert into t_dirty values(1,1,10),(10,11,20)")
+					localQuery := "select * from t_dirty use index(primary) where " +
+						"(k=1 and p=1) or (k=1 and p=11) or (k=1 and p=21) or " +
+						"(k=10 and p=11) or (k=20 and p=21) or (k=99 and p=1)"
+					globalCond := " where k=1 or k=10 or k=20 or k=99"
+					globalQuery := "select * from t_dirty use index(uk)" + globalCond
+					check := func(rows ...string) {
+						for _, query := range []string{localQuery, globalQuery} {
+							tk.MustHavePlan(query, "Batch_Point_Get")
+							tk.MustQuery(query).Sort().Check(testkit.Rows(rows...))
+						}
+					}
+					check("1 1 10", "10 11 20")
+					tk.MustExec("begin " + txnMode)
+					tk.MustExec("insert into t_dirty values(20,21,30)")
+					tk.MustExec("update t_dirty set v=11 where k=1")
+					check("1 1 11", "10 11 20", "20 21 30")
+					residualQuery := "select * from t_dirty use index(uk) where (k=1 or k=10 or k=20 or k=99) and v=11"
+					tk.MustHavePlan(residualQuery, "Batch_Point_Get")
+					tk.MustQuery(residualQuery).Check(testkit.Rows("1 1 11"))
+					tk.MustExec("delete from t_dirty where k=10")
+					tk.MustExec("savepoint before_move")
+					// The global unique value stays unchanged, but both its handle and partition may change.
+					tk.MustExec("update t_dirty set p=11 where k=1")
+					check("1 11 11", "20 21 30")
+					tk.MustQuery("select * from t_dirty partition(p0) use index(uk)" + globalCond).Check(testkit.Rows())
+					tk.MustQuery("select * from t_dirty partition(p1) use index(uk)" + globalCond).Check(testkit.Rows("1 11 11"))
+					tk.MustExec("update t_dirty set v=12 where k=1")
+					tk.MustQuery(residualQuery).Check(testkit.Rows())
+					tk.MustExec("delete from t_dirty where k=1")
+					tk.MustExec("insert into t_dirty values(1,21,99)")
+					check("1 21 99", "20 21 30")
+					tk.MustExec("rollback to savepoint before_move")
+					check("1 1 11", "20 21 30")
+					require.Error(t, tk.ExecToErr("update t_dirty set k=20,p=11 where k=1"))
+					check("1 1 11", "20 21 30")
+					tk.MustExec("rollback")
+					check("1 1 10", "10 11 20")
+					tk.MustExec("drop table t_dirty")
+				})
+			}
+		}
+	}
+}
+
+func TestPartitionBatchPointGetRouting(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	for _, partition := range []string{
+		"range(a) (partition p0 values less than(10), partition p1 values less than(20))",
+		"range(floor(a*0.5)) (partition p0 values less than(5), partition p1 values less than(10))",
+		"list(a) (partition p0 values in(1,2), partition p1 values in(11,12))",
+		"hash(a+1) partitions 3",
+		"key(a) partitions 3",
+	} {
+		tk.MustExec("create table t_route(a int primary key, b int) partition by " + partition)
+		tk.MustExec("insert into t_route values(1,1),(11,11)")
+		query := "select * from t_route where (a=1 or a=11 or a=99) and b>0"
+		tk.MustHavePlan(query, "Batch_Point_Get")
+		tk.MustQuery(query).Sort().Check(testkit.Rows("1 1", "11 11"))
+		// Ordered queries retain a Sort or an ordered scan instead of a cross-partition BatchPointGet.
+		tk.MustNotHavePlan(query+" order by a desc", "Batch_Point_Get")
+		tk.MustQuery(query + " order by a desc").Check(testkit.Rows("11 11", "1 1"))
+		tk.MustExec("drop table t_route")
+	}
+	for _, collation := range []string{"utf8mb4_bin", "utf8mb4_general_ci"} {
+		tk.MustExec("create table t_route(a varchar(20) primary key, b int) collate=" + collation +
+			" partition by range columns(a) (partition p0 values less than('m'), partition p1 values less than(maxvalue))")
+		tk.MustExec("insert into t_route values('a',1),('z',2)")
+		query := "select * from t_route where (a='a' or a='z') and b>0"
+		if collation == "utf8mb4_bin" {
+			tk.MustHavePlan(query, "Batch_Point_Get")
+		} else {
+			tk.MustNotHavePlan(query, "Batch_Point_Get")
+		}
+		tk.MustQuery(query).Sort().Check(testkit.Rows("a 1", "z 2"))
+		tk.MustExec("drop table t_route")
+	}
+	tk.MustExec("create table t_route(a int) partition by list(a) (partition p0 values in(0,1), partition p1 values in(2,3))")
+	tk.MustExec("insert into t_route values(0),(0),(1),(1),(2),(2),(3),(3)")
+	query := "select _tidb_rowid,a from t_route where _tidb_rowid=5 or _tidb_rowid=7"
+	tk.MustNotHavePlan(query, "Batch_Point_Get")
+	tk.MustQuery(query).Sort().Check(testkit.Rows("5 2", "7 3"))
+	query = "select _tidb_rowid,a from t_route partition(p1) where _tidb_rowid=5 or _tidb_rowid=7"
+	tk.MustHavePlan(query, "Batch_Point_Get")
+	tk.MustQuery(query).Sort().Check(testkit.Rows("5 2", "7 3"))
+}
+
+func TestPartitionBatchPointGetUpperLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	for _, rowFormat := range []int{1, 2} {
+		t.Run(fmt.Sprintf("format%d", rowFormat), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk2 := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk2.MustExec("use test")
+			tk.MustExec(fmt.Sprintf("set tidb_row_format_version=%d", rowFormat))
+			tk.MustExec("create table t_lock(k int, p int, primary key(k,p) clustered) partition by range(p) (partition p0 values less than(10), partition p1 values less than(20), partition p2 values less than(maxvalue))")
+			tk.MustExec("create table t_join(k int primary key)")
+			tk.MustExec("insert into t_lock values(1,1),(2,11),(3,21)")
+			tk.MustExec("insert into t_join values(1),(2),(3)")
+			tk.MustExec("begin pessimistic")
+			// The join keeps an upper Lock that consumes the reader's physical IDs.
+			// The absent first key must not shift those IDs onto the wrong output rows.
+			query := "select /*+ HASH_JOIN(d,n), USE_INDEX(d,primary) */ d.k from t_lock d join t_join n on d.k=n.k where (d.k=0 and d.p=21) or (d.k=1 and d.p=1) or (d.k=2 and d.p=11) for update"
+			tk.MustHavePlan(query, "Batch_Point_Get")
+			tk.MustHavePlan(query, "SelectLock")
+			tk.MustQuery(query).Sort().Check(testkit.Rows("1", "2"))
+			tk2.MustExec("begin pessimistic")
+			for _, key := range []string{"k=1 and p=1", "k=2 and p=11"} {
+				require.Error(t, tk2.ExecToErr("select * from t_lock where "+key+" for update nowait"))
+			}
+			tk2.MustQuery("select * from t_lock where k=3 and p=21 for update nowait").Check(testkit.Rows("3 21"))
+			tk2.MustExec("rollback")
+			tk.MustExec("rollback")
+			tk.MustExec("drop table t_lock,t_join")
+		})
+	}
+}
+
 func TestPartitionInfoDisable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

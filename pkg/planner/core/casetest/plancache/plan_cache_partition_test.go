@@ -152,6 +152,7 @@ func TestPlanCachePartitionIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_fix_control='44830:ON'")
 	preparedCache := tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache").Rows()[0][0]
 	nonPreparedCache := tk.MustQuery("select @@session.tidb_enable_non_prepared_plan_cache").Rows()[0][0]
 	defer func() {
@@ -178,9 +179,7 @@ func runPreparedPlanCachePartitionIndex(t *testing.T, tk *testkit.TestKit, table
 	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{
-		{"IndexLookUp"},
-		{"├─IndexRangeScan(Build)"},
-		{"└─TableRowIDScan(Probe)"}})
+		{"Batch_Point_Get"}})
 	tk.MustExec(`set @a=2,@b=5,@c=4`)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "BA 5", "abc 2"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
@@ -191,26 +190,23 @@ func runNonPreparedPlanCachePartitionIndex(t *testing.T, tk *testkit.TestKit, ta
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
 	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
 	tk.MustExec(fmt.Sprintf(`create table %s (b varchar(255), a int primary key nonclustered, key (b)) partition by key(a) partitions 3`, tableName))
-	// [Batch]PointGet does not use the plan cache,
-	// since it is already using the fast path!
+	// CBO BatchPointGet retains the existing cache safety checks for duplicate parameters.
 	tk.MustExec(fmt.Sprintf(`insert into %s values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)`, tableName))
 	tk.MustExec(fmt.Sprintf(`analyze table %s`, tableName))
 	tk.MustQuery(fmt.Sprintf(`explain format='plan_cache' select * from %s where a IN (2,1,4,1,1,5,5)`, tableName)).CheckAt([]int{1, 2, 3, 4}, [][]any{
-		{"4.00", "root", "partition:p1,p2", ""},
-		{"4.00", "cop[tikv]", "table:" + tableName + ", index:PRIMARY(a)", "range:[1,1], [2,2], [4,4], [5,5], keep order:false"},
-		{"4.00", "cop[tikv]", "table:" + tableName, "keep order:false"},
+		{"4.00", "root", "table:" + tableName + ", partition:p1,p2, index:PRIMARY(a)", "keep order:false, desc:false"},
 	})
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(fmt.Sprintf(`select * from %s where a IN (2,1,4,1,1,5,5)`, tableName)).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "abc 2"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(fmt.Sprintf(`select * from %s where a IN (1,3,4)`, tableName)).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(fmt.Sprintf(`select * from %s where a IN (1,3,4)`, tableName)).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(fmt.Sprintf(`select * from %s where a IN (2,5,4,2,5,5,1)`, tableName)).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "abc 2"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(fmt.Sprintf(`select * from %s where a IN (1,2,3,4,5,5,1)`, tableName)).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "BC 3", "abc 2"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(fmt.Sprintf(`select count(*) from %s partition (p0)`, tableName)).Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf(`select count(*) from %s partition (p1)`, tableName)).Check(testkit.Rows("5"))
 	tk.MustQuery(fmt.Sprintf(`select * from %s partition (p2)`, tableName)).Check(testkit.Rows("Ab 1"))
