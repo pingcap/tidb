@@ -20,6 +20,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ast "github.com/pingcap/tidb/pkg/parser/types"
@@ -289,7 +290,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 	if hasTiFlashLocalMatchInfo {
 		if tiFlashLocalMatchInfo.BooleanQuery == nil ||
-			tiFlashLocalMatchInfo.BooleanQuery.GetVersion() != localMatchAgainstProtocolVersion {
+			tiFlashLocalMatchInfo.BooleanQuery.GetVersion() != fulltext.LocalMatchAgainstProtocolVersion {
 			return nil
 		}
 	}

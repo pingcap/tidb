@@ -65,12 +65,6 @@ type LocalMatchAgainstTiFlashEvalInfo struct {
 	BooleanQuery *tipb.LocalMatchAgainstBooleanQuery
 }
 
-// localMatchAgainstProtocolVersion versions the Local MATCH semantics carried
-// by Expr.val, including the built-in stopword set. TiFlash must implement and
-// be deployed with a version before TiDB emits it. Never change the meaning of
-// an existing version; reject unknown versions and add a new version instead.
-const localMatchAgainstProtocolVersion uint32 = 1
-
 // Clone returns an independent copy of the TiFlash evaluation metadata.
 func (info *LocalMatchAgainstTiFlashEvalInfo) Clone() *LocalMatchAgainstTiFlashEvalInfo {
 	if info == nil {

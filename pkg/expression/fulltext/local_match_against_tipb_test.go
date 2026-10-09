@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package fulltext
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -26,7 +25,7 @@ import (
 func TestBuildLocalMatchAgainstBooleanQuery(t *testing.T) {
 	query, err := BuildLocalMatchAgainstBooleanQuery(`+cat -dog "red fox" pre*`, model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
-	require.Equal(t, localMatchAgainstProtocolVersion, query.GetVersion())
+	require.Equal(t, LocalMatchAgainstProtocolVersion, query.GetVersion())
 	require.Equal(t, tipb.LocalMatchAgainstParser_LocalMatchAgainstParserStandard, query.GetParser())
 	require.Len(t, query.GetNodes(), 4)
 
@@ -47,7 +46,7 @@ func TestBuildLocalMatchAgainstBooleanQuery(t *testing.T) {
 }
 
 func TestBuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(t *testing.T) {
-	query, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+cat -dog", fulltext.AnalyzerConfig{
+	query, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+cat -dog", AnalyzerConfig{
 		ParserType:             model.FullTextParserTypeStandardV1,
 		StopwordCollation:      "utf8mb4_general_ci",
 		InnodbFtMinTokenSize:   1,
@@ -61,21 +60,21 @@ func TestBuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(t *testing.T) {
 	require.Equal(t, tipb.LocalMatchAgainstParser_LocalMatchAgainstParserStandard, query.GetParser())
 	require.Equal(t, "utf8mb4_general_ci", query.GetStopwordCollation())
 
-	_, err = BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("cat", fulltext.AnalyzerConfig{
+	_, err = BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("cat", AnalyzerConfig{
 		ParserType:           model.FullTextParserTypeStandardV1,
 		InnodbFtMinTokenSize: 5,
 		InnodbFtMaxTokenSize: 0,
 	})
 	require.Error(t, err)
 
-	query, err = BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("cat", fulltext.AnalyzerConfig{
+	query, err = BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("cat", AnalyzerConfig{
 		ParserType:           model.FullTextParserTypeStandardV1,
 		InnodbFtMinTokenSize: 16,
 		InnodbFtMaxTokenSize: 10,
 	})
 	require.NoError(t, err, "min > max is a valid TiDB configuration that analyzes no standard tokens")
 
-	query, err = BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+the", fulltext.AnalyzerConfig{
+	query, err = BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+the", AnalyzerConfig{
 		ParserType:             model.FullTextParserTypeNgramV1,
 		NgramTokenSize:         3,
 		InnodbFtEnableStopword: true,
@@ -84,7 +83,7 @@ func TestBuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(t *testing.T) {
 	require.Equal(t, uint32(3), query.GetNgramTokenSize())
 	require.Equal(t, tipb.LocalMatchAgainstStopwordMode_LocalMatchAgainstStopwordModeBuiltin, query.GetStopwordMode(), "NGRAM must receive the stopword setting too")
 
-	query, err = BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+the", fulltext.AnalyzerConfig{
+	query, err = BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+the", AnalyzerConfig{
 		ParserType:             model.FullTextParserTypeNgramV1,
 		NgramTokenSize:         3,
 		InnodbFtEnableStopword: false,

@@ -2024,7 +2024,7 @@ func TestLocalMatchAgainstBooleanQueryUsesVersionedPayload(t *testing.T) {
 	require.NoError(t, err)
 	sf := fn.(*ScalarFunction)
 	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
-	query, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+tidb -mysql", fulltext.AnalyzerConfig{
+	query, err := fulltext.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+tidb -mysql", fulltext.AnalyzerConfig{
 		ParserType:             model.FullTextParserTypeStandardV1,
 		InnodbFtMinTokenSize:   3,
 		InnodbFtMaxTokenSize:   84,
@@ -2051,7 +2051,7 @@ func TestLocalMatchAgainstBooleanQueryUsesVersionedPayload(t *testing.T) {
 	require.NotEmpty(t, pbExpr.GetVal(), "Local MATCH metadata must use the scalar-function metadata slot")
 	decodedQuery := &tipb.LocalMatchAgainstBooleanQuery{}
 	require.NoError(t, proto.Unmarshal(pbExpr.GetVal(), decodedQuery))
-	require.Equal(t, localMatchAgainstProtocolVersion, decodedQuery.GetVersion())
+	require.Equal(t, fulltext.LocalMatchAgainstProtocolVersion, decodedQuery.GetVersion())
 	require.Equal(t, query, decodedQuery)
 	decoded, err := PBToExpr(ctx, pbExpr, []*types.FieldType{nil, matchColumn.RetType})
 	require.NoError(t, err)

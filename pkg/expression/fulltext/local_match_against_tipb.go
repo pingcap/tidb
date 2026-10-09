@@ -12,16 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package fulltext
 
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/expression/matchagainst"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+// LocalMatchAgainstProtocolVersion versions the Local MATCH semantics carried
+// by the Tipb query, including the built-in stopword set. TiFlash must implement
+// and be deployed with a version before TiDB emits it. Never change the meaning
+// of an existing version; reject unknown versions and add a new version instead.
+const LocalMatchAgainstProtocolVersion uint32 = 1
 
 // BuildLocalMatchAgainstBooleanQuery parses a BOOLEAN MODE search string and
 // converts it to the protocol representation consumed by TiFlash. The parser
@@ -57,7 +62,7 @@ func BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search string, parserT
 	if err != nil {
 		return nil, err
 	}
-	query.Version = localMatchAgainstProtocolVersion
+	query.Version = LocalMatchAgainstProtocolVersion
 	switch parserType {
 	case model.FullTextParserTypeStandardV1:
 		query.Parser = tipb.LocalMatchAgainstParser_LocalMatchAgainstParserStandard
@@ -73,7 +78,7 @@ func BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search string, parserT
 // BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig carries the same analyzer settings
 // used by TiDB's Local MATCH evaluator to TiFlash. This extends only execution
 // parity; it does not change BOOLEAN MODE query semantics.
-func BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(search string, config fulltext.AnalyzerConfig) (*tipb.LocalMatchAgainstBooleanQuery, error) {
+func BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(search string, config AnalyzerConfig) (*tipb.LocalMatchAgainstBooleanQuery, error) {
 	query, err := BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search, config.ParserType, config.NgramTokenSize)
 	if err != nil {
 		return nil, err

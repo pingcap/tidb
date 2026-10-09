@@ -77,7 +77,7 @@ func TestLocalMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
 	ctx := mock.NewContext()
 	sf := newLocalMatchAgainstForTest(t, ctx, "+PostgreSQL", 1, ast.FulltextSearchModifierBooleanMode)
 	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
-	booleanQuery, err := BuildLocalMatchAgainstBooleanQuery("+PostgreSQL", model.FullTextParserTypeStandardV1)
+	booleanQuery, err := fulltext.BuildLocalMatchAgainstBooleanQuery("+PostgreSQL", model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
 	require.NoError(t, SetLocalMatchAgainstTiFlashEvalInfo(sf, &LocalMatchAgainstTiFlashEvalInfo{BooleanQuery: booleanQuery}))
 

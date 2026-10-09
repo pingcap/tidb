@@ -20,6 +20,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1265,7 +1266,7 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 		// Expr.val contains the Local MATCH semantic protocol version. TiDB only
 		// decodes versions it understands; TiFlash support must be deployed before
 		// TiDB starts emitting a newer version.
-		if query.GetVersion() != localMatchAgainstProtocolVersion {
+		if query.GetVersion() != fulltext.LocalMatchAgainstProtocolVersion {
 			return nil, errors.Errorf("invalid Local MATCH protocol version %d", query.GetVersion())
 		}
 		if err := SetLocalMatchAgainstTiFlashEvalInfo(sf.(*ScalarFunction), &LocalMatchAgainstTiFlashEvalInfo{

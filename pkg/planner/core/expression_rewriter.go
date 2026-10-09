@@ -2517,7 +2517,7 @@ func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(modifier ast
 		if !constant.Value.IsNull() {
 			queryText = constant.Value.GetString()
 		}
-		booleanQuery, err := expression.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(queryText, analyzerConfig)
+		booleanQuery, err := fulltext.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(queryText, analyzerConfig)
 		if err != nil {
 			return nil, false
 		}
