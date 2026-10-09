@@ -182,8 +182,6 @@ fn test_builtin_cases_1() {
             true,
             "SELECT DATE_ADD(_UTF8MB4'2008-01-02', INTERVAL INTERVAL(1, 0, 1) DAY)",
         ),
-        ("SELECT INTERVAL()", false, ""),
-        ("SELECT INTERVAL(1)", false, ""),
         ("SELECT INTERVAL(1, 0)", true, "SELECT INTERVAL(1, 0)"),
         (
             "SELECT NOW() + INTERVAL(1+2) DAY `add`",

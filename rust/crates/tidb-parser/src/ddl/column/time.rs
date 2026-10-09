@@ -45,27 +45,18 @@ impl Parser {
                 args: Vec::new(),
                 origin_position: 0,
             }
-        } else if self.is_op("(") {
-            // go's DefaultValueExpr paren form wraps a NARROW value: the
-            // yacc has no infix inside the column default, so
-            // `DEFAULT (1 + 2)` errors at `+ 2)` (oracle-captured on
-            // g-view's dft CREATE). A column operand PARSES here and its
-            // fate belongs to the default-expression resolver, not the
-            // parser: `DEFAULT (a)` fails later with ErrBadField (1054)
-            // 'expression' (oracle: t5b's dflt CREATE).
-            self.bump();
-            let expression = self.parse_prefix(prec::NONE)?;
-            self.expect_op(")")?;
-            expression
         } else {
-            // Go's column DEFAULT grammar deliberately parses one prefix
-            // expression, not a full infix expression. This leaves the next
-            // `NOT NULL`/other column option for the option loop.
+            // Go `parseColumnOptions` parses one PREFIX expression
+            // (`parsePrefixExpr(0)`), not a full infix expression, so the next
+            // `NOT NULL`/other column option stays for the option loop. A
+            // parenthesized default is itself a prefix expression whose
+            // inside is a FULL expression: `DEFAULT (1 + 2)` parses (and the
+            // DDL folds it), while a column operand in parentheses parses and
+            // is left to the default-expression resolver.
             let expression = self.parse_prefix(prec::NONE)?;
             // `parseColumnOptions` rejects a bare identifier directly
-            // following DEFAULT. Parenthesized identifiers take the
-            // parenthesized-expression grammar path above and are not
-            // reclassified here.
+            // following DEFAULT; the check runs before the parentheses are
+            // unwrapped, so `DEFAULT (a)` is not reclassified here.
             if matches!(expression, Expr::Column(_)) {
                 return Err(self.err_here("invalid default value"));
             }

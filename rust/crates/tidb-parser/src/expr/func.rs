@@ -21,7 +21,6 @@
 //! `FunctionCallGeneric` production families in `pkg/parser/parser.y`.
 
 use super::*;
-use tidb_lexer::is_reserved;
 
 impl Parser {
     /// Distinguishes `INTERVAL (expr) UNIT` from the unrelated scalar
@@ -758,20 +757,10 @@ impl Parser {
         if self.peek().text.eq_ignore_ascii_case("using") {
             return Err(self.err_here(""));
         }
-        // A RESERVED keyword never starts a column reference either: go's
-        // grammar gives each reserved word its own token type and no
-        // simpleExpr production accepts it bare, so the syntax error lands
-        // ON the keyword token. Consuming it as a column name instead
-        // reports one token LATE (oracle: `SELECT XOR 1` errors at the XOR
-        // token itself -- `column 10 near "XOR 1"` -- not at the operand).
-        // The `(`-lookahead above already routed the reserved-but-function
-        // names (`REPEAT(x, y)`) to `parse_named_func`, and continuation
-        // segments after `.` stay ungated in `parse_column_ref_path` (go's
-        // own `parseColumnRef` takes the next token unconditionally there),
-        // so this gate fires exactly for the bare reserved-word prefix.
-        if self.peek().kind == TokenKind::Keyword && is_reserved(&self.peek().text) {
-            return Err(self.err_here(""));
-        }
+        // Go `parsePrefixKeywordExpr`'s fallback: any keyword that is not a
+        // clause keyword and has no syntax of its own starts a column
+        // reference, reserved or not (`SHOW DATABASES WHERE database = 'x'`;
+        // `SELECT XOR 1` fails at the `1`, not at XOR -- captured from Go).
         Ok(Expr::Column(self.parse_column_ref_path()?))
     }
 
@@ -829,6 +818,12 @@ impl Parser {
         if !self.is_op(")") {
             args.push(self.parse_expr(prec::NONE)?);
             while self.is_op(",") {
+                // Go `parseNextLastValFuncCall` reads exactly one sequence
+                // name and then expects ')': a second argument is 1064 AT the
+                // comma (`lastval(seq, 1)` near ", 1)").
+                if matches!(name.to_ascii_uppercase().as_str(), "LASTVAL" | "NEXTVAL") {
+                    return Err(self.err_here("sequence function takes one sequence name"));
+                }
                 self.bump();
                 // go's DATE_ADD/DATE_SUB production requires the second
                 // operand to START with INTERVAL: yacc fails AT the
@@ -845,18 +840,16 @@ impl Parser {
             }
         }
         // Functions with a DEDICATED grammar production fail at PARSE time
-        // with yacc's 1064 when their arity misses, not the binder's 1582:
-        // `MID` shares `SUBSTRING`'s 2-3 argument production (captured:
-        // `mid()` col 12 near ")", `mid(1)` col 13 near ")"), and the
-        // sequence readers take exactly the sequence name (`lastval()` col
-        // 16 near ")"). The error rides the not-yet-consumed `)` token so
-        // the rendered position matches go's yacc boundary byte for byte.
+        // with 1064 when their arity misses, not the binder's 1582: `MID`
+        // shares `SUBSTRING`'s 2-3 argument production (captured: `mid()`
+        // col 12 near ")", `mid(1)` col 13 near ")"). The error rides the
+        // not-yet-consumed `)` token so the rendered position matches Go's
+        // boundary byte for byte. Go's `parseScalarFuncCall` accepts an EMPTY
+        // argument list for every other name, so `lastval()`, `nextval()` and
+        // `interval()` reach the binder's 1582.
         match name.to_ascii_uppercase().as_str() {
             "MID" if args.len() != 2 && args.len() != 3 => {
                 return Err(self.err_here("MID requires two or three arguments"));
-            }
-            "LASTVAL" | "NEXTVAL" if args.len() != 1 => {
-                return Err(self.err_here("sequence function requires one argument"));
             }
             // The datetime-arithmetic functions have a dedicated grammar
             // production whose second operand MUST be INTERVAL: go's yacc
@@ -869,14 +862,6 @@ impl Parser {
             _ => {}
         }
         self.expect_op(")")?;
-        // The keyword-form INTERVAL scalar function has no zero- or
-        // one-argument production in TiDB's grammar.  Keep the generic
-        // function path for its two-or-more argument form, but reject the
-        // otherwise-valid generic fallback for `INTERVAL()` and
-        // `INTERVAL(value)` so those calls remain syntax errors like Go.
-        if name.eq_ignore_ascii_case("INTERVAL") && args.len() < 2 {
-            return Err(self.err_here("INTERVAL requires at least two arguments"));
-        }
         Ok(Expr::Func {
             name,
             args,
