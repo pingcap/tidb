@@ -78,6 +78,9 @@ pub trait TaskCoster {
 pub trait MppWarningSink {
     /// Raises one source-shaped MPP refusal warning when enforcement is on.
     fn raise_mpp_warning(&self, message: &str);
+
+    /// Go `StmtCtx.SetHintWarning`: a planner `ErrInternal` hint warning.
+    fn set_hint_warning(&self, message: &str);
 }
 
 /// Go `compareTaskCost` (`find_best_task.go:479`): whether `cur` beats
@@ -197,6 +200,9 @@ pub struct DispatchContext<'a> {
     /// Go AccessPath.ForcePartialOrder survives the partial candidate search.
     /// DataSource object identity keeps separate table occurrences independent.
     pub(super) forced_partial_order_paths: HashSet<(usize, i64)>,
+    /// Aggregations whose conflicting hints were already reset: Go clears
+    /// `PreferAggType` on the first exhaust, so it warns once.
+    hint_reset_aggregations: std::cell::RefCell<HashSet<i32>>,
     /// Go `SessionVars.AllocPlanColumnID`: the column-id allocator the
     /// aggregate partial/final split draws fresh columns from. `None` keeps
     /// pre-split searches working; a search that can push aggregates sets it
@@ -255,6 +261,7 @@ impl<'a> DispatchContext<'a> {
             prefer_range_scan: true,
             task_map: HashMap::new(),
             forced_partial_order_paths: HashSet::new(),
+            hint_reset_aggregations: std::cell::RefCell::new(HashSet::new()),
             column_ids: None,
         }
     }
@@ -695,6 +702,25 @@ fn exhaust_physical_plans(
             // StreamAgg and immediately returns it when STREAM_AGG applies.
             // With no applicable hint both families share one cost search in
             // that same hash-then-stream order.
+            // Go `LogicalAggregation.ResetHintIfConflicted`.
+            let mut prefer_agg_type = op.prefer_agg_type;
+            let both = crate::expression_rewriter::PREFER_HASH_AGG
+                | crate::expression_rewriter::PREFER_STREAM_AGG;
+            if prefer_agg_type & both == both {
+                if ctx
+                    .hint_reset_aggregations
+                    .borrow_mut()
+                    .insert(op.base.base.id())
+                {
+                    if let Some(sink) = ctx.mpp_warning_sink {
+                        sink.set_hint_warning("Optimizer aggregation hints are conflicted");
+                    }
+                }
+                prefer_agg_type = 0;
+            }
+            let prefer_hash = prefer_agg_type & crate::expression_rewriter::PREFER_HASH_AGG != 0;
+            let prefer_stream =
+                prefer_agg_type & crate::expression_rewriter::PREFER_STREAM_AGG != 0;
             let mut hash_aggs = physical::get_hash_aggs_with_mpp_options(
                 op,
                 prop,
@@ -707,19 +733,21 @@ fn exhaust_physical_plans(
                 &ctx.tiflash_pre_agg_mode,
                 &ctx.expr_pushdown_blacklist,
             );
-            if !hash_aggs.is_empty()
-                && op.prefer_agg_type & crate::expression_rewriter::PREFER_HASH_AGG != 0
-            {
+            if !hash_aggs.is_empty() && prefer_hash {
                 return Ok((vec![hash_aggs], true));
             }
-            let stream_aggs = physical::get_stream_aggs(op, prop, ctx.allocator, ctx.skew_ratio);
-            if !stream_aggs.is_empty()
-                && op.prefer_agg_type & crate::expression_rewriter::PREFER_STREAM_AGG != 0
-            {
+            let stream_aggs = physical::get_stream_aggs(
+                op,
+                prop,
+                ctx.allocator,
+                ctx.skew_ratio,
+                prefer_agg_type,
+            );
+            if !stream_aggs.is_empty() && prefer_stream {
                 return Ok((vec![stream_aggs], true));
             }
             hash_aggs.extend(stream_aggs);
-            Ok((one(hash_aggs).0, op.prefer_agg_type == 0))
+            Ok((one(hash_aggs).0, !(prefer_hash || prefer_stream)))
         }
         LogicalPlan::Join(op) => {
             use crate::find_best_task::JoinStrategy;
@@ -4676,6 +4704,10 @@ mod tests {
 
     impl MppWarningSink for RecordingMppWarningSink {
         fn raise_mpp_warning(&self, message: &str) {
+            self.0.borrow_mut().push(message.to_owned());
+        }
+
+        fn set_hint_warning(&self, message: &str) {
             self.0.borrow_mut().push(message.to_owned());
         }
     }

@@ -328,11 +328,6 @@ impl RewriterHints {
         }
     }
 
-    /// Go `LogicalAggregation.ResetHintIfConflicted`'s conflict test.
-    #[must_use]
-    pub const fn aggregation_type_conflicted(self) -> bool {
-        self.prefer_agg_type & PREFER_HASH_AGG != 0 && self.prefer_agg_type & PREFER_STREAM_AGG != 0
-    }
 }
 
 /// Everything the rewriter needs from its surroundings: the expression
@@ -1084,6 +1079,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
                 &self.env.join_hints,
                 &left_names,
                 &right_names,
+                self.env.ctx,
             );
         }
 
@@ -1935,6 +1931,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
                 &self.env.join_hints,
                 &left_names,
                 &right_names,
+                self.env.ctx,
             );
         }
         let mut plan = LogicalPlan::Join(join);

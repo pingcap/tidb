@@ -1464,3 +1464,41 @@ fn view_owner_batch_local_query_source_remains_forbidden() {
     assert_eq!(err.to_mysql_error().code, 1352);
     s.run("select a from target").unwrap();
 }
+
+/// Go's `QBHintHandler` rewrites each SELECT's `TableHints` in place,
+/// moving view query-block hints out of the outer block, and the view body's
+/// blocks take the `QueryBlockOffset` that body's own walk numbered from 1.
+/// The outer block read its original hints (warning "unknown query block
+/// name") and the body's blocks continued the outer numbering, so a hint
+/// aimed at a view's query block never reached it.
+#[test]
+fn view_query_block_hints_reach_the_view_and_nested_view_blocks() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t (a int, b int)",
+        "create table t1 (a int, b int)",
+        "create table t2 (a int, b int)",
+        "create definer='root'@'localhost' view v as select t.a, t.b from t join \
+         (select count(*) as a from t1 join t2 on t1.b = t2.b group by t2.a) tt on t.a = tt.a",
+        "create definer='root'@'localhost' view v1 as select t.a, t.b from t join \
+         (select count(*) as a from t1 join v on t1.b = v.b group by v.a) tt on t.a = tt.a",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for sql in [
+        "select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v",
+        "select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1",
+    ] {
+        let explain = row_text(session.run(&format!("explain format='brief' {sql}")))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(explain.contains("MergeJoin"), "{sql}:\n{explain}");
+        assert_eq!(
+            row_text(session.run("show warnings")),
+            Vec::<Vec<String>>::new(),
+            "{sql}"
+        );
+    }
+}

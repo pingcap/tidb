@@ -602,6 +602,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub opt_flag: u64,
     /// Whether Go's static `FlagPartitionProcessor` is active for this build.
     partition_processor_enabled: bool,
+    /// Go `SessionVars.EnableAdvancedJoinHint` (`tidb_opt_advanced_join_hint`).
+    pub advanced_join_hint: bool,
     /// Go `isSampling`: disables logical rewrites for TABLESAMPLE queries.
     pub is_sampling: bool,
     /// Go `curClause`.
@@ -609,7 +611,7 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `qbOffset`; [`Self::select_offset`] reads its tail.
     pub qb_offset: Vec<i32>,
     /// The next query-block offset assigned by the statement's preorder walk.
-    next_qb_offset: i32,
+    pub(crate) next_qb_offset: i32,
     /// Go `QBHintHandler`, shared by every query block in one build.
     qb_hint_handler: Option<tidb_hint::QBHintHandler>,
     /// Go `QBHintBuildState`, scoped to one statement build.
@@ -1303,6 +1305,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             resolve_ctx: tidb_model::GoShared::new(tidb_resolve::Context::new()),
             opt_flag: 0,
             partition_processor_enabled: true,
+            advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
             is_sampling: false,
             cur_clause: ClauseCode::Unknow,
             qb_offset: Vec::new(),
@@ -1470,13 +1473,13 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 .qb_hint_state
                 .as_mut()
                 .expect("hint state is initialized at the query root");
-            handler.current_stmt_hints(&select.hints, select_offset, state)
+            handler.current_select_hints(&select.hints, select_offset, state)
         };
         let straight_join_order = select.straight_join
             || current_table_hints
                 .iter()
                 .any(|hint| hint.name.eq_ignore_ascii_case("straight_join"));
-        let (mut parsed_plan_hints, subquery_hint_flags, hint_warnings) =
+        let (parsed_plan_hints, subquery_hint_flags, hint_warnings) =
             tidb_hint::parse_plan_hints(
                 &current_table_hints,
                 select_offset,
@@ -1493,18 +1496,15 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             self.ctx.append_warning(warning.code, &warning.message);
         }
         self.sub_query_hint_flags |= subquery_hint_flags;
-        let mut current_hints = RewriterHints::from_plan_hints(&parsed_plan_hints);
-        if current_hints.aggregation_type_conflicted() {
-            self.ctx
-                .append_warning(1815, "Optimizer aggregation hints are conflicted");
-            current_hints.prefer_agg_type = 0;
-            parsed_plan_hints.prefer_agg_type = 0;
-        }
+        // Go resolves conflicting aggregation hints only when the aggregate
+        // is physicalized (`LogicalAggregation.ResetHintIfConflicted`).
+        let current_hints = RewriterHints::from_plan_hints(&parsed_plan_hints);
         let current_plan_hints = Rc::new(RefCell::new(parsed_plan_hints));
         let current_join_hints = Rc::new(from::JoinHints::from_plan_hints(
             Rc::clone(&current_plan_hints),
             select_offset,
             self.source.current_database(),
+            self.advanced_join_hint,
         ));
         let current_index_merge_hints = index_merge_hints_from_plan(&current_plan_hints.borrow());
         let (current_index_hints, current_no_lookup_hints) =
@@ -2289,6 +2289,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             return Err(PlanError::unknown_database(db_name));
         }
         if let Some(view) = self.source.find_view(&db_name, &table_name).cloned() {
+            // Go `getPossibleAccessPaths` runs before the view branch, and a
+            // view has no index: an SQL index hint naming one is an error.
+            if let Some(index) = table_ref.hints.iter().flat_map(|hint| &hint.indexes).next() {
+                return Err(PlanError::key_not_exists(index.clone(), view.view_name.clone()));
+            }
             if table_ref.sample.is_some() {
                 return Err(PlanError::internal("Unsupported TABLESAMPLE in views"));
             }
@@ -2400,6 +2405,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             });
         }
         let mut index_merge_hints = Vec::new();
+        // Go `HintedIndex.IndexString` of each matched hint, for the
+        // inapplicable-index warning below.
+        let mut index_merge_hint_strings = Vec::new();
         for hint in &mut self.index_merge_hints {
             let hint_db = hint
                 .db_name
@@ -2409,6 +2417,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 && (hint_db.eq_ignore_ascii_case(&db_name) || hint_db == "*")
             {
                 hint.matched = true;
+                let mut index_string = format!("{hint_db}.{}", hint.table_name);
+                if !hint.index_names.is_empty() {
+                    index_string.push_str(", ");
+                    index_string.push_str(
+                        &hint
+                            .index_names
+                            .iter()
+                            .map(|name| name.to_lowercase())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                }
+                index_merge_hint_strings.push(index_string);
                 index_merge_hints.push(DataSourceIndexMergeHint {
                     index_names: hint.index_names.clone(),
                     partitions: hint.partitions.clone(),
@@ -2668,6 +2689,45 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.tikv_in_isolation_read,
             &self.isolation_read_engines_value,
         )?;
+        // Go `buildDataSource`: an index merge hint naming an index the
+        // hinted paths no longer hold is dropped with a warning.
+        let mut kept_index_merge_hints = Vec::new();
+        for (hint, index_string) in std::mem::take(&mut data_source.index_merge_hints)
+            .into_iter()
+            .zip(index_merge_hint_strings)
+        {
+            let invalid = hint
+                .index_names
+                .iter()
+                .filter(|name| {
+                    !resolution.paths.iter().any(|path| match path {
+                        crate::access_path::PossiblePath::Table { .. }
+                        | crate::access_path::PossiblePath::TiFlashTable => {
+                            name.eq_ignore_ascii_case("primary")
+                        }
+                        crate::access_path::PossiblePath::Index { index } => table
+                            .indexes
+                            .get(*index)
+                            .is_some_and(|index| index.name.eq_ignore_ascii_case(name)),
+                    })
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if invalid.is_empty() {
+                kept_index_merge_hints.push(hint);
+            } else {
+                self.ctx.append_warning(
+                    1815,
+                    &format!(
+                        "use_index_merge({index_string}) is inapplicable, check whether the \
+                         indexes ({}) exist, or the indexes are conflicted with \
+                         use_index/ignore_index/force_index hints.",
+                        invalid.join(", ")
+                    ),
+                );
+            }
+        }
+        data_source.index_merge_hints = kept_index_merge_hints;
         if !matches!(
             data_source.db_name.to_ascii_lowercase().as_str(),
             "mysql" | "sys" | "workload_schema"

@@ -836,6 +836,10 @@ impl tidb_planner::find_best_task::dispatch::MppWarningSink for crate::StmtConte
     fn raise_mpp_warning(&self, message: &str) {
         crate::StmtContext::append_mpp_warning(self, message);
     }
+
+    fn set_hint_warning(&self, message: &str) {
+        self.append_warning_parts(1815, message);
+    }
 }
 
 pub(super) fn logical_from_plan(
@@ -854,6 +858,7 @@ pub(super) fn logical_from_plan(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
@@ -3052,6 +3057,7 @@ fn planner_optimized_query_with_allocators(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(
         ctx.static_partition_prune() && !static_global_index_point_lookup(query, &source, ctx),
     );
@@ -3121,6 +3127,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
@@ -3532,6 +3539,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();

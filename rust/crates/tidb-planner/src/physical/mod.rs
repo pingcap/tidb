@@ -3461,6 +3461,7 @@ pub fn get_stream_aggs(
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
+    prefer_agg_type: u32,
 ) -> Vec<PhysicalPlan> {
     let (all, desc) = prop.all_same_order();
     if !all {
@@ -3576,7 +3577,7 @@ pub fn get_stream_aggs(
     // child's `CanAddEnforcer` is the essential difference: findBestTask may
     // install the group-key Sort below the StreamAgg when no access path
     // delivers that order naturally.
-    if agg.prefer_agg_type & crate::expression_rewriter::PREFER_STREAM_AGG != 0
+    if prefer_agg_type & crate::expression_rewriter::PREFER_STREAM_AGG != 0
         && prop.index_join_prop.is_none()
     {
         let child_sort = group_by_cols

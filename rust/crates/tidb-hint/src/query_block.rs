@@ -59,6 +59,10 @@ pub struct QBHintHandler {
     qb_name_to_select_offset: HashMap<String, i32>,
     view_qb_name_to_table: HashMap<String, Vec<HintTable>>,
     view_qb_name_to_hints: HashMap<String, Vec<Hint>>,
+    /// Each SELECT block's hints after `handleViewHints` moved the view hints
+    /// out, keyed by its offset. Go rewrites `node.TableHints` in place; a
+    /// planner reading an unrewritten AST takes the block's hints from here.
+    left_hints: HashMap<i32, Vec<Hint>>,
     warnings: Vec<HintWarning>,
     select_stmt_offset: i32,
 }
@@ -302,6 +306,27 @@ impl QBHintHandler {
             .unwrap_or_default()
     }
 
+    /// Go `GetCurrentStmtHints` over the SELECT block at `current_offset`,
+    /// reading the hints `handleViewHints` left in it (Go's rewritten
+    /// `TableHints`); `ast_hints` serves a block the handler never visited.
+    pub fn current_select_hints(
+        &mut self,
+        ast_hints: &[Hint],
+        current_offset: i32,
+        state: &mut QBHintBuildState,
+    ) -> Vec<Hint> {
+        match self.left_hints.remove(&current_offset) {
+            Some(left) => {
+                let hints = self.current_stmt_hints(&left, current_offset, state);
+                // Moving the vector keeps its elements' addresses, which
+                // `current_stmt_hints` uses as hint identities.
+                self.left_hints.insert(current_offset, left);
+                hints
+            }
+            None => self.current_stmt_hints(ast_hints, current_offset, state),
+        }
+    }
+
     /// Go `MarkViewQBNameUsed`.
     pub fn mark_view_qb_name_used(&self, name: &str, state: &mut QBHintBuildState) {
         if let Some(used) = state.view_qb_name_used.as_mut() {
@@ -382,27 +407,23 @@ impl QBHintHandler {
             } else if path.len() == 1 && path[0].name.is_empty() {
                 handler.hint_offset(path[0].qb_name.as_deref(), -1)
             } else {
-                nested_tables.insert(qb_name.clone(), path);
-                nested_hints.insert(
-                    qb_name.clone(),
-                    inherited
-                        .qb_name_to_hints
-                        .get(&qb_name)
-                        .cloned()
-                        .unwrap_or_default(),
-                );
                 -1
             };
+            let hints = inherited
+                .qb_name_to_hints
+                .get(&qb_name)
+                .cloned()
+                .unwrap_or_default();
             if offset != -1 {
-                ordinary_hints.insert(
-                    offset,
-                    inherited
-                        .qb_name_to_hints
-                        .get(&qb_name)
-                        .cloned()
-                        .unwrap_or_default(),
-                );
+                ordinary_hints.insert(offset, hints);
                 qb_name_offsets.insert(qb_name, offset);
+            } else {
+                // Go deletes only the converted entries, so a path naming a
+                // nested view, or a block that does not resolve, stays in the
+                // body's `ViewQBNameToTable` -- reported unused if nothing
+                // there matches it.
+                nested_tables.insert(qb_name.clone(), path);
+                nested_hints.insert(qb_name, hints);
             }
         }
 
@@ -425,6 +446,8 @@ impl Visitor for QBHintHandler {
             self.select_stmt_offset += 1;
             self.handle_view_hints(&mut select.hints, self.select_stmt_offset);
             self.check_query_block_hints(&select.hints, self.select_stmt_offset);
+            self.left_hints
+                .insert(self.select_stmt_offset, select.hints.clone());
         } else if node.is::<tidb_ast::ExplainStmt>() || node.is::<tidb_ast::CreateBindingStmt>() {
             return true;
         }

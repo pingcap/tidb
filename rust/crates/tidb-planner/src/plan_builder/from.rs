@@ -224,6 +224,8 @@ pub struct JoinHints {
     /// Go `SessionVars.CurrentDB`, which `ExtractTableAlias` gives an alias
     /// whose names carry no database (a derived table's).
     pub(crate) current_db: String,
+    /// Go `SessionVars.EnableAdvancedJoinHint`.
+    pub(crate) advanced_join_hint: bool,
 }
 
 impl JoinHints {
@@ -234,6 +236,7 @@ impl JoinHints {
         canonical: Rc<RefCell<tidb_hint::PlanHints>>,
         select_offset: i32,
         current_db: &str,
+        advanced_join_hint: bool,
     ) -> Self {
         let plan = canonical.borrow();
         let mut hints = Self::default();
@@ -274,7 +277,18 @@ impl JoinHints {
         hints.canonical = Some(canonical);
         hints.select_offset = select_offset;
         hints.current_db = current_db.to_ascii_lowercase();
+        hints.advanced_join_hint = advanced_join_hint;
         hints
+    }
+
+    /// Go `ExtractTableAlias`'s database fallback: an alias whose names carry
+    /// no database takes the session's current one.
+    fn alias_database(&self, alias: &HintedTable) -> String {
+        if alias.db_name.is_empty() {
+            self.current_db.clone()
+        } else {
+            alias.db_name.clone()
+        }
     }
 
     /// Go `PlanHints.IfPreferXxx(alias)` for whichever bit `flag` is: the
@@ -285,13 +299,8 @@ impl JoinHints {
         if let Some(canonical) = &self.canonical {
             // Go `ExtractTableAlias`: "if dbName.L == "" { dbName =
             // CurrentDB }", the database the hint's own table defaulted to.
-            let database_name = if alias.db_name.is_empty() {
-                self.current_db.clone()
-            } else {
-                alias.db_name.clone()
-            };
             let table = tidb_hint::HintedTable {
-                database_name,
+                database_name: self.alias_database(alias),
                 table_name: alias.table_name.clone(),
                 select_offset: self.select_offset,
                 ..tidb_hint::HintedTable::default()
@@ -391,6 +400,7 @@ pub fn set_preferred_join_type_and_order(
     hints: &Rc<JoinHints>,
     left_names: &[FieldName],
     right_names: &[FieldName],
+    ctx: &dyn tidb_expr::Columns,
 ) {
     use join_hint_flags as f;
 
@@ -429,7 +439,7 @@ pub fn set_preferred_join_type_and_order(
             let matched_rhs = hints.prefers(rhs.as_ref(), flag);
             let matched_any = matched_lhs || matched_rhs;
             if matched_any {
-                tidb_expr::constant_fold::record_fold_warning(
+                ctx.append_warning(
                     1815,
                     &format!(
                         "The join can not push down to the MPP side, the {}() hint is invalid",
@@ -469,6 +479,23 @@ pub fn set_preferred_join_type_and_order(
             join.right_prefer_join_type |= hinted;
         }
     }
+    let straight_join_order = hints
+        .canonical
+        .as_ref()
+        .is_some_and(|canonical| canonical.borrow().straight_join_order);
+    let has_conflict = if !hints.advanced_join_hint || straight_join_order {
+        contain_different_join_types(join.prefer_join_type)
+    } else {
+        contain_different_join_types(join.left_prefer_join_type)
+            || contain_different_join_types(join.right_prefer_join_type)
+    };
+    if has_conflict {
+        ctx.append_warning(
+            1815,
+            "Join hints are conflict, you can only specify one type of join",
+        );
+        join.prefer_join_type = 0;
+    }
     if let Some(leading) = &hints.leading {
         let mut tables = Vec::new();
         collect_leading_tables(leading, &mut tables);
@@ -493,7 +520,7 @@ pub fn set_preferred_join_type_and_order(
                     .into_iter()
                     .flatten()
                     .map(|alias| tidb_hint::HintedTable {
-                        database_name: alias.db_name.clone(),
+                        database_name: hints.alias_database(alias),
                         table_name: alias.table_name.clone(),
                         select_offset: hints.select_offset,
                         ..tidb_hint::HintedTable::default()
@@ -511,6 +538,33 @@ pub fn set_preferred_join_type_and_order(
     if join.prefer_join_type != 0 || join.prefer_join_order {
         join.hint_info = Some(Rc::clone(hints));
     }
+}
+
+/// Go `containDifferentJoinTypes` (`logical_join.go:2087`).
+fn contain_different_join_types(prefer_join_type: u32) -> bool {
+    use join_hint_flags as f;
+    let prefer_join_type = prefer_join_type
+        & !f::NO_HASH_JOIN
+        & !f::NO_MERGE_JOIN
+        & !f::NO_INDEX_JOIN
+        & !f::NO_INDEX_HASH_JOIN
+        & !f::NO_INDEX_MERGE_JOIN;
+    let inl_mask = f::RIGHT_AS_INLJ_INNER ^ f::LEFT_AS_INLJ_INNER;
+    let inlhj_mask = f::RIGHT_AS_INLHJ_INNER ^ f::LEFT_AS_INLHJ_INNER;
+    let inlmj_mask = f::RIGHT_AS_INLMJ_INNER ^ f::LEFT_AS_INLMJ_INNER;
+    let hj_right_build_mask = f::RIGHT_AS_HJ_BUILD ^ f::LEFT_AS_HJ_PROBE;
+    let hj_left_build_mask = f::LEFT_AS_HJ_BUILD ^ f::RIGHT_AS_HJ_PROBE;
+    let mpp_mask = f::SHUFFLE_JOIN ^ f::BC_JOIN;
+    let mask = inl_mask ^ inlhj_mask ^ inlmj_mask ^ hj_right_build_mask ^ hj_left_build_mask;
+    let ones_count = (prefer_join_type & !mask & !mpp_mask).count_ones();
+    if ones_count > 1 || (ones_count == 1 && prefer_join_type & mask > 0) {
+        return true;
+    }
+    [inl_mask, inlhj_mask, inlmj_mask, hj_left_build_mask, hj_right_build_mask]
+        .into_iter()
+        .filter(|side_mask| prefer_join_type & side_mask > 0)
+        .count()
+        > 1
 }
 
 fn collect_leading_tables<'a>(
@@ -1041,7 +1095,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:900` "Set preferred join algorithm if some join hints is specified
         // by user."
         let join_hints = self.join_hints.clone();
-        set_preferred_join_type_and_order(&mut join_plan, &join_hints, &left_names, &right_names);
+        set_preferred_join_type_and_order(
+            &mut join_plan,
+            &join_hints,
+            &left_names,
+            &right_names,
+            self.ctx,
+        );
 
         if join_node.natural {
             self.build_natural_join(
@@ -1218,7 +1278,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         })?;
 
         let join_hints = self.join_hints.clone();
-        set_preferred_join_type_and_order(&mut apply.join, &join_hints, &left_names, &right_names);
+        set_preferred_join_type_and_order(
+            &mut apply.join,
+            &join_hints,
+            &left_names,
+            &right_names,
+            self.ctx,
+        );
         Ok(LogicalPlan::Apply(apply))
     }
 
@@ -1688,10 +1754,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let saved_building_cte = std::mem::replace(&mut self.building_cte, false);
         let outer_hint_handler = self.qb_hint_handler.replace(view_hint_handler);
         let outer_hint_state = self.qb_hint_state.replace(view_hint_state);
+        // Go reads each block's `QueryBlockOffset`, which the view body's own
+        // `QBHintHandler` walk numbered from 1, so the body's blocks restart
+        // the numbering its hints were resolved against.
+        let outer_next_qb_offset = std::mem::replace(&mut self.next_qb_offset, 0);
         let built = match query.as_ref() {
             QueryStmt::Select(select) => self.build_select(select).map(|(plan, _)| plan),
             QueryStmt::SetOpr(set_operation) => self.build_set_opr(set_operation),
         };
+        self.next_qb_offset = outer_next_qb_offset;
         self.flush_hint_build_warnings();
         self.qb_hint_handler = outer_hint_handler;
         self.qb_hint_state = outer_hint_state;
