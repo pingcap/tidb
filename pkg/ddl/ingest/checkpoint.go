@@ -489,6 +489,10 @@ type ReorgCheckpoint struct {
 	InstanceAddr   string `json:"instance_addr"`
 
 	PhysicalID int64 `json:"physical_id"`
+	// StartKey and EndKey retain the safe recovery range from checkpoints
+	// written before the checkpoint manager was scoped to one physical table.
+	StartKey kv.Key `json:"start_key,omitempty"`
+	EndKey   kv.Key `json:"end_key,omitempty"`
 	// TS of next engine ingest.
 	TS uint64 `json:"ts"`
 
