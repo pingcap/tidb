@@ -32,6 +32,7 @@ use super::super::{
     MAX_REPLICA_ATTEMPT_TIME,
 };
 use super::RegionCache;
+use tikv_client::tikv::MixedReplicaSelection;
 
 impl<L> RegionCache<L> {
     /// Adapt canonical store facts to the native sender's candidate policy.
@@ -635,7 +636,10 @@ impl<L> RegionCache<L> {
             }
         } else {
             (
-                self.select_replica_read(selector, location, leader_peer_id, now)?,
+                // client-go `nextForReplicaReadMixed` builds its
+                // `ReplicaSelectMixedStrategy` without a busy threshold; only
+                // the leader path's busy fallback carries one.
+                self.select_replica_read(selector, location, leader_peer_id, Duration::ZERO, now)?,
                 None,
             )
         };
@@ -716,9 +720,15 @@ impl<L> RegionCache<L> {
                 if !self.leader_is_busy(selector, peer, now)? {
                     return Ok(Some(peer.clone()));
                 }
-                if let Some(idle) =
-                    self.select_replica_read(selector, location, leader_peer_id, now)?
-                {
+                // client-go `nextForReplicaReadLeader`: an idle replica under
+                // `ReplicaSelectMixedStrategy{busyThreshold}`.
+                if let Some(idle) = self.select_replica_read(
+                    selector,
+                    location,
+                    leader_peer_id,
+                    selector.busy_threshold(),
+                    now,
+                )? {
                     return Ok(Some(idle));
                 }
                 let cleared = selector.clear_busy_threshold_for_leader_fallback();
@@ -843,11 +853,16 @@ impl<L> RegionCache<L> {
         Ok(false)
     }
 
+    /// Source `ReplicaSelectMixedStrategy.next`. `busy_threshold` is the
+    /// strategy's own field: zero for replica reads, the request's threshold
+    /// only for the leader path's busy fallback, where it also excludes the
+    /// leader.
     fn select_replica_read(
         &self,
         selector: &RequestSelector,
         location: &RegionLocation,
         leader_peer_id: Option<u64>,
+        busy_threshold: Duration,
         now: HealthInstant,
     ) -> Result<Option<Peer>, RegionRouteError> {
         if selector.policy.stale_read && selector.dispatches == 1 {
@@ -893,9 +908,11 @@ impl<L> RegionCache<L> {
             };
             candidates.push(selector.health_policy.candidate(peer.id, facts, now));
         }
-        Ok(selector
-            .health_policy
-            .selection()
+        let selection = MixedReplicaSelection {
+            busy_threshold,
+            ..selector.health_policy.selection()
+        };
+        Ok(selection
             .choose(&candidates)
             .and_then(|selected| {
                 location

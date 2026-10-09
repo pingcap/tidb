@@ -67,6 +67,53 @@ fn server_busy_state_is_request_owned_and_no_idle_fallback_clears_threshold() {
     assert!(!fallback.replica_read);
 }
 
+/// client-go `nextForReplicaReadMixed` builds `ReplicaSelectMixedStrategy`
+/// without the request's busy threshold, so a stale read can still choose
+/// the leader. TiDB sends `tidb_load_based_replica_read_threshold` (1s by
+/// default) on every coprocessor request; carrying it into the mixed
+/// strategy excluded the leader, and a single-replica region then had no
+/// candidate and reloaded forever until the region backoff ran out.
+#[test]
+fn a_stale_read_keeps_the_leader_as_a_candidate_under_a_busy_threshold() {
+    let single = RegionLocation {
+        region: RegionVerId::new(1, 1, 1),
+        start_key: Vec::new(),
+        end_key: Vec::new(),
+        peers: vec![Peer {
+            id: 1,
+            store_id: 1,
+            role: PeerRole::Voter,
+            is_witness: false,
+            store_epoch: 1,
+        }],
+        leader_peer_id: Some(1),
+        stores: vec![Store {
+            id: 1,
+            address: "tikv-1".to_owned(),
+            epoch: 1,
+        }],
+        ..RegionLocation::default()
+    };
+    let mut cache = RegionCache::new(Loader(Some(single.clone())));
+    cache.locate_key(b"key").unwrap();
+    let mut selector = cache
+        .request_selector(
+            single.region,
+            ReadPolicy {
+                mode: ReplicaReadMode::Mixed,
+                stale_read: true,
+                forwarding: false,
+            },
+        )
+        .unwrap();
+    selector.set_busy_threshold(Duration::from_secs(1));
+    let RequestSelection::Attempt(request) = cache.select_request(&mut selector).unwrap() else {
+        panic!("the leader is the stale read's candidate; the region must not reload")
+    };
+    assert_eq!(request.attempt.peer_id, 1);
+    assert!(request.stale_read);
+}
+
 fn location() -> RegionLocation {
     let specs = [
         (11, 101, PeerRole::Voter, false),
