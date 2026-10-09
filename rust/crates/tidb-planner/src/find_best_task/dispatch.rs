@@ -3258,7 +3258,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     keep_order,
                     desc,
                     ranges: ranges.clone(),
-                    range_rebuild: table_range_rebuild,
+                    // Go's index-join inner table scan carries no
+                    // `AccessCondition`; the join owns its ranges.
+                    range_rebuild: if prop.index_join_prop.is_some() {
+                        None
+                    } else {
+                        table_range_rebuild
+                    },
                     table_scan_penalty: ds.table_scan_penalty,
                     tikv_pushdown: None,
                     resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
@@ -3996,7 +4002,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     keep_order,
                     desc,
                     ranges: ranges.clone(),
-                    range_rebuild: index_range_rebuild,
+                    // Go's index-join inner scan (`constructDS2IndexScanTask`)
+                    // carries no `AccessCondition`; the join owns its ranges.
+                    range_rebuild: if prop.index_join_prop.is_some() {
+                        None
+                    } else {
+                        index_range_rebuild
+                    },
                     covering_ranges: Vec::new(),
                     tikv_pushdown: None,
                 });

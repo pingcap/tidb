@@ -618,7 +618,10 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
             "('abz', 0), ('abb', 1), ('aba', 1), ('zz', 1)",
             "SELECT /*+ ORDER_INDEX(pt, idx) */ a FROM pt WHERE b > 0 ORDER BY a LIMIT 1",
             Some("aba"),
-            3,
+            // The table filter finishes the index plan, so Go pushes no Limit
+            // (handlePartialOrderTopN) and the first lookup batch reads every
+            // handle; the root TopN still needs 'zz' to close the 'ab' prefix.
+            4,
         ),
     ] {
         crate::run_create_table_on(&format!("CREATE TABLE {table} ({ddl})"), &mut catalog).unwrap();
@@ -814,3 +817,4 @@ fn index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls() {
         }
     }
 }
+

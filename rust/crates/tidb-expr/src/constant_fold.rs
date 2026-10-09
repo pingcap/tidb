@@ -105,22 +105,35 @@ fn fold_constant_in_mode_inner(
     if replacement.is_none() && ctx.warning_count() > error_bookmark {
         ctx.truncate_warnings(error_bookmark);
     }
-    if let Some((folded, is_deferred)) = replacement {
-        let original = std::mem::replace(expr, Expression::Constant(folded));
-        if is_deferred {
-            let Expression::Constant(folded) = expr else {
-                unreachable!()
-            };
-            folded.deferred_expr = Some(Box::new(original));
+    match replacement {
+        Some(Folded::Constant(folded, is_deferred)) => {
+            let original = std::mem::replace(expr, Expression::Constant(folded));
+            if is_deferred {
+                let Expression::Constant(folded) = expr else {
+                    unreachable!()
+                };
+                folded.deferred_expr = Some(Box::new(original));
+            }
         }
+        Some(Folded::Branch(branch)) => *expr = branch,
+        None => {}
     }
+}
+
+/// What a construction-time fold replaces a node with.
+enum Folded {
+    /// The node's value, and whether it is deferred (re-evaluated per run).
+    Constant(crate::constant::Constant, bool),
+    /// One of the node's own arguments: a special handler picked the branch
+    /// a constant condition decides.
+    Branch(Expression),
 }
 
 fn fold_current_value_in(
     expr: &Expression,
     ctx: &dyn crate::Columns,
     preserve_warning_casts: bool,
-) -> Option<(crate::constant::Constant, bool)> {
+) -> Option<Folded> {
     if preserve_warning_casts && (has_runtime_warning_cast(expr) || has_runtime_warning_in(expr)) {
         return None;
     }
@@ -132,6 +145,9 @@ fn fold_current_value_in(
     };
     if is_unfoldable_call(func.func_name.lowercase(), func.args.len()) {
         return None;
+    }
+    if let Some(folded) = special_fold(expr, func, ctx) {
+        return folded;
     }
     let mut has_null_arg = false;
     let mut all_const_arg = true;
@@ -181,7 +197,117 @@ fn fold_current_value_in(
     }
     // Go FoldConstant preserves the expression's collation on replacement.
     folded.collation = func.collation.clone();
-    Some((folded, is_deferred_const || deferred_self))
+    Some(Folded::Constant(folded, is_deferred_const || deferred_self))
+}
+
+/// Go `specialFoldHandler` (`constant_fold.go:31-37`): `if`, `ifnull`,
+/// `case` and `isnull` fold on their deciding argument alone, so a constant
+/// condition selects its branch and `isnull` of a NOT NULL argument is 0.
+/// The outer `None` falls through to the ordinary fold; `Some(None)` keeps
+/// the node. Arguments arrive already folded, as Go's recursion leaves them.
+fn special_fold(
+    expr: &Expression,
+    func: &crate::scalar_function::ScalarFunction,
+    ctx: &dyn crate::Columns,
+) -> Option<Option<Folded>> {
+    let name = func.func_name.lowercase();
+    if !matches!(name, "if" | "ifnull" | "case" | "isnull") {
+        return None;
+    }
+    // Go skips these handlers for `MaybeOverOptimized4PlanCache`: a branch
+    // picked from a parameter's value would outlive the execution. A built
+    // expression may be reused across executions here even without the plan
+    // cache, so any mutable constant keeps the node for the ordinary fold,
+    // which defers it.
+    if crate::expr_util::predicates::maybe_over_optimized_4_plan_cache(
+        true,
+        std::slice::from_ref(expr),
+    ) {
+        return None;
+    }
+    // Go `EvalInt` on the condition, which `wrapWithIsTrue` has made a truth
+    // value: an evaluation error keeps the node for the runtime to report.
+    let truth = |constant: &crate::constant::Constant| -> Option<Option<bool>> {
+        let value = constant.eval_in(ctx).ok()?;
+        crate::truthy_of(&value).ok()
+    };
+    let branch = |argument: &Expression| -> Folded {
+        match argument {
+            Expression::Constant(constant) => {
+                let deferred = constant.literal_value().is_none();
+                Folded::Constant(constant.clone(), deferred)
+            }
+            other => Folded::Branch(other.clone()),
+        }
+    };
+    Some(match name {
+        "isnull" => {
+            let argument = func.args.first()?;
+            if let Expression::Constant(constant) = argument {
+                let deferred = constant.literal_value().is_none();
+                let value = crate::eval_expression_once(expr, ctx).ok()?;
+                let mut folded =
+                    crate::constant::Constant::new(value, expr.static_type()?.clone());
+                folded.collation = func.collation.clone();
+                Some(Folded::Constant(folded, deferred))
+            } else if argument
+                .static_type()
+                .is_some_and(|field| field.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL))
+            {
+                Some(Folded::Constant(crate::constant::Constant::new_zero(), false))
+            } else {
+                None
+            }
+        }
+        "if" => {
+            let [Expression::Constant(condition), then, otherwise] = func.args.as_slice() else {
+                return Some(None);
+            };
+            let Some(value) = truth(condition) else {
+                return Some(None);
+            };
+            Some(branch(if value == Some(true) { then } else { otherwise }))
+        }
+        "ifnull" => {
+            let [first @ Expression::Constant(constant), second] = func.args.as_slice() else {
+                return Some(None);
+            };
+            Some(branch(if constant.value.is_null() { second } else { first }))
+        }
+        _ => {
+            // `caseWhenHandler`: the first constant-true condition decides;
+            // a non-constant one leaves every later branch unknown.
+            let arguments = &func.args;
+            let decimal = expr.static_type().map(tidb_datatype::FieldType::decimal);
+            let with_decimal = |folded: Folded| match (folded, decimal) {
+                (Folded::Constant(mut constant, deferred), Some(decimal)) => {
+                    if let Some(field) = constant.ret_type.as_mut() {
+                        field.set_decimal(decimal);
+                    }
+                    Folded::Constant(constant, deferred)
+                }
+                (folded, _) => folded,
+            };
+            let mut index = 0;
+            while index + 1 < arguments.len() {
+                let Expression::Constant(condition) = &arguments[index] else {
+                    return Some(None);
+                };
+                let Some(value) = truth(condition) else {
+                    return Some(None);
+                };
+                if value == Some(true) {
+                    return Some(Some(with_decimal(branch(&arguments[index + 1]))));
+                }
+                index += 2;
+            }
+            if arguments.len() % 2 == 1 {
+                Some(with_decimal(branch(&arguments[arguments.len() - 1])))
+            } else {
+                None
+            }
+        }
+    })
 }
 
 /// Constant integer casts, builtins that wrap their arguments in Go's

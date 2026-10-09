@@ -216,6 +216,54 @@ fn a_multi_row_insert_with_a_duplicate_in_the_middle_writes_nothing() {
     );
 }
 
+/// A multi-row INSERT whose later value is too long for its column stores
+/// nothing.
+///
+/// Capture: `INSERT INTO lc VALUES (1, 'abc'), (2, 'abcdef')` into a
+/// `VARCHAR(3)` column is `[types:1406]Data too long for column 'b' at row 2`
+/// and the table stays empty.
+#[test]
+fn a_multi_row_insert_with_an_over_long_later_value_writes_nothing() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE lc (a INT PRIMARY KEY, b VARCHAR(3))")
+        .unwrap();
+    let error = session
+        .run("INSERT INTO lc VALUES (1, 'abc'), (2, 'abcdef')")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1406);
+    assert_eq!(error.message, "Data too long for column 'b' at row 2");
+    assert!(rows(&mut session, "SELECT a FROM lc").is_empty());
+}
+
+/// Go deletes the conflicting row and adds the new one inside the
+/// statement's transaction, so a REPLACE whose new row violates a CHECK
+/// rolls back and the old row survives.
+///
+/// Capture: with `tidb_enable_check_constraint = ON`, over `1|5`,
+/// `REPLACE INTO rc VALUES (1, -1)` is
+/// `[table:3819]Check constraint 'rc_chk_1' is violated.` and the table is
+/// still `1|5`.
+#[test]
+fn a_replace_violating_a_check_keeps_the_conflicting_row() {
+    let mut session = Session::new();
+    session
+        .run("SET GLOBAL tidb_enable_check_constraint = ON")
+        .unwrap();
+    session
+        .run("CREATE TABLE rc (a INT PRIMARY KEY, b INT CHECK (b > 0))")
+        .unwrap();
+    session.run("INSERT INTO rc VALUES (1, 5)").unwrap();
+    let error = session
+        .run("REPLACE INTO rc VALUES (1, -1)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 3819);
+    assert_eq!(error.message, "Check constraint 'rc_chk_1' is violated.");
+    assert_eq!(rows(&mut session, "SELECT a, b FROM rc"), [["1", "5"]]);
+}
+
 /// A REPLACE whose second value list violates NOT NULL writes none of the
 /// three rows.
 ///

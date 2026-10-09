@@ -2112,6 +2112,35 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                 ))),
                 Some(table_stats) => {
                     if let Some(stats) = op.base.base.stats_info().cloned() {
+                        // Statistics the executor installed before this first
+                        // derivation stand in for Go's `deriveStatsByFilter`,
+                        // but Go's first `DeriveStats` also fixes each index
+                        // path's `IsSingleScan` here -- at join reorder for a
+                        // join, after the final column pruning otherwise.
+                        let missing = op
+                            .indexes
+                            .iter()
+                            .filter(|index| {
+                                op.derived_index_paths
+                                    .get(&index.id)
+                                    .and_then(|path| path.is_single_scan)
+                                    .is_none()
+                            })
+                            .map(|index| {
+                                (
+                                    index.id,
+                                    super::data_source::index_path_is_single_scan(
+                                        op,
+                                        index,
+                                        self.opt_prefix_index_single_scan,
+                                    ),
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        for (index_id, single_scan) in missing {
+                            op.derived_index_paths.entry(index_id).or_default().is_single_scan =
+                                Some(single_scan);
+                        }
                         StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
                     } else {
                         // Go preprocesses pushed predicates before deriving

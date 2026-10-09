@@ -370,6 +370,11 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
         );
     }
     let mut table = kv_table_of(&catalog, "t");
+    // This catalog allocated its own partition IDs.
+    let partition_ids: Vec<i64> = table
+        .partition()
+        .map(|partition| partition.definitions.iter().map(|d| d.id).collect())
+        .unwrap_or_default();
     let mut p0 = table.clone();
     p0.restrict_read_to_partitions(&[partition_ids[0]]);
     let p0_stats = analyze_kv_table(&mut p0, &options, None, &ctx())
@@ -827,7 +832,9 @@ fn analyze_numeric_generated_column_with_index_succeeds() {
     let mut table = kv_table_of(&catalog, "t0");
     let statistics = analyze_kv_table(&mut table, &AnalyzeOptions::default(), None, &ctx())
         .unwrap_or_else(|error| panic!("analyze must not fail: {error:?}"));
-    assert_eq!(statistics.columns.len(), 2, "c0 and the generated c1");
+    // Go's `SHOW STATS_HISTOGRAMS` lists `c0` and `i0` only: the virtual
+    // generated column gets no histogram of its own.
+    assert_eq!(statistics.columns.len(), 1, "c0 only");
     assert_eq!(statistics.indexes.len(), 1, "i0 over the generated column");
 }
 

@@ -288,6 +288,45 @@ fn by_items_text(
         .join(", ")
 }
 
+/// Go `PhysicalTopN.ExplainInfo` (`physical_topn.go:134`): the partition
+/// columns, `order by` only after a partition, the by-items, then the
+/// partial-order prefix column a prefix index supplies.
+fn topn_info(eval_ctx: &dyn tidb_expr::Columns, topn: &tidb_planner::physical::PhysicalTopN) -> String {
+    let column_text = |column: &tidb_expr::column::Column| {
+        expression_text(eval_ctx, &tidb_expr::expression::Expression::Column(column.clone()))
+    };
+    let mut text = String::new();
+    if !topn.partition_by.is_empty() {
+        text.push_str("partition by ");
+        text.push_str(
+            &topn
+                .partition_by
+                .iter()
+                .map(|item| column_text(&item.col))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        text.push(' ');
+    }
+    if !topn.by_items.is_empty() {
+        if !topn.partition_by.is_empty() {
+            text.push_str("order by ");
+        }
+        text.push_str(&by_items_text(eval_ctx, &topn.by_items));
+    }
+    text.push_str(&format!(", offset:{}, count:{}", topn.offset, topn.count));
+    if let Some(prefix_col) = topn.prefix_col {
+        let name = topn
+            .base
+            .base
+            .schema()
+            .and_then(|schema| schema.columns.iter().find(|column| column.unique_id == prefix_col))
+            .map_or_else(|| "?".to_owned(), column_text);
+        text.push_str(&format!(", prefix_col:{name}, prefix_len:{}", topn.prefix_len));
+    }
+    text
+}
+
 fn join_type_text(join_type: tidb_planner::find_best_task::LogicalJoinType) -> &'static str {
     use tidb_planner::find_best_task::LogicalJoinType;
     match join_type {
@@ -1410,12 +1449,7 @@ fn physical_operator_info(
             text
         }
         PhysicalPlan::Dml(_) => "N/A".to_owned(),
-        PhysicalPlan::TopN(topn) => format!(
-            "{}, offset:{}, count:{}",
-            by_items_text(eval_ctx, &topn.by_items),
-            topn.offset,
-            topn.count
-        ),
+        PhysicalPlan::TopN(topn) => topn_info(eval_ctx, topn),
         PhysicalPlan::HashAgg(aggregation) => aggregate_info(
             eval_ctx,
             &aggregation.agg_funcs,

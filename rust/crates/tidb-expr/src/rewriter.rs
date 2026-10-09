@@ -1127,7 +1127,11 @@ fn rewrite_expr_resolved_inner(
     if let Expr::Default(Some(path)) = expr {
         return resolver
             .resolve_default(path)
-            .ok_or(EvalError::Unsupported("unresolved DEFAULT column"));
+            // Go `expression_rewriter.go:1835`, with neither a plan nor a
+            // source table to read the named column's default from.
+            .ok_or(EvalError::Unsupported(
+                "Unsupported expr *ast.DefaultExpr when source table not provided",
+            ));
     }
     if let Expr::Column(path) = expr {
         if let Some(constant) = resolver.resolve_constant(path) {

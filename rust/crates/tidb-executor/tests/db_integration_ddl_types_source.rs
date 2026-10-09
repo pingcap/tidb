@@ -310,7 +310,8 @@ fn issue_2293_invalid_string_default_for_int_rejected_1067() {
 fn issue_19229_enum_set_bad_values_truncate_1265() {
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE enumt (type enum('a', 'b') )", &mut catalog).unwrap();
-    let ctx = StmtContext::for_query();
+    // Go's testkit runs under the default strict sql_mode.
+    let ctx = StmtContext::for_dml(true, true, false);
     for sql in ["insert into enumt values('xxx')", "insert into enumt values(-1)"] {
         assert!(
             matches!(

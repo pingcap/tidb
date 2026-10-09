@@ -2097,11 +2097,9 @@ fn stage_column_default(
                 context.like_default_escape(),
             );
         let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(
-            |_| match resolver.missing_name() {
+            |error| match resolver.missing_name() {
                 Some(name) => tidb_executor::column_default::DefaultError::UnknownColumn(name),
-                None => tidb_executor::column_default::DefaultError::Unsupported(
-                    "a DEFAULT this node cannot evaluate",
-                ),
+                None => tidb_executor::column_default::rewrite_error(error),
             },
         )?;
         tidb_expr::eval_expression_once(&rewritten, context).map_err(|_| {

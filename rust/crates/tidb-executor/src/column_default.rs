@@ -709,6 +709,15 @@ fn build_with_current_database(
     fold(expr).map(ColumnDefault::Value)
 }
 
+/// The rewriter's own refusal, as Go surfaces the expression rewriter's
+/// error; other failures keep the generic refusal.
+pub fn rewrite_error(error: tidb_expr::EvalError) -> DefaultError {
+    match error {
+        tidb_expr::EvalError::Unsupported(message) => DefaultError::Unsupported(message),
+        _ => DefaultError::Unsupported("a DEFAULT this node cannot evaluate"),
+    }
+}
+
 /// Builds a DEFAULT against the live statement context for every DDL entry
 /// point. Keeping CREATE and ALTER on this one boundary prevents the allowed
 /// function set and constant-folding behavior from drifting apart.
@@ -726,7 +735,7 @@ pub(crate) fn build_in_context(
                 ctx.like_default_escape(),
             ),
         )
-        .map_err(|_| DefaultError::Unsupported("a DEFAULT this node cannot evaluate"))?;
+        .map_err(rewrite_error)?;
         tidb_expr::eval_expression_once(&rewritten, ctx)
             .map_err(|_| DefaultError::Unsupported("a DEFAULT this node cannot evaluate"))
     })

@@ -3367,35 +3367,6 @@ fn attach_agg_over_cop(
     Ok(attach_plan_to_task(final_plan, t))
 }
 
-fn index_join_range_rebuild(
-    plan: &PhysicalPlan,
-) -> Option<crate::physical_plan_cache::PointRangeRebuild> {
-    use crate::physical_plan_cache::PointRangeRebuild;
-    match plan {
-        PhysicalPlan::TableScan(scan) => scan.range_rebuild.clone().map(PointRangeRebuild::Table),
-        PhysicalPlan::IndexScan(scan) => scan.range_rebuild.clone().map(PointRangeRebuild::Index),
-        PhysicalPlan::TableReader(reader) => reader
-            .table_plan
-            .as_deref()
-            .and_then(index_join_range_rebuild),
-        PhysicalPlan::IndexReader(reader) => reader
-            .index_plan
-            .as_deref()
-            .and_then(index_join_range_rebuild),
-        PhysicalPlan::IndexLookUpReader(reader) => reader
-            .index_plan
-            .as_deref()
-            .and_then(index_join_range_rebuild)
-            .or_else(|| {
-                reader
-                    .table_plan
-                    .as_deref()
-                    .and_then(index_join_range_rebuild)
-            }),
-        _ => plan.children().iter().find_map(index_join_range_rebuild),
-    }
-}
-
 /// Go `completePhysicalIndexJoin`: consume the inner task's access feedback,
 /// retain only lookup-capable equalities as join keys, and move every unused
 /// equality into the residual condition list.
@@ -3492,9 +3463,9 @@ fn complete_physical_index_join(
     join.outer_hash_keys = outer_hash_keys;
     join.inner_hash_keys = inner_hash_keys;
     join.equal_conditions.clear();
-    join.range_rebuild = info
-        .range_rebuild
-        .or_else(|| index_join_range_rebuild(inner_plan));
+    // Go `mutableIndexJoinRange` when the path has a static template;
+    // otherwise the join's ranges are immutable for the plan cache.
+    join.range_rebuild = info.range_rebuild;
     let (left, right) = if join.inner_child_idx == 0 {
         (&join.inner_join_keys, &join.outer_join_keys)
     } else {
