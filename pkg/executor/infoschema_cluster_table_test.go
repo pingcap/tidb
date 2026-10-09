@@ -202,11 +202,51 @@ type mockStore struct {
 	host string
 }
 
+<<<<<<< HEAD
 func (s *mockStore) EtcdAddrs() ([]string, error) { return []string{s.host}, nil }
 func (s *mockStore) TLSConfig() *tls.Config       { panic("not implemented") }
 func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
 func (s *mockStore) Name() string                 { return "mockStore" }
 func (s *mockStore) Describe() string             { return "" }
+=======
+func (s *mockStore) EtcdAddrs() ([]string, error)  { return []string{s.host}, nil }
+func (s *mockStore) GetPDAddrs() ([]string, error) { return []string{s.host}, nil }
+func (s *mockStore) TLSConfig() *tls.Config        { panic("not implemented") }
+func (s *mockStore) StartGCWorker() error          { panic("not implemented") }
+func (s *mockStore) Name() string                  { return "mockStore" }
+func (s *mockStore) Describe() string              { return "" }
+
+func TestSkipNonServingTiDBRPCNodesForTiDBTypeCoprocessor(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	bytes, err := json.Marshal(map[string]any{
+		"br": map[string]any{
+			"ddl_id":         "br",
+			"ip":             "",
+			"listening_port": 4000,
+			"status_port":    10080,
+			"version":        "8.0.11-TiDB-v8.5.0",
+			"disable_rpc":    true,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo",
+		fmt.Sprintf("return(`%s`)", string(bytes)),
+	))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo"))
+	})
+
+	rows := tk.MustQuery("select * from information_schema.cluster_slow_query").Rows()
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	require.Equal(t, 0, len(rows))
+	// cluster_info is the address source for config/log/metrics fanout.
+	tk.MustQuery("select instance from information_schema.cluster_info where type = 'tidb'").Check(testkit.Rows())
+}
+>>>>>>> 3c54db9b782 (coprocessor: skip empty tidb nodes (#71404))
 
 func TestTiDBClusterInfo(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)

@@ -107,6 +107,15 @@ const (
 	// MaxTokenLimit is the max token limit value.
 	MaxTokenLimit  = 1024 * 1024
 	DefSchemaLease = 45 * time.Second
+<<<<<<< HEAD
+=======
+	// max_allowed_packet must be in [1024, 1073741824] and a multiple of 1024.
+	maxAllowedPacketUnit  = 1024
+	minMaxAllowedPacket   = maxAllowedPacketUnit
+	maxOfMaxAllowedPacket = 1 << 30
+	// DefMaxAllowedPacket is the default value of max_allowed_packet.
+	DefMaxAllowedPacket = 64 << 20
+>>>>>>> 3c54db9b782 (coprocessor: skip empty tidb nodes (#71404))
 )
 
 // Valid config maps

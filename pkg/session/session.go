@@ -52,6 +52,15 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
+>>>>>>> 3c54db9b782 (coprocessor: skip empty tidb nodes (#71404))
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
@@ -3879,6 +3888,21 @@ func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*dom
 	return domap.GetOrCreateWithFilter(store, filter)
 }
 
+<<<<<<< HEAD
+=======
+// GetOrCreateBRDomain gets or creates the domain used by standalone BR.
+// WithDisableRPC is set before Init so the published server info is not an RPC target.
+func GetOrCreateBRDomain(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
+	return domap.getWithEtcdClient(store, nil, filter, domainCreateOptions{
+		serverInfoSyncerOptions: []serverinfo.SyncerOption{
+			serverinfo.WithoutStatusEndpointClaim(),
+			serverinfo.WithDisableRPC(),
+		},
+	})
+}
+
+// getStartMode gets the start mode according to the bootstrap version.
+>>>>>>> 3c54db9b782 (coprocessor: skip empty tidb nodes (#71404))
 func getStartMode(ver int64) ddl.StartMode {
 	if ver == notBootstrapped {
 		return ddl.Bootstrap
