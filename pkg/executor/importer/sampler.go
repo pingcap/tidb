@@ -213,7 +213,6 @@ func (s *kvSizeSampler) CreateColAssignSimpleExprs(
 		s.cfg.ColumnAssignments,
 		ctx,
 		&s.colAssignMu,
-		s.table.UseNewCollate(),
 	)
 }
 

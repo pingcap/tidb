@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -44,7 +43,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var indexConditionECtx exprctx.BuildContext
+var indexConditionECtx *exprstatic.ExprContext
 
 // indexPartialCondition is a data structure to help implement the partial index.
 type indexPartialCondition struct {
@@ -60,9 +59,8 @@ type index struct {
 	idxInfo  *model.IndexInfo
 	tblInfo  *model.TableInfo
 	phyTblID int64
-	// initNeedRestoreData is used to initialize `needRestoredData` in `index.Create()`.
-	// This routine cannot be done in `NewIndex()` because `needRestoreData` relies on `NewCollationEnabled()` and
-	// the collation global variable is initialized *after* `NewIndex()`.
+	// needRestoredData is initialized on first use. sync.Once makes the cached value
+	// safe for index instances shared by concurrent writers.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
 	encoder             codec.Encoder
@@ -82,55 +80,55 @@ func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
-	return NewIndexWithCollate(collate.NewCollationEnabled(), physicalID, tblInfo, indexInfo)
+	return newIndex(physicalID, tblInfo, indexInfo, collate.NewCollationEnabled())
 }
 
-// NewIndexWithCollate builds a new Index object with the specified collation setting.
-func NewIndexWithCollate(
-	useNewCollate bool,
-	physicalID int64,
-	tblInfo *model.TableInfo,
-	indexInfo *model.IndexInfo,
-) (table.Index, error) {
-	index := &index{
+func newIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, useNewCollate bool) (*index, error) {
+	idx := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
 		encoder:  codec.NewEncoder(useNewCollate),
 	}
-
-	conditionString := indexInfo.ConditionExprString
-	if len(conditionString) > 0 {
-		var err error
-		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
-			expression.WithTableInfo("", tblInfo),
-			expression.WithUseNewCollate(useNewCollate))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		index.conditionEvalBufferPool = sync.Pool{
-			New: func() any {
-				// For INSERT path, it'll only pass all writable columns.
-				// For UPDATE/DELETE path, it'll contain all columns.
-				// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
-				// the offsets of related columns in the expression. Therefore, it's fine to always record all
-				// columns here.
-				evalBufferTypes := make([]*types.FieldType, 0, len(tblInfo.Columns)+1)
-				for _, col := range tblInfo.Columns {
-					evalBufferTypes = append(evalBufferTypes, &col.FieldType)
-				}
-
-				if !tblInfo.HasClusteredIndex() {
-					// If the table doesn't have clustered index, we need to append an extra handle column.
-					evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
-				}
-
-				evalBuffer := chunk.MutRowFromTypes(evalBufferTypes)
-				return &evalBuffer
-			},
-		}
+	if err := idx.initPartialCondition(); err != nil {
+		return nil, err
 	}
-	return index, nil
+	return idx, nil
+}
+
+func (c *index) initPartialCondition() error {
+	conditionString := c.idxInfo.ConditionExprString
+	if len(conditionString) == 0 {
+		return nil
+	}
+	ctx := indexConditionECtx.Apply(exprstatic.WithNewCollationEnabled(c.encoder.UseNewCollate()))
+	conditionExpr, err := expression.ParseSimpleExpr(ctx, conditionString, expression.WithTableInfo("", c.tblInfo))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	c.conditionExpr = conditionExpr
+	c.conditionEvalBufferPool = sync.Pool{
+		New: func() any {
+			// For INSERT path, it'll only pass all writable columns.
+			// For UPDATE/DELETE path, it'll contain all columns.
+			// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
+			// the offsets of related columns in the expression. Therefore, it's fine to always record all
+			// columns here.
+			evalBufferTypes := make([]*types.FieldType, 0, len(c.tblInfo.Columns)+1)
+			for _, col := range c.tblInfo.Columns {
+				evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+			}
+
+			if !c.tblInfo.HasClusteredIndex() {
+				// If the table doesn't have clustered index, we need to append an extra handle column.
+				evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
+			}
+
+			evalBuffer := chunk.MutRowFromTypes(evalBufferTypes)
+			return &evalBuffer
+		},
+	}
+	return nil
 }
 
 // Meta returns index info.

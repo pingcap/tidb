@@ -114,7 +114,6 @@ func CollectGeneratedColumns(se *Session, tbl table.Table) ([]GeneratedCol, erro
 				col.GeneratedExpr.Internal(),
 				expression.WithInputSchemaAndNames(schema, names, meta),
 				expression.WithAllowCastArray(true),
-				expression.WithUseNewCollate(tbl.UseNewCollate()),
 			)
 			if err != nil {
 				return nil, err

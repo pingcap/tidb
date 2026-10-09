@@ -44,7 +44,7 @@ func TestLogKVConvertFailed(t *testing.T) {
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	var tbl table.Table
-	tbl, err = tables.TableFromMeta(NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	tbl, err = tables.TableFromMetaWithCollate(false, NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	var baseKVEncoder *BaseKVEncoder
@@ -56,6 +56,13 @@ func TestLogKVConvertFailed(t *testing.T) {
 		},
 		Logger: log.L(),
 	})
+	require.NoError(t, err)
+	require.False(t, baseKVEncoder.SessionCtx.GetExprCtx().NewCollationEnabled())
+	tbl, err = tables.TableFromMetaWithCollate(true, NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+	newCollationEncoder, err := NewBaseKVEncoder(&encode.EncodingConfig{Table: tbl, Logger: log.L()})
+	require.NoError(t, err)
+	require.True(t, newCollationEncoder.SessionCtx.GetExprCtx().NewCollationEnabled())
 	var newString strings.Builder
 	for range 100000 {
 		newString.WriteString("test_test_test_test_")
