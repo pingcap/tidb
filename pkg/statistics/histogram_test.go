@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,6 +77,411 @@ func genHist4Test(t *testing.T, buckets []*bucket4Test, totColSize int64) *Histo
 }
 
 func TestMergePartitionLevelHist(t *testing.T) {
+	type testCase struct {
+		partitionHists  [][]*bucket4Test
+		totColSize      []int64
+		popedTopN       []topN4Test
+		expHist         []*bucket4Test
+		expBucketNumber int
+	}
+	tests := []testCase{
+		{
+			partitionHists: [][]*bucket4Test{
+				{
+					// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
+					{
+						lower:  1,
+						upper:  4,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  9,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  12,
+						upper:  12,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  15,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+			},
+			totColSize: []int64{11, 11},
+			popedTopN:  []topN4Test{},
+			expHist: []*bucket4Test{
+				{
+					lower:  1,
+					upper:  9,
+					count:  10,
+					repeat: 2,
+					ndv:    7,
+				},
+				{
+					lower:  11,
+					upper:  17,
+					count:  22,
+					repeat: 1,
+					ndv:    8,
+				},
+			},
+			expBucketNumber: 2,
+		},
+		{
+			partitionHists: [][]*bucket4Test{
+				{
+					// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
+					{
+						lower:  1,
+						upper:  4,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  9,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  12,
+						upper:  12,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  15,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+			},
+			totColSize: []int64{11, 11},
+			popedTopN: []topN4Test{
+				{
+					data:  18,
+					count: 5,
+				},
+				{
+					data:  4,
+					count: 6,
+				},
+			},
+			expHist: []*bucket4Test{
+				{
+					lower:  1,
+					upper:  5,
+					count:  10,
+					repeat: 1,
+					ndv:    2,
+				},
+				{
+					lower:  6,
+					upper:  12,
+					count:  22,
+					repeat: 3,
+					ndv:    6,
+				},
+				{
+					lower:  13,
+					upper:  18,
+					count:  33,
+					repeat: 5,
+					ndv:    5,
+				},
+			},
+			expBucketNumber: 3,
+		},
+		{
+			// issue#49023
+			partitionHists: [][]*bucket4Test{
+				{
+					// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
+					{
+						lower:  1,
+						upper:  4,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  9,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  12,
+						upper:  12,
+						count:  5,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  15,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  2,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(3) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  2,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(4) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  2,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+			},
+			totColSize: []int64{11, 11, 11, 11},
+			popedTopN: []topN4Test{
+				{
+					data:  18,
+					count: 5,
+				},
+				{
+					data:  4,
+					count: 6,
+				},
+			},
+			expHist: []*bucket4Test{
+				{
+					lower:  1,
+					upper:  9,
+					count:  17,
+					repeat: 2,
+					ndv:    8,
+				},
+				{
+					lower:  11,
+					upper:  11,
+					count:  35,
+					repeat: 9,
+					ndv:    1,
+				},
+				{
+					lower:  13,
+					upper:  18,
+					count:  55,
+					repeat: 5,
+					ndv:    6,
+				},
+			},
+			expBucketNumber: 3,
+		},
+	}
+
+	killer := sqlkiller.SQLKiller{}
+
+	for ii, tt := range tests {
+		var expTotColSize int64
+		hists := make([]*Histogram, 0, len(tt.partitionHists))
+		for i := range tt.partitionHists {
+			hists = append(hists, genHist4Test(t, tt.partitionHists[i], tt.totColSize[i]))
+			expTotColSize += tt.totColSize[i]
+		}
+		ctx := mock.NewContext()
+		sc := ctx.GetSessionVars().StmtCtx
+		// Carry the popedTopN entries on the first partition's TopN with
+		// numTopN=0, every entry flows into Pass 2's leftover-TopN
+		// injection rather than being promoted to global TopN.
+		topNs := make([]*TopN, len(hists))
+		topNs[0] = NewTopN(len(tt.popedTopN))
+		for _, top := range tt.popedTopN {
+			b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(top.data))
+			require.NoError(t, err)
+			topNs[0].AppendTopN(b, uint64(top.count))
+		}
+		topNs[0].Sort()
+		for i := 1; i < len(topNs); i++ {
+			topNs[i] = NewTopN(0)
+		}
+		_, globalHist, err := MergePartTopNAndHistToGlobal(
+			sc, &killer, topNs, hists, 0, int64(tt.expBucketNumber), true,
+		)
+		require.NoError(t, err)
+		require.Equal(t, tt.expBucketNumber, len(globalHist.Buckets))
+		for i, b := range tt.expHist {
+			lo, err := ValueToString(ctx.GetSessionVars(), globalHist.GetLower(i), 1, []byte{types.KindInt64})
+			require.NoError(t, err, "failed at #%d case, %d bucket", ii, i)
+			up, err := ValueToString(ctx.GetSessionVars(), globalHist.GetUpper(i), 1, []byte{types.KindInt64})
+			require.NoError(t, err, "failed at #%d case, %d bucket", ii, i)
+			require.Equal(t, fmt.Sprintf("%v", b.lower), lo, "failed at #%d case, %d bucket", ii, i)
+			require.Equal(t, fmt.Sprintf("%v", b.upper), up, "failed at #%d case, %d bucket", ii, i)
+			require.Equal(t, b.count, globalHist.Buckets[i].Count, "failed at #%d case, %d bucket", ii, i)
+			require.Equal(t, b.repeat, globalHist.Buckets[i].Repeat, "failed at #%d case, %d bucket", ii, i)
+		}
+		require.Equal(t, expTotColSize, globalHist.TotColSize, "failed at #%d case", ii)
+	}
+}
+
+func TestMergePartitionHist2GlobalHist(t *testing.T) {
 	type testCase struct {
 		partitionHists  [][]*bucket4Test
 		totColSize      []int64

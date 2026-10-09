@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "global_stats.go",
         "global_stats_async.go",
-        "merge_worker.go",
         "topn.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/globalstats",
@@ -27,7 +26,6 @@ go_library(
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_tiancaiamao_gp//:gp",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_zap//:zap",
     ],
@@ -45,7 +43,7 @@ go_test(
     ],
     embed = [":globalstats"],
     flaky = True,
-    shard_count = 28,
+    shard_count = 29,
     deps = [
         "//pkg/domain",
         "//pkg/kv",
@@ -66,7 +64,6 @@ go_test(
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@com_github_tiancaiamao_gp//:gp",
         "@org_uber_go_goleak//:goleak",
     ],
 )

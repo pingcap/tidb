@@ -15,111 +15,12 @@
 package globalstats
 
 import (
-	"strings"
-	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/tiancaiamao/gp"
 )
-
-func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
-	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
-	[]statistics.TopNMeta, []*statistics.Histogram, error) {
-	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
-		return nil, nil, wrapper.AllHg, nil
-	}
-	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
-	killer := &sc.GetSessionVars().SQLKiller
-
-	// use original method if concurrency equals 1 or for version1
-	if mergeConcurrency < 2 {
-		return MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
-	}
-	batchSize := len(wrapper.AllTopN) / mergeConcurrency
-	if batchSize < 1 {
-		batchSize = 1
-	} else if batchSize > MaxPartitionMergeBatchSize {
-		batchSize = MaxPartitionMergeBatchSize
-	}
-	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killer)
-}
-
-// MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency.
-// To merge global stats topN by concurrency,
-// we will separate the partition topN in concurrency part and deal it with different worker.
-// mergeConcurrency is used to control the total concurrency of the running worker,
-// and mergeBatchSize is sued to control the partition size for each worker to solve it
-func MergeGlobalStatsTopNByConcurrency(
-	gp *gp.Pool,
-	mergeConcurrency, mergeBatchSize int,
-	wrapper *StatsWrapper,
-	timeZone *time.Location,
-	version int,
-	n uint32,
-	isIndex bool,
-	killer *sqlkiller.SQLKiller,
-) (*statistics.TopN,
-	[]statistics.TopNMeta, []*statistics.Histogram, error) {
-	if len(wrapper.AllTopN) < mergeConcurrency {
-		mergeConcurrency = len(wrapper.AllTopN)
-	}
-	tasks := make([]*TopnStatsMergeTask, 0)
-	for start := 0; start < len(wrapper.AllTopN); {
-		end := start + mergeBatchSize
-		if end > len(wrapper.AllTopN) {
-			end = len(wrapper.AllTopN)
-		}
-		task := NewTopnStatsMergeTask(start, end)
-		tasks = append(tasks, task)
-		start = end
-	}
-	var wg sync.WaitGroup
-	taskNum := len(tasks)
-	taskCh := make(chan *TopnStatsMergeTask, taskNum)
-	respCh := make(chan *TopnStatsMergeResponse, taskNum)
-	worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killer)
-	for i := 0; i < mergeConcurrency; i++ {
-		wg.Add(1)
-		gp.Go(func() {
-			defer wg.Done()
-			worker.Run(timeZone, isIndex, version)
-		})
-	}
-	for _, task := range tasks {
-		taskCh <- task
-	}
-	close(taskCh)
-	wg.Wait()
-	close(respCh)
-	// handle Error
-	hasErr := false
-	errMsg := make([]string, 0)
-	for resp := range respCh {
-		if resp.Err != nil {
-			hasErr = true
-			errMsg = append(errMsg, resp.Err.Error())
-		}
-	}
-	if hasErr {
-		return nil, nil, nil, errors.New(strings.Join(errMsg, ","))
-	}
-
-	// fetch the response from each worker and merge them into global topn stats
-	counter := worker.Result()
-	numTop := len(counter)
-	sorted := make([]statistics.TopNMeta, 0, numTop)
-	for value, cnt := range counter {
-		data := hack.Slice(string(value))
-		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
-	}
-	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-	return globalTopN, popedTopn, wrapper.AllHg, nil
-}
 
 // MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
 // The input parameters:
