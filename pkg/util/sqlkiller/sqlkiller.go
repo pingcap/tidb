@@ -61,8 +61,8 @@ type SQLKiller struct {
 // SendKillSignal sends a kill signal to the query.
 func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
-		status := atomic.LoadUint32(&killer.Signal)
-		err := killer.getKillError(status)
+		failpoint.InjectCall("beforeLogKillSignal")
+		err := killer.getKillError(reason)
 		logutil.BgLogger().Warn("kill initiated", zap.Uint64("connection ID", killer.ConnID.Load()), zap.String("reason", err.Error()))
 	}
 }
@@ -167,9 +167,10 @@ func (killer *SQLKiller) CheckConnectionAlive() {
 
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
-	if atomic.LoadUint32(&killer.Signal) != 0 {
+	status := atomic.SwapUint32(&killer.Signal, UnspecifiedKillSignal)
+	failpoint.InjectCall("afterResetKillSignalSwap")
+	if status != UnspecifiedKillSignal {
 		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID.Load()))
 	}
-	atomic.StoreUint32(&killer.Signal, 0)
 	killer.lastCheckTime.Store(nil)
 }
