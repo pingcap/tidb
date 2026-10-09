@@ -285,8 +285,14 @@ impl KvTable {
     /// number on a signed column is a negative base and moves nothing.
     /// CREATE does NOT share that domain-aware read; see
     /// `auto_increment_option`'s caller.
+    ///
+    /// Go's CREATE stores the base in meta (`CreateTableAndSetAutoID`) and the
+    /// table's allocator is loaded empty, so the first draw reserves the
+    /// default step from that base rather than an adapted one.
     pub fn rebase_auto_increment(&mut self, next_id: i64) -> Result<(), AutoIdStoreError> {
-        self.auto_id.rebase_to_next(next_id as u64)
+        self.auto_id.rebase_to_next(next_id as u64)?;
+        self.auto_id.forget_reservation();
+        Ok(())
     }
 
     /// Go `ALTER TABLE ... FORCE AUTO_INCREMENT = n`: unlike the ordinary

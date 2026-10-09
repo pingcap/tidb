@@ -1641,9 +1641,9 @@ pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<D
     }
     let result = str_to_date_inner(vals, cols)?;
     match result {
-        // go `mysqlTimeFix`: the month-0 results (no %m/%c token parsed)
-        // raise ErrWrongValueForFunction (1411) naming the INPUT text and
-        // the function (oracle-captured on g-fsp).
+        // The DATE/DATETIME signatures' `NO_ZERO_DATE` rejection of a zero
+        // year, month or day: ErrWrongValueForType (1411) naming the INPUT
+        // text and the function (`builtin_time.go:2068`).
         Datum::Bytes(bytes) if bytes.is_empty() => {
             if let Ok(Some(input)) = coerce_str(&vals[0]) {
                 cols.append_warning(
@@ -1683,14 +1683,19 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
         let token = format[format_pos];
         format_pos += 1;
         if token != '%' {
+            // Go `strToDate`: an exhausted input succeeds, the remaining
+            // tokens zero.
+            if date_pos >= date.len() {
+                break;
+            }
             if date.get(date_pos) != Some(&token) {
-                return Ok(month_zero_sentinel(&value));
+                return Ok(Datum::Null);
             }
             date_pos += 1;
             continue;
         }
         let Some(specifier) = format.get(format_pos).copied() else {
-            return Ok(month_zero_sentinel(&value));
+            return Ok(Datum::Null);
         };
         format_pos += 1;
         if date_pos >= date.len() {
@@ -1720,7 +1725,7 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
         match specifier {
             'Y' => {
                 let Some((raw, consumed)) = parse_ascii_digits(&date[date_pos..], 4) else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 value.year = expand_year(raw, consumed);
                 value.saw_date = true;
@@ -1728,7 +1733,7 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             }
             'y' => {
                 let Some((raw, consumed)) = parse_ascii_digits(&date[date_pos..], 2) else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 value.year = expand_year(raw, consumed);
                 value.saw_date = true;
@@ -1736,7 +1741,7 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             }
             'm' | 'c' => {
                 let Some((month, consumed)) = parse_ascii_digits(&date[date_pos..], 2) else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 // Assign BEFORE the range check: a parsed-but-out-of-range
                 // month (99) is the zero-time failure (1292), while an
@@ -1746,15 +1751,15 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
                 value.saw_date = true;
                 date_pos += consumed;
                 if month > 12 {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 }
             }
             'd' | 'e' => {
                 let Some((day, consumed)) = parse_ascii_digits(&date[date_pos..], 2) else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 if day > 31 {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 }
                 value.day = day;
                 value.saw_date = true;
@@ -1762,11 +1767,11 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             }
             'j' => {
                 // go `strToDate`'s %j: the day-of-year lands in the DAY slot
-                // and the month stays unset -- `mysqlTimeFix` then answers
-                // ErrWrongValueForFunction (1411) for the month-0 result
+                // and the month stays unset, so under `NO_ZERO_DATE` the
+                // month-0 result is the 1411 rejection
                 // (oracle: `STR_TO_DATE('2020 13 02', '%Y %j %d')`).
                 let Some((doy, consumed)) = parse_ascii_digits(&date[date_pos..], 3) else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 value.day = doy;
                 value.saw_date = true;
@@ -1774,10 +1779,10 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             }
             'H' | 'k' => {
                 let Some((hour, consumed)) = parse_ascii_digits(&date[date_pos..], 2) else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 if hour > 23 {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 }
                 value.hour = hour;
                 value.saw_time = true;
@@ -1786,10 +1791,10 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             }
             'h' | 'I' | 'l' => {
                 let Some((hour, consumed)) = parse_ascii_digits(&date[date_pos..], 2) else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 if hour == 0 || hour > 12 {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 }
                 value.hour = hour;
                 value.saw_time = true;
@@ -1798,10 +1803,10 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             }
             'i' => {
                 let Some((minute, consumed)) = parse_ascii_digits(&date[date_pos..], 2) else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 if minute > 59 {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 }
                 value.minute = minute;
                 value.saw_time = true;
@@ -1809,10 +1814,10 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             }
             's' | 'S' => {
                 let Some((second, consumed)) = parse_ascii_digits(&date[date_pos..], 2) else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 if second > 59 {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 }
                 value.second = second;
                 value.saw_time = true;
@@ -1830,10 +1835,10 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             }
             'p' => {
                 let Some(am_pm) = parse_am_pm(&date[date_pos..]) else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 if value.saw_24_hour {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 }
                 value.am_pm = Some(am_pm);
                 date_pos += 2;
@@ -1842,7 +1847,7 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
                 let Some((hour, minute, second, am_pm, consumed)) =
                     parse_time_12(&date[date_pos..])
                 else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 value.hour = hour;
                 value.minute = minute;
@@ -1855,7 +1860,7 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             'T' => {
                 let Some((hour, minute, second, consumed)) = parse_time_24(&date[date_pos..])
                 else {
-                    return Ok(month_zero_sentinel(&value));
+                    return Ok(Datum::Null);
                 };
                 value.hour = hour;
                 value.minute = minute;
@@ -1873,7 +1878,7 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
 
     if let Some(am_pm) = value.am_pm {
         if value.saw_24_hour || !value.saw_12_hour {
-            return Ok(month_zero_sentinel(&value));
+            return Ok(Datum::Null);
         }
         value.hour = if value.hour == 12 {
             if am_pm {
@@ -1887,61 +1892,9 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             value.hour
         };
     }
-    if value.saw_date {
-        // `types.checkMonthDay`, the one calendar rejection `Time.Check`
-        // still applies with `allowZeroInDate`: a zero month keeps Go's
-        // `maxDay = 31` initializer (the `if month > 0` guard skips the
-        // per-month table), and `ALLOW_INVALID_DATES` keeps it for every
-        // month.
-        let modes = cols.date_modes();
-        if value.month == 0 {
-            // go `mysqlTimeFix`: the month-0 results raise
-            // ErrWrongValueForFunction (1411) naming the input -- the
-            // empty-bytes sentinel the wrapper translates (the %j
-            // day-of-year path leaves the month unset).
-            return Ok(Datum::Bytes(Vec::new()));
-        }
-        let max_day = if modes.allow_invalid_dates || value.month == 0 {
-            31
-        } else {
-            days_in_month(value.year, value.month)
-        };
-        if value.month > 12 || value.day > max_day {
-            return Ok(month_zero_sentinel(&value));
-        }
-        // The DATE/DATETIME signatures' own `NO_ZERO_DATE` rejection; see
-        // this function's doc.
-        if modes.no_zero_date && (value.year == 0 || value.month == 0 || value.day == 0) {
-            return Ok(month_zero_sentinel(&value));
-        }
-        if value.year == 0 && value.month == 0 && value.day == 0 {
-            // go `mysqlTimeFix`: the month-0 results raise
-            // ErrWrongValueForFunction (1411) naming the input -- the empty-
-            // bytes sentinel the wrapper translates (the string results are
-            // never empty, so this cannot collide).
-            return Ok(Datum::Bytes(Vec::new()));
-        }
-        let date = format!("{:04}-{:02}-{:02}", value.year, value.month, value.day);
-        // go's `Time.String` renders the time-of-day for ANY datetime-kind
-        // result: a `%f`-bearing format forces the full
-        // `0000-00-00 00:00:00.000000` shape even without a time specifier
-        // (oracle-captured on g-fsp's zero-value rows).
-        if value.saw_time || value.saw_fraction {
-            return Ok(Datum::new_string(if value.saw_fraction {
-                format!(
-                    "{date} {:02}:{:02}:{:02}.{:06}",
-                    value.hour, value.minute, value.second, value.microsecond
-                )
-            } else {
-                format!(
-                    "{date} {:02}:{:02}:{:02}",
-                    value.hour, value.minute, value.second
-                )
-            }));
-        }
-        return Ok(Datum::new_string(date));
-    }
-    if value.saw_time {
+    let (is_duration, is_date) = format_type(&format);
+    if is_duration && !is_date {
+        // `builtinStrToDateDurationSig`: no `NO_ZERO_DATE` rejection.
         return Ok(Datum::new_string(if value.saw_fraction {
             format!(
                 "{:02}:{:02}:{:02}.{:06}",
@@ -1951,20 +1904,72 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             format!("{:02}:{:02}:{:02}", value.hour, value.minute, value.second)
         }));
     }
-    Ok(Datum::Null)
+    // `builtinStrToDate{Date,Datetime}Sig`. `Time.Check` under the SELECT's
+    // `allowZeroInDate`: `checkMonthDay` keeps `maxDay = 31` for a zero month
+    // (and for every month under `ALLOW_INVALID_DATES`); its failure is the
+    // zero time (1292).
+    let modes = cols.date_modes();
+    let max_day = if modes.allow_invalid_dates || value.month == 0 {
+        31
+    } else {
+        days_in_month(value.year, value.month)
+    };
+    if value.month > 12 || value.day > max_day {
+        return Ok(Datum::Null);
+    }
+    // The signatures' own `NO_ZERO_DATE` rejection, ErrWrongValueForType
+    // (1411) naming the input: the empty-bytes sentinel the wrapper reports.
+    if modes.no_zero_date && (value.year == 0 || value.month == 0 || value.day == 0) {
+        return Ok(Datum::Bytes(Vec::new()));
+    }
+    let date = format!("{:04}-{:02}-{:02}", value.year, value.month, value.day);
+    if is_date && !is_duration {
+        return Ok(Datum::new_string(date));
+    }
+    // DATETIME, with Go's `MaxFsp` when the format names `%f`.
+    Ok(Datum::new_string(if format_names_fraction(&format) {
+        format!(
+            "{date} {:02}:{:02}:{:02}.{:06}",
+            value.hour, value.minute, value.second, value.microsecond
+        )
+    } else {
+        format!("{date} {:02}:{:02}:{:02}", value.hour, value.minute, value.second)
+    }))
 }
 
-/// go `mysqlTimeFix`: a str_to_date result whose month token never parsed
-/// (the month stays 0 — the %j day-of-year path or a short input) raises
-/// ErrWrongValueForFunction (1411) naming the INPUT text; the wrapper
-/// translates this empty-bytes sentinel. Every other failure is the plain
-/// NULL (the token-parse failures answer the zero time whose cast warns
-/// 1292 with the zero-time text).
-fn month_zero_sentinel(value: &ParsedDateTime) -> Datum {
-    if value.saw_date && value.month == 0 {
-        return Datum::Bytes(Vec::new());
+/// Go `types.GetFormatType`: whether the format names time and date
+/// tokens, which decides `STR_TO_DATE`'s TIME, DATE or DATETIME signature.
+fn format_type(format: &[char]) -> (bool, bool) {
+    let mut position = 0;
+    while format.get(position).is_some_and(|c| c.is_whitespace()) {
+        position += 1;
     }
-    Datum::Null
+    let (mut is_duration, mut is_date) = (false, false);
+    while position < format.len() {
+        if format[position] != '%' {
+            position += 1;
+            continue;
+        }
+        let Some(specifier) = format.get(position + 1) else {
+            // `getFormatToken` fails on a trailing `%`.
+            return (false, false);
+        };
+        match specifier {
+            'h' | 'H' | 'i' | 'I' | 's' | 'S' | 'k' | 'l' | 'f' | 'r' | 'T' => is_duration = true,
+            'y' | 'Y' | 'm' | 'M' | 'c' | 'b' | 'D' | 'd' | 'e' => is_date = true,
+            _ => {}
+        }
+        if is_duration && is_date {
+            break;
+        }
+        position += 2;
+    }
+    (is_duration, is_date)
+}
+
+/// Go `strings.Contains(format, "%f")` in `getRetTp`.
+fn format_names_fraction(format: &[char]) -> bool {
+    format.windows(2).any(|pair| pair == ['%', 'f'])
 }
 
 fn skip_parser_whitespace(input: &[char], position: &mut usize) {

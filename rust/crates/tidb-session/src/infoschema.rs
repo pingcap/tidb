@@ -2091,14 +2091,9 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             Datum::Int(0),
             Datum::UInt(index_length),
             Datum::Int(0),
-            // go's AUTO_INCREMENT cell reads the STORED `AutoIncID` (the
-            // allocator high-water), not the id the next insert would take:
-            // a freshly created table reads 0, and a table without an
-            // auto-increment column reads NULL.
-            match table.next_auto_increment() {
-                Some(next) => Datum::Int(next.saturating_sub(1)),
-                None => Datum::Null,
-            },
+            // Go `getAutoIncrementID`: the allocator's `Base() + 1`, 0 while
+            // it has drawn nothing; NULL without an auto-increment column.
+            table.allocated_auto_increment().map_or(Datum::Null, Datum::Int),
             // CREATE_TIME is NULL rather than a fabricated timestamp.
             Datum::Null,
             Datum::Null,
@@ -2171,9 +2166,11 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
                 },
             ];
             if is_view {
-                row.extend(std::iter::repeat_n(Datum::Null, 13));
-                row.push(created.clone());
+                // TABLE_ROWS through AUTO_INCREMENT, then CREATE_TIME, then
+                // UPDATE_TIME through CREATE_OPTIONS, then TABLE_COMMENT.
                 row.extend(std::iter::repeat_n(Datum::Null, 7));
+                row.push(created.clone());
+                row.extend(std::iter::repeat_n(Datum::Null, 5));
                 row.push(text("VIEW"));
             } else {
                 row.extend(std::iter::repeat_n(Datum::Int(0), 6));

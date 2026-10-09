@@ -81,6 +81,22 @@ impl PreparedAllocatorChanges {
     }
 }
 
+/// Go `onRebaseAutoID`'s job warning: without FORCE a request below
+/// `NextGlobalAutoID` is raised to it, for auto-increment and auto-random
+/// alike.
+fn warn_adjusted_rebase(ctx: &crate::StmtContext, rebase: &crate::kv_table::PreparedAutoIdRebase) {
+    if rebase.next() != rebase.requested() {
+        ctx.append_warning_parts(
+            1105,
+            &format!(
+                "Can't reset AUTO_INCREMENT to {} without FORCE option, using {} instead",
+                rebase.requested() as i64,
+                rebase.next() as i64
+            ),
+        );
+    }
+}
+
 fn auto_increment_rebase_error(error: crate::kv_table::AutoIdError) -> DriverError {
     match error {
         crate::kv_table::AutoIdError::Exhausted => DriverError::AutoincReadFailed,
@@ -1501,6 +1517,7 @@ fn prepare_table_options(
                 let rebase = table
                     .prepare_rebase_auto_increment(next, force)
                     .map_err(auto_increment_rebase_error)?;
+                warn_adjusted_rebase(ctx, &rebase);
                 changes.push(PreparedMetadataChange::Rebase(
                     PreparedAllocatorRebase::Increment(rebase),
                 ));
@@ -1514,13 +1531,7 @@ fn prepare_table_options(
                 let rebase = table
                     .prepare_rebase_auto_random(next, force)
                     .map_err(super::auto_random::rebase_error)?;
-                if !force
-                    && table
-                        .next_auto_random()
-                        .is_some_and(|current| (next as u64) < current)
-                {
-                    ctx.append_warning_parts(1105, &format!("Can't reset AUTO_INCREMENT to {next} without FORCE option, using {} instead", table.next_auto_random().expect("checked above")));
-                }
+                warn_adjusted_rebase(ctx, &rebase);
                 reject_metadata_multi_job(multi_schema, "rebase auto_random ID")?;
                 changes.push(PreparedMetadataChange::Rebase(
                     PreparedAllocatorRebase::Random(rebase),

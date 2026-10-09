@@ -623,10 +623,21 @@ impl AutoIdAllocator {
             AllocatorBackend::Service(s) => s.base().wrapping_add(1),
         }
     }
+    /// Go `NextGlobalAutoID`, which `SHOW CREATE TABLE` prints: the first id
+    /// beyond every range reserved from the shared counter.
     pub(crate) fn next_for_show(&self) -> Result<u64, AutoIdStoreError> {
-        match &self.backend {
-            AllocatorBackend::Cached(c) => Ok(c.next()),
-            AllocatorBackend::Service(_) => self.next_global(),
+        self.next_global()
+    }
+
+    /// Go `getAutoIncrementID`: `alloc.Base() + 1`, or 0 while this allocator
+    /// has drawn nothing (`infoschema_reader.go:289-313`), which
+    /// `information_schema.TABLES` and `SHOW TABLE STATUS` print.
+    pub(crate) fn status_next(&self) -> u64 {
+        let next = self.allocated_next();
+        if next == 1 {
+            0
+        } else {
+            next
         }
     }
     pub(crate) fn next_global(&self) -> Result<u64, AutoIdStoreError> {
@@ -690,17 +701,28 @@ impl AutoIdAllocator {
                 .ok_or(AutoIdError::Exhausted)
         }
     }
+    /// Go `onRebaseAutoID`'s preparation: without FORCE the requested next id
+    /// is raised to `NextGlobalAutoID` (`adjustNewBaseToNextGlobalID`).
     pub(crate) fn prepare_rebase_to_next(
         &self,
         next: u64,
         force: bool,
     ) -> Result<PreparedAutoIdRebase, AutoIdError> {
-        if force {
+        let adjusted = if force {
             self.checked_force_rebase_base(next)?;
-        }
+            next
+        } else {
+            let global = self.next_global().map_err(AutoIdError::Store)?;
+            if exceeds(global, next, self.unsigned) {
+                global
+            } else {
+                next
+            }
+        };
         Ok(PreparedAutoIdRebase {
             allocator: self.clone(),
-            next,
+            requested: next,
+            next: adjusted,
             force,
         })
     }
@@ -737,19 +759,37 @@ impl AutoIdAllocator {
 #[derive(Debug)]
 pub(crate) struct PreparedAutoIdRebase {
     allocator: AutoIdAllocator,
+    requested: u64,
     next: u64,
     force: bool,
 }
 
 impl PreparedAutoIdRebase {
+    /// The next id the statement asked for.
+    pub(crate) const fn requested(&self) -> u64 {
+        self.requested
+    }
+
+    /// The next id the rebase establishes: the request, raised to
+    /// `NextGlobalAutoID` without FORCE.
+    pub(crate) const fn next(&self) -> u64 {
+        self.next
+    }
+
+    /// Go `onRebaseAutoID` then the schema reload: the shared counter moves
+    /// (`Rebase(newBase-1, false)` or `ForceRebase`), and `filterAllocators`
+    /// drops the table's allocator of that type, so the next draw starts a
+    /// fresh reservation at the default step.
     pub(crate) fn execute(self) -> Result<(), AutoIdError> {
         if self.force {
-            self.allocator.force_rebase_to_next(self.next)
+            self.allocator.force_rebase_to_next(self.next)?;
         } else {
             self.allocator
                 .rebase_to_next(self.next)
-                .map_err(AutoIdError::Store)
+                .map_err(AutoIdError::Store)?;
         }
+        self.allocator.forget_reservation();
+        Ok(())
     }
 }
 
@@ -1514,11 +1554,14 @@ mod tests {
         assert_eq!(writer.alloc(1, 1), Ok(1));
         assert_eq!(writer.alloc(1, 1), Ok(2));
         rebase.execute().unwrap();
-        assert_eq!(writer.alloc(1, 1), Ok(3));
-        assert_eq!(allocator.alloc(1, 1), Ok(4));
+        // Go's schema reload drops the allocator: the next draw reserves past
+        // the range the writer held.
+        let next = DEFAULT_AUTO_ID_STEP + 1;
+        assert_eq!(writer.alloc(1, 1), Ok(next));
+        assert_eq!(allocator.alloc(1, 1), Ok(next + 1));
 
         let force = allocator.prepare_rebase_to_next(2, true).unwrap();
-        assert_eq!(writer.alloc(1, 1), Ok(5), "FORCE is deferred too");
+        assert_eq!(writer.alloc(1, 1), Ok(next + 2), "FORCE is deferred too");
         force.execute().unwrap();
         assert_eq!(writer.alloc(1, 1), Ok(2), "execution keeps FORCE semantics");
     }
@@ -1526,13 +1569,14 @@ mod tests {
     #[test]
     fn prepared_rebase_preserves_store_errors_and_validates_without_writes() {
         let allocator = AutoIdAllocator::over(Arc::new(FailingStore), 1);
-        for force in [false, true] {
-            let rebase = allocator.prepare_rebase_to_next(100, force).unwrap();
-            assert_eq!(
-                rebase.execute(),
-                Err(AutoIdError::Store(AutoIdStoreError("injected".to_owned())))
-            );
-        }
+        let injected = AutoIdError::Store(AutoIdStoreError("injected".to_owned()));
+        // Without FORCE, Go reads `NextGlobalAutoID` before rebasing.
+        assert_eq!(
+            allocator.prepare_rebase_to_next(100, false).unwrap_err(),
+            injected
+        );
+        let rebase = allocator.prepare_rebase_to_next(100, true).unwrap();
+        assert_eq!(rebase.execute(), Err(injected));
         assert!(matches!(
             allocator.prepare_rebase_to_next(0, true),
             Err(AutoIdError::Exhausted)

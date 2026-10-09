@@ -1086,8 +1086,8 @@ fn allocator_state(
     };
     (
         table.next_global_row_ids().unwrap(),
-        table.next_auto_increment(),
-        table.next_auto_random(),
+        table.next_auto_increment_for_show().unwrap(),
+        table.next_auto_random_for_show().unwrap(),
     )
 }
 

@@ -3258,7 +3258,8 @@ impl KvTable {
         self.indexes_mut().push(index);
     }
 
-    /// SHOW CREATE reads the single-point service authority, including peer allocations.
+    /// Go `NextGlobalAutoID`, which SHOW CREATE TABLE prints: the shared
+    /// counter's next id, including peer allocations.
     #[must_use]
     pub fn next_auto_increment_for_show(&self) -> Result<Option<i64>, AutoIdStoreError> {
         self.auto_increment_offset
@@ -3266,22 +3267,15 @@ impl KvTable {
             .transpose()
     }
 
-    /// Local allocator cursor used by information schema and SHOW TABLE STATUS.
-    #[must_use]
-    pub fn next_auto_increment(&self) -> Option<i64> {
-        self.auto_increment_offset
-            .map(|_| self.auto_id.next() as i64)
-    }
-
-    /// The live draw cursor's next id, which `SHOW TABLE STATUS` reports as
-    /// `Auto_increment` -- distinct from [`Self::next_auto_increment`] (the
-    /// reserved window's end, which `SHOW CREATE` reports): go's STATUS row
-    /// reads the draw cursor (oracle g-view sr: after `AUTO_INCREMENT = 100`
-    /// plus one drawn id the two shows read 30100 and 101 respectively).
+    /// Go `getAutoIncrementID` (`infoschema_reader.go:289-313`): this node's
+    /// allocator `Base() + 1`, or 0 while it has drawn nothing -- what
+    /// `information_schema.TABLES.AUTO_INCREMENT` and `SHOW TABLE STATUS`
+    /// print. `SHOW CREATE TABLE` reads the shared counter instead
+    /// ([`Self::next_auto_increment_for_show`]).
     #[must_use]
     pub fn allocated_auto_increment(&self) -> Option<i64> {
         self.auto_increment_offset
-            .map(|_| self.auto_id.allocated_next() as i64)
+            .map(|_| self.auto_id.status_next() as i64)
     }
 
     /// The table's indexes: every one of them, which is what index

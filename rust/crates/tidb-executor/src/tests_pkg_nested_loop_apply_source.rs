@@ -102,7 +102,10 @@ fn move_info_schema_to_front_source() {
             "A".to_owned(),
             "B".to_owned(),
             "C".to_owned(),
+            "METRICS_SCHEMA".to_owned(),
+            "PERFORMANCE_SCHEMA".to_owned(),
             "mysql".to_owned(),
+            "sys".to_owned(),
             "test".to_owned(),
         ],
     );
@@ -124,14 +127,19 @@ fn move_info_schema_to_front_source() {
         vec![
             "INFORMATION_SCHEMA".to_owned(),
             "Aa".to_owned(),
+            "METRICS_SCHEMA".to_owned(),
+            "PERFORMANCE_SCHEMA".to_owned(),
             "b".to_owned(),
             "mysql".to_owned(),
+            "sys".to_owned(),
             "test".to_owned(),
         ],
     );
 
     // Go row 6's shape: several names on BOTH sides of "INFORMATION_SCHEMA"
-    // keep their sorted positions after the relocation.
+    // keep their sorted positions after the relocation. The bootstrapped
+    // METRICS_SCHEMA, PERFORMANCE_SCHEMA and sys sort byte-wise too, as in
+    // Go's `SHOW DATABASES`.
     let mut catalog = Catalog::default();
     for name in ["A", "B", "C", "a1", "b1"] {
         catalog.register_database_with_id(name, 300);
@@ -143,9 +151,12 @@ fn move_info_schema_to_front_source() {
             "A".to_owned(),
             "B".to_owned(),
             "C".to_owned(),
+            "METRICS_SCHEMA".to_owned(),
+            "PERFORMANCE_SCHEMA".to_owned(),
             "a1".to_owned(),
             "b1".to_owned(),
             "mysql".to_owned(),
+            "sys".to_owned(),
             "test".to_owned(),
         ],
     );
@@ -160,7 +171,10 @@ fn move_info_schema_to_front_source() {
         catalog.database_names(),
         vec![
             "INFORMATION_SCHEMA".to_owned(),
+            "METRICS_SCHEMA".to_owned(),
+            "PERFORMANCE_SCHEMA".to_owned(),
             "mysql".to_owned(),
+            "sys".to_owned(),
             "test".to_owned(),
         ],
     );

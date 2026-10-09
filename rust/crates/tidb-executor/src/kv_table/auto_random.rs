@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::auto_id::{increment_and_offset, AutoIdAllocator, AutoIdError, PreparedAutoIdRebase};
+use super::auto_id::{
+    increment_and_offset, AutoIdAllocator, AutoIdError, AutoIdStoreError, PreparedAutoIdRebase,
+};
 use super::{KvTable, TableAutoId};
 use tidb_datatype::Datum;
 
@@ -149,19 +151,25 @@ impl KvTable {
         self.auto_random
     }
 
-    /// The next increasing value this allocator will compose.
-    #[must_use]
-    pub fn next_auto_random(&self) -> Option<u64> {
-        self.auto_random.map(|_| self.auto_random_id.next())
+    /// Go `NextGlobalAutoID` of the auto-random allocator, which SHOW CREATE
+    /// TABLE prints as `AUTO_RANDOM_BASE`.
+    pub fn next_auto_random_for_show(&self) -> Result<Option<u64>, AutoIdStoreError> {
+        self.auto_random
+            .map(|_| self.auto_random_id.next_for_show())
+            .transpose()
     }
 
     /// Go `ALTER TABLE ... AUTO_RANDOM_BASE=n`: raise the next increasing
     /// value, leaving a higher counter unchanged.
+    ///
+    /// As at CREATE in Go, the allocator then starts empty above that base.
     pub fn rebase_auto_random(&mut self, next: i64) -> Result<(), AutoRandomError> {
         let next = self.checked_auto_random_base(next)?;
         self.auto_random_id
             .rebase_to_next(next)
-            .map_err(|error| AutoRandomError::AutoId(AutoIdError::Store(error)))
+            .map_err(|error| AutoRandomError::AutoId(AutoIdError::Store(error)))?;
+        self.auto_random_id.forget_reservation();
+        Ok(())
     }
 
     /// Go `FORCE AUTO_RANDOM_BASE=n`: replace the next increasing value even

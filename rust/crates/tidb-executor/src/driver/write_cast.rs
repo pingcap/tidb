@@ -848,7 +848,19 @@ fn apply_zero_date(
     match action {
         ZeroDateAction::Store(value) => Ok(value),
         ZeroDateAction::WarnAndStore(value) => {
-            let reported = error().to_mysql_error();
+            // ODKU completes its warnings like the insert row, naming the
+            // converted value it stores (`'0000-00-00 00:00:00'`).
+            let reported = if shape == CastShape::OnDuplicateAssignment {
+                DriverError::IncorrectTemporalValue {
+                    type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+                    value: datum_error_text(&value),
+                    column: column.to_owned(),
+                    row: row_index + 1,
+                }
+            } else {
+                error()
+            }
+            .to_mysql_error();
             ctx.append_warning_parts(reported.code, &reported.message);
             Ok(value)
         }

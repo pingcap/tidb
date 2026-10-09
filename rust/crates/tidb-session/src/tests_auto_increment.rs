@@ -70,22 +70,21 @@ fn the_create_table_auto_increment_option_seeds_the_first_id() {
     );
 }
 
-/// `ALTER TABLE ... AUTO_INCREMENT=n` is a REBASE: it moves the counter up to
-/// `n` and does nothing at all when the counter has already run past it. The
-/// mock store hides the second half behind its batch cache; the rule is Go's
-/// `Allocator.Rebase`, which only ever raises the base.
+/// `ALTER TABLE ... AUTO_INCREMENT=n` below `NextGlobalAutoID` is raised to
+/// it (Go `onRebaseAutoID`), and the schema reload drops the allocator, so
+/// each insert after an ALTER starts the next 30000-id reservation. Go's own
+/// output at its production step.
 #[test]
 fn alter_table_auto_increment_only_raises_the_counter() {
     let mut session = table(None);
     session.run("INSERT INTO ai (v) VALUES (1)").unwrap();
     session.run("ALTER TABLE ai AUTO_INCREMENT=500").unwrap();
     session.run("INSERT INTO ai (v) VALUES (2)").unwrap();
-    // Naming a value the counter is already past changes nothing.
     session.run("ALTER TABLE ai AUTO_INCREMENT=10").unwrap();
     session.run("INSERT INTO ai (v) VALUES (3)").unwrap();
     assert_eq!(
         rows(&mut session, "SELECT id, v FROM ai ORDER BY id"),
-        [["1", "1"], ["500", "2"], ["501", "3"]]
+        [["1", "1"], ["30001", "2"], ["60001", "3"]]
     );
 }
 

@@ -3984,14 +3984,22 @@ fn cast_json_argument_value(function: &ScalarFunction, value: Datum) -> Result<D
 
 // These source-selected JSON signatures share scalar conversion with the
 // vector path, after the whole JSON input batch has been evaluated.
-fn json_numeric_cast_target(function: &ScalarFunction) -> Option<&FieldType> {
+/// A numeric cast of one argument that Go's typed `vecEval*` cast signature
+/// evaluates argument-first: the whole argument column, then the conversion
+/// row by row (so a string column's truncation warnings come in row order,
+/// before the next operand's). Hybrid and vector sources keep the row path.
+fn numeric_cast_target(function: &ScalarFunction) -> Option<&FieldType> {
     let expected = match function.func_name.lowercase() {
         "cast_signed" | "cast_unsigned" => EvalType::Int,
         "cast_double" => EvalType::Real,
         "cast_decimal" => EvalType::Decimal,
         _ => return None,
     };
-    if function.args.len() != 1 || function.args[0].static_type()?.eval_type() != EvalType::Json {
+    if function.args.len() != 1 {
+        return None;
+    }
+    let source = function.args[0].static_type()?;
+    if source.is_hybrid() || source.eval_type() == EvalType::VectorFloat32 {
         return None;
     }
     function
@@ -4015,9 +4023,11 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
             }
         }),
         Expression::ScalarFunction(function) => {
-            if let Some(field) = json_numeric_cast_target(function) {
+            if let Some(field) = numeric_cast_target(function) {
                 return field.eval_type() == target
-                    && numeric_batch_supported(&function.args[0], EvalType::Json);
+                    && function.args[0].static_type().is_some_and(|source| {
+                        numeric_batch_supported(&function.args[0], source.eval_type())
+                    });
             }
 
             if function.func_name.lowercase() == "cast_json" && target == EvalType::Json {
@@ -4118,7 +4128,7 @@ fn eval_integer_batch(
                 .collect())
         }
         Expression::ScalarFunction(function) => {
-            if json_numeric_cast_target(function).is_some() {
+            if numeric_cast_target(function).is_some() {
                 return eval_numeric_batch_values(expression, ctx, input, EvalType::Int)?
                     .into_iter()
                     .map(bits)
@@ -4188,8 +4198,12 @@ fn eval_numeric_batch_values(
     target: EvalType,
 ) -> Result<Vec<Datum>, EvalError> {
     if let Expression::ScalarFunction(function) = expression {
-        if let Some(field) = json_numeric_cast_target(function) {
-            let values = eval_numeric_batch_values(&function.args[0], ctx, input, EvalType::Json)?;
+        if let Some(field) = numeric_cast_target(function) {
+            let source = function.args[0]
+                .static_type()
+                .expect("numeric cast source has a type")
+                .eval_type();
+            let values = eval_numeric_batch_values(&function.args[0], ctx, input, source)?;
             let cast = cast_type_of(
                 function
                     .func_name

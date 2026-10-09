@@ -114,6 +114,22 @@ pub(crate) fn eval_numeric_cast_with_type(
         }
         value => value,
     };
+    // Go `builtinCastDurationAs{Real,Decimal}Sig`: `types.CheckFsp(val.Fsp)`
+    // before `ToNumber`, so a chunk duration stamped `UnspecifiedFsp` reads
+    // as fsp 0.
+    let value = match value {
+        Datum::Duration(duration)
+            if matches!(target.eval_type(), EvalType::Real | EvalType::Decimal) =>
+        {
+            let fsp = tidb_datatype::check_fsp(duration.fsp())
+                .map_err(|error| EvalError::TruncatedWrongValue(error.to_string()))?;
+            Datum::Duration(tidb_datatype::MySqlDuration::from_raw_parts(
+                duration.nanoseconds(),
+                fsp,
+            ))
+        }
+        value => value,
+    };
     match target.eval_type() {
         EvalType::Decimal => {
             let decimal = if source == EvalType::String {

@@ -468,7 +468,11 @@ pub(super) fn show_create_table_text(
             table.auto_id_cache()
         ));
     }
-    if let Some(base) = table.next_auto_random().filter(|base| *base > 1) {
+    if let Some(base) = table
+        .next_auto_random_for_show()
+        .map_err(|e| DriverError::AutoIdUnavailable(e.0))?
+        .filter(|base| *base > 1)
+    {
         out.push_str(&format!(" /*T![auto_rand_base] AUTO_RANDOM_BASE={base} */"));
     }
     // Go `ShowCreateTable` (`executor/show.go:1405`), in this position:

@@ -1,5 +1,6 @@
 //! Auto-increment statement flows: `ALTER TABLE ... AUTO_INCREMENT = 100`
-//! rebases the allocator (the next insert lands at 100), an AUTO_RANDOM
+//! below `NextGlobalAutoID` is raised to it (Go `onRebaseAutoID`; the next
+//! insert lands at 30001 at the production step), an AUTO_RANDOM
 //! column allocates implicitly, and an EXPLICIT insert into an AUTO_RANDOM
 //! column is refused with TiDB's message naming the session variable.
 
@@ -16,7 +17,7 @@ fn alter_rebases_the_allocator() {
     session.run("insert into t (v) values (1)").unwrap();
     session.run("alter table t auto_increment = 100").unwrap();
     session.run("insert into t (v) values (2)").unwrap();
-    assert_eq!(rows(&mut session, "select id from t order by id"), "1;100");
+    assert_eq!(rows(&mut session, "select id from t order by id"), "1;30001");
 }
 
 #[test]

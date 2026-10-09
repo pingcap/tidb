@@ -3692,9 +3692,10 @@ fn explain_refuses_what_it_cannot_plan() {
                 && row.iter().any(|cell| cell.contains("semi join"))),
         "the INTERSECT analyze must plan through the common physical path"
     );
+    // Go preprocess: `[planner:1791]Unknown EXPLAIN format name: 'bogus'`.
     assert!(matches!(
         session.run("EXPLAIN FORMAT = 'bogus' SELECT * FROM t"),
-        Err(DriverError::Unsupported(reason)) if reason == "unknown EXPLAIN format name"
+        Err(DriverError::UnknownExplainFormat(name)) if name == "bogus"
     ));
 }
 

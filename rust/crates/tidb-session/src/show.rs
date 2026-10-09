@@ -1005,9 +1005,8 @@ impl Session {
                         let entry = catalog.table_in(&database, &name);
                         let (auto_increment, table_charset, comment, create_options) = match entry {
                             Some(tidb_executor::TableEntry::Kv(table)) => (
-                                // The STATUS row reads the draw cursor, not
-                                // the reserved window's end (`SHOW CREATE`
-                                // reads that one).
+                                // Go `getAutoIncrementID`, as
+                                // information_schema.TABLES reads it.
                                 table.allocated_auto_increment(),
                                 table.charset(),
                                 table.comment(),

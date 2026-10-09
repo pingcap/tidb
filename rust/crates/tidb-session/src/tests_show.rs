@@ -749,12 +749,18 @@ fn information_schema() {
         ["schema_name"]
     );
 
-    // An unimplemented information_schema table is an error, not empty
-    // output that would look like a table with no rows. (`views` is
-    // implemented -- see `views_appear_in_the_metadata_statements`.)
-    assert!(session
-        .run("SELECT * FROM information_schema.engines")
-        .is_err());
+    // ENGINES is Go's single fixed row (`setDataFromEngines`).
+    assert_eq!(
+        query(&mut session, "SELECT * FROM information_schema.engines").1,
+        [[
+            "InnoDB",
+            "DEFAULT",
+            "Supports transactions, row-level locking, and foreign keys",
+            "YES",
+            "YES",
+            "YES",
+        ]]
+    );
 }
 
 /// KEY_COLUMN_USAGE, STATISTICS, TABLE_CONSTRAINTS and
@@ -1843,9 +1849,26 @@ fn every_information_schema_cell_matches_its_declared_column_type() {
 
     for name in infoschema::served_table_names() {
         let columns = infoschema::table_schema(name).expect("a served table has a schema");
-        let rows = session
-            .run_with_columns(&format!("SELECT * FROM information_schema.{name}"))
-            .unwrap_or_else(|error| panic!("{name} did not answer: {error:?}"));
+        let answer = session.run_with_columns(&format!("SELECT * FROM information_schema.{name}"));
+        // Go refuses to scan CLUSTER_LOG without a time range
+        // (`memtable_reader.go:450`); that refusal is its answer.
+        if name.eq_ignore_ascii_case("CLUSTER_LOG") {
+            assert!(
+                format!("{answer:?}").contains("denied to scan logs, please specified the start time"),
+                "{name}: {answer:?}"
+            );
+            continue;
+        }
+        // An embedded session has no process HTTP owner for live config
+        // retrieval (the boundary `cluster_metadata_config_refuses_captured_
+        // runtime_rows` pins), and Go itself answers TIKV_STORE_STATUS with
+        // "pd http client unavailable" when there is no PD.
+        if name.eq_ignore_ascii_case("CLUSTER_CONFIG") || name.eq_ignore_ascii_case("TIKV_STORE_STATUS") {
+            if answer.is_err() {
+                continue;
+            }
+        }
+        let rows = answer.unwrap_or_else(|error| panic!("{name} did not answer: {error:?}"));
         let StmtOutput::Rows {
             columns: reported,
             rows,

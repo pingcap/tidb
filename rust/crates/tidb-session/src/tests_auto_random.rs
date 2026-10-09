@@ -95,6 +95,9 @@ fn auto_random_is_the_first_column_of_a_clustered_common_handle() {
     assert_eq!(ids[1] & incremental_mask, 2);
 }
 
+/// Go's own output at its production step (30000): a rebase below
+/// `NextGlobalAutoID` is raised to it with a warning, the schema reload drops
+/// the allocator, and the next insert starts the fresh reservation.
 #[test]
 fn auto_random_base_seeds_rebases_reports_and_validates_the_counter() {
     let mut session = Session::new();
@@ -116,11 +119,19 @@ fn auto_random_base_seeds_rebases_reports_and_validates_the_counter() {
     session
         .run("ALTER TABLE ar_base AUTO_RANDOM_BASE=500")
         .unwrap();
+    assert_eq!(
+        rows(&mut session, "SHOW WARNINGS"),
+        vec![vec![
+            "Warning".to_owned(),
+            "1105".to_owned(),
+            "Can't reset AUTO_INCREMENT to 500 without FORCE option, using 30100 instead".to_owned(),
+        ]]
+    );
     session.run("INSERT INTO ar_base (v) VALUES (2)").unwrap();
     let second = rows(&mut session, "SELECT id FROM ar_base WHERE v=2")[0][0]
         .parse::<i64>()
         .unwrap();
-    assert_eq!(second & ((1_i64 << 58) - 1), 500);
+    assert_eq!(second & ((1_i64 << 58) - 1), 30100);
 
     session
         .run("ALTER TABLE ar_base AUTO_RANDOM_BASE=10")
@@ -130,14 +141,14 @@ fn auto_random_base_seeds_rebases_reports_and_validates_the_counter() {
         vec![vec![
             "Warning".to_owned(),
             "1105".to_owned(),
-            "Can't reset AUTO_INCREMENT to 10 without FORCE option, using 501 instead".to_owned(),
+            "Can't reset AUTO_INCREMENT to 10 without FORCE option, using 60100 instead".to_owned(),
         ]]
     );
     session.run("INSERT INTO ar_base (v) VALUES (3)").unwrap();
     let third = rows(&mut session, "SELECT id FROM ar_base WHERE v=3")[0][0]
         .parse::<i64>()
         .unwrap();
-    assert_eq!(third & ((1_i64 << 58) - 1), 501);
+    assert_eq!(third & ((1_i64 << 58) - 1), 60100);
 
     session
         .run("ALTER TABLE ar_base FORCE AUTO_RANDOM_BASE=2")
