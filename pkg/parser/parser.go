@@ -13831,7 +13831,7 @@ yynewstate:
 			partitionMethod := ast.PartitionMethod{Expr: yyS[yypt-1].expr}
 			startOffset := parser.yyVAL.offset
 			endOffset := parser.yylval.offset
-			partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+			parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 			parser.yyVAL.item = &ast.AlterTableSpec{
 				Tp:        ast.AlterTableReorganizeLastPartition,
 				Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -13842,7 +13842,7 @@ yynewstate:
 			partitionMethod := ast.PartitionMethod{Expr: yyS[yypt-1].expr}
 			startOffset := parser.yyVAL.offset
 			endOffset := parser.yylval.offset
-			partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+			parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 			parser.yyVAL.item = &ast.AlterTableSpec{
 				Tp:        ast.AlterTableReorganizeFirstPartition,
 				Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -14019,7 +14019,7 @@ yynewstate:
 			partitionMethod := ast.PartitionMethod{Expr: yyS[yypt-2].expr}
 			startOffset := parser.yyVAL.offset
 			endOffset := parser.yylval.offset
-			partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+			parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 			parser.yyVAL.item = &ast.AlterTableSpec{
 				NoWriteToBinlog: noWriteToBinlog,
 				Tp:              ast.AlterTableAddLastPartition,
@@ -14105,7 +14105,7 @@ yynewstate:
 			partitionMethod := ast.PartitionMethod{Expr: yyS[yypt-2].expr}
 			startOffset := parser.yyVAL.offset
 			endOffset := parser.yylval.offset
-			partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+			parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 			parser.yyVAL.item = &ast.AlterTableSpec{
 				IfExists:  yyS[yypt-0].item.(bool),
 				Tp:        ast.AlterTableDropFirstPartition,
@@ -15237,7 +15237,7 @@ yynewstate:
 			startOffset := parser.startOffset(&yyS[yypt-2])
 			endOffset := parser.endOffset(&yyS[yypt-1])
 			expr := yyS[yypt-2].expr
-			expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+			parser.setNodeText(expr, parser.src[startOffset:endOffset])
 
 			parser.yyVAL.item = &ast.ColumnOption{
 				Tp:     ast.ColumnOptionGenerated,
@@ -16029,7 +16029,7 @@ yynewstate:
 			}
 			startOffset := parser.yyVAL.offset
 			endOffset := parser.yylval.offset
-			partitionInterval.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+			parser.setNodeText(partitionInterval, parser.src[startOffset:endOffset])
 			parser.yyVAL.item = partitionInterval
 		}
 	case 450:
@@ -16344,7 +16344,7 @@ yynewstate:
 			} else {
 				x.CheckOption = model.CheckOptionCascaded
 			}
-			selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+			parser.setNodeText(selStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 			parser.yyVAL.statement = x
 		}
 	case 513:
@@ -16607,7 +16607,7 @@ yynewstate:
 				TracePlan: false,
 			}
 			startOffset := parser.startOffset(&yyS[yypt])
-			yyS[yypt-0].statement.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+			parser.setNodeText(yyS[yypt-0].statement, string(parser.src[startOffset:]))
 		}
 	case 566:
 		{
@@ -16617,7 +16617,7 @@ yynewstate:
 				TracePlan: false,
 			}
 			startOffset := parser.startOffset(&yyS[yypt])
-			yyS[yypt-0].statement.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+			parser.setNodeText(yyS[yypt-0].statement, string(parser.src[startOffset:]))
 		}
 	case 567:
 		{
@@ -16626,7 +16626,7 @@ yynewstate:
 				TracePlan: true,
 			}
 			startOffset := parser.startOffset(&yyS[yypt])
-			yyS[yypt-0].statement.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+			parser.setNodeText(yyS[yypt-0].statement, string(parser.src[startOffset:]))
 		}
 	case 568:
 		{
@@ -16636,7 +16636,7 @@ yynewstate:
 				TracePlanTarget: yyS[yypt-1].ident,
 			}
 			startOffset := parser.startOffset(&yyS[yypt])
-			yyS[yypt-0].statement.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+			parser.setNodeText(yyS[yypt-0].statement, string(parser.src[startOffset:]))
 		}
 	case 572:
 		{
@@ -17517,7 +17517,7 @@ yynewstate:
 			field.Offset = parser.startOffset(&yyS[yypt])
 			if field.Expr != nil {
 				endOffset := parser.yylval.offset
-				field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+				parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 			}
 			parser.yyVAL.item = []*ast.SelectField{field}
 		}
@@ -17528,7 +17528,7 @@ yynewstate:
 			field.Offset = parser.startOffset(&yyS[yypt])
 			if field.Expr != nil {
 				endOffset := parser.yylval.offset
-				field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+				parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 			}
 			parser.yyVAL.item = append(fl, field)
 		}
@@ -18239,7 +18239,7 @@ yynewstate:
 			startOffset := parser.startOffset(&yyS[yypt-1])
 			endOffset := parser.endOffset(&yyS[yypt])
 			expr := yyS[yypt-1].expr
-			expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+			parser.setNodeText(expr, parser.src[startOffset:endOffset])
 			parser.yyVAL.expr = &ast.ParenthesesExpr{Expr: expr}
 		}
 	case 1454:
@@ -19446,7 +19446,7 @@ yynewstate:
 			lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 			if lastField.Expr != nil && lastField.AsName.O == "" {
 				lastEnd := yyS[yypt-1].offset - 1
-				lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+				parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
 			}
 			if yyS[yypt-0].item != nil {
 				st.Where = yyS[yypt-0].item.(ast.ExprNode)
@@ -19459,7 +19459,7 @@ yynewstate:
 			lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 			if lastField.Expr != nil && lastField.AsName.O == "" {
 				lastEnd := parser.endOffset(&yyS[yypt-5])
-				lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+				parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
 			}
 			if yyS[yypt-3].item != nil {
 				st.Where = yyS[yypt-3].item.(ast.ExprNode)
@@ -20364,14 +20364,14 @@ yynewstate:
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
 			// See the implementation of yyParse function
-			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			parser.yyVAL.expr = &ast.SubqueryExpr{Query: rs}
 		}
 	case 1877:
 		{
 			rs := yyS[yypt-1].statement.(*ast.SetOprStmt)
 			src := parser.src
-			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			parser.yyVAL.expr = &ast.SubqueryExpr{Query: rs}
 		}
 	case 1878:
@@ -20382,11 +20382,11 @@ yynewstate:
 				parser.setLastSelectFieldText(rs, endOffset)
 				src := parser.src
 				// See the implementation of yyParse function
-				rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+				parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 				parser.yyVAL.expr = &ast.SubqueryExpr{Query: rs}
 			case *ast.SetOprStmt:
 				src := parser.src
-				rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+				parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 				parser.yyVAL.expr = &ast.SubqueryExpr{Query: rs}
 			}
 		}
@@ -20405,11 +20405,11 @@ yynewstate:
 				endOffset := parser.endOffset(&yyS[yypt])
 				parser.setLastSelectFieldText(rs, endOffset)
 				src := parser.src
-				rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+				parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 				parser.yyVAL.expr = &ast.SubqueryExpr{Query: rs}
 			case *ast.SetOprStmt:
 				src := parser.src
-				rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+				parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 				parser.yyVAL.expr = &ast.SubqueryExpr{Query: rs}
 			}
 		}
@@ -22165,7 +22165,7 @@ yynewstate:
 			if yyS[yypt-0].statement != nil {
 				s := yyS[yypt-0].statement
 				if lexer, ok := yylex.(stmtTexter); ok {
-					s.SetText(parser.lexer.client, lexer.stmtText())
+					parser.setNodeText(s, lexer.stmtText())
 				}
 				parser.result = append(parser.result, s)
 			}
@@ -22175,7 +22175,7 @@ yynewstate:
 			if yyS[yypt-0].statement != nil {
 				s := yyS[yypt-0].statement
 				if lexer, ok := yylex.(stmtTexter); ok {
-					s.SetText(parser.lexer.client, lexer.stmtText())
+					parser.setNodeText(s, lexer.stmtText())
 				}
 				parser.result = append(parser.result, s)
 			}
@@ -23701,11 +23701,11 @@ yynewstate:
 			startOffset := parser.startOffset(&yyS[yypt-2])
 			endOffset := parser.startOffset(&yyS[yypt-1])
 			originStmt := yyS[yypt-2].statement
-			originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+			parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 			startOffset = parser.startOffset(&yyS[yypt])
 			hintedStmt := yyS[yypt-0].statement
-			hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+			parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 			x := &ast.CreateBindingStmt{
 				OriginNode:  originStmt,
@@ -23719,7 +23719,7 @@ yynewstate:
 		{
 			startOffset := parser.startOffset(&yyS[yypt])
 			hintedStmt := yyS[yypt-0].statement
-			hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+			parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 			x := &ast.CreateBindingStmt{
 				OriginNode:  hintedStmt,
@@ -23758,7 +23758,7 @@ yynewstate:
 		{
 			startOffset := parser.startOffset(&yyS[yypt])
 			originStmt := yyS[yypt-0].statement
-			originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+			parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 			x := &ast.DropBindingStmt{
 				OriginNode:  originStmt,
@@ -23772,11 +23772,11 @@ yynewstate:
 			startOffset := parser.startOffset(&yyS[yypt-2])
 			endOffset := parser.startOffset(&yyS[yypt-1])
 			originStmt := yyS[yypt-2].statement
-			originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+			parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 			startOffset = parser.startOffset(&yyS[yypt])
 			hintedStmt := yyS[yypt-0].statement
-			hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+			parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 			x := &ast.DropBindingStmt{
 				OriginNode:  originStmt,
@@ -23799,7 +23799,7 @@ yynewstate:
 		{
 			startOffset := parser.startOffset(&yyS[yypt])
 			originStmt := yyS[yypt-0].statement
-			originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+			parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 			x := &ast.SetBindingStmt{
 				BindingStatusType: yyS[yypt-2].item.(ast.BindingStatusType),
@@ -23813,11 +23813,11 @@ yynewstate:
 			startOffset := parser.startOffset(&yyS[yypt-2])
 			endOffset := parser.startOffset(&yyS[yypt-1])
 			originStmt := yyS[yypt-2].statement
-			originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+			parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 			startOffset = parser.startOffset(&yyS[yypt])
 			hintedStmt := yyS[yypt-0].statement
-			hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+			parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 			x := &ast.SetBindingStmt{
 				BindingStatusType: yyS[yypt-4].item.(ast.BindingStatusType),
@@ -25004,7 +25004,7 @@ yynewstate:
 				x.HistoricalStatsInfo = yyS[yypt-2].item.(*ast.AsOfClause)
 			}
 			startOffset := parser.startOffset(&yyS[yypt])
-			x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+			parser.setNodeText(x.Stmt, strings.TrimSpace(parser.src[startOffset:]))
 
 			parser.yyVAL.statement = x
 		}
@@ -25023,7 +25023,7 @@ yynewstate:
 				x.HistoricalStatsInfo = yyS[yypt-3].item.(*ast.AsOfClause)
 			}
 			startOffset := parser.startOffset(&yyS[yypt])
-			x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+			parser.setNodeText(x.Stmt, strings.TrimSpace(parser.src[startOffset:]))
 
 			parser.yyVAL.statement = x
 		}
@@ -25577,7 +25577,7 @@ yynewstate:
 			}
 			startOffset := parser.startOffset(&yyS[yypt])
 			originStmt := yyS[yypt-0].statement
-			originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
+			parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
 			startOffset = parser.startOffset(&yyS[yypt-3])
 			if parser.src[startOffset] == '(' {
 				startOffset++
