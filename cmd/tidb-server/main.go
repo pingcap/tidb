@@ -1312,14 +1312,11 @@ func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	}
 }
 
-// The amount of time we wait for the ongoing txt to finished.
-// We should better provider a dynamic way to set this value.
-var gracefulCloseConnectionsTimeout = 15 * time.Second
-
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	dom.StopAutoAnalyze()
 
-	drainClientWait := gracefulCloseConnectionsTimeout
+	// The amount of time we wait for the ongoing statements and transactions to finish.
+	drainClientWait := time.Duration(config.GetGlobalConfig().GracefulCloseConnectionsTimeout) * time.Second
 	if deploymode.IsStarter() && svr.GetForceShutdown() {
 		drainClientWait = 0
 	}
