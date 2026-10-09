@@ -810,6 +810,15 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		}()
 	}
 
+	// Close the inner executor on errors and panics, including OOM during result collection.
+	needClose := true
+	defer func() {
+		if needClose && task.innerExec != nil {
+			terror.Log(exec.Close(task.innerExec))
+			task.innerExec = nil
+		}
+	}()
+
 	// Fetch for the task first time, need to build the innerExec.
 	if task.innerExec == nil {
 		innerExec, err := iw.ReaderBuilder.BuildExecutorForIndexJoin(ctx, lookUpContent,
@@ -826,19 +835,9 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		task.innerResult.Reset()
 	}
 
-	// If don't need to use innerExec any more, close it.
-	var needClose bool
-	defer func() {
-		if needClose && task.innerExec != nil {
-			terror.Log(exec.Close(task.innerExec))
-			task.innerExec = nil
-		}
-	}()
-
 	for {
 		select {
 		case <-ctx.Done():
-			needClose = true
 			return ctx.Err()
 		default:
 		}
@@ -847,16 +846,15 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		err := exec.Next(ctx, task.innerExec, executorChk)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
-			needClose = true
 			return err
 		}
 		if executorChk.NumRows() == 0 {
-			needClose = true
 			break
 		}
 		task.innerResult.Add(executorChk)
 		// If maxFetchSize is set, we need to break the loop when the fetched rows reach the max.
 		if iw.maxFetchSize > 0 && task.innerResult.Len() >= iw.maxFetchSize {
+			needClose = false
 			break
 		}
 	}
