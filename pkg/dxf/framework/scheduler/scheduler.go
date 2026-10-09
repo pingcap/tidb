@@ -46,6 +46,8 @@ import (
 const metricStateAll = "all"
 
 var (
+	errTaskChanged = goerrors.New("task state or step changed")
+
 	// CheckTaskFinishedInterval is the interval for scheduler.
 	// exported for testing.
 	CheckTaskFinishedInterval = 500 * time.Millisecond
@@ -174,6 +176,58 @@ func (s *BaseScheduler) refreshTaskIfNeeded() error {
 		s.task.Store(newTask)
 	}
 	return nil
+}
+
+// startTaskStateWatcher cancels long-running prepare or plan work when the
+// persisted task state or step no longer matches the scheduler's task snapshot.
+// The returned stop function must be called after the work finishes. It waits
+// for the watcher to exit and reports whether the task changed.
+func (s *BaseScheduler) startTaskStateWatcher(task *proto.Task) (context.Context, func() bool) {
+	watchCtx, cancel := context.WithCancelCause(s.ctx)
+	done := make(chan struct{})
+	taskBase := task.TaskBase
+	go func() {
+		defer close(done)
+
+		ticker := time.NewTicker(CheckTaskFinishedInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case <-ticker.C:
+			}
+
+			newTaskBase, err := s.taskMgr.GetTaskBaseByID(watchCtx, taskBase.ID)
+			if err != nil {
+				if watchCtx.Err() != nil {
+					return
+				}
+				if goerrors.Is(err, storage.ErrTaskNotFound) {
+					cancel(errTaskChanged)
+					return
+				}
+				s.sampleLogger.Warn("check task state during prepare or plan failed", zap.Error(err))
+				continue
+			}
+			if newTaskBase.State != taskBase.State || newTaskBase.Step != taskBase.Step {
+				s.logger.Info("task state or step changed, cancel prepare or plan",
+					zap.Stringer("old-state", taskBase.State),
+					zap.Stringer("new-state", newTaskBase.State),
+					zap.String("old-step", proto.Step2Str(taskBase.Type, taskBase.Step)),
+					zap.String("new-step", proto.Step2Str(taskBase.Type, newTaskBase.Step)))
+				cancel(errTaskChanged)
+				return
+			}
+		}
+	}()
+
+	stop := func() bool {
+		cancel(nil)
+		<-done
+		return goerrors.Is(context.Cause(watchCtx), errTaskChanged)
+	}
+	return watchCtx, stop
 }
 
 // scheduleTask schedule the task execution step by step.
@@ -406,7 +460,12 @@ func (s *BaseScheduler) onPending() error {
 	s.logger.Debug("on pending state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
-		if err := s.OnPrepare(s.ctx, s, task); err != nil {
+		prepareCtx, stopWatcher := s.startTaskStateWatcher(task)
+		err := s.OnPrepare(prepareCtx, s, task)
+		if stopWatcher() {
+			return nil
+		}
+		if err != nil {
 			return s.handlePrepareOrPlanErr(err)
 		}
 		switched, err := s.taskMgr.SwitchTaskStepAfterPrepare(s.ctx, task)
@@ -592,7 +651,11 @@ func (s *BaseScheduler) switch2NextStep() error {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
 
-	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
+	planCtx, stopWatcher := s.startTaskStateWatcher(task)
+	metas, err := s.OnNextSubtasksBatch(planCtx, s, task, eligibleNodes, nextStep)
+	if stopWatcher() {
+		return nil
+	}
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePrepareOrPlanErr(err)
