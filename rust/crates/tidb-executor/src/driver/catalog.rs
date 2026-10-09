@@ -2703,6 +2703,14 @@ impl Catalog {
         (table.table_id == table_id).then_some(table)
     }
 
+    /// The bytes `key` holds in the table `table_id` names, read from a
+    /// shallow copy so the catalog itself is untouched: COMMIT's check of a
+    /// key an INSERT presumed absent.
+    #[must_use]
+    pub fn stored_raw_value(&self, table_id: i64, key: &[u8]) -> Option<Vec<u8>> {
+        self.kv_table_by_id(table_id)?.clone().stored_raw_value(key)
+    }
+
     fn table_id_names(&self) -> &HashMap<i64, Arc<CatalogTableKey>> {
         self.table_id_names.get_or_init(|| {
             let mut names = HashMap::new();

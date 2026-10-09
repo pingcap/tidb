@@ -435,3 +435,38 @@ fn update_and_delete_hints_apply_and_warn() {
         "INL_JOIN was not applied: {plan:?}"
     );
 }
+
+/// Go `optimizeDupKeyCheckForNormalInsert`: an optimistic transaction under
+/// `tidb_constraint_check_in_place = OFF` checks an INSERT's keys against
+/// its own writes only (`GetLocal`), presumes the rest absent, and the
+/// commit's prewrite rejects one the committed rows hold -- even if the
+/// transaction deleted it again -- while a row deleted and reinserted inside
+/// the transaction commits. The INSERT had failed at once.
+#[test]
+fn an_optimistic_lazy_insert_reports_its_duplicate_at_commit() {
+    let mut session = Session::new();
+    session.run("set tidb_constraint_check_in_place = 0").unwrap();
+    session.run("set @@tidb_txn_mode = 'optimistic'").unwrap();
+    session.run("create table t1(i int primary key, j int)").unwrap();
+    session.run("create table t2(i int, j int, unique index idx(i))").unwrap();
+    session.run("insert into t1 values (1, 2)").unwrap();
+    session.run("insert into t2 values (1, 2)").unwrap();
+    for (table, key) in [("t1", "t1.PRIMARY"), ("t2", "t2.idx")] {
+        session.run("begin").unwrap();
+        session.run(&format!("insert into {table} values (1, 3)")).unwrap();
+        session.run(&format!("delete from {table} where j = 3")).unwrap();
+        assert_eq!(
+            error_of(&mut session, "commit"),
+            format!("Duplicate entry '1' for key '{key}'")
+        );
+        assert_eq!(
+            row_text(session.run(&format!("select * from {table}"))),
+            [["1", "2"]]
+        );
+    }
+    session.run("begin").unwrap();
+    session.run("delete from t2 where i = 1").unwrap();
+    session.run("insert into t2 values (1, 5)").unwrap();
+    session.run("commit").unwrap();
+    assert_eq!(row_text(session.run("select * from t2")), [["1", "5"]]);
+}

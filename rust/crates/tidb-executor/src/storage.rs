@@ -182,6 +182,17 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         self.mark_presume_key_not_exists(key);
     }
 
+    /// Attaches the transaction's staged-write log for one table write, or
+    /// detaches it with `None`. Go's membuffer remembers which keys a
+    /// transaction wrote and which an INSERT presumed absent; a backend that
+    /// writes through -- the in-process store inside an optimistic
+    /// transaction -- keeps that record in the attached log, so
+    /// [`Self::get_local`] reads it and COMMIT checks the presumed keys. A
+    /// backend with staged writes of its own ignores it.
+    fn attach_txn_staging(&mut self, staging: Option<crate::kv_table::TxnStaging>) {
+        let _ = staging;
+    }
+
     /// Reads several keys at one backend request boundary. Backends that do
     /// not have a native batch operation retain correctness through the
     /// point-read fallback; cluster storage overrides this with TiKV's
@@ -387,6 +398,9 @@ impl StorageIterator for MaterializedStorageIterator {
 #[derive(Clone, Debug, Default)]
 pub struct MemTableStorage {
     inner: MemStorage,
+    /// The transaction's staged writes while a write runs inside an
+    /// optimistic transaction (see [`TableStorage::attach_txn_staging`]).
+    staging: Option<crate::kv_table::TxnStaging>,
 }
 
 impl MemTableStorage {
@@ -406,11 +420,49 @@ impl TableStorage for MemTableStorage {
     }
 
     fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
+        if let Some(staging) = &self.staging {
+            staging.writes.note(staging.table_id, key.as_bytes());
+        }
         Mutator::set(&mut self.inner, key, value).map_err(StorageError::from)
     }
 
     fn delete(&mut self, key: Key) -> Result<(), StorageError> {
+        if let Some(staging) = &self.staging {
+            staging.writes.note(staging.table_id, key.as_bytes());
+        }
         Mutator::delete(&mut self.inner, key).map_err(StorageError::from)
+    }
+
+    /// Go `GetLocal` over the attached log: a key this transaction wrote
+    /// reads its value, or an empty tombstone once deleted; any other key
+    /// has nothing staged. Without a log every write is the statement's own
+    /// and committed at once, so the ordinary read answers.
+    fn get_local(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        let Some(staging) = &self.staging else {
+            return self.get(key);
+        };
+        if !staging.writes.contains(staging.table_id, key.as_bytes()) {
+            return Err(StorageError::NotFound);
+        }
+        match self.get(key) {
+            Err(StorageError::NotFound) => Ok(Vec::new()),
+            other => other,
+        }
+    }
+
+    fn mark_presume_key_not_exists_with_hint(&mut self, key: &Key, value: &str, index: &str) {
+        if let Some(staging) = &self.staging {
+            staging.writes.presume(crate::kv_table::PresumedKey {
+                table_id: staging.table_id,
+                key: key.as_bytes().to_vec(),
+                value: value.to_owned(),
+                index: index.to_owned(),
+            });
+        }
+    }
+
+    fn attach_txn_staging(&mut self, staging: Option<crate::kv_table::TxnStaging>) {
+        self.staging = staging;
     }
 
     fn iter(

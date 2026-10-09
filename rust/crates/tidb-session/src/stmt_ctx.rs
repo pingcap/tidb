@@ -1342,6 +1342,10 @@ impl Session {
                         (!self.is_autocommit() || self.in_transaction())
                             && self.statement_txn_mode().is_pessimistic(),
                     )
+                    .with_optimistic_transaction(
+                        (!self.is_autocommit() || self.in_transaction())
+                            && !self.statement_txn_mode().is_pessimistic(),
+                    )
                     .with_rand_session(Arc::clone(&self.rand))
                     .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
                     .with_user_vars(self.user_vars.clone())
@@ -1448,6 +1452,10 @@ impl Session {
                 .with_pessimistic_transaction(
                     (!self.is_autocommit() || self.in_transaction())
                         && self.statement_txn_mode().is_pessimistic(),
+                )
+                .with_optimistic_transaction(
+                    (!self.is_autocommit() || self.in_transaction())
+                        && !self.statement_txn_mode().is_pessimistic(),
                 )
                 .with_rand_session(Arc::clone(&self.rand))
                 .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)

@@ -695,6 +695,11 @@ pub struct StmtContextData {
     pessimistic_lazy_dup_check: bool,
     /// Go TxnCtx.IsPessimistic for the active or implicit statement transaction.
     pessimistic_transaction: bool,
+    /// The statement continues (or lazily opens) an optimistic transaction,
+    /// whose membuffer outlives it: the in-process store keeps its staged
+    /// keys in [`Self::staged_writes`] (see
+    /// [`crate::storage::TableStorage::attach_txn_staging`]).
+    optimistic_transaction: bool,
     /// Go DupKeyCheckInPrewrite for an explicit, unrestricted user transaction.
     pessimistic_check_in_prewrite: bool,
     /// Go `SessionVars.ConstraintCheckInPlace` (`@@tidb_constraint_check_in_place`).
@@ -1697,6 +1702,13 @@ context_configuration! {
         self
     }
 
+    /// Marks the statement as part of an optimistic transaction.
+    #[must_use]
+    pub fn with_optimistic_transaction(mut self, enabled: bool) -> Self {
+        self.optimistic_transaction = enabled;
+        self
+    }
+
     /// Selects Go's deferred pessimistic uniqueness policy for this statement.
     #[must_use]
     pub fn with_pessimistic_check_in_prewrite(mut self, enabled: bool) -> Self {
@@ -2079,6 +2091,7 @@ impl StmtContext {
             query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
             pessimistic_transaction: false,
+            optimistic_transaction: false,
             pessimistic_check_in_prewrite: false,
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
@@ -3386,6 +3399,12 @@ impl StmtContext {
     #[must_use]
     pub fn pessimistic_transaction(&self) -> bool {
         self.pessimistic_transaction
+    }
+
+    /// Whether this statement is part of an optimistic transaction.
+    #[must_use]
+    pub fn optimistic_transaction(&self) -> bool {
+        self.optimistic_transaction
     }
 
     /// Whether Go's normal INSERT duplicate check is eager for this statement.

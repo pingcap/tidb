@@ -896,6 +896,29 @@ impl Session {
             }
             return Err(DriverError::Txn(TxnErrorKind::WriteConflict));
         }
+        // Go's prewrite rejects an `Op_Insert` mutation whose key the
+        // committed rows hold: a key an INSERT presumed absent (an optimistic
+        // transaction under `tidb_constraint_check_in_place = OFF`) reports
+        // its duplicate here, at COMMIT, and the transaction is gone. A key
+        // whose working bytes equal the committed ones was rolled back with
+        // its statement.
+        for presumed in self.staged_writes.take_presumed() {
+            let Some(committed) = shared.stored_raw_value(presumed.table_id, &presumed.key) else {
+                continue;
+            };
+            if txn.working.stored_raw_value(presumed.table_id, &presumed.key) == Some(committed) {
+                continue;
+            }
+            drop(shared);
+            self.clear_table_delta();
+            if let Some(process) = &self.process {
+                process.registry().transaction_finished(process.id());
+            }
+            return Err(DriverError::DuplicateEntry {
+                value: presumed.value,
+                key: presumed.index,
+            });
+        }
         *shared = txn.working;
         // The commit is durable in this store the moment the shared catalog
         // holds it; the history snapshot and Go's `LastTxnInfo` record

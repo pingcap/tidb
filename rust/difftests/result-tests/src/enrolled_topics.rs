@@ -165,4 +165,5 @@ pub const TOPICS: &[&str] = &[
     "planner/core/indexmerge_path",
     "session/nontransactional",
     "executor/insert",
+    "executor/write",
 ];

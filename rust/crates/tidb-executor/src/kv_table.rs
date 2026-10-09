@@ -917,7 +917,36 @@ type StagedKey = smallvec::SmallVec<[u8; 32]>;
 #[derive(Debug, Default)]
 pub struct StagedWrites(
     std::sync::Mutex<std::collections::HashMap<i64, std::collections::HashSet<StagedKey>>>,
+    /// The keys an INSERT presumed absent (Go `SetPresumeKeyNotExists`) on a
+    /// store that writes through, each with its duplicate text, for COMMIT
+    /// to check against the committed rows.
+    std::sync::Mutex<Vec<PresumedKey>>,
 );
+
+/// One key a lazy INSERT presumed absent: Go's `PresumeKeyNotExists` flag
+/// and the duplicate error `addRecord`/`addIndices` composed for it.
+#[derive(Clone, Debug)]
+pub struct PresumedKey {
+    /// The logical table the key belongs to.
+    pub table_id: i64,
+    /// The record or index key.
+    pub key: Vec<u8>,
+    /// The duplicate entry's value text.
+    pub value: String,
+    /// The duplicate entry's key name (`t.PRIMARY`, `t.idx`).
+    pub index: String,
+}
+
+/// The transaction's [`StagedWrites`] attached to one table's store for one
+/// write, Go's membuffer for a backend that writes through (see
+/// [`crate::storage::TableStorage::attach_txn_staging`]).
+#[derive(Clone, Debug)]
+pub struct TxnStaging {
+    /// The transaction's staged writes.
+    pub writes: std::sync::Arc<StagedWrites>,
+    /// The logical table whose store is written.
+    pub table_id: i64,
+}
 
 impl StagedWrites {
     /// Records that `table_id` staged a row write under `key` -- Go
@@ -962,6 +991,25 @@ impl StagedWrites {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&table_id)
             .is_some_and(|keys| keys.contains(key))
+    }
+
+    /// Go `SetPresumeKeyNotExists` with the duplicate text kept for COMMIT.
+    pub fn presume(&self, key: PresumedKey) {
+        self.1
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(key);
+    }
+
+    /// The keys presumed absent so far, emptied: COMMIT's constraint check
+    /// consumes them.
+    pub fn take_presumed(&self) -> Vec<PresumedKey> {
+        std::mem::take(
+            &mut *self
+                .1
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 }
 
@@ -3715,7 +3763,39 @@ impl KvTable {
         ctx: &crate::StmtContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, false, Some(ctx))
+        self.with_txn_staging(ctx, |table| {
+            table.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, false, Some(ctx))
+        })
+    }
+
+    /// Runs one row write with the statement's transaction staging attached
+    /// to this table's store when the statement is part of an optimistic
+    /// transaction (see [`crate::storage::TableStorage::attach_txn_staging`]).
+    fn with_txn_staging<T>(
+        &mut self,
+        ctx: &crate::StmtContext,
+        write: impl FnOnce(&mut Self) -> Result<T, KvTableError>,
+    ) -> Result<T, KvTableError> {
+        if !ctx.optimistic_transaction() {
+            return write(self);
+        }
+        self.store.attach_txn_staging(Some(TxnStaging {
+            writes: ctx.staged_writes_handle(),
+            table_id: self.table_id,
+        }));
+        let result = write(self);
+        self.store.attach_txn_staging(None);
+        result
+    }
+
+    /// The bytes `key` holds in this table's store, if any: COMMIT's check
+    /// of a key an INSERT presumed absent.
+    #[must_use]
+    pub fn stored_raw_value(&mut self, key: &[u8]) -> Option<Vec<u8>> {
+        self.store
+            .get(&Key::from_bytes(key.to_vec()))
+            .ok()
+            .filter(|value| !value.is_empty())
     }
 
     /// [`Self::insert_row_with_row_id_checked`] for a normal clustered INSERT
@@ -3730,7 +3810,9 @@ impl KvTable {
         ctx: &crate::StmtContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, true, Some(ctx))
+        self.with_txn_staging(ctx, |table| {
+            table.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, true, Some(ctx))
+        })
     }
 
     fn insert_row_in(
@@ -3973,6 +4055,16 @@ impl KvTable {
     /// second point read. The statement owns decoding, transaction policy,
     /// staged writes and table statistics, as Go's table mutation context does.
     pub fn update_row_with_old_context(
+        &mut self,
+        handle: &TableHandle,
+        old_row: Option<&[Datum]>,
+        row: &[Datum],
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
+        self.with_txn_staging(ctx, |table| table.update_row_in(handle, old_row, row, ctx))
+    }
+
+    fn update_row_in(
         &mut self,
         handle: &TableHandle,
         old_row: Option<&[Datum]>,
@@ -4222,6 +4314,14 @@ impl KvTable {
         handle: &TableHandle,
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
+        self.with_txn_staging(ctx, |table| table.delete_row_in(handle, ctx))
+    }
+
+    fn delete_row_in(
+        &mut self,
+        handle: &TableHandle,
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
         let Some(key) = self.stored_record_key(handle)? else {
             return Ok(());
         };
@@ -4243,6 +4343,15 @@ impl KvTable {
     /// derives its record key and index entries from the retained input row;
     /// no second storage read is needed.
     pub fn delete_row_with_old_context(
+        &mut self,
+        handle: &TableHandle,
+        old_row: &[Datum],
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
+        self.with_txn_staging(ctx, |table| table.delete_old_row_in(handle, old_row, ctx))
+    }
+
+    fn delete_old_row_in(
         &mut self,
         handle: &TableHandle,
         old_row: &[Datum],
