@@ -2206,7 +2206,7 @@ func (b *builtinLpadSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	}
 	padLength := len(padStr)
 
-	if targetLength < 0 || targetLength > b.tp.GetFlen() {
+	if targetLength < 0 {
 		return "", true, nil
 	}
 	if byteLength < targetLength && padLength == 0 {
@@ -2247,7 +2247,7 @@ func (b *builtinLpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	}
 	targetLength := int(length)
 
-	if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+	if uint64(targetLength) > b.maxAllowedPacket/uint64(mysql.MaxBytesOfCharacter) {
 		return "", true, handleAllowedPacketOverflowed(ctx, "lpad", b.maxAllowedPacket)
 	}
 
@@ -2257,7 +2257,7 @@ func (b *builtinLpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	}
 	padLength := len([]rune(padStr))
 
-	if targetLength < 0 || targetLength > mysql.MaxBlobWidth || targetLength*4 > b.tp.GetFlen() {
+	if targetLength < 0 {
 		return "", true, nil
 	}
 	if runeLength < targetLength && padLength == 0 {
@@ -2336,7 +2336,7 @@ func (b *builtinRpadSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	}
 	padLength := len(padStr)
 
-	if targetLength < 0 || targetLength > b.tp.GetFlen() {
+	if targetLength < 0 {
 		return "", true, nil
 	}
 	if byteLength < targetLength && padLength == 0 {
@@ -2377,7 +2377,7 @@ func (b *builtinRpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	}
 	targetLength := int(length)
 
-	if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+	if uint64(targetLength) > b.maxAllowedPacket/uint64(mysql.MaxBytesOfCharacter) {
 		return "", true, handleAllowedPacketOverflowed(ctx, "rpad", b.maxAllowedPacket)
 	}
 
@@ -2387,7 +2387,7 @@ func (b *builtinRpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	}
 	padLength := len([]rune(padStr))
 
-	if targetLength < 0 || targetLength > mysql.MaxBlobWidth || targetLength*4 > b.tp.GetFlen() {
+	if targetLength < 0 {
 		return "", true, nil
 	}
 	if runeLength < targetLength && padLength == 0 {

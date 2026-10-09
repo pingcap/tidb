@@ -1829,6 +1829,66 @@ func TestRpad(t *testing.T) {
 	}
 }
 
+func TestPadMaxAllowedPacket(t *testing.T) {
+	for _, name := range []string{ast.Lpad, ast.Rpad} {
+		for _, binary := range []bool{false, true} {
+			for _, constantLength := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/binary=%t/constant=%t", name, binary, constantLength), func(t *testing.T) {
+					ctx := createContext(t)
+					ctx.GetSessionVars().MaxAllowedPacket = 64 << 20
+					str, pad, bytesPerChar := "中", "文", 4
+					if binary {
+						str, pad, bytesPerChar = "a", "b", 1
+					}
+					// Result metadata is capped at MaxBlobWidth, but it must not cap evaluation.
+					lengths := []int64{
+						int64(mysql.MaxBlobWidth/bytesPerChar + 1),
+						int64(ctx.GetSessionVars().MaxAllowedPacket/uint64(bytesPerChar) + 1),
+						1 << 62, // Multiplying the character count must not overflow the packet check.
+					}
+					for i, length := range lengths {
+						args := primitiveValsToConstants(ctx, []any{str, length, pad})
+						if binary {
+							types.SetBinChsClnFlag(args[0].GetType(ctx))
+							types.SetBinChsClnFlag(args[2].GetType(ctx))
+						}
+						intType := types.NewFieldType(mysql.TypeLonglong)
+						if !constantLength {
+							args[1] = &Column{Index: 0, RetType: intType}
+						}
+						f, err := funcs[name].getFunction(ctx, args)
+						require.NoError(t, err)
+						input := chunk.NewChunkWithCapacity([]*types.FieldType{intType}, 1)
+						input.AppendInt64(0, length)
+						check := func(value string, isNull bool) {
+							if i > 0 {
+								require.True(t, isNull)
+								warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+								require.Len(t, warnings, 1)
+								require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, warnings[0].Err))
+							} else {
+								require.False(t, isNull)
+								require.Len(t, value, int(length)*len(str))
+								require.Equal(t, int(length)-1, strings.Count(value, pad))
+								require.Empty(t, ctx.GetSessionVars().StmtCtx.GetWarnings())
+							}
+						}
+						ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+						value, isNull, err := f.evalString(ctx, input.GetRow(0))
+						require.NoError(t, err)
+						check(value, isNull)
+						ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+						result := chunk.NewColumn(f.getRetTp(), 1)
+						require.True(t, f.isChildrenVectorized())
+						require.NoError(t, f.vecEvalString(ctx, input, result))
+						check(result.GetString(0), result.IsNull(0))
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestRpadSig(t *testing.T) {
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
