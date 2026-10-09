@@ -22,16 +22,19 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -1190,11 +1193,204 @@ func TestLoadDataPrivilege(t *testing.T) {
 	require.ErrorContains(t, err, "reader is nil")
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec(`CREATE TABLE t_load_source(a int)`)
+	tk.MustExec(`INSERT INTO t_load_source VALUES (1)`)
+	tk.MustExec(`REVOKE SELECT ON *.* FROM 'test_load'@'localhost'`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
+	// LOAD DATA ... SET is rewritten by the executor, so provide a reader to let
+	// the statement reach that point. The privilege check must reject the
+	// subquery before it runs.
+	tk.Session().SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder{
+		Build: func(string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("2\n")), nil
+		},
+		Wg: &sync.WaitGroup{},
+	})
+	defer tk.Session().SetValue(executor.LoadDataReaderBuilderKey, nil)
+	err = tk.ExecToErr("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load SET a = (SELECT @leak := (SELECT a FROM t_load_source))")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	// The subquery must not have run.
+	require.Equal(t, testkit.Rows("<nil>"), tk.MustQuery("select @leak").Rows())
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
 	err = tk.ExecToErr("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' REPLACE INTO TABLE t_load")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+}
+
+// execAndDrain executes sql and drains the result set, so errors raised while an
+// executor runs are returned. testkit.ExecToErr closes the RecordSet without
+// iterating it, which skips executor work for result-set plans.
+func execAndDrain(tk *testkit.TestKit, sql string) error {
+	rs, err := tk.Exec(sql)
+	if err != nil {
+		return err
+	}
+	if rs == nil {
+		return nil
+	}
+	_, resErr := session.GetRows4Test(context.Background(), tk.Session(), rs)
+	closeErr := rs.Close()
+	if resErr != nil {
+		return resErr
+	}
+	return closeErr
+}
+
+// TestSubqueryInExpressionPrivilege covers statements that carry a user
+// expression which is only rewritten at execution time (or in a phase outside
+// the statement-level privilege check). Subqueries inside those expressions must
+// not be able to read tables the user has no SELECT privilege on.
+func TestSubqueryInExpressionPrivilege(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec("use test")
+	rootTk.MustExec("drop table if exists t_subq_expr, t_subq_secret")
+	rootTk.MustExec("create table t_subq_expr(a int)")
+	rootTk.MustExec("insert into t_subq_expr values (1)")
+	rootTk.MustExec("create table t_subq_secret(v varchar(64))")
+	rootTk.MustExec("insert into t_subq_secret values ('2020-01-01 00:00:00')")
+	rootTk.MustExec("drop user if exists 'subq_expr'@'localhost'")
+	rootTk.MustExec("create user 'subq_expr'@'localhost'")
+	rootTk.MustExec("grant select on test.t_subq_expr to 'subq_expr'@'localhost'")
+	rootTk.MustExec("grant resource_group_admin on *.* to 'subq_expr'@'localhost'")
+
+	newUserTk := func() *testkit.TestKit {
+		tk := testkit.NewTestKit(t, store)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "subq_expr", Hostname: "localhost"}, nil, nil, nil))
+		tk.MustExec("use test")
+		return tk
+	}
+
+	// Sanity check: the secret table is not readable by this user.
+	err := newUserTk().ExecToErr("select * from test.t_subq_secret")
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+
+	hardDenied := []struct {
+		name string
+		sql  string
+	}{
+		{"select_as_of", "select * from test.t_subq_expr as of timestamp (select v from test.t_subq_secret)"},
+		{"start_transaction_as_of", "start transaction read only as of timestamp (select v from test.t_subq_secret)"},
+		{"query_watch_sql_digest", "query watch add sql digest (select v from test.t_subq_secret)"},
+		{"query_watch_plan_digest", "query watch add plan digest (select v from test.t_subq_secret)"},
+		{"query_watch_sql_text", "query watch add sql text exact to (select v from test.t_subq_secret)"},
+		{"calibrate_start_time", "calibrate resource start_time (select v from test.t_subq_secret)"},
+		{"calibrate_interval", "calibrate resource duration interval (select v from test.t_subq_secret) minute"},
+	}
+	for _, c := range hardDenied {
+		t.Run(c.name, func(t *testing.T) {
+			err := execAndDrain(newUserTk(), c.sql)
+			require.Error(t, err)
+			require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+		})
+	}
+
+	// PLAN REPLAYER evaluates its timestamp expression during planning and
+	// downgrades evaluation failures to warnings, so the denial surfaces there
+	// instead of as a statement error. What matters is that the subquery is
+	// rejected before it runs.
+	const planReplayerSQL = "plan replayer dump with stats as of timestamp (select v from test.t_subq_secret) explain select * from test.t_subq_expr"
+	hasAccessDeniedWarning := func(tk *testkit.TestKit) bool {
+		for _, w := range tk.Session().GetSessionVars().StmtCtx.GetWarnings() {
+			if terror.ErrorEqual(w.Err, plannererrors.ErrTableaccessDenied) {
+				return true
+			}
+		}
+		return false
+	}
+	t.Run("plan_replayer", func(t *testing.T) {
+		tk := newUserTk()
+		require.NoError(t, tk.ExecToErr(planReplayerSQL))
+		require.True(t, hasAccessDeniedWarning(tk))
+	})
+
+	// Granting SELECT on the source table must keep the statements working: the
+	// privilege check must not reject authorized subqueries.
+	rootTk.MustExec("grant select on test.t_subq_secret to 'subq_expr'@'localhost'")
+	for _, c := range hardDenied {
+		t.Run("granted_"+c.name, func(t *testing.T) {
+			err := execAndDrain(newUserTk(), c.sql)
+			require.False(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+		})
+	}
+	t.Run("granted_plan_replayer", func(t *testing.T) {
+		tk := newUserTk()
+		_ = tk.ExecToErr(planReplayerSQL)
+		require.False(t, hasAccessDeniedWarning(tk))
+	})
+}
+
+// TestScalarSubqueryPrivilegeBeforeExecution covers subqueries that are executed
+// while the statement is being planned, i.e. before the statement-level
+// privilege check. Such a subquery used to read its tables even when the
+// statement was denied afterwards, which is observable if it assigns the value
+// to a user variable. See the EvalSubqueryFirstRow call sites in
+// pkg/planner/core/expression_rewriter.go and buildSet.
+func TestScalarSubqueryPrivilegeBeforeExecution(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec("use test")
+	rootTk.MustExec("drop table if exists t_sq_target, t_sq_secret")
+	rootTk.MustExec("create table t_sq_target(a int)")
+	rootTk.MustExec("insert into t_sq_target values (1)")
+	rootTk.MustExec("create table t_sq_secret(v varchar(64))")
+	rootTk.MustExec("insert into t_sq_secret values ('topsecret')")
+	rootTk.MustExec("drop user if exists 'sq_u'@'localhost'")
+	rootTk.MustExec("create user 'sq_u'@'localhost'")
+	// Only the outer table is readable, so any denial below is about the secret.
+	rootTk.MustExec("grant select on test.t_sq_target to 'sq_u'@'localhost'")
+
+	newUserTk := func() *testkit.TestKit {
+		tk := testkit.NewTestKit(t, store)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "sq_u", Hostname: "localhost"}, nil, nil, nil))
+		return tk
+	}
+	// The user variable is only set if the subquery actually ran.
+	leakedValue := func(tk *testkit.TestKit) [][]any {
+		return tk.MustQuery("select @leak").Rows()
+	}
+
+	statements := []struct {
+		name string
+		sql  string
+	}{
+		{"plain_scalar", "select (select v from test.t_sq_secret)"},
+		{"plain_scalar_assign", "select (select @leak := (select v from test.t_sq_secret))"},
+		{"exists", "select exists(select 1 from test.t_sq_secret)"},
+		{"with_outer_table", "select * from test.t_sq_target where a = (select 1 from test.t_sq_secret)"},
+		{"set_var", "set @@tidb_slow_log_threshold = (select v from test.t_sq_secret)"},
+		{"asof_assign", "select * from test.t_sq_target as of timestamp (select @leak := (select v from test.t_sq_secret))"},
+	}
+	for _, c := range statements {
+		t.Run(c.name, func(t *testing.T) {
+			tk := newUserTk()
+			err := tk.ExecToErr(c.sql)
+			require.Error(t, err)
+			require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+			// The subquery must not have run: the variable is still NULL.
+			require.Equal(t, testkit.Rows("<nil>"), leakedValue(tk))
+		})
+	}
+
+	// With SELECT granted the subquery runs, which shows the shape itself is
+	// valid and that the denial above was purely the privilege check.
+	rootTk.MustExec("grant select on test.t_sq_secret to 'sq_u'@'localhost'")
+	for _, c := range statements {
+		t.Run("granted_"+c.name, func(t *testing.T) {
+			tk := newUserTk()
+			err := tk.ExecToErr(c.sql)
+			require.False(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+		})
+	}
+	t.Run("granted_plain_scalar_assign_leaks", func(t *testing.T) {
+		tk := newUserTk()
+		require.NoError(t, tk.ExecToErr("select (select @leak := (select v from test.t_sq_secret))"))
+		require.Equal(t, testkit.Rows("topsecret"), leakedValue(tk))
+	})
 }
 
 func TestAuthHost(t *testing.T) {
