@@ -277,7 +277,6 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			MVTablePKCols: res.MVTablePKCols, GroupKeyMVOffsets: res.GroupKeyMVOffsets,
 			CountStarMVOffset: res.CountStarMVOffset, AggInfos: res.AggInfos,
 		}
-		plan.SetSchema(source.Schema())
 		return plan.Init(b.ctx), nil
 	}
 
