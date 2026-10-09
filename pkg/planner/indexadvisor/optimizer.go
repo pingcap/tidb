@@ -223,11 +223,13 @@ func (opt *optimizerImpl) QueryPlanCost(sql string, hypoIndexes ...Index) (cost 
 	}
 
 	originalFix43817 := opt.sctx.GetSessionVars().OptimizerFixControl[fixcontrol.Fix43817]
+	originalExplainNonEvaledSubQuery := opt.sctx.GetSessionVars().ExplainNonEvaledSubQuery
 	originalWarns := opt.sctx.GetSessionVars().StmtCtx.GetWarnings()
 	originalExtraWarns := opt.sctx.GetSessionVars().StmtCtx.GetExtraWarnings()
 	originalHypoIndexes := opt.sctx.GetSessionVars().HypoIndexes
 	defer func() {
 		opt.sctx.GetSessionVars().OptimizerFixControl[fixcontrol.Fix43817] = originalFix43817
+		opt.sctx.GetSessionVars().ExplainNonEvaledSubQuery = originalExplainNonEvaledSubQuery
 		opt.sctx.GetSessionVars().StmtCtx.SetWarnings(originalWarns)
 		opt.sctx.GetSessionVars().StmtCtx.SetExtraWarnings(originalExtraWarns)
 		opt.sctx.GetSessionVars().HypoIndexes = originalHypoIndexes
@@ -235,6 +237,8 @@ func (opt *optimizerImpl) QueryPlanCost(sql string, hypoIndexes ...Index) (cost 
 	}()
 	opt.sctx.GetSessionVars().OptimizerFixControl[fixcontrol.Fix43817] = "on"
 	opt.sctx.GetSessionVars().StmtCtx.InExplainStmt = true
+	// QueryPlanCost uses EXPLAIN mode only to obtain plan cost, so keep scalar subquery preprocessing behavior.
+	opt.sctx.GetSessionVars().ExplainNonEvaledSubQuery = false
 	opt.sctx.GetSessionVars().HypoIndexes = nil
 
 	if err := opt.addHypoIndex(hypoIndexes...); err != nil {
