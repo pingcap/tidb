@@ -17,6 +17,7 @@ package fulltext
 import (
 	"context"
 	"testing"
+	"unicode"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -35,11 +36,31 @@ func TestPreserveUnderscoreTokenize(t *testing.T) {
 }
 
 func TestPreserveUnderscoreTokenizeUnicodeProtocol(t *testing.T) {
+	require.Equal(t, "15.0.0", unicode.Version, "Local MATCH protocol v1 requires Unicode 15.0.0")
 	tokens := PreserveUnderscoreTokenize("foo🙃bar foo👁bar foo𞤀bar foo𝟙bar foo\U0002EBF0bar foo\xffbar")
 	want := []string{"foo", "bar", "foo", "bar", "foo𞤀bar", "foo𝟙bar", "foo", "bar", "foo", "bar"}
 	require.Len(t, tokens, len(want))
 	for i, text := range want {
 		require.Equal(t, Token{Text: text, Position: i}, tokens[i])
+	}
+}
+
+func TestLocalMatchTokenClassification(t *testing.T) {
+	require.Equal(t, "15.0.0", unicode.Version, "Local MATCH protocol v1 requires Unicode 15.0.0")
+	fingerprint := uint64(14695981039346656037)
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		got := isTokenChar(r)
+		if want := unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_'; got != want {
+			t.Fatalf("classification mismatch at U+%04X: got %v want %v", r, got, want)
+		}
+		if got {
+			fingerprint ^= 1
+		}
+		fingerprint *= 1099511628211
+	}
+	require.Equal(t, uint64(0x71f51f3810b3b529), fingerprint, "protocol-v1 classification fingerprint: %016x", fingerprint)
+	for _, r := range []rune{-1, unicode.MaxRune + 1} {
+		require.False(t, isTokenChar(r))
 	}
 }
 

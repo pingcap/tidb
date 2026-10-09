@@ -20,9 +20,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/pkg/expression/matchagainst"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -339,7 +339,10 @@ func runeAtByte(text string, offset int) (rune, int) {
 }
 
 func isTokenChar(ch rune) bool {
-	return matchagainst.IsLocalMatchTokenRune(ch)
+	// Protocol v1 requires Go Unicode 15.0.0; the full-character regression
+	// test fails on a different version or a changed classification. TiFlash
+	// uses a table generated from this same standard-library rule.
+	return unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_'
 }
 
 func lengthFilter(tokens []Token, minLen, maxLen int) []Token {

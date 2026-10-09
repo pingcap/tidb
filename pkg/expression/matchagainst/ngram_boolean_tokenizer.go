@@ -14,6 +14,8 @@
 
 package matchagainst
 
+import "unicode"
+
 type ngramTokType uint8
 
 const (
@@ -66,7 +68,9 @@ func newNgramScanState(input string) *ngramScanState {
 }
 
 func isNgramWordChar(ch rune) bool {
-	return IsLocalMatchTokenRune(ch)
+	// Keep the rule identical to fulltext's document tokenizer. Protocol-v1
+	// tests strictly require Unicode 15.0.0 and the paired TiFlash checksum.
+	return unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_'
 }
 
 func isNgramUnsupportedOp(ch rune) bool {
