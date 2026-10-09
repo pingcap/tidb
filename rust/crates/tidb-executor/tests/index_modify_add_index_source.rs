@@ -121,7 +121,7 @@ fn check_via_index_and_admin(catalog: &mut Catalog, ctx: &StmtContext, expected:
         "the rebuilt index must serve exactly the surviving keys, ordered"
     );
     let mut table = kv_table(catalog, "test", "test_add_index");
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(ctx), true)
         .expect("Go: admin check table test_add_index");
 }
 
@@ -410,7 +410,7 @@ fn add_index_for_generated_column_serves_the_computed_values() {
     let rows = run_select_on("select id1 from gcai_table use index(idx1)", &mut catalog, &ctx).unwrap();
     assert_eq!(rows_text(&rows), vec![vec!["6"]]);
     let mut table = kv_table(&catalog, "test", "gcai_table");
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true)
         .expect("Go: admin check table gcai_table");
 }
 
@@ -475,7 +475,7 @@ fn add_unique_index_rollback_reports_1062_and_leaves_no_index() {
     let table = kv_table(&catalog, "test", "t1");
     assert!(table.indexes().iter().any(|index| index.name == "c3_index"));
     let mut table = table;
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx)).unwrap();
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true).unwrap();
 }
 
 // --- TestAddAnonymousIndex (pkg/ddl/index_modify_test.go:684) ---

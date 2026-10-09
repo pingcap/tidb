@@ -1541,7 +1541,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             output,
             kind,
             native_hash,
-            // Populated later, if at all, by [`Self::set_na_condition_count`]:
+            // Populated later, if at all, by [`Self::set_na_conditions`]:
             // unlike `native_hash` above, `is_eq_cond_from_in` alone cannot
             // tell a genuinely NAAJ-converted equality apart from one that
             // carries the same marker but stayed an ordinary residual
@@ -1711,11 +1711,24 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// fired for it).
     pub(crate) fn set_na_conditions(&mut self, na_conditions: Vec<Expression>) {
         let left_width = self.left_types.len();
-        self.na_keys = na_conditions
+        let keys = na_conditions
             .iter()
-            .filter_map(|condition| crate::hash_join::na_equi_key(condition, left_width))
-            .collect();
-        self.native_hash = self.native_hash || !self.na_keys.is_empty();
+            .map(|condition| crate::hash_join::na_equi_key(condition, left_width))
+            .collect::<Option<Vec<_>>>();
+        match keys {
+            Some(keys) => {
+                self.native_hash = self.native_hash || !keys.is_empty();
+                self.na_keys = keys;
+            }
+            // A key this table cannot hash keeps every NA condition as an
+            // ordinary condition, as Go's Apply mode moves NAEQConditions
+            // into OtherConditions (`builder.go:2778`): EvalBool's NULL
+            // reaches the miss marker, so the answers stay null-aware.
+            None => {
+                self.residual_conditions.extend(na_conditions.iter().cloned());
+                self.conditions.extend(na_conditions);
+            }
+        }
     }
 
     /// Whether the build side has moved to a spill file (Go

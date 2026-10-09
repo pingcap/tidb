@@ -1382,11 +1382,18 @@ impl Session {
                 }))
             }
             tidb_ast::AdminStmt::ShowStatsTopN(show) => self.stats_topn_stmt(show).map(Some),
-            tidb_ast::AdminStmt::ShowStatsBuckets(show) => self.stats_buckets_stmt(show).map(Some),
+            tidb_ast::AdminStmt::ShowStatsBuckets(show) => {
+                self.require_show_stats_privilege("stats_buckets")?;
+                self.stats_buckets_stmt(show).map(Some)
+            }
             tidb_ast::AdminStmt::ShowStatsHistograms(show) => {
+                self.require_show_stats_privilege("stats_histograms")?;
                 self.stats_histograms_stmt(show).map(Some)
             }
-            tidb_ast::AdminStmt::ShowStatsLocked(show) => self.stats_locked_stmt(show).map(Some),
+            tidb_ast::AdminStmt::ShowStatsLocked(show) => {
+                self.require_show_stats_privilege("stats_table_locked")?;
+                self.stats_locked_stmt(show).map(Some)
+            }
             // Go `fetchShowCollation`: one row per collation in the
             // parser's registry (`Collation | Charset | Id | Default |
             // Compiled | Sortlen | Pad_attribute`).
@@ -1578,6 +1585,7 @@ impl Session {
                 }
                 // Go `ShowExec.fetchShowStatsMeta` (`executor/show_stats.go:36`).
                 if show.kind == tidb_ast::ShowInspectionKind::StatsMeta {
+                    self.require_show_stats_privilege("stats_meta")?;
                     return self.stats_meta_stmt(show.filter.as_ref()).map(Some);
                 }
                 if show.kind == tidb_ast::ShowInspectionKind::StatsHealthy {

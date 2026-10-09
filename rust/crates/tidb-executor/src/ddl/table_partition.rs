@@ -1017,16 +1017,9 @@ fn partition_definition_comment(
 /// discarded in favour of the hex form, so the dropped runes never reach the
 /// output -- but the control flow is reproduced here so the two agree if that
 /// ever stops being true.
-///
-/// `strconv.IsPrint` is Go's own Unicode table. This uses the ASCII-exact
-/// rule -- control characters and non-ASCII whitespace are not printable --
-/// which agrees with Go on every byte a bound can hold in practice; a fully
-/// faithful port needs Go's table and is noted rather than pretended.
 #[must_use]
 pub fn hex_if_non_print(value: &str) -> String {
-    fn go_is_print(character: char) -> bool {
-        character == ' ' || !(character.is_control() || character.is_whitespace())
-    }
+    use tidb_hack::go_strconv::is_print as go_is_print;
     if value.chars().all(go_is_print) {
         return value.to_owned();
     }

@@ -220,21 +220,16 @@ fn lateral_derived_table_join_shapes() {
     );
     assert_eq!(rows, [["3", "300"], ["3", "301"], ["3", "302"]]);
 
-    // Go master supports LEFT LATERAL and null-extends unmatched rows.
-    let (_, rows) = query_text(
-        &mut session,
-        "SELECT t.a FROM t LEFT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x \
-         ON TRUE ORDER BY t.a",
-    );
-    assert_eq!(rows, [["1"], ["1"], ["2"], ["3"], ["3"], ["3"]]);
-    let rows = row_text(session.run(
-        "SELECT t.a, x.v FROM t LEFT JOIN LATERAL \
-         (SELECT v FROM s WHERE s.k = t.a AND v > 300) x ON TRUE ORDER BY t.a, x.v",
+    // Go's buildLateralJoin supports only INNER JOIN and the comma syntax
+    // (logical_plan_builder.go:984): LEFT and RIGHT refuse with 3809.
+    assert!(matches!(
+        session.run(
+            "SELECT t.a FROM t LEFT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x ON TRUE"
+        ),
+        Err(DriverError::InvalidLateralJoin(
+            "LEFT JOIN is not supported with LATERAL"
+        ))
     ));
-    assert_eq!(
-        rows,
-        [["1", "NULL"], ["2", "NULL"], ["3", "301"], ["3", "302"]]
-    );
     assert!(matches!(
         session.run(
             "SELECT t.a FROM t RIGHT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x ON TRUE"

@@ -327,6 +327,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         having: Option<&mut Expr>,
         order_by: &mut [OrderItem],
         names: &[FieldName],
+        outer_schema: &Schema,
     ) -> Result<Vec<Expr>, PlanError> {
         let mut lifted = Vec::new();
         let mut clauses: Vec<&mut Expr> = Vec::new();
@@ -353,7 +354,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     return false;
                 };
                 let mut inner = (**subquery).clone();
-                let inner_names = match self.subquery_source_names(&inner) {
+                // Go `correlatedAggregateResolver.Enter`/`Leave`: the
+                // subquery's local scope is built beneath this block's.
+                self.outer_schemas.push(outer_schema.clone());
+                self.outer_names.push(names.to_vec());
+                let inner_names = self.subquery_source_names(&inner);
+                self.outer_schemas.pop();
+                self.outer_names.pop();
+                let inner_names = match inner_names {
                     Ok(names) => names,
                     Err(error) => {
                         // The visitor API has no Result channel. Preserve the
@@ -382,6 +390,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for agg in lifted {
             let position = fields.len();
             fields.push(ProjectionField {
+                default_name: None,
                 window_spec_column: false,
                 expr: agg.clone(),
                 column_reference: false,
@@ -820,6 +829,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         Some(position) => position,
                         None => {
                             fields.push(ProjectionField {
+                                default_name: None,
                                 window_spec_column: false,
                                 expr: canonical,
                                 column_reference: true,

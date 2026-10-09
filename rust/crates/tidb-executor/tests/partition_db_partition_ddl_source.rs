@@ -1296,8 +1296,7 @@ fn partition_add_index_over_range_and_hash() {
     admin_check::check_table(
         &mut kv_table(&catalog, "partition_add_idx"),
         None,
-        &RowDecodeContext::for_query(&ctx),
-    )
+        &RowDecodeContext::for_query(&ctx), true)
     .unwrap();
     drop_table(&mut catalog, "partition_add_idx");
 
@@ -1315,8 +1314,7 @@ fn partition_add_index_over_range_and_hash() {
     admin_check::check_table(
         &mut kv_table(&catalog, "partition_add_idx"),
         None,
-        &RowDecodeContext::for_query(&ctx),
-    )
+        &RowDecodeContext::for_query(&ctx), true)
     .unwrap();
     drop_table(&mut catalog, "partition_add_idx");
 
@@ -1329,7 +1327,7 @@ fn partition_add_index_over_range_and_hash() {
     );
     run_insert_on("insert into t1 values (0,0),(1,1),(2,2),(3,3)", &mut catalog, &ctx).unwrap();
     ddl::run_alter_table_in("alter table t1 add index idx(a)", &mut catalog, "test", &ctx).unwrap();
-    admin_check::check_table(&mut kv_table(&catalog, "t1"), None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut kv_table(&catalog, "t1"), None, &RowDecodeContext::for_query(&ctx), true)
         .unwrap();
     drop_table(&mut catalog, "t1");
 
@@ -1342,7 +1340,7 @@ fn partition_add_index_over_range_and_hash() {
     );
     run_insert_on("insert into t1 values (0,0)", &mut catalog, &ctx).unwrap();
     ddl::run_alter_table_in("alter table t1 add index idx(a)", &mut catalog, "test", &ctx).unwrap();
-    admin_check::check_table(&mut kv_table(&catalog, "t1"), None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut kv_table(&catalog, "t1"), None, &RowDecodeContext::for_query(&ctx), true)
         .unwrap();
 }
 
@@ -1413,8 +1411,7 @@ fn issue_40135_modify_partition_column() {
     admin_check::check_table(
         &mut kv_table(&catalog, "t40135"),
         None,
-        &RowDecodeContext::for_query(&ctx),
-    )
+        &RowDecodeContext::for_query(&ctx), true)
     .unwrap();
 }
 
@@ -1449,7 +1446,7 @@ fn alter_modify_partition_col_shrink_refused_8200() {
             .unwrap_err();
     assert_eq!(err_code(&error), 8200);
     // The table and its two rows are untouched.
-    admin_check::check_table(&mut kv_table(&catalog, "t"), None, &RowDecodeContext::for_query(&strict))
+    admin_check::check_table(&mut kv_table(&catalog, "t"), None, &RowDecodeContext::for_query(&strict), true)
         .unwrap();
     let rows = run_select_on("select count(*) from t", &mut catalog, &strict).unwrap();
     assert_eq!(rows_text(&rows), vec![vec!["2"]]);
@@ -1528,7 +1525,7 @@ fn alter_modify_column_on_partitioned_table() {
         ddl::run_alter_table_in("alter table t modify a varchar(20)", &mut catalog, "test", &ctx)
             .unwrap_err();
     assert_eq!(err_code(&error), 8200);
-    admin_check::check_table(&mut kv_table(&catalog, "t"), None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut kv_table(&catalog, "t"), None, &RowDecodeContext::for_query(&ctx), true)
         .unwrap();
 }
 

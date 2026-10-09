@@ -21,6 +21,7 @@
 
 #![allow(unsafe_code)]
 
+pub mod go_strconv;
 mod map;
 
 use std::cell::UnsafeCell;

@@ -262,6 +262,14 @@ impl DriverError {
             tidb_error::tidb::errcode::ErrDropTableOnTemporaryTable,
             tidb_error::tidb::errname::ErrDropTableOnTemporaryTable.raw,
         ),
+        DriverError::CheckPartialIndexWithoutFastCheck => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrCheckPartialIndexWithoutFastCheck,
+            tidb_error::tidb::errname::ErrCheckPartialIndexWithoutFastCheck.raw,
+        ),
+        DriverError::ViewSelectVariable => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrViewSelectVariable,
+            tidb_error::tidb::errname::ErrViewSelectVariable.raw,
+        ),
         DriverError::ViewSelectTemporaryTable(name) => MysqlError::coded(
             tidb_error::tidb::errcode::ErrViewSelectTmptable,
             format!("View's SELECT refers to a temporary table '{name}'"),

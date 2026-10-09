@@ -1203,8 +1203,7 @@ fn drop_index_needed_by_a_foreign_key_is_refused_regardless_of_checks() {
     admin_check::check_table(
         std::sync::Arc::make_mut(table),
         None,
-        &RowDecodeContext::for_query(&ctx),
-    )
+        &RowDecodeContext::for_query(&ctx), true)
     .unwrap();
     run_delete_on("delete from t2", &mut catalog, &ctx).unwrap();
 }

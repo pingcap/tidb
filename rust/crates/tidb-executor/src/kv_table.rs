@@ -3363,6 +3363,11 @@ impl KvTable {
     /// Whether a row belongs in an index's partial predicate. A NULL result
     /// follows Go's `EvalBool` rule for index conditions and is treated as
     /// false, so `WHERE b IS NOT NULL` excludes NULL rows.
+    /// Go `IndexInfo.HasCondition`: whether `index_id` is a partial index.
+    pub(crate) fn index_has_condition(&self, index_id: i64) -> bool {
+        self.partial_index_conditions.contains_key(&index_id)
+    }
+
     pub(crate) fn index_condition_holds(
         &self,
         index: &KvIndex,

@@ -102,6 +102,9 @@ pub enum AdminCheckError {
     /// A stored key or value could not be decoded at all, which is a
     /// corruption this check reports rather than interprets.
     Decode(String),
+    /// Go `errCheckPartialIndexWithoutFastCheck` (8273): the non-fast
+    /// `CheckTableExec` cannot validate a partial index.
+    PartialIndexWithoutFastCheck,
 }
 
 /// The detail carried by [`AdminCheckError::ValueMismatch`].
@@ -234,6 +237,7 @@ pub fn check_table(
     table: &mut KvTable,
     only_index: Option<&str>,
     context: &RowDecodeContext,
+    fast_check: bool,
 ) -> Result<usize, AdminCheckError> {
     let indexes = table.index_list_for_check();
     let selected: Vec<_> = match only_index {
@@ -264,6 +268,12 @@ pub fn check_table(
             .collect(),
     };
 
+    // Go builds `CheckTableExec` only when `tidb_enable_fast_table_check` is
+    // OFF (`FastCheckTableExec` otherwise), and its `Next` refuses a partial
+    // index before counting anything (`check_table_index.go:153`).
+    if !fast_check && selected.iter().any(|index| table.index_has_condition(index.id)) {
+        return Err(AdminCheckError::PartialIndexWithoutFastCheck);
+    }
     let rows = table
         .scan_rows_with_handles_recomputed(context)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;

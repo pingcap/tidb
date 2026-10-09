@@ -633,17 +633,14 @@ pub(crate) fn equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiK
     column_pair_key(f, left_width, null_safe)
 }
 
-/// Go `updateEQCond` step 2: a bare `col op col` equality the planner
-/// marked `IsEQCondFromIn` (see [`crate::joiner::is_eq_cond_from_in`]),
-/// promoted into an [`EquiKey`] the same way an ordinary `eq` conjunct
-/// would be -- except the row it describes is never simply "not indexed"
-/// when the key holds a NULL. A `NOT IN` / `!= ALL` rewrite only ever
-/// marks a plain `eq`, never `nulleq` (`<=>` cannot appear in that
-/// rewrite), so `null_safe` is always `false` here.
+/// One of the plan's `NAEQConditions` (Go `updateEQCond` step 2) as an
+/// [`EquiKey`], built the same way an ordinary `eq` conjunct would be --
+/// except the row it describes is never simply "not indexed" when the key
+/// holds a NULL. The field, not an `InOperand` marker, makes it null-aware:
+/// `adjustKeyForm` builds a key over a projected expression from fresh
+/// projection columns, which carry no marker. A `NOT IN` / `!= ALL`
+/// rewrite only ever builds a plain `eq`, so `null_safe` is always `false`.
 pub(crate) fn na_equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
-    if !crate::joiner::is_eq_cond_from_in(conjunct) {
-        return None;
-    }
     let Expression::ScalarFunction(f) = conjunct else {
         return None;
     };

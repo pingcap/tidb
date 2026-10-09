@@ -773,7 +773,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
         .unwrap();
     assert_eq!(handles, std::slice::from_ref(&handle));
     assert_eq!(
-        check_table(&mut table, None, &RowDecodeContext::for_query(&statement)).unwrap(),
+        check_table(&mut table, None, &RowDecodeContext::for_query(&statement), true).unwrap(),
         1
     );
 

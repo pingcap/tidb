@@ -54,6 +54,40 @@ pub fn run_create_view_in(
     Ok(())
 }
 
+/// Go `checkForUserVariables` (`planbuilder.go:5291`), run before the view
+/// body is built: any `ast.VariableExpr` -- a user or system variable read,
+/// or an inline `@v := ...` assignment -- refuses the view.
+fn view_body_has_variable(create: &CreateViewStmt) -> bool {
+    struct Finder {
+        found: bool,
+    }
+    impl tidb_ast::Visitor for Finder {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() {
+                if matches!(
+                    expr,
+                    tidb_ast::Expr::UserVar(_)
+                        | tidb_ast::Expr::SysVar { .. }
+                        | tidb_ast::Expr::Assign { .. }
+                ) {
+                    self.found = true;
+                    return true;
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    use tidb_ast::Visitable;
+    let mut query = (*create.query).clone();
+    let mut finder = Finder { found: false };
+    query.accept(&mut finder);
+    finder.found
+}
+
 /// Every written table path in a `CREATE VIEW` body, including the ones
 /// inside subqueries and CTEs -- Go reaches them all because `buildDataSource`
 /// runs once per `TableName` node however deep it is.
@@ -98,6 +132,9 @@ pub fn resolve_view_definition(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(String, String, ViewDef), DriverError> {
+    if view_body_has_variable(create) {
+        return Err(DriverError::ViewSelectVariable);
+    }
     let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
     // Go `buildDataSource` (`pkg/planner/core/logical_plan_builder.go:4963`):

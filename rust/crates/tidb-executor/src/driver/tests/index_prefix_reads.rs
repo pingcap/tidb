@@ -287,8 +287,7 @@ fn writes_through_a_prefix_index_stay_admin_check_clean() {
             crate::admin_check::check_table(
                 std::sync::Arc::make_mut(table),
                 None,
-                &crate::RowDecodeContext::for_test_query_utc(),
-            )
+                &crate::RowDecodeContext::for_test_query_utc(), true)
             .expect("every stored entry re-encodes from the row it names"),
             1
         );
@@ -338,8 +337,7 @@ fn a_multi_byte_column_is_cut_by_characters() {
         crate::admin_check::check_table(
             std::sync::Arc::make_mut(table),
             None,
-            &crate::RowDecodeContext::for_test_query_utc(),
-        )
+            &crate::RowDecodeContext::for_test_query_utc(), true)
         .unwrap(),
         1
     );
@@ -372,8 +370,7 @@ fn create_index_backfills_cut_entries() {
         crate::admin_check::check_table(
             std::sync::Arc::make_mut(table),
             None,
-            &crate::RowDecodeContext::for_test_query_utc(),
-        )
+            &crate::RowDecodeContext::for_test_query_utc(), true)
         .unwrap(),
         1
     );
@@ -421,8 +418,7 @@ fn modify_column_clears_a_prefix_the_new_type_cannot_carry() {
         crate::admin_check::check_table(
             std::sync::Arc::make_mut(table),
             None,
-            &crate::RowDecodeContext::for_test_query_utc(),
-        )
+            &crate::RowDecodeContext::for_test_query_utc(), true)
         .expect("the rebuilt entries match the rows");
     }
 }
@@ -459,8 +455,7 @@ fn modify_column_keeps_a_prefix_the_new_type_can_carry() {
     crate::admin_check::check_table(
         std::sync::Arc::make_mut(table),
         None,
-        &crate::RowDecodeContext::for_test_query_utc(),
-    )
+        &crate::RowDecodeContext::for_test_query_utc(), true)
     .expect("the cut entries match the rows");
 
     // The same column with NO surviving prefix is Go's 1170.

@@ -911,6 +911,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // Its arguments must stay in the pre-aggregation scope.
                 let index = fields.len();
                 fields.push(ProjectionField {
+                    default_name: None,
                     window_spec_column: false,
                     expr: node.clone(),
                     column_reference: false,
@@ -948,6 +949,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
                 let index = fields.len();
                 fields.push(ProjectionField {
+                    default_name: None,
                     window_spec_column: spec_walk,
                     expr: node.clone(),
                     column_reference: true,

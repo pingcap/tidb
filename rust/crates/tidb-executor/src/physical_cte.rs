@@ -135,6 +135,20 @@ pub(crate) struct CteProducer {
     context: StmtContext,
     output_types: Vec<FieldType>,
     max_chunk_size: usize,
+    /// Go `corCols`: the outer values the seed and recursive parts read.
+    cor_cols: Vec<tidb_expr::column::CorrelatedColumn>,
+    /// Go `corColHashCodes`: those values when the result was last built.
+    cor_col_hash_codes: Vec<Vec<u8>>,
+}
+
+/// Go `getCorColHashCode`: `codec.HashCode` of the bound value.
+fn cor_col_hash_code(column: &tidb_expr::column::CorrelatedColumn) -> Vec<u8> {
+    let value = column.data.as_ref().map_or(Datum::Null, |data| {
+        data.read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    });
+    tidb_codec::hash_code(&value)
 }
 
 impl CteProducer {
@@ -150,7 +164,9 @@ impl CteProducer {
         context: StmtContext,
         output_types: Vec<FieldType>,
         max_chunk_size: usize,
+        cor_cols: Vec<tidb_expr::column::CorrelatedColumn>,
     ) -> Self {
+        let cor_col_hash_codes = cor_cols.iter().map(cor_col_hash_code).collect();
         Self {
             seed,
             recursive,
@@ -168,7 +184,35 @@ impl CteProducer {
             context,
             output_types,
             max_chunk_size,
+            cor_cols,
+            cor_col_hash_codes,
         }
+    }
+
+    /// Go `checkAndUpdateCorColHashCode`: whether an outer value this CTE
+    /// reads changed since the result was built.
+    fn check_and_update_cor_col_hash_code(&mut self) -> bool {
+        let mut changed = false;
+        for (column, code) in self.cor_cols.iter().zip(&mut self.cor_col_hash_codes) {
+            let new_code = cor_col_hash_code(column);
+            if new_code != *code {
+                changed = true;
+                *code = new_code;
+            }
+        }
+        changed
+    }
+
+    /// Go `cteProducer.reset`: forget the result so the next reader builds
+    /// it again.
+    fn reset(&mut self) -> Result<(), ExecError> {
+        self.current_iteration = 0;
+        self.seen.clear();
+        self.executor_opened = false;
+        self.open_error = None;
+        self.result_error = None;
+        self.result.lock().unwrap().reopen()?;
+        self.iter_in.lock().unwrap().reopen()
     }
 
     fn has_result(&self) -> bool {
@@ -223,16 +267,10 @@ impl CteProducer {
         }
         self.executor_opened = false;
         if !self.has_result() {
-            if let Err(error) = self.result.lock().unwrap().reopen() {
+            // The result was never generated, so the next reader starts over.
+            if let Err(error) = self.reset() {
                 first_error.get_or_insert(error);
             }
-            if let Err(error) = self.iter_in.lock().unwrap().reopen() {
-                first_error.get_or_insert(error);
-            }
-            self.result_error = None;
-            self.open_error = None;
-            self.current_iteration = 0;
-            self.seen.clear();
         }
         match first_error {
             Some(error) => Err(error),
@@ -546,7 +584,13 @@ impl CteExec {
 impl Executor for CteExec {
     fn open(&mut self) -> Result<(), ExecError> {
         self.reset();
-        self.producer.lock().unwrap().open()
+        let mut producer = self.producer.lock().unwrap();
+        // Go `CTEExec.Open`: under an Apply, a new outer row that changes a
+        // correlated value invalidates the result built for the last one.
+        if producer.check_and_update_cor_col_hash_code() {
+            producer.reset()?;
+        }
+        producer.open()
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
@@ -669,6 +713,7 @@ mod tests {
                 context.clone(),
                 vec![],
                 1024,
+                Vec::new(),
             )));
             let mut reader = CteExec::new(meta.clone(), producer.clone(), false, 0, 0);
             reader.open().unwrap();

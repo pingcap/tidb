@@ -119,10 +119,16 @@ impl Session {
         let only_index = only_index.map(str::to_owned);
         let ctx = self.statement_context(false);
         let decode_context = tidb_executor::RowDecodeContext::for_query(&ctx);
+        let fast_check = self.session_bool("tidb_enable_fast_table_check", true);
         self.with_catalog_mut(|catalog| {
             let table = admin_check_table_mut(catalog, &database, &name, statement)?;
-            tidb_executor::admin_check::check_table(table, only_index.as_deref(), &decode_context)
-                .map_err(admin_check_error)
+            tidb_executor::admin_check::check_table(
+                table,
+                only_index.as_deref(),
+                &decode_context,
+                fast_check,
+            )
+            .map_err(admin_check_error)
         })
     }
 }
@@ -218,5 +224,6 @@ fn admin_check_error(error: tidb_executor::admin_check::AdminCheckError) -> Driv
         AdminCheckError::NotStored(detail) | AdminCheckError::Decode(detail) => {
             DriverError::unsupported(detail)
         }
+        AdminCheckError::PartialIndexWithoutFastCheck => DriverError::CheckPartialIndexWithoutFastCheck,
     }
 }

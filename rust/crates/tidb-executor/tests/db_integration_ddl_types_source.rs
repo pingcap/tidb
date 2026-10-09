@@ -209,9 +209,9 @@ fn unique_key_null_value_unique_index_allows_multiple_nulls() {
         vec![vec![Datum::Int(2)]],
     );
     let mut table = kv_table(&catalog, "test", "t");
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true)
         .expect("admin check table t");
-    admin_check::check_table(&mut table, Some("b"), &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, Some("b"), &RowDecodeContext::for_query(&ctx), true)
         .expect("admin check index t b");
 }
 
@@ -240,9 +240,9 @@ fn unique_key_null_value_cluster_index_unique_index_allows_nulls() {
         vec![vec![Datum::Int(2)]],
     );
     let mut table = kv_table(&catalog, "test", "t");
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true)
         .expect("admin check table t");
-    admin_check::check_table(&mut table, Some("c"), &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, Some("c"), &RowDecodeContext::for_query(&ctx), true)
         .expect("admin check index t c");
 }
 
@@ -790,7 +790,7 @@ fn null_generated_column_indexed_over_default_nulls() {
     ddl::run_alter_table_in("alter table t add index idx_c(c)", &mut catalog, "test", &ctx)
         .unwrap();
     let mut table = kv_table(&catalog, "test", "t");
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true)
         .expect("the NULL-backed generated index is consistent");
 }
 
@@ -880,7 +880,7 @@ fn index_on_multiple_generated_column_base() {
     .unwrap();
     assert_eq!(via_index, via_scan);
     let mut table = kv_table(&catalog, "test", "t");
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true)
         .expect("admin check table t");
 }
 

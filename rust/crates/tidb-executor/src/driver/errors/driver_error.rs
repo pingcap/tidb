@@ -111,6 +111,12 @@ pub enum DriverError {
     /// Go `plannererrors.ErrViewSelectTemporaryTable` (1352), carrying the
     /// table name: a view's body named a LOCAL temporary table.
     ViewSelectTemporaryTable(String),
+    /// Go `dbterror.ErrViewSelectVariable` (1351): a view's body reads or
+    /// assigns a variable (`checkForUserVariables`).
+    ViewSelectVariable,
+    /// Go `errCheckPartialIndexWithoutFastCheck` (8273): `ADMIN CHECK` over
+    /// a partial index with `tidb_enable_fast_table_check` OFF.
+    CheckPartialIndexWithoutFastCheck,
     /// Go `dbterror.ErrTempTableNotAllowedWithTTL` (8151): `TTL` on a
     /// temporary table (`checkTTLInfoValid`).
     TempTableNotAllowedWithTTL,

@@ -4244,6 +4244,14 @@ impl PhysicalPlan {
             Self::StreamAgg(op) => {
                 aggregation_conditions(&op.agg_funcs, &op.group_by_items, &mut result);
             }
+            // Go `PhysicalCTE.ExtractCorrelatedCols`: the seed and recursive
+            // plans hang off the node, not its children.
+            Self::CTE(op) => {
+                result.extend(extract_correlated_cols_4_physical_plan(&op.seed_plan));
+                if let Some(recursive) = op.recursive_plan.as_deref() {
+                    result.extend(extract_correlated_cols_4_physical_plan(recursive));
+                }
+            }
             _ => {}
         }
         result
@@ -4826,6 +4834,54 @@ pub fn extract_correlated_cols_4_physical_plan(plan: &PhysicalPlan) -> Vec<Corre
     result
 }
 
+/// Go `ExtractOuterApplyCorrelatedCols` (`rule_decorrelate.go:59`): the
+/// correlated columns of `plan` that an Apply above it binds, leaving out
+/// those an Apply inside `plan` binds itself.
+#[must_use]
+pub fn extract_outer_apply_correlated_cols(plan: &PhysicalPlan) -> Vec<CorrelatedColumn> {
+    extract_outer_apply_correlated_cols_helper(plan).0
+}
+
+fn extract_outer_apply_correlated_cols_helper(
+    plan: &PhysicalPlan,
+) -> (Vec<CorrelatedColumn>, Vec<Schema>) {
+    let mut all_cor_cols = plan.extract_correlated_cols();
+    let mut all_outer_schemas = Vec::new();
+    let mut children: Vec<&PhysicalPlan> = plan.children().iter().collect();
+    match plan {
+        PhysicalPlan::Apply(apply) => {
+            let outer = if apply.hash_join.inner_child_idx == 0 {
+                plan.children().get(1)
+            } else {
+                plan.children().first()
+            };
+            if let Some(schema) = outer.and_then(PhysicalPlan::schema) {
+                all_outer_schemas.push(schema.clone());
+            }
+        }
+        PhysicalPlan::CTE(cte) => {
+            children = std::iter::once(cte.seed_plan.as_ref())
+                .chain(cte.recursive_plan.as_deref())
+                .collect();
+        }
+        _ => {}
+    }
+    for child in children {
+        let (child_cor_cols, child_outer_schemas) = extract_outer_apply_correlated_cols_helper(child);
+        all_cor_cols.extend(child_cor_cols);
+        all_outer_schemas.extend(child_outer_schemas);
+    }
+    let result = all_cor_cols
+        .into_iter()
+        .filter(|cor_col| {
+            !all_outer_schemas
+                .iter()
+                .any(|schema| schema.column_index(&cor_col.column) != -1)
+        })
+        .collect();
+    (result, all_outer_schemas)
+}
+
 fn visit_expression_correlated_columns_mut(
     expression: &mut tidb_expr::expression::Expression,
     visitor: &mut impl FnMut(&mut CorrelatedColumn),
@@ -4974,6 +5030,12 @@ fn visit_physical_correlated_columns_mut(
                     expressions(&mut bound.calc_funcs, visitor);
                     expressions(&mut bound.compare_cols, visitor);
                 }
+            }
+        }
+        PhysicalPlan::CTE(op) => {
+            visit_physical_correlated_columns_mut(&mut op.seed_plan, visitor);
+            if let Some(recursive) = op.recursive_plan.as_deref_mut() {
+                visit_physical_correlated_columns_mut(recursive, visitor);
             }
         }
 

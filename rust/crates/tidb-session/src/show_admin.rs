@@ -496,6 +496,10 @@ impl crate::Session {
             let (database, name) = self.split_table_path(path)?;
             let resolved = self.with_catalog_mut(|catalog| {
                 match catalog.table_in(&database, &name) {
+                    // Go `checkAdminCheckTableGrammar` (`preprocess.go:908`).
+                    Some(tidb_executor::TableEntry::Kv(table)) if table.is_temporary() => {
+                        Err(DriverError::OptOnTemporaryTable("admin checksum table"))
+                    }
                     Some(tidb_executor::TableEntry::Kv(table)) => {
                         let physical =
                             1 + table.partition().map_or(0, |p| p.definitions.len());

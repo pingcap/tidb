@@ -4635,6 +4635,7 @@ fn build_cte(
         )));
     }
 
+    let mut cor_cols = tidb_planner::physical::extract_outer_apply_correlated_cols(&cte.seed_plan);
     let seed = build_with_state(&cte.seed_plan, catalog, ctx, state)?;
     let output_types = seed.ret_field_types().to_vec();
     let mut result_storage = crate::cte_storage::CteStorage::new(
@@ -4673,6 +4674,9 @@ fn build_cte(
         },
         None => None,
     };
+    if let Some(recursive) = cte.recursive_plan.as_deref() {
+        cor_cols.extend(tidb_planner::physical::extract_outer_apply_correlated_cols(recursive));
+    }
     let slot = state
         .cte_slots
         .get(&cte.id_for_storage)
@@ -4690,6 +4694,7 @@ fn build_cte(
         ctx.clone(),
         output_types,
         ctx.executor_chunk_sizes().1,
+        cor_cols,
     )));
     state
         .cte_slots

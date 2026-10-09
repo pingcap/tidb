@@ -1,8 +1,9 @@
 // Copyright 2013 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 
-//! Go `strconv.IsPrint` tables, ported from Go 1.26 `strconv/isprint.go`.
-//! Keeping the generated ranges source-faithful avoids host-language Unicode
+//! Go `strconv.IsPrint` and `strconv.Quote` (`strconv/isprint.go`,
+//! `strconv/quote.go`), the tables ported from Go 1.26. Keeping the
+//! generated ranges source-faithful avoids host-language Unicode
 //! classification differences in `%q` compatibility formatting.
 
 const IS_PRINT16: &[u16] = &[
@@ -132,7 +133,9 @@ const IS_NOT_PRINT32: &[u16] = &[
     0xf0c0, 0xf0d0, 0xfabe, 0xfb93,
 ];
 
-pub(crate) fn is_print(character: char) -> bool {
+/// Go `strconv.IsPrint`.
+#[must_use]
+pub fn is_print(character: char) -> bool {
     let value = u32::from(character);
     if value <= 0xff {
         return (0x20..=0x7e).contains(&value) || ((0xa1..=0xff).contains(&value) && value != 0xad);
@@ -162,3 +165,81 @@ pub(crate) fn is_print(character: char) -> bool {
         .binary_search(&((value - 0x10000) as u16))
         .is_err()
 }
+
+/// Go `strconv.Quote` over a byte string -- what `%q` prints for one. A
+/// printable rune stays verbatim; quote and backslash are escaped; the
+/// named controls print as `\a`..`\v`; other runes print as `\x`, `\u`
+/// or `\U` escapes; and every byte that is not valid UTF-8 prints as
+/// `\xNN`.
+#[must_use]
+pub fn quote_bytes(bytes: &[u8]) -> String {
+    let mut out = String::from("\"");
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        match std::str::from_utf8(rest) {
+            Ok(valid) => {
+                valid.chars().for_each(|character| push_escaped_rune(&mut out, character));
+                break;
+            }
+            Err(error) => {
+                let (valid, after) = rest.split_at(error.valid_up_to());
+                std::str::from_utf8(valid)
+                    .expect("the prefix was just validated")
+                    .chars()
+                    .for_each(|character| push_escaped_rune(&mut out, character));
+                let bad = error.error_len().unwrap_or(after.len());
+                for byte in &after[..bad] {
+                    out.push_str(&format!("\\x{byte:02x}"));
+                }
+                rest = &after[bad..];
+            }
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Go `appendEscapedRune(buf, r, '"', false, false)`.
+fn push_escaped_rune(out: &mut String, character: char) {
+    if character == '"' || character == '\\' {
+        out.push('\\');
+        out.push(character);
+        return;
+    }
+    if is_print(character) {
+        out.push(character);
+        return;
+    }
+    match character {
+        '\u{7}' => out.push_str("\\a"),
+        '\u{8}' => out.push_str("\\b"),
+        '\u{c}' => out.push_str("\\f"),
+        '\n' => out.push_str("\\n"),
+        '\r' => out.push_str("\\r"),
+        '\t' => out.push_str("\\t"),
+        '\u{b}' => out.push_str("\\v"),
+        character if u32::from(character) < 0x20 || u32::from(character) == 0x7f => {
+            out.push_str(&format!("\\x{:02x}", u32::from(character)));
+        }
+        character if u32::from(character) < 0x10000 => {
+            out.push_str(&format!("\\u{:04x}", u32::from(character)));
+        }
+        character => out.push_str(&format!("\\U{:08x}", u32::from(character))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_print, quote_bytes};
+
+    #[test]
+    fn quote_matches_go_strconv_quote() {
+        // Go: strconv.Quote("\x89\a\xba%") over the raw bytes.
+        assert_eq!(quote_bytes(b"\x89\x07\xba%"), r#""\x89\a\xba%""#);
+        assert_eq!(quote_bytes(b"a\"b\\c"), r#""a\"b\\c""#);
+        assert_eq!(quote_bytes("\u{8}\u{c}\u{b}\u{1}\u{7f}".as_bytes()), r#""\b\f\v\x01\x7f""#);
+        assert_eq!(quote_bytes("猫\u{a0}\u{feff}\u{e0001}".as_bytes()), r#""猫\u00a0\ufeff\U000e0001""#);
+        assert!(is_print('猫') && !is_print('\u{ad}'));
+    }
+}
+

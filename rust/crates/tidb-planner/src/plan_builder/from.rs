@@ -1104,10 +1104,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 "USING clause is not supported with LATERAL",
             ));
         }
+        // `:984` "Currently supports INNER JOIN and comma syntax".
         let join_type = match join_node.tp {
             JoinType::Left => {
-                self.opt_flag |= flags::ELIMINATE_OUTER_JOIN | flags::OUTER_JOIN_TO_SEMI_JOIN;
-                LogicalJoinType::LeftOuter
+                return Err(PlanError::invalid_lateral_join(
+                    "LEFT JOIN is not supported with LATERAL",
+                ))
             }
             JoinType::Right => {
                 return Err(PlanError::invalid_lateral_join(

@@ -111,28 +111,12 @@ pub(crate) fn physical_expression_text_with_columns(
                 })
                 .collect::<Option<Vec<_>>>()?;
             match function.func_name.lowercase() {
-                "cast_decimal" => {
-                    if arguments.len() != 1 {
-                        return None;
-                    }
+                // Go names every cast `cast` and renders it as
+                // `cast(arg, RetType.String())`; this port keeps one name per
+                // cast signature.
+                name if (name == "cast" || name.starts_with("cast_")) && arguments.len() == 1 => {
                     let result_type = function.ret_type.as_ref()?;
-                    Some(format!(
-                        "cast({}, decimal({},{}) BINARY)",
-                        arguments[0],
-                        result_type.flen(),
-                        result_type.decimal()
-                    ))
-                }
-                "cast_double" => {
-                    (arguments.len() == 1).then(|| format!("cast({}, double BINARY)", arguments[0]))
-                }
-                "cast_date" => {
-                    (arguments.len() == 1).then(|| format!("cast({}, date BINARY)", arguments[0]))
-                }
-                // Master renders the integer casts through the same
-                // FieldType-string path: SIGNED → "bigint BINARY".
-                "cast_signed" => {
-                    (arguments.len() == 1).then(|| format!("cast({}, bigint BINARY)", arguments[0]))
+                    Some(format!("cast({}, {})", arguments[0], result_type.source_string()))
                 }
                 name => Some(format!("{name}({})", arguments.join(", "))),
             }

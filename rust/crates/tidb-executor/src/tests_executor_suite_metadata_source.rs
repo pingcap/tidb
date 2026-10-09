@@ -73,15 +73,15 @@ fn admin_check_index_reports_each_corruption_shape() {
     let context = crate::RowDecodeContext::for_test_query_utc();
     let mut consistent = kv_table_of(&catalog, "t");
     // Go: "admin check index t c" and "admin check index t C" both succeed.
-    let checked = admin_check::check_table(&mut consistent, Some("c"), &context)
+    let checked = admin_check::check_table(&mut consistent, Some("c"), &context, true)
         .expect("consistent table passes the check");
     assert_eq!(checked, 1, "exactly the named index is checked");
-    let checked = admin_check::check_table(&mut consistent, Some("C"), &context)
+    let checked = admin_check::check_table(&mut consistent, Some("C"), &context, true)
         .expect("index names resolve case-insensitively as in Go");
     assert_eq!(checked, 1);
 
     // Go: "admin check index t idx_inexistent" errors with "not exist".
-    let unknown = admin_check::check_table(&mut consistent, Some("idx_inexistent"), &context)
+    let unknown = admin_check::check_table(&mut consistent, Some("idx_inexistent"), &context, true)
         .expect_err("unknown index must be an error");
     assert!(
         matches!(unknown, admin_check::AdminCheckError::UnknownIndex { ref index, .. } if index == "idx_inexistent"),
@@ -118,7 +118,7 @@ fn admin_check_index_reports_each_corruption_shape() {
     record_lost
         .delete_record_for_test(&crate::kv_table::TableHandle::Int(3))
         .expect("record removal");
-    let inconsistent = admin_check::check_table(&mut record_lost, Some("c"), &context)
+    let inconsistent = admin_check::check_table(&mut record_lost, Some("c"), &context, true)
         .expect_err("orphaned index entry must be an error");
     let admin_check::AdminCheckError::Inconsistent {
         table,
@@ -154,7 +154,7 @@ fn admin_check_index_reports_each_corruption_shape() {
     entry_lost
         .delete_raw_key_for_test(&entries[1].0)
         .expect("raw entry removal");
-    let mismatch = admin_check::check_table(&mut entry_lost, Some("c"), &context)
+    let mismatch = admin_check::check_table(&mut entry_lost, Some("c"), &context, true)
         .expect_err("missing entry must be an error");
     let admin_check::AdminCheckError::CountMismatch {
         table_count,

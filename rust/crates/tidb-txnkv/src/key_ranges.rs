@@ -28,7 +28,6 @@ use std::sync::Arc;
 
 use tidb_proto::CoprocessorKeyRange;
 
-use crate::go_is_print;
 use crate::{Key, KeyRange};
 
 /// A key-range sequence with optional split ranges before and after a shared
@@ -290,7 +289,7 @@ fn write_go_quoted_character(formatter: &mut fmt::Formatter<'_>, character: char
         '\\' => formatter.write_str("\\\\"),
         '\"' => formatter.write_str("\\\""),
         ' '..='~' => write!(formatter, "{character}"),
-        character if go_is_print::is_print(character) => {
+        character if tidb_hack::go_strconv::is_print(character) => {
             write!(formatter, "{character}")
         }
         character if character < ' ' || character == '\u{007f}' => {

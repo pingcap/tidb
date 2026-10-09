@@ -65,7 +65,6 @@ mod error;
 mod farmhash;
 mod fault_injection;
 pub mod gc_state;
-mod go_is_print;
 mod handle;
 mod inner_txn;
 mod iteration;

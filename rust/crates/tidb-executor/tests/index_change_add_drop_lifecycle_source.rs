@@ -70,7 +70,7 @@ fn index_change_add_then_drop_rebuilds_and_clears_the_index() {
         .expect("index c2 exists after add");
     assert_eq!(indexed.column_offsets, vec![1], "index covers c2");
     let mut table = table;
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true)
         .expect("index entries match rows after the add");
     let rows = run_select_on("select c1 from t where c2 >= 1 order by c1", &mut catalog, &ctx).unwrap();
     assert_eq!(

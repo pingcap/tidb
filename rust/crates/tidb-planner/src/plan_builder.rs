@@ -169,6 +169,7 @@ mod aggregation_tests;
 pub mod catalog;
 pub mod cte;
 pub mod expand;
+pub mod field_name;
 pub mod from;
 pub mod handle_col_helper;
 pub mod marker;
@@ -370,9 +371,13 @@ pub struct ProjectionField {
     pub column_reference: bool,
     /// Go `SelectField.AsName`.
     pub alias: Option<String>,
-    /// Go `SelectField.Text()`: the exact source bytes, which name a computed
-    /// column. Absent for a wildcard-expanded or builder-appended field.
+    /// Go `SelectField.Text()`: the exact source bytes. Absent for a
+    /// wildcard-expanded or builder-appended field.
     pub text: Option<String>,
+    /// Go `buildProjectionFieldNameFromExpressions` over the parsed field:
+    /// the name an unaliased computed column takes (`select null` is
+    /// `NULL`). Absent where [`Self::text`] is.
+    pub default_name: Option<String>,
     /// Go `SelectField.Auxiliary`: a column ORDER BY or HAVING needs but the
     /// select list does not project. Trimmed by `buildSelect`'s `:4640`
     /// trailing projection.
@@ -3061,6 +3066,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             path.push(name.names.column.original.clone());
             fields.push(ProjectionField {
+                default_name: None,
                 window_spec_column: false,
                 expr: Expr::Column(path),
                 column_reference: true,
@@ -3169,6 +3175,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let column_name = field
             .alias
             .clone()
+            .or_else(|| field.default_name.clone())
             .or_else(|| field.text.clone())
             .unwrap_or_else(|| field.expr.restore());
         let mut name = FieldName::new(FieldNameMetadata {
@@ -3194,6 +3201,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     expanded.extend(Self::unfold_wild_star(path, schema, names));
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
+                    default_name: Some(field_name::default_field_display_name(
+                        fields, index, expr,
+                    )),
                     window_spec_column: false,
                     expr: expr.clone(),
                     column_reference: matches!(
@@ -3259,6 +3269,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     expanded.extend(list);
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
+                    default_name: Some(field_name::default_field_display_name(
+                        fields, index, expr,
+                    )),
                     window_spec_column: false,
                     expr: expr.clone(),
                     column_reference: matches!(
@@ -3356,6 +3369,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     }
                     let index = fields.len();
                     fields.push(ProjectionField {
+                        default_name: None,
                         window_spec_column: false,
                         expr: node.clone(),
                         column_reference: true,
@@ -3388,6 +3402,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // that trim is what renders q42's `Column#77->Column#81`.
                 let index = if aggregation::is_aggregate_call(node) {
                     fields.push(ProjectionField {
+                        default_name: None,
                         window_spec_column: false,
                         expr: node.clone(),
                         column_reference: matches!(node, Expr::Column(_)),
@@ -3401,6 +3416,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         Some(index) => index,
                         None => {
                             fields.push(ProjectionField {
+                                default_name: None,
                                 window_spec_column: false,
                                 expr: node.clone(),
                                 column_reference: matches!(node, Expr::Column(_)),
@@ -4278,6 +4294,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             having.as_mut(),
             &mut order_items,
             &source_names,
+            &snapshot_schema_and_names(&plan).0,
         )?;
         // 6a's ORDER BY half, which appends its own hidden fields past the
         // select list. Go resolves them with `orderByResolver`, so record the
@@ -4432,6 +4449,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             for (index, _) in having_aggs.iter().enumerate() {
                 let position = fields.len();
                 fields.push(ProjectionField {
+                    default_name: None,
                     window_spec_column: false,
                     expr: PlanMarker::new(MarkerKind::Agg, having_offset + index).as_expr(),
                     column_reference: false,

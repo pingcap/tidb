@@ -151,7 +151,6 @@ fn modify_column_refusals_and_reorders_match_go() {
     admin_check::check_table(
         std::sync::Arc::make_mut(table),
         None,
-        &RowDecodeContext::for_query(&ctx),
-    )
+        &RowDecodeContext::for_query(&ctx), true)
     .unwrap();
 }

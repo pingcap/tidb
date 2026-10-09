@@ -58,6 +58,24 @@ impl Session {
         })
     }
 
+    /// Go `buildShow` (`planbuilder.go:3632`) for SHOW STATS_META,
+    /// STATS_HISTOGRAMS, STATS_BUCKETS and STATS_LOCKED: SELECT on the
+    /// `mysql` table the parser names, refused as the `SHOW` command.
+    pub(crate) fn require_show_stats_privilege(&self, table: &str) -> Result<(), DriverError> {
+        if self.has_scoped_privilege("mysql", table, privilege::GlobalPriv::Select) {
+            return Ok(());
+        }
+        let Some((_, user, host)) = self.privilege_context() else {
+            return Ok(());
+        };
+        Err(DriverError::TableAccessDenied {
+            privilege: "SHOW",
+            user: user.to_owned(),
+            host: host.to_owned(),
+            table: table.to_owned(),
+        })
+    }
+
     /// Go's privilege gate on `SET GLOBAL`: SUPER, or the dynamic
     /// `SYSTEM_VARIABLES_ADMIN` privilege (which `has_dynamic_priv` already
     /// falls back to SUPER for, so this one call covers "at least one of").

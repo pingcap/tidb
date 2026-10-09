@@ -428,7 +428,7 @@ fn create_expression_index_builds_and_admin_checks_clean() {
     )
     .unwrap();
     let mut table = kv_table(&catalog, "test", "t");
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true)
         .expect("expression index consistent with its rows");
 
     // Issue 39784: an expression index over `lower(name)`. Go drops and
@@ -450,7 +450,7 @@ fn create_expression_index_builds_and_admin_checks_clean() {
     )
     .unwrap();
     let mut table = kv_table(&catalog2, "test", "t");
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true)
         .expect("lower() expression index consistent with its rows");
 }
 
@@ -478,7 +478,7 @@ fn create_unique_expression_index_builds_and_admin_checks_clean() {
     )
     .unwrap();
     let mut table = kv_table(&catalog, "test", "t");
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true)
         .expect("unique expression index consistent with its rows");
     let rows = rows_text(&run_select_on("select * from t order by a, b", &catalog, &ctx).unwrap());
     assert_eq!(rows.len(), 4);
@@ -507,7 +507,7 @@ fn drop_expression_index_roundtrip_keeps_rows_readable() {
     let ctx = StmtContext::for_query();
     ddl::run_alter_table_in("alter table t drop index idx", &mut catalog, "test", &ctx).unwrap();
     let mut table = kv_table(&catalog, "test", "t");
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx))
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true)
         .expect("table consistent after dropping its expression index");
     let rows = rows_text(&run_select_on("select * from t order by a", &catalog, &ctx).unwrap());
     assert_eq!(rows.len(), 4);

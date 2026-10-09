@@ -529,11 +529,6 @@ fn aggregate_info(
         if index > 0 {
             text.push_str(", ");
         }
-        let distinct = if function.has_distinct {
-            "distinct "
-        } else {
-            ""
-        };
         let output = schema
             .and_then(|schema| schema.columns.get(index))
             .map(|column| {
@@ -543,13 +538,48 @@ fn aggregate_info(
                 )
             })
             .unwrap_or_else(|| format!("Column#{index}"));
-        text.push_str(&format!(
-            "funcs:{}({}{})->{output}",
-            function.base.name,
-            distinct,
-            expressions_text(eval_ctx, &function.base.args)
-        ));
+        text.push_str(&format!("funcs:{}->{output}", agg_func_text(eval_ctx, function)));
     }
+    text
+}
+
+/// Go `aggregation.ExplainAggFunc(ctx, agg, false)` (`explain.go:26`): a
+/// GROUP_CONCAT's last argument is its separator, printed after the
+/// aggregate's own ORDER BY.
+fn agg_func_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    function: &tidb_expr::aggregation::AggFuncDesc,
+) -> String {
+    let mut text = format!("{}(", function.base.name);
+    if function.has_distinct {
+        text.push_str("distinct ");
+    }
+    let count = function.base.args.len();
+    for (index, argument) in function.base.args.iter().enumerate() {
+        if function.base.name == tidb_expr::aggregation::names::GROUP_CONCAT && index + 1 == count {
+            if !function.order_by_items.is_empty() {
+                text.push_str(" order by ");
+                let items = function
+                    .order_by_items
+                    .iter()
+                    .map(|item| {
+                        let rendered = expression_text(eval_ctx, &item.expr);
+                        if item.desc {
+                            format!("{rendered} desc")
+                        } else {
+                            rendered
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                text.push_str(&items.join(", "));
+            }
+            text.push_str(" separator ");
+        } else if index != 0 {
+            text.push_str(", ");
+        }
+        text.push_str(&expression_text(eval_ctx, argument));
+    }
+    text.push(')');
     text
 }
 
@@ -735,11 +765,17 @@ fn index_access(
         }
         return table_access;
     };
+    // Go `PhysicalIndexScan.AccessObject`: a hidden expression-index column
+    // prints its `GeneratedExprString`.
+    let visible = table.visible_column_count();
     let cols = index
         .column_offsets
         .iter()
-        .filter_map(|offset| table.columns.get(*offset))
-        .map(|column| column.name.clone())
+        .filter_map(|offset| table.columns.get(*offset).map(|column| (*offset, column)))
+        .map(|(offset, column)| match &column.generated {
+            Some(generated) if offset >= visible => generated.expr_text.clone(),
+            _ => column.name.clone(),
+        })
         .collect();
     table_access.indexes.push(IndexAccess {
         name: index.name.clone(),

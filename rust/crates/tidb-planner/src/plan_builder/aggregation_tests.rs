@@ -588,7 +588,7 @@ fn test_a_correlated_aggregate_is_lifted_into_the_outer_select_list() {
     let before = fields.len();
 
     let lifted = builder
-        .resolve_correlated_aggregates(&mut fields, None, &mut Vec::new(), &names)
+        .resolve_correlated_aggregates(&mut fields, None, &mut Vec::new(), &names, &schema)
         .expect("correlated aggregates resolve");
     assert_eq!(lifted.len(), 1, "count(a) belongs to the outer block");
     assert_eq!(fields.len(), before + 1);
@@ -627,7 +627,7 @@ fn test_an_aggregate_over_the_subquerys_own_columns_is_not_lifted() {
     let mut fields =
         PlanBuilder::<TestCatalog, ZonedNoColumns>::expand_fields(&select.fields, &schema, &names);
     let lifted = builder
-        .resolve_correlated_aggregates(&mut fields, None, &mut Vec::new(), &names)
+        .resolve_correlated_aggregates(&mut fields, None, &mut Vec::new(), &names, &schema)
         .expect("correlated aggregates resolve");
     assert!(
         lifted.is_empty(),
@@ -926,6 +926,7 @@ fn test_distinct_refuses_an_order_by_the_select_list_does_not_report() {
 fn test_resolve_from_select_fields_precedence() {
     let fields = vec![
         ProjectionField {
+            default_name: None,
             window_spec_column: false,
             expr: Expr::Column(vec!["b".to_owned()]),
             column_reference: true,
@@ -934,6 +935,7 @@ fn test_resolve_from_select_fields_precedence() {
             hidden: false,
         },
         ProjectionField {
+            default_name: None,
             window_spec_column: false,
             expr: Expr::Column(vec!["c".to_owned()]),
             column_reference: true,
@@ -942,6 +944,7 @@ fn test_resolve_from_select_fields_precedence() {
             hidden: false,
         },
         ProjectionField {
+            default_name: None,
             window_spec_column: false,
             expr: Expr::Column(vec!["hidden".to_owned()]),
             column_reference: true,
@@ -1022,6 +1025,7 @@ fn test_deduplicate_and_restore_gby_expressions_round_trip() {
 fn test_add_alias_name_gives_every_field_an_explicit_alias() {
     let mut fields = vec![
         ProjectionField {
+            default_name: None,
             window_spec_column: false,
             expr: Expr::Column(vec!["t".to_owned(), "b".to_owned()]),
             column_reference: true,
@@ -1030,6 +1034,7 @@ fn test_add_alias_name_gives_every_field_an_explicit_alias() {
             hidden: false,
         },
         ProjectionField {
+            default_name: None,
             window_spec_column: false,
             expr: Expr::Int("1".to_owned()),
             column_reference: false,

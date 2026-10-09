@@ -383,5 +383,5 @@ fn fix_59705_change_column_across_a_constraint() {
     assert_eq!(keys[0].cols, vec!["pid".to_owned()]);
     assert!(table.indexes().iter().any(|index| index.name == "fk_1"));
     let mut table = table;
-    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx)).unwrap();
+    admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx), true).unwrap();
 }
