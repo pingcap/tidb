@@ -437,6 +437,9 @@ pub struct StmtContextData {
     /// Go `StmtCtx.InExplainStmt`, which decides whether an enforced-MPP
     /// refusal is an ordinary warning or an extra warning.
     in_explain_stmt: bool,
+    /// Go `StmtCtx.ExplainFormat`: `plan_tree` renders columns without their
+    /// unique ids ([`Columns::remove_column_numbers`]).
+    explain_format: Option<crate::ExplainFormat>,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
     /// ([`StmtContext::enter_cop_eval`]).
     ///
@@ -1973,6 +1976,7 @@ impl StmtContext {
             extra_warnings: Arc::default(),
             message: Arc::default(),
             in_explain_stmt: false,
+            explain_format: None,
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
             used_stats_info: Arc::default(),
@@ -2179,6 +2183,13 @@ impl StmtContext {
     #[must_use]
     pub fn in_explain_stmt(&self) -> bool {
         self.in_explain_stmt
+    }
+
+    /// Records the EXPLAIN statement's format (Go `StmtCtx.ExplainFormat`).
+    #[must_use]
+    pub fn with_explain_format(mut self, format: crate::ExplainFormat) -> Self {
+        self.explain_format = Some(format);
+        self
     }
 
     /// Which `ResetContextOfStmt` arm built this context.
@@ -4279,6 +4290,11 @@ fn resolve_statement_clock(
 }
 
 impl Columns for StmtContext {
+    /// Go `shouldRemoveColumnNumbers` (`expression/column.go:456`).
+    fn remove_column_numbers(&self) -> bool {
+        self.in_explain_stmt && matches!(self.explain_format, Some(crate::ExplainFormat::PlanTree))
+    }
+
     fn context_id(&self) -> u64 {
         if self.context_id != 0 {
             self.context_id

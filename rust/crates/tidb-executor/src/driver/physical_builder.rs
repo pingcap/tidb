@@ -1761,6 +1761,66 @@ fn index_lookup_conditions(plan: &PhysicalPlan, output: &mut Vec<Expression>) {
     }
 }
 
+/// Go `AddSelectionConditionForGlobalIndex` pushes `in(_tidb_tid, ids)` into
+/// a global index's cop Selection, and TiKV evaluates it over the partition
+/// id each entry's value records. The in-process index cursors decode that
+/// id while they walk, so the condition lowers to the table's read
+/// restriction rather than a row filter: the reader's row schema does not
+/// carry `_tidb_tid` (Go's DataSource schema does not either). Returns the
+/// remaining conditions and the admitted partition ids (`-1`, Go's
+/// impossible id for an empty set, admits none).
+fn split_global_partition_filter(
+    conditions: Vec<Expression>,
+) -> (Vec<Expression>, Option<Vec<i64>>) {
+    let mut admitted: Option<Vec<i64>> = None;
+    let mut rest = Vec::with_capacity(conditions.len());
+    for condition in conditions {
+        let ids = match &condition {
+            Expression::ScalarFunction(function) if function.func_name.lowercase() == "in" => {
+                match function.args.split_first() {
+                    Some((Expression::Column(column), values))
+                        if column.id == tidb_model::column::EXTRA_PHYS_TBL_ID =>
+                    {
+                        values
+                            .iter()
+                            .map(|value| match value {
+                                Expression::Constant(constant) => match constant.value {
+                                    tidb_datatype::Datum::Int(id) => Some(id),
+                                    _ => None,
+                                },
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<_>>>()
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        match ids {
+            Some(mut ids) => {
+                ids.retain(|id| *id >= 0);
+                ids.sort_unstable();
+                ids.dedup();
+                admitted = Some(match admitted {
+                    Some(previous) => previous.into_iter().filter(|id| ids.contains(id)).collect(),
+                    None => ids,
+                });
+            }
+            None => rest.push(condition),
+        }
+    }
+    (rest, admitted)
+}
+
+/// The partition ids a global index's cop Selection admits
+/// ([`split_global_partition_filter`]), if it carries that filter.
+fn global_index_partition_restriction(index_plan: &PhysicalPlan) -> Option<Vec<i64>> {
+    let mut conditions = Vec::new();
+    index_lookup_conditions(index_plan, &mut conditions);
+    split_global_partition_filter(conditions).1
+}
+
 fn lower_index_lookup_selections(
     plan: &PhysicalPlan,
     source: &mut IndexRangeSourceExec,
@@ -1772,7 +1832,13 @@ fn lower_index_lookup_selections(
     let PhysicalPlan::Selection(selection) = plan else {
         return Ok(());
     };
-    let filters = resolve_expressions(&selection.conditions, source.schema())?;
+    // The reader applied the global index's partition filter as its read
+    // restriction (`global_index_partition_restriction`).
+    let (conditions, _) = split_global_partition_filter(selection.conditions.clone());
+    if conditions.is_empty() {
+        return Ok(());
+    }
+    let filters = resolve_expressions(&conditions, source.schema())?;
     let pushed =
         crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(filters, ctx);
     if !source.accept_scan_filter(&pushed, ctx) {
@@ -1922,6 +1988,9 @@ fn build_index_reader(
             std::sync::Arc::make_mut(&mut table).restrict_read_to_partitions(&ids);
         }
     }
+    if let Some(ids) = global_index_partition_restriction(index_plan) {
+        std::sync::Arc::make_mut(&mut table).restrict_read_to_partitions(&ids);
+    }
     if !table
         .indexes()
         .iter()
@@ -2030,6 +2099,7 @@ fn build_index_reader(
     } else {
         let mut conditions = Vec::new();
         index_lookup_conditions(index_plan, &mut conditions);
+        let (conditions, _) = split_global_partition_filter(conditions);
         let conditions = resolve_expressions(&conditions, source.schema())?;
         source.set_index_conditions(conditions, ctx);
     }
@@ -2243,7 +2313,10 @@ fn collect_index_inner_filters(
         collect_index_inner_filters(child, schema, filters)?;
     }
     if let PhysicalPlan::Selection(selection) = plan {
-        filters.extend(resolve_expressions(&selection.conditions, schema)?);
+        // The reader applied the global index's partition filter as its read
+        // restriction.
+        let (conditions, _) = split_global_partition_filter(selection.conditions.clone());
+        filters.extend(resolve_expressions(&conditions, schema)?);
     }
     Ok(())
 }
@@ -2529,7 +2602,7 @@ fn build_index_inner_reader(
     let table_id = join.inner_access_table_id.ok_or_else(|| {
         DriverError::unsupported("a physical index join has no retained inner table ID")
     })?;
-    let table = catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
+    let mut table = catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
         DriverError::unsupported("a physical index-join table ID is absent from the catalog")
     })?;
     let (embedded, covering) = index_inner_reader_payload(plan).ok_or_else(|| {
@@ -2557,6 +2630,13 @@ fn build_index_inner_reader(
     // the table row; project the aggregate's INPUT columns instead.
     let row_schema = offset_schema.unwrap_or(&schema);
     let output_offsets = index_inner_output_offsets(row_schema, &table)?;
+    let index_side = match plan {
+        PhysicalPlan::IndexLookUpReader(reader) => reader.index_plan.as_deref(),
+        _ => Some(embedded),
+    };
+    if let Some(ids) = index_side.and_then(global_index_partition_restriction) {
+        std::sync::Arc::make_mut(&mut table).restrict_read_to_partitions(&ids);
+    }
     let filter_schema = physical_table_schema(embedded, &table);
     let mut filters = Vec::new();
     collect_index_inner_filters(embedded, &filter_schema, &mut filters)?;

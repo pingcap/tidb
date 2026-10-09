@@ -388,7 +388,12 @@ pub(super) fn build_converged_union_index_merge_task(
                         tikv_pushdown: None,
                     },
                 ));
-                if !filled.index_filters.is_empty() {
+                let global_partition_filter = super::dispatch::global_index_partition_filter(
+                    ds,
+                    source_index,
+                    partial_plans_raw.last().and_then(PhysicalPlan::schema),
+                );
+                if !filled.index_filters.is_empty() || global_partition_filter.is_some() {
                     let scan = partial_plans_raw
                         .pop()
                         .expect("partial scan was just built");
@@ -411,7 +416,12 @@ pub(super) fn build_converged_union_index_merge_task(
                     partial_plans_raw.push(PhysicalPlan::Selection(
                         crate::physical::PhysicalSelection {
                             base,
-                            conditions: filled.index_filters.clone(),
+                            conditions: filled
+                                .index_filters
+                                .iter()
+                                .cloned()
+                                .chain(global_partition_filter)
+                                .collect(),
                             from_data_source: true,
                         },
                     ));

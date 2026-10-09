@@ -72,6 +72,11 @@ pub enum PlanStatement {
     /// Go itself builds these formats from one tree and one column list --
     /// `prepareOperatorInfo` appends `estRows` unless the format is
     /// `plan_tree` (`pkg/planner/core/common_plans.go`).
+    ///
+    /// `plan_tree` is kept: it also prints a column without an `OrigName` as
+    /// `Column` rather than `Column#<UniqueID>` (`shouldRemoveColumnNumbers`),
+    /// and such columns appear inside the `range: decided by [...]` text the
+    /// access property reads.
     RunDefaultExplain(String),
     /// The recording is not a text operator tree, so there is no access row to
     /// read a property out of.
@@ -187,6 +192,11 @@ pub fn plan_statement(sql: &str) -> Option<PlanStatement> {
     }
     if !is_explainable(explained) {
         return None;
+    }
+    if name == "plan_tree" {
+        return Some(PlanStatement::RunDefaultExplain(format!(
+            "explain format = 'plan_tree' {explained}"
+        )));
     }
     Some(PlanStatement::RunDefaultExplain(format!(
         "explain {explained}"
@@ -393,7 +403,7 @@ mod tests {
         assert_eq!(
             plan_statement("explain format = 'plan_tree' select * from t;"),
             Some(PlanStatement::RunDefaultExplain(
-                "explain select * from t".to_owned()
+                "explain format = 'plan_tree' select * from t".to_owned()
             ))
         );
         assert_eq!(

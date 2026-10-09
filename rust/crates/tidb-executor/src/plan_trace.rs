@@ -74,9 +74,7 @@ pub(crate) fn physical_expression_text_with_columns(
             // table-qualified physical name) when non-empty, falling back to
             // `Column#<UniqueID>` — the output names (aliases) are not part
             // of the explain rendering.
-            (!column.orig_name.is_empty())
-                .then(|| column.orig_name.clone())
-                .or_else(|| Some(format!("Column#{}", column.unique_id)))
+            Some(column_text(ctx, column))
         }
         Expression::ScalarFunction(function) => {
             if function.func_name.lowercase() == "or" && function.args.len() == 2 {
@@ -131,11 +129,20 @@ pub(crate) fn physical_expression_text_with_columns(
             // Go `CorrelatedColumn.StringWithCtx` renders through the embedded
             // `Column` (expression/column.go): a correlated reference prints
             // like its outer column, keeping the whole condition text visible.
-            let column = &correlated.column;
-            (!column.orig_name.is_empty())
-                .then(|| column.orig_name.clone())
-                .or_else(|| Some(format!("Column#{}", column.unique_id)))
+            Some(column_text(ctx, &correlated.column))
         }
+    }
+}
+
+/// Go `Column.string`: `OrigName`, else `Column#<UniqueID>`, or bare
+/// `Column` when the statement removes column numbers (plan_tree).
+fn column_text(ctx: &dyn tidb_expr::Columns, column: &tidb_expr::column::Column) -> String {
+    if !column.orig_name.is_empty() {
+        column.orig_name.clone()
+    } else if ctx.remove_column_numbers() {
+        "Column".to_owned()
+    } else {
+        format!("Column#{}", column.unique_id)
     }
 }
 

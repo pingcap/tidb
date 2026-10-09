@@ -1621,6 +1621,62 @@ pub(super) fn index_path_matches_order(
     true
 }
 
+/// Go `PhysicalIndexScan.AddSelectionConditionForGlobalIndex`
+/// (`physical_index_scan.go:443`): a global index holds every partition's
+/// entries, so its scan keeps only the partitions the statement reads --
+/// `in(_tidb_tid, ids)` over the partition id each entry records, or the
+/// impossible id -1 when none survive. A full partition set adds nothing
+/// (no partition here is hidden by an in-flight DDL).
+pub(super) fn global_index_partition_filter(
+    ds: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+    scan_schema: Option<&tidb_expr::schema::Schema>,
+) -> Option<tidb_expr::expression::Expression> {
+    use tidb_expr::expression::Expression;
+    if !index.global {
+        return None;
+    }
+    let access = ds.dynamic_partition_access.as_ref()?;
+    if access.all_partitions {
+        return None;
+    }
+    let column = scan_schema?
+        .columns
+        .iter()
+        .find(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)?
+        .clone();
+    let ids = access
+        .partitions
+        .iter()
+        .filter_map(|name| {
+            ds.partition_definition_names
+                .iter()
+                .position(|candidate| candidate.eq_ignore_ascii_case(name))
+                .and_then(|position| ds.partition_definition_ids.get(position).copied())
+        })
+        .collect::<Vec<_>>();
+    let long_long = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+    let constant = |id: i64| {
+        Expression::Constant(tidb_expr::constant::Constant::new(
+            tidb_datatype::Datum::Int(id),
+            long_long.clone(),
+        ))
+    };
+    let mut args = vec![Expression::Column(column)];
+    if ids.is_empty() {
+        args.push(constant(-1));
+    } else {
+        args.extend(ids.into_iter().map(constant));
+    }
+    Some(Expression::ScalarFunction(
+        tidb_expr::scalar_function::ScalarFunction::new(
+            tidb_ast::CiString::new("in"),
+            long_long,
+            args,
+        ),
+    ))
+}
+
 /// Go `matchPartialOrderProperty` (`find_best_task.go:1260`). A prefix index
 /// can provide the requested TopN prefix only when all index-definition
 /// columns line up with the ORDER BY columns, the final definition column is
@@ -4114,7 +4170,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 virtual_table_filters.append(&mut rejected_index_filters);
                 virtual_table_filters.extend(root_task_conds);
                 root_task_conds = virtual_table_filters;
-                let index_plan = if index_filters.is_empty() {
+                let global_partition_filter =
+                    global_index_partition_filter(ds, source_index, scan.schema());
+                let index_plan = if index_filters.is_empty() && global_partition_filter.is_none() {
                     scan
                 } else {
                     let mut selection_base = crate::physical::BasePhysicalPlan::new(
@@ -4185,7 +4243,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     selection_base.set_children(vec![scan]);
                     PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                         base: selection_base,
-                        conditions: index_filters,
+                        conditions: index_filters
+                            .into_iter()
+                            .chain(global_partition_filter)
+                            .collect(),
                         from_data_source: true,
                     })
                 };

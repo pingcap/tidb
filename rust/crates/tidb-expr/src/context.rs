@@ -525,6 +525,13 @@ pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
 
+    /// Go `shouldRemoveColumnNumbers` (`expression/column.go:456`): an
+    /// `EXPLAIN FORMAT='plan_tree'` statement renders a column with no
+    /// `OrigName` as `Column` instead of `Column#<UniqueID>`.
+    fn remove_column_numbers(&self) -> bool {
+        false
+    }
+
     /// Go `EvalContext.CtxID`, used by signature-local lazy caches. A context
     /// that has no statement lifetime uses zero, which keeps expression-only
     /// evaluation deterministic while live statement contexts override it.

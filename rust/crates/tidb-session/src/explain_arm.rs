@@ -93,7 +93,8 @@ impl Session {
                 crate::classify::statement_kind_of(target),
                 crate::classify::StatementKind::Dml
             ))
-            .with_in_explain_stmt(true);
+            .with_in_explain_stmt(true)
+            .with_explain_format(format);
         if explain.analyze {
             let (columns, rows) = match target {
                 Stmt::Query(query) => self.with_catalog_mut(|catalog| match &**query {

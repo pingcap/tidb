@@ -490,11 +490,24 @@ fn format_datum(d: &Datum, is_left_side: bool) -> String {
                 go_g_float(f64::from(narrowed))
             }
         }
-        // Go's `%v` of a MysqlEnum prints its NAME.
-        Datum::Enum(value, _) => tidb_hack::go_strconv::quote_bytes(value.name().as_bytes()),
-        // The remaining kinds print their debug shape until a caller
-        // formats one (Go's `%v` of those values is type-specific).
-        other => format!("{other:?}"),
+        // Go `"\"%v\""`: the value's String() between quotes, unescaped.
+        Datum::Enum(value, _) => format!("\"{}\"", value.name()),
+        Datum::Set(value, _) => format!("\"{value}\""),
+        Datum::Json(value) => format!("\"{value}\""),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => format!("\"{value}\""),
+        // Go's default `%v` of GetValue: the type's String().
+        Datum::Time(value) => value.to_string(),
+        Datum::Duration(value) => value.to_string(),
+        Datum::VectorFloat32(value) => value.to_string(),
+        // `%v` of a []byte prints its decimal octets as `[1 2 3]`.
+        Datum::Raw(bytes) => format!(
+            "[{}]",
+            bytes
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
     }
 }
 
