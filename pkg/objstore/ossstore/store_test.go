@@ -79,9 +79,10 @@ func TestIsTransientNoCredentialsError(t *testing.T) {
 		"unable to get credentials from any of the providers in the chain: "+
 			`Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/": `+
 			"dial tcp 100.100.100.200:80: connect: connection refused")))
-	// A metadata timeout without the provider-chain failure is not this error.
-	require.False(t, IsTransientNoCredentialsError(fmt.Errorf(
-		`Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": `+
+	// After the first call DefaultCredentialsProvider returns the cached
+	// provider's error without the chain prefix, so this must still match.
+	require.True(t, IsTransientNoCredentialsError(fmt.Errorf(
+		`get role name failed: Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": `+
 			"dial tcp 100.100.100.200:80: i/o timeout")))
 	// Messages like the ones produced in production: no credentials configured
 	// anywhere plus a timeout talking to the ECS metadata service, so they are

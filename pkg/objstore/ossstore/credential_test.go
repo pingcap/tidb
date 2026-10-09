@@ -34,6 +34,11 @@ func TestFetchCredentials(t *testing.T) {
 	transient := fmt.Errorf(
 		"unable to get credentials from any of the providers in the chain: " +
 			`Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/tidbcloud-abc?": i/o timeout`)
+	// rawTransient is what DefaultCredentialsProvider returns after the first
+	// call: the cached provider's error, without the chain prefix.
+	rawTransient := fmt.Errorf(
+		`get role name failed: Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": ` +
+			"dial tcp 100.100.100.200:80: i/o timeout")
 	permanent := fmt.Errorf(
 		"unable to get credentials from any of the providers in the chain: " +
 			"open /home/pingcap/.aliyun/config.json: no such file or directory")
@@ -47,6 +52,26 @@ func TestFetchCredentials(t *testing.T) {
 			gomock.InOrder(
 				provider.EXPECT().GetCredentials().Return(nil, transient),
 				provider.EXPECT().GetCredentials().Return(nil, transient),
+				provider.EXPECT().GetCredentials().Return(&providers.Credentials{
+					AccessKeyId:     "ak",
+					AccessKeySecret: "sk",
+				}, nil),
+			)
+			cred, err := fetchCredentials(context.Background(), provider, logger)
+			require.NoError(t, err)
+			require.Equal(t, "ak", cred.AccessKeyId)
+		})
+	})
+
+	t.Run("RetryRawTimeoutFromCachedProvider", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			provider := mock.NewMockCredentialsProvider(ctrl)
+			gomock.InOrder(
+				provider.EXPECT().GetCredentials().Return(nil, transient),
+				provider.EXPECT().GetCredentials().Return(nil, rawTransient),
+				provider.EXPECT().GetCredentials().Return(nil, rawTransient),
 				provider.EXPECT().GetCredentials().Return(&providers.Credentials{
 					AccessKeyId:     "ak",
 					AccessKeySecret: "sk",
