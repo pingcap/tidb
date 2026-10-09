@@ -1962,7 +1962,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle(do.SysSessionPool())
+	do.privHandle = privileges.NewHandle(do.SysSessionPool(), sctx.GetSessionVars().GlobalVarsAccessor)
 	if err := do.privHandle.UpdateAll(); err != nil {
 		return errors.Trace(err)
 	}

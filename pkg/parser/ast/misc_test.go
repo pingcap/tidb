@@ -442,3 +442,46 @@ func TestAddQueryWatchStmtRestore(t *testing.T) {
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
+
+func TestSetPwdStmtSecureText(t *testing.T) {
+	// Direct construction: SetPwdStmt.User can be nil (current-user form),
+	// matching what Restore handles. SecureText must not leak "<nil>".
+	cases := []struct {
+		name string
+		stmt *ast.SetPwdStmt
+		want string
+	}{
+		{
+			name: "nil user",
+			stmt: &ast.SetPwdStmt{Password: "x"},
+			want: "set password",
+		},
+		{
+			name: "nil user with retain",
+			stmt: &ast.SetPwdStmt{Password: "x", RetainCurrentPassword: true},
+			want: "set password RETAIN CURRENT PASSWORD",
+		},
+		{
+			name: "named user",
+			stmt: &ast.SetPwdStmt{
+				User:     &auth.UserIdentity{Username: "u", Hostname: "%"},
+				Password: "x",
+			},
+			want: "set password for user u@%",
+		},
+		{
+			name: "named user with retain",
+			stmt: &ast.SetPwdStmt{
+				User:                  &auth.UserIdentity{Username: "u", Hostname: "%"},
+				Password:              "x",
+				RetainCurrentPassword: true,
+			},
+			want: "set password for user u@% RETAIN CURRENT PASSWORD",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, c.stmt.SecureText())
+		})
+	}
+}
