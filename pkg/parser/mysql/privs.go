@@ -327,6 +327,9 @@ var AllDBPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, Crea
 // AllTablePrivs is all the privileges in table scope.
 var AllTablePrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, IndexPriv, ReferencesPriv, AlterPriv, CreateViewPriv, ShowViewPriv, OperateViewPriv, TriggerPriv}
 
+// AllTablePrivMask is the mask of all privilege types available at table scope. It is the union of AllTablePrivs.
+const AllTablePrivMask = SelectPriv | InsertPriv | UpdatePriv | DeletePriv | CreatePriv | DropPriv | IndexPriv | ReferencesPriv | AlterPriv | CreateViewPriv | ShowViewPriv | OperateViewPriv | TriggerPriv
+
 // AllColumnPrivs is all the privileges in column scope.
 var AllColumnPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, ReferencesPriv}
 

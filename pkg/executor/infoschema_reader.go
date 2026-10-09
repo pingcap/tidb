@@ -973,7 +973,7 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 		}
 		for _, table := range tables {
 			if len(table.Constraints) > 0 {
-				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllTablePrivMask) {
 					continue
 				}
 				for _, constraint := range table.Constraints {
@@ -1018,7 +1018,7 @@ func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context,
 	for i, table := range tables {
 		schema := schemas[i]
 		if len(table.Constraints) > 0 {
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllTablePrivMask) {
 				continue
 			}
 			for _, constraint := range table.Constraints {
@@ -2338,7 +2338,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 		if !ex.HasConstraintSchema(schema.L) {
 			continue
 		}
-		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllTablePrivMask) {
 			continue
 		}
 
