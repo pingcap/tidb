@@ -142,6 +142,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /br/bin
 COPY --from=tidb-builder      /tidb-server                   /br/bin/tidb-server
 COPY --from=tikv-builder      /tikv-server                   /br/bin/tikv-server
+COPY --from=tikv-builder      /tikv-ctl                      /br/bin/tikv-ctl
 COPY --from=pd-builder        /pd-server                     /br/bin/pd-server
 COPY --from=pd-builder        /pd-ctl                        /br/bin/pd-ctl
 COPY --from=ticdc-builder     /cdc                           /br/bin/cdc
