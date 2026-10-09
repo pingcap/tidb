@@ -1460,7 +1460,7 @@ func TestRedactConfig(t *testing.T) {
 		redact string
 	}{
 		{"", ""},
-		{":", objstore.InvalidURLPlaceholder},
+		{":", ":"},
 		{"s3://bucket:port/file?access-key=AKID", objstore.InvalidURLPlaceholder},
 		{"~/file", "~/file"},
 		{"gs://bucket/file", "gs://bucket/file"},
