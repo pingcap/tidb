@@ -163,8 +163,38 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{nil,
-				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+			},
 			geners: []dataGenerator{newRandLenStrGener(0, 10), newRandLenStrGener(0, 20)},
+		},
+		// latin1 is byte oriented, so LOCATE takes the byte-oriented signatures. The
+		// generated data spells the interesting characters as raw cp1252 bytes, which
+		// are not valid UTF-8, to keep the two evaluation paths honest about offsets.
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetLatin1).SetCollate(charset.CollationLatin1).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetLatin1).SetCollate(charset.CollationLatin1).BuildP(),
+			},
+			geners: []dataGenerator{
+				newSelectStringGener([]string{"a", "A", "\xC4", "\xE4", "\xC3\xA9"}),
+				newSelectStringGener([]string{"a\xC4b", "A\xE4B", "\xC3\xA9x", "abc"}),
+			},
+		},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetLatin1).SetCollate("latin1_swedish_ci").BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetLatin1).SetCollate("latin1_swedish_ci").BuildP(),
+				nil,
+			},
+			geners: []dataGenerator{
+				newSelectStringGener([]string{"a", "A", "\xC4", "\xE4", "\xC3\xA9"}),
+				newSelectStringGener([]string{"a\xC4b", "A\xE4B", "\xC3\xA9x", "abc"}),
+				newRangeInt64Gener(-2, 6),
+			},
 		},
 		{
 			retEvalType:   types.ETInt,
@@ -467,6 +497,17 @@ var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 	},
 	ast.Instr: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		// See the latin1 note on ast.Locate above.
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetLatin1).SetCollate("latin1_swedish_ci").BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetLatin1).SetCollate("latin1_swedish_ci").BuildP(),
+			},
+			geners: []dataGenerator{
+				newSelectStringGener([]string{"a\xC4b", "A\xE4B", "\xC3\xA9x", "abc"}),
+				newSelectStringGener([]string{"a", "A", "\xC4", "\xE4", "\xC3\xA9"}),
+			},
+		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{"test,case"}, &constStrGener{"case"}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{"test,case"}, &constStrGener{"testcase"}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString},
