@@ -145,11 +145,28 @@ pub(super) fn dml_table_scope(
     columns: Vec<(String, FieldType)>,
     ctx: &crate::StmtContext,
 ) -> FromScope {
-    let mut scope = single_table_scope(
-        table_ref.alias.as_deref().unwrap_or(name),
-        table_ref.alias.is_none().then(|| database.to_owned()),
-        columns,
-    );
+    with_statement_context(
+        single_table_scope(
+            table_ref.alias.as_deref().unwrap_or(name),
+            table_ref.alias.is_none().then(|| database.to_owned()),
+            columns,
+        ),
+        ctx,
+    )
+}
+
+/// The INSERT target as the outer scope of a subquery in its VALUES lists
+/// or ON DUPLICATE KEY UPDATE assignments (Go's `mockTablePlan`).
+pub(super) fn insert_table_scope(
+    database: &str,
+    name: &str,
+    columns: Vec<(String, FieldType)>,
+    ctx: &crate::StmtContext,
+) -> FromScope {
+    with_statement_context(single_table_scope(name, Some(database.to_owned()), columns), ctx)
+}
+
+fn with_statement_context(mut scope: FromScope, ctx: &crate::StmtContext) -> FromScope {
     let statement = FromScope::for_statement(ctx);
     scope.constant_context = statement.constant_context;
     scope.zone = statement.zone;

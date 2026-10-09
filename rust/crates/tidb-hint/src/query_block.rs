@@ -88,6 +88,29 @@ impl QBHintHandler {
         handler
     }
 
+    /// Builds handler metadata for the SELECT-shaped source an UPDATE or
+    /// DELETE plans, which carries the statement's hints: Go's `Enter` arm
+    /// for those statements (`checkQueryBlockHints(node.TableHints, 0)`), so
+    /// the hints belong to block 0 and only the queries nested in the
+    /// source are numbered.
+    pub fn build_dml_source(source: &mut tidb_ast::SelectStmt) -> Self {
+        let mut handler = Self::new();
+        handler.check_query_block_hints(&source.hints, 0);
+        if let Some(from) = source.from.as_mut() {
+            from.accept(&mut handler);
+        }
+        if let Some(where_clause) = source.where_clause.as_mut() {
+            where_clause.accept(&mut handler);
+        }
+        for item in &mut source.order_by {
+            item.accept(&mut handler);
+        }
+        if let Some(limit) = source.limit.as_mut() {
+            limit.accept(&mut handler);
+        }
+        handler
+    }
+
     /// Go `NewBuildState`.
     pub fn new_build_state(&self) -> QBHintBuildState {
         QBHintBuildState {

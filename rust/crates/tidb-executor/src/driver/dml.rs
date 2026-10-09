@@ -31,12 +31,12 @@ use delete_record::DeleteRecords;
 use tidb_planner::physical::FkTriggerNode;
 use update_record::UpdateRecords;
 
-use correlated::{dml_table_scope, DmlExpression, UpdateExpression};
+use correlated::{dml_table_scope, insert_table_scope, DmlExpression, UpdateExpression};
 
 pub(crate) use defaults::{
     column_default, column_metadata, materialize_column_default, prepare_named_defaults,
     rewrite_with_prepared_defaults, ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse,
-    PreparedNamedDefault, PreparedOnUpdateNow, ResolvedDefaultColumn,
+    PreparedOnUpdateNow, ResolvedDefaultColumn, set_value_for_ref_column,
 };
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
@@ -608,6 +608,47 @@ fn resolve_insert_target(
     })
 }
 
+/// Go evaluates an uncorrelated subquery in a VALUES list or an ON
+/// DUPLICATE KEY UPDATE assignment while it plans the INSERT
+/// (`handleScalarSubquery`'s `EvalSubqueryFirstRow`): before any row is
+/// written, and whether or not a row conflicts. One that reads the target's
+/// columns stays in the statement, for the rewriter to refuse.
+fn fold_insert_subqueries(
+    insert: &tidb_ast::InsertStmt,
+    layout: &InsertTargetLayout,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<tidb_ast::InsertStmt>, DriverError> {
+    use super::subquery::{expr_has_subquery, fold_subqueries};
+    let values = insert
+        .rows
+        .iter()
+        .flatten()
+        .chain(insert.on_duplicate.iter().map(|assignment| &assignment.value));
+    if !values.clone().any(expr_has_subquery) {
+        return Ok(None);
+    }
+    let scope = insert_table_scope(
+        &layout.database,
+        &layout.table_name,
+        layout.column_list.clone(),
+        ctx,
+    );
+    let mut folded = insert.clone();
+    let values = folded
+        .rows
+        .iter_mut()
+        .flatten()
+        .chain(folded.on_duplicate.iter_mut().map(|assignment| &mut assignment.value));
+    for value in values {
+        if expr_has_subquery(value) {
+            *value = fold_subqueries(value, &scope, catalog, current_db, ctx)?;
+        }
+    }
+    Ok(Some(folded))
+}
+
 fn run_insert_with_physical(
     insert: &tidb_ast::InsertStmt,
     catalog: &mut Catalog,
@@ -622,6 +663,8 @@ fn run_insert_with_physical(
     }
 
     let target_layout = resolve_insert_target(insert, catalog, current_db, ctx)?;
+    let folded_insert = fold_insert_subqueries(insert, &target_layout, catalog, current_db, ctx)?;
+    let insert = folded_insert.as_ref().unwrap_or(insert);
     let eval_chunk = {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
@@ -639,6 +682,27 @@ fn run_insert_with_physical(
         &target_layout.target_offsets,
     );
     on_duplicate_scope.validate(&insert.on_duplicate)?;
+    // The fields Go appended to the SELECT for the assignments, typed as the
+    // source plan outputs them.
+    let extra_types: Vec<FieldType> =
+        match (physical_source.as_deref(), on_duplicate_scope.actual_col_len()) {
+            (Some(physical), Some(actual)) => physical
+                .schema()
+                .map(|schema| {
+                    schema
+                        .columns
+                        .iter()
+                        .skip(actual)
+                        .map(|column| {
+                            column.ret_type.clone().unwrap_or_else(|| {
+                                FieldType::new(tidb_datatype::FieldTypeCode::Null)
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
     let select_on_duplicate = if insert.source.is_some() {
         Some(prepare_on_duplicate_assignments(
             &insert.on_duplicate,
@@ -647,6 +711,8 @@ fn run_insert_with_physical(
             target_layout.extra_handle_offset,
             &target_layout.table_name,
             Some(&target_layout.database),
+            &on_duplicate_scope,
+            &extra_types,
             ctx,
             eval_chunk.get_row(0),
         )?)
@@ -943,10 +1009,13 @@ fn run_insert_with_physical(
             extra_handle_offset,
             &table_name,
             Some(&database),
+            &on_duplicate_scope,
+            &extra_types,
             ctx,
             eval_chunk.get_row(0),
         )?,
     };
+    let table_types = column_list.iter().map(|(_, field_type)| field_type.clone());
     let prepared_on_duplicate = PreparedOnDuplicate {
         on_update_now: PreparedOnUpdateNow::new(
             &column_meta,
@@ -957,9 +1026,35 @@ fn run_insert_with_physical(
         assignments: on_duplicate_assignments,
         extra_handle: extra_handle_offset.is_some(),
         selected_partitions: insert_partition_ids.clone(),
-        scope: on_duplicate_scope,
+        extra_len: extra_types.len(),
+        row_types: table_types
+            .clone()
+            .chain(extra_types.iter().cloned())
+            .chain(table_types)
+            .collect(),
     };
+    // Go `ResolveOnDuplicate` drops an assignment of DEFAULT to a generated
+    // column, and the executor branches on `len(e.OnDuplicate) > 0`: a
+    // statement whose every assignment was dropped is a plain INSERT, which
+    // reports its duplicate.
+    let has_on_duplicate = !prepared_on_duplicate.assignments.is_empty();
 
+    // Go `buildInsert`'s `checkRefColumn`: a VALUES expression that names a
+    // column of the row (a subquery's own columns aside) sets
+    // `NeedFillDefaultValue`, and `evalRow` then starts every row from
+    // `setValueForRefColumn` and evaluates into that buffer, so `SET a = 1,
+    // b = a + 1` reads the `a` just written and `VALUES (a)` the default.
+    let has_ref_cols = source_rows.is_none()
+        && insert
+            .rows
+            .iter()
+            .flatten()
+            .any(|value| value.flags() & tidb_ast::FLAG_HAS_REFERENCE != 0);
+    let mut eval_buffer = has_ref_cols.then(|| {
+        let field_types: Vec<FieldType> =
+            column_meta.iter().map(|meta| meta.field_type.clone()).collect();
+        tidb_chunk::mutrow::MutRow::from_types(&field_types)
+    });
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
     // Go `buildValuesListOfInsert` checks arity in two steps: the FIRST row
     // against the target columns, and every later row against the one before
@@ -976,18 +1071,51 @@ fn run_insert_with_physical(
         };
         let mut row = vec![Datum::Null; column_list.len()];
         let mut assigned = vec![false; column_list.len()];
+        if let Some(buffer) = eval_buffer.as_mut() {
+            set_value_for_ref_column(
+                &column_meta,
+                extra_handle_offset,
+                &mut row,
+                &mut assigned,
+                ctx,
+                eval_chunk.get_row(0),
+            )?;
+            buffer.set_datums(&row);
+        }
+        // Go `evalRow` and `getRow` cast each value as it is produced, in the
+        // statement's column order; the cast value is what a later
+        // expression of the row reads.
+        let mut cast_done = vec![false; column_list.len()];
         for (position, &offset) in target_offsets.iter().enumerate().take(width) {
             let value = match source_rows.as_ref() {
                 Some(_) => value_rows[index][position].clone(),
                 None => match &prepared_value_rows[index][position] {
                     PreparedInsertValue::Generated => continue,
-                    PreparedInsertValue::Expression(expression) => expression
-                        .eval(ctx, eval_chunk.get_row(0))
-                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+                    PreparedInsertValue::Expression(expression) => {
+                        let input = match eval_buffer.as_ref() {
+                            Some(buffer) => buffer.to_row(),
+                            None => eval_chunk.get_row(0),
+                        };
+                        expression
+                            .eval(ctx, input)
+                            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?
+                    }
                 },
             };
+            let value = cast_value_for_column(
+                value,
+                &column_meta[offset].field_type,
+                column_meta[offset].name.as_str(),
+                new_rows.len(),
+                ctx,
+                insert.ignore,
+            )?;
+            if let Some(buffer) = eval_buffer.as_mut() {
+                buffer.set_datum(offset, &value);
+            }
             row[offset] = value;
             assigned[offset] = true;
+            cast_done[offset] = true;
         }
         // Go fills the auto-increment column before the default and NOT NULL
         // rules run, so an omitted auto column never looks like a missing
@@ -1032,13 +1160,17 @@ fn run_insert_with_physical(
         }
         // Go casts each value to its column's type BEFORE the row is
         // written, which is what rounds a decimal to the column's scale and
-        // parses a numeric string. The cast pass runs FIRST: go's row decode
-        // emits the truncation warnings (1406) before `HandleBadNull`'s
-        // constraint warnings (1048), so `INSERT IGNORE INTO t VALUES (NULL,
-        // 'abc')` warns 1406-for-b and only then 1048-for-a (oracle-captured
-        // order).
+        // parses a numeric string. The statement's values were cast above;
+        // this pass casts what the row filled in (defaults and the
+        // auto-increment marker). It runs before `HandleBadNull`: go's row
+        // build emits the truncation warnings (1406) before the constraint
+        // warnings (1048), so `INSERT IGNORE INTO t VALUES (NULL, 'abc')`
+        // warns 1406-for-b and only then 1048-for-a (oracle-captured order).
         {
             for (offset, value) in row.iter_mut().enumerate() {
+                if cast_done[offset] {
+                    continue;
+                }
                 // The row is one wider than the table when the statement
                 // wrote `_tidb_rowid`. Go gives that slot a synthetic
                 // `table.Column` built from `NewExtraHandleColInfo()`
@@ -1217,7 +1349,7 @@ fn run_insert_with_physical(
                                     1690,
                                     &format!("constant {value} overflows {type_name}"),
                                 );
-                                if insert.on_duplicate.is_empty() {
+                                if !has_on_duplicate {
                                     if !insert.ignore {
                                         return Err(DriverError::AutoincReadFailed);
                                     }
@@ -1290,7 +1422,7 @@ fn run_insert_with_physical(
     // in-place mode for those statements.
     let lazy_dup_check = (!ctx.constraint_check_in_place() || ctx.pessimistic_lazy_dup_check())
         && !insert.replace
-        && insert.on_duplicate.is_empty()
+        && !has_on_duplicate
         && !insert.ignore;
     // Go resolves a conflict per row, before the row is written, only when
     // the statement needs the conflicting handle: REPLACE deletes every row
@@ -1300,7 +1432,7 @@ fn run_insert_with_physical(
     // authoritative `addRecord`/index writes below perform the same one
     // existence check and retain the duplicate error, so probing here would
     // issue a redundant remote read for every row in a batch.
-    let resolves_conflicts = insert.replace || !insert.on_duplicate.is_empty() || insert.ignore;
+    let resolves_conflicts = insert.replace || has_on_duplicate || insert.ignore;
     // A normal INSERT into a clustered table with no secondary indexes can
     // prove all record keys absent in one BatchGet. Keep the proof narrow: a
     // heap handle allocation, partition routing, or a unique secondary key
@@ -1397,7 +1529,7 @@ fn run_insert_with_physical(
                 if unchanged {
                     continue;
                 }
-            } else if !insert.on_duplicate.is_empty() {
+            } else if has_on_duplicate {
                 let sql_candidate;
                 let candidate_values = if let Some(offset) = extra_handle_offset {
                     sql_candidate = candidate[..column_list.len() - 1]
@@ -1641,18 +1773,11 @@ pub(crate) fn kv_read_error(operation: &str, error: crate::kv_table::KvTableErro
 }
 
 #[derive(Clone, Debug)]
-enum PreparedOnDuplicateValue {
-    Constant(Box<Expression>),
-    Ast {
-        value: tidb_ast::Expr,
-        defaults: Vec<PreparedNamedDefault>,
-    },
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct PreparedOnDuplicateAssignment {
     offset: usize,
-    value: PreparedOnDuplicateValue,
+    /// Built over Go's `Schema4OnDuplicate` (see
+    /// [`super::on_duplicate_scope::OnDuplicateResolver`]).
+    value: Expression,
 }
 
 struct PreparedOnDuplicate {
@@ -1660,13 +1785,17 @@ struct PreparedOnDuplicate {
     assignments: Vec<PreparedOnDuplicateAssignment>,
     on_update_now: PreparedOnUpdateNow,
     selected_partitions: Option<Vec<i64>>,
-    /// Go `Names4OnDuplicate`: what each name an assignment value uses reads.
-    scope: super::on_duplicate_scope::OnDuplicateScope,
+    /// How many fields Go appended to the SELECT for the assignments.
+    extra_len: usize,
+    /// The types of Go's `row4Update`: stored row, appended fields, would-be
+    /// row.
+    row_types: Vec<FieldType>,
 }
 
-/// Resolves ON DUPLICATE assignments once, whether or not an inserted row
-/// eventually conflicts. `VALUES(col)` remains in the AST until a candidate
-/// row exists, but every DEFAULT leaf is already a typed statement constant.
+/// Go `ResolveOnDuplicate`: every assignment is rewritten once, at plan
+/// time, whether or not an inserted row eventually conflicts, its DEFAULT
+/// leaves already typed statement constants.
+#[allow(clippy::too_many_arguments)]
 fn prepare_on_duplicate_assignments(
     assignments: &[tidb_ast::Assignment],
     column_list: &[(String, FieldType)],
@@ -1674,6 +1803,8 @@ fn prepare_on_duplicate_assignments(
     extra_handle_offset: Option<usize>,
     table_name: &str,
     database: Option<&str>,
+    scope: &super::on_duplicate_scope::OnDuplicateScope,
+    extra_types: &[FieldType],
     ctx: &crate::StmtContext,
     row: tidb_chunk::row::Row<'_>,
 ) -> Result<Vec<PreparedOnDuplicateAssignment>, DriverError> {
@@ -1686,6 +1817,20 @@ fn prepare_on_duplicate_assignments(
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
         clause_message: "field list",
+    };
+    let value_resolver = super::on_duplicate_scope::OnDuplicateResolver {
+        base: TableResolver {
+            database: database,
+            table_name,
+            columns: column_list,
+            constant_context: ctx.clone(),
+            zone: ctx.session_zone(),
+            no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+            div_precision_increment: ctx.div_precision_increment(),
+            clause_message: "field list",
+        },
+        scope,
+        extra_types,
     };
     let mut prepared = Vec::with_capacity(assignments.len());
     for assignment in assignments {
@@ -1729,9 +1874,10 @@ fn prepare_on_duplicate_assignments(
             tidb_ast::Expr::Default(None) => {
                 let datum =
                     materialize_column_default(target_meta, DefaultUse::Expression, ctx, row)?;
-                PreparedOnDuplicateValue::Constant(Box::new(Expression::Constant(
-                    tidb_expr::constant::Constant::new(datum, target_meta.field_type.clone()),
-                )))
+                Expression::Constant(tidb_expr::constant::Constant::new(
+                    datum,
+                    target_meta.field_type.clone(),
+                ))
             }
             value => {
                 let defaults =
@@ -1747,10 +1893,7 @@ fn prepare_on_duplicate_assignments(
                             meta: column_meta[column].clone(),
                         })
                     })?;
-                PreparedOnDuplicateValue::Ast {
-                    value: value.clone(),
-                    defaults,
-                }
+                rewrite_with_prepared_defaults(value, &value_resolver, &defaults)?
             }
         };
         prepared.push(PreparedOnDuplicateAssignment { offset, value });
@@ -1791,19 +1934,6 @@ fn apply_on_duplicate(
         return Ok(0);
     };
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
-    let resolver = TableResolver {
-        database: Some(database),
-        // Go resolves ODKU value columns against the TARGET table: a
-        // qualifier naming it (`t.v`) reads the stored row, and an
-        // unqualified name prefers the target over the source output.
-        table_name: target_table_name,
-        columns: column_list,
-        constant_context: ctx.clone(),
-        zone: ctx.session_zone(),
-        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-        div_precision_increment: ctx.div_precision_increment(),
-        clause_message: "field list",
-    };
     let extra_handle = prepared.extra_handle;
     let sql_row = |row: &[Datum]| {
         let visible = column_list.len() - usize::from(extra_handle);
@@ -1815,31 +1945,41 @@ fn apply_on_duplicate(
         }
         values
     };
+    // Go `doDupRowUpdate`: `VALUES(col)` reads `CurrInsertValues`, the
+    // would-be row, and each assignment evaluates over `row4Update` -- the
+    // stored row as the earlier assignments left it, the appended fields,
+    // then the would-be row.
+    let new_row = &candidate[..column_list.len().min(candidate.len())];
+    ctx.set_current_insert_values(new_row.to_vec());
     let mut updated = existing.clone();
-    for assignment in &prepared.assignments {
-        let expr = match &assignment.value {
-            PreparedOnDuplicateValue::Constant(expression) => expression.as_ref().clone(),
-            PreparedOnDuplicateValue::Ast { value, defaults } => {
-                // `VALUES(col)` is the value the insert would have written,
-                // resolved only after this candidate exists. DEFAULT leaves
-                // remain bound to the statement constants prepared earlier.
-                let bound =
-                    substitute_values_references(value, candidate, extras, &prepared.scope)?;
-                rewrite_with_prepared_defaults(&bound, &resolver, defaults)?
-            }
-        };
-        let chunk = row_chunk(&sql_row(&updated), &field_types)?;
-        let value = expr
-            .eval(ctx, chunk.get_row(0))
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        updated[assignment.offset] = cast_value_for_assignment(
-            value,
-            &field_types[assignment.offset],
-            &column_list[assignment.offset].0,
-            row_index,
-            ctx,
-        )?;
-    }
+    let assigned = (|| {
+        for assignment in &prepared.assignments {
+            let mut row4_update = sql_row(&updated);
+            row4_update.extend(
+                extras
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::repeat(Datum::Null))
+                    .take(prepared.extra_len),
+            );
+            row4_update.extend_from_slice(new_row);
+            let chunk = row_chunk(&row4_update, &prepared.row_types)?;
+            let value = assignment
+                .value
+                .eval(ctx, chunk.get_row(0))
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            updated[assignment.offset] = cast_value_for_assignment(
+                value,
+                &field_types[assignment.offset],
+                &column_list[assignment.offset].0,
+                row_index,
+                ctx,
+            )?;
+        }
+        Ok::<(), DriverError>(())
+    })();
+    ctx.clear_current_insert_values();
+    assigned?;
     let updated_chunk = row_chunk(&sql_row(&updated), &field_types)?;
     prepared
         .on_update_now
@@ -1864,124 +2004,6 @@ fn apply_on_duplicate(
     } else {
         u64::from(outcome.unchanged() && ctx.client_found_rows())
     })
-}
-
-/// Replaces every `VALUES(col)` in an `ON DUPLICATE KEY UPDATE` assignment
-/// with the literal the insert would have written for that column, and
-/// every source column (or field Go appended to the SELECT) with its value.
-///
-/// Go does not substitute at all: its expression rewriter handles
-/// `*ast.ValuesExpr` in `Enter` (`expression_rewriter.go:623`) by pushing a
-/// `ScalarFunction` closed over the column OFFSET onto the expression stack,
-/// which reads `SessionVars.CurrInsertValues` at eval time. Because that is a
-/// stack rewrite driven by the generic AST walk, the position of `VALUES()`
-/// inside the assignment is irrelevant -- `a = IFNULL(VALUES(a), 0)` and
-/// `a = CASE WHEN VALUES(a) > 0 THEN VALUES(a) ELSE b END` are handled by the
-/// same line as `a = VALUES(a)`.
-///
-/// So this substitution has to be TOTAL over the expression tree, not a
-/// hand-listed set of container variants: a per-variant recursion silently
-/// left `VALUES()` alive inside every function call, `CASE`, `IN`, `BETWEEN`
-/// and subquery, where it then resolved as an unknown function. Riding the
-/// package-wide [`tidb_ast::Visitable`] walk -- the same traversal Go's
-/// `Node.Accept` gives its rewriter -- removes the variant list entirely.
-/// Which column a name reads is Go's `Names4OnDuplicate` resolution
-/// ([`super::on_duplicate_scope::OnDuplicateScope`]).
-fn substitute_values_references(
-    expr: &tidb_ast::Expr,
-    candidate: &[Datum],
-    extras: &[Datum],
-    scope: &super::on_duplicate_scope::OnDuplicateScope,
-) -> Result<tidb_ast::Expr, DriverError> {
-    use super::on_duplicate_scope::OnDuplicateBinding;
-    use tidb_ast::Visitable;
-
-    struct Substitute<'a> {
-        candidate: &'a [Datum],
-        extras: &'a [Datum],
-        scope: &'a super::on_duplicate_scope::OnDuplicateScope,
-        error: Option<DriverError>,
-    }
-
-    impl Substitute<'_> {
-        fn value_of(&self, args: &[tidb_ast::Expr]) -> Result<tidb_ast::Expr, DriverError> {
-            let Some(tidb_ast::Expr::Column(path)) = args.first() else {
-                return Err(DriverError::unsupported("VALUES() takes a column name"));
-            };
-            // Go reads `insertPlan.TableColNames` only, scoping a failure to
-            // the field list.
-            let offset = self.scope.resolve_values(path)?;
-            datum_to_literal(&self.candidate[offset])
-        }
-
-        fn column(&self, path: &[String]) -> Result<Option<tidb_ast::Expr>, DriverError> {
-            Ok(match self.scope.resolve(path)? {
-                // The stored row, read by the assignment's own evaluation.
-                Some(OnDuplicateBinding::Target(_)) | None => None,
-                Some(OnDuplicateBinding::Extra(position)) => {
-                    Some(datum_to_literal(&self.extras[position])?)
-                }
-                Some(OnDuplicateBinding::NewRow(offset)) => {
-                    Some(datum_to_literal(&self.candidate[offset])?)
-                }
-            })
-        }
-    }
-
-    impl tidb_ast::Visitor for Substitute<'_> {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            if node.is::<tidb_ast::QueryStmt>() {
-                return true;
-            }
-            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
-                return false;
-            };
-            match expr {
-                tidb_ast::Expr::Subquery(_) => true,
-                tidb_ast::Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("values") => {
-                    match self.value_of(args) {
-                        Ok(literal) => *expr = literal,
-                        Err(error) => self.error = Some(error),
-                    }
-                    // The arguments of a substituted `VALUES()` are gone with it, and
-                    // its replacement is a literal: nothing below is left to visit.
-                    true
-                }
-                // A source column (`src.v` in `INSERT ... SELECT ... FROM src
-                // ... ON DUPLICATE KEY UPDATE t.v = src.v`) reads the row the
-                // insert would have written, or a field Go appended to the
-                // SELECT for it; a target column reads the stored row.
-                tidb_ast::Expr::Column(path) => {
-                    match self.column(path) {
-                        Ok(Some(literal)) => *expr = literal,
-                        Ok(None) => {}
-                        Err(error) => self.error = Some(error),
-                    }
-                    true
-                }
-                _ => false,
-            }
-        }
-
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            // Go's `Enter` returns `ok == false` on a rewrite failure, which
-            // aborts the whole walk; stopping here is the same abort.
-            self.error.is_none()
-        }
-    }
-
-    let mut rewritten = expr.clone();
-    let mut visitor = Substitute {
-        candidate,
-        extras,
-        scope,
-        error: None,
-    };
-    rewritten.accept(&mut visitor);
-    match visitor.error {
-        Some(error) => Err(error),
-        None => Ok(rewritten),
-    }
 }
 
 /// Runs a single-table `UPDATE`, returning MySQL's affected-row count.
@@ -2123,6 +2145,10 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     )
 }
 
+///
+/// The SELECT carries the statement's hints, as Go's `tryUpdatePointPlan`
+/// builds its `SelectStmt{TableHints: updateStmt.TableHints}` and
+/// `buildUpdate` pushes them for the read.
 pub(crate) fn update_source_query(update: &tidb_ast::UpdateStmt) -> Option<tidb_ast::QueryStmt> {
     match &update.kind {
         tidb_ast::UpdateKind::Single(table_ref) => super::access::PointPlanStmt::of_write(
@@ -2134,7 +2160,10 @@ pub(crate) fn update_source_query(update: &tidb_ast::UpdateStmt) -> Option<tidb_
         .write_select(),
         tidb_ast::UpdateKind::Multi { .. } => None,
     }
-    .map(|select| tidb_ast::QueryStmt::Select(Box::new(select)))
+    .map(|mut select| {
+        select.hints.clone_from(&update.hints);
+        tidb_ast::QueryStmt::Select(Box::new(select))
+    })
 }
 
 /// Go `tryUpdatePointPlan` declines the complete fast DML plan when any SET
@@ -2590,33 +2619,9 @@ fn cached_dml_physical_plan(
             ("Insert", source, None)
         }
         tidb_ast::DmlStmt::Update(update) => {
-            let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
-                return None;
-            };
-            let source = super::access::PointPlanStmt::of_write(
-                update.where_clause.as_ref(),
-                &update.order_by,
-                update.limit.as_ref(),
-                table_ref,
-            )
-            .write_select()
-            .map(|select| tidb_ast::QueryStmt::Select(Box::new(select)))?;
-            ("Update", Some(source), Some(update.as_ref()))
+            ("Update", Some(update_source_query(update)?), Some(update.as_ref()))
         }
-        tidb_ast::DmlStmt::Delete(delete) => {
-            let tidb_ast::DeleteKind::Single(table_ref) = &delete.kind else {
-                return None;
-            };
-            let source = super::access::PointPlanStmt::of_write(
-                delete.where_clause.as_ref(),
-                &delete.order_by,
-                delete.limit.as_ref(),
-                table_ref,
-            )
-            .write_select()
-            .map(|select| tidb_ast::QueryStmt::Select(Box::new(select)))?;
-            ("Delete", Some(source), None)
-        }
+        tidb_ast::DmlStmt::Delete(delete) => ("Delete", Some(delete_source_query(delete)?), None),
         _ => return None,
     };
     let fk_spec = match dml.as_ref() {
@@ -3326,7 +3331,10 @@ pub(crate) fn delete_source_query(delete: &tidb_ast::DeleteStmt) -> Option<tidb_
         .write_select(),
         tidb_ast::DeleteKind::Multi { .. } => None,
     }
-    .map(|select| tidb_ast::QueryStmt::Select(Box::new(select)))
+    .map(|mut select| {
+        select.hints.clone_from(&delete.hints);
+        tidb_ast::QueryStmt::Select(Box::new(select))
+    })
 }
 
 fn run_delete_with_physical(
@@ -3539,22 +3547,6 @@ pub(crate) fn row_chunk(
         chunk.append_datum(i, &Datum::Null);
     }
     Ok(chunk)
-}
-
-/// Whether a write statement WRITES the name `_tidb_rowid`.
-///
-/// Go appends the extra handle column to every heap `DataSource` and lets
-/// `rule_column_pruning` take it away again; asking the statement first
-/// reaches the same schema, and leaves a write that never mentions the name
-/// with exactly the row it had before.
-fn statement_names_extra_handle<'a>(exprs: impl Iterator<Item = &'a tidb_ast::Expr>) -> bool {
-    exprs
-        .flat_map(crate::driver::subquery::bare_columns)
-        .any(|path| {
-            path.last().is_some_and(|name| {
-                name.eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)
-            })
-        })
 }
 
 /// The integer a record handle reports as `_tidb_rowid`.

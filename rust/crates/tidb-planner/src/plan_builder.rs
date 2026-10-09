@@ -4129,6 +4129,46 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         select: &SelectStmt,
         wrap_lock: bool,
     ) -> Result<(LogicalPlan, u64), PlanError> {
+        self.with_dml_hints(select, |builder| {
+            builder.build_dml_source_in_block(select, wrap_lock)
+        })
+    }
+
+    /// Go `buildUpdate`/`buildDelete`'s `pushSelectOffset(0)` and
+    /// `pushTableHints(stmt.TableHints, 0)`, popped once the statement is
+    /// built: the write's own hints (which `select` carries) apply to the
+    /// tables it reads, in query block 0, and an unmatched one warns.
+    fn with_dml_hints<T>(
+        &mut self,
+        select: &SelectStmt,
+        build: impl FnOnce(&mut Self) -> Result<T, PlanError>,
+    ) -> Result<T, PlanError> {
+        let owns_hint_build = self.qb_hint_handler.is_none();
+        if owns_hint_build {
+            let mut source = select.clone();
+            let mut handler = tidb_hint::QBHintHandler::build_dml_source(&mut source);
+            for warning in handler.take_warnings() {
+                self.ctx.append_warning(warning.code, &warning.message);
+            }
+            self.qb_hint_state = Some(handler.new_build_state());
+            self.qb_hint_handler = Some(handler);
+        }
+        self.qb_offset.push(0);
+        let hint_frame = self.push_query_block_hints(select);
+        let result = build(self);
+        self.pop_query_block_hints(hint_frame);
+        self.qb_offset.pop();
+        if owns_hint_build {
+            self.end_hint_build();
+        }
+        result
+    }
+
+    fn build_dml_source_in_block(
+        &mut self,
+        select: &SelectStmt,
+        wrap_lock: bool,
+    ) -> Result<(LogicalPlan, u64), PlanError> {
         self.is_for_update_read = true;
         self.in_update_or_delete_stmt = true;
         let mut plan = self.build_table_refs(select.from.as_ref())?;
@@ -4202,29 +4242,31 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         assignment_values: &[Option<Expr>],
         wrap_lock: bool,
     ) -> Result<(LogicalPlan, Vec<Option<Expression>>, u64), PlanError> {
-        let (mut plan, _) = self.build_dml_source(select, wrap_lock)?;
-        self.cur_clause = ClauseCode::FieldList;
-        let mut expressions = Vec::with_capacity(assignment_values.len());
-        for value in assignment_values {
-            let Some(value) = value else {
-                expressions.push(None);
-                continue;
-            };
-            let mut scratch = Self::clause_scratch(value);
-            let (next_plan, lowered) = self.lower_scalar_subqueries(plan, &mut scratch)?;
-            plan = next_plan;
-            if !lowered {
-                expressions.push(None);
-                continue;
+        self.with_dml_hints(select, |builder| {
+            let (mut plan, _) = builder.build_dml_source_in_block(select, wrap_lock)?;
+            builder.cur_clause = ClauseCode::FieldList;
+            let mut expressions = Vec::with_capacity(assignment_values.len());
+            for value in assignment_values {
+                let Some(value) = value else {
+                    expressions.push(None);
+                    continue;
+                };
+                let mut scratch = Self::clause_scratch(value);
+                let (next_plan, lowered) = builder.lower_scalar_subqueries(plan, &mut scratch)?;
+                plan = next_plan;
+                if !lowered {
+                    expressions.push(None);
+                    continue;
+                }
+                let (schema, names) = snapshot_schema_and_names(&plan);
+                let mut markers = BTreeMap::new();
+                markers.insert(MarkerKind::Column, schema.columns.clone());
+                expressions.push(Some(
+                    builder.rewrite_scalar(&scratch, &schema, &names, &markers)?,
+                ));
             }
-            let (schema, names) = snapshot_schema_and_names(&plan);
-            let mut markers = BTreeMap::new();
-            markers.insert(MarkerKind::Column, schema.columns.clone());
-            expressions.push(Some(
-                self.rewrite_scalar(&scratch, &schema, &names, &markers)?,
-            ));
-        }
-        Ok((plan, expressions, self.get_opt_flag()))
+            Ok((plan, expressions, builder.get_opt_flag()))
+        })
     }
 
     /// Go `buildSelect(ctx, sel)` (`logical_plan_builder.go:4254`), on the

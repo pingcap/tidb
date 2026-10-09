@@ -145,6 +145,14 @@ pub trait ColumnResolver {
         None
     }
 
+    /// Resolves `VALUES(column)` to Go's `NewValuesFunc` over the column's
+    /// insert-row offset. Go's rewriter builds it in an INSERT's ON
+    /// DUPLICATE KEY UPDATE from `insertPlan.TableColNames`; a resolver for
+    /// that scope overrides this, and every other scope keeps the default.
+    fn resolve_values(&self, _path: &[String]) -> Option<Expression> {
+        None
+    }
+
     /// The session `time_zone` the rewrite runs under -- Go's
     /// `ctx.Location()`, which `getFunction` reaches while BUILDING the
     /// expression and which the `TIMESTAMP 'lit'` fold both normalizes an
@@ -282,6 +290,9 @@ impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
     }
     fn resolve_default(&self, path: &[String]) -> Option<Expression> {
         (**self).resolve_default(path)
+    }
+    fn resolve_values(&self, path: &[String]) -> Option<Expression> {
+        (**self).resolve_values(path)
     }
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
         (**self).time_zone()
@@ -2226,6 +2237,13 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // the shared `eval_func_values` implementation runs it.
         Expr::Func { name, args, .. } => {
             let lowered = name.to_ascii_lowercase();
+            if lowered == "values" {
+                if let [Expr::Column(path)] = args.as_slice() {
+                    if let Some(values) = resolver.resolve_values(path) {
+                        return Ok(values);
+                    }
+                }
+            }
             if lowered == "grouping" {
                 let args = args
                     .iter()

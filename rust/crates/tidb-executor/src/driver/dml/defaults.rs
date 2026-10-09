@@ -263,6 +263,42 @@ pub(crate) fn materialize_column_default(
     }
 }
 
+/// Go `InsertValues.setValueForRefColumn`: the row an INSERT whose values
+/// name its columns evaluates into. A column holds its default, which counts
+/// as written. A column without one holds its type's zero value and stays
+/// unwritten, so the row build still refuses (or warns about) it when the
+/// statement leaves it out; the auto-increment column holds its zero and
+/// stays unwritten as well, so it still takes an id. A generated column
+/// reads the same way until the row build computes it.
+pub(crate) fn set_value_for_ref_column(
+    meta: &[ColumnDefaultMeta],
+    extra_handle_offset: Option<usize>,
+    row: &mut [Datum],
+    assigned: &mut [bool],
+    ctx: &crate::StmtContext,
+    input: tidb_chunk::row::Row<'_>,
+) -> Result<(), DriverError> {
+    for (offset, column) in meta.iter().enumerate() {
+        // `_tidb_rowid` is not one of Go's `Table.Cols()`.
+        if Some(offset) == extra_handle_offset {
+            continue;
+        }
+        match materialize_column_default(column, DefaultUse::Insert, ctx, input) {
+            Ok(value) => {
+                row[offset] = value;
+                assigned[offset] = !column
+                    .field_type
+                    .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT);
+            }
+            Err(DriverError::NoDefaultForField(_)) => {
+                row[offset] = crate::bad_null::zero_value(&column.field_type);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 /// One occurrence of `DEFAULT(column)` after its column metadata has been
 /// resolved and its value has been materialized. A vector, rather than a map,
 /// is intentional: computed defaults are evaluated once per written
@@ -296,6 +332,10 @@ impl<R: tidb_expr::rewriter::ColumnResolver> tidb_expr::rewriter::ColumnResolver
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         self.base.resolve(path)
+    }
+
+    fn resolve_values(&self, path: &[String]) -> Option<Expression> {
+        self.base.resolve_values(path)
     }
 
     fn resolve_default(&self, path: &[String]) -> Option<Expression> {

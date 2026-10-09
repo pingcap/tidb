@@ -97,6 +97,10 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.resolve_default(path)
     }
 
+    fn resolve_values(&self, path: &[String]) -> Option<Expression> {
+        self.base.resolve_values(path)
+    }
+
     fn time_zone(&self) -> SessionTimeZone {
         self.base.time_zone()
     }

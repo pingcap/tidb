@@ -26,6 +26,7 @@
 //! only.
 
 use super::{Catalog, DriverError};
+use tidb_expr::rewriter::ColumnResolver;
 
 /// Go `types.FieldName`, lowercased as `FindFieldName` compares it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -530,4 +531,98 @@ fn select_output_names(
         }
     }
     names
+}
+
+/// Go's rewriter over `Insert.Schema4OnDuplicate`, which every assignment
+/// value is built on once, at plan time: the stored row's columns, then the
+/// fields appended to the SELECT, then the would-be row's, a name reading
+/// the position [`OnDuplicateScope::resolve`] binds it to. `VALUES(col)` is
+/// Go's `NewValuesFunc` over the target column's offset, which reads the
+/// statement's current insert row (`SessionVars.CurrInsertValues`).
+pub(crate) struct OnDuplicateResolver<'a> {
+    /// The target table: its columns' types and the statement context.
+    pub(crate) base: super::TableResolver<'a>,
+    pub(crate) scope: &'a OnDuplicateScope,
+    /// The appended SELECT fields' types.
+    pub(crate) extra_types: &'a [tidb_datatype::FieldType],
+}
+
+impl ColumnResolver for OnDuplicateResolver<'_> {
+    fn resolve(&self, path: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
+        let table = self.base.columns;
+        let (index, field_type) = match self.scope.resolve(path).ok()?? {
+            OnDuplicateBinding::Target(offset) => (offset, table.get(offset)?.1.clone()),
+            OnDuplicateBinding::Extra(position) => {
+                (table.len() + position, self.extra_types.get(position)?.clone())
+            }
+            OnDuplicateBinding::NewRow(offset) => (
+                table.len() + self.extra_types.len() + offset,
+                table.get(offset)?.1.clone(),
+            ),
+        };
+        Some((index, field_type, (index + 1) as i64))
+    }
+
+    fn resolve_values(&self, path: &[String]) -> Option<tidb_expr::expression::Expression> {
+        let offset = self.scope.resolve_values(path).ok()?;
+        let field_type = self.base.columns.get(offset)?.1.clone();
+        Some(tidb_expr::expression::Expression::ScalarFunction(
+            tidb_expr::scalar_function::ScalarFunction::new_values(offset, field_type),
+        ))
+    }
+
+    fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
+        self.base.user_vars()
+    }
+
+    fn clause_message(&self) -> &'static str {
+        self.base.clause_message()
+    }
+
+    fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, tidb_expr::EvalError> {
+        self.base.param_value(order)
+    }
+
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        self.base.time_zone()
+    }
+
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        self.base.date_modes()
+    }
+
+    fn connection_charset_info(&self) -> (&str, &str) {
+        self.base.connection_charset_info()
+    }
+
+    fn like_default_escape(&self) -> u8 {
+        self.base.like_default_escape()
+    }
+
+    fn no_unsigned_subtraction(&self) -> bool {
+        self.base.no_unsigned_subtraction()
+    }
+
+    fn div_precision_increment(&self) -> u32 {
+        self.base.div_precision_increment()
+    }
+
+    fn current_database(&self) -> Option<String> {
+        self.base.current_database()
+    }
+
+    fn fold_constant(
+        &self,
+        expression: &mut tidb_expr::expression::Expression,
+        mode: tidb_expr::ConstantFoldMode,
+    ) {
+        self.base.fold_constant(expression, mode);
+    }
+
+    fn eval_constant(
+        &self,
+        expression: &tidb_expr::expression::Expression,
+    ) -> Result<tidb_datatype::Datum, tidb_expr::EvalError> {
+        self.base.eval_constant(expression)
+    }
 }

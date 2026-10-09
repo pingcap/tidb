@@ -953,8 +953,10 @@ fn resolve_delete_targets(
 }
 
 /// Go `buildUpdate`/`buildDelete`'s read: the `FROM` join with the `WHERE`,
-/// `ORDER BY` and `LIMIT` above it, as one SELECT for the planner.
+/// `ORDER BY` and `LIMIT` above it, as one SELECT for the planner, carrying
+/// the statement's hints (`pushTableHints(stmt.TableHints, 0)`).
 pub(crate) fn multi_dml_select(
+    hints: &[tidb_ast::Hint],
     from: &tidb_ast::Join,
     where_clause: Option<&tidb_ast::Expr>,
     order_by: &[tidb_ast::OrderItem],
@@ -966,7 +968,7 @@ pub(crate) fn multi_dml_select(
         kind: Default::default(),
         is_in_braces: false,
         with: None,
-        hints: Vec::new(),
+        hints: hints.to_vec(),
         priority: Default::default(),
         sql_small_result: false,
         sql_big_result: false,
@@ -1038,6 +1040,7 @@ pub(crate) fn multi_dml_physical_plan(
             (
                 "Update",
                 multi_dml_select(
+                    &update.hints,
                     from,
                     update.where_clause.as_ref(),
                     &update.order_by,
@@ -1056,7 +1059,7 @@ pub(crate) fn multi_dml_physical_plan(
             }
             (
                 "Delete",
-                multi_dml_select(from, delete.where_clause.as_ref(), &[], None),
+                multi_dml_select(&delete.hints, from, delete.where_clause.as_ref(), &[], None),
             )
         }
     };

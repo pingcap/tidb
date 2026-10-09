@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! INSERT answers `executor/insert.test` records, each checked against Go
-//! (testkit runs on this branch where the recording does not settle it).
+//! Write answers `executor/insert.test` and `executor/write.test` record,
+//! each checked against Go (testkit or server runs on this branch where the
+//! recording does not settle it).
 
 use crate::tests_support::{row_text, warnings_of};
 use crate::Session;
@@ -241,5 +242,196 @@ fn a_prefix_key_duplicate_reports_the_cut_value() {
     assert_eq!(
         warnings_of(&session),
         vec![(1062, "Duplicate entry 'aa' for key 'c.PRIMARY'".to_owned())]
+    );
+}
+
+/// Go `evalRow` over `setValueForRefColumn`: a value naming a column of the
+/// row reads what the statement already wrote to it, or else its default,
+/// the zero value of a column without one, and the zero of the
+/// auto-increment column, which still takes an id. These had been refused.
+#[test]
+fn insert_values_read_the_row_they_build() {
+    let mut session = Session::new();
+    session.run("create table t(a int default 100, b int)").unwrap();
+    session.run("insert into t set b = a + 1, a = 1").unwrap();
+    session.run("insert into t (b) value (a)").unwrap();
+    session.run("insert into t set a = 2, b = a + 1").unwrap();
+    assert_eq!(
+        row_text(session.run("select a, b from t order by a")),
+        [["1", "101"], ["2", "3"], ["100", "100"]]
+    );
+
+    session.run("create table n(a bigint not null, b bigint not null)").unwrap();
+    session.run("insert into n value (b + 1, a)").unwrap();
+    session.run("insert into n set a = b + a, b = a + 1").unwrap();
+    session.run("insert into n value (1000, a)").unwrap();
+    session.run("insert n set b = sqrt(a + 4), a = 10").unwrap();
+    assert_eq!(
+        row_text(session.run("select * from n order by a")),
+        [["0", "1"], ["1", "1"], ["10", "2"], ["1000", "1000"]]
+    );
+
+    session.run("create table ai(a int auto_increment key, b int)").unwrap();
+    session.run("insert into ai (b) value (a)").unwrap();
+    session.run("insert into ai value (a, a + 1)").unwrap();
+    assert_eq!(row_text(session.run("select * from ai order by a")), [["1", "0"], ["2", "1"]]);
+
+    // A generated column reads as its default: zero when NOT NULL.
+    session
+        .run("create table g(j int generated always as (i + 1) stored not null, i int default 5)")
+        .unwrap();
+    session.run("insert into g set i = j + 9").unwrap();
+    assert_eq!(row_text(session.run("select * from g")), [["10", "9"]]);
+}
+
+/// A column without a default is still refused when the statement leaves
+/// it out, and under a non-strict mode warns 1364 once, from the seeding,
+/// even when the statement then writes it (a testkit run on this branch).
+#[test]
+fn a_ref_column_insert_keeps_the_no_default_rules() {
+    let mut session = Session::new();
+    session.run("create table s(a int not null, b int)").unwrap();
+    assert_eq!(
+        error_of(&mut session, "insert into s (b) value (a)"),
+        "Field 'a' doesn't have a default value"
+    );
+    session.run("set @@sql_mode = ''").unwrap();
+    let no_default = vec![(1364, "Field 'a' doesn't have a default value".to_owned())];
+    session.run("insert into s (b) value (a)").unwrap();
+    assert_eq!(warnings_of(&session), no_default);
+    session.run("insert into s set a = a + 1").unwrap();
+    assert_eq!(warnings_of(&session), no_default);
+    assert_eq!(
+        row_text(session.run("select a, ifnull(b, 'null') from s order by a")),
+        [["0", "0"], ["1", "null"]]
+    );
+}
+
+/// Go casts each value as `evalRow` produces it, so the warnings follow the
+/// statement's column list, and the row build's 1364 comes after them
+/// (a testkit run on this branch).
+#[test]
+fn insert_cast_warnings_follow_the_column_list() {
+    let mut session = Session::new();
+    session.run("create table w(a int not null, b int, c varchar(2))").unwrap();
+    session.run("insert ignore into w(c, b) values ('abc', 'x')").unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![
+            (1406, "Data too long for column 'c' at row 1".to_owned()),
+            (1366, "Incorrect int value: 'x' for column 'b' at row 1".to_owned()),
+            (1364, "Field 'a' doesn't have a default value".to_owned()),
+        ]
+    );
+}
+
+/// Go `ResolveOnDuplicate` drops `b = DEFAULT(b)` for a generated `b`; with
+/// nothing left to assign the statement is a plain INSERT and reports its
+/// duplicate (a warning under IGNORE). It had updated nothing silently.
+#[test]
+fn an_on_duplicate_left_with_no_assignment_reports_the_duplicate() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table t2 (a int default 10 primary key, b int generated always as (-a) virtual, \
+             c int generated always as (-a) stored)",
+        )
+        .unwrap();
+    let sql = "insert into t2 set a = 3, b = default, c = default(c) on duplicate key update b = default(b)";
+    session.run(sql).unwrap();
+    assert_eq!(error_of(&mut session, sql), "Duplicate entry '3' for key 't2.PRIMARY'");
+    session
+        .run("insert ignore into t2 set a = 3 on duplicate key update b = default(b)")
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![(1062, "Duplicate entry '3' for key 't2.PRIMARY'".to_owned())]
+    );
+}
+
+/// Go `doDupRowUpdate`: `VALUES(col)` reads the would-be row whatever the
+/// column's type, anywhere in the assignment. It had been substituted as a
+/// literal, which a TIMESTAMP has no form for, so the statement failed.
+#[test]
+fn on_duplicate_values_read_the_would_be_row() {
+    let mut session = Session::new();
+    session
+        .run("create table t(id int primary key, ts timestamp, n int, s varchar(10))")
+        .unwrap();
+    session
+        .run("insert into t values (1, '2020-01-01 00:00:00', 1, 'a')")
+        .unwrap();
+    session
+        .run(
+            "insert into t values (1, '2020-05-03 05:58:45', 5, 'b') on duplicate key update \
+             ts = values(ts), n = ifnull(values(n), 0) + n, s = concat(values(s), s)",
+        )
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("select * from t")),
+        [["1", "2020-05-03 05:58:45", "6", "ba"]]
+    );
+}
+
+/// Go evaluates an uncorrelated subquery in a VALUES list or an ON
+/// DUPLICATE KEY UPDATE assignment while planning (`EvalSubqueryFirstRow`),
+/// conflict or not; one with no row is NULL. Both had been refused.
+#[test]
+fn insert_subqueries_are_evaluated_while_planning() {
+    let mut session = Session::new();
+    session.run("create table t(a int primary key, b int)").unwrap();
+    session.run("create table s(x int)").unwrap();
+    session.run("insert into s values (5)").unwrap();
+    session.run("insert into t values (1, (select x from s))").unwrap();
+    session
+        .run("insert into t values (1, 2) on duplicate key update b = (select x + 1 from s)")
+        .unwrap();
+    session
+        .run("insert into t values (2, 2) on duplicate key update b = (select x from s where x < 0)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("select * from t order by a")),
+        [["1", "6"], ["2", "2"]]
+    );
+}
+
+/// Go `buildUpdate`/`buildDelete` push the statement's hints for its read
+/// (`pushTableHints(stmt.TableHints, 0)`): they apply and they warn. They had
+/// been dropped.
+#[test]
+fn update_and_delete_hints_apply_and_warn() {
+    let mut session = Session::new();
+    session.run("create table t(a varchar(10), key(a))").unwrap();
+    session.run("create table t1(a varchar(10), key(a))").unwrap();
+    let deprecated = vec![(
+        1815,
+        "The INDEX MERGE JOIN hint is deprecated for usage, try other hints.".to_owned(),
+    )];
+    session
+        .run("update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a = 'a' where t.a = t1.a")
+        .unwrap();
+    assert_eq!(warnings_of(&session), deprecated);
+    session
+        .run("delete /*+ INL_MERGE_JOIN(t) */ t from t, t1 where t.a = t1.a")
+        .unwrap();
+    assert_eq!(warnings_of(&session), deprecated);
+    session
+        .run("update /*+ use_index(t, nosuch) */ t set t.a = 'a' where t.a = 'b'")
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![(1176, "Key 'nosuch' doesn't exist in table 't'".to_owned())]
+    );
+    let plan = row_text(session.run("explain delete /*+ ignore_index(t, a) */ from t where a = 'x'"));
+    assert!(
+        plan.iter().any(|row| row[0].contains("TableFullScan")),
+        "IGNORE_INDEX left the index path: {plan:?}"
+    );
+    let plan = row_text(
+        session.run("explain update /*+ inl_join(t1) */ t, t1 set t.a = 'a' where t.a = t1.a"),
+    );
+    assert!(
+        plan.iter().any(|row| row[0].contains("IndexJoin")),
+        "INL_JOIN was not applied: {plan:?}"
     );
 }
