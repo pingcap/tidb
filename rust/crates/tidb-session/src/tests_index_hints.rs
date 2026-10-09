@@ -986,8 +986,11 @@ fn skyline_keeps_indexes_with_incomparable_access_columns() {
     assert_eq!(row_text(session.run(query)), vec![vec!["7".to_owned()]]);
 }
 
+/// Go `buildIntoAccessPath` builds no OR index merge over a single index,
+/// hinted or not; the hinted query reports "IndexMerge is inapplicable" (a Go
+/// oracle run answers both with the IndexLookUp over `ia`).
 #[test]
-fn single_index_union_requires_an_explicit_merge_hint() {
+fn single_index_union_is_not_an_index_merge_even_when_hinted() {
     let mut session = Session::new();
     session
         .run("CREATE TABLE im_same (id BIGINT PRIMARY KEY, a BIGINT, payload BIGINT, KEY ia(a))")
@@ -996,14 +999,11 @@ fn single_index_union_requires_an_explicit_merge_hint() {
         .run("INSERT INTO im_same VALUES (1,1,10),(2,2,20),(3,3,30),(4,1,40)")
         .unwrap();
     session.run("SET tidb_enable_index_merge=ON").unwrap();
-    for (hint, expected_merge) in [("", false), ("/*+ USE_INDEX_MERGE(im_same, ia) */", true)] {
+    for hint in ["", "/*+ USE_INDEX_MERGE(im_same, ia) */"] {
         let query = format!("SELECT {hint} payload FROM im_same WHERE a=1 OR a=2");
         let plan = row_text(session.run(&format!("EXPLAIN {query}")));
-        assert_eq!(
-            plan.iter()
-                .flatten()
-                .any(|cell| cell.contains("IndexMerge")),
-            expected_merge,
+        assert!(
+            !plan.iter().flatten().any(|cell| cell.contains("IndexMerge")),
             "{plan:?}"
         );
         let mut rows = row_text(session.run(&query));
@@ -1496,4 +1496,52 @@ fn union_partials_prune_index_prefix_before_appended_handle_estimation() {
     let mut rows = row_text(session.run(query));
     rows.sort();
     assert_eq!(rows, vec![vec!["15"], vec!["16"], vec!["25"], vec!["26"]]);
+}
+
+/// Go `buildIntoAccessPath` builds no OR index merge that reads through a
+/// single access object, so `use_index_merge` over one index falls back with
+/// "IndexMerge is inapplicable"; `buildDataSource` drops a hint naming an
+/// index the hinted paths lack, with its own warning; and under pseudo
+/// statistics skyline pruning keeps a preferred equality range over an
+/// unhinted index merge.
+#[test]
+fn index_merge_hints_apply_go_path_rules() {
+    let mut session = Session::new();
+    for sql in [
+        "create table tt (a int, key(a))",
+        "create table t1 (a int, b int, c int, key a(a), key b(b))",
+        "create table t (id int primary key, a int, b int, c int, key(a), key(b), key(c))",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let explain = |session: &mut Session, sql: &str| {
+        row_text(session.run(&format!("explain format='brief' {sql}")))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let plan = explain(&mut session, "select /*+ use_index_merge(tt) */ * from tt where a = 10 or a = 20");
+    assert!(!plan.contains("IndexMerge"), "{plan}");
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        vec![vec!["Warning", "1105", "IndexMerge is inapplicable"]]
+    );
+    session.run("select /*+ USE_INDEX_MERGE(t1, a, b, c, d) */ * from t1").unwrap();
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        vec![vec![
+            "Warning",
+            "1815",
+            "use_index_merge(test.t1, a, b, c, d) is inapplicable, check whether the indexes \
+             (c, d) exist, or the indexes are conflicted with use_index/ignore_index/force_index hints."
+        ]]
+    );
+    let plan = explain(&mut session, "select * from t where b = 1 and (a = 1 or c = 1)");
+    assert!(!plan.contains("IndexMerge") && plan.contains("index:b(b)"), "{plan}");
+    let plan = explain(
+        &mut session,
+        "select /*+ USE_INDEX_MERGE(t, a, c) */ * from t where b = 1 and (a = 1 or c = 1)",
+    );
+    assert!(plan.contains("IndexMerge"), "{plan}");
 }

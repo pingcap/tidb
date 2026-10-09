@@ -2541,7 +2541,12 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                         self.opt_prefix_index_single_scan,
                         self.use_plan_cache,
                     ) {
-                        Ok(paths) => source.derived_access_paths = Some(paths),
+                        Ok((paths, warning)) => {
+                            if let Some(warning) = warning {
+                                self.eval_context.append_warning(1105, &warning);
+                            }
+                            source.derived_access_paths = Some(paths);
+                        }
                         Err(error) => result = Err(error),
                     }
                 }

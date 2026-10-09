@@ -1502,3 +1502,34 @@ fn view_query_block_hints_reach_the_view_and_nested_view_blocks() {
         );
     }
 }
+
+/// Go rebuilds an inlined CTE from the same AST nodes, whose
+/// `QueryBlockOffset` the statement's hint walk fixed (the WITH clause first).
+/// Each rebuild advanced the planner's block counter instead, so view
+/// query-block hints registered at a CTE body's offset (`v4@sel_4`) missed,
+/// and every later block shifted.
+#[test]
+fn view_hints_inside_inlined_ctes_keep_their_query_block_offsets() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t4 (a int, b int, key idx_a(a), key idx_b(b))",
+        "create definer='root'@'localhost' view v4 as select * from t4 where a > 2 and b > 3",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let sql = "with d1 as (select a from (select a from (select /*+ qb_name(qb, v4) \
+               use_index(t4@qb, idx_a) */ a from v4 where a < 10) as t0 where a < 9) as t1 \
+               where a < 8), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a \
+               from v4 where b < 10) select * from (select * from d1) as t0 join \
+               (select * from d2) as t1";
+    let explain = row_text(session.run(&format!("explain format='brief' {sql}")))
+        .into_iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        explain.contains("index:idx_a(a)") && explain.contains("index:idx_b(b)"),
+        "{explain}"
+    );
+    assert_eq!(row_text(session.run("show warnings")), Vec::<Vec<String>>::new());
+}

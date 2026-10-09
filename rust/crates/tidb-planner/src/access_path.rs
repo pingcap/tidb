@@ -131,7 +131,7 @@ pub(crate) fn derive_access_paths(
     no_index_merge_hint: bool,
     prefix_single_scan: bool,
     use_plan_cache: bool,
-) -> Result<DerivedAccessPaths, crate::plan_base::PlanError> {
+) -> Result<(DerivedAccessPaths, Option<String>), crate::plan_base::PlanError> {
     let table_path = source
         .enumerated_paths
         .iter()
@@ -178,9 +178,25 @@ pub(crate) fn derive_access_paths(
         })
         .unwrap_or(source.access_path_min_selectivity)
         .min(1.0);
+    // Go `generateIndexMergePath`'s warning, reported only for a hinted table
+    // (which then loses its hints).
+    let mut index_merge_warning = None;
     // Go `generateIndexMergePath`: `(EnableIndexMerge || len(IndexMergeHints)
     // > 0) && !NoIndexMergeHint`.
-    if (index_merge_enabled || !source.index_merge_hints.is_empty()) && !no_index_merge_hint {
+    if !((index_merge_enabled || !source.index_merge_hints.is_empty()) && !no_index_merge_hint) {
+        index_merge_warning = Some(
+            "IndexMerge is inapplicable or disabled. Got no_index_merge hint or tidb_enable_index_merge is off.",
+        );
+    } else if source.is_local_temporary {
+        index_merge_warning =
+            Some("IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table.");
+    } else {
+        // Go `generateOtherIndexMerge`'s `isPossibleIdxMerge`.
+        if source.pushed_down_conds.is_empty() || source.enumerated_paths.len() <= 1 {
+            index_merge_warning = Some(
+                "IndexMerge is inapplicable or disabled. No available filter or available index.",
+            );
+        }
         let mut merges = Vec::new();
         for path in index_merge::prepare_union_index_merge_paths(source, context, use_plan_cache)? {
             merges.push(DerivedAccessPath::Union(path));
@@ -212,13 +228,25 @@ pub(crate) fn derive_access_paths(
                 min_selectivity = min_selectivity.min(rows / stats.row_count());
             }
         }
+        if merges.is_empty() && index_merge_warning.is_none() {
+            index_merge_warning = Some("IndexMerge is inapplicable");
+        }
         paths.extend(merges);
     }
-    Ok(DerivedAccessPaths {
-        table_path,
-        paths,
-        min_selectivity,
-    })
+    let index_merge_warning = index_merge_warning
+        .filter(|_| !source.index_merge_hints.is_empty())
+        .map(|message| {
+            source.index_merge_hints.clear();
+            message.to_owned()
+        });
+    Ok((
+        DerivedAccessPaths {
+            table_path,
+            paths,
+            min_selectivity,
+        },
+        index_merge_warning,
+    ))
 }
 
 /// Go AccessPath.SplitCorColAccessCondFromFilters. Extends an equality

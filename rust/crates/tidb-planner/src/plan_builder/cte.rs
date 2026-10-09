@@ -459,6 +459,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 name_original: cte.name.clone(),
                 col_name_list: cte.columns.clone(),
                 definition: Some((*cte.query).clone()),
+                qb_offset_start: self.next_qb_offset,
                 non_recursive: !with.recursive,
                 is_building: true,
                 storage_id: self.alloc_id_for_cte_storage,
@@ -1149,7 +1150,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .definition
             .as_ref()
             .ok_or_else(|| PlanError::internal("an inlined CTE has no recorded body"))?;
-        let mut plan = self.build_query_stmt(query, true)?;
+        let outer_next_qb_offset = std::mem::replace(&mut self.next_qb_offset, cte.qb_offset_start);
+        let built = self.build_query_stmt(query, true);
+        self.next_qb_offset = outer_next_qb_offset;
+        let mut plan = built?;
         self.handle_helper.pop_map();
         let current_db = self.source.current_database().to_owned();
         let mut names = plan.output_names().to_vec();

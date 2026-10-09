@@ -141,7 +141,6 @@ fn prepare_union_index_merge_path_for_or(
 
     let enumerated_indexes = enumerated_index_mask(ds);
     let mut alternatives: Vec<Vec<Partial>> = Vec::with_capacity(disjuncts.len());
-    let mut any_index_partial = false;
     for disjunct in &disjuncts {
         let mut branch = Vec::new();
         // Keep every ordinary alternative. Property convergence, rather than
@@ -280,16 +279,28 @@ fn prepare_union_index_merge_path_for_or(
         if branch.is_empty() {
             return Ok(None);
         }
-        any_index_partial |= branch
-            .iter()
-            .any(|partial| matches!(partial, Partial::Index { .. }));
         alternatives.push(branch);
     }
 
-    // A union whose partials include an index scan must fetch rows by
-    // handle; all-table partials need no final row fetch — and add no
-    // value over the ordinary handle-range path, so leave those to it.
-    if !any_index_partial {
+    // Go `buildIntoAccessPath`: without an MV index, a union that reads
+    // through at most one access object -- the table counting as one --
+    // adds nothing over that object's own path.
+    let mut possible_ids = std::collections::BTreeSet::new();
+    let mut contain_mv_path = false;
+    for partial in alternatives.iter().flatten() {
+        match partial {
+            Partial::Index { index_pos, .. } => {
+                if let Some(index) = ds.indexes.get(*index_pos) {
+                    possible_ids.insert(index.id);
+                    contain_mv_path |= index.is_multi_valued;
+                }
+            }
+            Partial::Table { .. } => {
+                possible_ids.insert(-1);
+            }
+        }
+    }
+    if !contain_mv_path && possible_ids.len() <= 1 {
         return Ok(None);
     }
 

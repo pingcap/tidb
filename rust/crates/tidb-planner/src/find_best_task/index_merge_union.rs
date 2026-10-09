@@ -848,10 +848,11 @@ mod tests {
             expression_evaluator: &crate::ranger::points::evaluate_static,
         };
         let plan_id_before = allocator.current();
-        let prepared = prepare_union_index_merge_path(&ds, &derivation)
+        // Go `buildIntoAccessPath`: a union reading through one index is no
+        // index merge.
+        assert!(prepare_union_index_merge_path(&ds, &derivation)
             .unwrap()
-            .unwrap();
-        assert!(prepared.count_after_access >= 0.0);
+            .is_none());
         assert_eq!(
             allocator.current(),
             plan_id_before,
@@ -870,6 +871,7 @@ mod tests {
         let alternatives = prepare_union_index_merge_path(&choices, &derivation)
             .unwrap()
             .unwrap();
+        assert!(alternatives.count_after_access >= 0.0);
         assert_eq!(alternatives.alternatives.len(), 2);
         assert!(alternatives
             .alternatives
@@ -892,6 +894,37 @@ mod tests {
             tidb_ast::CiString::new("eq"), ty.clone(), vec![Expression::Column(b.clone()),
                 Expression::Constant(Constant::new(Datum::Int(value), ty.clone()))],
         ));
+        // Go `buildIntoAccessPath` needs two access objects: with no index
+        // led by `b`, an OR over `b` builds no merge.
+        let only_b = {
+            let mut only_b = choices.clone();
+            only_b.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new("or"), ty.clone(), vec![eq_b(1), eq_b(2)],
+            ))];
+            only_b
+        };
+        assert!(crate::access_path::index_merge::prepare_union_index_merge_paths(&only_b, &derivation, false)
+            .unwrap()
+            .is_empty());
+        // Two indexes led by `b` serve the second OR.
+        for (id, columns) in [(9, vec!["b"]), (10, vec!["b", "a"])] {
+            multiple_or.indexes.push(SourceIndex {
+                id,
+                global: true,
+                columns: columns
+                    .into_iter()
+                    .map(|name| SourceIndexColumn {
+                        name: name.into(),
+                        offset: usize::from(name == "b"),
+                        length: -1,
+                    })
+                    .collect(),
+                ..Default::default()
+            });
+            multiple_or
+                .enumerated_paths
+                .push(crate::access_path::PossiblePath::Index { index: multiple_or.indexes.len() - 1 });
+        }
         multiple_or.pushed_down_conds.push(Expression::ScalarFunction(ScalarFunction::new(
             tidb_ast::CiString::new("or"), ty.clone(), vec![eq_b(1), eq_b(2)],
         )));
@@ -965,8 +998,10 @@ mod tests {
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
         let mut unhinted = ds.clone();
         unhinted.index_merge_hints.clear();
-        assert!(build_union_index_merge_task(&unhinted, &mut ctx).unwrap().unwrap().invalid(),
-            "Go rejects an unhinted union whose chosen branches all use one index");
+        assert!(build_union_index_merge_task(&unhinted, &mut ctx)
+                .unwrap()
+                .is_none_or(|task| task.invalid()),
+            "Go builds no union whose branches all use one index");
         let must_not_evaluate =
             |_: &Expression| -> Result<tidb_datatype::Datum, tidb_expr::EvalError> {
                 panic!("physical property search must consume logical ranges")
@@ -1136,9 +1171,6 @@ mod tests {
                 .all(|matched| matched.matched())
         );
         assert!(cop.idx_merge_part_plans.iter().all(|plan| matches!(plan, PhysicalPlan::IndexScan(scan) if scan.index_id == 7 && scan.keep_order)));
-        let task = build_union_index_merge_task(&ds, &mut ctx)
-            .unwrap()
-            .unwrap();
         let mut unavailable_index = ds.clone();
         unavailable_index.enumerated_paths.clear();
         assert!(
@@ -1151,25 +1183,14 @@ mod tests {
         assert!(build_union_index_merge_task(&local_temporary, &mut ctx)
             .unwrap()
             .is_none());
-        assert!(matches!(&task, Task::Cop(cop) if !cop.index_plan_finished));
-        let task = task.into_root_task(&allocator).unwrap();
-        let PhysicalPlan::IndexMergeReader(reader) = task.plan().unwrap() else {
-            panic!("expected index merge")
-        };
-        for partial in &reader.partial_plans_raw {
-            let ids: Vec<_> = partial
-                .schema()
-                .unwrap()
-                .columns
-                .iter()
-                .map(|column| column.id)
-                .collect();
-            assert_eq!(ids, vec![1, 2, 1, tidb_model::column::EXTRA_PHYS_TBL_ID]);
-            assert_ne!(
-                partial.schema().unwrap().columns[1].unique_id,
-                ds.table_columns[1].unique_id
-            );
-        }
+        // A global index over a common handle: the pruned `b` comes back as
+        // a fresh column, then the handle and the physical-table id.
+        let columns = partial_index_schema(&ds, &ds.indexes[0], &ctx).unwrap();
+        assert_eq!(
+            columns.iter().map(|column| column.id).collect::<Vec<_>>(),
+            vec![1, 2, 1, tidb_model::column::EXTRA_PHYS_TBL_ID]
+        );
+        assert_ne!(columns[1].unique_id, ds.table_columns[1].unique_id);
         let mut ds = ds;
         ds.is_common_handle = false;
         ds.common_handle_cols.clear();

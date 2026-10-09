@@ -279,6 +279,10 @@ pub struct OuterCte {
     /// Go `cteInfo.def.Query.Query`, kept because an INLINED CTE is rebuilt
     /// from its AST at the reference site.
     pub definition: Option<tidb_ast::QueryStmt>,
+    /// The query-block counter before the body's first build. Go rebuilds
+    /// an inlined CTE from the same AST nodes, whose `QueryBlockOffset` the
+    /// statement's walk fixed, so a rebuild replays these offsets.
+    pub qb_offset_start: i32,
     /// Go `cteInfo.nonRecursive`: the declaring `WITH` had no `RECURSIVE`.
     pub non_recursive: bool,
     /// Go `cteInfo.isBuilding`.
@@ -330,6 +334,7 @@ impl Default for OuterCte {
             name_original: String::new(),
             col_name_list: Vec::new(),
             definition: None,
+            qb_offset_start: 0,
             non_recursive: false,
             is_building: false,
             use_recursive: false,

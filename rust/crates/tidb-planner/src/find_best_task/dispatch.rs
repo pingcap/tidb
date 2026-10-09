@@ -4266,8 +4266,26 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     if heuristic_selected {
         return Ok(best);
     }
+    // Go keeps preferRange enabled only when the skyline saw an unanalyzed
+    // index winner, the table statistics are pseudo, or the table is empty
+    // -- or an index merge is preferred (`ShouldPreferIndexMerge`).
+    let prefer_merge = !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
+    let prefer_range = ctx.prefer_range_scan
+        && prop.index_join_prop.is_none()
+        && (prefer_merge
+            || idx_missing_stats
+            || table_pseudo
+            || ds
+                .table_stats
+                .as_ref()
+                .or_else(|| ds.base.base.stats_info())
+                .is_none_or(|stats| stats.row_count() < 1.0));
+    // Go `skylinePruning`'s preferRange filter keeps only the preferred
+    // range-scan candidates once one exists; an index merge candidate is one
+    // only when an index merge is preferred.
+    let merges_pruned = prefer_range && !prefer_merge && best_preferred_range.is_some();
     // All alternative choices were fixed before ordinary physical construction.
-    for candidate in &merge_candidates {
+    for candidate in merge_candidates.iter().filter(|_| !merges_pruned) {
         let mut merge_task = match candidate {
             super::candidate_preparation::PreparedMerge::Union(path) =>
                 super::index_merge_union::build_converged_union_index_merge_task(ds, path, ctx)?,
@@ -4285,19 +4303,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             best_is_full_range = false;
         }
     }
-    // Go keeps preferRange enabled only when the skyline saw an unanalyzed
-    // index winner, the table statistics are pseudo, or the table is empty.
     // This decision comes after candidate comparisons; making it before
     // enumeration misses idxMissingStats for a new index on analyzed columns.
-    let prefer_range = ctx.prefer_range_scan
-        && prop.index_join_prop.is_none()
-        && (idx_missing_stats
-            || table_pseudo
-            || ds
-                .table_stats
-                .as_ref()
-                .or_else(|| ds.base.base.stats_info())
-                .is_none_or(|stats| stats.row_count() < 1.0));
     if prefer_range && best_is_full_range {
         if let Some(range_task) = best_preferred_range {
             if !best_is_preferred_range {
