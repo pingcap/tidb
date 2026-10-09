@@ -783,15 +783,34 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 			path.IndexFilters = append(path.IndexFilters, clonedIdxFilters...)
 		}
 
-		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, buildPartialPathUp4MVIndex(
+		indexMergePath := buildPartialPathUp4MVIndex(
 			partialPaths,
 			isIntersection,
 			tableFilters,
 			ds.TableStats.HistColl,
-		),
 		)
+		indexMergePath.IndexMergeMVCoveredConds = collectMVCoveredJSONConds(accessFilters)
+		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergePath)
 	}
 	return nil
+}
+
+// collectMVCoveredJSONConds returns the JSON predicates among accessFilters. The ranges built for a single MVIndex
+// enforce these exactly (unsafe type conversions and empty arrays are rejected while building them), so rows
+// returned by the path always satisfy them.
+func collectMVCoveredJSONConds(accessFilters []expression.Expression) []expression.Expression {
+	var covered []expression.Expression
+	for _, f := range accessFilters {
+		sf, ok := f.(*expression.ScalarFunction)
+		if !ok {
+			continue
+		}
+		switch sf.FuncName.L {
+		case ast.JSONMemberOf, ast.JSONContains, ast.JSONOverlaps:
+			covered = append(covered, f)
+		}
+	}
+	return covered
 }
 
 // buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
