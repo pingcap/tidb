@@ -900,8 +900,9 @@ func GetStorage(
 
 func storageOpts(cfg *Config) *storeapi.Options {
 	return &storeapi.Options{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
+		NoCredentials:              cfg.NoCreds,
+		SendCredentials:            cfg.SendCreds,
+		WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
 	}
 }
 

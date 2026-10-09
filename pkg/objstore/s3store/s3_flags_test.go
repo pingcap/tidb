@@ -16,7 +16,9 @@ package s3store
 
 import (
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/spf13/pflag"
@@ -379,4 +381,39 @@ func TestS3ProfileAvoidAutoNewCred(t *testing.T) {
 	require.Equal(t, "us-west-2", s3Backend.Region)
 	require.Equal(t, "", s3Backend.AccessKey, "Should not have explicit access key when using profile")
 	require.Equal(t, "", s3Backend.SecretAccessKey, "Should not have explicit secret key when using profile")
+}
+
+func TestWebIdentitySessionDurationFlag(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		want    time.Duration
+		wantErr bool
+	}{
+		{name: "defaults to one hour", want: time.Hour},
+		{name: "accepts three hours", args: []string{"--s3.web-identity-session-duration=3h"}, want: 3 * time.Hour},
+		{name: "rejects duration below fifteen minutes", args: []string{"--s3.web-identity-session-duration=10m"}, wantErr: true},
+		{name: "rejects duration above twelve hours", args: []string{"--s3.web-identity-session-duration=13h"}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			s3like.DefineS3Flags(flags)
+			require.NoError(t, flags.Parse(tc.args))
+			options := &s3like.S3BackendOptions{}
+			err := options.ParseFromFlags(flags)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, options.WebIdentitySessionDuration)
+		})
+	}
+}
+
+func TestWebIdentitySessionDurationAWSOption(t *testing.T) {
+	var options stscreds.WebIdentityRoleOptions
+	webIdentitySessionDurationOptions(3 * time.Hour)(&options)
+	require.Equal(t, 3*time.Hour, options.Duration)
 }

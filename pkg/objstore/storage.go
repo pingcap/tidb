@@ -62,9 +62,18 @@ func NewFromURL(ctx context.Context, uri string) (storeapi.Storage, error) {
 	if u.Scheme == "memstore" {
 		return NewMemStorage(), nil
 	}
-	b, err := parseBackend(u, uri, nil)
+	var backendOptions *BackendOptions
+	if u.Scheme == "s3" || u.Scheme == "ks3" || u.Scheme == "oss" {
+		backendOptions = &BackendOptions{}
+	}
+	b, err := parseBackend(u, uri, backendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if backendOptions != nil {
+		return New(ctx, b, &storeapi.Options{
+			WebIdentitySessionDuration: backendOptions.S3.WebIdentitySessionDuration,
+		})
 	}
 	return NewWithDefaultOpt(ctx, b)
 }

@@ -152,9 +152,10 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 
 	client := backup.NewBackupClient(ctx, mgr)
 	opts := storeapi.Options{
-		NoCredentials:            cfg.NoCreds,
-		SendCredentials:          cfg.SendCreds,
-		CheckS3ObjectLockOptions: true,
+		NoCredentials:              cfg.NoCreds,
+		SendCredentials:            cfg.SendCreds,
+		WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
+		CheckS3ObjectLockOptions:   true,
 	}
 	if err = client.SetStorageAndCheckNotInUse(ctx, u, &opts); err != nil {
 		return errors.Trace(err)

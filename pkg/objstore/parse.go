@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -104,7 +105,13 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if options != nil {
 			s3Options = options.S3
 		}
-		ExtractQueryParameters(u, &s3Options)
+		if err := ExtractQueryParameters(u, &s3Options); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if options != nil {
+			options.S3.WebIdentitySessionDuration = s3Options.WebIdentitySessionDuration
+			options.S3.Region = s3Options.Region
+		}
 		s3Options.SetForcePathStyle(rawURL)
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
@@ -126,7 +133,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if options != nil {
 			gcsOptions = options.GCS
 		}
-		ExtractQueryParameters(u, &gcsOptions)
+		if err := ExtractQueryParameters(u, &gcsOptions); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if err := gcsOptions.apply(gcs); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -142,7 +151,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if options != nil {
 			azblobOptions = options.Azblob
 		}
-		ExtractQueryParameters(u, &azblobOptions)
+		if err := ExtractQueryParameters(u, &azblobOptions); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if err := azblobOptions.apply(azblob); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -155,12 +166,14 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 // ExtractQueryParameters moves the query parameters of the URL into the options
 // using reflection.
 //
-// The options must be a pointer to a struct which contains only string or bool
-// fields (more types will be supported in the future), and tagged for JSON
-// serialization.
+// The options must be a pointer to a struct with JSON-tagged string, bool, or
+// time.Duration fields. An invalid duration returns an error.
 //
 // All of the URL's query parameters will be removed after calling this method.
-func ExtractQueryParameters(u *url.URL, options any) {
+func ExtractQueryParameters(u *url.URL, options any) error {
+	defer func() {
+		u.RawQuery = ""
+	}()
 	type field struct {
 		index int
 		kind  reflect.Kind
@@ -193,14 +206,22 @@ func ExtractQueryParameters(u *url.URL, options any) {
 				}
 			case reflect.String:
 				field.SetString(param)
+			case reflect.Int64:
+				if field.Type() != reflect.TypeOf(time.Duration(0)) {
+					panic("BackendOption " + f.kind.String() + " is not supported yet")
+				}
+				v, err := time.ParseDuration(param)
+				if err != nil {
+					return errors.Annotatef(berrors.ErrStorageInvalidConfig, "invalid duration for query parameter %q: %v", key, err)
+				}
+				field.SetInt(int64(v))
 			default:
 				panic("BackendOption introduced an unsupported kind, please handle it! " + f.kind.String())
 			}
 		}
 	}
 
-	// Clean up the URL finally.
-	u.RawQuery = ""
+	return nil
 }
 
 // NormalizeQueryParameterKey normalizes object storage URL query parameter keys
