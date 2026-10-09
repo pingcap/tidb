@@ -83,6 +83,11 @@ type PointGetPlan struct {
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
 
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	// If not nil, each element corresponds to a column in the schema.
+	// The executor should evaluate these expressions instead of returning raw column values.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
+
 	// required by cost model
 	cost         float64
 	PlanCostInit bool
@@ -327,6 +332,9 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	for _, col := range p.accessCols {
 		sum += col.MemoryUsage()
 	}
+	for _, expr := range p.MaskingExprs {
+		sum += expr.MemoryUsage()
+	}
 	return
 }
 
@@ -519,7 +527,13 @@ type BatchPointGetPlan struct {
 	Lock          bool
 	LockWaitTime  int64
 	Columns       []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	cost          float64
+
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	// If not nil, each element corresponds to a column in the schema.
+	// The executor should evaluate these expressions instead of returning raw column values.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
+
+	cost float64
 
 	// required by cost model
 	PlanCostInit bool
@@ -749,6 +763,9 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 	}
 	for _, col := range p.accessCols {
 		sum += col.MemoryUsage()
+	}
+	for _, expr := range p.MaskingExprs {
+		sum += expr.MemoryUsage()
 	}
 	return
 }
