@@ -122,7 +122,7 @@ func fetchCredentials(
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		var cred *providers.Credentials
 		cred, err = provider.GetCredentials()
-		if err == nil || !IsTransientNoCredentialsError(err) {
+		if err == nil || !isTransientNoCredentialsError(err) {
 			return cred, err
 		}
 		if attempt == maxAttempts {
