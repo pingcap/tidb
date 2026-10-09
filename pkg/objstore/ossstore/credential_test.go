@@ -105,7 +105,7 @@ func TestFetchCredentials(t *testing.T) {
 			_, err := fetchCredentials(context.Background(), provider, logger)
 			require.ErrorContains(t, err, "i/o timeout")
 			// maxAttempts in fetchCredentials.
-			require.Equal(t, 300, attempts)
+			require.Equal(t, 60, attempts)
 		})
 	})
 
@@ -118,7 +118,9 @@ func TestFetchCredentials(t *testing.T) {
 			provider := mock.NewMockCredentialsProvider(ctrl)
 			provider.EXPECT().GetCredentials().Return(nil, transient)
 			_, err := fetchCredentials(ctx, provider, logger)
-			require.ErrorContains(t, err, "i/o timeout")
+			// on cancellation the caller must see ctx.Err() rather than the
+			// transient provider error.
+			require.ErrorIs(t, err, context.Canceled)
 		})
 	})
 }

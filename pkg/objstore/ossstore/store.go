@@ -153,9 +153,6 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 		ossCfg = ossCfg.WithCredentialsProvider(credProvider)
 	} else {
 		var provider providers.CredentialsProvider = providers.NewDefaultCredentialsProvider()
-		// The ECS metadata service can be transiently unreachable while resolving
-		// credentials from the default provider chain, so retry those failures
-		// here to avoid failing store creation.
 		cred, err := fetchCredentials(ctx, provider, logger)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get credentials from default provider")
@@ -164,11 +161,16 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 		// https://github.com/aliyun/credentials-go/blob/7d2a3e68402630904f518531e80b370b3649c6a1/credentials/providers/default.go#L101
 		if strings.Contains(cred.ProviderName, ecsRAMRoleProviderName) {
 			httpCli := httputil.NewClient(nil)
-			ecsRegionID, err = httputil.GetText(httpCli, regionIDMetaURL)
-			if err != nil {
-				// shouldn't happen normally, we just successfully got ECS RAM
-				// role credentials from the metadata service.
-				return nil, errors.Annotatef(err, "failed to get region ID from ECS metadata service")
+			regionID, regionErr := httputil.GetText(httpCli, regionIDMetaURL)
+			if regionErr != nil {
+				// The region ID is only used to decide whether the traffic-saving
+				// internal endpoint can be used, so a transient metadata failure
+				// here must not fail store creation. Fall back to the public
+				// endpoint instead.
+				logger.Warn("failed to get region ID from ECS metadata service, fallback to public endpoint",
+					zap.Error(regionErr))
+			} else {
+				ecsRegionID = regionID
 			}
 		}
 		if qs.RoleArn != "" {
