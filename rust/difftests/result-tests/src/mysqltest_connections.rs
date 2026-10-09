@@ -226,6 +226,13 @@ impl Connections {
         initial_database: Option<&str>,
     ) -> Result<Session, String> {
         let mut session = Session::with_catalog(SharedCatalog::clone(&self.catalog));
+        // mysql-tester answers the server's local-file request (`LOAD STATS
+        // 's/x.json'`) with the file relative to `tests/integrationtest`,
+        // the directory it runs in.
+        let local_root = difftest::parser_oracle::repo_root().join("tests/integrationtest");
+        session.set_client_local_file_reader(std::sync::Arc::new(move |path: &str| {
+            std::fs::read(local_root.join(path))
+        }));
         // Go's push-down blacklists are package-level, so `ADMIN RELOAD` on
         // one connection changes what every other connection plans. Every
         // session in this pool is the same server, so they share one handle.

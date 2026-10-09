@@ -2041,11 +2041,18 @@ fn index_join_path_is_max_one_row(
             let Some(source_index) = ds.indexes.get(*index) else {
                 return false;
             };
-            let columns = source_index
+            // Go compares `usedColsLen` with `len(FullIdxCols)`, which keeps
+            // a nil slot for every index column the DataSource pruned. Such a
+            // column can be neither a join key nor fixed by an equality, so
+            // the probe cannot pin one row.
+            let Some(columns) = source_index
                 .columns
                 .iter()
-                .filter_map(|column| ds.schema_column_for_index_column(column).cloned())
-                .collect::<Vec<_>>();
+                .map(|column| ds.schema_column_for_index_column(column).cloned())
+                .collect::<Option<Vec<_>>>()
+            else {
+                return false;
+            };
             (columns, source_index.unique)
         }
     };
@@ -4034,30 +4041,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 let runtime_probe_stats = runtime_counts.as_ref().map(|counts| counts.1.clone());
                 let scan_stats = runtime_counts.as_ref().map(|counts| counts.2.clone()).or(stats.clone());
                 base.base.set_stats(scan_stats.clone());
-                let mut cost_columns = source_index
-                    .columns
-                    .iter()
-                    .filter_map(|column| ds.table_columns.get(column.offset).cloned())
-                    .collect::<Vec<_>>();
-                // Go `convertToIndexScan` appends the table handle columns to
-                // the physical index schema even when the same logical
-                // columns already occur in the secondary index.  Cost model
-                // v2 prices that physical schema verbatim: for a four-column
-                // secondary index over a three-column common handle this is
-                // seven INT slots, not the four-column set-union.  Retaining
-                // the duplicates is therefore both an execution-schema and
-                // a plan-cost contract, not an index-width heuristic.
-                cost_columns.extend(ds.common_handle_cols.iter().cloned());
-                // Go `InitSchema` (`physical_index_scan.go:363`) appends the
-                // handle only when the index schema does not already carry
-                // one (`setHandle`). A common handle was just appended, and
-                // this port keeps `handle_cols` as the SAME columns as
-                // `common_handle_cols` for such a table, so appending both
-                // would price three extra INT slots and flip the range-path
-                // choice back to the table scan.
-                if ds.common_handle_cols.is_empty() {
-                    cost_columns.extend(ds.handle_cols.iter().cloned());
-                }
+                // Go `getPlanCostVer24PhysicalIndexScan` prices the scan's own
+                // physical schema (`InitSchema`): every index column -- a
+                // pruned one as a fresh column without statistics -- then the
+                // common handle, the retained handle, or for a double read a
+                // fresh `_tidb_rowid`. A secondary index over a three-column
+                // common handle therefore prices seven slots, duplicates
+                // included.
+                let cost_columns = base
+                    .base
+                    .schema()
+                    .map(|schema| schema.columns.clone())
+                    .unwrap_or_default();
                 let scan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
                     base,
                     table_id: ds.physical_table_id,

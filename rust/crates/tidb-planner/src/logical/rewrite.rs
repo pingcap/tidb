@@ -2536,6 +2536,8 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                         source,
                         &derivation,
                         self.index_merge_enabled,
+                        self.rule_context
+                            .is_some_and(|context| context.no_index_merge_hint),
                         self.opt_prefix_index_single_scan,
                         self.use_plan_cache,
                     ) {

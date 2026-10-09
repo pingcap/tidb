@@ -313,6 +313,9 @@ pub struct CostSessionOpts {
     pub mpp_allowed: bool,
     /// Go `SessionVars.IsMPPEnforced()`: both allow and enforce are on.
     pub mpp_enforced: bool,
+    /// Go `SessionVars.EnableChunkRPC` (`tidb_enable_chunk_rpc`): readers
+    /// size their network rows in chunk format.
+    pub enable_chunk_rpc: bool,
 }
 
 impl Default for CostSessionOpts {
@@ -339,6 +342,7 @@ impl Default for CostSessionOpts {
             use_hash_join_v2: true,
             mpp_allowed: true,
             mpp_enforced: false,
+            enable_chunk_rpc: true,
         }
     }
 }

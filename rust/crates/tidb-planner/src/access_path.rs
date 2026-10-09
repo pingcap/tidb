@@ -128,6 +128,7 @@ pub(crate) fn derive_access_paths(
     source: &mut crate::logical::DataSource,
     context: &AccessPathDerivationContext<'_>,
     index_merge_enabled: bool,
+    no_index_merge_hint: bool,
     prefix_single_scan: bool,
     use_plan_cache: bool,
 ) -> Result<DerivedAccessPaths, crate::plan_base::PlanError> {
@@ -177,7 +178,9 @@ pub(crate) fn derive_access_paths(
         })
         .unwrap_or(source.access_path_min_selectivity)
         .min(1.0);
-    if index_merge_enabled || !source.index_merge_hints.is_empty() {
+    // Go `generateIndexMergePath`: `(EnableIndexMerge || len(IndexMergeHints)
+    // > 0) && !NoIndexMergeHint`.
+    if (index_merge_enabled || !source.index_merge_hints.is_empty()) && !no_index_merge_hint {
         let mut merges = Vec::new();
         for path in index_merge::prepare_union_index_merge_paths(source, context, use_plan_cache)? {
             merges.push(DerivedAccessPath::Union(path));

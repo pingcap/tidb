@@ -622,6 +622,8 @@ pub struct RuleContext<'a> {
     pub opt_prefix_index_single_scan: bool,
     /// Go EnableIndexMerge, used before physical property search.
     pub index_merge_enabled: bool,
+    /// Go `StmtCtx.NoIndexMergeHint`, which overrides `USE_INDEX_MERGE`.
+    pub no_index_merge_hint: bool,
     /// Go `SessionVars.RangeMaxSize`; zero means unlimited.
     pub range_max_size: i64,
     /// Go SessionVars.SelectivityFactor for uncovered or partially covered predicates.

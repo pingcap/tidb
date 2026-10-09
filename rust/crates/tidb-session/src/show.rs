@@ -796,13 +796,7 @@ impl Session {
             tidb_ast::AdminStmt::AnalyzeTable(_) | tidb_ast::AdminStmt::AnalyzeIncremental(_) => {
                 self.analyze_stmt(admin)
             }
-            // Go receives LOAD STATS bytes through the MySQL client-local
-            // transfer handler and persists them through the statistics
-            // handle. The standalone session has neither boundary; the
-            // cluster connection owns the complete path.
-            tidb_ast::AdminStmt::LoadStats(_) => Err(DriverError::unsupported(
-                "LOAD STATS requires client-local file transfer",
-            )),
+            tidb_ast::AdminStmt::LoadStats(load) => self.load_stats_stmt(&load.path).map(Some),
             tidb_ast::AdminStmt::LockStats(lock) => self.stats_lock_stmt(lock, true),
             tidb_ast::AdminStmt::UnlockStats(unlock) => self.stats_lock_stmt(unlock, false),
             tidb_ast::AdminStmt::CreateWorkloadSnapshot => {

@@ -500,10 +500,15 @@ impl Ver2Coster {
                 );
                 let index_side = crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
+                        // Go `cardinality.GetAvgRowSize(GetTblStats(p.IndexPlan),
+                        // p.IndexPlan.Schema().Columns, isEncodedKey: true)`.
                         net_cost(
                             self.cost_option(),
                             index_rows,
-                            index_plan.map_or_else(|| Self::row_size(plan), Self::row_size),
+                            index_plan.map_or_else(
+                                || Self::row_size(plan),
+                                |plan| plan.cop_avg_row_size(true, self.session.enable_chunk_rpc),
+                            ),
                             net_factor,
                         ),
                         index_child,
@@ -518,10 +523,15 @@ impl Ver2Coster {
                 );
                 let table_side = crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
+                        // Go `cardinality.GetAvgRowSize(GetTblStats(p.TablePlan),
+                        // p.TablePlan.Schema().Columns, isEncodedKey: false)`.
                         net_cost(
                             self.cost_option(),
                             table_rows,
-                            table_plan.map_or_else(|| Self::row_size(plan), Self::row_size),
+                            table_plan.map_or_else(
+                                || Self::row_size(plan),
+                                |plan| plan.cop_avg_row_size(false, self.session.enable_chunk_rpc),
+                            ),
                             net_factor,
                         ),
                         table_child,

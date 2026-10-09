@@ -310,9 +310,9 @@ fn check_child_row_changes(
             }) {
                 continue;
             }
-            if !wanted.contains(&key) {
-                wanted.push(key);
-            }
+            // Go `FKCheckExec.addRowNeedToCheck` appends every row's key; a
+            // linear de-duplication here made a large INSERT quadratic.
+            wanted.push(key);
         }
         if wanted.is_empty() {
             continue;

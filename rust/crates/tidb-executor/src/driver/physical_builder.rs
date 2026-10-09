@@ -1542,6 +1542,10 @@ fn materialize_reader_topn_keys(
             Expression::Column(column),
         ));
     }
+    // The child's columns carry the offsets of the schema they were planned
+    // in (a pushed Projection's output keeps its scan offsets), so both the
+    // passed-through columns and the moved keys resolve against the child.
+    let expressions = resolve_expressions(&expressions, child.schema())?;
     Ok(Box::new(ProjectionExec::new(
         meta(ctx, plan, schema),
         expressions,

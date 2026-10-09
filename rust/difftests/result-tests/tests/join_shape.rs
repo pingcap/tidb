@@ -586,14 +586,18 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
         );
     }
 
-    // Recorded snapshot, not complete join parity. The historical increase of
-    // 19 agreeing plans was not reviewed statement by statement; retain that
-    // limitation and inspect recorded witnesses before updating these counts.
-    const COMPARED: usize = 246;
-    const BOTH_AGREE: usize = 168;
-    const RECORDED_MERGE_PAIRS: usize = 90;
-    const AGREED_MERGE_PAIRS: usize = 86;
-    const EXTRA_MERGE_PAIRS: usize = 5;
+    // Recorded snapshot, not complete join parity. Every count moved the
+    // right way when it was last re-recorded (more plans compared, all merge
+    // pairs reproduced, none extra); the nine disagreements left are the
+    // TIDB_SMJ hint over a cross or other-condition join, a qualified
+    // TIDB_INLJ hint on a semi join, two subqueries Go decorrelates, and one
+    // join-reorder inner-side choice. Inspect recorded witnesses before
+    // updating these counts.
+    const COMPARED: usize = 279;
+    const BOTH_AGREE: usize = 270;
+    const RECORDED_MERGE_PAIRS: usize = 100;
+    const AGREED_MERGE_PAIRS: usize = 100;
+    const EXTRA_MERGE_PAIRS: usize = 0;
 
     assert_eq!(
         (

@@ -79,6 +79,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         opt_index_prune_threshold: 20,
         opt_prefix_index_single_scan: true,
         index_merge_enabled: true,
+        no_index_merge_hint: false,
         range_max_size: 0,
         selectivity_factor: crate::cost_factors::SELECTION_FACTOR,
         range_fallback_handler: None,

@@ -110,10 +110,7 @@ impl Retriever for MemStorage {
         key: Option<&Key>,
         upper_bound: Option<&Key>,
     ) -> Result<Self::Iterator, MemStorageError> {
-        let entries = self
-            .data
-            .iter()
-            .filter(|(stored, _)| in_range(stored, key, upper_bound))
+        let entries = range_entries(&self.data, key, upper_bound)
             .map(|(stored, value)| (stored.clone(), value.clone()))
             .collect();
         Ok(MemIterator::new(entries))
@@ -126,31 +123,31 @@ impl Retriever for MemStorage {
     ) -> Result<Self::Iterator, MemStorageError> {
         // Go's reverse iterator walks `[lowerBound, key)`, i.e. the exclusive
         // bound is the upper one, in descending key order.
-        let mut entries: Vec<(Key, Vec<u8>)> = self
-            .data
-            .iter()
-            .filter(|(stored, _)| in_range(stored, lower_bound, key))
+        let entries: Vec<(Key, Vec<u8>)> = range_entries(&self.data, lower_bound, key)
+            .rev()
             .map(|(stored, value)| (stored.clone(), value.clone()))
             .collect();
-        entries.reverse();
         Ok(MemIterator::new(entries))
     }
 }
 
-/// Whether `key` lies in the half-open range `[start, end)`; `None` is Go's
-/// `nil`, an unbounded end.
-fn in_range(key: &Key, start: Option<&Key>, end: Option<&Key>) -> bool {
-    if let Some(start) = start {
-        if key < start {
-            return false;
-        }
-    }
-    if let Some(end) = end {
-        if key >= end {
-            return false;
-        }
-    }
-    true
+/// The entries in the half-open range `[start, end)`; `None` is Go's `nil`,
+/// an unbounded end. Seeks the sorted map instead of filtering every entry,
+/// so a point or prefix read costs the range it covers, not the table.
+fn range_entries<'a>(
+    data: &'a BTreeMap<Key, Vec<u8>>,
+    start: Option<&Key>,
+    end: Option<&Key>,
+) -> std::collections::btree_map::Range<'a, Key, Vec<u8>> {
+    use std::ops::Bound;
+    let lower = start.map_or(Bound::Unbounded, Bound::Included);
+    let upper = match (start, end) {
+        // An inverted range is empty; `BTreeMap::range` would panic on it.
+        (Some(start), Some(end)) if end < start => Bound::Excluded(start),
+        (_, Some(end)) => Bound::Excluded(end),
+        (_, None) => Bound::Unbounded,
+    };
+    data.range::<Key, _>((lower, upper))
 }
 
 /// A snapshot iterator over a range of [`MemStorage`].

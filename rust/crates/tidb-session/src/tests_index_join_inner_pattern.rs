@@ -545,3 +545,52 @@ fn index_probe_group_expression_preserves_whole_groups() {
         assert_eq!(row_text(session.run(&sql)), vec![vec!["2"]], "{hint}");
     }
 }
+
+/// Go `TestIssue33231` (`partition_pruner.test`). Two outer rows with the
+/// same key and different `c_str` rebuild OVERLAPPING inner ranges from the
+/// `t1.c_str <= t2.c_str` comparison -- `[7, >= 'affectionate']` and
+/// `[7, >= 'epic']`. Go's `buildKvRangesForIndexJoin` unions a task's ranges
+/// (`ranger.UnionRanges`), so the inner row is read once; reading it once per
+/// range joined each outer row with it twice. Both the common-handle table
+/// path and a secondary-index path build these ranges.
+#[test]
+fn overlapping_compare_ranges_read_each_inner_row_once() {
+    for (clustered, inner) in [("CLUSTERED", "PRIMARY"), ("NONCLUSTERED", "k")] {
+        let mut session = Session::new();
+        session
+            .run("set @@session.tidb_partition_prune_mode = 'dynamic'")
+            .unwrap();
+        session
+            .run(&format!(
+                "create table t1 (c_int int, c_str varchar(40), primary key (c_int, c_str) \
+                 {clustered}, key k (c_int, c_str)) partition by hash (c_int) partitions 4"
+            ))
+            .unwrap();
+        session.run("create table t2 like t1").unwrap();
+        session
+            .run("insert into t1 values (6, 'beautiful curran'), (7, 'epic kalam'), (7, 'affectionate curie')")
+            .unwrap();
+        session
+            .run("insert into t2 values (6, 'vigorous rhodes'), (7, 'sweet aryabhata')")
+            .unwrap();
+        let sql = format!(
+            "select /*+ INL_JOIN(t2) use_index(t2, {inner}) */ * from t1, t2 \
+             where t1.c_int = t2.c_int and t1.c_str <= t2.c_str and t2.c_int in (6, 7, 6) \
+             order by t1.c_int, t1.c_str"
+        );
+        let explain = plan(&mut session, &format!("explain {sql}"));
+        assert!(
+            explain.contains("IndexJoin") && explain.contains("le(test.t1.c_str, test.t2.c_str)"),
+            "{clustered}: the comparison must decide the inner ranges:\n{explain}"
+        );
+        assert_eq!(
+            row_text(session.run(&sql)),
+            vec![
+                vec!["6", "beautiful curran", "6", "vigorous rhodes"],
+                vec!["7", "affectionate curie", "7", "sweet aryabhata"],
+                vec!["7", "epic kalam", "7", "sweet aryabhata"],
+            ],
+            "{clustered}:\n{explain}"
+        );
+    }
+}

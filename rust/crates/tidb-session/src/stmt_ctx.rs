@@ -295,6 +295,7 @@ impl Session {
             && tidb_executor::hash_join_version::is_hash_join_v2_supported();
         env.session.mpp_allowed = enabled("tidb_allow_mpp", true);
         env.session.mpp_enforced = env.session.mpp_allowed && enabled("tidb_enforce_mpp", false);
+        env.session.enable_chunk_rpc = enabled("tidb_enable_chunk_rpc", true);
 
         env.cost_factors.index_scan = number("tidb_opt_index_scan_cost_factor", 1.0);
         env.cost_factors.table_row_id_scan = number("tidb_opt_table_rowid_scan_cost_factor", 1.0);
@@ -1311,6 +1312,7 @@ impl Session {
                     .with_join_reorder_through_sel(join_reorder_through_sel)
                     .with_outer_join_reorder(outer_join_reorder)
                     .with_index_merge(index_merge)
+                    .with_no_index_merge_hint(self.stmt_hints.no_index_merge_hint)
                     .with_pushdown_blacklists(self.pushdown_blacklists.snapshot())
                     .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
                     .with_statement_phase_observer(self.statement_phase_observer())
@@ -1547,6 +1549,7 @@ impl Session {
                 .with_join_reorder_through_sel(join_reorder_through_sel)
                 .with_outer_join_reorder(outer_join_reorder)
                 .with_index_merge(index_merge)
+                .with_no_index_merge_hint(self.stmt_hints.no_index_merge_hint)
                 .with_static_partition_prune(static_partition_prune);
             if let Some(parameters) = &self.prepared_params {
                 let _ = ctx.with_prepared_params(Arc::clone(parameters));

@@ -121,4 +121,8 @@ pub const TOPICS: &[&str] = &[
     "executor/expand",
     "session/vars",
     "planner/core/integration_partition",
+    "explain_join_stats",
+    "imdbload",
+    "clustered_index",
+    "explain_indexmerge_stats",
 ];

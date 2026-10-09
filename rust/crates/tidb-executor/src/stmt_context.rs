@@ -798,6 +798,9 @@ pub struct StmtContextData {
     /// Go `SessionVars.EnableIndexMerge`: whether automatic IndexMerge paths
     /// participate in this statement's costed access-path selection.
     index_merge: bool,
+    /// Go `StmtCtx.NoIndexMergeHint`: `NO_INDEX_MERGE()` forbids IndexMerge
+    /// paths even when a `USE_INDEX_MERGE` hint names them.
+    no_index_merge_hint: bool,
     /// Whether planning this statement built an Apply -- Go
     /// `isPhysicalPlanCacheable`'s `*physicalop.PhysicalApply` arm, which
     /// refuses to cache any plan containing one. A channel because the
@@ -1535,6 +1538,13 @@ context_configuration! {
         self
     }
 
+    /// Records the statement's `NO_INDEX_MERGE()` hint.
+    #[must_use]
+    pub fn with_no_index_merge_hint(mut self, hinted: bool) -> Self {
+        self.no_index_merge_hint = hinted;
+        self
+    }
+
     /// Sets `@@tidb_opt_write_row_id` for this statement.
     #[must_use]
     pub fn with_allow_write_row_id(mut self, allowed: bool) -> Self {
@@ -2098,6 +2108,7 @@ impl StmtContext {
             outer_join_reorder: true,
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
+            no_index_merge_hint: false,
             planned_apply: session.planned_apply,
             process_plan_info: None,
             publish_brief_binary_plan: true,
@@ -3251,6 +3262,12 @@ impl StmtContext {
     #[must_use]
     pub fn index_merge(&self) -> bool {
         self.index_merge
+    }
+
+    /// Go `StmtCtx.NoIndexMergeHint`.
+    #[must_use]
+    pub fn no_index_merge_hint(&self) -> bool {
+        self.no_index_merge_hint
     }
 
     /// Go `SessionVars.IsDynamicPartitionPruneEnabled()`, inverted:

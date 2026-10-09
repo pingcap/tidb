@@ -5392,10 +5392,7 @@ impl IndexJoinLookupExec {
             return Ok(());
         };
         let first_probe = self.next_probe;
-        let mut ranges = Vec::with_capacity(self.probes.len().saturating_sub(first_probe));
-        while let Some((probe, bounds)) = self.next_probe_with_bounds() {
-            ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
-        }
+        let ranges = self.take_probe_ranges(None)?;
         if ranges.is_empty() {
             return Ok(());
         }
@@ -5746,6 +5743,50 @@ impl IndexJoinLookupExec {
             .collect())
     }
 
+    /// The ranges the remaining probes read, at most `limit` of them when the
+    /// probes are plain points.
+    ///
+    /// Go `buildKvRangesForIndexJoin` (`executor/builder.go:5499`): with a
+    /// next-column comparison (`ColWithCmpFuncManager`) two outer rows can
+    /// rebuild OVERLAPPING ranges -- `[7, >= 'affectionate']` and
+    /// `[7, >= 'epic']` -- so the task's ranges go through
+    /// `ranger.UnionRanges(.., true)` and each inner row is read once. That
+    /// union spans the whole task, so the limit does not apply to it.
+    fn take_probe_ranges(&mut self, limit: Option<usize>) -> Result<Vec<IndexRange>, ExecError> {
+        let compare = !self.probe_bound_ops.is_empty();
+        let mut ranges = Vec::new();
+        while compare || limit.is_none_or(|limit| ranges.len() < limit) {
+            let Some((probe, bounds)) = self.next_probe_with_bounds() else {
+                break;
+            };
+            ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
+        }
+        if !compare || ranges.len() < 2 {
+            return Ok(ranges);
+        }
+        let ranges = ranges
+            .into_iter()
+            .map(|range| tidb_planner::ranger::types::Range {
+                low_val: range.low,
+                high_val: range.high,
+                collators: Vec::new(),
+                low_exclude: range.low_exclusive,
+                high_exclude: range.high_exclusive,
+            })
+            .collect();
+        let ranges = tidb_planner::ranger::ranger::union_ranges(ranges, true)
+            .map_err(|error| ExecError::internal(format!("index-join range union: {error}")))?;
+        Ok(ranges
+            .into_iter()
+            .map(|range| IndexRange {
+                low: range.low_val,
+                high: range.high_val,
+                low_exclusive: range.low_exclude,
+                high_exclusive: range.high_exclude,
+            })
+            .collect())
+    }
+
     /// The next probe's converted key tuple, bounds dropped. Callers that do
     /// not open ranges (batched complete-handle lookups) never carry bounds.
     fn next_probe(&mut self) -> Option<Vec<Datum>> {
@@ -5914,10 +5955,7 @@ impl IndexJoinLookupExec {
                     // outer-derived bound exists, otherwise Go's
                     // `buildRangesForIndexJoin` last-slot extension. One
                     // batch of outer rows becomes one multi-range walk.
-                    let mut ranges = Vec::with_capacity(self.probes.len());
-                    while let Some((probe, bounds)) = self.next_probe_with_bounds() {
-                        ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
-                    }
+                    let ranges = self.take_probe_ranges(None)?;
                     if ranges.is_empty() {
                         return Ok(None);
                     }
@@ -5986,13 +6024,7 @@ impl IndexJoinLookupExec {
     /// ranges (Go's inner worker builds one reader per task over the task's
     /// lookup ranges). `false` when the probes are exhausted.
     fn advance_common_handle_cursor(&mut self) -> Result<bool, ExecError> {
-        let mut ranges = Vec::with_capacity(INDEX_LOOKUP_BATCH_SIZE);
-        while ranges.len() < INDEX_LOOKUP_BATCH_SIZE {
-            let Some((probe, bounds)) = self.next_probe_with_bounds() else {
-                break;
-            };
-            ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
-        }
+        let ranges = self.take_probe_ranges(Some(INDEX_LOOKUP_BATCH_SIZE))?;
         if ranges.is_empty() {
             return Ok(false);
         }
@@ -6158,10 +6190,7 @@ impl IndexJoinLookupExec {
     /// fallback.
     fn open_prefetched_common_handle_cursor(&mut self) -> Result<bool, ExecError> {
         let first_probe = self.next_probe;
-        let mut ranges = Vec::with_capacity(self.probes.len().saturating_sub(first_probe));
-        while let Some((probe, bounds)) = self.next_probe_with_bounds() {
-            ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
-        }
+        let ranges = self.take_probe_ranges(None)?;
         if ranges.is_empty() {
             self.next_probe = first_probe;
             return Ok(false);

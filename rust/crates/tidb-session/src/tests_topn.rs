@@ -321,3 +321,55 @@ fn a_distinct_over_a_group_by_limits_after_the_dedup_like_go() {
         );
     }
 }
+
+/// Go `TestTopNHeavyFunctionOptimize` (`topn_heavy_function_optimize.test`):
+/// with projection push-down, a heavy by-item that is not the first one
+/// splits into a pushed Projection that materializes the distance and a
+/// pushed TopN whose leading key is an expression. The reader evaluates that
+/// key through a private projection over the pushed Projection's output;
+/// those columns still carried their scan offsets, so the projection read the
+/// wrong slots -- garbled values, and an out-of-bounds read on a vector
+/// column. Expected rows are TiDB's recording.
+#[test]
+fn a_pushed_topn_key_over_a_pushed_projection_reads_its_own_columns() {
+    let mut session = Session::new();
+    session
+        .run("set session tidb_opt_projection_push_down=1")
+        .unwrap();
+    session
+        .run(
+            "create table recipes (id bigint primary key, title varchar(32), rating double, \
+             review_count int, embedding_title vector(3), embedding_content vector(3))",
+        )
+        .unwrap();
+    session
+        .run(
+            "insert into recipes values (1, 'r1', 4, 10, '[1,0,0]', '[1,0,0]'), \
+             (2, 'r2', 4, 10, '[0,1,0]', '[0,1,0]'), (3, 'r3', 5, 5, '[0,0,1]', '[1,0,0]')",
+        )
+        .unwrap();
+    let sql = "select id, review_count, rating, embedding_title, embedding_content from recipes \
+               where embedding_title is not null and embedding_content is not null order by \
+               coalesce((((ifnull(review_count, 0) * ifnull(rating, 0)) + 0) / (ifnull(review_count, 0) + 1)), 0) desc, \
+               (1 * (1 - vec_cosine_distance(embedding_title, '[1,0,0]'))) + \
+               (1 * (1 - vec_cosine_distance(embedding_content, '[1,0,0]'))) desc limit 2";
+    let explain = plan(&mut session, &format!("explain format='brief' {sql}"));
+    assert!(
+        explain
+            .iter()
+            .any(|row| row.contains("Projection") && row.contains("cop[tikv]")),
+        "the distance must be materialized by a pushed Projection:\n{}",
+        explain.join("\n")
+    );
+    assert_eq!(
+        flat(row_text(session.run(sql))),
+        vec!["3,5,5,[0,0,1],[1,0,0]", "1,10,4,[1,0,0],[1,0,0]"]
+    );
+    assert_eq!(
+        flat(row_text(session.run(
+            "select id, review_count, rating from recipes order by review_count + 0 desc, \
+             vec_cosine_distance(embedding_title, '[1,0,0]') desc limit 2"
+        ))),
+        vec!["2,10,4", "1,10,4"]
+    );
+}

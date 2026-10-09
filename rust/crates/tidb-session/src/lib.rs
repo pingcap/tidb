@@ -35,6 +35,7 @@ use tidb_ast::Stmt;
 use tidb_datatype::{Datum, FieldType};
 use tidb_executor::{Catalog, DriverError, MysqlRng};
 use tidb_executor::{SchemaErrorKind, DEFAULT_DATABASE};
+pub use load_stats_arm::ClientLocalFileReader;
 pub use tidb_planner::txn_mode::{
     txn_mode_for_begin, txn_mode_for_statement, SessionTxnMode, StatementTxnModeInputs,
     OPTIMISTIC_TXN_MODE, PESSIMISTIC_TXN_MODE,
@@ -850,6 +851,9 @@ pub struct Session {
     /// alone changes no plan. SHARED across the sessions a front end opens,
     /// because Go's scope for them is one server. See [`blacklist`].
     pushdown_blacklists: blacklist::PushdownBlacklists,
+    /// The client half of the protocol's local-file transfer, which
+    /// `LOAD STATS` reads its dump through (see [`load_stats_arm`]).
+    client_local_file_reader: Option<load_stats_arm::ClientLocalFileReader>,
     /// The channel `StmtContext::report_planned_apply` writes: whether the
     /// statement now running planned an Apply. Read by the prepared plan
     /// cache (Go's `PhysicalApply` refusal) and cleared per statement.
@@ -1013,6 +1017,7 @@ impl Session {
             global_binding_cache: None,
             global_binding_writer: None,
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
+            client_local_file_reader: None,
             planned_apply: Arc::default(),
             mpp_query_info: Arc::default(),
             external_mpp_query_scope: false,
@@ -1170,6 +1175,7 @@ mod explain_arm;
 mod gcutil;
 mod identity;
 pub mod infoschema;
+mod load_stats_arm;
 mod non_prepared_plan_cache;
 mod noop;
 mod observation;
