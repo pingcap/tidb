@@ -712,9 +712,7 @@ INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...');
 ANALYZE TABLE t all columns;
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483649;
 id	task	access object	operator info
-TableReader	root	partition:p0	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, -2147483648), le(executor__partition__partition_boundaries.t.a, -2147483649)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483649;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483648;
@@ -791,9 +789,7 @@ a	b
 -2147483648	MIN_INT filler...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 0 AND -1;
 id	task	access object	operator info
-TableReader	root	partition:p0	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 0), le(executor__partition__partition_boundaries.t.a, -1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 0 AND -1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 0 AND 0;
@@ -885,9 +881,7 @@ a	b
 999999	999999 Filler ...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 999998 AND 999997;
 id	task	access object	operator info
-TableReader	root	partition:p0	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 999998), le(executor__partition__partition_boundaries.t.a, 999997)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 999998 AND 999997;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 999998 AND 999998;
@@ -997,9 +991,7 @@ a	b
 999999	999999 Filler ...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 999999 AND 999998;
 id	task	access object	operator info
-TableReader	root	partition:p0	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 999999), le(executor__partition__partition_boundaries.t.a, 999998)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 999999 AND 999998;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 999999 AND 999999;
@@ -1107,9 +1099,7 @@ a	b
 999999	999999 Filler ...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 1000000 AND 999999;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 1000000), le(executor__partition__partition_boundaries.t.a, 999999)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 1000000 AND 999999;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000000;
@@ -1216,9 +1206,7 @@ a	b
 2000002	2000002 Filler ...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000000;
 id	task	access object	operator info
-TableReader	root	partition:p1	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 1000001), le(executor__partition__partition_boundaries.t.a, 1000000)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000000;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000001;
@@ -1322,9 +1310,7 @@ a	b
 2000002	2000002 Filler ...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000001;
 id	task	access object	operator info
-TableReader	root	partition:p1	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 1000002), le(executor__partition__partition_boundaries.t.a, 1000001)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000001;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000002;
@@ -1423,9 +1409,7 @@ a	b
 2000002	2000002 Filler ...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 3000000 AND 2999999;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 2999999)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 2999999;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000000;
@@ -1493,9 +1477,7 @@ SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000002;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000000;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000000)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000000;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000001;
@@ -1582,9 +1564,7 @@ INSERT INTO t VALUES (6, '6 Filler...');
 ANALYZE TABLE t all columns;
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 2 AND -1;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 2 AND -1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN -1 AND 4;
@@ -1601,9 +1581,7 @@ a	b
 4	4 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 2 AND 0;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 2 AND 0;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 0 AND 4;
@@ -1620,9 +1598,7 @@ a	b
 4	4 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 2 AND 1;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 2 AND 1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 1 AND 4;
@@ -1703,9 +1679,7 @@ a	b
 5	5 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 5 AND 4;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 5), le(executor__partition__partition_boundaries.t.a, 4)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 5 AND 4;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 2 AND 6;
@@ -1722,9 +1696,7 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 6 AND 4;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 6), le(executor__partition__partition_boundaries.t.a, 4)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 6 AND 4;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 2 AND 7;
@@ -1741,9 +1713,7 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a BETWEEN 7 AND 4;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 7), le(executor__partition__partition_boundaries.t.a, 4)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a BETWEEN 7 AND 4;
 a	b
 set @@tidb_partition_prune_mode = 'dynamic';
@@ -3425,16 +3395,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a > 2 AND a < -1;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a > 2 AND a < -1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a < 2 OR a > -1);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a < 2 OR a > -1);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a > 2 AND a < -1);
@@ -3467,16 +3433,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a >= 2 AND a < -1;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a >= 2 AND a < -1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a < 2 OR a >= -1);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a < 2 OR a >= -1);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a >= 2 AND a < -1);
@@ -3509,16 +3471,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a > 2 AND a <= -1;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a > 2 AND a <= -1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a <= 2 OR a > -1);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a <= 2 OR a > -1);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a > 2 AND a <= -1);
@@ -3551,16 +3509,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a >= 2 AND a <= -1;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a >= 2 AND a <= -1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a <= 2 OR a >= -1);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a <= 2 OR a >= -1);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a >= 2 AND a <= -1);
@@ -3635,16 +3589,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a > 2 AND a < 0;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a > 2 AND a < 0;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a < 2 OR a > 0);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a < 2 OR a > 0);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a > 2 AND a < 0);
@@ -3677,16 +3627,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a >= 2 AND a < 0;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a >= 2 AND a < 0;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a < 2 OR a >= 0);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a < 2 OR a >= 0);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a >= 2 AND a < 0);
@@ -3719,16 +3665,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a > 2 AND a <= 0;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a > 2 AND a <= 0;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a <= 2 OR a > 0);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a <= 2 OR a > 0);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a > 2 AND a <= 0);
@@ -3761,16 +3703,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a >= 2 AND a <= 0;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a >= 2 AND a <= 0;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 0);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a <= 2 OR a >= 0);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 0);
@@ -3845,16 +3783,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a > 2 AND a < 1;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a > 2 AND a < 1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a < 2 OR a > 1);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a < 2 OR a > 1);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a > 2 AND a < 1);
@@ -3887,16 +3821,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a >= 2 AND a < 1;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a >= 2 AND a < 1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a < 2 OR a >= 1);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a < 2 OR a >= 1);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a >= 2 AND a < 1);
@@ -3929,16 +3859,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a > 2 AND a <= 1;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a > 2 AND a <= 1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a <= 2 OR a > 1);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a <= 2 OR a > 1);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a > 2 AND a <= 1);
@@ -3971,16 +3897,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a >= 2 AND a <= 1;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a >= 2 AND a <= 1;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 1);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a <= 2 OR a >= 1);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 1);
@@ -4054,9 +3976,7 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a > 2 AND a < 2;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a > 2 AND a < 2;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a < 2 OR a > 2);
@@ -4097,16 +4017,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a >= 2 AND a < 2;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a >= 2 AND a < 2;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a < 2 OR a >= 2);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a < 2 OR a >= 2);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a >= 2 AND a < 2);
@@ -4139,16 +4055,12 @@ a	b
 6	6 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE a > 2 AND a <= 2;
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 2)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE a > 2 AND a <= 2;
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a <= 2 OR a > 2);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 2)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a <= 2 OR a > 2);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a > 2 AND a <= 2);
@@ -4189,9 +4101,7 @@ a	b
 2	2 Filler...
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 2);
 id	task	access object	operator info
-TableReader	root	partition:dual	data:Selection
-└─Selection	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2)
-  └─TableFullScan	cop[tikv]	table:t	keep order:false
+TableDual	root		rows:0
 SELECT * FROM t WHERE NOT (a <= 2 OR a >= 2);
 a	b
 explain format='plan_tree' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 2);
