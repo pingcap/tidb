@@ -186,9 +186,9 @@ impl InsertStmt {
                 }
                 push_name_path(out, c);
                 out.push('=');
-                v.restore_into(out);
+                v.restore_into_with_context(out, context);
             }
-            restore_insert_tail(self, out);
+            restore_insert_tail(self, out, context);
             return;
         }
         if self.columns_specified {
@@ -224,12 +224,12 @@ impl InsertStmt {
                     if j > 0 {
                         out.push(',');
                     }
-                    e.restore_into(out);
+                    e.restore_into_with_context(out, context);
                 }
                 out.push(')');
             }
         }
-        restore_insert_tail(self, out);
+        restore_insert_tail(self, out, context);
     }
 }
 
@@ -436,7 +436,7 @@ impl UpdateStmt {
             if i > 0 {
                 out.push_str(", ");
             }
-            a.restore_into(out);
+            a.restore_into_with_context(out, context);
         }
         if let Some(w) = &self.where_clause {
             out.push_str(" WHERE ");
@@ -606,7 +606,7 @@ fn restore_target_list(out: &mut String, targets: &[Vec<String>], context: &Rest
     }
 }
 
-fn restore_insert_tail(statement: &InsertStmt, out: &mut String) {
+fn restore_insert_tail(statement: &InsertStmt, out: &mut String, context: &RestoreContext) {
     if let Some(alias) = &statement.row_alias {
         out.push_str(" AS ");
         out.push_str(&back_quote(alias));
@@ -627,7 +627,7 @@ fn restore_insert_tail(statement: &InsertStmt, out: &mut String) {
             if index > 0 {
                 out.push(',');
             }
-            assignment.restore_into(out);
+            assignment.restore_into_with_context(out, context);
         }
     }
     restore_returning(out, &statement.returning);
@@ -664,9 +664,14 @@ impl Assignment {
     }
 
     pub(crate) fn restore_into(&self, out: &mut String) {
+        self.restore_into_with_context(out, &RestoreContext::default());
+    }
+
+    /// Go `Assignment.Restore(ctx)`: the value follows the context's flags.
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         push_name_path(out, &self.col);
         out.push('=');
-        self.value.restore_into(out);
+        self.value.restore_into_with_context(out, context);
     }
 }
 

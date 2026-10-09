@@ -297,17 +297,22 @@ fn process_status_uses_the_typed_autocommit_and_transaction_bits() {
     assert_eq!(session.status_text(), "autocommit");
 }
 
-/// A session that has pinned a historical timestamp must not be answered
-/// from the present.
+/// A session that has pinned `tidb_snapshot` must not be answered from the
+/// present: Go reads the session's `SnapshotTS`, and this tier refuses it --
+/// the same answer `tidb-planner`'s bounded scan gives
+/// (`UnsupportedReadOnlyFeature::StaleRead`). Silently returning current rows
+/// is the one outcome a client cannot detect.
 ///
-/// Go reads the PAST for both of these: `tidb_snapshot` sets the session's
-/// `SnapshotTS`, and a negative `tidb_read_staleness` reads
-/// `now() - staleness` (`CalculateAsOfTsExpr`). This tier's store keeps no
-/// MVCC history, so it refuses -- the same answer `tidb-planner`'s bounded
-/// scan already gives (`UnsupportedReadOnlyFeature::StaleRead`). Silently
-/// returning current rows is the one outcome a client cannot detect.
+/// `tidb_read_staleness` is no such pin on this store. Go applies it to a
+/// SELECT only (preprocess `p.stmtTp == TypeSelect`) and reads at
+/// `CalAppropriateTime(now + staleness, now, minSafeTS)`
+/// (`staleread.CalculateTsWithReadStaleness`). A store whose stores report no
+/// safe ts, as unistore's `GetStoreSafeTS` does, leaves client-go's
+/// `getMinSafeTSByStores` at MaxUint64, which clamps the read to now: the
+/// recorded `session/nontransactional` reads current rows under -100. A
+/// write ignores it. Both had been refused.
 #[test]
-fn a_pinned_historical_read_is_refused_rather_than_answered_from_the_present() {
+fn read_staleness_reads_the_present_and_a_snapshot_pin_is_refused() {
     let mut session = Session::new();
     session
         .run("CREATE TABLE t (a INT PRIMARY KEY, b INT)")
@@ -315,18 +320,16 @@ fn a_pinned_historical_read_is_refused_rather_than_answered_from_the_present() {
     session.run("INSERT INTO t VALUES (1, 10)").unwrap();
 
     session.run("SET @@tidb_read_staleness = -1").unwrap();
-    let error = session.run("SELECT b FROM t").unwrap_err();
-    assert!(
-        format!("{error:?}").contains("tidb_read_staleness"),
-        "a staleness-pinned read must name what it refused, got {error:?}"
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SELECT b FROM t")),
+        vec![vec!["10"]]
     );
-    // A write is refused for the same reason, and so is a read of a table
-    // that does not exist -- the guard is above name resolution.
-    assert!(session.run("INSERT INTO t VALUES (2, 20)").is_err());
-    // Unpinning is always possible: `SET` and transaction control sit above
-    // the guard.
+    session.run("INSERT INTO t VALUES (2, 20)").unwrap();
     session.run("SET @@tidb_read_staleness = 0").unwrap();
-    session.run("SELECT b FROM t").unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SELECT b FROM t ORDER BY a")),
+        vec![vec!["10"], vec!["20"]]
+    );
 
     session
         .run("SET @@tidb_snapshot = '2020-01-01 00:00:00'")
@@ -336,6 +339,8 @@ fn a_pinned_historical_read_is_refused_rather_than_answered_from_the_present() {
         format!("{error:?}").contains("tidb_snapshot"),
         "a snapshot-pinned read must name what it refused, got {error:?}"
     );
+    // Unpinning is always possible: `SET` and transaction control sit above
+    // the guard.
     session.run("SET @@tidb_snapshot = ''").unwrap();
     session.run("SELECT b FROM t").unwrap();
 }

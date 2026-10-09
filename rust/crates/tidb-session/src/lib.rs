@@ -1177,6 +1177,7 @@ mod identity;
 pub mod infoschema;
 mod load_stats_arm;
 mod non_prepared_plan_cache;
+mod nontransactional;
 mod noop;
 mod observation;
 mod prepared_ast;
@@ -2829,6 +2830,8 @@ mod tests_enum_index_range;
 mod tests_multi_valued_index;
 #[cfg(test)]
 mod tests_index_merge_union;
+#[cfg(test)]
+mod tests_nontransactional;
 #[cfg(test)]
 mod tests_eval_bool;
 #[cfg(test)]

@@ -618,6 +618,7 @@ fn run_insert_with_physical(
             &target_layout.column_meta,
             target_layout.extra_handle_offset,
             &target_layout.table_name,
+            Some(&target_layout.database),
             ctx,
             eval_chunk.get_row(0),
         )?)
@@ -739,6 +740,7 @@ fn run_insert_with_physical(
     let mut previous_width = target_offsets.len();
     if source_rows.is_none() {
         let resolver = TableResolver {
+            database: Some(&database),
             table_name: &table_name,
             columns: &column_list,
             constant_context: ctx.clone(),
@@ -896,6 +898,7 @@ fn run_insert_with_physical(
             &column_meta,
             extra_handle_offset,
             &table_name,
+            Some(&database),
             ctx,
             eval_chunk.get_row(0),
         )?,
@@ -1598,10 +1601,12 @@ fn prepare_on_duplicate_assignments(
     column_meta: &[ColumnDefaultMeta],
     extra_handle_offset: Option<usize>,
     table_name: &str,
+    database: Option<&str>,
     ctx: &crate::StmtContext,
     row: tidb_chunk::row::Row<'_>,
 ) -> Result<Vec<PreparedOnDuplicateAssignment>, DriverError> {
     let resolver = TableResolver {
+        database: database,
         table_name,
         columns: column_list,
         constant_context: ctx.clone(),
@@ -1714,6 +1719,7 @@ fn apply_on_duplicate(
     };
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let resolver = TableResolver {
+        database: Some(database),
         // Go resolves ODKU value columns against the TARGET table: a
         // qualifier naming it (`t.v`) reads the stored row, and an
         // unqualified name prefers the target over the source output.
@@ -2891,6 +2897,7 @@ fn run_update_with_physical(
     // `SET u.v = 1` is Go's unknown-column error. Resolving both sides through
     // the one resolver is what makes those two cases the same case.
     let resolver = TableResolver {
+        database: Some(&database),
         table_name: table_ref.alias.as_deref().unwrap_or(&name),
         columns: &column_list,
         constant_context: ctx.clone(),

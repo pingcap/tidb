@@ -3020,6 +3020,7 @@ impl Session {
                                 .to_owned(),
                         })
                     }
+                    DmlStmt::Batch(batch) => self.run_non_transactional_dml(batch),
                     other => Err(DriverError::unsupported(format!(
                         "this DML statement kind ({}) is not supported yet",
                         variant_name(other)
@@ -3505,20 +3506,12 @@ impl Session {
                 "reading at @@tidb_snapshot is not supported yet",
             ));
         }
-        if let Ok(staleness) = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
-        {
-            if staleness
-                .trim()
-                .parse::<i64>()
-                .is_ok_and(|value| value != 0)
-            {
-                return Err(DriverError::unsupported(
-                    "reading at @@tidb_read_staleness is not supported yet",
-                ));
-            }
-        }
+        // `@@tidb_read_staleness` needs no history here. Go applies it to a
+        // SELECT only (preprocess `p.stmtTp == TypeSelect`), reading at
+        // `CalAppropriateTime(now + staleness, now, minSafeTS)`. This store
+        // reports no safe ts, as unistore's `GetStoreSafeTS` does, which
+        // client-go's `getMinSafeTSByStores` reads as MaxUint64: the read is
+        // clamped to now, the current read. Any other statement ignores it.
         Ok(())
     }
 }

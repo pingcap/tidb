@@ -3262,6 +3262,9 @@ fn key_info_table(
 /// (case-insensitive, as in MySQL).
 pub(crate) struct TableResolver<'a> {
     pub(crate) table_name: &'a str,
+    /// The table's database, which a `db.t.c` reference must name (Go
+    /// `FindFieldName` matches `name.DBName` even through an alias).
+    pub(crate) database: Option<&'a str>,
     pub(crate) columns: &'a [(String, FieldType)],
     pub(crate) constant_context: crate::StmtContext,
     /// The statement's session `time_zone` (see [`ColumnResolver::time_zone`]),
@@ -3329,7 +3332,15 @@ impl ColumnResolver for TableResolver<'_> {
         let (qualifier, name) = match path {
             [name] => (None, name),
             [table, name] => (Some(table), name),
-            // db.t.a qualification waits on a multi-schema catalog.
+            [schema, table, name] => {
+                if !self
+                    .database
+                    .is_some_and(|database| database.eq_ignore_ascii_case(schema))
+                {
+                    return None;
+                }
+                (Some(table), name)
+            }
             _ => return None,
         };
         if let Some(q) = qualifier {
