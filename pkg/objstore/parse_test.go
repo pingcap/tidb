@@ -23,6 +23,7 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -610,12 +611,12 @@ func TestBackendOptionsRedacted(t *testing.T) {
 	opts.S3.Endpoint = "https://AKID:SKEY@s3.example.com"
 
 	redacted := opts.Redacted()
-	require.Equal(t, RedactedValue, redacted.S3.AccessKey)
-	require.Equal(t, RedactedValue, redacted.S3.SecretAccessKey)
-	require.Equal(t, RedactedValue, redacted.S3.SessionToken)
-	require.Equal(t, RedactedValue, redacted.Azblob.AccountKey)
-	require.Equal(t, RedactedValue, redacted.Azblob.SASToken)
-	require.Equal(t, RedactedValue, redacted.Azblob.EncryptionKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.AccessKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SecretAccessKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SessionToken)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.AccountKey)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.SASToken)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.EncryptionKey)
 	require.Equal(t, "us-east-1", redacted.S3.Region)
 	require.Equal(t, "account", redacted.Azblob.AccountName)
 	require.Equal(t, "https://account.blob.core.windows.net/", redacted.Azblob.Endpoint)
