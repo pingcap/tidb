@@ -60,6 +60,15 @@ impl UniquePointRead {
         self,
         store: &mut dyn TableStorage,
     ) -> Result<Option<TableHandle>, KvTableError> {
+        Ok(self.get_with_partition(store)?.map(|(handle, _)| handle))
+    }
+
+    /// [`Self::get`] plus the partition a GLOBAL index entry records for its
+    /// row (Go `tablecodec.SplitIndexValue(value).PartitionID`).
+    pub(super) fn get_with_partition(
+        self,
+        store: &mut dyn TableStorage,
+    ) -> Result<Option<(TableHandle, Option<i64>)>, KvTableError> {
         for physical_id in self.physical_ids {
             let key = Key::from_bytes(encode_index_seek_key(
                 physical_id,
@@ -73,7 +82,7 @@ impl UniquePointRead {
                     let handle = handle.ok_or_else(|| {
                         KvTableError::Decode("index value contains no handle".to_owned())
                     })?;
-                    return Ok(Some(convert_handle(&handle)));
+                    return Ok(Some((convert_handle(&handle), global_partition_id(&handle))));
                 }
                 Err(StorageError::NotFound) => {}
                 Err(error) => return Err(KvTableError::from(error)),
@@ -720,6 +729,20 @@ impl KvTable {
         }
     }
 
+    /// [`Self::lookup_unique`] plus the partition a global index entry
+    /// records for its row.
+    pub(crate) fn lookup_unique_with_partition(
+        &mut self,
+        index_id: i64,
+        values: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<Option<(TableHandle, Option<i64>)>, KvTableError> {
+        match self.unique_point_read(index_id, values, zone)? {
+            Some(read) => read.get_with_partition(self.store.as_mut()),
+            None => Ok(None),
+        }
+    }
+
     pub(super) fn unique_point_read(
         &self,
         index_id: i64,
@@ -767,6 +790,21 @@ impl KvTable {
         values: &[Vec<Datum>],
         zone: &SessionTimeZone,
     ) -> Result<Vec<Option<TableHandle>>, KvTableError> {
+        Ok(self
+            .lookup_unique_batched_with_partition(index_id, values, zone)?
+            .into_iter()
+            .map(|found| found.map(|(handle, _)| handle))
+            .collect())
+    }
+
+    /// [`Self::lookup_unique_batched`] plus the partition each global index
+    /// entry records for its row.
+    pub(crate) fn lookup_unique_batched_with_partition(
+        &mut self,
+        index_id: i64,
+        values: &[Vec<Datum>],
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<Option<(TableHandle, Option<i64>)>>, KvTableError> {
         let Some(index) = self
             .indexes
             .iter()
@@ -824,7 +862,7 @@ impl KvTable {
                             .ok_or_else(|| {
                                 KvTableError::Decode("index value contains no handle".to_owned())
                             })?;
-                        Ok(convert_handle(&handle))
+                        Ok((convert_handle(&handle), global_partition_id(&handle)))
                     })
                     .transpose()
             })
@@ -854,6 +892,14 @@ fn trailing_spaces(value: &Datum) -> usize {
 ///
 /// A distinct entry keeps the handle in its value; a non-distinct entry keeps
 /// it appended to its key, which is the same split Go's index reader makes.
+/// The partition a global index entry's value records for its row.
+fn global_partition_id(handle: &tidb_txnkv::Handle) -> Option<i64> {
+    match handle {
+        tidb_txnkv::Handle::Partition(partition) => Some(partition.partition_id()),
+        _ => None,
+    }
+}
+
 pub(in crate::kv_table) fn convert_handle(handle: &tidb_txnkv::Handle) -> TableHandle {
     match handle.int_value() {
         Some(value) => TableHandle::Int(value),

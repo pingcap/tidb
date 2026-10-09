@@ -2870,10 +2870,22 @@ fn build_index_join(
             "a physical index join retained a condition on its inner side",
         ));
     }
+    // Go `IndexLookUpJoin`'s outer filter only marks `outerMatch`: an outer
+    // row that fails it still reaches the joiner's miss path. A join that
+    // preserves its outer side therefore keeps the row, and only an inner
+    // or semi join may drop it before the lookup.
+    let outer_preserved = match join.join_type {
+        LogicalJoinType::LeftOuter
+        | LogicalJoinType::LeftOuterSemi
+        | LogicalJoinType::AntiSemi
+        | LogicalJoinType::AntiLeftOuterSemi => join.inner_child_idx == 1,
+        LogicalJoinType::RightOuter => join.inner_child_idx == 0,
+        _ => false,
+    };
     let outer = filtered_join_child(
         plan,
         build_with_state(outer_plan, catalog, ctx, state)?,
-        outer_conditions,
+        if outer_preserved { &[] } else { outer_conditions },
         ctx,
     )?;
     let left_schema = plan_schema(left_plan)?;
@@ -2904,6 +2916,9 @@ fn build_index_join(
         &join.other_conditions,
         &condition_schema,
     )?);
+    if outer_preserved {
+        conditions.extend(resolve_expressions(outer_conditions, &condition_schema)?);
+    }
     let (probe_keys, probe_parts) = index_join_probe_shape(join)?;
     let probe_key_domains = index_join_probe_key_domains(join, &probe_parts, catalog)?;
     let probe_bounds = join
@@ -3800,6 +3815,11 @@ fn point_partition_id(
     let Some(routing) = &point.partition else {
         return Ok(Some(point.table_id));
     };
+    // An index point reads its entry first: a global entry names its row's
+    // partition, which the source checks against the PARTITION clause.
+    if point.index_id.is_some() {
+        return Ok(Some(point.table_id));
+    }
     let table = catalog
         .physical_kv_table_by_id(point.table_id)
         .ok_or_else(|| DriverError::unsupported("point partition logical table is absent"))?;
@@ -3860,6 +3880,23 @@ fn point_partition_id(
     }))
 }
 
+/// Go `matchPartitionNames`' id set: the physical ids the PARTITION clause
+/// names, or `None` when it names none.
+fn partition_ids_named(table: &crate::kv_table::KvTable, names: &[String]) -> Option<Vec<i64>> {
+    if names.is_empty() {
+        return None;
+    }
+    let partition = table.partition()?;
+    Some(
+        partition
+            .definitions
+            .iter()
+            .filter(|definition| names.iter().any(|name| definition.name.eq_ignore_ascii_case(name)))
+            .map(|definition| definition.id)
+            .collect(),
+    )
+}
+
 fn build_point_get(
     plan: &PhysicalPlan,
     point: &PhysicalPointGet,
@@ -3887,15 +3924,22 @@ fn build_point_get(
                 "a physical unique-index PointGet does not retain exactly one key",
             ));
         }
-        let child = Box::new(UniqueIndexPointSourceExec::new(
-            executor_meta,
-            (*table).clone(),
-            index_id,
-            index_values,
-            output_columns,
-            RowDecodeContext::for_query(ctx),
-            true,
-        ));
+        let allowed = point
+            .partition
+            .as_ref()
+            .and_then(|partition| partition_ids_named(&table, &partition.names));
+        let child = Box::new(
+            UniqueIndexPointSourceExec::new(
+                executor_meta,
+                (*table).clone(),
+                index_id,
+                index_values,
+                output_columns,
+                RowDecodeContext::for_query(ctx),
+                true,
+            )
+            .with_allowed_partitions(allowed),
+        );
         return Ok(wrap_point_index_usage(
             child,
             std::sync::Arc::unwrap_or_clone(table),
@@ -3954,15 +3998,19 @@ fn build_batch_point_get(
             batch.keep_order,
             batch.desc,
         )?;
-        let child = Box::new(UniqueIndexPointSourceExec::new(
-            executor_meta,
-            (*table).clone(),
-            index_id,
-            index_values,
-            output_columns,
-            RowDecodeContext::for_query(ctx),
-            false,
-        ));
+        let allowed = partition_ids_named(&table, &batch.partition_names);
+        let child = Box::new(
+            UniqueIndexPointSourceExec::new(
+                executor_meta,
+                (*table).clone(),
+                index_id,
+                index_values,
+                output_columns,
+                RowDecodeContext::for_query(ctx),
+                false,
+            )
+            .with_allowed_partitions(allowed),
+        );
         return Ok(wrap_point_index_usage(
             child,
             std::sync::Arc::unwrap_or_clone(table),
@@ -6840,6 +6888,7 @@ mod tests {
             unsigned_handle: true,
             ranges: [3, 1, 3, 9].into_iter().map(point_range).collect(),
             partition_ids: None,
+            partition_names: Vec::new(),
             range_rebuild: None,
             keep_order: true,
             desc: false,
@@ -6907,6 +6956,7 @@ mod tests {
             unsigned_handle: false,
             ranges: [30, 10, 30, 90].into_iter().map(point_range).collect(),
             partition_ids: None,
+            partition_names: Vec::new(),
             range_rebuild: None,
             keep_order: true,
             desc: false,

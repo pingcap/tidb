@@ -321,16 +321,9 @@ pub(super) fn show_create_table_text(
             })
             .collect::<Vec<_>>()
             .join(",");
-        let mut clause = if index.name.eq_ignore_ascii_case("PRIMARY") {
-            // Go `idxInfo.Primary`: the comment follows
-            // `tableInfo.HasClusteredIndex()`, which a common handle
-            // satisfies.
-            let clustered = if table.common_handle_offsets().is_empty() {
-                "NONCLUSTERED"
-            } else {
-                "CLUSTERED"
-            };
-            format!("  PRIMARY KEY ({columns}) /*T![clustered_index] {clustered} */")
+        let primary = index.name.eq_ignore_ascii_case("PRIMARY");
+        let mut clause = if primary {
+            format!("  PRIMARY KEY ({columns})")
         } else if index.unique {
             format!("  UNIQUE KEY {} ({columns})", escape_name(&index.name))
         } else {
@@ -348,6 +341,19 @@ pub(super) fn show_create_table_text(
             clause.push_str(" COMMENT '");
             clause.push_str(&tidb_util::format::output_format(&index.comment));
             clause.push('\'');
+        }
+        // Go `idxInfo.Primary`: the marker follows every other suffix and
+        // `tableInfo.HasClusteredIndex()` decides it, which a common handle
+        // satisfies; a global index's marker comes last.
+        if primary {
+            if table.common_handle_offsets().is_empty() {
+                clause.push_str(" /*T![clustered_index] NONCLUSTERED */");
+            } else {
+                clause.push_str(" /*T![clustered_index] CLUSTERED */");
+            }
+        }
+        if index.global {
+            clause.push_str(" /*T![global_index] GLOBAL */");
         }
         clauses.push(clause);
     }

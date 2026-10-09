@@ -2626,6 +2626,9 @@ pub struct PhysicalBatchPointGet {
     pub ranges: crate::ranger::types::Ranges,
     /// Physical partition ID per retained range, for a routed fast batch.
     pub partition_ids: Option<Vec<i64>>,
+    /// Go `BatchPointGetPlan.PartitionNames`: the PARTITION clause, which a
+    /// global index applies to the partition each entry records.
+    pub partition_names: Vec<String>,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
     /// Go `KeepOrder`.
@@ -4683,6 +4686,7 @@ impl PhysicalPlan {
                 access_cols: op.access_cols.clone(),
                 ranges: op.ranges.clone(),
                 partition_ids: op.partition_ids.clone(),
+                partition_names: op.partition_names.clone(),
                 unsigned_handle: op.unsigned_handle,
                 range_rebuild: op.range_rebuild.clone(),
                 keep_order: op.keep_order,

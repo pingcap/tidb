@@ -577,6 +577,26 @@ fn partition_indices_for_spec(
             surviving,
         ));
     }
+    // Go `PartitionRangeForCNFExpr` prunes a single-column RANGE COLUMNS
+    // table by its predicates, and only a wider one through the ranger.
+    if let ([column], crate::partition_routing::PartitionKind::RangeColumns { .. }) =
+        (columns.as_slice(), &partition.kind)
+    {
+        if let Some(ids) = crate::partition_pruning::single_range_columns_pruned_ids(
+            partition,
+            &conditions,
+            column,
+            builder,
+            context,
+        ) {
+            surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
+        }
+        return Ok(remap_partition_indices(
+            partition,
+            &source.partition_names,
+            surviving,
+        ));
+    }
     let lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; columns.len()];
     let Ok(detached) = tidb_planner::ranger::detacher::detach_partition_range_with_fallback_handler(
         &conditions,

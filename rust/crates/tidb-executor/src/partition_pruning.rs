@@ -2341,3 +2341,354 @@ mod tests {
         assert_ne!(bound_below_constant, collapsed);
     }
 }
+
+/// Go `PartitionRange`: the half-open definition-index interval
+/// `[start, end)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PartitionRange {
+    start: usize,
+    end: usize,
+}
+
+/// Go `PartitionRangeOR`: an OR of [`PartitionRange`]s.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PartitionRangeOr(Vec<PartitionRange>);
+
+impl PartitionRangeOr {
+    /// Go `GetFullRange`.
+    fn full(end: usize) -> Self {
+        Self(vec![PartitionRange { start: 0, end }])
+    }
+
+    /// Go `IntersectionRange`.
+    fn intersection_range(self, start: usize, end: usize) -> Self {
+        Self(
+            self.0
+                .into_iter()
+                .filter_map(|range| {
+                    let (new_start, new_end) = (range.start.max(start), range.end.min(end));
+                    (new_end > new_start).then_some(PartitionRange {
+                        start: new_start,
+                        end: new_end,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// Go `Union`.
+    fn union(mut self, other: Self) -> Self {
+        self.0.extend(other.0);
+        self.simplify()
+    }
+
+    /// Go `simplify`: sort by start and merge overlapping ranges.
+    fn simplify(mut self) -> Self {
+        if self.0.is_empty() {
+            return self;
+        }
+        self.0.sort_by_key(|range| range.start);
+        let mut merged: Vec<PartitionRange> = Vec::with_capacity(self.0.len());
+        for current in self.0 {
+            match merged.last_mut() {
+                Some(last) if current.start <= last.end => last.end = last.end.max(current.end),
+                _ => merged.push(current),
+            }
+        }
+        Self(merged)
+    }
+
+    /// Go `Intersection`.
+    fn intersection(self, other: Self) -> Self {
+        if let [only] = self.0.as_slice() {
+            return other.intersection_range(only.start, only.end);
+        }
+        if let [only] = other.0.as_slice() {
+            return self.intersection_range(only.start, only.end);
+        }
+        let (wide, narrow) = if self.0.len() > other.0.len() {
+            (self, other)
+        } else {
+            (other, self)
+        };
+        let mut result = Vec::with_capacity(narrow.0.len());
+        for range in narrow.0 {
+            result.extend(wide.clone().intersection_range(range.start, range.end).0);
+        }
+        Self(result).simplify()
+    }
+}
+
+/// Go `sort.Search`: the smallest index in `[0, n)` where `predicate`
+/// holds, or `n`.
+fn go_sort_search(n: usize, mut predicate: impl FnMut(usize) -> bool) -> usize {
+    let (mut low, mut high) = (0, n);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if predicate(middle) {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    low
+}
+
+/// Go `RangeColumnsPruner` for a table partitioned by ONE column. Go prunes
+/// that shape by its predicates rather than through the ranger
+/// (`PartitionRangeForCNFExpr`, `rule_partition_processor.go:1372`): the
+/// ranger does not yet handle a predicate whose collation differs from the
+/// column's, which `partitionRangeForExpr` must refuse to prune.
+struct SingleRangeColumnsPruner<'a, B, C> {
+    less_than: &'a [Vec<crate::partition_routing::RangeColumnBound>],
+    bound_type: &'a tidb_datatype::FieldType,
+    column: &'a tidb_expr::column::Column,
+    builder: &'a B,
+    ctx: &'a C,
+}
+
+impl<B, C> SingleRangeColumnsPruner<'_, B, C>
+where
+    B: tidb_expr::expr_util::builder::FunctionBuilder,
+    C: tidb_expr::Columns,
+{
+    fn full(&self) -> PartitionRangeOr {
+        PartitionRangeOr::full(self.less_than.len())
+    }
+
+    fn is_part_col(&self, expr: &tidb_expr::expression::Expression) -> bool {
+        matches!(expr, tidb_expr::expression::Expression::Column(column) if column.id == self.column.id)
+    }
+
+    /// Go `PartitionRangeForCNFExpr`.
+    fn range_for_cnf(
+        &self,
+        exprs: &[tidb_expr::expression::Expression],
+        mut result: PartitionRangeOr,
+    ) -> PartitionRangeOr {
+        for expr in exprs {
+            result = self.range_for_expr(expr, result);
+        }
+        result
+    }
+
+    /// Go `PartitionRangeForExpr`.
+    fn range_for_expr(
+        &self,
+        expr: &tidb_expr::expression::Expression,
+        result: PartitionRangeOr,
+    ) -> PartitionRangeOr {
+        if let tidb_expr::expression::Expression::ScalarFunction(op) = expr {
+            match op.func_name.lowercase() {
+                "and" => return self.range_for_cnf(&op.args, result),
+                "or" if op.args.len() == 2 => {
+                    // Go `partitionRangeForOrExpr`.
+                    let left = self.range_for_expr(&op.args[0], self.full());
+                    let right = self.range_for_expr(&op.args[1], self.full());
+                    return result.intersection(left.union(right));
+                }
+                "in" => return result.intersection(self.range_for_in(&op.args)),
+                _ => {}
+            }
+        }
+        match self.partition_range_for_expr(expr) {
+            Some((start, end)) => result.intersection_range(start, end),
+            None => result,
+        }
+    }
+
+    /// Go `partitionRangeColumnForInExpr`.
+    fn range_for_in(&self, args: &[tidb_expr::expression::Expression]) -> PartitionRangeOr {
+        let Some(column) = args.first().filter(|first| self.is_part_col(first)) else {
+            return self.full();
+        };
+        let mut result = PartitionRangeOr(Vec::new());
+        for arg in &args[1..] {
+            let tidb_expr::expression::Expression::Constant(constant) = arg else {
+                return self.full();
+            };
+            // "for safety, only support string,int and datetime now"
+            match &constant.value {
+                Datum::Int(_) | Datum::UInt(_) | Datum::Time(_) | Datum::Bytes(_) | Datum::String(_) => {}
+                Datum::Null => continue,
+                _ => return self.full(),
+            }
+            let Ok(eq) = self.builder.new_function("eq", None, vec![column.clone(), arg.clone()]) else {
+                return self.full();
+            };
+            let Some((start, end)) = self.partition_range_for_expr(&eq) else {
+                return self.full();
+            };
+            result.0.push(PartitionRange { start, end });
+        }
+        result.simplify()
+    }
+
+    /// Go `RangeColumnsPruner.partitionRangeForExpr`; `None` is Go's
+    /// `ok == false`.
+    fn partition_range_for_expr(
+        &self,
+        expr: &tidb_expr::expression::Expression,
+    ) -> Option<(usize, usize)> {
+        let tidb_expr::expression::Expression::ScalarFunction(op) = expr else {
+            return None;
+        };
+        let length = self.less_than.len();
+        let mut op_name = match op.func_name.lowercase() {
+            name @ ("eq" | "lt" | "gt" | "le" | "ge" | "nulleq") => name,
+            "isnull" => {
+                // NULL sorts before every value: the first partition.
+                return op.args.first().filter(|arg| self.is_part_col(arg)).map(|_| (0, 1));
+            }
+            _ => return None,
+        };
+        let [left, right] = op.args.as_slice() else {
+            return None;
+        };
+        let constant = match (left, right) {
+            (tidb_expr::expression::Expression::Column(_), tidb_expr::expression::Expression::Constant(constant)) => constant,
+            (tidb_expr::expression::Expression::Constant(constant), tidb_expr::expression::Expression::Column(_)) => {
+                // Go `opposite`.
+                op_name = match op_name {
+                    "lt" => "gt",
+                    "gt" => "lt",
+                    "le" => "ge",
+                    "ge" => "le",
+                    same => same,
+                };
+                constant
+            }
+            _ => return Some((0, length)),
+        };
+        let column = if matches!(left, tidb_expr::expression::Expression::Column(_)) { left } else { right };
+        if !self.is_part_col(column) {
+            return None;
+        }
+        if op_name == "nulleq" {
+            if constant.value.is_null() {
+                return Some((0, 1));
+            }
+            op_name = "eq";
+        }
+        // "If different collation, we can only prune if the expression is
+        // binary collation and an EQ": otherwise every partition stays.
+        let expr_collation = op
+            .ret_type
+            .as_ref()
+            .map_or("", tidb_datatype::FieldType::collation_name);
+        let column_collation = self
+            .column
+            .ret_type
+            .as_ref()
+            .map_or("", tidb_datatype::FieldType::collation_name);
+        if expr_collation != column_collation
+            && (op_name != "eq" || !tidb_datatype::is_bin_collation(expr_collation))
+        {
+            return Some((0, length));
+        }
+        Some(self.prune_use_binary_search(op_name, constant))
+    }
+
+    /// Go `RangeColumnsPruner.pruneUseBinarySearch`.
+    fn prune_use_binary_search(
+        &self,
+        op_name: &str,
+        constant: &tidb_expr::constant::Constant,
+    ) -> (usize, usize) {
+        let length = self.less_than.len();
+        let mut failed = false;
+        let mut is_null = false;
+        let mut compare = |ith: usize, op: &str| -> bool {
+            let crate::partition_routing::RangeColumnBound::Value(bound) = &self.less_than[ith][0]
+            else {
+                return true;
+            };
+            let bound = tidb_expr::expression::Expression::Constant(
+                tidb_expr::constant::Constant::new(bound.clone(), self.bound_type.clone()),
+            );
+            // Go `NewFunctionBase` (no constant folding), then
+            // `expr.SetCharsetAndCollation(partition column's)`: the
+            // comparison runs under the column's collation.
+            let mut ret_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+            if let Some(column_type) = self.column.ret_type.as_ref() {
+                ret_type.set_charset_name(column_type.charset_name());
+                ret_type.set_collation_name(column_type.collation_name());
+            }
+            let function = tidb_expr::expression::Expression::ScalarFunction(
+                tidb_expr::scalar_function::ScalarFunction::new(
+                    tidb_ast::CiString::new(op),
+                    ret_type,
+                    vec![bound, tidb_expr::expression::Expression::Constant(constant.clone())],
+                ),
+            );
+            match tidb_expr::eval_expression_once(&function, self.ctx) {
+                Ok(Datum::Null) => {
+                    is_null = true;
+                    false
+                }
+                Ok(value) => {
+                    is_null = false;
+                    matches!(value, Datum::Int(v) if v > 0) || matches!(value, Datum::UInt(v) if v > 0)
+                }
+                Err(_) => {
+                    failed = true;
+                    true
+                }
+            }
+        };
+        let (start, mut end) = match op_name {
+            "eq" => {
+                let position = go_sort_search(length, |i| compare(i, "gt"));
+                (position, position + 1)
+            }
+            "lt" => (0, go_sort_search(length, |i| compare(i, "ge")) + 1),
+            "ge" | "gt" => (go_sort_search(length, |i| compare(i, "gt")), length),
+            "le" => (0, go_sort_search(length, |i| compare(i, "gt")) + 1),
+            _ => (0, length),
+        };
+        if failed || is_null {
+            return (0, length);
+        }
+        end = end.min(length);
+        (start, end)
+    }
+}
+
+/// Go `pruneRangeColumnsPartition` for a single-column RANGE COLUMNS table:
+/// the physical ids `conditions` can reach.
+pub(crate) fn single_range_columns_pruned_ids(
+    spec: &PartitionSpec,
+    conditions: &[tidb_expr::expression::Expression],
+    column: &tidb_expr::column::Column,
+    builder: &impl tidb_expr::expr_util::builder::FunctionBuilder,
+    ctx: &impl tidb_expr::Columns,
+) -> Option<Vec<i64>> {
+    let PartitionKind::RangeColumns {
+        less_than,
+        field_types,
+    } = &spec.kind
+    else {
+        return None;
+    };
+    let [bound_type] = field_types.as_slice() else {
+        return None;
+    };
+    if less_than.len() != spec.definitions.len() || less_than.iter().any(|bound| bound.len() != 1) {
+        return None;
+    }
+    let pruner = SingleRangeColumnsPruner {
+        less_than,
+        bound_type,
+        column,
+        builder,
+        ctx,
+    };
+    let ranges = pruner.range_for_cnf(conditions, pruner.full());
+    Some(
+        ranges
+            .0
+            .iter()
+            .flat_map(|range| spec.definitions[range.start..range.end].iter().map(|definition| definition.id))
+            .collect(),
+    )
+}

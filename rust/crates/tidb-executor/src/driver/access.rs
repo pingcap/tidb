@@ -2090,6 +2090,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
                 unsigned_handle: table.unsigned_pk_handle(),
                 ranges,
                 partition_ids,
+                partition_names: Vec::new(),
                 range_rebuild: None,
                 keep_order: false,
                 desc: false,

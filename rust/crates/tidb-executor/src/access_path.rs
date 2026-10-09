@@ -1210,11 +1210,21 @@ pub(crate) struct UniqueIndexPointSourceExec {
     output_columns: Vec<HandleOutputColumn>,
     decode_context: crate::kv_table::RowDecodeContext,
     single_point: bool,
+    /// Go `PartitionNames` resolved to physical ids: a global index entry
+    /// whose row lives elsewhere answers nothing. `None` restricts nothing.
+    allowed_partitions: Option<Vec<i64>>,
     source: Option<HandleSourceExec>,
     initialized: bool,
 }
 
 impl UniqueIndexPointSourceExec {
+    /// Restricts a global index's rows to the PARTITION clause's ids.
+    #[must_use]
+    pub(crate) fn with_allowed_partitions(mut self, ids: Option<Vec<i64>>) -> Self {
+        self.allowed_partitions = ids;
+        self
+    }
+
     #[must_use]
     pub(crate) fn new(
         meta: ExecutorMeta,
@@ -1233,6 +1243,7 @@ impl UniqueIndexPointSourceExec {
             output_columns,
             decode_context,
             single_point,
+            allowed_partitions: None,
             source: None,
             initialized: false,
         }
@@ -1240,6 +1251,15 @@ impl UniqueIndexPointSourceExec {
 }
 
 impl UniqueIndexPointSourceExec {
+    /// Go `matchPartitionNames(pid, partitionNames, pi)` for a global index
+    /// entry; a local entry carries no partition and is already confined.
+    fn partition_allowed(&self, partition: Option<i64>) -> bool {
+        match (&self.allowed_partitions, partition) {
+            (Some(allowed), Some(id)) => allowed.contains(&id),
+            _ => true,
+        }
+    }
+
     fn initialize(&mut self) -> Result<(), ExecError> {
         // Go isCommonHandleRead: clustered PRIMARY has metadata but no
         // separate index entries. Its values directly encode record handles.
@@ -1269,15 +1289,17 @@ impl UniqueIndexPointSourceExec {
                 ));
             };
             self.table
-                .lookup_unique(self.index_id, values, self.decode_context.zone())
+                .lookup_unique_with_partition(self.index_id, values, self.decode_context.zone())
                 .map_err(|error| {
                     ExecError::unsupported(format!("unique index lookup failed: {error:?}"))
                 })?
                 .into_iter()
+                .filter(|(_, partition)| self.partition_allowed(*partition))
+                .map(|(handle, _)| handle)
                 .collect()
         } else {
             self.table
-                .lookup_unique_batched(
+                .lookup_unique_batched_with_partition(
                     self.index_id,
                     &self.index_values,
                     self.decode_context.zone(),
@@ -1287,6 +1309,8 @@ impl UniqueIndexPointSourceExec {
                 })?
                 .into_iter()
                 .flatten()
+                .filter(|(_, partition)| self.partition_allowed(*partition))
+                .map(|(handle, _)| handle)
                 .collect()
         };
         let Some(first) = handles.first().cloned() else {

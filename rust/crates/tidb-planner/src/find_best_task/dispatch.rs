@@ -3186,6 +3186,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             ranges,
                             unsigned_handle: handle_type.is_unsigned(),
                             partition_ids: None,
+                            partition_names: ds.partition_names.clone(),
                             range_rebuild: table_range_rebuild
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Table),
@@ -3711,7 +3712,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {
                             base: point_base,
                             table_id: ds.physical_table_id,
-                            partition: None,
+                            // Go `PointGetPlan.PartitionNames`: a global index
+                            // applies them to the partition its entry records.
+                            partition: (!ds.partition_names.is_empty()).then(|| {
+                                crate::physical::PointGetPartition {
+                                    names: ds.partition_names.clone(),
+                                    physical_table_id: None,
+                                }
+                            }),
                             index_id: Some(source_index.id),
                             access_cols: Some(if single_scan {
                                 index_cols.clone()
@@ -3737,6 +3745,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             ranges: ranges.clone(),
                             unsigned_handle: false,
                             partition_ids: None,
+                            partition_names: ds.partition_names.clone(),
                             range_rebuild: index_range_rebuild
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Index),
