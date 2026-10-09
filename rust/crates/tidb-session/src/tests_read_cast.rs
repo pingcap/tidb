@@ -113,9 +113,18 @@ fn check_cast(session: &mut Session, sql_mode: &str, target: &str, value: &str, 
         }
         Read::WarnedNull => {
             assert_eq!(got, [["NULL"]], "{context}");
+            // Go quotes what its parser made of the input: a parsed date in
+            // its unpadded `%d-%d-%d` form, and the zero DATETIME with its
+            // clock. Captured from Go TiDB for every cell of this matrix.
+            let quoted = match (value, target) {
+                ("0000-00-00", "DATETIME") => "0000-00-00 00:00:00",
+                ("2024-02-31", _) => "2024-2-31",
+                ("2024-13-01", _) => "2024-13-1",
+                _ => value,
+            };
             assert_eq!(
                 warnings(session),
-                [(1292, format!("Incorrect datetime value: '{value}'"))],
+                [(1292, format!("Incorrect datetime value: '{quoted}'"))],
                 "{context}"
             );
         }

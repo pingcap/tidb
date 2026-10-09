@@ -2043,6 +2043,13 @@ fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str, fsp: i64) {
             );
             return;
         }
+        // Go `checkMonthDay` renders a month past 12 from the parsed parts,
+        // unpadded, like an out-of-range day (`'2024-13-1'`).
+        if month > 12 && head[2].bytes().all(|byte| byte.is_ascii_digit()) {
+            let rendered = format!("{year}-{month}-{day}");
+            ctx.append_warning(1292, &format!("Incorrect datetime value: '{rendered}'"));
+            return;
+        }
         if (1..=12).contains(&month) && (1..=31).contains(&day) {
             let days_in_month = match month {
                 1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,

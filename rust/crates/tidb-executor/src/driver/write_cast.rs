@@ -464,7 +464,25 @@ fn cast_contextual_value(
             );
         }
         if !flags.ignore_truncate_err() {
-            if flags.truncate_as_warning() {
+            if flags.truncate_as_warning()
+                && raw.code == 8179
+                && shape == CastShape::InsertRow
+                && field.code() == tidb_datatype::FieldTypeCode::Timestamp
+            {
+                // Go `HandleTruncate` does not absorb
+                // `ErrTimestampInDSTTransition`, so `InsertValues.handleErr`
+                // sees it: a TIMESTAMP column keeps the timestamp already
+                // adjusted past the gap and warns `ErrTruncateWrongInsertValue`
+                // (1292), the same diagnostic strict mode raises below.
+                let reported = DriverError::IncorrectTemporalValue {
+                    type_name: "timestamp".to_owned(),
+                    value: datum_error_text(source),
+                    column: column.to_owned(),
+                    row: row + 1,
+                }
+                .to_mysql_error();
+                ctx.append_warning_parts(reported.code, &reported.message);
+            } else if flags.truncate_as_warning() {
                 let reported = complete_typed_cast(
                     raw,
                     if shape == CastShape::OnDuplicateAssignment {
@@ -1256,11 +1274,15 @@ mod source_tests {
         assert_eq!(datum_error_text(&stored), "2018-03-11 03:00:00");
         let warnings = lenient.take_warnings();
         assert_eq!(warnings.len(), 1);
-        // Lenient table conversion handles the error before INSERT's handleErr.
-        // Strict conversion returns it, so INSERT retitles it below.
-        assert_eq!(warnings[0].1, 8179);
-        assert_eq!(warnings[0].2,
-            "Timestamp is not valid, since it is in Daylight Saving Time transition '2018-03-11 02:00:16' for time zone 'America/Los_Angeles'");
+        // `HandleTruncate` does not absorb the DST error, so INSERT's
+        // `handleErr` retitles it in both modes: a warning here, the error
+        // below. Captured from Go TiDB: `Warning 1292 Incorrect timestamp
+        // value: '...' for column 'ts' at row 1`.
+        assert_eq!(warnings[0].1, 1292);
+        assert_eq!(
+            warnings[0].2,
+            "Incorrect timestamp value: '2018-03-11 02:00:16' for column 'ts' at row 1"
+        );
 
         let strict = crate::StmtContext::for_dml(false, true, false).with_time_zone(zone);
         let error = cast_value_for_column(input, &field_type, "ts", 0, &strict, false)
