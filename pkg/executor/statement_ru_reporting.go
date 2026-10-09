@@ -167,9 +167,9 @@ func (report *statementRUFullReport) addOperator(engine statementRUEngine, opera
 	}
 }
 
-func (calculator statementRUCalculator) engineResult(weights ruv2.StmtWeights) statementRUEngineResult {
-	tidb, tikv, tiflash := calculator.compute[statementRUTiDB], calculator.compute[statementRUTiKV], calculator.compute[statementRUTiFlash]
-	units := calculator.units
+func (calculator *statementRUCalculator) engineResult(weights *ruv2.StmtWeights) statementRUEngineResult {
+	tidb, tikv, tiflash := &calculator.compute[statementRUTiDB], &calculator.compute[statementRUTiKV], &calculator.compute[statementRUTiFlash]
+	units := &calculator.units
 	return statementRUEngineResult{
 		TiDB: weights.CPUWork*tidb.cpuWork + weights.HashStateRow*tidb.hashStateRows +
 			weights.OperatorNum*tidb.operatorNum + weights.JoinOutputRow*(units.JoinOutputRows-tiflash.joinOutputRows) +
@@ -181,8 +181,8 @@ func (calculator statementRUCalculator) engineResult(weights ruv2.StmtWeights) s
 	}
 }
 
-func (calculator statementRUCalculator) tiFlashRU(weights ruv2.StmtWeights) float64 {
-	tiflash := calculator.compute[statementRUTiFlash]
+func (calculator *statementRUCalculator) tiFlashRU(weights *ruv2.StmtWeights) float64 {
+	tiflash := &calculator.compute[statementRUTiFlash]
 	return weights.CPUWork*tiflash.cpuWork + weights.HashStateRow*tiflash.hashStateRows +
 		weights.OperatorNum*tiflash.operatorNum + weights.JoinOutputRow*tiflash.joinOutputRows +
 		weights.ScanByte*tiflash.scanBytes + weights.NetByte*tiflash.netBytes + weights.CrossAZNetByte*tiflash.crossAZNetBytes
@@ -199,7 +199,7 @@ func (report *statementRUFullReport) addStatementUnits(units ruv2.StmtUnits) {
 	}
 }
 
-func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
+func publishStatementRUFullMetrics(finalized *statementRUFinalizedSnapshot) {
 	for engine, operators := range finalized.report.units {
 		for operator, units := range operators {
 			if !finalized.report.seen[engine][operator] {

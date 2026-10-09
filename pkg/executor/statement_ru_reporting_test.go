@@ -138,7 +138,7 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 		report.add(statementRUTiDB, statementRUProjection, ruv2.StmtUnits{CPUWork: 3})
 		report.add(statementRUTiKV, statementRUReader, ruv2.StmtUnits{})
 		finalized := statementRUFinalizedSnapshot{report: report, calibrationState: statementRUCalibrationIncomplete}
-		publishStatementRUFullMetrics(finalized)
+		publishStatementRUFullMetrics(&finalized)
 		families, err := registry.Gather()
 		require.NoError(t, err)
 		require.Len(t, families, 1)
@@ -152,7 +152,7 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 		require.Equal(t, map[string]string{"engine": "tidb", "opclass": "projection", "unit": "cpu_work"}, labels)
 		// A later zero contribution neither creates series nor removes accumulated work.
 		report.units[statementRUTiDB][statementRUProjection] = ruv2.StmtUnits{}
-		publishStatementRUFullMetrics(finalized)
+		publishStatementRUFullMetrics(&finalized)
 		after, err := registry.Gather()
 		require.NoError(t, err)
 		require.Equal(t, families, after)
@@ -197,7 +197,7 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 		c := &checks[i]
 		c.before = testutil.ToFloat64(metrics.RUV2Unit.WithLabelValues(c.engine, c.operator, c.unit))
 	}
-	publishStatementRUMetricsSafely(first)
+	publishStatementRUMetricsSafely(&first)
 	for _, c := range checks {
 		require.InDelta(t, c.want, testutil.ToFloat64(metrics.RUV2Unit.WithLabelValues(c.engine, c.operator, c.unit))-c.before, 1e-9, c.unit)
 	}
