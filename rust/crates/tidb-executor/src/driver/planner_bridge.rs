@@ -3471,21 +3471,36 @@ impl CachedSelectPlan {
         tidb_planner::physical_plan_cache::cached_plan_memory_usage(&self.physical) as i64
     }
 
-    pub(crate) fn bind(&mut self, values: &[tidb_datatype::Datum]) -> Option<u64> {
-        super::bind_prepared_statement_in_place(&mut self.statement, values).ok()?;
+    pub(crate) fn bind(
+        &mut self,
+        values: &[tidb_datatype::Datum],
+        ctx: Option<&crate::StmtContext>,
+    ) -> Result<u64, CachedPlanBindFailure> {
+        super::bind_prepared_statement_in_place(&mut self.statement, values)
+            .map_err(|_| CachedPlanBindFailure::Rejected)?;
         // Rebuild through the current execute parameters, never the datum
         // cached when the marker-bearing expression was first planned.
-        let parameters = tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values);
-        let evaluator = |expression: &tidb_expr::expression::Expression| {
-            tidb_expr::eval_expression_once(expression, &parameters)
+        let needs_statement = std::sync::atomic::AtomicBool::new(false);
+        let statement = deferred_rebuild_context(ctx, values);
+        let evaluator = |expression: &tidb_expr::expression::Expression| match &statement {
+            Some(statement) => tidb_expr::eval_expression_once(expression, statement),
+            None => {
+                needs_statement.store(true, std::sync::atomic::Ordering::Relaxed);
+                Err(tidb_expr::EvalError::Unsupported(
+                    "a deferred expression needs the executing statement",
+                ))
+            }
         };
         let rebuilt = self.physical.rebuild_plan_for_cache_in_place(
             &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values)
                 .with_deferred_evaluator(&evaluator),
         );
-        rebuilt.ok()?;
+        if needs_statement.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(CachedPlanBindFailure::NeedsStatement);
+        }
+        rebuilt.map_err(|_| CachedPlanBindFailure::Rejected)?;
         self.generation = self.generation.wrapping_add(1);
-        Some(self.generation)
+        Ok(self.generation)
     }
 
     pub(crate) fn execution_mut(
@@ -3494,6 +3509,28 @@ impl CachedSelectPlan {
     ) -> Option<(&tidb_ast::Stmt, &mut PhysicalPlan)> {
         (self.generation == generation).then_some((&self.statement, &mut self.physical))
     }
+}
+
+/// Why a cached plan could not be rebuilt for an execute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CachedPlanBindFailure {
+    /// The rebuild reached a deferred expression (`NOW()`) and was given no
+    /// statement to evaluate it in: the entry stays, and a bind with the
+    /// executing statement rebuilds it.
+    NeedsStatement,
+    /// Go rejects an entry whose in-place rebuild fails.
+    Rejected,
+}
+
+/// The context a cached plan's rebuild evaluates a deferred expression in:
+/// Go re-evaluates `NOW()` and its kin under the executing statement's own
+/// session context (clock, time zone, variables) with this execute's
+/// parameters. Without a statement there is no clock to read.
+pub(super) fn deferred_rebuild_context(
+    ctx: Option<&crate::StmtContext>,
+    values: &[tidb_datatype::Datum],
+) -> Option<crate::StmtContext> {
+    ctx.map(|ctx| ctx.clone().with_prepared_params(std::sync::Arc::from(values)))
 }
 
 /// Builds the same logical and physical plan as ordinary execution, with

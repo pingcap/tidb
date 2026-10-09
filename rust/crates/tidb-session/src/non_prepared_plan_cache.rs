@@ -347,6 +347,7 @@ pub(crate) fn parameterize_select(
     catalog: &Catalog,
     current_db: &str,
     enable_param_limit: bool,
+    enable_for_dml: bool,
     string_collation: Collation,
     max_num_param: usize,
 ) -> Result<ParameterizedSelect, Refusal> {
@@ -371,6 +372,12 @@ pub(crate) fn parameterize_select(
         filter_depth: 0,
         max_num_param,
     };
+    // Go `NonPreparedPlanCacheableWithCtx`: a locking read is "not a SELECT
+    // statement" only while `tidb_enable_non_prepared_plan_cache_for_dml` is
+    // off; with it on the read is admitted like any SELECT.
+    if select.lock.is_some() && !enable_for_dml {
+        return Err(Refusal::fast("not a SELECT statement"));
+    }
     let mut parameterized = (**select).clone();
     walk.fast_check(&parameterized)?;
     walk.select(&mut parameterized)?;
@@ -417,11 +424,6 @@ impl Walk<'_> {
     fn fast_check(&mut self, select: &SelectStmt) -> Result<(), Refusal> {
         if select.kind != tidb_ast::SelectStatementKind::Select {
             return Err(Refusal::fast("not a select statement"));
-        }
-        if select.lock.is_some() {
-            // Go refuses a locking read at the statement-kind gate:
-            // `selStmt.LockInfo != nil` is "not a SELECT statement".
-            return Err(Refusal::fast("not a SELECT statement"));
         }
         if select.having.is_some() {
             return Err(Refusal::fast(
@@ -982,6 +984,7 @@ impl crate::Session {
             &catalog,
             &self.current_db,
             enable_param_limit,
+            self.non_prepared_plan_cache_for_dml_enabled(),
             string_collation,
             max_num_param,
         ) {

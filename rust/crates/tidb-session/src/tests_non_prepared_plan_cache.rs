@@ -516,21 +516,28 @@ fn go_refuses_tables_in_every_system_schema_owned_by_filter() {
 }
 
 #[test]
-fn go_refuses_a_locking_read_and_a_statement_that_is_not_a_select() {
+fn a_locking_read_and_a_dml_statement_follow_the_dml_switch() {
     let mut session = cache_session();
 
-    // Go's statement-kind gate: `selStmt.LockInfo != nil` is refused with
-    // "not a SELECT statement" while the DML switch is off.
+    // The DML switch is on by default (`DefTiDBEnableNonPreparedPlanCacheForDML`),
+    // so a locking read and a repeated UPDATE reuse the retained plan.
+    let _ = session.run("select a from t where a = 1 for update");
+    let _ = session.run("select a from t where a = 2 for update");
+    assert_eq!(hit(&mut session), "1");
+    let _ = session.run("update t set b = 9 where a = 1");
+    let _ = session.run("update t set b = 9 where a = 2");
+    assert_eq!(hit(&mut session), "1");
+
+    // Go's statement-kind gate: with the switch off, `selStmt.LockInfo !=
+    // nil` is refused as "not a SELECT statement".
+    session
+        .run("set tidb_enable_non_prepared_plan_cache_for_dml = 0")
+        .expect("switch off");
     refused(
         &mut session,
         "select a from t where a = 1 for update",
         "select a from t where a = 2 for update",
     );
-    // The DML switch is on by default (`DefTiDBEnableNonPreparedPlanCacheForDML`),
-    // so a repeated UPDATE now reuses the retained plan.
-    let _ = session.run("update t set b = 9 where a = 1");
-    let _ = session.run("update t set b = 9 where a = 2");
-    assert_eq!(hit(&mut session), "1");
 }
 
 /// Go `NonPreparedPlanCacheableWithCtx`'s UPDATE/INSERT/DELETE arms: the

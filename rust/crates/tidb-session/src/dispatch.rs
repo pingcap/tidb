@@ -1746,7 +1746,7 @@ impl Session {
                 .statement_context_for_stmt(statement, false)
                 .with_prepared_params(parameters.clone());
             self.with_catalog_mut(|catalog| {
-                if schema_version != catalog.metadata_version() {
+                if schema_version != catalog.schema_version() {
                     return Ok(None);
                 }
                 let Stmt::Query(query) = statement else {
@@ -2705,7 +2705,7 @@ impl Session {
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
                     let record_set = self.with_catalog_mut(|catalog| {
                         let physical = select_plan.as_mut().and_then(|retained| {
-                            (retained.schema_version == catalog.metadata_version()).then(|| {
+                            (retained.schema_version == catalog.schema_version()).then(|| {
                                 *retained.used = true;
                                 &mut *retained.physical
                             })
@@ -2741,7 +2741,7 @@ impl Session {
                                 unreachable!("a retained SELECT owns a SELECT query")
                             };
                             self.with_catalog_mut(|catalog| {
-                                (schema_version == catalog.metadata_version())
+                                (schema_version == catalog.schema_version())
                                     .then(|| {
                                         tidb_executor::driver::open_query_meta_stmt_with_physical(
                                             query,
@@ -2762,7 +2762,7 @@ impl Session {
                 }
                 let record_set = self.with_catalog_mut(|catalog| {
                     let physical = select_plan.as_mut().and_then(|retained| {
-                        (retained.schema_version == catalog.metadata_version()).then(|| {
+                        (retained.schema_version == catalog.schema_version()).then(|| {
                             *retained.used = true;
                             &mut *retained.physical
                         })

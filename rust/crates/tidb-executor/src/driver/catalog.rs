@@ -273,6 +273,12 @@ pub struct Catalog {
     /// temporary one that shadowed it -- the create would overwrite the slot
     /// and the detach would empty it.
     shadowed_by_local_temporary: Vec<(String, String, std::sync::Arc<TableEntry>)>,
+    /// While a session's LOCAL temporary tables are attached: the metadata
+    /// version of the image without them, and the version attaching gave.
+    /// Go's `SessionExtendedInfoSchema` keeps the shared infoschema's
+    /// `SchemaMetaVersion`, so a temporary table never moves a plan-cache key
+    /// (see [`Catalog::schema_version`]).
+    overlay_versions: Option<(u64, u64)>,
     /// Loaded statistics by physical table id, Go's `StatsHandle` cache as
     /// the planner sees it.
     ///
@@ -522,6 +528,7 @@ impl CatalogSnapshot {
             planner_view: self.planner_view.clone(),
             table_id_names: self.table_id_names.clone(),
             shadowed_by_local_temporary: self.shadowed_by_local_temporary.clone(),
+            overlay_versions: None,
             statistics: Arc::clone(&owner.statistics),
             statistics_view: owner.statistics_view.clone(),
             statistics_schemas: Arc::clone(&self.statistics_schemas),
@@ -683,6 +690,7 @@ impl Default for Catalog {
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
             shadowed_by_local_temporary: Vec::new(),
+            overlay_versions: None,
             statistics: Arc::default(),
             pending_stats_modify_count: HashMap::new(),
             statistics_view: None,
@@ -1863,6 +1871,17 @@ impl Catalog {
         self.metadata_version
     }
 
+    /// Go `InfoSchema.SchemaMetaVersion` as a plan-cache key and plan
+    /// validity check read it: the metadata version of the shared image,
+    /// which a session attaching its LOCAL temporary tables does not move
+    /// (`SessionExtendedInfoSchema` keeps the inner version). A statement
+    /// reading a temporary table is refused by the cache on its own.
+    #[must_use]
+    pub fn schema_version(&self) -> u64 {
+        self.overlay_versions
+            .map_or(self.metadata_version, |(base, _)| base)
+    }
+
     /// Advances the mutation counter and drops the derived views that
     /// belong to the image it counted.
     ///
@@ -2896,7 +2915,9 @@ impl Catalog {
         // mounting its own temp tables never moves either.
         let changed = !tables.is_empty();
         if changed {
+            let base = self.metadata_version;
             self.bump_metadata_version();
+            self.overlay_versions = Some((base, self.metadata_version));
         }
         for (database, name, table) in tables {
             let Some(schema) = self.database_mut(&database) else {
@@ -2929,6 +2950,12 @@ impl Catalog {
         // memoized sweep rather than a fresh walk.
         let slots = self.ensure_temporary_sweep().0.to_vec();
         let moved_entries = !slots.is_empty() || !self.shadowed_by_local_temporary.is_empty();
+        // A statement that changed no schema leaves the image it found, so
+        // detaching restores that image's version.
+        let restored = self
+            .overlay_versions
+            .take()
+            .and_then(|(base, attached)| (attached == self.metadata_version).then_some(base));
         if moved_entries {
             self.bump_metadata_version();
         }
@@ -2955,6 +2982,9 @@ impl Catalog {
         }
         if moved_entries {
             self.temporary_sweep = None;
+        }
+        if let Some(base) = restored {
+            self.metadata_version = base;
         }
         taken
     }

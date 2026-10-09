@@ -209,6 +209,16 @@ impl Session {
                     self.vars
                         .optimizer_fix_control()
                         .get_bool_with_default(tidb_planner::fix_control::FIX_45798, true),
+                )
+                .with_cache_switches(
+                    self.session_bool(
+                        tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
+                        tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
+                    ),
+                    self.session_bool(
+                        tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
+                        tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
+                    ),
                 ),
             )
         });

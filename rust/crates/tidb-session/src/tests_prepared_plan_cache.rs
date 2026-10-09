@@ -2133,3 +2133,78 @@ fn instance_plan_cache_global_limits_use_typed_byte_getters() {
         vec![vec!["104857600"]]
     );
 }
+
+fn last_plan_from_cache(session: &mut Session) -> Vec<Vec<String>> {
+    row_text(session.run("select @@last_plan_from_cache"))
+}
+
+/// Go's `SessionExtendedInfoSchema` keeps the shared `SchemaMetaVersion`, so
+/// a session's LOCAL temporary table moves no plan-cache key: a statement
+/// that does not read it hits as before. Attaching the table around every
+/// statement had moved the key, so nothing in such a session ever hit.
+#[test]
+fn a_local_temporary_table_does_not_stop_other_statements_hitting() {
+    let mut session = Session::new();
+    session.run("create table t (a int)").unwrap();
+    session.run("create temporary table tt (a int)").unwrap();
+    session.run("set tidb_enable_non_prepared_plan_cache = 1").unwrap();
+    session.run("select * from t where a = 1").unwrap();
+    session.run("select * from t where a = 2").unwrap();
+    assert_eq!(last_plan_from_cache(&mut session), [["1"]]);
+    session.run("prepare st from 'select * from t where a = ?'").unwrap();
+    session.run("set @a = 1").unwrap();
+    session.run("execute st using @a").unwrap();
+    session.run("execute st using @a").unwrap();
+    assert_eq!(last_plan_from_cache(&mut session), [["1"]]);
+    // A statement reading the temporary table is refused by the cache.
+    session.run("select * from tt where a = 1").unwrap();
+    session.run("select * from tt where a = 2").unwrap();
+    assert_eq!(last_plan_from_cache(&mut session), [["0"]]);
+}
+
+/// Go `NewPlanCacheKey` reads `tidb_enable_plan_cache_for_param_limit` and
+/// `tidb_enable_plan_cache_for_subquery` at every EXECUTE: turning one off
+/// after PREPARE stops the statement it covers from hitting.
+#[test]
+fn the_limit_and_subquery_switches_apply_at_each_execute() {
+    let mut session = Session::new();
+    session.run("create table t (a int)").unwrap();
+    session.run("create table s (a int)").unwrap();
+    session.run("prepare l from 'select * from t limit ?'").unwrap();
+    session.run("prepare q from 'select * from t where a in (select a from s)'").unwrap();
+    session.run("set @n = 1").unwrap();
+    session.run("set tidb_enable_plan_cache_for_param_limit = off").unwrap();
+    session.run("set tidb_enable_plan_cache_for_subquery = off").unwrap();
+    session.run("execute l using @n").unwrap();
+    session.run("execute l using @n").unwrap();
+    assert_eq!(last_plan_from_cache(&mut session), [["0"]]);
+    session.run("execute q").unwrap();
+    session.run("execute q").unwrap();
+    assert_eq!(last_plan_from_cache(&mut session), [["0"]]);
+    session.run("set tidb_enable_plan_cache_for_param_limit = on").unwrap();
+    session.run("set tidb_enable_plan_cache_for_subquery = on").unwrap();
+    session.run("execute l using @n").unwrap();
+    session.run("execute l using @n").unwrap();
+    assert_eq!(last_plan_from_cache(&mut session), [["1"]]);
+    session.run("execute q").unwrap();
+    session.run("execute q").unwrap();
+    assert_eq!(last_plan_from_cache(&mut session), [["1"]]);
+}
+
+/// A cached plan's rebuild evaluates a deferred `NOW()` under the executing
+/// statement's clock, as Go's does; it had been evaluated with no session,
+/// failed, and dropped the entry, so such a statement never hit.
+#[test]
+fn a_plan_reading_now_is_reused() {
+    let mut session = Session::new();
+    session.run("create table t (a int, c datetime, key(a))").unwrap();
+    session.run("set tidb_enable_non_prepared_plan_cache = 1").unwrap();
+    session.run("select * from t where c < now()").unwrap();
+    session.run("select * from t where c < now()").unwrap();
+    assert_eq!(last_plan_from_cache(&mut session), [["1"]]);
+    session.run("prepare st from 'select * from t where c < now() and a > ?'").unwrap();
+    session.run("set @a = 1").unwrap();
+    session.run("execute st using @a").unwrap();
+    session.run("execute st using @a").unwrap();
+    assert_eq!(last_plan_from_cache(&mut session), [["1"]]);
+}

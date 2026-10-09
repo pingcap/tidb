@@ -2225,6 +2225,7 @@ pub struct PreparedDmlPlan {
     table_keys: Vec<CatalogTableKey>,
     parameter_count: usize,
     limit_parameter_orders: Vec<usize>,
+    stmt_info: super::access::PlanCacheStmtInfo,
     statement: Stmt,
     cache_key: String,
     last_limit_values: std::sync::Mutex<Vec<u64>>,
@@ -2250,20 +2251,35 @@ impl CachedDmlPlan {
         tidb_planner::physical_plan_cache::cached_plan_memory_usage(&self.physical) as i64
     }
 
-    fn bind(&mut self, values: &[Datum]) -> Option<u64> {
-        super::bind_prepared_statement_in_place(&mut self.statement, values).ok()?;
-        let parameters = tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values);
-        let evaluator = |expression: &tidb_expr::expression::Expression| {
-            tidb_expr::eval_expression_once(expression, &parameters)
+    fn bind(
+        &mut self,
+        values: &[Datum],
+        ctx: Option<&crate::StmtContext>,
+    ) -> Result<u64, super::planner_bridge::CachedPlanBindFailure> {
+        use super::planner_bridge::CachedPlanBindFailure;
+        super::bind_prepared_statement_in_place(&mut self.statement, values)
+            .map_err(|_| CachedPlanBindFailure::Rejected)?;
+        let needs_statement = std::sync::atomic::AtomicBool::new(false);
+        let statement = super::planner_bridge::deferred_rebuild_context(ctx, values);
+        let evaluator = |expression: &tidb_expr::expression::Expression| match &statement {
+            Some(statement) => tidb_expr::eval_expression_once(expression, statement),
+            None => {
+                needs_statement.store(true, std::sync::atomic::Ordering::Relaxed);
+                Err(tidb_expr::EvalError::Unsupported(
+                    "a deferred expression needs the executing statement",
+                ))
+            }
         };
-        self.physical
-            .rebuild_plan_for_cache_in_place(
-                &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values)
-                    .with_deferred_evaluator(&evaluator),
-            )
-            .ok()?;
+        let rebuilt = self.physical.rebuild_plan_for_cache_in_place(
+            &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values)
+                .with_deferred_evaluator(&evaluator),
+        );
+        if needs_statement.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(CachedPlanBindFailure::NeedsStatement);
+        }
+        rebuilt.map_err(|_| CachedPlanBindFailure::Rejected)?;
         self.generation = self.generation.wrapping_add(1);
-        Some(self.generation)
+        Ok(self.generation)
     }
 
     fn execution_mut(
@@ -2303,7 +2319,7 @@ impl PreparedDmlPlan {
     ) {
         cache.delete(&PhysicalPlanCacheKey {
             statement: self.cache_key.clone(),
-            schema_version: catalog.metadata_version(),
+            schema_version: catalog.schema_version(),
             stats_version_hash: self.stats_version_hash(catalog, environment),
             environment: environment.clone(),
             limit_values: self
@@ -2425,7 +2441,7 @@ impl PreparedDmlPlan {
             .lock()
             .ok()?
             .clone_from(&limit_values);
-        let schema_version = catalog.metadata_version();
+        let schema_version = catalog.schema_version();
         let stats_version_hash = self.stats_version_hash(catalog, environment);
         let cache_key = PhysicalPlanCacheKey {
             statement: self.cache_key.clone(),
@@ -2434,7 +2450,8 @@ impl PreparedDmlPlan {
             environment: environment.clone(),
             limit_values,
         };
-        let cached = match cache.get(&cache_key, &parameter_types) {
+        let admitted = environment.admits(self.stmt_info);
+        let cached = match admitted.then(|| cache.get(&cache_key, &parameter_types)).flatten() {
             Some(CachedPhysicalPlan::Dml(plan)) => Some(plan),
             _ => None,
         };
@@ -2446,11 +2463,16 @@ impl PreparedDmlPlan {
             Some(plan) => {
                 let generation = {
                     let mut cached = plan.lock().ok()?;
-                    cached.bind(params)
+                    cached.bind(params, ctx)
                 };
                 match generation {
-                    Some(generation) => (plan, generation, true),
-                    None => {
+                    Ok(generation) => (plan, generation, true),
+                    // A context-free lookup leaves the entry for the bind
+                    // that carries the statement.
+                    Err(super::planner_bridge::CachedPlanBindFailure::NeedsStatement) => {
+                        return None;
+                    }
+                    Err(super::planner_bridge::CachedPlanBindFailure::Rejected) => {
                         cache.delete(&cache_key);
                         return None;
                     }
@@ -2477,7 +2499,8 @@ impl PreparedDmlPlan {
                     generation: 0,
                 };
                 // A rejected candidate executes once without a cache rebuild or insertion.
-                let generation = if cacheable { plan.bind(params)? } else { 0 };
+                let cacheable = cacheable && admitted;
+                let generation = if cacheable { plan.bind(params, Some(&ctx)).ok()? } else { 0 };
                 let plan = Arc::new(std::sync::Mutex::new(plan));
                 if cacheable {
                     cache.put(
@@ -2589,6 +2612,7 @@ pub fn build_prepared_dml_plan(
             .collect(),
         parameter_count,
         limit_parameter_orders: super::access::prepared_limit_parameter_orders(statement),
+        stmt_info: super::access::PlanCacheStmtInfo::of(statement),
         statement: statement.clone(),
         last_limit_values: std::sync::Mutex::default(),
         cache_key: super::plan_cache::statement_key(current_db, &statement.restore()),

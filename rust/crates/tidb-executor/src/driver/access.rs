@@ -339,7 +339,7 @@ impl PreparedPointGetPlan {
     /// Whether the catalog still names the same unpartitioned physical table.
     #[must_use]
     pub fn matches_catalog(&self, catalog: &Catalog, current_database: &str) -> bool {
-        if self.schema_version != catalog.metadata_version()
+        if self.schema_version != catalog.schema_version()
             || !self.current_database.eq_ignore_ascii_case(current_database)
         {
             return false;
@@ -393,10 +393,55 @@ pub struct PreparedSelectPlan {
     table_keys: Vec<CatalogTableKey>,
     parameter_count: usize,
     limit_parameter_orders: Vec<usize>,
+    stmt_info: PlanCacheStmtInfo,
     statement: tidb_ast::Stmt,
     cache_key: String,
     last_limit_values: std::sync::Mutex<Vec<u64>>,
     contains_sequence_functions: bool,
+}
+
+/// Go `PlanCacheStmt.limits` and `hasSubquery`, as `planCacheStmtProcessor`
+/// records them at PREPARE: whether the statement has any LIMIT and any
+/// subquery expression. `NewPlanCacheKey` refuses the cache at each EXECUTE
+/// while the matching switch is off.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct PlanCacheStmtInfo {
+    has_limit: bool,
+    has_subquery: bool,
+}
+
+impl PlanCacheStmtInfo {
+    pub(super) fn of(stmt: &tidb_ast::Stmt) -> Self {
+        struct Processor(PlanCacheStmtInfo);
+
+        impl tidb_ast::Visitor for Processor {
+            fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                if node.is::<tidb_ast::Limit>() {
+                    self.0.has_limit = true;
+                } else if let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() {
+                    if matches!(
+                        expr,
+                        tidb_ast::Expr::Subquery(_)
+                            | tidb_ast::Expr::Exists { .. }
+                            | tidb_ast::Expr::InSubquery { .. }
+                            | tidb_ast::Expr::CompareSubquery { .. }
+                    ) {
+                        self.0.has_subquery = true;
+                    }
+                }
+                false
+            }
+
+            fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+                true
+            }
+        }
+
+        let mut statement = stmt.clone();
+        let mut processor = Processor(Self::default());
+        tidb_ast::Visitable::accept(&mut statement, &mut processor);
+        processor.0
+    }
 }
 
 /// Session facts in Go's prepared-plan cache key that can change physical
@@ -426,6 +471,10 @@ pub struct PreparedPlanCacheEnvironment {
     skip_stats_on_binding: bool,
     plan_cache_max_plan_size: u64,
     enable_generated_columns: bool,
+    /// Go `EnablePlanCacheForParamLimit` (`tidb_enable_plan_cache_for_param_limit`).
+    enable_param_limit: bool,
+    /// Go `EnablePlanCacheForSubquery` (`tidb_enable_plan_cache_for_subquery`).
+    enable_subquery: bool,
 }
 
 impl Default for PreparedPlanCacheEnvironment {
@@ -481,6 +530,8 @@ impl PreparedPlanCacheEnvironment {
             plan_cache_max_plan_size: tidb_vardef::defaults::DEF_TIDB_PLAN_CACHE_MAX_PLAN_SIZE
                 as u64,
             enable_generated_columns: true,
+            enable_param_limit: true,
+            enable_subquery: true,
         }
     }
 
@@ -554,6 +605,23 @@ impl PreparedPlanCacheEnvironment {
         self.binding_sql = binding_sql.unwrap_or_default().to_owned();
         self.skip_stats_on_binding = !self.binding_sql.is_empty() && skip_stats;
         self
+    }
+
+    /// Adds the two switches Go's `NewPlanCacheKey` reads at every EXECUTE.
+    #[must_use]
+    pub const fn with_cache_switches(mut self, param_limit: bool, subquery: bool) -> Self {
+        self.enable_param_limit = param_limit;
+        self.enable_subquery = subquery;
+        self
+    }
+
+    /// Go `NewPlanCacheKey`'s refusals: a statement with a subquery while
+    /// `tidb_enable_plan_cache_for_subquery` is off, or with a LIMIT while
+    /// `tidb_enable_plan_cache_for_param_limit` is off, neither reads nor
+    /// fills the cache.
+    pub(super) const fn admits(&self, info: PlanCacheStmtInfo) -> bool {
+        !(info.has_subquery && !self.enable_subquery)
+            && !(info.has_limit && !self.enable_param_limit)
     }
 
     pub(crate) const fn plan_cacheability(
@@ -639,7 +707,7 @@ impl PreparedSelectPlan {
     ) {
         cache.delete(&PhysicalPlanCacheKey {
             statement: self.cache_key.clone(),
-            schema_version: catalog.metadata_version(),
+            schema_version: catalog.schema_version(),
             stats_version_hash: self.stats_version_hash(catalog, environment),
             environment: environment.clone(),
             limit_values: self
@@ -799,7 +867,7 @@ impl PreparedSelectPlan {
             .lock()
             .ok()?
             .clone_from(&limit_values);
-        let schema_version = catalog.metadata_version();
+        let schema_version = catalog.schema_version();
         let stats_version_hash = self.stats_version_hash(catalog, environment);
         let cache_key = PhysicalPlanCacheKey {
             statement: self.cache_key.clone(),
@@ -808,7 +876,8 @@ impl PreparedSelectPlan {
             environment: environment.clone(),
             limit_values,
         };
-        let cached = match cache.get(&cache_key, &parameter_types) {
+        let admitted = environment.admits(self.stmt_info);
+        let cached = match admitted.then(|| cache.get(&cache_key, &parameter_types)).flatten() {
             Some(CachedPhysicalPlan::Select(plan)) => Some(plan),
             _ => None,
         };
@@ -818,10 +887,15 @@ impl PreparedSelectPlan {
         let parameters: Arc<[Datum]> = Arc::from(values);
         let (cached_plan, generation, cache_hit) = match cached {
             Some(plan) => {
-                let generation = plan.lock().ok()?.bind(values);
+                let generation = plan.lock().ok()?.bind(values, ctx);
                 match generation {
-                    Some(generation) => (plan, generation, true),
-                    None => {
+                    Ok(generation) => (plan, generation, true),
+                    // A context-free lookup leaves the entry for the bind
+                    // that carries the statement.
+                    Err(super::planner_bridge::CachedPlanBindFailure::NeedsStatement) => {
+                        return None;
+                    }
+                    Err(super::planner_bridge::CachedPlanBindFailure::Rejected) => {
                         // Go rejects a cache entry whose in-place range rebuild
                         // fails and generates a fresh plan. Do not leave a
                         // partially rebuilt tree available to the next execute.
@@ -845,7 +919,8 @@ impl PreparedSelectPlan {
                     environment.plan_cacheability(self.parameter_count),
                 )?;
                 // A rejected cache candidate still executes its already-bound plan.
-                let generation = if cacheable { plan.bind(values)? } else { 0 };
+                let cacheable = cacheable && admitted;
+                let generation = if cacheable { plan.bind(values, Some(&ctx)).ok()? } else { 0 };
                 let plan = Arc::new(std::sync::Mutex::new(plan));
                 if cacheable {
                     cache.put(
@@ -1016,7 +1091,7 @@ pub(crate) fn run_prepared_select_for_test(
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     let ctx = ctx.clone().with_prepared_params(execution.parameters());
-    if execution.schema_version() != catalog.metadata_version()
+    if execution.schema_version() != catalog.schema_version()
         || !execution
             .plan()
             .current_database
@@ -1213,7 +1288,7 @@ pub fn build_prepared_point_get_plan(
                 .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
     }) {
         return contradiction_plan(
-            catalog.metadata_version(),
+            catalog.schema_version(),
             current_database,
             database,
             table_name,
@@ -1330,7 +1405,7 @@ pub fn build_prepared_point_get_plan(
         return None;
     }
     Some(PreparedPointGetPlan {
-        schema_version: catalog.metadata_version(),
+        schema_version: catalog.schema_version(),
         current_database: current_database.to_owned(),
         database: database.to_owned(),
         table: table_name.to_owned(),
@@ -1387,6 +1462,7 @@ pub fn build_prepared_select_plan(
         table_names,
         parameter_count,
         limit_parameter_orders,
+        stmt_info: PlanCacheStmtInfo::of(stmt),
         statement: stmt.clone(),
         last_limit_values: std::sync::Mutex::default(),
         cache_key: super::plan_cache::statement_key(current_database, &stmt.restore()),
