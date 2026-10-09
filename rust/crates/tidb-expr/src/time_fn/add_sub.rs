@@ -541,8 +541,10 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
     let Some(result) = add_unit_to_time(&unit, base, amount) else {
         return Err(EvalError::Unsupported("TIMESTAMPADD unit"));
     };
+    // Go: an overflowing `addUnitToTime` is `ErrDatetimeFunctionOverflow`
+    // through `handleInvalidTimeError`.
     let Some(result) = result else {
-        return Ok(Datum::Null);
+        return super::calendar::date_arithmetic_overflow(cols);
     };
     if !result.in_range() {
         cols.append_warning(
@@ -585,7 +587,18 @@ fn add_unit_to_time(unit: &str, base: GoDateTime, amount: f64) -> Option<Option<
         "YEAR" => return Some(add_months(base, rounded * 12.0, false)),
         _ => return None,
     };
-    if !micros.is_finite() || micros.abs() > 9e18 {
+    // Go `validAddTime`: the sum, in floating point, must stay within
+    // `0001-01-01 00:00:00`..`9999-12-31 23:59:59.999999`.
+    let base_micros = duration_parse::daynr(base.year, base.month, base.day) as f64
+        * 86_400_000_000.0
+        + f64::from(base.hour) * 3_600_000_000.0
+        + f64::from(base.minute) * 60_000_000.0
+        + f64::from(base.second) * 1_000_000.0
+        + f64::from(base.micros);
+    let min_micros = duration_parse::daynr(1, 1, 1) as f64 * 86_400_000_000.0;
+    let max_micros = (duration_parse::daynr(9999, 12, 31) + 1) as f64 * 86_400_000_000.0 - 1.0;
+    let sum = micros + base_micros;
+    if !(sum >= min_micros && sum <= max_micros) {
         return Some(None);
     }
     Some(base.add(GoDuration {
@@ -600,13 +613,13 @@ fn add_unit_to_time(unit: &str, base: GoDateTime, amount: f64) -> Option<Option<
 /// go through Go's own `time.Time.AddDate`, which OVERFLOWS
 /// (`2020-02-29 + 1 YEAR` is `2021-03-01`). Both were captured.
 fn add_months(base: GoDateTime, months: f64, clamp: bool) -> Option<GoDateTime> {
-    if !months.is_finite() || months.abs() > 1e6 {
+    // Go `validAddMonth`: the target month must lie within
+    // `0001-01`..`9999-12`; anything else is the overflow return.
+    let target = months + (base.year * 12) as f64 + f64::from(base.month - 1);
+    if !(target >= 12.0 && target <= (9999 * 12 + 11) as f64) {
         return None;
     }
     let total = base.year * 12 + i64::from(base.month) - 1 + months as i64;
-    if total < 0 {
-        return None;
-    }
     let year = total / 12;
     let month = (total % 12 + 1) as u32;
     let day = if clamp {

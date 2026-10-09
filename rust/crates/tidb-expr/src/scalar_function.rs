@@ -1511,6 +1511,42 @@ impl ScalarFunction {
         }
     }
 
+    /// [`implicit_numeric_value`] for one operand of a binary operator: Go
+    /// casts a bit operator's operands to INT, a comparison of a string with
+    /// a number compares as REAL (`getBaseCmpType`), and a logical operator
+    /// tests truth through `EvalBool`.
+    fn implicit_numeric_operand(&self, op: BinaryOp, index: usize, value: Datum) -> Datum {
+        let numeric = |expression: &Expression| {
+            expression.static_type().is_some_and(|field| {
+                matches!(
+                    field.eval_type(),
+                    EvalType::Int | EvalType::Real | EvalType::Decimal
+                )
+            })
+        };
+        let target = match op {
+            BinaryOp::BitAnd
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor
+            | BinaryOp::LeftShift
+            | BinaryOp::RightShift => EvalType::Int,
+            BinaryOp::LogicAnd | BinaryOp::LogicOr | BinaryOp::LogicXor => EvalType::Real,
+            BinaryOp::Eq
+            | BinaryOp::NullEq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge
+                if self.args.get(1 - index).is_some_and(numeric) =>
+            {
+                EvalType::Real
+            }
+            _ => return value,
+        };
+        implicit_numeric_value(&self.args[index], &value, target).unwrap_or(value)
+    }
+
     fn eval_binary_values(
         &self,
         op: BinaryOp,
@@ -1774,7 +1810,7 @@ impl ScalarFunction {
                 let domain = self.numeric_operand_domain();
                 let lhs = match domain {
                     Some(domain) => eval_numeric_operand_row(&self.args[0], ctx, row, domain)?,
-                    None => self.args[0].eval(ctx, row)?,
+                    None => self.implicit_numeric_operand(op, 0, self.args[0].eval(ctx, row)?),
                 };
                 // Real addition and Int/Real MOD evaluate both operands even
                 // when the left is NULL. Other numeric signatures stop here.
@@ -1792,7 +1828,10 @@ impl ScalarFunction {
                         (BinaryOp::LogicOr, Some(true)) => return Ok(Datum::Int(1)),
                         _ => {}
                     }
-                    let rhs = logic_truthy(&self.args[1].eval(ctx, row)?, ctx)?;
+                    let rhs = logic_truthy(
+                        &self.implicit_numeric_operand(op, 1, self.args[1].eval(ctx, row)?),
+                        ctx,
+                    )?;
                     return Ok(match op {
                         BinaryOp::LogicAnd if rhs == Some(false) => Datum::Int(0),
                         BinaryOp::LogicOr if rhs == Some(true) => Datum::Int(1),
@@ -1804,7 +1843,7 @@ impl ScalarFunction {
                 }
                 let rhs = match domain {
                     Some(domain) => eval_numeric_operand_row(&self.args[1], ctx, row, domain)?,
-                    None => self.args[1].eval(ctx, row)?,
+                    None => self.implicit_numeric_operand(op, 1, self.args[1].eval(ctx, row)?),
                 };
                 // Keep expression metadata for signedness, signature
                 // selection and source-shaped overflow diagnostics.
@@ -1814,6 +1853,14 @@ impl ScalarFunction {
         if let Some(op) = unary_op_for_name(name) {
             if self.args.len() == 1 {
                 let v = self.args[0].eval(ctx, row)?;
+                // Go builds `-x` and `NOT x` over a string as REAL and `~x`
+                // as INT, so `DAYNAME()` there is its weekday index.
+                let target = if op == UnaryOp::BitNeg {
+                    EvalType::Int
+                } else {
+                    EvalType::Real
+                };
+                let v = implicit_numeric_value(&self.args[0], &v, target).unwrap_or(v);
                 return crate::ops::eval_unary(
                     op,
                     v,
@@ -2304,6 +2351,8 @@ impl ScalarFunction {
                 let ret_type = self
                     .get_static_type()
                     .ok_or(EvalError::Unsupported("a cast with no result type"))?;
+                let value = implicit_numeric_value(&self.args[0], &value, ret_type.eval_type())
+                    .unwrap_or(value);
                 return crate::cast::eval_cast(
                     &cast_type_of(target, ret_type)?,
                     value,
@@ -3694,6 +3743,46 @@ fn numeric_argument_domain(source: EvalType, target: EvalType) -> bool {
 
 // Go's builder inserts numeric argument casts. Native arithmetic retains
 // those source FieldTypes, so apply the same conversion before the operator.
+/// Go `CanImplicitEvalInt` / `CanImplicitEvalReal` (`builtin_cast.go`):
+/// `DAYNAME()` is a string function MySQL also evaluates as a number --
+/// its weekday index, Monday 0 (`builtinDayNameSig.evalInt`/`evalReal`) --
+/// wherever its value is cast to an integer or a real, and in a truth test
+/// (`EvalBool`), rather than as the number its name would parse to.
+/// `Some` is that number for a `DAYNAME()` value; `None` leaves the value
+/// to the ordinary cast.
+pub(crate) fn implicit_numeric_value(
+    expression: &Expression,
+    value: &Datum,
+    target: EvalType,
+) -> Option<Datum> {
+    const WEEKDAYS: [&str; 7] = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ];
+    let Expression::ScalarFunction(function) = expression else {
+        return None;
+    };
+    if function.func_name.lowercase() != "dayname" {
+        return None;
+    }
+    let Datum::String(name) = value else {
+        return None;
+    };
+    let index = WEEKDAYS
+        .iter()
+        .position(|day| day.as_bytes() == name.bytes())?;
+    match target {
+        EvalType::Int => Some(Datum::Int(index as i64)),
+        EvalType::Real => Some(Datum::Real(index as f64)),
+        _ => None,
+    }
+}
+
 pub(crate) fn cast_numeric_argument(
     expression: &Expression,
     value: Datum,
@@ -3715,6 +3804,9 @@ fn cast_numeric_argument_in_mode(
         .expect("numeric argument has a type");
     if value.is_null() || field.eval_type() == target {
         return Ok(value);
+    }
+    if let Some(number) = implicit_numeric_value(expression, &value, target) {
+        return Ok(number);
     }
     let value = match value {
         Datum::Int(bits) if field.is_unsigned() => Datum::UInt(bits as u64),

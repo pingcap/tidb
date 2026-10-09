@@ -725,7 +725,7 @@ pub(crate) fn date_add_result_fsp(
 
 // Go baseDateArithmetical.addDate sends out-of-range calendar results
 // through handleInvalidTimeError (the statement's truncation error group).
-fn date_arithmetic_overflow(ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(super) fn date_arithmetic_overflow(ctx: &dyn Columns) -> Result<Datum, EvalError> {
     const MESSAGE: &str = "Datetime function: datetime field overflow";
     match ctx.truncate_level() {
         ErrorLevel::Ignore => {}
@@ -957,18 +957,45 @@ fn interval_date_text(date: &Datum, cols: &dyn Columns) -> Result<Option<String>
             }
         },
         _ => {
-            // go's getDateFromReal/getDateFromDecimal do not read the raw
-            // decimal text: the numeric value is truncated toward zero to an
-            // integer first (`1.75` -> `1`), and that integer goes through
-            // the SAME packed read as the INT source. The failure names the
-            // truncated integer (`Incorrect time value: '1'`), never the
-            // decimal text.
-            let n = match date {
-                Datum::Decimal(value) => value.round_to_i64_saturating(),
-                Datum::Real(value) => value.trunc() as i64,
+            // Go `ParseTimeFromDecimal` / `ParseTimeFromFloat64`: the integral
+            // part, truncated toward zero, goes through the SAME packed read
+            // as the INT source (a failure names that integer, `Incorrect
+            // time value: '1'`, never the decimal text); when it reads as a
+            // DATETIME the fraction is kept as microseconds -- a decimal's
+            // first six fraction digits, a real's rounded remainder -- so
+            // `19000101000000.0005` is half a millisecond past midnight.
+            let (n, micros) = match date {
+                Datum::Decimal(value) => {
+                    let text = value.to_string();
+                    let (integral, fraction) = text.split_once('.').unwrap_or((&text, ""));
+                    let n = integral.parse::<i64>().unwrap_or(if integral.starts_with('-') {
+                        i64::MIN
+                    } else {
+                        i64::MAX
+                    });
+                    let digits: String = fraction.chars().take(6).collect();
+                    let micros = if digits.is_empty() {
+                        0
+                    } else {
+                        format!("{digits:0<6}").parse::<i64>().unwrap_or(0)
+                    };
+                    (n, micros)
+                }
+                Datum::Real(value) => (
+                    value.trunc() as i64,
+                    ((value - value.trunc()) * 1_000_000.0)
+                        .round()
+                        .clamp(0.0, 999_999.0) as i64,
+                ),
                 _ => return coerce_str(date),
             };
-            return interval_int_text(n, cols);
+            return Ok(interval_int_text(n, cols)?.map(|text| {
+                if micros > 0 && n >= 101_000_000 {
+                    format!("{text}.{micros:06}")
+                } else {
+                    text
+                }
+            }));
         }
     };
     interval_int_text(number, cols)
@@ -1045,11 +1072,11 @@ pub(super) fn whole_interval_amount(
                 return Ok(None);
             };
             let n = parse_single_string_amount(unit, &value);
-            // go converts the string amount through a decimal first: a
-            // string that is not a clean decimal (no digit run, or anything
-            // left after it -- including a fraction, which truncates)
-            // warns `Truncated incorrect DECIMAL value: '<s>'` (1292)
-            // before the same leading-run value.
+            // Go `intervalReformatString`: a string that is not a clean
+            // integer (no digit run, or anything left after it -- including
+            // a fraction, which truncates) is `ErrTruncatedWrongVal("DECIMAL",
+            // str)` through `ec.HandleError`, so a SELECT warns and a strict
+            // INSERT fails, before the same leading-run value.
             let trimmed = value.trim();
             let after_sign = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
             let digits = after_sign.len()
@@ -1057,10 +1084,9 @@ pub(super) fn whole_interval_amount(
                     .trim_start_matches(|c: char| c.is_ascii_digit())
                     .len();
             if digits == 0 || digits < after_sign.len() {
-                cols.append_warning(
-                    1292,
-                    &format!("Truncated incorrect DECIMAL value: '{value}'"),
-                );
+                cols.handle_truncate(&format!(
+                    "Truncated incorrect DECIMAL value: '{value}'"
+                ))?;
             }
             n
         }
@@ -1195,24 +1221,32 @@ pub(super) fn parse_composite_value(
         Some(rest) => (true, rest),
         None => (false, trimmed),
     };
-    let mut matches: Vec<i64> = Vec::new();
+    let mut matches: Vec<String> = Vec::new();
     let mut digits = String::new();
     for c in body.chars().chain(std::iter::once('\0')) {
         if c.is_ascii_digit() {
             digits.push(c);
         } else if !digits.is_empty() {
-            matches.push(digits.parse().unwrap_or(i64::MAX));
-            digits.clear();
+            matches.push(std::mem::take(&mut digits));
         }
     }
     if matches.len() > cnt {
         return (0, 0, 0, 0);
     }
+    const MICROSECOND: usize = 6;
     let mut fields = [0i64; 7];
     let mut idx = index as i64;
     for i in 0..matches.len() {
-        let value = matches[matches.len() - 1 - i];
+        let group = &matches[matches.len() - 1 - i];
         if idx >= 0 {
+            // Go `alignFrac(fields[MicrosecondIndex], MaxFsp)`: the
+            // microsecond group is a fraction's digits, so `'1.5'` is half a
+            // second and `-2` two tenths.
+            let value: i64 = if idx as usize == MICROSECOND && group.len() < 6 {
+                format!("{group:0<6}").parse().unwrap_or(i64::MAX)
+            } else {
+                group.parse().unwrap_or(i64::MAX)
+            };
             fields[idx as usize] = if neg { -value } else { value };
         }
         idx -= 1;

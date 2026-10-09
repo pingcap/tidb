@@ -166,4 +166,5 @@ pub const TOPICS: &[&str] = &[
     "session/nontransactional",
     "executor/insert",
     "executor/write",
+    "expression/time",
 ];

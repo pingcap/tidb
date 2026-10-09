@@ -1332,6 +1332,15 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.time_zone.clone()
     }
 
+    /// The statement's SQL mode, which Go's `builtinDateLiteralSig` reads
+    /// (`DATE '0-0-0'` is legal without NO_ZERO_DATE).
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        self.warning_context
+            .map_or(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE, |context| {
+                context.date_modes()
+            })
+    }
+
     fn current_database(&self) -> Option<String> {
         self.warning_context
             .and_then(tidb_expr::Columns::current_database)

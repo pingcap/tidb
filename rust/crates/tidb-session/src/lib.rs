@@ -2844,6 +2844,8 @@ mod tests_explain_merge_join;
 #[cfg(test)]
 mod tests_expression_indexes;
 #[cfg(test)]
+mod tests_expression_time;
+#[cfg(test)]
 mod tests_extra_handle;
 #[cfg(test)]
 mod tests_extra_handle_access;

@@ -140,11 +140,13 @@ pub(crate) fn date_literal(
             message,
         }
     })?;
+    // Go `builtinDateLiteralSig.evalTime` names the parsed literal
+    // (`b.literal.String()`), so `DATE '0-0-0'` reports '0000-00-00'.
     if modes.no_zero_date && time.is_zero() {
-        return Err(wrong_value(1292, "date", text));
+        return Err(wrong_value(1292, "date", &time.to_string()));
     }
     if modes.no_zero_in_date && time.invalid_zero() && !time.is_zero() {
-        return Err(wrong_value(1292, "date", text));
+        return Err(wrong_value(1292, "date", &time.to_string()));
     }
     // Go `setDecimalAndFlenForDate` (`pkg/expression/builtin.go:1065`):
     // `SetDecimal(0)`, `SetFlen(mysql.MaxDateWidth)`, `SetType(mysql.TypeDate)`.
@@ -339,6 +341,11 @@ mod tests {
             date_literal("2007-10-00", &utc, no_zero_in_date),
             Err(EvalError::WrongTemporalLiteral { code: 1292, ref message })
                 if message == "Incorrect date value: '2007-10-00'"
+        ));
+        assert!(matches!(
+            date_literal("0-0-0", &utc, no_zero_date),
+            Err(EvalError::WrongTemporalLiteral { code: 1292, ref message })
+                if message == "Incorrect date value: '0000-00-00'"
         ));
 
         assert!(matches!(
