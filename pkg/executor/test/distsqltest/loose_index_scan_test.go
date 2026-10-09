@@ -137,3 +137,69 @@ func TestLooseIndexScanPlan(t *testing.T) {
 		"    └─Limit 8000.00 cop[tikv]  offset:0, count:1",
 		"      └─IndexFullScan 10000.00 cop[tikv] table:t, index:iab(a, b) keep order:true, stats:pseudo"))
 }
+
+func TestLooseIndexScanClusteredPrimaryKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (ns_id bigint unsigned not null, id bigint unsigned not null, v int,
+		primary key (ns_id, id) clustered)`)
+	tk.MustExec(`create table s (c varchar(20) collate utf8mb4_general_ci not null, d int not null, v int,
+		primary key (c, d) clustered)`)
+	tk.MustExec("create table n (ns_id bigint unsigned not null, id bigint unsigned not null, primary key (ns_id, id) nonclustered)")
+	rng := rand.New(rand.NewSource(1))
+	values := make([]string, 0, 2000)
+	for i := range 2000 {
+		// Include namespaces above MaxInt64 to cover the unsigned key order.
+		ns := uint64(rng.Intn(30))
+		if ns >= 25 {
+			ns = 1<<63 + ns
+		}
+		values = append(values, fmt.Sprintf("(%d, %d, %d)", ns, i*7%2003, rng.Intn(10)))
+	}
+	tk.MustExec("insert into t values " + strings.Join(values, ","))
+	tk.MustExec("insert into n select ns_id, id from t")
+	strs := []string{"x", "X ", "y", "Y", "z", "", "xx"}
+	values = values[:0]
+	for i := range 500 {
+		values = append(values, fmt.Sprintf("('%s', %d, %d)", strs[i%len(strs)], i, rng.Intn(10)))
+	}
+	tk.MustExec("insert into s values " + strings.Join(values, ","))
+	tk.MustExec("split table t between (0, 0) and (30, 0) regions 5")
+	tk.MustExec("analyze table t, s, n")
+
+	eligible := []string{
+		"select ns_id, min(id) from t group by ns_id",
+		"select ns_id, min(id) from t where ns_id > 0 group by ns_id order by ns_id limit 20",
+		"select ns_id, max(id) from t group by ns_id order by ns_id desc",
+		"select distinct ns_id from t where v = 3",
+		"select ns_id, min(id) from t where ns_id in (3, 9, 27) or ns_id > 9223372036854775808 group by ns_id",
+		"select x.ns_id, x.min_id from (select ns_id, min(id) min_id from t where ns_id > 0 group by ns_id order by ns_id limit 50000) x",
+		"select lower(trim(c)), min(d) from s group by c",
+		"select lower(trim(c)), max(d) from s group by c order by c desc",
+	}
+	for _, sql := range eligible {
+		enableLooseScan(t)
+		require.True(t, usesLooseScan(tk, sql), sql)
+		loose := tk.MustQuery(sql).Sort().Rows()
+		disableLooseScan(t)
+		require.False(t, usesLooseScan(tk, sql), sql)
+		tk.MustQuery(sql).Sort().Check(loose)
+	}
+
+	enableLooseScan(t)
+	defer func() {
+		disableLooseScan(t)
+	}()
+	tk.MustQuery("explain format='brief' select ns_id, min(id) from t group by ns_id").CheckContain(
+		"data:Limit, loose scan prefix:1")
+	ineligible := []string{
+		"select ns_id, max(id) from t group by ns_id",
+		"select ns_id, min(v) from t group by ns_id",
+		"select id from t group by id",
+		"select ns_id, min(id) from n ignore index(primary) group by ns_id",
+	}
+	for _, sql := range ineligible {
+		require.False(t, usesLooseScan(tk, sql), sql)
+	}
+}

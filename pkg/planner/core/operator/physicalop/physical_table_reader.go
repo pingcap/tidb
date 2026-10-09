@@ -81,6 +81,11 @@ type PhysicalTableReader struct {
 	PlanPartInfo *PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	TableScanAndPartitionInfos []TableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
+
+	// LooseScan is set when the reader skips from one distinct clustered
+	// primary key prefix to the next instead of scanning every row. See
+	// LooseScanInfo.
+	LooseScan *LooseScanInfo
 }
 
 // Init initializes PhysicalTableReader.
@@ -232,6 +237,7 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	cloned.ReadReqType = p.ReadReqType
 	cloned.IsCommonHandle = p.IsCommonHandle
 	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
+	cloned.LooseScan = p.LooseScan.Clone()
 	if cloned.TablePlan, err = p.TablePlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
@@ -262,17 +268,20 @@ func (p *PhysicalTableReader) ExplainInfo() string {
 		return fmt.Sprintf("MppVersion: %d, %s", p.SCtx().GetSessionVars().ChooseMppVersion(), tablePlanInfo)
 	}
 
-	return tablePlanInfo
+	return tablePlanInfo + p.LooseScan.explainInfo()
 }
 
 // ExplainNormalizedInfo implements Plan interface.
-func (*PhysicalTableReader) ExplainNormalizedInfo() string {
-	return ""
+func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
+	if p.LooseScan == nil {
+		return ""
+	}
+	return "data:" + p.TablePlan.TP() + p.LooseScan.explainInfo()
 }
 
 // OperatorInfo return other operator information to be explained.
 func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
-	return "data:" + p.TablePlan.ExplainID().String()
+	return "data:" + p.TablePlan.ExplainID().String() + p.LooseScan.explainInfo()
 }
 
 // ResolveIndices implements Plan interface.

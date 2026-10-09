@@ -4154,6 +4154,12 @@ func buildNoRangeTableReader(b *executorBuilder, v *physicalop.PhysicalTableRead
 		e.dummy = true
 	}
 
+	if v.LooseScan != nil {
+		if e.looseScan, err = buildLooseScanInfo(v.Schema(), v.LooseScan); err != nil {
+			return nil, err
+		}
+	}
+
 	return e, nil
 }
 
@@ -4676,7 +4682,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexRead
 	}
 
 	if v.LooseScan != nil {
-		if e.looseScan, err = buildLooseScanInfo(v); err != nil {
+		if e.looseScan, err = buildLooseScanInfo(v.Schema(), v.LooseScan); err != nil {
 			return nil, err
 		}
 	}

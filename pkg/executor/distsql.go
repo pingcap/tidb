@@ -431,7 +431,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		if e.desc {
 			slices.Reverse(kvRanges)
 		}
-		e.result = newLooseScanResult(e, kvRanges)
+		e.result = newIndexLooseScanResult(e, kvRanges)
 		return nil
 	}
 	if !needMergeSort(e.byItems, len(kvRanges)) {

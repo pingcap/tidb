@@ -203,6 +203,10 @@ type TableReaderExecutor struct {
 	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+
+	// looseScan is set when the reader skips between distinct clustered
+	// primary key prefixes.
+	looseScan *looseScanInfo
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -330,6 +334,15 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			}
 			e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		}
+		return nil
+	}
+
+	if e.looseScan != nil {
+		result, err := newTableLooseScanResult(ctx, e)
+		if err != nil {
+			return err
+		}
+		e.resultHandler.open(nil, result)
 		return nil
 	}
 
@@ -598,6 +611,12 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 			reqBuilder.SetTiDBServerID(serverInfo.ServerIDGetter())
 		}
 	}
+	return e.finishKVReq(ctx, reqBuilder)
+}
+
+// finishKVReq sets everything but the key ranges on reqBuilder and builds the
+// request.
+func (e *TableReaderExecutor) finishKVReq(_ context.Context, reqBuilder *distsql.RequestBuilder) (*kv.Request, error) {
 	reqBuilder.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).

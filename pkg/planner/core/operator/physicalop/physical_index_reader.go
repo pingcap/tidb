@@ -52,8 +52,8 @@ type PhysicalIndexReader struct {
 }
 
 // LooseScanInfo describes a loose (skip) index scan. The reader reads the
-// first BatchSize rows of a key range, then seeks past the index prefix of the
-// last row it read, so each distinct prefix value costs one coprocessor
+// first BatchSize rows of a key range, then seeks past the key prefix (index
+// prefix, or clustered primary key prefix) of the last row it read, so each distinct prefix value costs one coprocessor
 // request instead of a scan of all its keys. The aggregation above the reader
 // still merges the rows, so the reader only has to return a superset of the
 // rows each group needs.
@@ -212,19 +212,20 @@ func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObj
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.IndexPlan.ExplainID().String() + p.looseScanExplainInfo()
+	return "index:" + p.IndexPlan.ExplainID().String() + p.LooseScan.explainInfo()
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return "index:" + p.IndexPlan.TP() + p.looseScanExplainInfo()
+	return "index:" + p.IndexPlan.TP() + p.LooseScan.explainInfo()
 }
 
-func (p *PhysicalIndexReader) looseScanExplainInfo() string {
-	if p.LooseScan == nil {
+// explainInfo returns the loose scan part of a reader's explain info.
+func (l *LooseScanInfo) explainInfo() string {
+	if l == nil {
 		return ""
 	}
-	return fmt.Sprintf(", loose scan prefix:%d", len(p.LooseScan.PrefixCols))
+	return fmt.Sprintf(", loose scan prefix:%d", len(l.PrefixCols))
 }
 
 // GetNetDataSize calculates the cost of the plan in network data transfer.

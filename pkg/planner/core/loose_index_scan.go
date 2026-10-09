@@ -27,68 +27,106 @@ import (
 // looseScanBatchSize is the number of rows a loose index scan reads per seek.
 const looseScanBatchSize = 1
 
-// attach2Task4LooseScan turns an index-only cop task into a loose index scan
-// under a complete-mode stream aggregation. The reader reads the first row of
-// every distinct index prefix and the aggregation merges them, so this is only
-// valid when every aggregate function can be computed from those rows. It
-// returns base.InvalidTask when the cop task or the aggregation doesn't
-// qualify.
+// attach2Task4LooseScan turns an index-only cop task, or a cop task over a
+// clustered primary key, into a loose index scan under a complete-mode stream
+// aggregation. The reader reads the first row of every distinct key prefix and
+// the aggregation merges them, so this is only valid when every aggregate
+// function can be computed from those rows. It returns base.InvalidTask when
+// the cop task or the aggregation doesn't qualify.
 func attach2Task4LooseScan(p *physicalop.PhysicalStreamAgg, t base.Task) base.Task {
 	cop, ok := t.(*physicalop.CopTask)
-	if !ok || cop.TablePlan != nil || cop.IndexPlan == nil || cop.IndexJoinInfo != nil ||
-		len(cop.RootTaskConds) > 0 || len(cop.IdxMergePartPlans) > 0 || cop.GetStoreType() != kv.TiKV {
+	if !ok || cop.IndexJoinInfo != nil || len(cop.RootTaskConds) > 0 || len(cop.IdxMergePartPlans) > 0 ||
+		cop.GetStoreType() != kv.TiKV {
 		return base.InvalidTask
 	}
-	// Only selections may sit between the index scan and the limit we add:
-	// they keep the first matching row of a group first.
-	var is *physicalop.PhysicalIndexScan
-	for plan := cop.IndexPlan; is == nil; {
-		switch x := plan.(type) {
-		case *physicalop.PhysicalIndexScan:
-			is = x
-		case *physicalop.PhysicalSelection:
-			plan = x.Children()[0]
-		default:
-			return base.InvalidTask
-		}
+	var scanPlan *base.PhysicalPlan
+	switch {
+	case cop.TablePlan == nil && cop.IndexPlan != nil:
+		scanPlan = &cop.IndexPlan
+	case cop.TablePlan != nil && cop.IndexPlan == nil:
+		scanPlan = &cop.TablePlan
+	default:
+		return base.InvalidTask
 	}
-	info := buildLooseScanInfo(p, is)
+	// Only selections may sit between the scan and the limit we add: they keep
+	// the first matching row of a group first.
+	plan := *scanPlan
+	for sel, ok := plan.(*physicalop.PhysicalSelection); ok; sel, ok = plan.(*physicalop.PhysicalSelection) {
+		plan = sel.Children()[0]
+	}
+	var info *physicalop.LooseScanInfo
+	switch x := plan.(type) {
+	case *physicalop.PhysicalIndexScan:
+		info = buildLooseScanInfo4IndexScan(p, x)
+	case *physicalop.PhysicalTableScan:
+		info = buildLooseScanInfo4TableScan(p, x)
+	}
 	if info == nil {
 		return base.InvalidTask
 	}
 
 	limit := physicalop.PhysicalLimit{Count: info.BatchSize}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
-	limit.SetSchema(cop.IndexPlan.Schema())
-	limit.SetChildren(cop.IndexPlan)
-	cop.IndexPlan = limit
+	limit.SetSchema((*scanPlan).Schema())
+	limit.SetChildren(*scanPlan)
+	*scanPlan = limit
 
 	rt := cop.ConvertToRootTask(p.SCtx())
-	reader, ok := rt.Plan().(*physicalop.PhysicalIndexReader)
-	if !ok {
+	switch reader := rt.Plan().(type) {
+	case *physicalop.PhysicalIndexReader:
+		reader.LooseScan = info
+	case *physicalop.PhysicalTableReader:
+		reader.LooseScan = info
+	default:
 		return base.InvalidTask
 	}
-	reader.LooseScan = info
 	attachPlan2Task(p, rt)
 	return rt
 }
 
-// buildLooseScanInfo checks that the stream aggregation p can be computed from
-// the first row of each distinct index prefix read by is, and returns the
-// loose scan description, or nil if it can't.
-func buildLooseScanInfo(p *physicalop.PhysicalStreamAgg, is *physicalop.PhysicalIndexScan) *physicalop.LooseScanInfo {
+func buildLooseScanInfo4IndexScan(p *physicalop.PhysicalStreamAgg, is *physicalop.PhysicalIndexScan) *physicalop.LooseScanInfo {
 	if !is.KeepOrder || is.Index == nil || is.Index.MVIndex || is.Index.IsColumnarIndex() ||
 		is.Table.GetPartitionInfo() != nil || len(is.GroupByColIdxs) > 0 || len(is.ByItems) > 0 {
 		return nil
 	}
-	idxPos := func(col *expression.Column) int {
-		for i, idxCol := range is.IdxCols {
-			if idxCol != nil && idxCol.EqualColumn(col) {
+	return buildLooseScanInfo(p, is.IdxCols, is.IdxColLens, is.Schema(), is.Desc)
+}
+
+// buildLooseScanInfo4TableScan handles a scan over a clustered (common handle)
+// primary key, whose row keys are ordered by the primary key columns. An
+// integer handle is unique, so every group would have a single row.
+func buildLooseScanInfo4TableScan(p *physicalop.PhysicalStreamAgg, ts *physicalop.PhysicalTableScan) *physicalop.LooseScanInfo {
+	if !ts.KeepOrder || !ts.Table.IsCommonHandle || ts.Table.GetPartitionInfo() != nil ||
+		len(ts.GroupByColIdxs) > 0 || len(ts.ByItems) > 0 || ts.HandleCols == nil {
+		return nil
+	}
+	pk := ts.Table.GetPrimaryKey()
+	if pk == nil || len(pk.Columns) != ts.HandleCols.NumCols() {
+		return nil
+	}
+	keyCols := make([]*expression.Column, 0, len(pk.Columns))
+	keyColLens := make([]int, 0, len(pk.Columns))
+	for i, idxCol := range pk.Columns {
+		keyCols = append(keyCols, ts.HandleCols.GetCol(i))
+		keyColLens = append(keyColLens, idxCol.Length)
+	}
+	return buildLooseScanInfo(p, keyCols, keyColLens, ts.Schema(), ts.Desc)
+}
+
+// buildLooseScanInfo checks that the stream aggregation p can be computed from
+// the first row of each distinct prefix of keyCols, the columns the scan's
+// keys are ordered by, and returns the loose scan description, or nil if it
+// can't. schema is the scan's output schema.
+func buildLooseScanInfo(p *physicalop.PhysicalStreamAgg, keyCols []*expression.Column, keyColLens []int,
+	schema *expression.Schema, desc bool) *physicalop.LooseScanInfo {
+	keyPos := func(col *expression.Column) int {
+		for i, keyCol := range keyCols {
+			if keyCol != nil && keyCol.EqualColumn(col) {
 				return i
 			}
 		}
 		return -1
 	}
-	// The prefix ends at the last GROUP BY column in index order. Index columns
+	// The prefix ends at the last GROUP BY column in key order. Key columns
 	// before it that aren't grouped on only split groups further, which the
 	// aggregation above merges back.
 	prefixLen := 0
@@ -97,18 +135,17 @@ func buildLooseScanInfo(p *physicalop.PhysicalStreamAgg, is *physicalop.Physical
 		if !ok {
 			return nil
 		}
-		pos := idxPos(col)
+		pos := keyPos(col)
 		if pos < 0 {
 			return nil
 		}
 		prefixLen = max(prefixLen, pos+1)
 	}
-	schema := is.Schema()
 	usable := func(pos int) bool {
-		if pos >= len(is.IdxCols) || is.IdxCols[pos] == nil || is.IdxColLens[pos] != types.UnspecifiedLength {
+		if pos >= len(keyCols) || keyCols[pos] == nil || keyColLens[pos] != types.UnspecifiedLength {
 			return false
 		}
-		col := is.IdxCols[pos]
+		col := keyCols[pos]
 		if !schema.Contains(col) {
 			return false
 		}
@@ -128,7 +165,7 @@ func buildLooseScanInfo(p *physicalop.PhysicalStreamAgg, is *physicalop.Physical
 		BatchSize:  looseScanBatchSize,
 	}
 	for i := range prefixLen {
-		info.PrefixCols = append(info.PrefixCols, is.IdxCols[i])
+		info.PrefixCols = append(info.PrefixCols, keyCols[i])
 	}
 	for _, aggFunc := range p.AggFuncs {
 		switch aggFunc.Name {
@@ -143,7 +180,7 @@ func buildLooseScanInfo(p *physicalop.PhysicalStreamAgg, is *physicalop.Physical
 		if !ok {
 			return nil
 		}
-		pos := idxPos(col)
+		pos := keyPos(col)
 		if pos >= 0 && pos < prefixLen {
 			// Constant within a group.
 			continue
@@ -154,13 +191,13 @@ func buildLooseScanInfo(p *physicalop.PhysicalStreamAgg, is *physicalop.Physical
 		if pos != prefixLen || !usable(pos) {
 			return nil
 		}
-		if (aggFunc.Name == ast.AggFuncMin) == is.Desc {
+		if (aggFunc.Name == ast.AggFuncMin) == desc {
 			return nil
 		}
 		if aggFunc.Name == ast.AggFuncMin && !mysql.HasNotNullFlag(col.RetType.GetFlag()) {
 			// NULLs sort first in an ascending scan; descending MAX reads them
 			// last, so only MIN needs the extra seek.
-			info.NullSkipCol = is.IdxCols[pos]
+			info.NullSkipCol = keyCols[pos]
 		}
 	}
 	return info
