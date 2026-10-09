@@ -373,7 +373,19 @@ func readMergeIter(t *testing.T, s *readTestSuite) {
 	var totalSize int
 	readBufSize := s.memoryLimit / len(files)
 	zeroOffsets := make([]uint64, len(files))
+<<<<<<< HEAD:pkg/lightning/backend/external/bench_test.go
 	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot, 1)
+=======
+	iter, err := simplesst.NewMergeKVIter(
+		ctx,
+		files,
+		zeroOffsets,
+		s.store,
+		readBufSize,
+		s.mergeIterHotspot,
+		maxMergeReaderMemoryPerCore,
+	)
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756)):pkg/ingestor/globalsort/bench_test.go
 	intest.AssertNoError(err)
 
 	kvCnt := 0
@@ -528,7 +540,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 	op := NewMergeOperator(
 		wctx,
 		s.store,
-		int64(5*size.MB),
+		5*maxMergeReaderMemoryPerCore,
 		mergeOutput,
 		DefaultBlockSize,
 		onClose,
@@ -541,7 +553,6 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 	err = MergeOverlappingFiles(
 		wctx,
 		datas,
-		s.concurrency,
 		op,
 	)
 

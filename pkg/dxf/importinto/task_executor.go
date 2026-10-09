@@ -449,6 +449,7 @@ type mergeSortStepExecutor struct {
 	logger   *zap.Logger
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
+<<<<<<< HEAD
 	subtaskSortedKVMeta *external.SortedKVMeta
 	// part-size for uploading merged files, it's calculated by:
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
@@ -456,12 +457,18 @@ type mergeSortStepExecutor struct {
 	indexKVPartSize int64
 	store           tidbkv.Storage
 	indicesGenKV    map[int64]importer.GenKVIndex
+=======
+	subtaskSortedKVMeta *globalsort.SortedKVMeta
+	store               tidbkv.Storage
+	indicesGenKV        map[int64]importer.GenKVIndex
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756))
 
 	summary execute.SubtaskSummary
 }
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
+<<<<<<< HEAD
 func (m *mergeSortStepExecutor) Init(context.Context) error {
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
 	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount))
@@ -474,6 +481,8 @@ func (m *mergeSortStepExecutor) Init(context.Context) error {
 	return nil
 }
 
+=======
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756))
 func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	defer func() {
 		err = normalizeSubtaskErr(err)
@@ -516,10 +525,13 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	prefix := subtaskPrefix(m.task.ID, subtask.ID)
 
+<<<<<<< HEAD
 	partSize := m.dataKVPartSize
 	if sm.KVGroup != external.DataKVGroup {
 		partSize = m.indexKVPartSize
 	}
+=======
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756))
 	onDup, err := getOnDupForKVGroup(
 		m.indicesGenKV,
 		sm.KVGroup,
@@ -530,15 +542,25 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	}
 
 	wctx := workerpool.NewContext(ctx)
+<<<<<<< HEAD
 	op := external.NewMergeOperator(
+=======
+	res := m.GetResource()
+	op := globalsort.NewMergeOperator(
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756))
 		wctx,
 		objStore,
-		partSize,
+		res.MemoryPerCore(),
 		prefix,
 		external.DefaultOneWriterBlockSize,
 		onWriterClose,
+<<<<<<< HEAD
 		external.NewMergeCollector(ctx, &m.summary),
 		int(m.GetResource().CPU.Capacity()),
+=======
+		globalsort.NewMergeCollector(ctx, &m.summary),
+		int(res.CPU.Capacity()),
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756))
 		false,
 		onDup,
 	)
@@ -546,7 +568,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err = external.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
-		int(m.GetResource().CPU.Capacity()), // the concurrency used to split subtask
 		op,
 	); err != nil {
 		return errors.Trace(err)
