@@ -1975,7 +1975,6 @@ drop table if exists t;
 create table t (id bit(16), key id(id));
 insert into t values (65);
 select * from t where id not in (-1,2);
--- error 1582
 select * from t where id in (-1, -2);
 
 # TestProjectionBitType
