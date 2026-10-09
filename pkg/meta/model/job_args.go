@@ -1359,6 +1359,17 @@ type IndexArg struct {
 	IsGlobal bool  `json:"is_global,omitempty"`
 	// ConditionString is used to store the partial index condition string for the index.
 	ConditionString string `json:"condition_string,omitempty"`
+
+	// Only used for job args v2.
+	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
+}
+
+// IndexArgSplitOpt is a field of IndexArg used by index presplit.
+type IndexArgSplitOpt struct {
+	Lower      []string   `json:"lower,omitempty"`
+	Upper      []string   `json:"upper,omitempty"`
+	Num        int64      `json:"num,omitempty"`
+	ValueLists [][]string `json:"value_lists,omitempty"`
 }
 
 // ModifyIndexArgs is the argument for add/drop/rename index jobs,
