@@ -459,4 +459,9 @@ func TestConfigStringRedactsCredentials(t *testing.T) {
 	require.Contains(t, str, "region=us-east-1")
 	require.Equal(t, "AKID", conf.S3.AccessKey)
 	require.Contains(t, conf.OutputDirPath, "AKID")
+
+	conf.OutputDirPath = "s3://bucket:port/path?access-key=AKID&secret-access-key=SKEY"
+	str = conf.String()
+	require.NotContains(t, str, "AKID")
+	require.NotContains(t, str, "SKEY")
 }

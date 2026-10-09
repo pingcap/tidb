@@ -29,7 +29,7 @@ import (
 func TestCreateStorage(t *testing.T) {
 	_, err := ParseBackend("1invalid:", nil)
 	require.Error(t, err)
-	require.Regexp(t, "parse (.*)1invalid:(.*): first path segment in URL cannot contain colon", err.Error())
+	require.Regexp(t, "parse storage URL failed: first path segment in URL cannot contain colon", err.Error())
 
 	_, err = ParseBackend("net:storage", nil)
 	require.Error(t, err)
@@ -594,4 +594,39 @@ func TestS3DefaultForceStylePath(t *testing.T) {
 	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=true`, nil)
 	require.NoError(t, err)
 	require.True(t, s.GetS3().ForcePathStyle)
+}
+
+func TestRedactURL(t *testing.T) {
+	cases := []struct {
+		raw      string
+		expected string
+	}{
+		{"/local/path", "/local/path"},
+		{"s3://bucket/prefix", "s3://bucket/prefix"},
+		{"s3://bucket/prefix?access-key=AKID&secret-access-key=SKEY&region=us", "s3://bucket/prefix?access-key=xxxxxx&region=us&secret-access-key=xxxxxx"},
+		{"azure://bucket/prefix?sas-token=SAS", "azure://bucket/prefix?sas-token=xxxxxx"},
+		{"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
+		{"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
+		{"s3a://bucket/prefix?access-key=AKID&secret-access-key=SKEY", "s3a://bucket/prefix"},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.expected, RedactURL(c.raw), c.raw)
+	}
+}
+
+func TestParseRawURLErrorDoesNotLeakURL(t *testing.T) {
+	for _, raw := range []string{
+		"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY",
+		"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY",
+	} {
+		_, err := ParseRawURL(raw)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+
+		_, err = ParseBackend(raw, nil)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+	}
 }

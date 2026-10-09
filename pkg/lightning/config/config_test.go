@@ -33,6 +33,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1459,7 +1460,8 @@ func TestRedactConfig(t *testing.T) {
 		redact string
 	}{
 		{"", ""},
-		{":", ":"},
+		{":", objstore.InvalidURLPlaceholder},
+		{"s3://bucket:port/file?access-key=AKID", objstore.InvalidURLPlaceholder},
 		{"~/file", "~/file"},
 		{"gs://bucket/file", "gs://bucket/file"},
 		{"gs://bucket/file?access-key=123", "gs://bucket/file?access-key=123"},
@@ -1477,5 +1479,18 @@ func TestRedactConfig(t *testing.T) {
 
 		require.Contains(t, cfg.Redact(), tt.redact)
 		require.Contains(t, cfg.String(), tt.origin)
+	}
+}
+
+func TestAdjustFilePathRedactsSourceDir(t *testing.T) {
+	for _, dir := range []string{
+		"s3://bucket:port/data?access-key=AKID&secret-access-key=SKEY",
+		"unknown://bucket/data?access-key=AKID&secret-access-key=SKEY",
+	} {
+		m := &MydumperRuntime{SourceDir: dir}
+		err := m.adjustFilePath()
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
 	}
 }
