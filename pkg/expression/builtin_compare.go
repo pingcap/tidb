@@ -598,13 +598,16 @@ func (b *builtinGreatestIntSig) evalInt(ctx EvalContext, row chunk.Row) (maxv in
 	if isNull || err != nil {
 		return maxv, isNull, err
 	}
+	unsignedCmp := mysql.HasUnsignedFlag(b.tp.GetFlag())
 	for i := 1; i < len(b.args); i++ {
 		var v int64
 		v, isNull, err = b.args[i].EvalInt(ctx, row)
 		if isNull || err != nil {
 			return maxv, isNull, err
 		}
-		if v > maxv {
+		// Unsigned integer values are still carried in int64 slots, so the boundary above MaxInt64
+		// must be ordered by uint64 instead of signed int64.
+		if (!unsignedCmp && v > maxv) || (unsignedCmp && uint64(v) > uint64(maxv)) {
 			maxv = v
 		}
 	}
@@ -942,13 +945,16 @@ func (b *builtinLeastIntSig) evalInt(ctx EvalContext, row chunk.Row) (minv int64
 	if isNull || err != nil {
 		return minv, isNull, err
 	}
+	unsignedCmp := mysql.HasUnsignedFlag(b.tp.GetFlag())
 	for i := 1; i < len(b.args); i++ {
 		var v int64
 		v, isNull, err = b.args[i].EvalInt(ctx, row)
 		if isNull || err != nil {
 			return minv, isNull, err
 		}
-		if v < minv {
+		// Unsigned integer values are still carried in int64 slots, so the boundary above MaxInt64
+		// must be ordered by uint64 instead of signed int64.
+		if (!unsignedCmp && v < minv) || (unsignedCmp && uint64(v) < uint64(minv)) {
 			minv = v
 		}
 	}
