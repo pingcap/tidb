@@ -472,8 +472,10 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
     let plan = plan_stats_write(&mut store, &catalog, &stats, now())
         .expect("a full-sized analyze result plans");
     let planned = plan.mutations.len();
-    // Real analyze output exceeds the deleted facade's count ceiling.
-    assert!(planned > 4096);
+    // Every bucket and TopN row of the six 256-bucket, 100-value histograms
+    // is in the one plan. A clustered statistics row is one mutation: Go
+    // writes no entry for a clustered table's primary index.
+    assert!(planned >= 6 * (256 + 100), "{planned}");
     let bytes: usize = plan
         .mutations
         .iter()

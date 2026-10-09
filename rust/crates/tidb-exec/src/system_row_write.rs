@@ -543,6 +543,14 @@ fn index_entries(
     let mut mutations = Vec::new();
     for (position, index) in table.indices.iter_deref().enumerate() {
         let index = index.read();
+        // Go `addIndices`, `rebuildUpdateRecordIndices` and
+        // `removeRowIndices` (`pkg/table/tables/tables.go`) skip a clustered
+        // table's primary index: its key is the record handle, so it owns no
+        // index entry. Writing one stores a key Go never writes, and deleting
+        // one asserts the existence of a key that is not there.
+        if index.primary && table.is_common_handle {
+            continue;
+        }
         let codec_index = &codec_table.indices[position];
         let mut indexed = Vec::with_capacity(index.columns.len());
         for index_column in index.columns.iter_deref() {
@@ -1155,6 +1163,81 @@ mod tests {
         let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(1));
         let deleted = delete_row(&table, &key, &values).unwrap();
         assert_eq!(deleted[1].assertion(), tidb_txnkv::AssertionOp::AssertNone);
+    }
+
+    /// `mysql.column_stats_usage`'s shape: `PRIMARY KEY (table_id, column_id)
+    /// CLUSTERED`, plus a secondary index so the test also sees an entry that
+    /// must be written.
+    fn clustered_fixture() -> (TableInfo, RowValues) {
+        use tidb_model::index::{IndexColumn, IndexInfo};
+        let column = |id: i64, name: &str| ColumnInfo {
+            id,
+            name: tidb_ast::CiString::new(name),
+            offset: id - 1,
+            state: tidb_model::SchemaState::PUBLIC,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            ..Default::default()
+        };
+        let index_column = |name: &str, offset: i64| IndexColumn {
+            name: tidb_ast::CiString::new(name),
+            offset,
+            length: -1,
+            ..Default::default()
+        };
+        let primary = IndexInfo {
+            id: 1,
+            name: tidb_ast::CiString::new("PRIMARY"),
+            primary: true,
+            unique: true,
+            state: tidb_model::SchemaState::PUBLIC,
+            columns: vec![index_column("table_id", 0), index_column("column_id", 1)].into(),
+            ..Default::default()
+        };
+        let secondary = IndexInfo {
+            id: 2,
+            name: tidb_ast::CiString::new("v_idx"),
+            state: tidb_model::SchemaState::PUBLIC,
+            columns: vec![index_column("v", 2)].into(),
+            ..Default::default()
+        };
+        (
+            TableInfo {
+                id: 42,
+                is_common_handle: true,
+                common_handle_version: 1,
+                columns: vec![
+                    column(1, "table_id"),
+                    column(2, "column_id"),
+                    column(3, "v"),
+                ]
+                .into(),
+                indices: vec![primary, secondary].into(),
+                ..Default::default()
+            },
+            [(1, Datum::Int(2)), (2, Datum::Int(1)), (3, Datum::Int(7))].into(),
+        )
+    }
+
+    #[test]
+    fn a_clustered_primary_index_owns_no_entry_on_store_or_delete() {
+        let (table, values) = clustered_fixture();
+        let (record_key, _) = clustered_record_key_with_collation(&table, &values, true).unwrap();
+        for mutations in [
+            store_clustered_row_with_collation(&table, None, &values, true).unwrap(),
+            delete_clustered_row_with_collation(&table, &values, true).unwrap(),
+        ] {
+            // The record itself and the secondary entry; nothing under the
+            // primary index's id.
+            assert_eq!(mutations.len(), 2, "{mutations:?}");
+            assert_eq!(mutations[0].key(), record_key.as_slice());
+            let primary_prefix = tidb_codec::table_key::encode_table_index_prefix(42, 1);
+            assert!(
+                mutations
+                    .iter()
+                    .all(|mutation| !mutation.key().starts_with(&primary_prefix)),
+                "{mutations:?}"
+            );
+        }
     }
 
     #[test]
