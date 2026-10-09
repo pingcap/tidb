@@ -645,6 +645,11 @@ pub(crate) fn unistore_cluster_session_stack(
     )
     .with_cop_scans(cop_scans)
     .with_server_info(server_info)
+    // No etcd: the standalone server ID, as Go's Domain allocator names.
+    .with_connection_ids(crate::sql_node::new_connection_id_allocator(
+        &config.global_config,
+        None,
+    ))
     .with_cluster_peer_client(Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
         tidb_txnkv::rpc::TonicCoprocessorClient::with_security(Arc::new(
             config.cluster_security.clone(),

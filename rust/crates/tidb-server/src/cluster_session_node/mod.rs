@@ -1038,6 +1038,10 @@ pub struct ClusterSessionFactory {
     /// established an identity.
     server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     server_identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
+    /// Go `Domain.connIDAllocator`: the node's one connection-ID allocator,
+    /// shared with the SQL listener and drawn from by internal processes
+    /// (auto-analyze's `NextConnID`).
+    connection_ids: Arc<dyn tidb_util::globalconn::Allocator + Send + Sync>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
     cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
@@ -1202,6 +1206,10 @@ impl ClusterSessionFactory {
             cop_scans: None,
             server_info: None,
             server_identity: None,
+            connection_ids: crate::sql_node::new_connection_id_allocator(
+                &tidb_config::config_tree::Config::default(),
+                None,
+            ),
             cluster_topology: None,
             cluster_config: None,
             cluster_peer: None,
@@ -2013,6 +2021,26 @@ impl ClusterSessionFactory {
     ) -> Self {
         self.server_identity = identity;
         self
+    }
+
+    /// Installs the node's connection-ID allocator, built from the node's
+    /// configuration and server identity (see
+    /// [`crate::sql_node::new_connection_id_allocator`]).
+    #[must_use]
+    pub fn with_connection_ids(
+        mut self,
+        connection_ids: Arc<dyn tidb_util::globalconn::Allocator + Send + Sync>,
+    ) -> Self {
+        self.connection_ids = connection_ids;
+        self
+    }
+
+    /// Go `Domain.NextConnID` / `ReleaseConnID`, over the node's one
+    /// connection-ID allocator.
+    pub(crate) fn connection_id_allocator(
+        &self,
+    ) -> Arc<dyn tidb_util::globalconn::Allocator + Send + Sync> {
+        Arc::clone(&self.connection_ids)
     }
 
     /// Binds server information for publication and cluster discovery.
@@ -3288,6 +3316,10 @@ impl QuerySessionFactory for ClusterSessionFactory {
         self.server_identity.clone()
     }
 
+    fn connection_ids(&self) -> Option<Arc<dyn tidb_util::globalconn::Allocator + Send + Sync>> {
+        Some(self.connection_id_allocator())
+    }
+
     fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
         Some(Arc::new(self.processes.clone()))
     }
@@ -4392,11 +4424,17 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
         tidb_stats_handle_util::call_with_sctx(
             self.session_pool.as_ref(),
             |context| {
-                let process_id = context.connection_id()?;
-                let generator = tidb_stats_handle_util::Generator::new(move || process_id, |_| {});
-                let (track, untrack) = system_process_trackers(
-                    self.factory().map_err(stats_session_error)?.processes(),
+                // Go hands the stats handle `Domain.NextConnID` and
+                // `ReleaseConnID` as its auto-analyze process-ID generator, so
+                // the ID names this node's server ID and `KILL` routes it here.
+                let factory = self.factory().map_err(stats_session_error)?;
+                let ids = factory.connection_id_allocator();
+                let released = Arc::clone(&ids);
+                let generator = tidb_stats_handle_util::Generator::new(
+                    move || ids.next_id(),
+                    move |id| released.release(id),
                 );
+                let (track, untrack) = system_process_trackers(factory.processes());
                 let arguments = arguments
                     .iter()
                     .map(|argument| tidb_util::sqlescape::SqlArg::from(argument.as_str()))

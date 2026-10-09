@@ -1635,6 +1635,7 @@ struct ObservedSystemAnalyze {
     inner: Arc<dyn crate::cluster_analyze_seam::ClusterAnalyze>,
     processes: tidb_session::process::ProcessRegistry,
     kill: Option<bool>,
+    process_id: u64,
     factory: std::sync::Weak<ClusterSessionFactory>,
     observed: Arc<AtomicBool>,
     interrupted: Arc<AtomicBool>,
@@ -1655,7 +1656,7 @@ impl crate::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
             .processes
             .snapshot()
             .into_iter()
-            .find(|row| row.id == 9_000)
+            .find(|row| row.id == self.process_id)
             .expect("running system task is visible to the shared manager");
         assert!(process
             .info
@@ -1668,7 +1669,7 @@ impl crate::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
             let factory = self.factory.upgrade().unwrap();
             let mut admin = factory.open_session(session_context(87)).unwrap();
             let kind = if query { "QUERY" } else { "CONNECTION" };
-            rows(&mut admin, &format!("KILL {kind} 9000"));
+            rows(&mut admin, &format!("KILL {kind} {}", self.process_id));
             self.interrupted
                 .store(killer.handle_signal().is_some(), Ordering::SeqCst);
         }
@@ -1681,6 +1682,120 @@ impl crate::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
             jobs,
         )
     }
+}
+
+/// Kills the running auto-analyze through SQL `KILL QUERY`, by the process ID
+/// the shared process list shows for it, and records that ID.
+struct KillingSystemAnalyze {
+    inner: Arc<dyn crate::cluster_analyze_seam::ClusterAnalyze>,
+    processes: tidb_session::process::ProcessRegistry,
+    factory: std::sync::Weak<ClusterSessionFactory>,
+    process_id: Arc<AtomicU64>,
+}
+
+impl crate::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyze {
+    fn execute(
+        &self,
+        statement: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        resource_group: &str,
+        approximate_counts: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        killer: &tidb_util::sqlkiller::SqlKiller,
+        historical_stats_enabled: &dyn Fn() -> bool,
+        jobs: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::sql_node::SqlQueryError>
+    {
+        let process_id = self
+            .processes
+            .snapshot()
+            .into_iter()
+            .find(|row| {
+                row.info
+                    .as_deref()
+                    .is_some_and(|info| info.to_ascii_lowercase().starts_with("analyze table"))
+            })
+            .expect("the running auto-analyze is in the shared process list")
+            .id;
+        self.process_id.store(process_id, Ordering::SeqCst);
+        let factory = self.factory.upgrade().unwrap();
+        let mut admin = factory.open_session(session_context(88)).unwrap();
+        rows(&mut admin, &format!("KILL QUERY {process_id}"));
+        self.inner.execute(
+            statement,
+            resource_group,
+            approximate_counts,
+            killer,
+            historical_stats_enabled,
+            jobs,
+        )
+    }
+}
+
+/// Go hands the stats handle `Domain.NextConnID` / `ReleaseConnID` as the
+/// auto-analyze process-ID generator, so the process ID names this node's
+/// server ID and `KILL` reaches it (`executeKillStmt` routes by
+/// `gcid.ServerID`). The production auto-analyze must draw its ID from the
+/// node's connection-ID allocator, not reuse an internal session's own
+/// identifier, which `KILL` cannot route.
+#[test]
+fn production_auto_analyze_is_killable_by_its_process_id() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = stack.factory;
+    let mut client = factory
+        .open_session(session_context(86))
+        .expect("client session opens");
+    rows(&mut client, "USE test");
+    rows(
+        &mut client,
+        "CREATE TABLE auto_kill_live (a INT, INDEX idx_a(a))",
+    );
+    rows(&mut client, "INSERT INTO auto_kill_live VALUES (1),(2),(3)");
+
+    let process_id = Arc::new(AtomicU64::new(0));
+    let pool = factory.advanced_sys_session_pool();
+    tidb_stats_handle_util::call_with_sctx(
+        pool.as_ref(),
+        |context| {
+            context.with_session(|session| {
+                session.analyze = Arc::new(KillingSystemAnalyze {
+                    inner: Arc::clone(&session.analyze),
+                    processes: factory.processes(),
+                    factory: Arc::downgrade(&factory),
+                    process_id: Arc::clone(&process_id),
+                });
+                Ok(())
+            })
+        },
+        &[],
+    )
+    .expect("the pooled system session takes the seam");
+
+    let source = super::super::ClusterPriorityQueueSource {
+        factory: Arc::downgrade(&factory),
+        stats_lease: Duration::ZERO,
+        session_pool: Arc::clone(&pool),
+    };
+    let analyzed = tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext::auto_analyze(
+        &source,
+        2,
+        false,
+        "analyze table %n.%n",
+        &["test".to_owned(), "auto_kill_live".to_owned()],
+    );
+
+    let process_id = process_id.load(Ordering::SeqCst);
+    let (gcid, truncated) = tidb_util::globalconn::parse_conn_id(process_id)
+        .expect("an allocator-minted process ID parses");
+    assert!(!truncated);
+    assert_eq!(
+        gcid.server_id,
+        tidb_util::globalconn::SERVER_ID_FOR_STANDALONE,
+        "process ID {process_id} names this node's server ID"
+    );
+    assert!(
+        !analyzed,
+        "KILL QUERY {process_id} must interrupt the auto-analyze"
+    );
 }
 
 #[test]
@@ -1727,6 +1842,10 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
     );
     rows(&mut client, "SET GLOBAL tidb_enable_analyze_snapshot = ON");
 
+    // Go's auto-analyze process ID is `Domain.NextConnID()`: it names this
+    // node's server ID, so `KILL` routes it to this node
+    // (`executeKillStmt` compares `gcid.ServerID` with `sm.ServerID()`).
+    let process_id = factory.connection_id_allocator().next_id();
     let observed = Arc::new(AtomicBool::new(false));
     let interrupted = Arc::new(AtomicBool::new(false));
     let tracked = Arc::new(AtomicBool::new(false));
@@ -1743,6 +1862,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
                         inner: Arc::clone(&session.analyze),
                         processes: factory.processes(),
                         kill,
+                        process_id,
                         factory: Arc::downgrade(&factory),
                         observed: Arc::clone(&observed),
                         interrupted: Arc::clone(&interrupted),
@@ -1753,12 +1873,12 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
             let (register, unregister) = super::super::system_process_trackers(factory.processes());
             let released_by_generator = Arc::clone(&released);
             let generator = tidb_stats_handle_util::Generator::new(
-                || 9_000,
+                move || process_id,
                 move |id| released_by_generator.store(id, Ordering::SeqCst),
             );
             let tracked_by_callback = Arc::clone(&tracked);
             let track: tidb_sqlexec::TrackSysProc = Arc::new(move |id, process| {
-                assert_eq!(id, 9_000);
+                assert_eq!(id, process_id);
                 assert!(
                     !(&*process as &dyn std::any::Any).is::<()>(),
                     "restricted ANALYZE must hand the tracker its live session"
@@ -1768,7 +1888,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
             });
             let untracked_by_callback = Arc::clone(&untracked);
             let untrack: tidb_sqlexec::UntrackSysProc = Arc::new(move |id| {
-                assert_eq!(id, 9_000);
+                assert_eq!(id, process_id);
                 untracked_by_callback.store(true, Ordering::SeqCst);
                 unregister(id);
             });
@@ -1801,11 +1921,11 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
         .processes()
         .snapshot()
         .iter()
-        .any(|row| row.id == 9_000));
+        .any(|row| row.id == process_id));
     assert!(tracked.load(Ordering::SeqCst));
     assert!(untracked.load(Ordering::SeqCst));
-    assert_eq!(released.load(Ordering::SeqCst), 9_000);
-    assert!(!tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(9_000));
+    assert_eq!(released.load(Ordering::SeqCst), process_id);
+    assert!(!tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(process_id));
     if kill.is_some() {
         return;
     }

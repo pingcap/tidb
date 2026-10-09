@@ -470,6 +470,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
     .with_global_config_syncer(global_config_keeper.syncer())
     .with_cop_scans(cop_scans)
     .with_server_info(Arc::clone(&server_info))
+    .with_connection_ids(crate::sql_node::new_connection_id_allocator(
+        &config.global_config,
+        server_identity.clone(),
+    ))
     .with_server_identity(server_identity)
     .with_cluster_topology(cluster_topology)
     .with_cluster_peer_client(Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(

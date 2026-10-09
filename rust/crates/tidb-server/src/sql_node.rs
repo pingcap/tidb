@@ -1460,6 +1460,15 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
         None
     }
 
+    /// Domain's connection-ID allocator (Go `Domain.connIDAllocator`), when
+    /// the factory owns one: client connections then draw their IDs from the
+    /// same allocator as the factory's internal processes, as Go's
+    /// `newClientConn` and auto-analyze both call `NextConnID`. None lets the
+    /// connection tracker build its own.
+    fn connection_ids(&self) -> Option<Arc<dyn Allocator + Send + Sync>> {
+        None
+    }
+
     /// Returns the server's session manager for process memory control.
     fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
         None
@@ -1470,13 +1479,38 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
 /// for this server retains this authority, including dedicated worker threads.
 pub struct ConnectionTracker {
     pub(crate) command_limiter: crate::mysql_connection::CommandLimiter,
-    connection_ids: Box<dyn Allocator + Send + Sync>,
+    connection_ids: Arc<dyn Allocator + Send + Sync>,
     identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
     active: AtomicUsize,
     max_active: AtomicUsize,
     accepted: AtomicU64,
     completed: AtomicU64,
     failed: AtomicU64,
+}
+
+/// Go `Domain`'s connection-ID allocator (`domain.go`, "initialize the global
+/// kill"): with global kill on, a global allocator whose IDs name this node's
+/// server ID -- the leased one, or `serverIDForStandalone` without etcd --
+/// so `KILL` can route by ID; otherwise the simple allocator. One instance
+/// serves a node: client connections and internal process IDs such as
+/// auto-analyze's (Go `NextConnID`) draw from it.
+pub fn new_connection_id_allocator(
+    config: &tidb_config::config_tree::Config,
+    identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
+) -> Arc<dyn Allocator + Send + Sync> {
+    if config.enable_global_kill {
+        let owner = identity;
+        Arc::new(GlobalAllocator::new(
+            move || {
+                owner
+                    .as_ref()
+                    .map_or(STANDALONE_SERVER_ID, |owner| owner.id())
+            },
+            config.enable_32bits_connection_id,
+        ))
+    } else {
+        Arc::new(SimpleAllocator::new())
+    }
 }
 
 impl Default for ConnectionTracker {
@@ -1491,27 +1525,21 @@ impl ConnectionTracker {
             token_limit: limit,
             ..Default::default()
         };
-        Self::with_config(&config, None)
+        Self::with_config(&config, None, None)
     }
 
+    /// `connection_ids` is the node's shared allocator when its session
+    /// factory owns one (Go's `Domain.connIDAllocator`, which `newClientConn`
+    /// reads through `dom.NextConnID`); otherwise the tracker builds the same
+    /// allocator for itself.
     fn with_config(
         config: &tidb_config::config_tree::Config,
         identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
+        connection_ids: Option<Arc<dyn Allocator + Send + Sync>>,
     ) -> Self {
         let identity = identity.filter(|_| config.enable_global_kill);
-        let connection_ids: Box<dyn Allocator + Send + Sync> = if config.enable_global_kill {
-            let owner = identity.clone();
-            Box::new(GlobalAllocator::new(
-                move || {
-                    owner
-                        .as_ref()
-                        .map_or(STANDALONE_SERVER_ID, |owner| owner.id())
-                },
-                config.enable_32bits_connection_id,
-            ))
-        } else {
-            Box::new(SimpleAllocator::new())
-        };
+        let connection_ids =
+            connection_ids.unwrap_or_else(|| new_connection_id_allocator(config, identity.clone()));
         Self {
             command_limiter: crate::mysql_connection::CommandLimiter::new(config.token_limit),
             connection_ids,
@@ -1959,6 +1987,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         let tracker = Arc::new(ConnectionTracker::with_config(
             &config.global_config,
             factory.server_identity(),
+            factory.connection_ids(),
         ));
         Ok(Self {
             listener,
