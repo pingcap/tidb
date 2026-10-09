@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -300,7 +299,7 @@ func DefaultConfig() *Config {
 // redacted returns a shallow copy of conf with storage credentials masked.
 func (conf *Config) redacted() *Config {
 	c := *conf
-	c.OutputDirPath = ast.RedactURL(c.OutputDirPath)
+	c.OutputDirPath = objstore.RedactURL(c.OutputDirPath)
 	const mask = "xxxxxx"
 	maskIfSet := func(s *string) {
 		if *s != "" {

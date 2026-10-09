@@ -36,6 +36,27 @@ type BackendOptions struct {
 	Azblob AzblobBackendOptions    `json:"azblob" toml:"azblob"`
 }
 
+// InvalidURLPlaceholder replaces a storage URL that cannot be parsed, because
+// such a URL cannot be reliably masked.
+const InvalidURLPlaceholder = "(invalid storage URL)"
+
+// RedactURL masks the credentials in a storage URL so that it can be put into
+// logs and error messages. An unparseable URL is replaced by
+// InvalidURLPlaceholder, and the query of a URL with an unknown scheme is
+// dropped, since ast.RedactURL cannot tell which parameters are secret there.
+func RedactURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return InvalidURLPlaceholder
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "", "file", "local", "hdfs", "noop", "gs", "gcs", "s3", "ks3", "oss", "azure", "azblob":
+		return ast.RedactURL(rawURL)
+	}
+	u.RawQuery = ""
+	return u.String()
+}
+
 // ParseRawURL parse raw url to url object.
 func ParseRawURL(rawURL string) (*url.URL, error) {
 	// https://github.com/pingcap/br/issues/603
@@ -44,7 +65,11 @@ func ParseRawURL(rawURL string) (*url.URL, error) {
 	rawURL = strings.ReplaceAll(rawURL, "+", "%2B")
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, errors.Trace(err)
+		// url.Error carries the whole URL, which may contain credentials.
+		if urlErr, ok := err.(*url.Error); ok {
+			err = urlErr.Err
+		}
+		return nil, errors.Errorf("parse storage URL failed: %v", err)
 	}
 	return u, nil
 }

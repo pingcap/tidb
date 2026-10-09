@@ -203,6 +203,12 @@ func TestVerifyCheckpointRedactsSourceDir(t *testing.T) {
 	require.NotContains(t, err.Error(), "AKID")
 	require.NotContains(t, err.Error(), "SKEY")
 	require.Contains(t, err.Error(), "region=us-east-1")
+
+	cfg.Mydumper.SourceDir = "s3://bucket:port/data?access-key=AKID&secret-access-key=SKEY"
+	err = verifyCheckpoint(cfg, taskCp)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "SKEY")
 }
 
 // failMetaMgrBuilder mocks meta manager init failure
