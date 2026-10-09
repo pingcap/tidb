@@ -2368,11 +2368,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 		}
 		//TODO: handle locks in batch
 		if lockErr := batchResp.GetLocked(); lockErr != nil {
-<<<<<<< HEAD
-			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
-=======
 			if err := worker.handleLockErr(bo, lockHints, lockErr, task); err != nil {
->>>>>>> ead9d38239a (store: back off when TiKV ignores cop lock hints (#71446))
 				return batchRespList, nil, err
 			}
 			task.meetLockFallback = true
