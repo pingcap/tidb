@@ -424,9 +424,19 @@ pub(super) fn build_converged_union_index_merge_task(
                 let detached = &filled.detached;
                 let ranges = &detached.ranges;
                 let schema_columns = partial_handle_columns(ds, ctx)?;
+                // Go PhysicalTableScan.TP: IsFullScan holds for no ranges too.
+                let unsigned_int_handle = ds.pk_is_handle && filled.handle_type.is_unsigned();
+                let scan_kind = if ranges
+                    .iter()
+                    .all(|range| range.is_full_range(unsigned_int_handle))
+                {
+                    crate::access_path::ResolvedTableScanKind::Full
+                } else {
+                    crate::access_path::ResolvedTableScanKind::Range
+                };
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
-                    "TableRangeScan",
+                    scan_kind.plan_type(),
                     ds.base.base.query_block_offset(),
                 );
                 base.base.set_stats(Some(merge_scan_stats(
@@ -459,7 +469,7 @@ pub(super) fn build_converged_union_index_merge_task(
                             crate::access_path::ResolvedTableDescriptor::new(
                                 ds.physical_table_id,
                                 !ds.common_handle_cols.is_empty(),
-                                crate::access_path::ResolvedTableScanKind::Range,
+                                scan_kind,
                                 crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
                             ),
                         ),

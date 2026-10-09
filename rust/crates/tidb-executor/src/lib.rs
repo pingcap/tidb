@@ -46,6 +46,7 @@
 pub mod base_join_probe;
 pub mod concurrent_entry_map;
 pub mod metric_tables_def;
+pub mod pd_helper;
 pub mod hash_join_v2;
 pub mod hash_join_version;
 pub mod hash_table_v2;

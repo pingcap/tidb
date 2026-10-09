@@ -190,6 +190,9 @@ pub trait LocalTemporaryTableIdAllocator: std::fmt::Debug + Send + Sync {
 pub struct Catalog {
     /// Domain-scoped plan-cache flush generation, shared by catalog snapshots.
     plan_cache_epoch: Arc<super::plan_cache::PlanCacheInvalidation>,
+    /// Go's process-global `pdhelper.GlobalPDHelper` approximate-count
+    /// cache, scoped to this in-process catalog and shared by its snapshots.
+    pd_helper_cache: Arc<std::sync::Mutex<crate::pd_helper::ApproximateTableCountCache>>,
     local_temporary_ids: Option<Arc<dyn LocalTemporaryTableIdAllocator>>,
     // Snapshot creation shares schema maps. Mutation detaches only the outer
     // name map and the database it touches, retaining all other table maps.
@@ -502,6 +505,7 @@ impl CatalogSnapshot {
     fn restore(&self, owner: &Catalog) -> Catalog {
         Catalog {
             plan_cache_epoch: Arc::clone(&owner.plan_cache_epoch),
+            pd_helper_cache: Arc::clone(&owner.pd_helper_cache),
             local_temporary_ids: owner.local_temporary_ids.clone(),
             databases: Arc::clone(&self.databases),
             max_index_length: self.max_index_length,
@@ -667,6 +671,13 @@ impl Default for Catalog {
             version: 0,
             metadata_version: next_metadata_version(),
             plan_cache_epoch: Arc::default(),
+            // Go `defaultPDHelper`'s capacity and TTL.
+            pd_helper_cache: Arc::new(std::sync::Mutex::new(
+                crate::pd_helper::ApproximateTableCountCache::new(
+                    1024 * 1024,
+                    std::time::Duration::from_secs(30),
+                ),
+            )),
             local_temporary_ids: None,
             latest_index_schema: std::sync::OnceLock::new(),
             planner_view: std::sync::OnceLock::new(),
@@ -1810,6 +1821,36 @@ impl Catalog {
     /// Cluster servers install their domain owner directly on each session.
     pub fn plan_cache_invalidation(&self) -> Arc<super::plan_cache::PlanCacheInvalidation> {
         Arc::clone(&self.plan_cache_epoch)
+    }
+
+    /// Go `PDHelper.GetApproximateTableCountFromStorage` for this store, which
+    /// has no PD HTTP client: a cached count is `(count, true)`; a miss is the
+    /// loader's `(0, false)`, cached for the next 30 seconds.
+    pub fn approximate_table_count(
+        &self,
+        table_id: i64,
+        db_name: &str,
+        table_name: &str,
+        partition_name: &str,
+    ) -> (f64, bool) {
+        let key = crate::pd_helper::approximate_table_count_key(
+            table_id,
+            db_name,
+            table_name,
+            partition_name,
+        );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let mut cache = self
+            .pd_helper_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(count) = cache.get(&key, now) {
+            return (count, true);
+        }
+        cache.insert(key, now, 0.0);
+        (0.0, false)
     }
 
     /// Process-local identity of this schema metadata image. Unlike a local

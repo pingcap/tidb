@@ -72,7 +72,7 @@ pub(crate) fn aggregate_kind(
                 .and_then(Expression::static_type)
                 .is_some_and(FieldType::is_binary_string),
         },
-        "APPROX_COUNT_DISTINCT" => AggKind::ApproxCountDistinct,
+        "APPROX_COUNT_DISTINCT" => AggKind::ApproxCountDistinct(Default::default()),
         "APPROX_PERCENTILE" => {
             let [value, percentage] = args else {
                 return Err(DriverError::ApproxPercentileArgument(

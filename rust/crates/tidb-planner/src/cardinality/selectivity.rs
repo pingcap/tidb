@@ -20,9 +20,9 @@
 //! `GetRowCountByColumnRanges` and `GetRowCountByIndexRanges` fall back to
 //! the pseudo row counts themselves when the statistics are invalid.
 //!
-//! Multi-valued indexes are skipped: Go's `getMaskAndSelectivityForMVIndex`
-//! needs `CollectFilters4MVIndex`/`BuildPartialPaths4MVIndex`, which this
-//! planner does not have yet.
+//! A multi-valued index is estimated as Go's `getMaskAndSelectivityForMVIndex`
+//! does, through the access-path generator's own `CollectFilters4MVIndex` and
+//! `BuildPartialPaths4MVIndex` halves.
 
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
@@ -160,7 +160,20 @@ pub fn selectivity(
 
     for index_id in coll.index_ids() {
         let info = coll.index_info(index_id);
-        if info.is_some_and(|info| info.mv_index) {
+        if let Some(info) = info.filter(|info| info.mv_index) {
+            if let Some((selectivity, mask)) =
+                mask_and_selectivity_for_mv_index(ctx, coll, index_id, info, &remained)
+            {
+                nodes.push(StatsNode {
+                    selectivity,
+                    ..StatsNode::new(
+                        StatsNodeType::Index,
+                        index_id,
+                        mask,
+                        info.column_lower_names.len(),
+                    )
+                });
+            }
             continue;
         }
         // Go `findPrefixOfIndexByCol`: a possible path decides by its own
@@ -473,6 +486,52 @@ fn detach_index_range(
             ctx.evaluate,
         ),
     }
+}
+
+/// Go `getMaskAndSelectivityForMVIndex`: the selectivity of the IndexMerge
+/// partial paths the MV index would serve for `exprs`, and the mask of the
+/// conditions they cover. `None` where Go returns `ok == false`, including
+/// every error on the way.
+fn mask_and_selectivity_for_mv_index(
+    ctx: &SelectivityContext<'_>,
+    coll: &HistColl,
+    index_id: i64,
+    info: &crate::stats_info::HistCollIndexInfo,
+    exprs: &[Expression],
+) -> Option<(f64, i64)> {
+    use crate::access_path::mv_index;
+    let cols = coll.mv_index_columns(index_id);
+    if cols.is_empty() {
+        return None;
+    }
+    let (access_conds, _, _) = mv_index::collect_filters_for_mv_index(ctx.evaluate, exprs, cols);
+    let (filter_sets, is_intersection) =
+        mv_index::mv_index_partial_access_filters(ctx.evaluate, &access_conds, cols).ok()??;
+    let lengths = mv_index::mv_index_column_lengths(cols, &info.column_lengths);
+    let realtime = coll.realtime_count() as f64;
+    // Go `CalcTotalSelectivityForMVIdxPath`: each partial reads the virtual
+    // column, so its selectivity is over the table's realtime count.
+    let mut total = if is_intersection { 1.0 } else { 0.0 };
+    for filters in filter_sets {
+        // Go `buildPartialPath4MVIndex`: every filter must become an access
+        // condition.
+        let detached = detach_index_range(ctx, &filters, cols, &lengths).ok()?;
+        if detached.access_conds.len() != filters.len() || !detached.remained_conds.is_empty() {
+            return None;
+        }
+        ctx.record_used_item(index_id, true);
+        let count =
+            get_row_count_by_index_ranges(coll, index_id, &detached.ranges, cols, ctx.options)
+                .ok()?
+                .est;
+        let selectivity = (count / realtime).clamp(0.0, 1.0);
+        total = if is_intersection {
+            total * selectivity
+        } else {
+            (selectivity + total) - total * selectivity
+        };
+    }
+    Some((total, covered_mask(exprs, &access_conds)))
 }
 
 /// The `exprs[i].Equal(accessConds[j])` mask `getMaskAndRanges` returns.

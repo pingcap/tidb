@@ -1802,7 +1802,12 @@ impl InitStats<'_> {
             .filter_map(|index| {
                 let declared = source.declared_index_columns(index)
                     .into_iter().map_while(|column| column).collect::<Vec<_>>();
-                let mut columns = declared.iter().map(|(column, _)| column.unique_id)
+                // Go resolves the index against `ds.TblCols`, every table
+                // column, so an index leading with a pruned or hidden
+                // (expression-index) column is still in the collection.
+                let mut columns = index.columns.iter()
+                    .map_while(|key| source.table_columns.get(key.offset))
+                    .map(|column| column.unique_id)
                     .collect::<Vec<_>>();
                 // This snapshot is consumed after path preparation. Mirror
                 // fillIndexPath's extension of the initial retained-index map,
@@ -1817,6 +1822,16 @@ impl InitStats<'_> {
                         .into_iter().map(|(column, _)| column.unique_id));
                 }
                 (!columns.is_empty()).then_some((index.id, columns))
+            })
+            .collect::<Vec<_>>();
+        let mv_index_columns = source
+            .indexes
+            .iter()
+            .filter(|index| {
+                index.is_multi_valued && index_columns.iter().any(|(id, _)| *id == index.id)
+            })
+            .filter_map(|index| {
+                Some((index.id, tidb_planner::access_path::prepare_cols_for_mv_index(source, index)?))
             })
             .collect::<Vec<_>>();
         let index_histograms = index_columns.iter().filter_map(|(id, _)| {
@@ -2023,7 +2038,8 @@ impl InitStats<'_> {
                     .with_pk_is_handle(source.handle_is_int)
                     .with_index_ndvs(index_ndvs)
                     .with_initialized_ndvs(initialized_column_ndvs, initialized_index_ndvs)
-                    .with_column_and_index_infos(column_infos, index_infos),
+                    .with_column_and_index_infos(column_infos, index_infos)
+                    .with_mv_index_columns(mv_index_columns),
                 )
                 .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |statistics| {
                     if statistics.pseudo || statistics.stats_ver <= 0 {

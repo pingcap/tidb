@@ -756,7 +756,7 @@ fn write_partial(writer: &mut SpillWriter, partial: &Partial) -> Result<(), Exec
                 writer.datum(&Datum::Json(value.clone()))?;
             }
         }
-        Partial::ApproxCountDistinct(sketch) => {
+        Partial::ApproxCountDistinct(sketch, _) => {
             writer.u8(15);
             let (skip_degree, has_zero, hashes) = sketch.spill_state();
             writer.u8(skip_degree);
@@ -947,7 +947,7 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
             }
             Partial::JsonObjectAgg(values, Box::new(value_type.clone()), *key_is_binary)
         }
-        (AggKind::ApproxCountDistinct, 15) => {
+        (AggKind::ApproxCountDistinct(sig), 15) => {
             let skip_degree = reader.u8()?;
             let has_zero = match reader.u8()? {
                 0 => false,
@@ -961,6 +961,7 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
             Partial::ApproxCountDistinct(
                 ApproxCountDistinctSketch::from_spill_state(skip_degree, has_zero, &hashes)
                     .map_err(ExecError::SpillFailed)?,
+                *sig,
             )
         }
         (AggKind::ApproxPercentile(percent), 16) => {
@@ -2913,7 +2914,10 @@ fn merge_state(dst: &mut AggState, src: &mut AggState, func: &AggFunc) -> Result
             // Go's merge overwrites duplicate keys with the incoming map.
             dst_values.append(src_values);
         }
-        (Partial::ApproxCountDistinct(dst_sketch), Partial::ApproxCountDistinct(src_sketch)) => {
+        (
+            Partial::ApproxCountDistinct(dst_sketch, _),
+            Partial::ApproxCountDistinct(src_sketch, _),
+        ) => {
             dst_sketch.merge(src_sketch);
         }
         (

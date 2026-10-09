@@ -245,6 +245,56 @@ impl ApproxCountDistinctSketch {
         }
     }
 
+    /// Go `Serialize`: the partial result a Partial1/Partial2 aggregate
+    /// outputs -- the skip degree, the element count as a uvarint, then each
+    /// element (zero first, when present) as a little-endian `uint32`.
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(1 + 10 + self.size as usize * 4);
+        out.push(self.skip_degree);
+        tidb_codec::encode_uvarint(&mut out, u64::from(self.size));
+        if self.has_zero {
+            out.extend_from_slice(&0u32.to_le_bytes());
+        }
+        for x in &self.buf {
+            if *x != 0 {
+                out.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        out
+    }
+
+    /// Go `readAndMerge`: folds a [`Self::serialize`]d partial result into
+    /// `self`, as a Partial2/Final aggregate does with its string input.
+    pub fn read_and_merge(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let (&rhs_skip_degree, rest) = bytes
+            .split_first()
+            .ok_or_else(|| "Cannot read partialResult4ApproxCountDistinct: empty input".to_owned())?;
+        if rhs_skip_degree > self.skip_degree {
+            self.skip_degree = rhs_skip_degree;
+            self.rehash();
+        }
+        let (mut rest, rhs_size) =
+            tidb_codec::decode_uvarint(rest).map_err(|error| error.to_string())?;
+        if rhs_size > u64::from(UNIQUES_HASH_MAX_SIZE) {
+            return Err(
+                "Cannot read partialResult4ApproxCountDistinct: too large size degree".to_owned(),
+            );
+        }
+        if u64::from(self.buf_size()) < rhs_size {
+            let new_size_degree = UNIQUES_HASH_SET_INITIAL_SIZE_DEGREE
+                .max(((rhs_size - 1) as f64).log2() as u8 + 2);
+            self.resize(new_size_degree);
+        }
+        for _ in 0..rhs_size {
+            let (element, tail) = rest.split_at_checked(4).ok_or_else(|| {
+                "Cannot read partialResult4ApproxCountDistinct: truncated input".to_owned()
+            })?;
+            rest = tail;
+            self.insert_hash(u32::from_le_bytes(element.try_into().expect("four bytes")));
+        }
+        Ok(())
+    }
+
     /// The state Go's aggregate serializer must retain across a spill: the
     /// thinning degree, zero membership, and every surviving non-zero hash.
     pub(crate) fn spill_state(&self) -> (u8, bool, Vec<u32>) {

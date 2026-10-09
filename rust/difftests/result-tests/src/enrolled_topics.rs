@@ -159,4 +159,8 @@ pub const TOPICS: &[&str] = &[
     "statistics/overflow_calc",
     "topn_pushdown",
     "types/const",
+    "executor/index_merge_reader",
+    "planner/core/casetest/index/index",
+    "planner/core/grouped_ranges_order_by",
+    "planner/core/indexmerge_path",
 ];

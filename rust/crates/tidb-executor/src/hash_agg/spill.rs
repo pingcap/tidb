@@ -191,7 +191,7 @@ fn go_partial_result_bytes(func: &AggFunc) -> usize {
         AggKind::Variance { .. } => 24,
         AggKind::JsonArrayAgg { .. } => 48,
         AggKind::JsonObjectAgg { .. } => 24,
-        AggKind::ApproxCountDistinct => 48,
+        AggKind::ApproxCountDistinct(_) => 48,
         AggKind::ApproxPercentile(_) => 24,
     };
     // Go's DISTINCT implementations embed one value-set header in the

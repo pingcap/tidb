@@ -272,40 +272,60 @@ fn prepare_union_index_merge_path_for_or(
                 keep_source_filter,
             });
         }
-        if ds.handle_is_int
-            && !ds.handle_cols.is_empty()
-            && index_merge_hint_allows(ds, "primary")
-            && ds.enumerated_paths.iter().any(|path| {
-                matches!(
-                    path,
-                    crate::access_path::PossiblePath::Table {
-                        is_int_handle: true,
-                        ..
-                    }
-                )
-            })
-        {
-            let collected = collect_unfinished_filters(ds, None, disjunct, ctx);
+        // Go `accessPathsForConds` over the table path: an integer handle
+        // (`IsIntHandlePath`) or a clustered common handle
+        // (`IsCommonHandlePath`, ranged over its PRIMARY index's columns).
+        let table_primary = ds.enumerated_paths.iter().find_map(|path| match path {
+            crate::access_path::PossiblePath::Table {
+                is_int_handle: true,
+                ..
+            } if ds.handle_is_int && !ds.handle_cols.is_empty() => Some(None),
+            crate::access_path::PossiblePath::Table {
+                is_int_handle: false,
+                primary_index: Some(primary),
+            } if ds.is_common_handle => Some(Some(*primary)),
+            _ => None,
+        });
+        if let Some(primary) = table_primary.filter(|_| index_merge_hint_allows(ds, "primary")) {
+            let primary_index = primary.and_then(|position| ds.indexes.get(position));
+            let collected = collect_unfinished_filters(ds, primary_index, disjunct, ctx);
             if let Some((mut usable, keep_branch_filter)) = collected {
                 for filter in &table_filters {
-                    if let Some((filters, _)) = collect_unfinished_filters(ds, None, filter, ctx) {
+                    if let Some((filters, _)) =
+                        collect_unfinished_filters(ds, primary_index, filter, ctx)
+                    {
                         usable.extend(filters);
                     }
                 }
                 let (pushable, rejected) = partition_partial_filters(&usable, ctx);
-                if let Ok(mut filled) = super::ordinary::detach_table_path(ds, None, &pushable, ctx, false)
-                    .and_then(|mut filled| {
-                        filled.count_after_access =
-                            Some(super::ordinary::estimate_int_table_path(ds, &filled, ctx)?);
-                        Ok(filled)
-                    })
+                if let Ok(mut filled) =
+                    super::ordinary::detach_table_path(ds, primary, &pushable, ctx, false)
+                        .and_then(|mut filled| {
+                            filled.count_after_access = Some(match primary_index {
+                                // Go `deriveCommonHandleTablePathStats`: the
+                                // PRIMARY index's histogram over these ranges.
+                                Some(index) => estimate_index_ranges(
+                                    ds,
+                                    index,
+                                    &filled.detached.ranges,
+                                    &filled.common_columns,
+                                    ctx,
+                                )?,
+                                None => super::ordinary::estimate_int_table_path(ds, &filled, ctx)?,
+                            });
+                            Ok(filled)
+                        })
                 {
-                    if !filled.detached.ranges.is_empty()
-                        && !filled
-                            .detached
-                            .ranges
-                            .iter()
-                            .any(|range| range.is_full_range(false))
+                    // Go accessPathsForConds drops only a full range; an
+                    // empty one (`a between 2 and 1`) stays a partial.
+                    let unsigned_int_handle = primary.is_none()
+                        && ds.pk_is_handle
+                        && filled.handle_type.is_unsigned();
+                    if !filled
+                        .detached
+                        .ranges
+                        .iter()
+                        .any(|range| range.is_full_range(unsigned_int_handle))
                     {
                         let rows = filled
                             .count_after_access
@@ -617,8 +637,20 @@ pub(super) fn estimate_partial_index_ranges(
     filled: &super::ordinary::FilledIndexPath,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<f64, PlanError> {
+    estimate_index_ranges(ds, source_index, &filled.detached.ranges, &filled.columns, ctx)
+}
+
+/// Go `GetRowCountByIndexRanges` over `ranges` of `source_index`, whose
+/// usable key columns are `columns`.
+fn estimate_index_ranges(
+    ds: &DataSource,
+    source_index: &crate::plan_builder::catalog::SourceIndex,
+    ranges: &crate::ranger::types::Ranges,
+    columns: &[(tidb_expr::column::Column, i64)],
+    ctx: &AccessPathDerivationContext<'_>,
+) -> Result<f64, PlanError> {
     let declared = source_index.columns.len();
-    let ranges = &super::ordinary::prune_estimate_range(&filled.detached.ranges, declared);
+    let ranges = &super::ordinary::prune_estimate_range(ranges, declared);
     let Some(hist) = ds.table_stats.as_ref().and_then(|stats| stats.hist_coll()) else {
         // Go's table always carries a collection; a profile without one
         // keeps the pseudo rate.
@@ -630,8 +662,7 @@ pub(super) fn estimate_partial_index_ranges(
             source_index.unique.then_some(source_index.columns.len()),
         ));
     };
-    let columns = filled
-        .columns
+    let columns = columns
         .iter()
         .take(declared)
         .map(|(column, _)| column.clone())

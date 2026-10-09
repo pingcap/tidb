@@ -776,7 +776,7 @@ impl Session {
                     }
                 }
             }
-            let resolution = resolve_analyze_options(
+            let mut resolution = resolve_analyze_options(
                 table_id,
                 &partition_ids,
                 statement.raw_options,
@@ -846,6 +846,56 @@ impl Session {
                 .map(|physical_id| (*physical_id, realtime_count(*physical_id)))
                 .collect::<Vec<_>>();
             let global_count = realtime_count(table_id);
+            // Go `buildAnalyzeSamplingPushdown`: a column task with neither
+            // SAMPLES nor SAMPLERATE samples at `getAdjustedSampleRate`'s
+            // rate, and its reason is a note. The tasks are the partitions of
+            // a partitioned table, the table itself otherwise.
+            for options in resolution
+                .physical
+                .iter_mut()
+                .filter(|_| index_tasks.run_full_sampling)
+            {
+                if options.is_partition == partition_ids.is_empty()
+                    || options.effective.num_samples != 0
+                    || options.effective.sample_rate.is_some()
+                {
+                    continue;
+                }
+                let partition_name = table
+                    .partition()
+                    .and_then(|partition| {
+                        partition
+                            .definitions
+                            .iter()
+                            .find(|definition| definition.id == options.physical_id)
+                    })
+                    .map_or("", |definition| definition.name.as_str());
+                let (approximate, has_pd) = catalog.approximate_table_count(
+                    options.physical_id,
+                    &schema,
+                    &name,
+                    partition_name,
+                );
+                let approximate = has_pd.then_some(approximate);
+                let realtime = realtime_count(options.physical_id);
+                let rate =
+                    tidb_stats::row_sample_collector::adjusted_sample_rate(realtime, approximate);
+                let reason =
+                    tidb_exec::real_tikv_analyze::sample_rate_reason(realtime, approximate, rate);
+                options.effective.sample_rate = Some(rate);
+                let target = if partition_name.is_empty() {
+                    format!("{schema}.{name}")
+                } else {
+                    format!("{schema}.{name}'s partition {partition_name}")
+                };
+                ctx.append_note_parts(
+                    1105,
+                    &format!(
+                        "Analyze use auto adjusted sample rate {rate:.6} for table {target}, \
+                         reason to use this rate is \"{reason}\""
+                    ),
+                );
+            }
             let mut analyzed = std::collections::HashMap::new();
             let execution: Result<(), DriverError> = recover_analyze_panic(|| {
                 #[cfg(test)]

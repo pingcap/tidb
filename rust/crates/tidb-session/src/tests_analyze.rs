@@ -298,11 +298,14 @@ fn analyze_persists_effective_column_list_and_reuses_raw_options() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW WARNINGS")),
-        vec![vec![
-            "Warning",
-            "1105",
-            "Columns a,b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
-        ]]
+        vec![
+            vec![
+                "Warning",
+                "1105",
+                "Columns a,b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
+            ],
+            vec!["Note", "1105", "Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\""],
+        ]
     );
     let table_id = session
         .with_catalog_mut(|catalog| {
@@ -529,11 +532,14 @@ fn analyze_predicate_columns_without_collected_usage_warns() {
     );
     assert_eq!(
         row_text(session.run("SHOW WARNINGS")),
-        vec![vec![
-            "Warning",
-            "1105",
-            "No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
-        ]]
+        vec![
+            vec![
+                "Warning",
+                "1105",
+                "No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+            ],
+            vec!["Note", "1105", "Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\""],
+        ]
     );
 }
 
@@ -859,10 +865,13 @@ fn ordinary_index_target_collects_all_statistics() {
     session.run("ANALYZE TABLE t INDEX ka").unwrap();
     assert_eq!(
         warnings_of(&session),
-        vec![(
-            1105,
-            "The version 2 would collect all statistics not only the selected indexes".to_owned(),
-        )]
+        vec![
+            (
+                1105,
+                "The version 2 would collect all statistics not only the selected indexes".to_owned(),
+            ),
+            (1105, "Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"".to_owned()),
+        ]
     );
     assert_eq!(scan_row(&mut session, "EXPLAIN SELECT * FROM t").0, "2.00");
 
@@ -1501,4 +1510,55 @@ fn stats_ndv_batch_unique_partition_lifecycle() {
             Ok(())
         })
         .unwrap();
+}
+
+/// Go `buildAnalyzeSamplingPushdown`'s note, as a Go server on this branch
+/// reports it. A never-analyzed table reads as the 10000-row pseudo table;
+/// once analyzed empty, the PD helper (this store has no PD HTTP client)
+/// answers its cached miss as `hasPD`, so Go names the empty-table reason
+/// without the PD clause. Partitions are the tasks of a partitioned table,
+/// and an explicit SAMPLES or SAMPLERATE takes no adjusted rate.
+#[test]
+fn analyze_notes_the_adjusted_sample_rate_like_go() {
+    let note = |target: &str, reason: &str| {
+        vec![
+            "Note".to_owned(),
+            "1105".to_owned(),
+            format!(
+                "Analyze use auto adjusted sample rate 1.000000 for table {target}, \
+                 reason to use this rate is \"{reason}\""
+            ),
+        ]
+    };
+    let pseudo = "use min(1, 110000/10000) as the sample-rate=1";
+    let empty = "TiDB assumes that the table is empty, use sample-rate=1";
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, KEY ka(a))").unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), vec![note("test.t", pseudo)]);
+    session.run("ANALYZE TABLE t").unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), vec![note("test.t", empty)]);
+
+    session
+        .run("CREATE TABLE p (a INT, b INT, KEY(a)) PARTITION BY HASH(a) PARTITIONS 2")
+        .unwrap();
+    session.run("ANALYZE TABLE p").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![
+            note("test.p's partition p0", pseudo),
+            note("test.p's partition p1", pseudo)
+        ]
+    );
+    session.run("ANALYZE TABLE p PARTITION p1").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![note("test.p's partition p1", empty)]
+    );
+
+    session.run("CREATE TABLE s (a INT)").unwrap();
+    session.run("ANALYZE TABLE s WITH 0.5 SAMPLERATE").unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+    session.run("ANALYZE TABLE s WITH 100 SAMPLES").unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
 }

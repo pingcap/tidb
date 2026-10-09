@@ -3868,6 +3868,11 @@ impl StmtContext {
         self.append_warning(code, message);
     }
 
+    /// Records a driver-rendered note, Go `StmtCtx.AppendNote`.
+    pub fn append_note_parts(&self, code: u16, message: &str) {
+        self.append_leveled(WarningLevel::Note, code, message);
+    }
+
     /// Records a driver-rendered warning at go's ERROR warning level —
     /// `StmtCtx.AppendError` (`ErrAlterOperationNotSupported`'s 1846 lands
     /// as `Error 1846 ...` in SHOW WARNINGS, not `Warning 1846`).

@@ -38,6 +38,7 @@ use super::index_merge::{
 use super::{AccessPathDerivationContext, IndexPathState};
 use crate::logical::DataSource;
 use crate::plan_base::PlanError;
+use crate::ranger::points::ExpressionEvaluator;
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
@@ -129,7 +130,7 @@ fn unwrap_json_argument(expr: &Expression) -> Option<&Expression> {
 /// `1, 2, 3` of `target_type`; a scalar is one constant. `None` when the
 /// argument is not an immutable JSON value or an element does not convert.
 fn json_array_expr_to_exprs(
-    ctx: &AccessPathDerivationContext<'_>,
+    evaluate: &ExpressionEvaluator<'_>,
     expr: &Expression,
     target_type: &FieldType,
 ) -> Option<Vec<Expression>> {
@@ -140,7 +141,7 @@ fn json_array_expr_to_exprs(
     {
         return None;
     }
-    let Ok(Datum::Json(json)) = (ctx.expression_evaluator)(&wrapped) else {
+    let Ok(Datum::Json(json)) = evaluate(&wrapped) else {
         return None;
     };
     if json.type_code() != tidb_datatype::JSON_TYPE_CODE_ARRAY {
@@ -176,7 +177,7 @@ fn is_safe_type_conversion_for_mv_index_range(value: &Expression, index_type: &F
 /// The JSON document a `json_contains`/`json_overlaps`/`json_memberof` call
 /// on the MV column reads, and the values it tests, with Go's filter type.
 fn mv_column_values(
-    ctx: &AccessPathDerivationContext<'_>,
+    evaluate: &ExpressionEvaluator<'_>,
     function: &tidb_expr::scalar_function::ScalarFunction,
     target_json_path: &Expression,
     json_type: &FieldType,
@@ -195,7 +196,7 @@ fn mv_column_values(
             if !target_json_path.equal(function.args.first()?) {
                 return None;
             }
-            let values = json_array_expr_to_exprs(ctx, function.args.get(1)?, json_type)?;
+            let values = json_array_expr_to_exprs(evaluate, function.args.get(1)?, json_type)?;
             (!values.is_empty()).then_some((values, AccessFilterType::MultiValuesAndOnMvCol))
         }
         // json_overlaps(a, '1') or json_overlaps('1', a)
@@ -207,7 +208,7 @@ fn mv_column_values(
             } else {
                 return None;
             };
-            let values = json_array_expr_to_exprs(ctx, other, json_type)?;
+            let values = json_array_expr_to_exprs(evaluate, other, json_type)?;
             // Forbid an empty array for safety.
             (!values.is_empty()).then_some((values, AccessFilterType::MultiValuesOrOnMvCol))
         }
@@ -218,7 +219,7 @@ fn mv_column_values(
 /// Go `checkAccessFilter4IdxCol`: whether `filter` can access `idx_col`, and
 /// how.
 pub(crate) fn check_access_filter_for_idx_col(
-    ctx: &AccessPathDerivationContext<'_>,
+    evaluate: &ExpressionEvaluator<'_>,
     filter: &Expression,
     idx_col: &Column,
 ) -> Option<AccessFilterType> {
@@ -229,7 +230,8 @@ pub(crate) fn check_access_filter_for_idx_col(
     if let Some(virtual_expr) = idx_col.virtual_expr.as_deref() {
         let target_json_path = unwrap_json_cast(virtual_expr)?;
         let json_type = idx_col.get_static_type()?.array_type();
-        let (values, filter_type) = mv_column_values(ctx, function, target_json_path, &json_type)?;
+        let (values, filter_type) =
+            mv_column_values(evaluate, function, target_json_path, &json_type)?;
         let index_type = idx_col.get_static_type()?;
         if !values
             .iter()
@@ -290,7 +292,7 @@ fn is_mv_virtual_column(column: &Column) -> bool {
 /// leading run of index columns each matched by one filter becomes the
 /// access filters; the rest remain.
 pub(crate) fn collect_filters_for_mv_index(
-    ctx: &AccessPathDerivationContext<'_>,
+    evaluate: &ExpressionEvaluator<'_>,
     filters: &[Expression],
     idx_cols: &[Column],
 ) -> (Vec<Expression>, Vec<Expression>, Option<AccessFilterType>) {
@@ -303,7 +305,7 @@ pub(crate) fn collect_filters_for_mv_index(
             if used_as_access[position] {
                 continue;
             }
-            if let Some(filter_type) = check_access_filter_for_idx_col(ctx, filter, column) {
+            if let Some(filter_type) = check_access_filter_for_idx_col(evaluate, filter, column) {
                 access_filters.push(filter.clone());
                 used_as_access[position] = true;
                 found = true;
@@ -332,7 +334,7 @@ pub(crate) fn collect_filters_for_mv_index(
 /// separate mutation of its access slot (`(2 member of a) and (1 member of
 /// a)` can only be combined at run time by intersecting handles).
 fn collect_filters_for_mv_index_mutations(
-    ctx: &AccessPathDerivationContext<'_>,
+    evaluate: &ExpressionEvaluator<'_>,
     filters: &[Expression],
     idx_cols: &[Column],
 ) -> (Vec<Expression>, Option<usize>, Vec<Expression>) {
@@ -346,7 +348,7 @@ fn collect_filters_for_mv_index_mutations(
             if used_as_access[position] {
                 continue;
             }
-            if check_access_filter_for_idx_col(ctx, filter, column).is_none() {
+            if check_access_filter_for_idx_col(evaluate, filter, column).is_none() {
                 continue;
             }
             if is_mv_virtual_column(column) {
@@ -379,19 +381,11 @@ fn build_partial_path_for_mv_index(
     index_pos: usize,
 ) -> Result<Option<IndexMergePartial>, PlanError> {
     let index = &ds.indexes[index_pos];
+    let declared_lengths = index.columns.iter().map(|key| key.length).collect::<Vec<_>>();
     let columns = idx_cols
         .iter()
-        .zip(&index.columns)
-        .map(|(column, key)| {
-            // A full-length prefix is no prefix, as in IndexInfo2Cols.
-            let length = if column.get_static_type().is_some_and(|field| field.flen() == key.length)
-            {
-                tidb_datatype::UNSPECIFIED_LENGTH
-            } else {
-                key.length
-            };
-            (column.clone(), length)
-        })
+        .cloned()
+        .zip(mv_index_column_lengths(idx_cols, &declared_lengths))
         .collect::<Vec<_>>();
     let (cols, lengths): (Vec<_>, Vec<_>) = columns.iter().cloned().unzip();
     let detached = ctx
@@ -445,6 +439,51 @@ fn build_partial_paths_for_mv_index(
     use_plan_cache: bool,
     noncacheable: &mut Option<String>,
 ) -> Result<Option<(Vec<IndexMergePartial>, bool)>, PlanError> {
+    // Go `jsonArrayExpr2Exprs(..., checkForSkipPlanCache = true)`: the plan
+    // depends on the array's VALUES, so it must not be reused for others.
+    if let Some(Expression::ScalarFunction(function)) = idx_cols
+        .iter()
+        .position(is_mv_virtual_column)
+        .and_then(|vir_col_id| access_filters.get(vir_col_id))
+    {
+        if matches!(function.func_name.lowercase(), "json_contains" | "json_overlaps")
+            && tidb_expr::expr_util::predicates::maybe_over_optimized_4_plan_cache(
+                use_plan_cache,
+                &function.args,
+            )
+        {
+            *noncacheable = Some(format!(
+                "{} function with immutable parameters can affect index selection",
+                function.func_name.lowercase()
+            ));
+        }
+    }
+    let Some((filter_sets, is_intersection)) =
+        mv_index_partial_access_filters(ctx.expression_evaluator, access_filters, idx_cols)?
+    else {
+        return Ok(None);
+    };
+    let mut partials = Vec::with_capacity(filter_sets.len());
+    for access in filter_sets {
+        let Some(partial) = build_partial_path_for_mv_index(ds, ctx, &access, idx_cols, index_pos)?
+        else {
+            return Ok(None);
+        };
+        partials.push(partial);
+    }
+    Ok(Some((partials, is_intersection)))
+}
+
+/// The value half of Go `buildPartialPaths4MVIndex`, which the access paths
+/// and `cardinality.getMaskAndSelectivityForMVIndex` share: one copy of
+/// `access_filters` per value the MV column's filter tests, that filter
+/// rewritten to `virtual_col = value` (`(1 member of j)` -> `j = 1`), and
+/// whether the partials intersect. `None` where Go returns `ok == false`.
+pub(crate) fn mv_index_partial_access_filters(
+    evaluate: &ExpressionEvaluator<'_>,
+    access_filters: &[Expression],
+    idx_cols: &[Column],
+) -> Result<Option<(Vec<Vec<Expression>>, bool)>, tidb_expr::EvalError> {
     let Some(vir_col_id) = idx_cols.iter().position(is_mv_virtual_column) else {
         return Ok(None);
     };
@@ -461,20 +500,8 @@ fn build_partial_paths_for_mv_index(
     else {
         return Ok(None);
     };
-    // Go `jsonArrayExpr2Exprs(..., checkForSkipPlanCache = true)`: the plan
-    // depends on the array's VALUES, so it must not be reused for others.
-    if matches!(function.func_name.lowercase(), "json_contains" | "json_overlaps")
-        && tidb_expr::expr_util::predicates::maybe_over_optimized_4_plan_cache(
-            use_plan_cache,
-            &function.args,
-        )
-    {
-        *noncacheable = Some(format!(
-            "{} function with immutable parameters can affect index selection",
-            function.func_name.lowercase()
-        ));
-    }
-    let Some((values, filter_type)) = mv_column_values(ctx, function, target_json_path, &json_type)
+    let Some((values, filter_type)) =
+        mv_column_values(evaluate, function, target_json_path, &json_type)
     else {
         return Ok(None);
     };
@@ -488,10 +515,8 @@ fn build_partial_paths_for_mv_index(
     {
         return Ok(None);
     }
-    let mut partials = Vec::with_capacity(values.len());
+    let mut filter_sets = Vec::with_capacity(values.len());
     for value in values {
-        // Rewrite the JSON function to EQ to calculate the range:
-        // `(1 member of j)` -> `j = 1`.
         let eq = tidb_expr::new_function::new_function(
             &tidb_expr::NoColumns,
             "eq",
@@ -500,13 +525,25 @@ fn build_partial_paths_for_mv_index(
         )?;
         let mut access = access_filters.to_vec();
         access[vir_col_id] = eq;
-        let Some(partial) = build_partial_path_for_mv_index(ds, ctx, &access, idx_cols, index_pos)?
-        else {
-            return Ok(None);
-        };
-        partials.push(partial);
+        filter_sets.push(access);
     }
-    Ok(Some((partials, is_intersection)))
+    Ok(Some((filter_sets, is_intersection)))
+}
+
+/// Go `buildPartialPath4MVIndex`'s column lengths: a full-length prefix is
+/// no prefix, as in `IndexInfo2Cols`.
+pub(crate) fn mv_index_column_lengths(idx_cols: &[Column], declared_lengths: &[i64]) -> Vec<i64> {
+    idx_cols
+        .iter()
+        .zip(declared_lengths)
+        .map(|(column, &length)| {
+            if column.get_static_type().is_some_and(|field| field.flen() == length) {
+                tidb_datatype::UNSPECIFIED_LENGTH
+            } else {
+                length
+            }
+        })
+        .collect()
 }
 
 /// Go `cardinality.CalcTotalSelectivityForMVIdxPath`. Every partial these
@@ -609,7 +646,7 @@ pub(crate) fn generate_and_index_merge_for_mv_index(
         else {
             continue;
         };
-        let (access_filters, remaining, _) = collect_filters_for_mv_index(ctx, filters, &idx_cols);
+        let (access_filters, remaining, _) = collect_filters_for_mv_index(ctx.expression_evaluator, filters, &idx_cols);
         if access_filters.is_empty() {
             continue;
         }
@@ -671,7 +708,7 @@ fn generate_mv_index_merge_partial_paths_for_and(
             continue;
         };
         let (mut access_filters, mv_col_offset, mutations) =
-            collect_filters_for_mv_index_mutations(ctx, filters, &idx_cols);
+            collect_filters_for_mv_index_mutations(ctx.expression_evaluator, filters, &idx_cols);
         if access_filters.is_empty() {
             continue;
         }
@@ -862,7 +899,7 @@ pub(crate) fn init_unfinished_mv_path(
         )
     });
     // Case 2: the previous logic, which must build a valid range at once.
-    let (access, remaining, access_type) = collect_filters_for_mv_index(ctx, &cnf_items, &idx_cols);
+    let (access, remaining, access_type) = collect_filters_for_mv_index(ctx.expression_evaluator, &cnf_items, &idx_cols);
     if !access.is_empty()
         && matches!(
             access_type,
@@ -885,7 +922,7 @@ pub(crate) fn init_unfinished_mv_path(
                 continue;
             }
             if matches!(
-                check_access_filter_for_idx_col(ctx, item, column),
+                check_access_filter_for_idx_col(ctx.expression_evaluator, item, column),
                 Some(
                     AccessFilterType::EqOrInOnNonMvCol
                         | AccessFilterType::MultiValuesOrOnMvCol
@@ -927,7 +964,7 @@ pub(crate) fn build_mv_alternative(
         return Ok(None);
     };
     let (access, remaining, _) =
-        collect_filters_for_mv_index(ctx, &unfinished.usable_filters, &idx_cols);
+        collect_filters_for_mv_index(ctx.expression_evaluator, &unfinished.usable_filters, &idx_cols);
     if access.is_empty() {
         return Ok(None);
     }

@@ -787,7 +787,9 @@ struct Compressor {
     tokens: Vec<Token>,
     length: usize,
     offset: usize,
-    max_insert_index: usize,
+    /// Go's signed `int`: negative for an input shorter than a minimum
+    /// match, where no position is inserted into the hash chains.
+    max_insert_index: isize,
     sync: bool,
     scratch: Vec<LiteralNode>,
 }
@@ -970,7 +972,7 @@ impl Compressor {
         if self.window_end - self.index < MIN_MATCH_LENGTH + MAX_MATCH_LENGTH && !self.sync {
             return;
         }
-        self.max_insert_index = self.window_end - (MIN_MATCH_LENGTH - 1);
+        self.max_insert_index = self.window_end as isize - (MIN_MATCH_LENGTH as isize - 1);
         loop {
             let lookahead = self.window_end - self.index;
             if lookahead < MIN_MATCH_LENGTH + MAX_MATCH_LENGTH {
@@ -991,7 +993,7 @@ impl Compressor {
                     break;
                 }
             }
-            if self.index < self.max_insert_index {
+            if (self.index as isize) < self.max_insert_index {
                 let hash = hash4(&self.window[self.index..self.index + MIN_MATCH_LENGTH]);
                 let hh = &mut self.hash_head[(hash as usize & HASH_MASK)];
                 self.chain_head = *hh as i32;
@@ -1031,7 +1033,7 @@ impl Compressor {
                 let mut index = self.index;
                 index += 1;
                 while index < new_index {
-                    if index < self.max_insert_index {
+                    if (index as isize) < self.max_insert_index {
                         let hash = hash4(&self.window[index..index + MIN_MATCH_LENGTH]);
                         let hh = &mut self.hash_head[(hash as usize & HASH_MASK)];
                         self.hash_prev[index & WINDOW_MASK] = *hh;
@@ -1153,6 +1155,8 @@ fn adler32(data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
+
     use super::go_zlib_deflate;
 
     /// Captured from `go run` against compress/zlib (NewWriter + Write +
@@ -1173,5 +1177,44 @@ mod tests {
                 0x04, 0x00, 0x00, 0xff, 0xff, 0x1a, 0x0b, 0x04, 0x5d,
             ]
         );
+    }
+
+    /// Inputs shorter than a minimum match: Go's `maxInsertIndex` is a
+    /// negative `int` there, which skips hashing (`COMPRESS('b')` panicked
+    /// on the unsigned subtraction). Go 1.25's level-6 compressor (the
+    /// branch's go.mod toolchain; Go 1.27 rewrote the encoder, so its bytes
+    /// differ for every input here and above) writes each byte as a
+    /// fixed-Huffman literal, then close's empty final stored block, then
+    /// the Adler-32. The bytes are that derivation, and they inflate back.
+    #[test]
+    fn compresses_inputs_shorter_than_a_match_like_go_zlib() {
+        let cases: [(&[u8], &[u8]); 3] = [
+            (
+                b"",
+                &[0x78, 0x9c, 0x01, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01],
+            ),
+            (
+                b"b",
+                &[
+                    0x78, 0x9c, 0x4a, 0x02, 0x04, 0x00, 0x00, 0xff, 0xff, 0x00, 0x63, 0x00, 0x63,
+                ],
+            ),
+            (
+                b"ab",
+                &[
+                    0x78, 0x9c, 0x4a, 0x4c, 0x02, 0x04, 0x00, 0x00, 0xff, 0xff, 0x01, 0x26, 0x00,
+                    0xc4,
+                ],
+            ),
+        ];
+        for (input, expected) in cases {
+            let compressed = go_zlib_deflate(input);
+            assert_eq!(compressed, expected, "input {input:?}");
+            let mut inflated = Vec::new();
+            flate2::read::ZlibDecoder::new(compressed.as_slice())
+                .read_to_end(&mut inflated)
+                .unwrap();
+            assert_eq!(inflated, input);
+        }
     }
 }

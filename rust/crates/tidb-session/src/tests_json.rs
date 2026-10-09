@@ -1486,3 +1486,32 @@ fn cast_as_json_keeps_gos_typed_names() {
         Ok("OBJECT".to_owned())
     );
 }
+
+/// `planner/core/integration.test`'s TestApproxCountDistinctInPartitionTable:
+/// with `tidb_opt_agg_push_down` the aggregate is split across the static
+/// partition union, each partition's HashAgg running Go's
+/// `approxCountDistinctPartial1` (its output is the `Serialize`d sketch) and
+/// the top one `approxCountDistinctFinal` (merging those sketches). The port
+/// ran every mode as the complete aggregate, so the partial count landed in
+/// the sketch column and the statement panicked; the answer is TiDB's.
+#[test]
+fn approx_count_distinct_merges_partial_sketches_across_a_partition_union() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table t(a int(11), b int) partition by range (a) \
+             (partition p0 values less than (3), partition p1 values less than maxvalue)",
+        )
+        .unwrap();
+    session
+        .run("insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2)")
+        .unwrap();
+    session.run("set session tidb_opt_agg_push_down=1").unwrap();
+    session.run("set @@tidb_partition_prune_mode='static'").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "select approx_count_distinct(a), b from t group by b order by b desc"
+        )),
+        vec![vec!["1", "2"], vec!["3", "1"]]
+    );
+}

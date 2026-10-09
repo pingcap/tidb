@@ -127,6 +127,37 @@ impl Selectable for DatumSelection<'_> {
     }
 }
 
+/// Go's four `approx_count_distinct` signatures (`aggfuncs/builder.go`
+/// `buildApproxCountDistinct`): whether the rows carry serialized partial
+/// sketches (Partial2/Final) and whether the output is one (Partial1/Partial2).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ApproxCountDistinctSig {
+    /// The argument is a `Serialize`d partial result to merge.
+    pub merge_input: bool,
+    /// The result is the `Serialize`d sketch rather than its count.
+    pub sketch_output: bool,
+}
+
+impl ApproxCountDistinctSig {
+    /// Go's choice by the descriptor's mode and result type: a BIGINT result
+    /// selects by mode alone; a string result (a partial state column) is
+    /// Partial1 for Complete/Partial1 and Partial2 for Partial2/Final.
+    pub fn of(mode: tidb_expr::aggregation::AggFunctionMode, string_result: bool) -> Option<Self> {
+        use tidb_expr::aggregation::AggFunctionMode as Mode;
+        let (merge_input, sketch_output) = match (mode, string_result) {
+            (Mode::Complete, false) => (false, false),
+            (Mode::Partial1, false) | (Mode::Complete | Mode::Partial1, true) => (false, true),
+            (Mode::Partial2, _) | (Mode::Final, true) => (true, true),
+            (Mode::Final, false) => (true, false),
+            _ => return None,
+        };
+        Some(Self {
+            merge_input,
+            sketch_output,
+        })
+    }
+}
+
 /// The aggregate function kinds this seed supports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AggKind {
@@ -207,8 +238,10 @@ pub enum AggKind {
     /// `uniquesHashMaxSize` (65536) distinct values the sketch keeps every
     /// hash and the answer is the exact distinct count; above that
     /// threshold Go starts discarding hashes and extrapolating the true
-    /// cardinality, which this sketch reproduces bit for bit.
-    ApproxCountDistinct,
+    /// cardinality, which this sketch reproduces bit for bit. The signature
+    /// says whether the input rows are serialized sketches and whether the
+    /// output is one (Go's Original/Partial1/Partial2/Final).
+    ApproxCountDistinct(ApproxCountDistinctSig),
     /// `APPROX_PERCENTILE(v, pct)`: the value at ordinal rank
     /// `ceil(pct / 100 * N)` among the group's non-NULL values (Go
     /// `func_percentile.go`'s `percentile`), which is a real element rather
@@ -531,8 +564,8 @@ enum Partial {
     /// encoder the bytewise-sorted key order it needs.
     JsonObjectAgg(BTreeMap<String, BinaryJSON>, Box<FieldType>, bool),
     /// `APPROX_COUNT_DISTINCT`: the BJKST sketch folding the group's encoded
-    /// argument tuples.
-    ApproxCountDistinct(ApproxCountDistinctSketch),
+    /// argument tuples (or serialized partial sketches), and its signature.
+    ApproxCountDistinct(ApproxCountDistinctSketch, ApproxCountDistinctSig),
     /// `APPROX_PERCENTILE`: the group's non-NULL values, ranked at finalize.
     /// `percent` is `None` for Go's always-NULL fallback build.
     ApproxPercentile {
@@ -1697,8 +1730,8 @@ impl Partial {
                 Box::new(value_type.clone()),
                 *key_is_binary,
             ),
-            AggKind::ApproxCountDistinct => {
-                Partial::ApproxCountDistinct(ApproxCountDistinctSketch::new())
+            AggKind::ApproxCountDistinct(sig) => {
+                Partial::ApproxCountDistinct(ApproxCountDistinctSketch::new(), *sig)
             }
             AggKind::ApproxPercentile(percent) => Partial::ApproxPercentile {
                 values: Vec::new(),
@@ -1926,19 +1959,27 @@ impl Partial {
             // A row with a NULL argument (or, for the multi-argument form, a
             // NULL in ANY argument, which the caller has already collapsed to
             // one NULL) never reaches the sketch.
-            (Partial::ApproxCountDistinct(_), None) => {
+            (Partial::ApproxCountDistinct(..), None) => {
                 return Err(ExecError::unsupported(
                     "APPROX_COUNT_DISTINCT requires an argument",
                 ));
             }
-            (Partial::ApproxCountDistinct(_), Some(Datum::Null)) => {}
+            (Partial::ApproxCountDistinct(..), Some(Datum::Null)) => {}
+            // Go `approxCountDistinctPartial2.UpdatePartialResult`: the input
+            // is a partial result `Serialize`d by a Partial1/Partial2 below.
+            (Partial::ApproxCountDistinct(sketch, sig), Some(partial)) if sig.merge_input => {
+                let bytes = partial.as_raw_bytes().ok_or_else(|| {
+                    ExecError::unsupported("APPROX_COUNT_DISTINCT partial result is not a string")
+                })?;
+                sketch.read_and_merge(bytes).map_err(ExecError::internal)?;
+            }
             // The caller (the group-fold loop below) has already encoded the
             // row's argument tuple the way Go's `evalAndEncode` does; this
             // just feeds those bytes through FarmHash into the sketch.
-            (Partial::ApproxCountDistinct(sketch), Some(Datum::Bytes(encoded))) => {
+            (Partial::ApproxCountDistinct(sketch, _), Some(Datum::Bytes(encoded))) => {
                 sketch.insert(&encoded);
             }
-            (Partial::ApproxCountDistinct(_), Some(_)) => {
+            (Partial::ApproxCountDistinct(..), Some(_)) => {
                 return Err(ExecError::unsupported(
                     "APPROX_COUNT_DISTINCT requires a pre-encoded argument tuple",
                 ));
@@ -2348,7 +2389,12 @@ impl Partial {
                     .map(|(key, value)| (key.clone(), BinaryJSONValue::Binary(value.clone())))
                     .collect(),
             ))?,
-            Partial::ApproxCountDistinct(sketch) => Datum::Int(sketch.fixed_size() as i64),
+            // Go `approxCountDistinctPartial1.AppendFinalResult2Chunk`
+            // outputs the serialized sketch; Original/Final output the count.
+            Partial::ApproxCountDistinct(sketch, sig) if sig.sketch_output => {
+                Datum::Bytes(sketch.serialize())
+            }
+            Partial::ApproxCountDistinct(sketch, _) => Datum::Int(sketch.fixed_size() as i64),
             // Go `percentile`: ordinal rank `k = min(ceil(N * pct/100), N)`,
             // then the k-th smallest value ITSELF (`selection.Select`), so an
             // even-sized group returns a real element rather than the mean of
@@ -3573,7 +3619,10 @@ fn eval_agg_input<C: Columns>(
     let (value, distinct_key) = if f.extra_args.is_empty()
         && !matches!(
             f.kind,
-            AggKind::ApproxCountDistinct | AggKind::GroupConcat { .. }
+            AggKind::ApproxCountDistinct(ApproxCountDistinctSig {
+                merge_input: false,
+                ..
+            }) | AggKind::GroupConcat { .. }
         ) {
         (
             match &f.arg {
@@ -3621,7 +3670,7 @@ fn eval_agg_input<C: Columns>(
             }
         }
         (Some(tuple_key.map_or(Datum::Null, Datum::Bytes)), None)
-    } else if matches!(f.kind, AggKind::ApproxCountDistinct) {
+    } else if matches!(f.kind, AggKind::ApproxCountDistinct(_)) {
         // `APPROX_COUNT_DISTINCT(a, b, ...)`: Go's
         // `approxCountDistinctOriginal.UpdatePartialResult`
         // (`evalAndEncode`) skips the row as soon as ANY

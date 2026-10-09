@@ -34,6 +34,17 @@ pub(crate) mod index_merge;
 pub(crate) mod mv_index;
 pub(crate) mod ordinary;
 
+/// Go `statistics.PrepareCols4MVIndex` (`PrepareIdxColsAndUnwrapArrayType`
+/// with its one-ARRAY-column check), which `GenerateHistCollFromColumnInfo`
+/// stores as `HistColl.MVIdx2Columns`.
+#[must_use]
+pub fn prepare_cols_for_mv_index(
+    ds: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+) -> Option<Vec<tidb_expr::column::Column>> {
+    mv_index::prepare_idx_cols_and_unwrap_array_type(ds, index, true)
+}
+
 /// Statement inputs to logical access-path derivation, independent of physical
 /// properties, plan allocation and task costing. Range fallback side effects
 /// remain attached to the same statement as the expression evaluator.

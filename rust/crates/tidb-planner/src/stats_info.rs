@@ -74,6 +74,10 @@ pub struct HistColl {
     /// holds: every public index of a `PseudoTable`, the stored ones
     /// otherwise.
     index_infos: Vec<HistCollIndexInfo>,
+    /// Go `HistColl.MVIdx2Columns`: each multi-valued index's columns as
+    /// `PrepareCols4MVIndex` returns them (the ARRAY column typed as its
+    /// element), which `getMaskAndSelectivityForMVIndex` matches against.
+    mv_index_columns: BTreeMap<i64, Vec<tidb_expr::column::Column>>,
 }
 
 /// Go `statistics.Index.Info`, the subset the planner's estimators read.
@@ -172,6 +176,7 @@ impl HistColl {
             index_ndvs: BTreeMap::new(),
             column_infos: BTreeMap::new(),
             index_infos: Vec::new(),
+            mv_index_columns: BTreeMap::new(),
         }
     }
 
@@ -185,6 +190,23 @@ impl HistColl {
         self.column_infos = columns.into_iter().collect();
         self.index_infos = indexes.into_iter().collect();
         self
+    }
+
+    /// Attaches Go `HistColl.MVIdx2Columns`.
+    #[must_use]
+    pub fn with_mv_index_columns(
+        mut self,
+        indexes: impl IntoIterator<Item = (i64, Vec<tidb_expr::column::Column>)>,
+    ) -> Self {
+        self.mv_index_columns = indexes.into_iter().collect();
+        self
+    }
+
+    /// Go `coll.MVIdx2Columns[id]`; empty when the index is not a
+    /// multi-valued index of this collection.
+    #[must_use]
+    pub fn mv_index_columns(&self, index_id: i64) -> &[tidb_expr::column::Column] {
+        self.mv_index_columns.get(&index_id).map_or(&[], Vec::as_slice)
     }
 
     /// Go `coll.GetCol(colID).Info`, when the collection holds the column.

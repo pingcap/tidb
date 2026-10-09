@@ -674,7 +674,7 @@ fn automatic_sample_rate(
 
 /// go `getAdjustedSampleRate`'s reason strings, branch for branch
 /// (`pkg/executor/builder.go:3270`).
-fn sample_rate_reason(
+pub fn sample_rate_reason(
     realtime_count: Option<i64>,
     approximate_count: Option<f64>,
     rate: f64,

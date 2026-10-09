@@ -106,12 +106,14 @@ impl AggFunc {
                 key_is_binary: arg_type(0)?.is_binary_string(),
             },
             "approx_count_distinct" => {
-                if desc.mode != AggFunctionMode::Complete
-                    || desc.ret_type().code() != FieldTypeCode::LongLong
-                {
+                let string_result = desc.ret_type().eval_type() == EvalType::String;
+                if !string_result && desc.ret_type().code() != FieldTypeCode::LongLong {
                     return Err(unsupported_mode());
                 }
-                AggKind::ApproxCountDistinct
+                AggKind::ApproxCountDistinct(
+                    super::ApproxCountDistinctSig::of(desc.mode, string_result)
+                        .ok_or_else(unsupported_mode)?,
+                )
             }
             "approx_percentile" => {
                 if desc.mode == AggFunctionMode::Partial2 {

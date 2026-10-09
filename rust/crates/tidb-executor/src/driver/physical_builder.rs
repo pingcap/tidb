@@ -1150,6 +1150,19 @@ fn aggregate_function(
     if descriptor.mode == AggFunctionMode::Final && matches!(kind, AggKind::Count) {
         kind = AggKind::FinalCount;
     }
+    // Go `buildApproxCountDistinct` picks the signature by mode and result
+    // type; a pushed-down Partial1 outputs its serialized sketch.
+    if let AggKind::ApproxCountDistinct(sig) = &mut kind {
+        let string_result =
+            descriptor.ret_type().eval_type() == tidb_datatype::EvalType::String;
+        *sig = crate::hash_agg::ApproxCountDistinctSig::of(descriptor.mode, string_result)
+            .ok_or_else(|| {
+                DriverError::unsupported(format!(
+                    "APPROX_COUNT_DISTINCT in {} mode",
+                    descriptor.mode.as_str()
+                ))
+            })?;
+    }
     if upper == "APPROX_PERCENTILE" {
         args.truncate(1);
     }
@@ -1689,6 +1702,13 @@ fn embedded_index_scan(plan: &PhysicalPlan) -> Option<&PhysicalIndexScan> {
     match plan {
         PhysicalPlan::IndexScan(scan) => Some(scan),
         _ => plan.children().iter().find_map(embedded_index_scan),
+    }
+}
+
+fn embedded_table_scan(plan: &PhysicalPlan) -> Option<&PhysicalTableScan> {
+    match plan {
+        PhysicalPlan::TableScan(scan) => Some(scan),
+        _ => plan.children().iter().find_map(embedded_table_scan),
     }
 }
 
@@ -4621,6 +4641,13 @@ fn build_index_merge_reader(
         // Go's partial table worker drains one result per pruned partition.
         // Keep those results under one path for intersection membership.
         let mut partitions: Vec<Box<dyn PartialHandleSource>> = Vec::new();
+        // Go builds the worker's key ranges from the scan's Ranges, so an
+        // empty set (`a between 2 and 1`) reads no keys; a table scan built
+        // here with none would read every handle, as a lookup's table side
+        // does.
+        let reads_no_keys = embedded_index_scan(partial).is_none()
+            && embedded_table_scan(partial).is_some_and(|scan| scan.ranges.is_empty());
+        let selected = if reads_no_keys { Vec::new() } else { selected };
         for partition_index in selected {
             let mut partition_plan = partial.clone();
             set_index_merge_partition(&mut partition_plan, physical_ids[partition_index]);
@@ -7789,9 +7816,10 @@ mod tests {
                     }
                     if table_partial {
                         let handle = partial_plans_raw[1].schema().unwrap().columns[1].clone();
+                        // A full handle range: a partial table scan with no
+                        // ranges reads no keys, as Go's partial worker does.
                         let mut partial = table_scan(11, 42, i64::MIN, i64::MAX);
                         if let PhysicalPlan::TableScan(scan) = &mut partial {
-                            scan.ranges.clear();
                             scan.base.base.set_schema(Some(Schema::new(vec![handle])));
                         }
                         partial_plans_raw[1] = partial;
