@@ -50,6 +50,14 @@ pub fn run_create_view_in(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let (database, name, view) = resolve_view_definition(create, catalog, current_db, ctx)?;
+    crate::ddl::bdr::admit(
+        catalog,
+        ctx.ddl_cdc_write_source(),
+        &database,
+        &[crate::ddl::bdr::SubmittedJob::new(
+            tidb_model::ActionType::ACTION_CREATE_VIEW,
+        )],
+    )?;
     catalog.register_persistent_view_in(&database, &name, view)?;
     Ok(())
 }
@@ -270,6 +278,9 @@ pub fn run_drop_view_in(
     names: &[Vec<String>],
     catalog: &mut Catalog,
     current_db: &str,
+    // The session's `tidb_cdc_write_source`, which exempts the jobs from BDR
+    // admission.
+    cdc_write_source: u64,
 ) -> Result<Vec<String>, DriverError> {
     use crate::ddl::{check_drop_object, drop_objects, DropObjectKind, DropObjectsError};
     let names = names
@@ -289,6 +300,15 @@ pub fn run_drop_view_in(
             DropObjectKind::Other
         };
         check_drop_object(schema, name, DropObjectKind::View, actual, false)?;
+        // Go `dropTableObject` submits one ActionDropView per view.
+        crate::ddl::bdr::admit(
+            catalog,
+            cdc_write_source,
+            schema,
+            &[crate::ddl::bdr::SubmittedJob::new(
+                tidb_model::ActionType::ACTION_DROP_VIEW,
+            )],
+        )?;
         Ok(catalog.drop_table_in(schema, name))
     })
     .map_err(|error| match error {

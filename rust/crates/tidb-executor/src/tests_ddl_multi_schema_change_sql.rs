@@ -398,7 +398,7 @@ fn multi_schema_change_drop_columns_parallel_second_run_reports_1091() {
 /// index if exists c` twice succeeds, the loser filing
 /// `Note 1091 index b doesn't exist` (`index.go:2262`) -- and THIS engine's
 /// suppressed note text matches Go exactly (`indexes.rs`
-/// `drop_index_from_table`). Without `IF EXISTS` the second submission is
+/// `prepare_drop_index`). Without `IF EXISTS` the second submission is
 /// 1091 `index b doesn't exist`, likewise identical.
 #[test]
 fn multi_schema_change_drop_indexes_parallel_matches_go_notes() {
@@ -983,6 +983,7 @@ fn multi_schema_change_rename_table_then_alter_leaves_consistent_table() {
         &mut catalog,
         "test",
         tidb_parser::SqlMode::default(),
+        0,
     )
     .expect("Go: rename to t1");
     assert_eq!(text_rows(&catalog, "select * from t1"), vec![["1", "2"]]);

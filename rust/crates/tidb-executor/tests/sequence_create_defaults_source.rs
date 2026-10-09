@@ -29,7 +29,7 @@ fn run(catalog: &mut Catalog, sql: &str) -> Result<(), DriverError> {
     };
     match &*ddl {
         tidb_ast::DdlStmt::CreateSequence(create) => {
-            run_create_sequence_in(create, catalog, "test").map(|_| ())
+            run_create_sequence_in(create, catalog, "test", 0).map(|_| ())
         }
         other => panic!("unexpected DDL payload for {sql}: {other:?}"),
     }

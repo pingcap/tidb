@@ -114,6 +114,29 @@ pub fn is_modify_column_denied(
 /// safe and unmanaged DDL, and refuses to add a unique index; the secondary
 /// role allows only unmanaged DDL.
 pub fn is_denied(role: Option<BdrRole>, action: ActionType, args: Option<&JobArgsValue>) -> bool {
+    let first_index_unique = (role == Some(BdrRole::Primary)
+        && (action == ActionType::ACTION_ADD_INDEX
+            || action == ActionType::ACTION_ADD_PRIMARY_KEY))
+        .then_some(args)
+        .flatten()
+        .map(|args| {
+            let JobArgsValue::ModifyIndex(Some(args)) = args else {
+                panic!("interface conversion: model.JobArgs is not *model.ModifyIndexArgs")
+            };
+            args.read().first_index_unique()
+        });
+    is_action_denied(role, action, first_index_unique)
+}
+
+/// [`is_denied`] over the one fact it reads from a job's arguments: whether
+/// the first index an ADD INDEX / ADD PRIMARY KEY job adds is unique (`None`
+/// for a job without arguments). A DDL executor that has not built Go's
+/// `JobArgs` asks this directly.
+pub fn is_action_denied(
+    role: Option<BdrRole>,
+    action: ActionType,
+    first_index_unique: Option<bool>,
+) -> bool {
     let ddl_type = ACTION_BDR_MAP.read().get(&action).cloned();
 
     match role {
@@ -123,17 +146,11 @@ pub fn is_denied(role: Option<BdrRole>, action: ActionType, args: Option<&JobArg
             };
 
             // A unique index cannot be added on the primary role.
-            if action == ActionType::ACTION_ADD_INDEX
-                || action == ActionType::ACTION_ADD_PRIMARY_KEY
+            if (action == ActionType::ACTION_ADD_INDEX
+                || action == ActionType::ACTION_ADD_PRIMARY_KEY)
+                && first_index_unique == Some(true)
             {
-                if let Some(args) = args {
-                    let JobArgsValue::ModifyIndex(Some(args)) = args else {
-                        panic!("interface conversion: model.JobArgs is not *model.ModifyIndexArgs")
-                    };
-                    if args.read().first_index_unique() {
-                        return true;
-                    }
-                }
+                return true;
             }
 
             !(ddl_type == DDLBDRType::SAFE_DDL || ddl_type == DDLBDRType::UNMANAGEMENT_DDL)

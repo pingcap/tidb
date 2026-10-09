@@ -317,6 +317,7 @@ mod alter_metadata;
 mod alter_table;
 /// AUTO_RANDOM declaration validation shared by local and cluster DDL.
 pub mod auto_random;
+pub(crate) mod bdr;
 pub mod check_constraint;
 mod column_changes;
 pub mod column_field_type;
@@ -349,6 +350,7 @@ pub use table_partition::{
     StoredPartitionDefinition, StoredPartitionMetadata,
 };
 
+pub use bdr::admit_job as admit_bdr_job;
 use column_types::{database_charset_of, field_type_of, table_charset_of, NOT_NULL_FLAG};
 pub use indexes::{index_backfill_error, run_create_index_in, run_drop_index_in};
 use table_constraints::{
@@ -1203,7 +1205,7 @@ pub fn run_create_table_in(
             copy.set_ttl_info(None);
         }
         copy.set_temp_table_type(temporary);
-        register_created_table(catalog, &database, name, copy, temporary)?;
+        register_created_table(catalog, &database, name, copy, temporary, ctx)?;
         return Ok(true);
     }
 
@@ -2059,7 +2061,7 @@ pub fn run_create_table_in(
             reference.id = policy.id;
         }
     }
-    register_created_table(catalog, &database, name, table, temporary)?;
+    register_created_table(catalog, &database, name, table, temporary, ctx)?;
     Ok(true)
 }
 
@@ -2077,11 +2079,21 @@ fn register_created_table(
     name: &str,
     mut table: KvTable,
     temporary: tidb_model::TempTableType,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     if temporary == tidb_model::TempTableType::LOCAL {
         table.table_id = catalog.allocate_local_temporary_table_id()?;
         catalog.register_local_temporary_in(database, name, table)
     } else {
+        // The job Go submits for the built table.
+        bdr::admit(
+            catalog,
+            ctx.ddl_cdc_write_source(),
+            database,
+            &[bdr::SubmittedJob::new(
+                tidb_model::ActionType::ACTION_CREATE_TABLE,
+            )],
+        )?;
         catalog.register_kv_in(database, name, table)
     }
 }

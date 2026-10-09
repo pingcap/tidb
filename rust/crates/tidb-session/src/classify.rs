@@ -72,6 +72,10 @@ pub enum StoredStateChange {
     /// The persisted statistics-lock state and the deltas unlocked into
     /// `mysql.stats_meta`.
     StatsLock,
+    /// The cluster's BDR role, Go's meta key `BDRRole`: `ADMIN SET` and
+    /// `UNSET BDR ROLE` write it and `ADMIN SHOW BDR ROLE` reads it from
+    /// the store rather than from any node's schema.
+    BdrRole,
 }
 
 /// Whether a `SET` statement carries at least one GLOBAL-scoped assignment.
@@ -511,7 +515,8 @@ impl Session {
             names: names.into_iter().rev().collect(),
         };
         self.with_catalog_mut(|catalog| {
-            tidb_executor::run_drop_table_stmt_in(&drop, catalog, &database, false).map(|_| ())
+            // A LOCAL temporary drop submits no DDL job, so no BDR admission.
+            tidb_executor::run_drop_table_stmt_in(&drop, catalog, &database, false, 0).map(|_| ())
         })
     }
 
@@ -654,6 +659,16 @@ impl Session {
                 ) =>
             {
                 StoredStateChange::StatsLock
+            }
+            Stmt::Admin(admin)
+                if matches!(
+                    admin.as_ref(),
+                    tidb_ast::AdminStmt::SetBdrRole(_)
+                        | tidb_ast::AdminStmt::UnsetBdrRole
+                        | tidb_ast::AdminStmt::ShowBdrRole
+                ) =>
+            {
+                StoredStateChange::BdrRole
             }
             Stmt::Admin(_) | Stmt::Session(_) | Stmt::Query(_) | Stmt::Dml(_) => {
                 StoredStateChange::None

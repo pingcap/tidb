@@ -226,6 +226,8 @@ impl PreparedIndexChange<'_> {
                     add_spec(&name, definition),
                     ctx,
                     max_index_length,
+                    // The statement's jobs were admitted before any ran.
+                    None,
                 )
             }
             Self::Drop { id, .. } => {

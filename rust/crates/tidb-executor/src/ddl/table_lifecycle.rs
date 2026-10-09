@@ -207,6 +207,9 @@ pub fn run_rename_table_in(
     // already parsed, so without it a double-quoted name would mean one thing
     // to the session and another here.
     sql_mode: tidb_parser::SqlMode,
+    // The session's `tidb_cdc_write_source`, which exempts the job from BDR
+    // admission.
+    cdc_write_source: u64,
 ) -> Result<(), DriverError> {
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
@@ -289,6 +292,22 @@ pub fn run_rename_table_in(
         });
     }
 
+    // Go submits one ActionRenameTable, or one ActionRenameTables for a
+    // statement naming several pairs; a pair renaming a table to itself
+    // submits nothing.
+    if let Some(first) = staged.first() {
+        let action = if pairs.len() == 1 {
+            tidb_model::ActionType::ACTION_RENAME_TABLE
+        } else {
+            tidb_model::ActionType::ACTION_RENAME_TABLES
+        };
+        super::bdr::admit(
+            catalog,
+            cdc_write_source,
+            &first.from_db,
+            &[super::bdr::SubmittedJob::new(action)],
+        )?;
+    }
     for rename in &staged {
         crate::foreign_key::rewrite_table_references(
             catalog,
@@ -349,7 +368,7 @@ pub fn run_truncate_table_in(
     // to the session and another here.
     sql_mode: tidb_parser::SqlMode,
 ) -> Result<(), DriverError> {
-    run_truncate_table_in_with_foreign_key_checks(sql, catalog, current_db, sql_mode, true)
+    run_truncate_table_in_with_foreign_key_checks(sql, catalog, current_db, sql_mode, true, 0)
 }
 
 /// Runs `TRUNCATE TABLE` with the issuing session's `foreign_key_checks`
@@ -362,6 +381,7 @@ pub fn run_truncate_table_in_with_foreign_key_checks(
     current_db: &str,
     sql_mode: tidb_parser::SqlMode,
     foreign_key_checks: bool,
+    cdc_write_source: u64,
 ) -> Result<(), DriverError> {
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
@@ -399,6 +419,7 @@ pub fn run_truncate_table_in_with_foreign_key_checks(
             return Ok(());
         }
     }
+    let bdr = super::bdr::Admission::new(catalog, cdc_write_source, &database);
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(&database, &name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{name}"),
@@ -407,6 +428,9 @@ pub fn run_truncate_table_in_with_foreign_key_checks(
     if table.is_cache_table() {
         return Err(DriverError::OperationOnCachedTable("Truncate Table"));
     }
+    bdr.admit(&[super::bdr::SubmittedJob::new(
+        tidb_model::ActionType::ACTION_TRUNCATE_TABLE,
+    )])?;
     // TRUNCATE starts the counter over, and on a shared counter that is a
     // write like any other: a failure here must not be reported as a
     // successful truncate whose next insert then collides.
@@ -464,7 +488,7 @@ pub fn run_drop_table_in(
             ))
         }
     };
-    run_drop_table_stmt_in(drop, catalog, current_db, foreign_key_checks)
+    run_drop_table_stmt_in(drop, catalog, current_db, foreign_key_checks, 0)
 }
 
 /// Execute the already parsed DROP using one resolved temporary/persistent split.
@@ -473,6 +497,9 @@ pub fn run_drop_table_stmt_in(
     catalog: &mut Catalog,
     current_db: &str,
     foreign_key_checks: bool,
+    // The session's `tidb_cdc_write_source`, which exempts the jobs from BDR
+    // admission.
+    cdc_write_source: u64,
 ) -> Result<Vec<String>, DriverError> {
     // The kind of table each written name currently resolves to, resolved
     // ONCE so the two temporary arms below and the ordinary drop all judge
@@ -577,6 +604,15 @@ pub fn run_drop_table_stmt_in(
         if !check_drop_object(schema, name, DropObjectKind::Table, actual, cached)? {
             return Ok(false);
         }
+        // Go `dropTableObject` submits one ActionDropTable per table.
+        super::bdr::admit(
+            catalog,
+            cdc_write_source,
+            schema,
+            &[super::bdr::SubmittedJob::new(
+                tidb_model::ActionType::ACTION_DROP_TABLE,
+            )],
+        )?;
         Ok(catalog.drop_table_in(schema, name))
     })
     .map_err(|error| match error {

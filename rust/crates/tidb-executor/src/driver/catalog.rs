@@ -190,6 +190,10 @@ pub trait LocalTemporaryTableIdAllocator: std::fmt::Debug + Send + Sync {
 pub struct Catalog {
     /// Domain-scoped plan-cache flush generation, shared by catalog snapshots.
     plan_cache_epoch: Arc<super::plan_cache::PlanCacheInvalidation>,
+    /// Go's meta key `BDRRole` (`meta.Mutator.GetBDRRole`): the cluster's
+    /// BDR role, "" when unset. It is store-global meta rather than schema,
+    /// so every snapshot and staged copy of this catalog shares it.
+    bdr_role: Arc<std::sync::RwLock<String>>,
     /// Go's process-global `pdhelper.GlobalPDHelper` approximate-count
     /// cache, scoped to this in-process catalog and shared by its snapshots.
     pd_helper_cache: Arc<std::sync::Mutex<crate::pd_helper::ApproximateTableCountCache>>,
@@ -511,6 +515,7 @@ impl CatalogSnapshot {
     fn restore(&self, owner: &Catalog) -> Catalog {
         Catalog {
             plan_cache_epoch: Arc::clone(&owner.plan_cache_epoch),
+            bdr_role: Arc::clone(&owner.bdr_role),
             pd_helper_cache: Arc::clone(&owner.pd_helper_cache),
             local_temporary_ids: owner.local_temporary_ids.clone(),
             databases: Arc::clone(&self.databases),
@@ -678,6 +683,7 @@ impl Default for Catalog {
             version: 0,
             metadata_version: next_metadata_version(),
             plan_cache_epoch: Arc::default(),
+            bdr_role: Arc::default(),
             // Go `defaultPDHelper`'s capacity and TTL.
             pd_helper_cache: Arc::new(std::sync::Mutex::new(
                 crate::pd_helper::ApproximateTableCountCache::new(
@@ -1106,6 +1112,23 @@ impl Catalog {
 
     /// Creates `database`, reporting whether it was new. Go raises
     /// `ErrDBCreateExists` (1007) unless `IF NOT EXISTS` was written.
+    /// Go `meta.Mutator.GetBDRRole`: the stored BDR role, "" when unset.
+    #[must_use]
+    pub fn bdr_role(&self) -> String {
+        self.bdr_role
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Go `meta.Mutator.SetBDRRole` / `ClearBDRRole` (the empty role).
+    pub fn set_bdr_role(&self, role: &str) {
+        *self
+            .bdr_role
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = role.to_owned();
+    }
+
     /// Go `infoschema.PolicyByName`: the policy a name refers to, folded.
     #[must_use]
     pub fn policy(&self, name: &str) -> Option<&tidb_model::PolicyInfo> {

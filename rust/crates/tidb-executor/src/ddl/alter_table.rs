@@ -596,6 +596,17 @@ fn run_alter_table_in_inner(
         check_prepared_column_count(&changes, catalog, &database, &name)?;
     }
     reject_drop_index_used_by_added_foreign_key(catalog, &database, &name, &actions)?;
+    // Go submits the statement's jobs here -- one per specification, or the
+    // sub-jobs of one multi-schema change -- and the submitter's BDR
+    // admission refuses before any of them runs.
+    let jobs = actions
+        .iter()
+        .zip(&changes)
+        .flat_map(|(action, prepared)| {
+            submitted_jobs(action, prepared.change.as_ref(), catalog, &database, &name)
+        })
+        .collect::<Vec<_>>();
+    super::bdr::admit(catalog, ctx.ddl_cdc_write_source(), &database, &jobs)?;
     for (action, prepared) in actions.iter().zip(changes) {
         if let Some(change) = prepared.change {
             match change {
@@ -651,6 +662,145 @@ fn run_alter_table_in_inner(
         }
     }
     Ok(())
+}
+
+/// The jobs Go's `AlterTable` submits for one specification, for the BDR
+/// admission. A specification its builder found nothing to do for (an
+/// IF [NOT] EXISTS that matched, an option already in effect) submits none.
+fn submitted_jobs(
+    action: &tidb_ast::AlterTableAction,
+    change: Option<&PreparedAlterChange<'_>>,
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+) -> Vec<super::bdr::SubmittedJob> {
+    use super::bdr::SubmittedJob as Job;
+    use tidb_ast::{AlterPartitionAction as Partition, AlterTableAction as Action};
+    use tidb_model::ActionType as A;
+    if let Some(PreparedAlterChange::Metadata(changes)) = change {
+        return changes
+            .iter()
+            .map(|change| {
+                Job::new(match change {
+                    PreparedMetadataChange::Comment(_) => A::ACTION_MODIFY_TABLE_COMMENT,
+                    PreparedMetadataChange::Charset { .. } => {
+                        A::ACTION_MODIFY_TABLE_CHARSET_AND_COLLATE
+                    }
+                    PreparedMetadataChange::Rebase(PreparedAllocatorRebase::Increment(_)) => {
+                        A::ACTION_REBASE_AUTO_ID
+                    }
+                    PreparedMetadataChange::Rebase(PreparedAllocatorRebase::Random(_)) => {
+                        A::ACTION_REBASE_AUTO_RANDOM_BASE
+                    }
+                    PreparedMetadataChange::AutoIdCache(_) => A::ACTION_MODIFY_TABLE_AUTO_IDCACHE,
+                    PreparedMetadataChange::Ttl(_) if matches!(action, Action::RemoveTtl(_)) => {
+                        A::ACTION_ALTER_TTLREMOVE
+                    }
+                    PreparedMetadataChange::Ttl(_) => A::ACTION_ALTER_TTLINFO,
+                    PreparedMetadataChange::Placement(_) => A::ACTION_ALTER_TABLE_PLACEMENT,
+                    PreparedMetadataChange::Rename { .. } => A::ACTION_RENAME_TABLE,
+                })
+            })
+            .collect();
+    }
+    // The actions this owner runs without a prepared change submit their
+    // job unless Go's builder returns early: CACHE on a cached table and
+    // NOCACHE on an uncached one do nothing.
+    let unprepared = match action {
+        Action::Cache(mode) => {
+            let cached = matches!(
+                catalog.table_in(database, name),
+                Some(crate::TableEntry::Kv(table)) if table.is_cached()
+            );
+            cached == (*mode == tidb_ast::AlterTableCacheMode::NoCache)
+        }
+        Action::Partition(
+            Partition::Truncate { .. }
+            | Partition::Drop { .. }
+            | Partition::Add { .. }
+            | Partition::Coalesce { .. },
+        ) => true,
+        _ => false,
+    };
+    if change.is_none() && !unprepared {
+        return Vec::new();
+    }
+    let job = match action {
+        Action::AddColumn { .. } | Action::AddColumns { .. } => Job::new(A::ACTION_ADD_COLUMN),
+        Action::DropColumn { .. } => Job::new(A::ACTION_DROP_COLUMN),
+        Action::DropPrimaryKey(_) => Job::new(A::ACTION_DROP_PRIMARY_KEY),
+        // Go `CheckIsDropPrimaryKey`: dropping the index named PRIMARY is
+        // dropping the primary key.
+        Action::DropIndex { name, .. } if name.eq_ignore_ascii_case("primary") => {
+            Job::new(A::ACTION_DROP_PRIMARY_KEY)
+        }
+        Action::DropIndex { .. } => Job::new(A::ACTION_DROP_INDEX),
+        Action::DropForeignKey(_) => Job::new(A::ACTION_DROP_FOREIGN_KEY),
+        Action::DropCheck(_) => Job::new(A::ACTION_DROP_CHECK_CONSTRAINT),
+        Action::AlterIndexVisibility(_) => Job::new(A::ACTION_ALTER_INDEX_VISIBILITY),
+        Action::AlterCheck(_) => Job::new(A::ACTION_ALTER_CHECK_CONSTRAINT),
+        Action::AlterColumnDefault(_) => Job::new(A::ACTION_SET_DEFAULT_VALUE),
+        Action::RenameIndex(_) => Job::new(A::ACTION_RENAME_INDEX),
+        Action::RenameColumn(_) | Action::ModifyColumn { .. } | Action::ChangeColumn { .. } => {
+            Job::new(A::ACTION_MODIFY_COLUMN)
+        }
+        Action::AddIndexConstraint(definition) => match definition.kind {
+            tidb_ast::IndexConstraintKind::PrimaryKey => {
+                Job::add_index(A::ACTION_ADD_PRIMARY_KEY, true)
+            }
+            tidb_ast::IndexConstraintKind::Key | tidb_ast::IndexConstraintKind::Index => {
+                Job::add_index(A::ACTION_ADD_INDEX, false)
+            }
+            tidb_ast::IndexConstraintKind::Unique
+            | tidb_ast::IndexConstraintKind::UniqueKey
+            | tidb_ast::IndexConstraintKind::UniqueIndex => {
+                Job::add_index(A::ACTION_ADD_INDEX, true)
+            }
+            tidb_ast::IndexConstraintKind::Vector | tidb_ast::IndexConstraintKind::Columnar => {
+                Job::new(A::ACTION_ADD_COLUMNAR_INDEX)
+            }
+            tidb_ast::IndexConstraintKind::Fulltext => return Vec::new(),
+        },
+        Action::AddForeignKey(_) => Job::new(A::ACTION_ADD_FOREIGN_KEY),
+        Action::AddCheck(_) => Job::new(A::ACTION_ADD_CHECK_CONSTRAINT),
+        Action::Cache(tidb_ast::AlterTableCacheMode::Cache) => {
+            Job::new(A::ACTION_ALTER_CACHE_TABLE)
+        }
+        Action::Cache(tidb_ast::AlterTableCacheMode::NoCache) => {
+            Job::new(A::ACTION_ALTER_NO_CACHE_TABLE)
+        }
+        Action::SetAttributes(_) => Job::new(A::ACTION_ALTER_TABLE_ATTRIBUTES),
+        Action::SetStatsOptions(_) => Job::new(A::ACTION_ALTER_TABLE_STATS_OPTIONS),
+        Action::SetTiFlashReplica { .. } => Job::new(A::ACTION_SET_TI_FLASH_REPLICA),
+        Action::SplitRegion { .. } => Job::new(A::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY),
+        Action::Partition(partition) => Job::new(match partition {
+            Partition::Add { .. } | Partition::LastPartitionLessThan { .. } => {
+                A::ACTION_ADD_TABLE_PARTITION
+            }
+            Partition::Drop { .. } | Partition::FirstPartitionLessThan { .. } => {
+                A::ACTION_DROP_TABLE_PARTITION
+            }
+            Partition::Truncate { .. } => A::ACTION_TRUNCATE_TABLE_PARTITION,
+            Partition::Exchange { .. } => A::ACTION_EXCHANGE_TABLE_PARTITION,
+            Partition::Reorganize { .. } | Partition::Coalesce { .. } => {
+                A::ACTION_REORGANIZE_PARTITION
+            }
+            Partition::Repartition(_) => A::ACTION_ALTER_TABLE_PARTITIONING,
+            Partition::RemovePartitioning => A::ACTION_REMOVE_PARTITIONING,
+            Partition::SetAttributes { .. } => A::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES,
+            Partition::SetOptions { .. } => A::ACTION_ALTER_TABLE_PARTITION_PLACEMENT,
+            // Go refuses these before building a job (`ErrGeneralUnsupportedDDL`,
+            // `ErrUnsupportedCheckPartition`, ...) or runs none.
+            Partition::Check { .. }
+            | Partition::ImportTablespace { .. }
+            | Partition::DiscardTablespace { .. }
+            | Partition::SplitMaxValuePartition { .. }
+            | Partition::MergeFirstPartitionLessThan { .. }
+            | Partition::Maintain { .. } => return Vec::new(),
+        }),
+        _ => return Vec::new(),
+    };
+    vec![job]
 }
 
 fn truncate_partition_action(
@@ -3254,6 +3404,15 @@ pub(super) fn prepare_modify_column(
     table
         .validate_alter_auto_random_spec(new_auto_random, offset)
         .map_err(super::auto_random::rebase_error)?;
+    // Go `GetModifiableColumnJob` asks `IsModifyColumnDenied` after
+    // `checkAutoRandom`, over the built column's type and the spec's options.
+    super::bdr::admit_modify_column(
+        catalog,
+        database,
+        &field_type,
+        &table.columns[offset].field_type,
+        &def.options,
+    )?;
     let column = KvColumn {
         name: def.name.clone(),
         id: table.columns[offset].id,
@@ -3506,6 +3665,9 @@ pub(super) fn prepare_add_column(
             .origin
             .or_else(|| not_null.then(|| crate::bad_null::zero_value(&field_type_for_origin))),
     };
+    // Go `AddColumn` asks `IsAddColumnDenied` once the column is built and
+    // its position checked.
+    super::bdr::admit_add_column(catalog, database, &def.options)?;
     Ok(Some(PreparedColumnChange::Add {
         column,
         position: position.clone(),

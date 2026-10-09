@@ -138,6 +138,7 @@ fn table_create_duplicate_drop_truncate_rename_round_trip() {
         &mut catalog,
         "test_table",
         ctx.sql_mode(),
+        0,
     )
     .unwrap();
     assert!(catalog.contains_in("test_rename_table", "tt"));
@@ -282,6 +283,7 @@ fn rename_tables_moves_both_pairs_in_one_statement() {
         &mut catalog,
         "test_table",
         ctx.sql_mode(),
+        0,
     )
     .unwrap();
     assert!(catalog.contains_in("test_table", "tt1"));

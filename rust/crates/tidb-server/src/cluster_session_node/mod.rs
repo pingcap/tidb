@@ -6373,6 +6373,12 @@ impl ClusterServerSession {
                     )),
                 }
             }
+            // The role lives in the cluster's meta key, which this node does
+            // not read or write yet; answering from its own catalog would
+            // report or set a role no other node sees.
+            StoredStateChange::BdrRole => Err(SqlQueryError::unknown(
+                "ADMIN SET/UNSET/SHOW BDR ROLE is not supported on a cluster node yet",
+            )),
             StoredStateChange::StatsLock => {
                 match prepare_cluster_stats_lock_parsed(stmt, self.session.current_database()) {
                     Ok(Some(statement)) => Ok(StatementRoute::StatsLock(statement)),

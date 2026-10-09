@@ -762,6 +762,36 @@ impl Session {
             // See `tidb_executor::explain`'s module doc for every place
             // this tier's plan text diverges from Go's and why.
             tidb_ast::AdminStmt::Explain(explain) => self.explain_stmt(explain),
+            // Go `executeAdminSetBDRRole` / `executeAdminUnsetBDRRole` write
+            // the meta key `BDRRole`; `AdminShowBDRRoleExec` reads it. Every
+            // ADMIN statement needs SUPER (`buildAdmin`).
+            tidb_ast::AdminStmt::SetBdrRole(_)
+            | tidb_ast::AdminStmt::UnsetBdrRole
+            | tidb_ast::AdminStmt::ShowBdrRole => {
+                if !self.has_scoped_privilege("", "", privilege::GlobalPriv::Super) {
+                    return Err(DriverError::SpecificAccessDenied("SUPER".to_owned()));
+                }
+                let role = match admin {
+                    tidb_ast::AdminStmt::SetBdrRole(tidb_ast::BdrRole::Primary) => "primary",
+                    tidb_ast::AdminStmt::SetBdrRole(tidb_ast::BdrRole::Secondary) => "secondary",
+                    tidb_ast::AdminStmt::UnsetBdrRole => "",
+                    _ => {
+                        let role = self.with_catalog_mut(|catalog| Ok(catalog.bdr_role()))?;
+                        let mut field_type =
+                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::String);
+                        field_type.set_flen(1);
+                        return Ok(Some(StmtOutput::Rows {
+                            columns: vec![("BDR_ROLE".to_owned(), field_type)],
+                            rows: vec![vec![Datum::Bytes(role.into_bytes())]],
+                        }));
+                    }
+                };
+                self.with_catalog_mut(|catalog| {
+                    catalog.set_bdr_role(role);
+                    Ok(())
+                })?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
             tidb_ast::AdminStmt::FlushPlanCache(scope) => {
                 self.flush_session_plan_cache(*scope)?;
                 Ok(Some(StmtOutput::Done(true)))

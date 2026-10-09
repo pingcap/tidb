@@ -25,10 +25,10 @@ fn run(catalog: &mut Catalog, sql: &str) -> Result<(), DriverError> {
     };
     match &*ddl {
         tidb_ast::DdlStmt::CreateSequence(create) => {
-            run_create_sequence_in(create, catalog, "test").map(|_| ())
+            run_create_sequence_in(create, catalog, "test", 0).map(|_| ())
         }
-        tidb_ast::DdlStmt::AlterSequence(alter) => run_alter_sequence_in(alter, catalog, "test"),
-        tidb_ast::DdlStmt::DropSequence(drop) => run_drop_sequence_in(drop, catalog, "test"),
+        tidb_ast::DdlStmt::AlterSequence(alter) => run_alter_sequence_in(alter, catalog, "test", 0),
+        tidb_ast::DdlStmt::DropSequence(drop) => run_drop_sequence_in(drop, catalog, "test", 0),
         other => panic!("not a sequence statement: {other:?}"),
     }
 }

@@ -649,6 +649,16 @@ impl Session {
         Ok(Some((database, name, or_replace, view)))
     }
 
+    /// `tidb_cdc_write_source`, which Go copies into each DDL job
+    /// (`job.CDCWriteSource`): a DDL replicated by TiCDC skips BDR admission.
+    pub(crate) fn ddl_cdc_write_source(&self) -> u64 {
+        self.vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_CDC_WRITE_SOURCE)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0)
+    }
+
     pub(crate) fn statement_context(&self, is_dml: bool) -> tidb_executor::StmtContext {
         self.statement_context_ignoring(is_dml, false)
     }
@@ -1033,12 +1043,7 @@ impl Session {
                 .ok()
                 .and_then(|value| tidb_executor::BlockEncryptionMode::parse(&value))
                 .unwrap_or_default(),
-            ddl_cdc_write_source: self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_CDC_WRITE_SOURCE)
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(0),
+            ddl_cdc_write_source: self.ddl_cdc_write_source(),
             ddl_reorg_priority: match self
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIDB_DDL_REORG_PRIORITY)

@@ -444,7 +444,18 @@ impl Session {
                         ));
                     }
                     let charset = tidb_executor::resolve_database_charset(options)?;
+                    let cdc_write_source = self.ddl_cdc_write_source();
                     let created = self.with_catalog_mut(|catalog| {
+                        // Go `CreateSchemaWithInfo` submits ActionCreateSchema
+                        // unless the schema exists.
+                        if !catalog.has_database(name) {
+                            tidb_executor::ddl::admit_bdr_job(
+                                catalog,
+                                cdc_write_source,
+                                name,
+                                tidb_model::ActionType::ACTION_CREATE_SCHEMA,
+                            )?;
+                        }
                         Ok(catalog.create_database_with_charset(name, charset))
                     })?;
                     // Go raises ErrDBCreateExists unless IF NOT EXISTS, and
@@ -480,8 +491,20 @@ impl Session {
                             return Err(error);
                         }
                     }
-                    let dropped =
-                        self.with_catalog_mut(|catalog| Ok(catalog.drop_database(name)))?;
+                    let cdc_write_source = self.ddl_cdc_write_source();
+                    let dropped = self.with_catalog_mut(|catalog| {
+                        // Go `DropSchema` submits ActionDropSchema for a
+                        // schema that exists.
+                        if catalog.has_database(name) {
+                            tidb_executor::ddl::admit_bdr_job(
+                                catalog,
+                                cdc_write_source,
+                                name,
+                                tidb_model::ActionType::ACTION_DROP_SCHEMA,
+                            )?;
+                        }
+                        Ok(catalog.drop_database(name))
+                    })?;
                     // Go raises ErrDatabaseDropExists (1008, HY000,
                     // `Can't drop database '%-.192s'; database doesn't
                     // exist`) unless IF EXISTS — NOT the 1049 a missing
@@ -3029,13 +3052,21 @@ impl Session {
             }
             Stmt::Ddl(ddl) => match &**ddl {
                 DdlStmt::RenameTable(_) => {
+                    let cdc_write_source = self.ddl_cdc_write_source();
                     let current_db = self.current_db.clone();
                     self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_rename_table_in(sql, catalog, &current_db, sql_mode)?;
+                        tidb_executor::run_rename_table_in(
+                            sql,
+                            catalog,
+                            &current_db,
+                            sql_mode,
+                            cdc_write_source,
+                        )?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
                 DdlStmt::TruncateTable(name) => {
+                    let cdc_write_source = self.ddl_cdc_write_source();
                     let local = self.is_local_temporary_table_path(name);
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = !local && self.foreign_key_checks();
@@ -3046,6 +3077,7 @@ impl Session {
                             &current_db,
                             sql_mode,
                             foreign_key_checks,
+                            cdc_write_source,
                         )?;
                         Ok(StmtOutput::Affected(0))
                     })
@@ -3144,11 +3176,18 @@ impl Session {
                     result
                 }
                 DdlStmt::DropTable(drop) => {
+                    let cdc_write_source = self.ddl_cdc_write_source();
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = self.foreign_key_checks();
                     let missing = if drop.temporary == tidb_ast::DropTemporary::Local {
                         self.with_catalog_mut(|catalog| {
-                            tidb_executor::run_drop_table_stmt_in(drop, catalog, &current_db, false)
+                            tidb_executor::run_drop_table_stmt_in(
+                                drop,
+                                catalog,
+                                &current_db,
+                                false,
+                                cdc_write_source,
+                            )
                         })?
                     } else {
                         let (persistent, local) = self.split_local_temporary_drop(drop);
@@ -3158,6 +3197,7 @@ impl Session {
                                 catalog,
                                 &current_db,
                                 foreign_key_checks,
+                                cdc_write_source,
                             )
                         })?;
                         // Go completes the local leg only after every durable
@@ -3253,26 +3293,44 @@ impl Session {
                 // Go answers every sequence DDL with a zero affected-row
                 // count, as it does every other DDL.
                 DdlStmt::CreateSequence(create) => {
+                    let cdc_write_source = self.ddl_cdc_write_source();
                     let current_db = self.current_db.clone();
                     let create = create.clone();
                     self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_create_sequence_in(&create, catalog, &current_db)?;
+                        tidb_executor::run_create_sequence_in(
+                            &create,
+                            catalog,
+                            &current_db,
+                            cdc_write_source,
+                        )?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
                 DdlStmt::AlterSequence(alter) => {
+                    let cdc_write_source = self.ddl_cdc_write_source();
                     let current_db = self.current_db.clone();
                     let alter = alter.clone();
                     self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_alter_sequence_in(&alter, catalog, &current_db)?;
+                        tidb_executor::run_alter_sequence_in(
+                            &alter,
+                            catalog,
+                            &current_db,
+                            cdc_write_source,
+                        )?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
                 DdlStmt::DropSequence(drop) => {
+                    let cdc_write_source = self.ddl_cdc_write_source();
                     let current_db = self.current_db.clone();
                     let drop = drop.clone();
                     self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_sequence_in(&drop, catalog, &current_db)?;
+                        tidb_executor::run_drop_sequence_in(
+                            &drop,
+                            catalog,
+                            &current_db,
+                            cdc_write_source,
+                        )?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
@@ -3308,10 +3366,17 @@ impl Session {
                     Ok(StmtOutput::Done(false))
                 }
                 DdlStmt::DropView { if_exists, names } => {
+                    let cdc_write_source = self.ddl_cdc_write_source();
                     let current_db = self.current_db.clone();
                     let (if_exists, names) = (*if_exists, names.clone());
                     let missing = self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_view_in(if_exists, &names, catalog, &current_db)
+                        tidb_executor::run_drop_view_in(
+                            if_exists,
+                            &names,
+                            catalog,
+                            &current_db,
+                            cdc_write_source,
+                        )
                     })?;
                     // Same demotion as `DROP TABLE IF EXISTS`, same code:
                     // a view that was not there is `Note 1051`.

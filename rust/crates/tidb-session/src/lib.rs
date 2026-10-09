@@ -2784,6 +2784,8 @@ mod tests_auto_random;
 #[cfg(test)]
 mod tests_bad_null;
 #[cfg(test)]
+mod tests_bdr;
+#[cfg(test)]
 mod tests_binding;
 #[cfg(test)]
 mod tests_cast_int_truncation;

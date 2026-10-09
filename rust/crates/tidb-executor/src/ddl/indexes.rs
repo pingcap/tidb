@@ -17,8 +17,9 @@
 //! the same code.
 //!
 //! Inside: [`run_create_index_in`] and [`run_drop_index_in`], the statement
-//! entry points; [`add_index_to_table`] and [`drop_index_from_table`], the
-//! actions the `ALTER TABLE` dispatcher shares with them; and the two AST
+//! entry points; [`add_index_to_table`], [`prepare_drop_index`] and
+//! [`drop_prepared_index`], the actions the `ALTER TABLE` dispatcher shares
+//! with them; and the two AST
 //! readers `is_visible` (Go `!IndexInfo.Invisible`) and `index_part_names`,
 //! which reject the index shapes this tier does not model rather than
 //! silently creating a plain index.
@@ -105,6 +106,7 @@ pub fn run_create_index_in(
         ));
     }
     let max_index_length = catalog.max_index_length();
+    let bdr = super::bdr::Admission::new(catalog, ctx.ddl_cdc_write_source(), &database);
     add_index_to_table(
         catalog,
         &database,
@@ -121,6 +123,7 @@ pub fn run_create_index_in(
         },
         ctx,
         max_index_length,
+        Some(&bdr),
     )
 }
 
@@ -603,6 +606,7 @@ pub(crate) fn add_index_to_table(
     index: IndexSpec<'_>,
     ctx: &crate::StmtContext,
     max_index_length: i64,
+    bdr: Option<&super::bdr::Admission>,
 ) -> Result<(), DriverError> {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
@@ -620,6 +624,13 @@ pub(crate) fn add_index_to_table(
             return Ok(());
         }
     };
+    // Go `createIndex` submits its job once the index is built.
+    if let Some(bdr) = bdr {
+        bdr.admit(&[super::bdr::SubmittedJob::add_index(
+            tidb_model::ActionType::ACTION_ADD_INDEX,
+            index.unique,
+        )])?;
+    }
     let index_name = index.name;
     let condition = index.condition;
     let added = pending.len();
@@ -728,30 +739,27 @@ pub fn run_drop_index_in(
     ) {
         return Err(DriverError::OperationOnCachedTable("Drop Index"));
     }
-    drop_index_from_table(
-        catalog,
-        &database,
-        &table_name,
-        &drop.name,
-        drop.if_exists,
-        ctx,
-    )
-}
-
-/// Removes one index, shared by `DROP INDEX` and `ALTER TABLE ... DROP INDEX`.
-pub(crate) fn drop_index_from_table(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    index_name: &str,
-    if_exists: bool,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    match prepare_drop_index(catalog, database, table_name, index_name, if_exists)? {
-        IndexAdmission::Change(id) => drop_prepared_index(catalog, database, table_name, id)?,
-        IndexAdmission::Note(note) => ctx.append_suppressed(&note),
+    match prepare_drop_index(catalog, &database, &table_name, &drop.name, drop.if_exists)? {
+        IndexAdmission::Change(id) => {
+            // Go `dropIndex` submits ActionDropPrimaryKey for PRIMARY.
+            let action = if drop.name.eq_ignore_ascii_case("primary") {
+                tidb_model::ActionType::ACTION_DROP_PRIMARY_KEY
+            } else {
+                tidb_model::ActionType::ACTION_DROP_INDEX
+            };
+            super::bdr::admit(
+                catalog,
+                ctx.ddl_cdc_write_source(),
+                &database,
+                &[super::bdr::SubmittedJob::new(action)],
+            )?;
+            drop_prepared_index(catalog, &database, &table_name, id)
+        }
+        IndexAdmission::Note(note) => {
+            ctx.append_suppressed(&note);
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 pub(super) fn prepare_drop_index(

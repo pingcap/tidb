@@ -70,7 +70,7 @@ fn run_seq(catalog: &mut Catalog, sql: &str) {
     };
     match &*ddl {
         tidb_ast::DdlStmt::CreateSequence(create) => {
-            run_create_sequence_in(create, catalog, "test")
+            run_create_sequence_in(create, catalog, "test", 0)
                 .unwrap_or_else(|error| panic!("{sql} must create: {error:?}"));
         }
         other => panic!("unexpected DDL payload for {sql}: {other:?}"),

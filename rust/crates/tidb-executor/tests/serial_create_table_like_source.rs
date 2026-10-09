@@ -187,7 +187,7 @@ fn create_table_like_copies_structure_without_rows_fks_or_autoinc_and_reports_go
     let tidb_ast::DdlStmt::CreateSequence(create_sequence) = &*payload else {
         panic!("expected CREATE SEQUENCE")
     };
-    tidb_executor::ddl_sequence::run_create_sequence_in(create_sequence, &mut catalog, "test")
+    tidb_executor::ddl_sequence::run_create_sequence_in(create_sequence, &mut catalog, "test", 0)
         .expect("create sequence seq");
     let error = create_error(&mut catalog, "create table sequenceTable like seq");
     assert_eq!(code_of(&error), 1347);

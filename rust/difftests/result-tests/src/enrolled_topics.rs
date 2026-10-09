@@ -167,4 +167,5 @@ pub const TOPICS: &[&str] = &[
     "executor/insert",
     "executor/write",
     "expression/time",
+    "ddl/bdr_mode",
 ];

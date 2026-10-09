@@ -899,6 +899,7 @@ fn rename_table_rewrites_the_constraint_reference() {
         &mut catalog,
         "test",
         checks_off.sql_mode(),
+        0,
     )
     .unwrap();
     let keys = declared(&catalog, "test2", "t2");
@@ -937,6 +938,7 @@ fn rename_table_rewrites_the_constraint_reference() {
         &mut catalog,
         "test",
         checks_on.sql_mode(),
+        0,
     )
     .unwrap();
     ddl::run_alter_table_in(
@@ -953,6 +955,7 @@ fn rename_table_rewrites_the_constraint_reference() {
         &mut catalog,
         "test",
         checks_on.sql_mode(),
+        0,
     )
     .unwrap();
     let keys = declared(&catalog, "test2", "tt3");
@@ -1026,6 +1029,7 @@ fn truncate_or_drop_of_a_referenced_table_reports_go_errnos() {
         "test",
         checks_off.sql_mode(),
         false,
+        0,
     )
     .unwrap();
     ddl::run_drop_table_in(
