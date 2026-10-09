@@ -98,6 +98,10 @@ func (r *credentialRefresher) startRefresh() error {
 // otherwise fail store creation. It returns the last error after maxAttempts
 // attempts (about 10 minutes) or when ctx is done, and logs a warning every
 // logInterval attempts while the failure persists.
+//
+// On a non-ECS host a metadata dial timeout also delays surfacing a genuine
+// "no credentials configured" misconfiguration. That is acceptable: this path is
+// essentially only used on NextGen Cloud, which runs on Aliyun ECS.
 func fetchCredentials(
 	ctx context.Context,
 	provider providers.CredentialsProvider,

@@ -51,11 +51,11 @@ const (
 	ecsMetadataIP = "100.100.100.200"
 )
 
-// IsTransientNoCredentialsError reports whether err is a transient failure of
-// the default credential provider chain: the chain could not get credentials
-// from any provider because the Aliyun ECS metadata service request timed out or
-// hit its deadline. Permanent causes, e.g. missing credential configuration, are
-// not reported as retryable.
+// IsTransientNoCredentialsError reports whether err is a transient failure to
+// resolve credentials from the default provider chain because the Aliyun ECS
+// metadata service request timed out or hit its deadline. Permanent causes,
+// e.g. missing credential configuration or the metadata service refusing the
+// request, are not reported as retryable.
 //
 // The reason it is matched this way is that the Aliyun SDK does its own
 // transient-error detection the same way. The OSS SDK's ConnectionErrorRetryable
@@ -67,16 +67,13 @@ const (
 // fmt.Errorf("refresh Ecs sts token err: %s", err.Error()) (see ecs_ram_role.go
 // in github.com/aliyun/credentials-go), and the import code reformats it again
 // via errors.GetErrStackMsg. So the net.Error type is gone and we match the same
-// signals as text: the provider-chain failure plus the metadata host and the Go
-// HTTP timeout messages that the SDK's type check would have caught.
+// signals as text: the metadata host and the Go HTTP timeout messages that the
+// SDK's type check would have caught.
 func IsTransientNoCredentialsError(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	if !strings.Contains(msg, "unable to get credentials from any of the providers in the chain") {
-		return false
-	}
 	if !strings.Contains(msg, ecsMetadataIP) {
 		return false
 	}
