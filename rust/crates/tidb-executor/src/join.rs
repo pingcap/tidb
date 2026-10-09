@@ -868,16 +868,23 @@ impl IndexProbePlan {
         probe_key_domains: Vec<IndexProbeKeyDomain>,
         probe_bounds: Vec<crate::access_path::LookupProbeBound>,
     ) -> Result<Self, ExecError> {
+        // A probe key is a position among the join's equality keys; one
+        // whose equality has no comparable encoding cannot drive a lookup.
         let probe_encoding = probe_keys
             .iter()
             .enumerate()
-            .map(|(at, key)| EquiKey {
-                left: at,
-                right: at,
-                class: keys[*key].class,
-                null_safe: keys[*key].null_safe,
+            .map(|(at, key)| {
+                let key = keys.get(*key).ok_or_else(|| {
+                    ExecError::unsupported("an index-join probe key has no comparable encoding")
+                })?;
+                Ok(EquiKey {
+                    left: at,
+                    right: at,
+                    class: key.class,
+                    null_safe: key.null_safe,
+                })
             })
-            .collect();
+            .collect::<Result<_, ExecError>>()?;
         let mut bound_encoding = Vec::with_capacity(probe_bounds.len());
         for (at, bound) in probe_bounds.iter().enumerate() {
             let Some(field_type) = bound.arg.static_type() else {

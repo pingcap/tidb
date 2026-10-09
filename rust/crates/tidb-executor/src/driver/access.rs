@@ -3222,7 +3222,13 @@ pub(crate) fn try_point_get(
     // handle column is pinned, it is the same one-row lookup as an integer
     // point get; extra equalities remain in the filter above the source.
     let common_offsets = table.common_handle_offsets().to_vec();
-    if !common_offsets.is_empty() {
+    // Go `getIndexValues` declines the clustered primary key too when it has
+    // a prefix column: its handle holds only the leading part of the value.
+    let prefix_common_handle = table
+        .common_handle_prefix_lengths()
+        .iter()
+        .any(|length| *length != crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
+    if !common_offsets.is_empty() && !prefix_common_handle {
         let mut values = Vec::with_capacity(common_offsets.len());
         for offset in common_offsets {
             let Some((name, _)) = columns.get(offset) else {

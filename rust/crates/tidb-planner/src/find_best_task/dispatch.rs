@@ -1740,115 +1740,128 @@ fn equality_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
     ids
 }
 
-// IN fixes a finite access prefix, but does not make an ordering column or
-// a unique lookup single-valued. Keep that distinction from equality_fixed_ids.
-fn index_join_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
-    use tidb_expr::expression::Expression;
-    let mut ids = equality_fixed_ids(ds);
-    for condition in &ds.pushed_down_conds {
-        let Expression::ScalarFunction(function) = condition else {
-            continue;
-        };
-        if function.func_name.lowercase() != "in" {
-            continue;
-        }
-        if let [Expression::Column(column), values @ ..] = function.args.as_slice() {
-            if !values.is_empty()
-                && values
-                    .iter()
-                    .all(|value| matches!(value, Expression::Constant(_)))
-            {
-                ids.push(column.unique_id);
-            }
-        }
-    }
-    ids
-}
-
-/// The facts Go's `indexJoinPathResult` carries into `indexJoinPathCompare`
-/// for one inner index path.
-struct IndexJoinPathFacts {
+/// Go `indexJoinPathResult`: one inner path's index-join build together with
+/// what `indexJoinPathCompare` and the inner task read from the DataSource.
+pub(super) struct IndexJoinPathResult {
     /// Position of the path in the enumerated path list.
     position: usize,
-    /// Go `getIndexCandidateForIndexJoin`.
-    candidate: crate::find_best_task::candidate::CandidateMetrics,
-    /// Go `usedColsLen`: the width of the template range.
-    used_cols_len: usize,
-    /// Go `eqUsedColsNDV`: the NDV of the equality prefix over the table's
-    /// own statistics, zero under pseudo statistics.
+    core: super::index_join_path::IndexJoinPathCore,
+    /// Go `candidate`; the common handle path is its own only candidate.
+    candidate: Option<crate::find_best_task::candidate::CandidateMetrics>,
+    /// Go `eqUsedColsNDV`.
     eq_used_cols_ndv: f64,
-    /// Index columns probed by a join key (`idxOff2KeyOff != -1`).
-    key_cover: usize,
+    /// Go `chosenPath.IdxColLens`.
+    idx_col_lens: Vec<i64>,
+    /// Go `chosenPath.FullIdxCols` and `FullIdxColLens`, `None` for a
+    /// pruned column.
+    full_idx_cols: Vec<Option<(tidb_expr::column::Column, i64)>>,
+    /// Go `indexJoinPathGetRangeInfoAndMaxOneRow`'s `maxOneRow`.
+    max_one_row: bool,
+    /// Go `mutableIndexJoinRange`, set when the accesses hold parameters.
+    rebuild: Option<super::index_join_path::IndexJoinPathRebuild>,
 }
 
-/// Go `getBestIndexJoinPathResultByProp` (`index_join_path.go:795`) for the
-/// index prop: walk the possible paths in order, build each index path's
-/// index-join result and keep the winner of `indexJoinPathCompare`. Only the
-/// winner is priced (`buildDataSource2IndexScanByIndexJoinProp`).
-fn choose_index_join_index_path(
-    ds: &crate::logical::DataSource,
-    paths: &[&crate::access_path::PossiblePath],
-    runtime: &crate::physical_property::IndexJoinRuntimeProp,
-    ctx: &DispatchContext<'_>,
-    table_pseudo: bool,
-) -> Option<usize> {
-    let mut best: Option<IndexJoinPathFacts> = None;
-    for (position, path) in paths.iter().enumerate() {
-        let crate::access_path::PossiblePath::Index { index } = path else {
-            continue;
-        };
-        if !path_matches_index_join_runtime(ds, path, runtime) {
-            continue;
-        }
-        let Some(facts) = index_join_path_facts(ds, *index, path, runtime, ctx, position) else {
-            continue;
-        };
-        if index_join_path_compare(best.as_ref(), &facts, ctx, table_pseudo) {
-            best = Some(facts);
-        }
+/// What building one inner path for an index join answers.
+enum IndexJoinPathAnswer {
+    NotApplicable,
+    EmptyRange,
+    Built(IndexJoinPathResult),
+}
+
+fn index_join_range_env<'a>(
+    ctx: &'a DispatchContext<'_>,
+) -> super::index_join_path::IndexJoinRangeEnv<'a> {
+    super::index_join_path::IndexJoinRangeEnv {
+        range_max_size: ctx.range_max_size,
+        fallback_handler: ctx.range_fallback_handler,
+        opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan,
+        evaluate: ctx.expression_evaluator,
     }
-    best.map(|best| best.position)
 }
 
-/// Go `indexJoinPathBuild` + `indexJoinPathConstructResult`'s comparison
-/// facts for one index path.
-fn index_join_path_facts(
+/// Go `getBestIndexJoinPathResultByProp`'s per-path step: build the path's
+/// index-join probe and, for an index path, its skyline candidate
+/// (`getIndexCandidateForIndexJoin`) and equality-prefix NDV.
+fn build_index_join_path_result(
     ds: &crate::logical::DataSource,
-    index: usize,
     path: &crate::access_path::PossiblePath,
+    position: usize,
     runtime: &crate::physical_property::IndexJoinRuntimeProp,
     ctx: &DispatchContext<'_>,
-    position: usize,
-) -> Option<IndexJoinPathFacts> {
-    let source_index = ds.indexes.get(index)?;
-    if source_index.is_multi_valued {
-        // Go `IsIndexJoinUnapplicable`: an MV index is reachable only by
-        // IndexMerge.
-        return None;
-    }
-    let info = index_join_feedback(ds, path, runtime, ctx)?;
-    // Go: a path whose template range is empty can never be the better one.
-    let template_width = info.ranges.first()?.low_val.len();
-    let index_columns = ds.index_range_columns(source_index);
-    let last_col_is_range = info.compare_filters.is_some();
-    let used_cols_len = (template_width + usize::from(last_col_is_range)).min(index_columns.len());
-    let eq_used_cols_len = used_cols_len - usize::from(last_col_is_range);
-    let key_cover = info
-        .key_off2_idx_off
-        .iter()
-        .filter(|offset| **offset >= 0)
-        .collect::<std::collections::BTreeSet<_>>()
-        .len();
-    // Go reads `innerTableStats` (the DataSource's TableStats) unless its
-    // StatsVersion is pseudo.
+) -> Result<IndexJoinPathAnswer, PlanError> {
+    let Some(inner_schema) = ds.base.base.schema() else {
+        return Ok(IndexJoinPathAnswer::NotApplicable);
+    };
+    let source_index = match path {
+        crate::access_path::PossiblePath::Index { index } => {
+            let Some(source_index) = ds.indexes.get(*index) else {
+                return Ok(IndexJoinPathAnswer::NotApplicable);
+            };
+            // Go `IsIndexJoinUnapplicable`: an MV or partial index is
+            // reachable only through IndexMerge or its own condition.
+            if source_index.is_multi_valued || !source_index.condition_expr_string.is_empty() {
+                return Ok(IndexJoinPathAnswer::NotApplicable);
+            }
+            Some(source_index)
+        }
+        crate::access_path::PossiblePath::Table { .. } if !ds.handle_is_int => None,
+        _ => return Ok(IndexJoinPathAnswer::NotApplicable),
+    };
+    let (idx_cols, idx_col_lens): (Vec<_>, Vec<_>) = match source_index {
+        Some(index) => ds.index_range_columns(index).into_iter().unzip(),
+        None => (ds.common_handle_cols.clone(), ds.common_handle_lens.clone()),
+    };
+    let info = super::index_join_path::IndexJoinPathInfo {
+        other_conditions: &runtime.other_conditions,
+        outer_join_keys: &runtime.outer_join_keys,
+        inner_join_keys: &runtime.inner_join_keys,
+        inner_pushed_conditions: &ds.pushed_down_conds,
+        inner_schema,
+    };
+    let core = match super::index_join_path::index_join_path_build(
+        info,
+        &idx_cols,
+        &idx_col_lens,
+        index_join_range_env(ctx),
+    )? {
+        super::index_join_path::IndexJoinPathOutcome::NotApplicable => {
+            return Ok(IndexJoinPathAnswer::NotApplicable)
+        }
+        super::index_join_path::IndexJoinPathOutcome::EmptyRange => {
+            return Ok(IndexJoinPathAnswer::EmptyRange)
+        }
+        super::index_join_path::IndexJoinPathOutcome::Built(core) => core,
+    };
+    let full_idx_cols = match source_index {
+        // Go `fillIndexPath` appends the handle to `FullIdxCols` exactly when
+        // it appends it to `IdxCols`.
+        Some(index) => {
+            let mut full = ds.declared_index_columns(index);
+            let prefix = full.iter().cloned().map_while(std::convert::identity).collect::<Vec<_>>();
+            full.extend(ds.handle_cols_to_append(index, &prefix).into_iter().map(Some));
+            full
+        }
+        None => idx_cols
+            .iter()
+            .cloned()
+            .zip(idx_col_lens.iter().copied())
+            .map(Some)
+            .collect(),
+    };
+    // A clustered primary key is unique by definition.
+    let unique = source_index.is_none_or(|index| index.unique);
+    let max_one_row =
+        super::index_join_path::index_join_path_max_one_row(&core, unique, full_idx_cols.len());
+    // Go `indexJoinPathConstructResult`: the NDV reads the table's own
+    // statistics, unless they are pseudo.
     let eq_used_cols_ndv = ds
         .table_stats
         .as_ref()
         .filter(|stats| stats.stats_version() != 0)
         .map_or(0.0, |stats| {
-            let columns = index_columns[..eq_used_cols_len]
+            let columns = idx_cols[..core.eq_used_cols_len.min(idx_cols.len())]
                 .iter()
-                .map(|(column, _)| column.unique_id)
+                .map(|column| column.unique_id)
                 .collect::<Vec<_>>();
             crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
                 &columns,
@@ -1857,20 +1870,58 @@ fn index_join_path_facts(
             )
             .0
         });
-    let state = ds.derived_index_paths.get(&source_index.id);
-    let single_scan = state.and_then(|state| state.is_single_scan).unwrap_or_else(|| {
-        index_path_is_single_scan(ds, source_index, ctx.opt_prefix_index_single_scan)
+    let candidate = match source_index {
+        Some(source_index) => Some(index_join_candidate(
+            ds,
+            source_index,
+            &idx_cols,
+            &idx_col_lens,
+            &core,
+            ctx,
+        )),
+        None => None,
+    };
+    let rebuild = tidb_expr::expr_util::predicates::maybe_over_optimized_4_plan_cache(
+        true,
+        &core.chosen_access,
+    )
+    .then(|| {
+        super::index_join_path::IndexJoinPathRebuild::new(
+            info,
+            &idx_cols,
+            &idx_col_lens,
+            ctx.opt_prefix_index_single_scan,
+        )
     });
-    // A path the data source derived no access facts for (no pushed
-    // condition) is still a candidate: Go's AccessPath always exists, with
-    // empty access maps and the table's row count.
-    let table_rows = ds
-        .table_stats
-        .as_ref()
-        .or_else(|| ds.base.base.stats_info())
-        .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+    Ok(IndexJoinPathAnswer::Built(IndexJoinPathResult {
+        position,
+        core,
+        candidate,
+        eq_used_cols_ndv,
+        idx_col_lens,
+        full_idx_cols,
+        max_one_row,
+        rebuild,
+    }))
+}
+
+/// Go `getIndexCandidateForIndexJoin` (`find_best_task.go:1712`): the
+/// DataSource cannot see the join keys, so every column the index join uses
+/// joins both coverage maps, and the equality count is that width.
+fn index_join_candidate(
+    ds: &crate::logical::DataSource,
+    source_index: &crate::plan_builder::catalog::SourceIndex,
+    idx_cols: &[tidb_expr::column::Column],
+    idx_col_lens: &[i64],
+    core: &super::index_join_path::IndexJoinPathCore,
+    ctx: &DispatchContext<'_>,
+) -> crate::find_best_task::candidate::CandidateMetrics {
+    let state = ds.derived_index_paths.get(&source_index.id);
     let mut candidate = state
         .and_then(|state| {
+            let single_scan = state.is_single_scan.unwrap_or_else(|| {
+                index_path_is_single_scan(ds, source_index, ctx.opt_prefix_index_single_scan)
+            });
             crate::find_best_task::candidate::index_candidate_metrics(
                 ds,
                 source_index,
@@ -1879,22 +1930,12 @@ fn index_join_path_facts(
                 false,
             )
         })
-        .unwrap_or_else(|| crate::find_best_task::candidate::CandidateMetrics {
-            single_scan,
-            global: source_index.global,
-            pseudo: !ds.analyzed_index_ids.contains(&source_index.id),
-            count_after_access: table_rows,
-            count_after_index: table_rows,
-            ..Default::default()
-        });
-    // Go `getIndexCandidateForIndexJoin`: the data source cannot see the join
-    // keys, so every used index column joins both coverage maps, and the
-    // equality count is the used width.
-    for (column, length) in index_columns.iter().take(used_cols_len) {
+        .unwrap_or_default();
+    for (column, length) in idx_cols.iter().zip(idx_col_lens).take(core.index_join_cols) {
         candidate.access_columns.insert(column.unique_id, *length);
         candidate.index_columns.insert(column.unique_id, *length);
     }
-    candidate.eq_or_in_count = used_cols_len;
+    candidate.eq_or_in_count = core.index_join_cols;
     candidate.matches_property = false;
     // Go `isFullIndexMatch` reads the static EqOrInCondCount with the widened
     // index-condition map.
@@ -1903,49 +1944,99 @@ fn index_join_path_facts(
         .map_or(0, |filled| filled.detached.eq_or_in_count);
     candidate.full_index_match =
         static_eq_or_in > 0 && candidate.index_columns.len() >= source_index.columns.len();
-    Some(IndexJoinPathFacts {
-        position,
-        candidate,
-        used_cols_len,
-        eq_used_cols_ndv,
-        key_cover,
-    })
+    candidate
+}
+
+/// Go `getBestIndexJoinPathResultByProp` (`index_join_path.go:795`) for the
+/// index prop: walk the possible index paths in order, build each one's
+/// index-join result and keep the winner of `indexJoinPathCompare`. An empty
+/// range on any path answers no index join at all.
+fn choose_index_join_index_path(
+    ds: &crate::logical::DataSource,
+    paths: &[&crate::access_path::PossiblePath],
+    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    ctx: &DispatchContext<'_>,
+    table_pseudo: bool,
+) -> Option<IndexJoinPathResult> {
+    let mut best: Option<IndexJoinPathResult> = None;
+    for (position, path) in paths.iter().enumerate() {
+        if !matches!(path, crate::access_path::PossiblePath::Index { .. }) {
+            continue;
+        }
+        // Go logs a failed build and moves to the next path.
+        match build_index_join_path_result(ds, path, position, runtime, ctx) {
+            Ok(IndexJoinPathAnswer::EmptyRange) => return None,
+            Ok(IndexJoinPathAnswer::Built(result)) => {
+                if index_join_path_compare(best.as_ref(), &result, ctx, table_pseudo) {
+                    best = Some(result);
+                }
+            }
+            Ok(IndexJoinPathAnswer::NotApplicable) | Err(_) => {}
+        }
+    }
+    best
+}
+
+/// Go `buildDataSource2TableScanByIndexJoinProp`'s common handle step: the
+/// common handle path is the only candidate (`IsCommonHandlePath`).
+fn choose_index_join_common_handle_path(
+    ds: &crate::logical::DataSource,
+    paths: &[&crate::access_path::PossiblePath],
+    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    ctx: &DispatchContext<'_>,
+) -> Option<IndexJoinPathResult> {
+    let (position, path) = paths.iter().enumerate().find(|(_, path)| {
+        matches!(path, crate::access_path::PossiblePath::Table { .. })
+    })?;
+    match build_index_join_path_result(ds, path, position, runtime, ctx) {
+        Ok(IndexJoinPathAnswer::Built(result)) => Some(result),
+        _ => None,
+    }
 }
 
 /// Go `indexJoinPathCompare` (`index_join_path.go:293`): reuse skyline
 /// pruning's `compareCandidates` under an unconstrained property, and fall
 /// back to `indexJoinPathCmp4UnComparableOnes` when it names no winner.
 fn index_join_path_compare(
-    best: Option<&IndexJoinPathFacts>,
-    current: &IndexJoinPathFacts,
+    best: Option<&IndexJoinPathResult>,
+    current: &IndexJoinPathResult,
     ctx: &DispatchContext<'_>,
     table_pseudo: bool,
 ) -> bool {
+    if current.core.ranges.is_empty() {
+        return false;
+    }
     let Some(best) = best else {
         return true;
     };
-    let comparison = crate::find_best_task::candidate::compare_candidates(
-        &current.candidate,
-        &best.candidate,
-        table_pseudo,
-        f64::MAX,
-        ctx.prefer_range_scan,
-        ctx.index_join_skyline_threshold,
-    );
-    match comparison.ordering {
-        1 => return true,
-        -1 => return false,
-        _ => {}
+    if let (Some(current_candidate), Some(best_candidate)) = (&current.candidate, &best.candidate) {
+        let comparison = crate::find_best_task::candidate::compare_candidates(
+            current_candidate,
+            best_candidate,
+            table_pseudo,
+            f64::MAX,
+            ctx.prefer_range_scan,
+            ctx.index_join_skyline_threshold,
+        );
+        match comparison.ordering {
+            1 => return true,
+            -1 => return false,
+            _ => {}
+        }
     }
     // Go `indexJoinPathCmp4UnComparableOnes`.
     if !is_ndv_close(current.eq_used_cols_ndv, best.eq_used_cols_ndv) {
         return current.eq_used_cols_ndv > best.eq_used_cols_ndv;
     }
-    if current.used_cols_len != best.used_cols_len {
-        return current.used_cols_len > best.used_cols_len;
+    if current.core.used_cols_len != best.core.used_cols_len {
+        return current.core.used_cols_len > best.core.used_cols_len;
     }
-    if current.key_cover != best.key_cover {
-        return current.key_cover > best.key_cover;
+    let cover = |result: &IndexJoinPathResult| {
+        result.core.idx_off2_key_off.iter().filter(|off| **off != -1).count()
+    };
+    let cover_diff = cover(current) as i64 - cover(best) as i64;
+    if cover_diff != 0 {
+        return cover_diff > 0;
     }
     current.eq_used_cols_ndv > best.eq_used_cols_ndv
 }
@@ -1969,399 +2060,62 @@ fn is_ndv_close(lhs: f64, rhs: f64) -> bool {
     diff / max < 0.2
 }
 
-/// The path admission half of Go's
-/// `buildDataSource2{Table,Index}ScanByIndexJoinProp`: a table-range
-/// candidate must probe the clustered handle; an index-range candidate must
-/// cover a leading run made of runtime join keys and equality-fixed columns.
-fn path_matches_index_join_runtime(
+/// Go `completeIndexJoinFeedBackInfo` for a path built by
+/// `indexJoinPathBuild`: the template ranges, the reversed key mapping and
+/// the comparison-range manager travel up to the index join.
+fn index_join_info_from_result(
     ds: &crate::logical::DataSource,
-    path: &crate::access_path::PossiblePath,
+    result: &IndexJoinPathResult,
     runtime: &crate::physical_property::IndexJoinRuntimeProp,
-) -> bool {
-    let inner_ids: Vec<i64> = runtime
+    index_id: Option<i64>,
+) -> crate::task::IndexJoinInfo {
+    // "reverse idxOff2KeyOff as keyOff2IdxOff"
+    let mut key_off2_idx_off = vec![-1; runtime.inner_join_keys.len()];
+    for (idx_off, key_off) in result.core.idx_off2_key_off.iter().enumerate() {
+        if let Some(slot) = usize::try_from(*key_off).ok().and_then(|key| key_off2_idx_off.get_mut(key)) {
+            *slot = idx_off as i64;
+        }
+    }
+    crate::task::IndexJoinInfo {
+        range_bare: false,
+        table_id: ds.physical_table_id,
+        index_id,
+        ranges: result.core.ranges.clone(),
+        idx_col_lens: result.idx_col_lens.clone(),
+        key_off2_idx_off,
+        access_conditions: result.core.chosen_access.clone(),
+        range_rebuild: result
+            .rebuild
+            .clone()
+            .map(|rebuild| crate::physical_plan_cache::PointRangeRebuild::IndexJoin(Box::new(rebuild))),
+        compare_filters: result.core.last_col_manager.clone(),
+    }
+}
+
+/// Go `getIndexJoinIntPKPathInfo` (`index_join_path.go:743`): an integer
+/// handle probes by the inner key that IS the handle. Its ranges are the
+/// "global var(ranges) which will be handled as empty range".
+fn index_join_int_pk_info(
+    ds: &crate::logical::DataSource,
+    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+) -> Option<crate::task::IndexJoinInfo> {
+    let pk_col = ds.handle_cols.first()?;
+    let key_off2_idx_off = runtime
         .inner_join_keys
         .iter()
-        .map(|column| column.unique_id)
-        .collect();
-    match path {
-        crate::access_path::PossiblePath::TiFlashTable => false,
-        crate::access_path::PossiblePath::Table { .. } => {
-            if !runtime.table_range_scan {
-                return false;
-            }
-            if ds.handle_is_int {
-                return ds
-                    .handle_cols
-                    .first()
-                    .is_some_and(|column| inner_ids.contains(&column.unique_id));
-            }
-            // Go's common-handle table-range builder follows the PRIMARY KEY
-            // from its first column. Runtime join keys and equality-fixed
-            // columns may jointly cover that leading run, but a later handle
-            // column cannot be probed across an unfixed earlier one.
-            let fixed = index_join_fixed_ids(ds);
-            let mut matched_runtime_key = false;
-            for column in &ds.common_handle_cols {
-                if inner_ids.contains(&column.unique_id) {
-                    matched_runtime_key = true;
-                } else if !fixed.contains(&column.unique_id) {
-                    break;
-                }
-            }
-            matched_runtime_key
-        }
-        crate::access_path::PossiblePath::Index { index } => {
-            if runtime.table_range_scan {
-                return false;
-            }
-            let Some(index) = ds.indexes.get(*index) else {
-                return false;
-            };
-            let fixed = index_join_fixed_ids(ds);
-            let mut matched_runtime_key = false;
-            for index_column in &index.columns {
-                // `IndexColumn.Offset` indexes the TABLE's column list, not
-                // the DataSource's pruned schema; resolve by name as
-                // `schema_column_for_index_column` (Go's `ds.Columns`
-                // alignment) does.
-                let Some(column) = ds.schema_column_for_index_column(index_column) else {
-                    // Go IndexInfo2Cols truncates IdxCols at the first
-                    // pruned column, retaining any usable leading join keys.
-                    break;
-                };
-                if inner_ids.contains(&column.unique_id) {
-                    matched_runtime_key = true;
-                } else if !fixed.contains(&column.unique_id) {
-                    break;
-                }
-            }
-            matched_runtime_key
-        }
-    }
-}
-
-
-/// Go `indexJoinPathGetRangeInfoAndMaxOneRow` (`index_join_path.go:588`): a
-/// UNIQUE access path whose complete key is covered by equality access
-/// conditions -- the runtime join keys plus any equality-fixed columns --
-/// reads at most one row per outer row. The inner scan's row count is capped
-/// at 1.0 for such a path, which is what lets plain `IndexJoin` (whose hash
-/// table is built over `probeRowsOne * buildRows`) beat `IndexHashJoin` when
-/// the per-probe average exceeds one row.
-fn index_join_path_is_max_one_row(
-    ds: &crate::logical::DataSource,
-    path: &crate::access_path::PossiblePath,
-    runtime: &crate::physical_property::IndexJoinRuntimeProp,
-) -> bool {
-    let (access_columns, unique) = match path {
-        crate::access_path::PossiblePath::TiFlashTable => return false,
-        crate::access_path::PossiblePath::Table { .. } if ds.handle_is_int => (
-            ds.handle_cols.iter().take(1).cloned().collect::<Vec<_>>(),
-            true,
-        ),
-        crate::access_path::PossiblePath::Table { .. } => (
-            ds.common_handle_cols.clone(),
-            // The clustered primary key is unique by definition.
-            true,
-        ),
-        crate::access_path::PossiblePath::Index { index } => {
-            let Some(source_index) = ds.indexes.get(*index) else {
-                return false;
-            };
-            // Go compares `usedColsLen` with `len(FullIdxCols)`, which keeps
-            // a nil slot for every index column the DataSource pruned. Such a
-            // column can be neither a join key nor fixed by an equality, so
-            // the probe cannot pin one row.
-            let Some(columns) = source_index
-                .columns
-                .iter()
-                .map(|column| ds.schema_column_for_index_column(column).cloned())
-                .collect::<Option<Vec<_>>>()
-            else {
-                return false;
-            };
-            (columns, source_index.unique)
-        }
-    };
-    if !unique || access_columns.is_empty() {
-        return false;
-    }
-    let fixed = equality_fixed_ids(ds);
-    let mut matched_runtime_key = false;
-    for column in &access_columns {
-        if runtime
-            .inner_join_keys
-            .iter()
-            .any(|key| key.unique_id == column.unique_id)
-        {
-            matched_runtime_key = true;
-        } else if !fixed.contains(&column.unique_id) {
-            return false;
-        }
-    }
-    matched_runtime_key
-}
-
-/// Go `completeIndexJoinFeedBackInfo`: return the selected access's complete
-/// prefix lengths and map every logical inner key to the chosen key column.
-/// A key left at `-1` becomes a residual equality when the parent completes
-/// `PhysicalIndexJoin`.
-fn index_join_feedback(
-    ds: &crate::logical::DataSource,
-    path: &crate::access_path::PossiblePath,
-    runtime: &crate::physical_property::IndexJoinRuntimeProp,
-    ctx: &DispatchContext<'_>,
-) -> Option<crate::task::IndexJoinInfo> {
-    let (access_columns, idx_col_lens) = match path {
-        crate::access_path::PossiblePath::TiFlashTable => (Vec::new(), Vec::new()),
-        crate::access_path::PossiblePath::Table { .. } if ds.handle_is_int => (
-            ds.handle_cols.iter().take(1).collect::<Vec<_>>(),
-            Vec::new(),
-        ),
-        crate::access_path::PossiblePath::Table { .. } => (
-            ds.common_handle_cols.iter().collect::<Vec<_>>(),
-            ds.common_handle_lens.clone(),
-        ),
-        crate::access_path::PossiblePath::Index { index } => {
-            let source_index = ds.indexes.get(*index);
-            let columns = source_index
-                .into_iter()
-                .flat_map(|index| &index.columns)
-                .map_while(|column| ds.schema_column_for_index_column(column))
-                .collect::<Vec<_>>();
-            let lengths = source_index
-                .map(|index| {
-                    index
-                        .columns
-                        .iter()
-                        .take(columns.len())
-                        .map(|column| column.length)
-                        .collect()
-                })
-                .unwrap_or_default();
-            (columns, lengths)
-        }
-    };
-    let fixed = index_join_fixed_ids(ds);
-    let mut key_off2_idx_off = vec![-1; runtime.inner_join_keys.len()];
-    let mut matched_runtime_key = false;
-    let mut first_unmatched_index_offset = access_columns.len();
-    for (idx_off, column) in access_columns.iter().copied().enumerate() {
-        if let Some(key_off) = runtime
-            .inner_join_keys
-            .iter()
-            .position(|key| key.unique_id == column.unique_id)
-        {
-            key_off2_idx_off[key_off] = i64::try_from(idx_off).unwrap_or(i64::MAX);
-            matched_runtime_key = true;
-        } else if !fixed.contains(&column.unique_id) {
-            first_unmatched_index_offset = idx_off;
-            break;
-        }
-    }
-    let (compare_filters, last_col_access) = matched_runtime_key
-        .then(|| access_columns.get(first_unmatched_index_offset).copied())
-        .flatten()
-        .and_then(|target_col| {
-            index_join_compare_filters(
-                ds,
-                runtime,
-                target_col,
-                first_unmatched_index_offset,
-                &idx_col_lens,
-            )
-        })
-        .map_or((None, Vec::new()), |(filters, access)| {
-            (Some(filters), access)
-        });
-    // RangeInfo lists chosen access predicates, not every join residual.
-    // Equality-fixed non-join prefix columns precede the final range column.
-    let mut access_conditions = Vec::new();
-    for (offset, column) in access_columns.iter().enumerate() {
-        if offset > first_unmatched_index_offset {
-            break;
-        }
-        if key_off2_idx_off.iter().any(|index| *index == offset as i64) {
-            continue;
-        }
-        let is_prefix = offset < first_unmatched_index_offset;
-        if !is_prefix && compare_filters.is_some() {
-            break;
-        }
-        let checker = crate::ranger::checker::ConditionChecker {
-            checker_col: Some(column),
-            length: idx_col_lens
-                .get(offset)
-                .copied()
-                .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
-            opt_prefix_index_single_scan: false,
-        };
-        for condition in &ds.pushed_down_conds {
-            let prefix_equality = matches!(condition, tidb_expr::expression::Expression::ScalarFunction(function) if matches!(function.func_name.lowercase(), "eq" | "in"));
-            if (!is_prefix || prefix_equality)
-                && !tidb_expr::simple_expr::extract_columns(condition).is_empty()
-                && checker.check(condition).0
-            {
-                access_conditions.push(condition.clone());
-            }
-        }
-    }
-    // Go's template ranges contain each static EQ/IN combination, with
-    // placeholders where the per-outer-row join keys will be substituted.
-    // Build over only static prefix columns; the ordinary scan ranges cannot
-    // describe a static column separated from the front by a runtime key.
-    let static_offsets = (0..first_unmatched_index_offset)
-        .filter(|offset| !key_off2_idx_off.contains(&(*offset as i64)))
-        .collect::<Vec<_>>();
-    let static_columns = static_offsets
-        .iter()
-        .map(|offset| access_columns[*offset].clone())
-        .collect::<Vec<_>>();
-    let static_lengths = static_offsets
-        .iter()
-        .map(|offset| {
-            idx_col_lens
-                .get(*offset)
-                .copied()
-                .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH)
-        })
-        .collect::<Vec<_>>();
-    let prefix_conditions = access_conditions
-        .iter()
-        .filter(|condition| {
-            tidb_expr::simple_expr::extract_columns(condition)
-                .iter()
-                .all(|column| {
-                    static_columns
-                        .iter()
-                        .any(|fixed| fixed.unique_id == column.unique_id)
-                })
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let (ranges, range_rebuild) = if static_columns.is_empty() {
-        (vec![crate::ranger::types::Range::default()], None)
-    } else {
-        let ranges = ctx
-            .detach_index_range(&prefix_conditions, &static_columns, &static_lengths)
-            .ok()?
-            .ranges;
-        let rebuild = crate::physical_plan_cache::PointRangeRebuild::IndexJoin {
-            access: crate::physical_plan_cache::IndexRangeRebuild::new(
-                prefix_conditions,
-                static_columns,
-                static_lengths,
-            ),
-            offsets: static_offsets.clone(),
-            width: first_unmatched_index_offset,
-        };
-        (ranges, Some(rebuild))
-    };
-    let ranges = crate::physical_plan_cache::index_join_template_ranges(
-        ranges,
-        &static_offsets,
-        first_unmatched_index_offset,
-    )?;
-    access_conditions.extend(last_col_access);
-    Some(crate::task::IndexJoinInfo {
-        // Bare outer-key spelling only when the probe is the integer handle
-        // (`constructDS2TableScanTask`'s int-PK branch); rowid tables without
-        // a matching handle and index probes render the `eq(inner, outer)`
-        // pairs of `indexJoinPathRangeInfo`.
-        range_bare: matches!(path, crate::access_path::PossiblePath::Table { .. })
-            && ds.handle_is_int,
+        .map(|key| if key.unique_id == pk_col.unique_id { 0 } else { -1 })
+        .collect::<Vec<i64>>();
+    key_off2_idx_off.contains(&0).then(|| crate::task::IndexJoinInfo {
+        // `indexJoinIntPKRangeInfo` renders the bare outer join keys.
+        range_bare: true,
         table_id: ds.physical_table_id,
-        index_id: match path {
-            crate::access_path::PossiblePath::Index { index } => {
-                ds.indexes.get(*index).map(|index| index.id)
-            }
-            crate::access_path::PossiblePath::Table { .. } => None,
-            crate::access_path::PossiblePath::TiFlashTable => None,
-        },
-        ranges,
-        idx_col_lens,
+        index_id: None,
+        ranges: Vec::new(),
+        idx_col_lens: Vec::new(),
         key_off2_idx_off,
-        access_conditions,
-        range_rebuild,
-        compare_filters,
-    })
-}
-
-/// Go `indexJoinPathBuildColManager`: comparisons against the first index
-/// column after the equality prefix become one retained per-outer-row range
-/// manager. The expression on the other side must depend on the outer schema
-/// and must not reference the inner data source.
-fn index_join_compare_filters(
-    ds: &crate::logical::DataSource,
-    runtime: &crate::physical_property::IndexJoinRuntimeProp,
-    target_col: &tidb_expr::column::Column,
-    target_index_offset: usize,
-    idx_col_lens: &[i64],
-) -> Option<(
-    crate::physical::IndexJoinCompareFilters,
-    Vec<tidb_expr::expression::Expression>,
-)> {
-    let inner_schema = ds.base.base.schema()?;
-    let mut ops = Vec::new();
-    let mut args = Vec::new();
-    let mut access_conditions = Vec::new();
-    for condition in &runtime.other_conditions {
-        let tidb_expr::expression::Expression::ScalarFunction(function) = condition else {
-            continue;
-        };
-        let [left, right] = function.args.as_slice() else {
-            continue;
-        };
-        let name = function.func_name.lowercase();
-        let (op, argument) = if left
-            .as_column()
-            .is_some_and(|column| column.unique_id == target_col.unique_id)
-        {
-            let op = match name {
-                "ge" => crate::physical::IndexJoinCompareOp::Ge,
-                "gt" => crate::physical::IndexJoinCompareOp::Gt,
-                "lt" => crate::physical::IndexJoinCompareOp::Lt,
-                "le" => crate::physical::IndexJoinCompareOp::Le,
-                _ => continue,
-            };
-            (op, right)
-        } else if right
-            .as_column()
-            .is_some_and(|column| column.unique_id == target_col.unique_id)
-        {
-            let op = match name {
-                "ge" => crate::physical::IndexJoinCompareOp::Le,
-                "gt" => crate::physical::IndexJoinCompareOp::Lt,
-                "lt" => crate::physical::IndexJoinCompareOp::Gt,
-                "le" => crate::physical::IndexJoinCompareOp::Ge,
-                _ => continue,
-            };
-            (op, left)
-        } else {
-            continue;
-        };
-        let affected = tidb_expr::simple_expr::extract_columns(argument);
-        if affected.is_empty() || affected.iter().any(|column| inner_schema.contains(column)) {
-            continue;
-        }
-        ops.push(op);
-        args.push(argument.clone());
-        access_conditions.push(condition.clone());
-    }
-    (!ops.is_empty()).then(|| {
-        (
-            crate::physical::IndexJoinCompareFilters {
-                target_col: target_col.clone(),
-                target_index_offset,
-                col_length: idx_col_lens
-                    .get(target_index_offset)
-                    .copied()
-                    .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
-                ops,
-                args,
-            },
-            access_conditions,
-        )
+        access_conditions: Vec::new(),
+        range_rebuild: None,
+        compare_filters: None,
     })
 }
 
@@ -2830,13 +2584,19 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     let mut best_is_preferred_range = false;
     let mut best_is_full_range = true;
     let mut ordinary_candidates = Vec::new();
-    // Go `buildDataSource2IndexScanByIndexJoinProp`: the index prop prices
-    // only the path `getBestIndexJoinPathResultByProp` chose by rule.
-    let chosen_index_join_path = prop
-        .index_join_prop
-        .as_ref()
-        .filter(|runtime| !runtime.table_range_scan)
-        .map(|runtime| choose_index_join_index_path(ds, &ordinary_paths, runtime, ctx, table_pseudo));
+    // Go `getBestIndexJoinInnerTaskByProp`: an index-join probe prices only
+    // the path its rules choose -- the common handle path or the integer
+    // handle for a table-range probe, the `indexJoinPathCompare` winner of
+    // the index paths otherwise.
+    let index_join_result = prop.index_join_prop.as_ref().and_then(|runtime| {
+        if !runtime.table_range_scan {
+            choose_index_join_index_path(ds, &ordinary_paths, runtime, ctx, table_pseudo)
+        } else if ds.handle_is_int {
+            None
+        } else {
+            choose_index_join_common_handle_path(ds, &ordinary_paths, runtime, ctx)
+        }
+    });
     'paths: for (path_position, path) in ordinary_paths.iter().enumerate() {
         if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
             && !matches!(path, crate::access_path::PossiblePath::TiFlashTable))
@@ -2846,12 +2606,19 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             continue;
         }
         if let Some(runtime) = &prop.index_join_prop {
-            if !path_matches_index_join_runtime(ds, path, runtime) {
+            let admitted = match path {
+                crate::access_path::PossiblePath::Table { .. }
+                    if runtime.table_range_scan && ds.handle_is_int =>
+                {
+                    index_join_int_pk_info(ds, runtime).is_some()
+                }
+                _ => index_join_result
+                    .as_ref()
+                    .is_some_and(|result| result.position == path_position),
+            };
+            if !admitted {
                 continue;
             }
-        }
-        if chosen_index_join_path.is_some_and(|chosen| chosen != Some(path_position)) {
-            continue;
         }
         let mut cur_preferred_range = false;
         let mut cur_is_full_range = true;
@@ -2898,10 +2665,35 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 let common_handle = primary_index.and_then(|index| ds.indexes.get(index));
                 let (common_columns, common_lengths): (Vec<_>, Vec<_>) =
                     table_path.common_columns.iter().cloned().unzip();
-                let ranges = table_path.detached.ranges.clone();
-                if ranges.is_empty() {
-                    return Ok(empty_range_dual_task(ds, ctx));
-                }
+                // Go `buildDataSource2TableScanByIndexJoinProp`: a common
+                // handle probes through its `indexJoinPathBuild` result, an
+                // integer handle through the full integer range with every
+                // pushed condition as a filter (`getIndexJoinIntPKPathInfo`).
+                let (ranges, table_access_conds, mut table_filters) = match &prop.index_join_prop {
+                    None => {
+                        let ranges = table_path.detached.ranges.clone();
+                        if ranges.is_empty() {
+                            return Ok(empty_range_dual_task(ds, ctx));
+                        }
+                        (
+                            ranges,
+                            table_path.detached.access_conds.clone(),
+                            table_path.detached.remained_conds.clone(),
+                        )
+                    }
+                    Some(_) => match &index_join_result {
+                        Some(result) => (
+                            result.core.ranges.clone(),
+                            result.core.chosen_access.clone(),
+                            result.core.chosen_remained.clone(),
+                        ),
+                        None => (
+                            crate::ranger::points::full_int_range(handle_type.is_unsigned()),
+                            Vec::new(),
+                            ds.pushed_down_conds.clone(),
+                        ),
+                    },
+                };
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
                     "TableScan",
@@ -2909,45 +2701,26 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 );
                 base.base.set_schema(ds.base.base.schema().cloned());
                 cur_is_full_range = crate::ranger::types::has_full_range(&ranges, false);
-                let table_access_conds = table_path.detached.access_conds.clone();
-                let mut table_filters = table_path.detached.remained_conds.clone();
                 // Go `constructDS2TableScanTask` computes the residual
                 // selectivity from `chosenRemained` BEFORE the inner-only
                 // access conditions are re-attached to the Selection.
-                let mut residual_table_filters = table_filters.clone();
+                let residual_table_filters = table_filters.clone();
                 if prop.index_join_prop.is_some() {
-                    // Go `constructDS2TableScanTask` re-attaches every
-                    // inner-only access condition as an explicit probe-side
-                    // Selection (`exhaust_physical_plans.go:913-917`); the
-                    // runtime ranges come from the join keys, so a static
-                    // predicate such as `o_w_id = 1` is a residual filter.
+                    // "Keep explicit probe-side selections for access
+                    // predicates to preserve the previous plan shape", only
+                    // the ones fully evaluable on the inner schema.
                     if let Some(schema) = ds.base.base.schema() {
-                        for condition in &table_access_conds {
-                            if tidb_expr::expr_util::normal_form::expr_from_schema(
-                                condition, schema,
-                            ) && !table_filters
-                                .iter()
-                                .any(|existing| existing.equal(condition))
-                            {
-                                table_filters.push(condition.clone());
-                            }
-                        }
-                    }
-                }
-                if let Some(runtime) = &prop.index_join_prop {
-                    for condition in &table_access_conds {
-                        let columns = tidb_expr::simple_expr::extract_columns(condition);
-                        if columns.iter().any(|column| {
-                            runtime
-                                .inner_join_keys
-                                .iter()
-                                .any(|key| key.unique_id == column.unique_id)
-                        }) && !residual_table_filters
+                        let inner_only = table_access_conds
                             .iter()
-                            .any(|existing| existing.equal(condition))
-                        {
-                            residual_table_filters.push(condition.clone());
-                        }
+                            .filter(|condition| {
+                                tidb_expr::expr_util::normal_form::expr_from_schema(condition, schema)
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        table_filters = crate::ranger::detacher::append_conditions_if_not_exist(
+                            table_filters,
+                            &inner_only,
+                        );
                     }
                 }
                 let table_stats = ds
@@ -3137,7 +2910,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         1.0
                     };
                     let mut runtime_rows = output_rows / probe_selectivity;
-                    if index_join_path_is_max_one_row(ds, path, runtime) {
+                    // "For IntHandle (integer primary key), it's always a
+                    // unique match."
+                    if index_join_result.as_ref().is_none_or(|result| result.max_one_row) {
                         runtime_rows = runtime_rows.min(1.0);
                     }
                     // Go `constructDS2TableScanTask` (`exhaust_physical_plans.go:865`)
@@ -3414,9 +3189,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     stats_context: ctx.task_stats_context(ds, &root_task_conds),
                     root_task_conds,
                     index_join_info: match &prop.index_join_prop {
-                        Some(runtime) => Some(match index_join_feedback(ds, path, runtime, ctx) {
-                            Some(info) => info,
-                            None => continue 'paths,
+                        Some(runtime) => Some(match &index_join_result {
+                            Some(result) => index_join_info_from_result(ds, result, runtime, None),
+                            None => match index_join_int_pk_info(ds, runtime) {
+                                Some(info) => info,
+                                None => continue 'paths,
+                            },
                         }),
                         None => None,
                     },
@@ -3551,7 +3329,15 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .iter()
                     .map(|(_, length)| *length)
                     .collect::<Vec<_>>();
-                let detach = if let Some(path) = filled_path {
+                // Go `constructDS2IndexScanTask` takes the index-join probe's
+                // template ranges and `chosenRemained` from
+                // `indexJoinPathBuild`, never the ordinary detach.
+                let index_join_probe = index_join_result
+                    .as_ref()
+                    .filter(|_| prop.index_join_prop.is_some());
+                let detach = if index_join_probe.is_some() {
+                    None
+                } else if let Some(path) = filled_path {
                     Some(path.detached.clone())
                 } else if ds.pushed_down_conds.is_empty() || index_cols.is_empty() {
                     None
@@ -3562,11 +3348,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         Err(_) => None,
                     }
                 };
-                let ranges = detach
-                    .as_ref()
-                    .map_or_else(crate::ranger::points::full_range, |result| {
-                        result.ranges.clone()
-                    });
+                let ranges = match index_join_probe {
+                    Some(result) => result.core.ranges.clone(),
+                    None => detach
+                        .as_ref()
+                        .map_or_else(crate::ranger::points::full_range, |result| {
+                            result.ranges.clone()
+                        }),
+                };
                 if detach
                     .as_ref()
                     .is_some_and(|result| result.ranges.is_empty())
@@ -3671,30 +3460,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .as_ref()
                     .is_some_and(|result| result.eq_or_in_count > 0)
                     && !cur_is_full_range;
-                let mut remained_conds = detach.as_ref().map_or_else(
-                    || ds.pushed_down_conds.clone(),
-                    |result| result.remained_conds.clone(),
-                );
-                if prop.index_join_prop.is_some() {
-                    // Go `constructDS2IndexScanTask` re-attaches every
-                    // inner-only access condition as an explicit probe-side
-                    // Selection: the runtime ranges come from the join keys,
-                    // so a static predicate such as `h_w_id = 1` is a residual
-                    // filter that keeps the `IndexRangeScan -> Selection`
-                    // shape (`exhaust_physical_plans.go:913-917`).
-                    if let (Some(result), Some(schema)) = (detach.as_ref(), ds.base.base.schema()) {
-                        for condition in &result.access_conds {
-                            if tidb_expr::expr_util::normal_form::expr_from_schema(
-                                condition, schema,
-                            ) && !remained_conds
-                                .iter()
-                                .any(|existing| existing.equal(condition))
-                            {
-                                remained_conds.push(condition.clone());
-                            }
-                        }
-                    }
-                }
+                let remained_conds = match index_join_probe {
+                    Some(result) => result.core.chosen_remained.clone(),
+                    None => detach.as_ref().map_or_else(
+                        || ds.pushed_down_conds.clone(),
+                        |result| result.remained_conds.clone(),
+                    ),
+                };
                 // Go retains `AccessCondition` on PhysicalIndexScan, not
                 // every pushed predicate. Rebuilding the latter would feed
                 // residual filters back into the ranger and make a safe
@@ -3997,18 +3769,27 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // `tmpPath.CountAfterAccess`, which for a runtime probe is the
                 // per-outer-row count divided by the residual index-filter
                 // selectivity; the static access estimate is used otherwise.
-                let runtime_counts = prop.index_join_prop.as_ref().map(|runtime| {
+                let runtime_counts = prop.index_join_prop.as_ref().zip(index_join_probe).map(|(runtime, probe)| {
+                    // "the estimated row count of the IndexScan should be no
+                    // larger than (total row count / NDV of join key
+                    // columns)": only the join-key columns that are not a
+                    // prefix column count.
                     let upper_bound = if ctx.index_join_row_count_upper_bound {
-                        let fixed = index_join_fixed_ids(ds);
-                        let used_columns = resolved_index_prefix.iter().take_while(|(column, _)| {
-                            fixed.contains(&column.unique_id)
-                                || runtime.inner_join_keys.iter().any(|key| key.unique_id == column.unique_id)
-                        }).filter_map(|(column, length)| {
-                            ((*length == tidb_datatype::UNSPECIFIED_LENGTH
-                                || column.ret_type.as_ref().is_some_and(|ty| ty.flen() == *length))
-                                && runtime.inner_join_keys.iter().any(|key| key.unique_id == column.unique_id))
-                                .then_some(column.unique_id)
-                        }).collect::<Vec<_>>();
+                        let used_columns = probe
+                            .core
+                            .idx_off2_key_off
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, key_off)| **key_off >= 0)
+                            .filter_map(|(idx_offset, _)| match probe.full_idx_cols.get(idx_offset) {
+                                Some(Some((column, length)))
+                                    if *length == tidb_datatype::UNSPECIFIED_LENGTH =>
+                                {
+                                    Some(column.unique_id)
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
                         table_stats.as_ref().and_then(|stats| {
                             let ndv = stats.hist_coll()?.ndv_lower_bound(&used_columns)?;
                             (ndv > 0).then(|| stats.row_count() / ndv as f64)
@@ -4016,7 +3797,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     } else {
                         None
                     };
-                    let max_one_row = index_join_path_is_max_one_row(ds, path, runtime);
+                    let max_one_row = probe.max_one_row;
                     let cap = |count: f64| {
                         let count = upper_bound.map_or(count, |bound| count.min(bound));
                         if max_one_row { count.min(1.0) } else { count }
@@ -4313,12 +4094,15 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     index_plan_finished: false,
                     keep_order,
                     expect_cnt: prop.expected_cnt as u64,
-                    index_join_info: match &prop.index_join_prop {
-                        Some(runtime) => Some(match index_join_feedback(ds, path, runtime, ctx) {
-                            Some(info) => info,
-                            None => continue 'paths,
-                        }),
-                        None => None,
+                    index_join_info: match (&prop.index_join_prop, index_join_probe) {
+                        (Some(runtime), Some(probe)) => Some(index_join_info_from_result(
+                            ds,
+                            probe,
+                            runtime,
+                            Some(source_index.id),
+                        )),
+                        (Some(_), None) => continue 'paths,
+                        (None, _) => None,
                     },
                     partial_order_match_result: partial_order_match,
                     ..crate::task::CopTask::default()
@@ -6396,93 +6180,6 @@ mod tests {
             PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
 
         assert!(table_path_matches_order(&source, &order_by_district));
-    }
-
-    #[test]
-    fn index_join_keeps_a_usable_prefix_when_trailing_columns_are_pruned() {
-        use crate::access_path::PossiblePath;
-        use crate::logical::DataSource;
-        use crate::logical::data_source::DataSourceColumn;
-        use crate::physical_property::IndexJoinRuntimeProp;
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
-        use tidb_datatype::{FieldType, FieldTypeCode};
-        use tidb_expr::column::Column;
-        use tidb_expr::schema::Schema;
-
-        let key = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
-        let mut base = BaseLogicalPlan::with_id(1, "DataSource", 0);
-        base.base.set_schema(Some(Schema::new(vec![key.clone()])));
-        let mut source = DataSource {
-            base,
-            columns: vec![DataSourceColumn {
-                id: 1,
-                name: "key".to_owned(),
-                is_primary_key: false,
-                is_not_null: true,
-            }],
-            indexes: vec![SourceIndex {
-                columns: ["key", "pruned"]
-                    .into_iter()
-                    .enumerate()
-                    .map(|(offset, name)| SourceIndexColumn {
-                        name: name.to_owned(),
-                        offset,
-                        length: -1,
-                    })
-                    .collect(),
-                ..SourceIndex::default()
-            }],
-            ..DataSource::default()
-        };
-        let runtime = IndexJoinRuntimeProp {
-            other_conditions: Vec::new(),
-            outer_join_keys: vec![Column::new(21, FieldType::new(FieldTypeCode::LongLong))],
-            inner_join_keys: vec![key],
-            avg_inner_row_count: 1.0,
-            table_range_scan: false,
-        };
-        let path = PossiblePath::Index { index: 0 };
-        assert!(path_matches_index_join_runtime(&source, &path, &runtime));
-
-        // A missing leading column still prevents probing a later join key.
-        source.indexes[0].columns.swap(0, 1);
-        assert!(!path_matches_index_join_runtime(&source, &path, &runtime));
-    }
-
-    #[test]
-    fn an_index_join_cannot_probe_only_a_later_common_handle_column() {
-        use crate::access_path::PossiblePath;
-        use crate::logical::DataSource;
-        use crate::physical_property::IndexJoinRuntimeProp;
-        use tidb_datatype::{FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
-        use tidb_expr::column::Column;
-
-        let part = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
-        let supplier = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
-        let source = DataSource {
-            handle_cols: vec![part.clone(), supplier.clone()],
-            handle_is_int: false,
-            common_handle_cols: vec![part, supplier.clone()],
-            common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
-            ..DataSource::default()
-        };
-        let table_path = PossiblePath::Table {
-            is_int_handle: false,
-            primary_index: Some(0),
-        };
-        let runtime = IndexJoinRuntimeProp {
-            other_conditions: Vec::new(),
-            outer_join_keys: vec![Column::new(21, FieldType::new(FieldTypeCode::LongLong))],
-            inner_join_keys: vec![supplier],
-            avg_inner_row_count: 1.0,
-            table_range_scan: true,
-        };
-
-        assert!(!path_matches_index_join_runtime(
-            &source,
-            &table_path,
-            &runtime,
-        ));
     }
 
     #[test]

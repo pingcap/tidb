@@ -265,47 +265,9 @@ pub enum PointRangeRebuild {
     Table(TableRangeRebuild),
     /// A unique-index point range.
     Index(IndexRangeRebuild),
-    /// Go mutableIndexJoinRange: static values interleaved with runtime keys.
-    IndexJoin {
-        /// EQ/IN predicates and their static columns.
-        access: IndexRangeRebuild,
-        /// Object-key positions occupied by the static columns.
-        offsets: Vec<usize>,
-        /// Complete equality-prefix width, including runtime placeholders.
-        width: usize,
-    },
-}
-
-/// Interleaves ranger static tuples with Go's runtime-key placeholders.
-/// A truncated/non-point template cannot bind all retained lookup keys.
-pub(crate) fn index_join_template_ranges(
-    mut ranges: Ranges,
-    offsets: &[usize],
-    width: usize,
-) -> Option<Ranges> {
-    if ranges.is_empty() || offsets.iter().any(|offset| *offset >= width) {
-        return None;
-    }
-    for range in &mut ranges {
-        if range.low_exclude
-            || range.high_exclude
-            || range.low_val.len() != offsets.len()
-            || range.collators.len() != offsets.len()
-            || range.low_val != range.high_val
-        {
-            return None;
-        }
-        let mut values = vec![Datum::Null; width];
-        let mut collators = vec![tidb_datatype::Collation::Binary; width];
-        for (source, target) in offsets.iter().enumerate() {
-            values[*target] = range.low_val[source].clone();
-            collators[*target] = range.collators[source];
-        }
-        range.low_val = values.clone();
-        range.high_val = values;
-        range.collators = collators;
-    }
-    Some(ranges)
+    /// Go `mutableIndexJoinRange`: the template ranges rebuilt by rerunning
+    /// `indexJoinPathBuild` with the new parameters.
+    IndexJoin(Box<crate::find_best_task::index_join_path::IndexJoinPathRebuild>),
 }
 
 /// An evaluator for a deferred constant such as a non-deterministic function.
@@ -816,21 +778,15 @@ fn rebuild_point_ranges(
                 result.ranges
             }
         }
-        PointRangeRebuild::IndexJoin {
-            access,
-            offsets,
-            width,
-        } => {
-            bind_conditions(&mut access.access_conditions, context)?;
-            let result = crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
-                &access.access_conditions,
-                &access.index_columns,
-                &access.index_column_lengths,
-                0,
-                &|expr| context.evaluate(expr),
-            )
-            .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-            let rebuilt = index_join_template_ranges(result.ranges, offsets, *width)
+        PointRangeRebuild::IndexJoin(rebuild) => {
+            for conditions in rebuild.conditions_mut() {
+                bind_conditions(conditions, context)?;
+            }
+            // Go `mutableIndexJoinRange.Rebuild`: an empty or no-longer-built
+            // range, or one whose count or width changed, is refused.
+            let rebuilt = rebuild
+                .rebuild(&|expr| context.evaluate(expr))
+                .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?
                 .ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
             if rebuilt.len() != original.len()
                 || rebuilt.first().map(|range| range.width())

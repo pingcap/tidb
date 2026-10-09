@@ -452,6 +452,14 @@ pub(crate) enum KeyClass {
     /// collation match `'a'` with `'a  '` -- the same rule the `GROUP BY`
     /// path applies in `hash_agg.rs`'s `group_key_part`.
     Str(Collation),
+    /// Both keys are temporal (`DATE`/`DATETIME`/`TIMESTAMP`). Go
+    /// `HashChunkRow` hashes the packed `uint64` (`Time.ToPackedUint`), which
+    /// carries neither the type nor the fsp, exactly as `Time.Compare`
+    /// ignores them. Both sides read the session zone, so the packed local
+    /// value has the same equality classes as Go's UTC-converted one.
+    Time,
+    /// Both keys are `TIME`; Go `HashChunkRow` hashes the nanoseconds.
+    Duration,
 }
 
 impl KeyClass {
@@ -463,11 +471,14 @@ impl KeyClass {
     /// string key hashes under exactly the rule that will later be asked to
     /// confirm the match.
     ///
-    /// `Datetime`/`Timestamp`/`Duration`/`Json`/`VectorFloat32` are
-    /// deliberately absent: their equality involves timezone resolution,
-    /// fractional-second precision, or structural folding that this unit has
-    /// not proven injective, and an unproven key is a dropped row.
+    /// `Json`/`VectorFloat32` are deliberately absent: their equality
+    /// involves structural folding that this unit has not proven injective,
+    /// and an unproven key is a dropped row.
     pub(crate) fn of(left: &FieldType, right: &FieldType, collation: Collation) -> Option<Self> {
+        let temporal = |eval_type| matches!(eval_type, EvalType::Datetime | EvalType::Timestamp);
+        if temporal(left.eval_type()) && temporal(right.eval_type()) {
+            return Some(KeyClass::Time);
+        }
         let eval_type = left.eval_type();
         if eval_type != right.eval_type() {
             return None;
@@ -477,6 +488,7 @@ impl KeyClass {
             EvalType::Real => Some(KeyClass::Real),
             EvalType::Decimal => Some(KeyClass::Decimal),
             EvalType::String => Some(KeyClass::Str(collation)),
+            EvalType::Duration => Some(KeyClass::Duration),
             _ => None,
         }
     }
@@ -749,6 +761,14 @@ fn key_part(class: KeyClass, datum: &Datum) -> Result<Option<Vec<u8>>, KeyError>
                 None => return Err(KeyError),
             },
         },
+        KeyClass::Time => match datum {
+            Datum::Time(time) => Some(time.to_packed_uint().map_err(|_| KeyError)?.to_be_bytes().to_vec()),
+            _ => return Err(KeyError),
+        },
+        KeyClass::Duration => match datum {
+            Datum::Duration(duration) => Some(duration.nanoseconds().to_be_bytes().to_vec()),
+            _ => return Err(KeyError),
+        },
     })
 }
 
@@ -991,6 +1011,8 @@ pub(crate) fn row_hash_chunk_batched(
             // in the column-major path without materializing a `Datum` per
             // row.
             KeyClass::Str(_) => is_raw_string_cell(field_type),
+            // Temporal cells hash through their datum, as `key_part` reads it.
+            KeyClass::Time | KeyClass::Duration => false,
         };
         if !supported {
             return Ok(None);
@@ -1133,6 +1155,8 @@ fn hash_chunk_key_row(
             hasher.write(&(part.len() as u64).to_be_bytes());
             hasher.write(part.as_ref());
         }
+        // `row_hash_chunk_batched` refuses these classes before reaching here.
+        KeyClass::Time | KeyClass::Duration => return Err(KeyError),
     }
     Ok(())
 }
@@ -1332,7 +1356,7 @@ pub(crate) fn equi_keys_equal_row(
                     None => false,
                 }
             }
-            KeyClass::Decimal | KeyClass::Str(_) => {
+            KeyClass::Decimal | KeyClass::Str(_) | KeyClass::Time | KeyClass::Duration => {
                 let row_datum = row.get_datum(row_at, field_type);
                 let (left_datum, right_datum) = if datums_are_left {
                     (datum, &row_datum)
@@ -1416,7 +1440,7 @@ pub(crate) fn equi_keys_equal_chunk_rows(
                 let right = right.get_bytes(key.right);
                 collation.immutable_key(&left) == collation.immutable_key(&right)
             }
-            KeyClass::Decimal | KeyClass::Str(_) => {
+            KeyClass::Decimal | KeyClass::Str(_) | KeyClass::Time | KeyClass::Duration => {
                 let left = left.get_datum(key.left, left_type);
                 let right = right.get_datum(key.right, right_type);
                 key_part(key.class, &left)? == key_part(key.class, &right)?

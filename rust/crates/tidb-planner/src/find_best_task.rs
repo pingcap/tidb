@@ -680,6 +680,7 @@ pub mod candidate;
 mod candidate_preparation;
 pub mod coster;
 pub mod dispatch;
+pub mod index_join_path;
 pub mod index_merge_intersection;
 pub mod index_merge_union;
 

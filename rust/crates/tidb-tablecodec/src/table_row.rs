@@ -183,10 +183,15 @@ pub fn unflatten_datum(
             }
             Datum::Time(value)
         }
+        // Go `datum.GetInt64()` reads `d.i`, which holds the nanoseconds of
+        // both an int datum (row values) and the KindMysqlDuration datum an
+        // index key decodes into.
         FieldTypeCode::Duration => Datum::Duration(MySqlDuration::from_raw_parts(
-            datum
-                .as_int()
-                .ok_or(TableRowError::InvalidDatum("duration"))?,
+            match &datum {
+                Datum::Duration(duration) => Some(duration.nanoseconds()),
+                _ => datum.as_int(),
+            }
+            .ok_or(TableRowError::InvalidDatum("duration"))?,
             field_type.decimal(),
         )),
         FieldTypeCode::Enum => {

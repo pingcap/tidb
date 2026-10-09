@@ -5074,6 +5074,16 @@ pub(crate) enum LookupProbePart {
     Alternatives(Vec<Datum>),
 }
 
+/// Go's static next-column range (`nextColRange`) in one index-join
+/// template: the last template slot spans this range instead of a point.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LookupProbeTail {
+    pub(crate) low: Datum,
+    pub(crate) high: Datum,
+    pub(crate) low_exclusive: bool,
+    pub(crate) high_exclusive: bool,
+}
+
 /// Which comparison one [`LookupProbeBound`] applies, always in the normalized
 /// `target_key_col op arg` orientation Go's `indexJoinPathBuildColManager`
 /// produces (`The column manager always build expression in the form of col op
@@ -5130,6 +5140,7 @@ pub(crate) struct LookupForkTemplate {
     keep_order: bool,
     descending: bool,
     probe_parts: Vec<LookupProbePart>,
+    probe_tails: Vec<LookupProbeTail>,
     probe_key_prefix_lengths: Vec<i64>,
     /// The lookup key's column types, computed once here and shared by every
     /// task this template opens (Go's `innerCtx.keyColTypes`, fixed at build).
@@ -5144,6 +5155,7 @@ pub(crate) struct LookupForkTemplate {
     decode_offsets: Option<Vec<usize>>,
     output_offsets: Option<Vec<usize>>,
     probe_bound_ops: Vec<LookupProbeBoundOp>,
+    probe_bound_target_type: Option<FieldType>,
 }
 
 impl LookupForkTemplate {
@@ -5162,6 +5174,7 @@ impl LookupForkTemplate {
             keep_order: self.keep_order,
             descending: self.descending,
             probe_parts: self.probe_parts.clone(),
+            probe_tails: self.probe_tails.clone(),
             probe_key_prefix_lengths: self.probe_key_prefix_lengths.clone(),
             probe_key_types: std::sync::OnceLock::from(self.probe_key_types.clone()),
             probes: Vec::new(),
@@ -5191,6 +5204,7 @@ impl LookupForkTemplate {
             shared_probes: None,
             shared_generation: 0,
             probe_bound_ops: self.probe_bound_ops.clone(),
+            probe_bound_target_type: self.probe_bound_target_type.clone(),
             probe_bound_values: Vec::new(),
         };
         task.set_probes(probes)?;
@@ -5226,6 +5240,8 @@ pub struct IndexJoinLookupExec {
     /// The complete object-key template. Empty preserves the legacy contract
     /// where the dynamic join-key tuple already is the complete probe.
     probe_parts: Vec<LookupProbePart>,
+    /// One static next-column range per template, after the point prefix.
+    probe_tails: Vec<LookupProbeTail>,
     /// Go `PhysicalIndexJoin.IdxColLens`, aligned with the selected index or
     /// common-handle object.
     probe_key_prefix_lengths: Vec<i64>,
@@ -5292,6 +5308,9 @@ pub struct IndexJoinLookupExec {
     /// keeps the point-probe path; set once at build time alongside
     /// [`Self::set_probes`]'s per-probe values.
     probe_bound_ops: Vec<LookupProbeBoundOp>,
+    /// Go `ColWithCmpFuncManager.TargetCol.RetType`: the compared key
+    /// column's type, which may be the handle Go appends to an index key.
+    probe_bound_target_type: Option<FieldType>,
     /// The current batch's bound values, aligned with `probes`.
     probe_bound_values: Vec<Vec<Datum>>,
 }
@@ -5345,6 +5364,7 @@ impl IndexJoinLookupExec {
             keep_order: false,
             descending: false,
             probe_parts: Vec::new(),
+            probe_tails: Vec::new(),
             probe_key_prefix_lengths: Vec::new(),
             probe_key_types: std::sync::OnceLock::new(),
             probes: Vec::new(),
@@ -5370,6 +5390,7 @@ impl IndexJoinLookupExec {
             shared_probes: None,
             shared_generation: 0,
             probe_bound_ops: Vec::new(),
+            probe_bound_target_type: None,
             probe_bound_values: Vec::new(),
         }
     }
@@ -5476,6 +5497,7 @@ impl IndexJoinLookupExec {
     /// each fork keeps its own cursor and row counters.
     pub(crate) fn fork_template(&self) -> Option<LookupForkTemplate> {
         let complete_common_handle = matches!(self.object, LookupObject::CommonHandle)
+            && self.probe_tails.is_empty()
             && (self.probe_parts.is_empty()
                 || self.probe_parts.len() == self.table.common_handle_offsets().len());
         if !matches!(self.object, LookupObject::CommonHandle)
@@ -5492,6 +5514,7 @@ impl IndexJoinLookupExec {
             keep_order: self.keep_order,
             descending: self.descending,
             probe_parts: self.probe_parts.clone(),
+            probe_tails: self.probe_tails.clone(),
             probe_key_prefix_lengths: self.probe_key_prefix_lengths.clone(),
             probe_key_types: self.probe_key_types().map(Arc::from),
             decode_context: self.decode_context.clone(),
@@ -5508,6 +5531,7 @@ impl IndexJoinLookupExec {
             decode_offsets: self.decode_offsets.clone(),
             output_offsets: self.output_offsets.clone(),
             probe_bound_ops: self.probe_bound_ops.clone(),
+            probe_bound_target_type: self.probe_bound_target_type.clone(),
         })
     }
 
@@ -5532,6 +5556,11 @@ impl IndexJoinLookupExec {
     /// Installs the complete object-key shape built by the index ranger.
     pub(crate) fn set_probe_parts(&mut self, probe_parts: Vec<LookupProbePart>) {
         self.probe_parts = probe_parts;
+    }
+
+    /// Installs the static next-column range of each template.
+    pub(crate) fn set_probe_tails(&mut self, probe_tails: Vec<LookupProbeTail>) {
+        self.probe_tails = probe_tails;
     }
 
     /// Installs Go `PhysicalIndexJoin.IdxColLens` for equality-prefix cuts.
@@ -5560,6 +5589,19 @@ impl IndexJoinLookupExec {
     /// content; the values arrive here through [`IndexJoinProbes`].
     pub(crate) fn set_probe_bound_ops(&mut self, ops: Vec<LookupProbeBoundOp>) {
         self.probe_bound_ops = ops;
+    }
+
+    /// Installs the compared key column's type (Go `TargetCol.RetType`).
+    pub(crate) fn set_probe_bound_target_type(&mut self, target_type: FieldType) {
+        self.probe_bound_target_type = Some(target_type);
+    }
+
+    /// The compared key column's type: Go builds the comparison range with
+    /// `TargetCol.RetType`, falling back to the key column after the prefix.
+    fn probe_bound_type(&self) -> Option<&FieldType> {
+        self.probe_bound_target_type
+            .as_ref()
+            .or_else(|| self.probe_key_types()?.get(self.probe_parts.len()))
     }
 
     /// Installs every predicate local to the looked-up leaf.
@@ -5604,7 +5646,7 @@ impl IndexJoinLookupExec {
     /// `constructDatumLookupKey` conversion; a probe whose bounds hold NULL
     /// reads nothing at all, exactly as Go's `BuildColumnRange` answers an
     /// empty range for it.
-    fn next_probe_with_bounds(&mut self) -> Option<(Vec<Datum>, Vec<Datum>)> {
+    fn next_probe_with_bounds(&mut self) -> Option<(Vec<Datum>, Vec<Datum>, usize)> {
         let template_count = self
             .probe_parts
             .iter()
@@ -5612,6 +5654,7 @@ impl IndexJoinLookupExec {
                 LookupProbePart::Alternatives(values) => Some(values.len()),
                 _ => None,
             })
+            .or_else(|| (!self.probe_tails.is_empty()).then_some(self.probe_tails.len()))
             .unwrap_or(1);
         if template_count == 0 {
             return None;
@@ -5644,7 +5687,7 @@ impl IndexJoinLookupExec {
                 continue;
             };
             if self.probe_bound_ops.is_empty() {
-                return Some((key, Vec::new()));
+                return Some((key, Vec::new(), template_ordinal));
             }
             // Fail-closed on desync: a caller that seeds keys without the
             // aligned bound values must not silently read UNBOUNDED ranges.
@@ -5659,7 +5702,7 @@ impl IndexJoinLookupExec {
                 // probe reads nothing, but later probes still run.
                 continue;
             };
-            return Some((key, bounds));
+            return Some((key, bounds, template_ordinal));
         }
     }
 
@@ -5668,8 +5711,7 @@ impl IndexJoinLookupExec {
     /// equality probes. A NULL or unconvertible value yields `None`: Go's
     /// ranger answers such comparisons with an empty range, i.e. no rows.
     fn bound_values_in_key_domain(&self, values: &[Datum]) -> Option<Vec<Datum>> {
-        let types = self.probe_key_types()?;
-        let column = types.get(self.probe_parts.len())?;
+        let column = self.probe_bound_type()?;
         values
             .iter()
             .map(|value| {
@@ -5689,13 +5731,28 @@ impl IndexJoinLookupExec {
         &self,
         key: &[Datum],
         bounds: &[Datum],
+        tail: Option<&LookupProbeTail>,
     ) -> Result<Vec<IndexRange>, ExecError> {
         if bounds.is_empty() {
+            // Go `buildRangesForIndexJoin` fills the join keys into a template
+            // whose last slot may hold the static next-column range.
+            let Some(tail) = tail else {
+                return Ok(vec![IndexRange {
+                    low: key.to_vec(),
+                    high: key.to_vec(),
+                    low_exclusive: false,
+                    high_exclusive: false,
+                }]);
+            };
+            let mut low = key.to_vec();
+            low.push(tail.low.clone());
+            let mut high = key.to_vec();
+            high.push(tail.high.clone());
             return Ok(vec![IndexRange {
-                low: key.to_vec(),
-                high: key.to_vec(),
-                low_exclusive: false,
-                high_exclusive: false,
+                low,
+                high,
+                low_exclusive: tail.low_exclusive,
+                high_exclusive: tail.high_exclusive,
             }]);
         }
         if bounds.len() != self.probe_bound_ops.len() {
@@ -5703,11 +5760,8 @@ impl IndexJoinLookupExec {
                 "index-join comparison values do not align with their operators".into(),
             ));
         }
-        let key_types = self.probe_key_types().ok_or_else(|| {
+        let target_type = self.probe_bound_type().ok_or_else(|| {
             ExecError::unsupported("an index-join comparison target has no key type")
-        })?;
-        let target_type = key_types.get(key.len()).ok_or_else(|| {
-            ExecError::Internal("an index-join comparison target is outside its key".into())
         })?;
         let target = Expression::Column(tidb_expr::column::Column::new(0, target_type.clone()));
         let conditions = self
@@ -5774,10 +5828,11 @@ impl IndexJoinLookupExec {
         let compare = !self.probe_bound_ops.is_empty();
         let mut ranges = Vec::new();
         while compare || limit.is_none_or(|limit| ranges.len() < limit) {
-            let Some((probe, bounds)) = self.next_probe_with_bounds() else {
+            let Some((probe, bounds, template)) = self.next_probe_with_bounds() else {
                 break;
             };
-            ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
+            let tail = self.probe_tails.get(template);
+            ranges.extend(self.probe_index_ranges(&probe, &bounds, tail)?);
         }
         if !compare || ranges.len() < 2 {
             return Ok(ranges);
@@ -5994,7 +6049,7 @@ impl IndexJoinLookupExec {
                     // integer handle reads nothing rather than erroring:
                     // Go's `BuildTableRange` produces an empty range for it,
                     // and an empty range is no rows.
-                    let Some((probe, _bounds)) = self.next_probe_with_bounds() else {
+                    let Some((probe, _bounds, _template)) = self.next_probe_with_bounds() else {
                         return Ok(None);
                     };
                     let [value] = probe.as_slice() else {
@@ -6103,7 +6158,8 @@ impl IndexJoinLookupExec {
         }
         matches!(self.object, LookupObject::CommonHandle)
             && !self.probe_parts.is_empty()
-            && self.probe_parts.len() != self.table.common_handle_offsets().len()
+            && (!self.probe_tails.is_empty()
+                || self.probe_parts.len() != self.table.common_handle_offsets().len())
     }
 
     /// The decoded column each output column reads, or `None` when an
@@ -6364,6 +6420,7 @@ impl IndexJoinLookupExec {
             }
         }
         let complete_common_handle = matches!(self.object, LookupObject::CommonHandle)
+            && self.probe_tails.is_empty()
             && (self.probe_parts.is_empty()
                 || self.probe_parts.len() == self.table.common_handle_offsets().len());
         if !matches!(self.object, LookupObject::CommonHandle) || complete_common_handle {
@@ -7974,7 +8031,7 @@ mod tests {
         source.set_probe_bound_ops(vec![LookupProbeBoundOp::Gt, LookupProbeBoundOp::Ge]);
 
         let ranges = source
-            .probe_index_ranges(&[Datum::Int(7)], &[Datum::Int(10), Datum::Int(12)])
+            .probe_index_ranges(&[Datum::Int(7)], &[Datum::Int(10), Datum::Int(12)], None)
             .unwrap();
         let range = &ranges[0];
         assert_eq!(range.low, [Datum::Int(7), Datum::Int(12)]);

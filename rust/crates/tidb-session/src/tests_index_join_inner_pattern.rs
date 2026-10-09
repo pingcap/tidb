@@ -628,3 +628,88 @@ fn a_string_key_probing_an_enum_or_set_index_joins_by_member_name() {
         }
     }
 }
+
+/// Go `HashChunkRow` hashes DATE/DATETIME/TIMESTAMP keys by their packed
+/// value and TIME keys by nanoseconds. The key classes refused them, so an
+/// index join on a TIMESTAMP key built its probe over an empty key list and
+/// panicked indexing it.
+#[test]
+fn an_index_join_probes_temporal_keys() {
+    let mut session = Session::new();
+    for sql in [
+        "create table o (ts timestamp, dt datetime(3), d date, tm time)",
+        "create table i (ts timestamp, dt datetime, d date, tm time(2), v int, \
+         key (ts), key (dt), key (d), key (tm))",
+        "insert into o values ('2025-03-27 00:56:13', '2025-03-27 00:56:13.000', \
+         '2025-03-27', '10:00:00')",
+        "insert into i values ('2025-03-27 00:56:13', '2025-03-27 00:56:13', \
+         '2025-03-27', '10:00:00.00', 1), ('2024-01-01 00:00:00', '2024-01-01 00:00:00', \
+         '2024-01-01', '11:00:00', 2)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for column in ["ts", "dt", "d", "tm"] {
+        let sql = format!("select /*+ inl_join(i) */ i.v from o join i on o.{column} = i.{column}");
+        let explain = plan(&mut session, &format!("explain format='brief' {sql}"));
+        assert!(explain.contains("IndexJoin"), "{sql}:\n{explain}");
+        assert_eq!(row_text(session.run(&sql)), vec![vec!["1"]], "{sql}");
+    }
+}
+
+/// Go `AddRecord` truncates a prefix column of a clustered primary key
+/// before encoding the handle (`TruncateIndexValues`), and `getIndexValues`
+/// refuses a point get on such a key. The full value was encoded, so an
+/// index-join lookup by the truncated handle found nothing.
+#[test]
+fn a_prefix_clustered_primary_key_stores_and_probes_the_truncated_handle() {
+    let mut session = Session::new();
+    for sql in [
+        "create table u (a int, b char(10), c varchar(255), primary key (c(5)) clustered)",
+        "insert into u values (20301, 'Charlie', 'aaaaaaa')",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let joined = "select /*+ inl_join(t2) */ t1.a, t2.c from u t1 join u t2 on t1.c = t2.c";
+    assert!(plan(&mut session, &format!("explain format='brief' {joined}")).contains("IndexJoin"));
+    assert_eq!(row_text(session.run(joined)), vec![vec!["20301", "aaaaaaa"]]);
+    let point = "select a from u where c = 'aaaaaaa'";
+    let explain = plan(&mut session, &format!("explain format='brief' {point}"));
+    assert!(!explain.contains("Point_Get"), "{explain}");
+    assert!(explain.contains("[\"aaaaa\",\"aaaaa\"]"), "{explain}");
+    assert_eq!(row_text(session.run(point)), vec![vec!["20301"]]);
+    assert!(row_text(session.run("select a from u where c = 'aaaaabb'")).is_empty());
+    // Go reports the values the handle holds.
+    let duplicate = session
+        .run("insert into u values (1, 'x', 'aaaaabb')")
+        .unwrap_err()
+        .to_string();
+    assert!(duplicate.contains("Duplicate entry 'aaaaa' for key 'u.PRIMARY'"), "{duplicate}");
+}
+
+/// Go appends the integer handle to a non-unique index's columns, so a join
+/// comparison on the handle becomes the probe's per-row range on that slot,
+/// built with the target column's own type (`TargetCol.RetType`). The probe
+/// read the type from the index's declared columns, found none for the
+/// handle slot and answered every probe with an empty range.
+#[test]
+fn an_index_join_compares_the_appended_handle_slot() {
+    let mut session = Session::new();
+    for sql in [
+        "create table k (a int, pk int primary key, index(a))",
+        "create table t (a int, pk int primary key, index(a))",
+        "insert into k values (0,8),(0,23),(1,21),(1,33),(1,52),(2,17),(2,34),(2,39),(2,40),\
+         (2,66),(2,67),(3,9),(3,25),(3,41),(3,48),(4,4),(4,11),(4,15),(4,26),(4,27),(4,31),\
+         (4,35),(4,45),(4,47),(4,49)",
+        "insert into t values (3,4),(3,5),(3,27),(3,29),(3,57),(3,58),(3,79),(3,84),(3,92),(3,95)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for hint in ["inl_join", "inl_hash_join"] {
+        let sql = format!(
+            "select /*+ {hint}(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk"
+        );
+        let explain = plan(&mut session, &format!("explain format='brief' {sql}"));
+        assert!(explain.contains("gt(test.k.pk, test.t.pk)]"), "{sql}:\n{explain}");
+        assert_eq!(row_text(session.run(&sql)), vec![vec!["33"]], "{sql}");
+    }
+}

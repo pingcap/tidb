@@ -2202,27 +2202,7 @@ impl KvTable {
                 "a common handle probe does not cover every key column".to_owned(),
             ));
         }
-        let mut stored_values = values.to_vec();
-        for (position, (value, offset)) in stored_values
-            .iter_mut()
-            .zip(self.common_handle_offsets.iter().copied())
-            .enumerate()
-        {
-            let Some(column) = self.columns.get(offset) else {
-                return Err(KvTableError::Encode(
-                    "a common-handle column is outside the table schema".to_owned(),
-                ));
-            };
-            if let Some(length) = self.common_handle_prefix_lengths.get(position) {
-                crate::index_prefix_cut::cut_index_value(value, *length, &column.field_type);
-            }
-        }
-        let encoded = tidb_codec::Encoder::new(self.use_new_collation)
-            .encode_key_in_timezone(zone, &stored_values)
-            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        let padded = tidb_txnkv::CommonHandle::new(encoded)
-            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        Ok(TableHandle::Common(padded.encoded().to_vec()))
+        self.common_handle_from_values(values, zone)
     }
 
     /// Go `TableInfo.PKIsHandle` for one column: whether this offset IS the
@@ -2532,8 +2512,26 @@ impl KvTable {
                 values.len()
             )));
         }
+        // Go `AddRecord` runs `tablecodec.TruncateIndexValues` over the
+        // primary key before `codec.EncodeKey`: a prefix key column stores
+        // only its leading part in the handle.
+        let mut stored_values = values.to_vec();
+        for (position, (value, offset)) in stored_values
+            .iter_mut()
+            .zip(self.common_handle_offsets.iter().copied())
+            .enumerate()
+        {
+            let Some(column) = self.columns.get(offset) else {
+                return Err(KvTableError::Encode(
+                    "a common-handle column is outside the table schema".to_owned(),
+                ));
+            };
+            if let Some(length) = self.common_handle_prefix_lengths.get(position) {
+                crate::index_prefix_cut::cut_index_value(value, *length, &column.field_type);
+            }
+        }
         let encoded = tidb_codec::Encoder::new(self.use_new_collation)
-            .encode_key_in_timezone(zone, values)
+            .encode_key_in_timezone(zone, &stored_values)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
         // Go `kv.NewCommonHandle` pads a short encoding out to nine bytes,
         // and so does the record-key codec this handle is about to be written
@@ -4133,10 +4131,26 @@ impl KvTable {
 /// [`datum_text`] renderer, so a composite key can never disagree with a
 /// single-column one about how a value prints.
 fn clustered_key_text(table: &KvTable, row: &[Datum]) -> String {
+    // Go reports the values the handle holds, so a prefix key column shows
+    // only its leading part (`TruncateIndexValues`).
     table
         .handle_column_offsets()
         .iter()
-        .map(|offset| row.get(*offset).map_or_else(String::new, datum_text))
+        .enumerate()
+        .map(|(position, offset)| {
+            let Some(mut value) = row.get(*offset).cloned() else {
+                return String::new();
+            };
+            if table.pk_handle_offset.is_none() {
+                if let (Some(length), Some(column)) = (
+                    table.common_handle_prefix_lengths.get(position),
+                    table.columns.get(*offset),
+                ) {
+                    crate::index_prefix_cut::cut_index_value(&mut value, *length, &column.field_type);
+                }
+            }
+            datum_text(&value)
+        })
         .collect::<Vec<_>>()
         .join("-")
 }

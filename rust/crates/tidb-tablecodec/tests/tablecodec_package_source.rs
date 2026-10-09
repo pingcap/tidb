@@ -246,6 +246,23 @@ fn test_unflatten_datums() {
     assert_eq!(values[0].collation(), Some(Collation::Utf8Mb4UnicodeCi));
 }
 
+/// Go `Unflatten`'s duration arm reads `datum.GetInt64()`, the `d.i` slot
+/// that holds the nanoseconds of the KindMysqlDuration datum an index key
+/// decodes into, so a TIME column read back from an index entry restores.
+#[test]
+fn unflatten_restores_a_duration_decoded_from_an_index_key() {
+    let mut time = field(FieldTypeCode::Duration);
+    time.set_decimal(2);
+    let decoded = Datum::Duration(tidb_datatype::MySqlDuration::from_raw_parts(36_000_000_000_000, 6));
+    let restored = unflatten_datum(decoded, &time, Some(&UTC)).unwrap();
+    assert_eq!(
+        restored,
+        Datum::Duration(tidb_datatype::MySqlDuration::from_raw_parts(36_000_000_000_000, 2))
+    );
+    let from_row = unflatten_datum(Datum::Int(36_000_000_000_000), &time, Some(&UTC)).unwrap();
+    assert_eq!(from_row, restored);
+}
+
 /// Source: `tablecodec_test.go::TestTimeCodec`.
 #[test]
 fn test_time_codec() {

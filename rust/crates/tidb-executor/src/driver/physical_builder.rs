@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use crate::access_path::{
     HandleOutputColumn, HandleSourceExec, IndexJoinLookupExec, IndexRangeSourceExec, LookupObject,
-    LookupProbeBound, LookupProbeBoundOp, LookupProbePart, SharedIndexJoinProbes,
+    LookupProbeBound, LookupProbeBoundOp, LookupProbePart, LookupProbeTail, SharedIndexJoinProbes,
     UniqueIndexPointSourceExec,
 };
 use crate::apply::NestedLoopApplyExec;
@@ -2474,10 +2474,16 @@ fn index_join_probe_shape(
             "a physical index join maps two join keys to one lookup column",
         ));
     }
-    let prefix_len = join.compare_filters.as_ref().map_or_else(
-        || dynamic.last().expect("non-empty above").0 + 1,
-        |filters| filters.target_index_offset,
-    );
+    // Go's template width covers the join keys and the EQ/IN columns; a
+    // comparison manager or a static next-column range owns the last slot.
+    let prefix_len = match &join.compare_filters {
+        Some(filters) => filters.target_index_offset,
+        None => {
+            let width = join.ranges.first().map_or(0, |range| range.low_val.len());
+            let width = if index_join_template_has_tail(join) { width - 1 } else { width };
+            width.max(dynamic.last().expect("non-empty above").0 + 1)
+        }
+    };
     if dynamic
         .last()
         .is_some_and(|(index, _)| *index >= prefix_len)
@@ -2487,6 +2493,8 @@ fn index_join_probe_shape(
         ));
     }
     let probe_keys = dynamic.iter().map(|(_, key)| *key).collect::<Vec<_>>();
+    // A range's exclusion flags describe its last slot only.
+    let has_tail = index_join_template_has_tail(join);
     let mut parts = Vec::with_capacity(prefix_len);
     for index in 0..prefix_len {
         if let Some((position, _)) = dynamic
@@ -2503,7 +2511,8 @@ fn index_join_probe_shape(
             .map(|range| {
                 let low = range.low_val.get(index)?;
                 let high = range.high_val.get(index)?;
-                (!range.low_exclude && !range.high_exclude && low == high).then(|| low.clone())
+                (low == high && (has_tail || (!range.low_exclude && !range.high_exclude)))
+                    .then(|| low.clone())
             })
             .collect::<Option<Vec<_>>>()
             .filter(|values| !values.is_empty())
@@ -2517,6 +2526,35 @@ fn index_join_probe_shape(
         }
     }
     Ok((probe_keys, parts))
+}
+
+/// Whether Go's template ranges end in a static next-column range
+/// (`nextColRange`) rather than a point.
+fn index_join_template_has_tail(join: &tidb_planner::physical::PhysicalIndexJoin) -> bool {
+    join.compare_filters.is_none()
+        && join.ranges.iter().any(|range| {
+            range.low_exclude
+                || range.high_exclude
+                || range.low_val.last() != range.high_val.last()
+        })
+}
+
+/// The static next-column range of every template, in template order.
+fn index_join_probe_tails(join: &tidb_planner::physical::PhysicalIndexJoin) -> Vec<LookupProbeTail> {
+    if !index_join_template_has_tail(join) {
+        return Vec::new();
+    }
+    join.ranges
+        .iter()
+        .filter_map(|range| {
+            Some(LookupProbeTail {
+                low: range.low_val.last()?.clone(),
+                high: range.high_val.last()?.clone(),
+                low_exclusive: range.low_exclude,
+                high_exclusive: range.high_exclude,
+            })
+        })
+        .collect()
 }
 
 fn index_join_probe_key_domains(
@@ -2769,6 +2807,7 @@ fn build_index_inner_reader(
         statement,
     );
     source.set_probe_parts(probe_parts.to_vec());
+    source.set_probe_tails(index_join_probe_tails(join));
     source.set_probe_key_prefix_lengths(join.idx_col_lens.clone());
     if let Some(compare_filters) = &join.compare_filters {
         source.set_probe_bound_ops(
@@ -2779,6 +2818,9 @@ fn build_index_inner_reader(
                 .map(lookup_probe_bound_op)
                 .collect(),
         );
+        if let Some(target_type) = &compare_filters.target_col.ret_type {
+            source.set_probe_bound_target_type(target_type.clone());
+        }
     }
     source.set_filters(filters, ctx.clone());
     source.set_index_filters(index_filters);
