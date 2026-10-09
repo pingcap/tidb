@@ -451,9 +451,10 @@ func TestConfigStringRedactsCredentials(t *testing.T) {
 	conf.Azblob.AccountKey = "AZKEY"
 	conf.Azblob.SASToken = "SAS"
 	conf.Azblob.EncryptionKey = "ENC"
+	conf.Azblob.Endpoint = "https://account.blob.core.windows.net/?sig=SASQUERY"
 
 	str := conf.String()
-	for _, secret := range []string{"AKID", "SKEY", "TOKEN", "AZKEY", "SAS", "ENC"} {
+	for _, secret := range []string{"AKID", "SKEY", "TOKEN", "AZKEY", "SAS", "ENC", "SASQUERY"} {
 		require.NotContains(t, str, secret)
 	}
 	require.Contains(t, str, "region=us-east-1")
