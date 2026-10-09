@@ -1288,10 +1288,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		//   because the connection is in the `connStatusReading` status.
 		// 3. The connection changes its status to `connStatusDispatching` and starts to execute the command.
 		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
-			// `Server.DrainClients` closes the idle connection, but the client has already sent a command.
-			if cc.getStatus() == connStatusWaitShutdown && cc.server.inShutdownMode.Load() &&
-				!cc.rejectCommandInShutdown(ctx, data) && cc.lingerAfterNoReplyCommand(data, &lingerUntil) &&
-				cc.CompareAndSwapStatus(connStatusWaitShutdown, connStatusDispatching) {
+			if cc.handleCommandAfterDrainClose(ctx, data, &lingerUntil) {
 				continue
 			}
 			return
@@ -1781,6 +1778,21 @@ func (cc *clientConn) rejectCommandInShutdown(ctx context.Context, data []byte) 
 		terror.Log(err)
 	}
 	return true
+}
+
+// handleCommandAfterDrainClose handles a command that was read after `Server.DrainClients` had already claimed the idle
+// connection: it rejects the command with ER_SERVER_SHUTDOWN, and reports whether the connection keeps lingering
+// because the command expects no response.
+//
+// `KILL CONNECTION` sets the same status, also on a connection in a transaction. Such a connection is closed without a
+// reply: ER_SERVER_SHUTDOWN tells the client that the command alone is safe to retry, while closing the connection
+// rolls back the earlier statements of its transaction.
+func (cc *clientConn) handleCommandAfterDrainClose(ctx context.Context, data []byte, lingerUntil *time.Time) bool {
+	if cc.getStatus() != connStatusWaitShutdown || !cc.server.inShutdownMode.Load() || cc.ctx.GetSessionVars().InTxn() {
+		return false
+	}
+	return !cc.rejectCommandInShutdown(ctx, data) && cc.lingerAfterNoReplyCommand(data, lingerUntil) &&
+		cc.CompareAndSwapStatus(connStatusWaitShutdown, connStatusDispatching)
 }
 
 // lingerAfterNoReplyCommand is called in shutdown mode after a command that expects no response was read and not
