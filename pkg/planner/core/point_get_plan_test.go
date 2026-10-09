@@ -146,6 +146,29 @@ func TestPointGetPlanCache(t *testing.T) {
 	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
 	require.Equal(t, float64(2), hit)
+
+	// Each index column needs a type even if the first IN tuple has a literal
+	// and only a later tuple has a parameter in that position.
+	for _, key := range []string{"unique key uk(k1, k2)", "primary key(k1, k2) clustered"} {
+		tk.MustExec("drop table t")
+		tk.MustExec("create table t(k1 int, k2 int, v int, " + key + ")")
+		tk.MustExec("insert into t values (1,2,100), (3,2,200), (1,4,300)")
+		for _, predicate := range []string{
+			"(k1, k2) in ((1, ?), (?, 2))",
+			"(k2, k1) in ((?, 1), (2, ?))",
+		} {
+			tk.MustExec("prepare st from 'select v from t where " + predicate + "'")
+			tk.MustExec("set @a=2, @b=3")
+			tk.MustQuery("execute st using @a, @b").Sort().Check(testkit.Rows("100", "200"))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+			tk.MustExec("set @a=4, @b=3")
+			tk.MustQuery("execute st using @a, @b").Sort().Check(testkit.Rows("200", "300"))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			tk.MustExec("set @a=2, @b=1")
+			tk.MustQuery("execute st using @a, @b").Check(testkit.Rows("100"))
+			tk.MustExec("deallocate prepare st")
+		}
+	}
 }
 
 // Test that the plan id will be reset before optimization every time.
