@@ -594,3 +594,37 @@ fn overlapping_compare_ranges_read_each_inner_row_once() {
         );
     }
 }
+
+/// Go `TestIndexJoinEnumSetIssue19233` (`index_lookup_join.test`): a VARCHAR
+/// outer key probing a unique ENUM or SET index is converted into the inner
+/// column's type, and the batch's sort/dedup key must encode that ENUM/SET
+/// datum by its member name as Go's `GetBytes` does; the string-only encoder
+/// failed the statement with "a join key column has no comparable encoding".
+#[test]
+fn a_string_key_probing_an_enum_or_set_index_joins_by_member_name() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE p1 (type enum('HOST_PORT') NOT NULL, UNIQUE KEY (type))",
+        "CREATE TABLE p2 (type set('HOST_PORT') NOT NULL, UNIQUE KEY (type))",
+        "CREATE TABLE i (objectType varchar(64) NOT NULL)",
+        "insert into i values ('SWITCH'), ('HOST_PORT'), ('HOST_PORT')",
+        "insert into p1 values ('HOST_PORT')",
+        "insert into p2 values ('HOST_PORT')",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for hint in ["INL_JOIN", "INL_HASH_JOIN"] {
+        for inner in ["p1", "p2"] {
+            let sql = format!(
+                "select /*+ {hint}({inner}) */ * from i, {inner} where i.objectType = {inner}.type"
+            );
+            let explain = plan(&mut session, &format!("explain format='brief' {sql}"));
+            assert!(explain.contains("Index"), "{sql}:\n{explain}");
+            assert_eq!(
+                row_text(session.run(&sql)),
+                vec![vec!["HOST_PORT", "HOST_PORT"], vec!["HOST_PORT", "HOST_PORT"]],
+                "{sql}"
+            );
+        }
+    }
+}

@@ -158,11 +158,6 @@ pub struct DispatchContext<'a> {
     /// `exhaustPhysicalPlans4LogicalApply` after estimating the correlated
     /// value hit ratio.
     pub apply_cache_capacity: i64,
-    /// Go `fixcontrol.Fix44855`, which raises an IndexJoin probe's scan-row
-    /// floor when the chosen access path can use only a prefix of the equality
-    /// join keys. Go reads this floor with `GetBoolWithDefault(..., true)`;
-    /// its distinct upper bound below uses the false default.
-    pub index_join_probe_row_count_fix: bool,
     /// Go Fix44855's separate NDV upper bound, disabled by default.
     pub index_join_row_count_upper_bound: bool,
     /// Whether normal optimization may convert scans to PointGet/BatchPointGet.
@@ -244,7 +239,6 @@ impl<'a> DispatchContext<'a> {
             group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
             use_hash_join_v2: true,
             apply_cache_capacity: 0,
-            index_join_probe_row_count_fix: true,
             index_join_row_count_upper_bound: false,
             enable_point_get_conversion: true,
             index_join_skyline_threshold: 1_000.0,
@@ -451,13 +445,6 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_apply_cache_capacity(mut self, capacity: i64) -> Self {
         self.apply_cache_capacity = capacity;
-        self
-    }
-
-    /// Uses the session's resolved Fix44855 value for IndexJoin probe sizing.
-    #[must_use]
-    pub const fn with_index_join_probe_row_count_fix(mut self, enabled: bool) -> Self {
-        self.index_join_probe_row_count_fix = enabled;
         self
     }
 
@@ -1778,168 +1765,208 @@ fn index_join_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
     ids
 }
 
-/// Computes Go's `indexJoinProbeAccessRowsFloor` for one admitted access
-/// prefix (`exhaust_physical_plans.go:824`).  IndexJoin's post-join row count
-/// uses every equality key, while a probe path may only build ranges from a
-/// leading subset.  In that case the scan still reads approximately one
-/// table row per distinct value of the keys that *were* used by the path.
-///
-/// The source skips this correction for pseudo statistics, complete key
-/// coverage, and a trailing range (the latter is not an equality-prefix
-/// estimate).  Unknown or non-positive NDVs fail closed at the same boundary
-/// rather than making a low-confidence cost estimate look precise.
-fn index_join_probe_access_rows_floor(
-    ds: &crate::logical::DataSource,
-    access_columns: &[tidb_expr::column::Column],
-    runtime: &crate::physical_property::IndexJoinRuntimeProp,
-    enabled: bool,
-    group_ndv_skew_ratio: f64,
-) -> Option<f64> {
-    if !enabled || runtime.inner_join_keys.is_empty() || ds.handle_is_int {
-        return None;
-    }
-    let table_stats = ds.table_stats.as_ref()?;
-    if table_stats.stats_version() == 0 {
-        return None;
-    }
-
-    // `lastColIsRange`/`lastColManager` in Go identifies a non-equality tail.
-    // The Rust runtime property carries the source's residual conditions, so
-    // conservatively decline the floor whenever one of them is a range
-    // comparison.  Equality residuals remain eligible.
-    if runtime.other_conditions.iter().any(|condition| {
-        let tidb_expr::expression::Expression::ScalarFunction(function) = condition else {
-            return false;
-        };
-        let name = function.func_name.lowercase();
-        name == "ge" || name == "gt" || name == "lt" || name == "le"
-    }) {
-        return None;
-    }
-
-    let inner_ids = runtime
-        .inner_join_keys
-        .iter()
-        .map(|column| column.unique_id)
-        .collect::<std::collections::BTreeSet<_>>();
-    let fixed = equality_fixed_ids(ds)
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut used_columns = Vec::new();
-    let mut used_runtime_keys = 0usize;
-    for column in access_columns {
-        if inner_ids.contains(&column.unique_id) {
-            used_runtime_keys += 1;
-            used_columns.push(column.clone());
-        } else if fixed.contains(&column.unique_id) {
-            used_columns.push(column.clone());
-        } else {
-            break;
-        }
-    }
-    if used_runtime_keys == 0 || used_runtime_keys >= runtime.inner_join_keys.len() {
-        return None;
-    }
-
-    let ids = used_columns
-        .iter()
-        .map(|column| column.unique_id)
-        .collect::<Vec<_>>();
-    let (ndv, _) = crate::cardinality::derive_stats::
-        estimate_cols_ndv_with_matched_len_and_skew_ratio(
-            &ids,
-            table_stats,
-            group_ndv_skew_ratio,
-        );
-    if !ndv.is_finite() || ndv <= 0.0 {
-        return None;
-    }
-    let floor = table_stats.row_count() / ndv;
-    floor.is_finite().then_some(floor.max(0.0))
+/// The facts Go's `indexJoinPathResult` carries into `indexJoinPathCompare`
+/// for one inner index path.
+struct IndexJoinPathFacts {
+    /// Position of the path in the enumerated path list.
+    position: usize,
+    /// Go `getIndexCandidateForIndexJoin`.
+    candidate: crate::find_best_task::candidate::CandidateMetrics,
+    /// Go `usedColsLen`: the width of the template range.
+    used_cols_len: usize,
+    /// Go `eqUsedColsNDV`: the NDV of the equality prefix over the table's
+    /// own statistics, zero under pseudo statistics.
+    eq_used_cols_ndv: f64,
+    /// Index columns probed by a join key (`idxOff2KeyOff != -1`).
+    key_cover: usize,
 }
 
-/// Computes Go's `indexJoinPathCountAfterAccess4Compare` for one secondary
-/// index candidate. IndexJoin's runtime equality is invisible while ordinary
-/// access statistics are derived, so a stable single-column NDV lets the
-/// skyline comparison divide that estimate by the per-probe key cardinality.
-/// Multiple runtime keys, prefix columns, pseudo statistics, and invalid NDVs
-/// fail closed just as Go's helper does.
-fn index_join_skyline_count_for_index(
+/// Go `getBestIndexJoinPathResultByProp` (`index_join_path.go:795`) for the
+/// index prop: walk the possible paths in order, build each index path's
+/// index-join result and keep the winner of `indexJoinPathCompare`. Only the
+/// winner is priced (`buildDataSource2IndexScanByIndexJoinProp`).
+fn choose_index_join_index_path(
     ds: &crate::logical::DataSource,
+    paths: &[&crate::access_path::PossiblePath],
     runtime: &crate::physical_property::IndexJoinRuntimeProp,
-    index_prefix: &[(tidb_expr::column::Column, i64)],
-    count_after_access: Option<f64>,
-) -> Option<f64> {
-    let count_after_access = count_after_access?;
-    if !count_after_access.is_finite() || count_after_access <= 0.0 {
+    ctx: &DispatchContext<'_>,
+    table_pseudo: bool,
+) -> Option<usize> {
+    let mut best: Option<IndexJoinPathFacts> = None;
+    for (position, path) in paths.iter().enumerate() {
+        let crate::access_path::PossiblePath::Index { index } = path else {
+            continue;
+        };
+        if !path_matches_index_join_runtime(ds, path, runtime) {
+            continue;
+        }
+        let Some(facts) = index_join_path_facts(ds, *index, path, runtime, ctx, position) else {
+            continue;
+        };
+        if index_join_path_compare(best.as_ref(), &facts, ctx, table_pseudo) {
+            best = Some(facts);
+        }
+    }
+    best.map(|best| best.position)
+}
+
+/// Go `indexJoinPathBuild` + `indexJoinPathConstructResult`'s comparison
+/// facts for one index path.
+fn index_join_path_facts(
+    ds: &crate::logical::DataSource,
+    index: usize,
+    path: &crate::access_path::PossiblePath,
+    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    ctx: &DispatchContext<'_>,
+    position: usize,
+) -> Option<IndexJoinPathFacts> {
+    let source_index = ds.indexes.get(index)?;
+    if source_index.is_multi_valued {
+        // Go `IsIndexJoinUnapplicable`: an MV index is reachable only by
+        // IndexMerge.
         return None;
     }
-    let table_stats = ds
+    let info = index_join_feedback(ds, path, runtime, ctx)?;
+    // Go: a path whose template range is empty can never be the better one.
+    let template_width = info.ranges.first()?.low_val.len();
+    let index_columns = ds.index_range_columns(source_index);
+    let last_col_is_range = info.compare_filters.is_some();
+    let used_cols_len = (template_width + usize::from(last_col_is_range)).min(index_columns.len());
+    let eq_used_cols_len = used_cols_len - usize::from(last_col_is_range);
+    let key_cover = info
+        .key_off2_idx_off
+        .iter()
+        .filter(|offset| **offset >= 0)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    // Go reads `innerTableStats` (the DataSource's TableStats) unless its
+    // StatsVersion is pseudo.
+    let eq_used_cols_ndv = ds
         .table_stats
         .as_ref()
-        .or_else(|| ds.base.base.stats_info())?;
-    if table_stats.stats_version() == 0 {
-        return None;
+        .filter(|stats| stats.stats_version() != 0)
+        .map_or(0.0, |stats| {
+            let columns = index_columns[..eq_used_cols_len]
+                .iter()
+                .map(|(column, _)| column.unique_id)
+                .collect::<Vec<_>>();
+            crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
+                &columns,
+                stats,
+                ctx.group_ndv_skew_ratio,
+            )
+            .0
+        });
+    let state = ds.derived_index_paths.get(&source_index.id);
+    let single_scan = state.and_then(|state| state.is_single_scan).unwrap_or_else(|| {
+        index_path_is_single_scan(ds, source_index, ctx.opt_prefix_index_single_scan)
+    });
+    // A path the data source derived no access facts for (no pushed
+    // condition) is still a candidate: Go's AccessPath always exists, with
+    // empty access maps and the table's row count.
+    let table_rows = ds
+        .table_stats
+        .as_ref()
+        .or_else(|| ds.base.base.stats_info())
+        .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+    let mut candidate = state
+        .and_then(|state| {
+            crate::find_best_task::candidate::index_candidate_metrics(
+                ds,
+                source_index,
+                state,
+                single_scan,
+                false,
+            )
+        })
+        .unwrap_or_else(|| crate::find_best_task::candidate::CandidateMetrics {
+            single_scan,
+            global: source_index.global,
+            pseudo: !ds.analyzed_index_ids.contains(&source_index.id),
+            count_after_access: table_rows,
+            count_after_index: table_rows,
+            ..Default::default()
+        });
+    // Go `getIndexCandidateForIndexJoin`: the data source cannot see the join
+    // keys, so every used index column joins both coverage maps, and the
+    // equality count is the used width.
+    for (column, length) in index_columns.iter().take(used_cols_len) {
+        candidate.access_columns.insert(column.unique_id, *length);
+        candidate.index_columns.insert(column.unique_id, *length);
     }
-    let runtime_ids = runtime
-        .inner_join_keys
-        .iter()
-        .map(|column| column.unique_id)
-        .collect::<std::collections::BTreeSet<_>>();
-    if runtime_ids.is_empty() {
-        return None;
-    }
-    let fixed = equality_fixed_ids(ds)
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut runtime_column = None;
-    for (column, length) in index_prefix {
-        if runtime_ids.contains(&column.unique_id) {
-            if *length != tidb_datatype::UNSPECIFIED_LENGTH || runtime_column.is_some() {
-                return None;
-            }
-            runtime_column = Some(column.unique_id);
-        } else if fixed.contains(&column.unique_id) {
-            continue;
-        } else {
-            break;
-        }
-    }
-    let runtime_column = runtime_column?;
-    let ndv = table_stats.col_ndv(runtime_column);
-    if !ndv.is_finite() || ndv <= 0.0 {
-        return None;
-    }
-    let adjusted = count_after_access / ndv;
-    adjusted.is_finite().then_some(adjusted)
+    candidate.eq_or_in_count = used_cols_len;
+    candidate.matches_property = false;
+    // Go `isFullIndexMatch` reads the static EqOrInCondCount with the widened
+    // index-condition map.
+    let static_eq_or_in = state
+        .and_then(|state| state.filled.as_ref())
+        .map_or(0, |filled| filled.detached.eq_or_in_count);
+    candidate.full_index_match =
+        static_eq_or_in > 0 && candidate.index_columns.len() >= source_index.columns.len();
+    Some(IndexJoinPathFacts {
+        position,
+        candidate,
+        used_cols_len,
+        eq_used_cols_ndv,
+        key_cover,
+    })
 }
 
-/// Applies Go's `Fix45132` ratio rule to two IndexJoin inner candidates.
-/// `Some(true)` means the current candidate wins, `Some(false)` means the
-/// existing best wins, and `None` delegates to ordinary task costing.
-fn index_join_skyline_prefers_current(
-    current: Option<f64>,
-    best: Option<f64>,
-    expected_cnt: f64,
-    threshold: f64,
-) -> Option<bool> {
-    let (current, best) = (current?, best?);
-    if expected_cnt != f64::MAX
-        || threshold <= 0.0
-        || !current.is_finite()
-        || !best.is_finite()
-        || current <= 100.0
-        || best <= 100.0
-    {
-        return None;
+/// Go `indexJoinPathCompare` (`index_join_path.go:293`): reuse skyline
+/// pruning's `compareCandidates` under an unconstrained property, and fall
+/// back to `indexJoinPathCmp4UnComparableOnes` when it names no winner.
+fn index_join_path_compare(
+    best: Option<&IndexJoinPathFacts>,
+    current: &IndexJoinPathFacts,
+    ctx: &DispatchContext<'_>,
+    table_pseudo: bool,
+) -> bool {
+    let Some(best) = best else {
+        return true;
+    };
+    let comparison = crate::find_best_task::candidate::compare_candidates(
+        &current.candidate,
+        &best.candidate,
+        table_pseudo,
+        f64::MAX,
+        ctx.prefer_range_scan,
+        ctx.index_join_skyline_threshold,
+    );
+    match comparison.ordering {
+        1 => return true,
+        -1 => return false,
+        _ => {}
     }
-    if current / best > threshold {
-        return Some(false);
+    // Go `indexJoinPathCmp4UnComparableOnes`.
+    if !is_ndv_close(current.eq_used_cols_ndv, best.eq_used_cols_ndv) {
+        return current.eq_used_cols_ndv > best.eq_used_cols_ndv;
     }
-    if best / current > threshold {
-        return Some(true);
+    if current.used_cols_len != best.used_cols_len {
+        return current.used_cols_len > best.used_cols_len;
     }
-    None
+    if current.key_cover != best.key_cover {
+        return current.key_cover > best.key_cover;
+    }
+    current.eq_used_cols_ndv > best.eq_used_cols_ndv
+}
+
+/// Go `isNDVClose` (`index_join_path.go:379`).
+fn is_ndv_close(lhs: f64, rhs: f64) -> bool {
+    if lhs == 0.0 || rhs == 0.0 {
+        return lhs == rhs;
+    }
+    const NDV_FLOOR: f64 = 20.0;
+    const NDV_DIFF_THRESHOLD: f64 = 200.0;
+    let min = lhs.min(rhs);
+    let max = lhs.max(rhs);
+    let diff = (lhs - rhs).abs();
+    if max <= NDV_FLOOR {
+        return true;
+    }
+    if diff < NDV_DIFF_THRESHOLD && min >= NDV_FLOOR {
+        return true;
+    }
+    diff / max < 0.2
 }
 
 /// The path admission half of Go's
@@ -2799,12 +2826,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         partial_order.map_or(false, |info| info.all_same_order().1)
     };
     let mut best = Task::invalid_task();
-    let mut best_index_join_skyline_count = None;
     let mut best_preferred_range: Option<Task> = None;
     let mut best_is_preferred_range = false;
     let mut best_is_full_range = true;
     let mut ordinary_candidates = Vec::new();
-    'paths: for path in &ordinary_paths {
+    // Go `buildDataSource2IndexScanByIndexJoinProp`: the index prop prices
+    // only the path `getBestIndexJoinPathResultByProp` chose by rule.
+    let chosen_index_join_path = prop
+        .index_join_prop
+        .as_ref()
+        .filter(|runtime| !runtime.table_range_scan)
+        .map(|runtime| choose_index_join_index_path(ds, &ordinary_paths, runtime, ctx, table_pseudo));
+    'paths: for (path_position, path) in ordinary_paths.iter().enumerate() {
         if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
             && !matches!(path, crate::access_path::PossiblePath::TiFlashTable))
             || (ds.prefer_store_type & crate::logical::data_source::PREFER_TIKV != 0
@@ -2817,7 +2850,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 continue;
             }
         }
-        let mut index_join_skyline_count = None;
+        if chosen_index_join_path.is_some_and(|chosen| chosen != Some(path_position)) {
+            continue;
+        }
         let mut cur_preferred_range = false;
         let mut cur_is_full_range = true;
         let mut candidate_metrics = None;
@@ -2919,15 +2954,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .table_stats
                     .clone()
                     .or_else(|| ds.base.base.stats_info().cloned());
-                let probe_access_rows_floor = prop.index_join_prop.as_ref().and_then(|runtime| {
-                    index_join_probe_access_rows_floor(
-                        ds,
-                        &common_columns,
-                        runtime,
-                        ctx.index_join_probe_row_count_fix,
-                        ctx.group_ndv_skew_ratio,
-                    )
-                });
                 heuristic = Some(crate::find_best_task::candidate::HeuristicPath {
                     range_count: ranges.len(),
                     only_points: ranges.iter().all(|range| {
@@ -2950,11 +2976,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     ),
                 });
                 let mut count_after_access = table_path.count_after_access;
-                if let (Some(count), Some(floor)) =
-                    (count_after_access.as_mut(), probe_access_rows_floor)
-                {
-                    *count = count.max(floor);
-                }
                 // Go `deriveTablePathStats` returns before
                 // `adjustCountAfterAccess` for a correlated integer handle.
                 let correlated_int_handle =
@@ -3115,8 +3136,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     } else {
                         1.0
                     };
-                    let mut runtime_rows = (output_rows / probe_selectivity)
-                        .max(probe_access_rows_floor.unwrap_or(0.0));
+                    let mut runtime_rows = output_rows / probe_selectivity;
                     if index_join_path_is_max_one_row(ds, path, runtime) {
                         runtime_rows = runtime_rows.min(1.0);
                     }
@@ -3859,15 +3879,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .table_stats
                     .clone()
                     .or_else(|| ds.base.base.stats_info().cloned());
-                let probe_access_rows_floor = prop.index_join_prop.as_ref().and_then(|runtime| {
-                    index_join_probe_access_rows_floor(
-                        ds,
-                        &index_cols,
-                        runtime,
-                        ctx.index_join_probe_row_count_fix,
-                        ctx.group_ndv_skew_ratio,
-                    )
-                });
                 let mut count_after_access = table_stats.as_ref().map(|stats| stats.row_count());
                 let ranges_include_appended_handle =
                     resolved_index_prefix.len() > source_index.columns.len()
@@ -3906,19 +3917,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 base_stats.row_count(),
                             ))
                         });
-                }
-                index_join_skyline_count = prop.index_join_prop.as_ref().and_then(|runtime| {
-                    index_join_skyline_count_for_index(
-                        ds,
-                        runtime,
-                        &resolved_index_prefix,
-                        count_after_access,
-                    )
-                });
-                if let (Some(count), Some(floor)) =
-                    (count_after_access.as_mut(), probe_access_rows_floor)
-                {
-                    *count = count.max(floor);
                 }
                 if let (Some(count), Some(ds_stats), Some(base_stats)) = (
                     count_after_access.as_mut(),
@@ -4035,17 +4033,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
                     };
                     let final_rows = cap(runtime.avg_inner_row_count);
-                    let mut index_rows = cap(final_rows / selectivity(&table_filters));
-                    let mut access_rows = cap(index_rows / selectivity(&index_filters));
-                    // The access floor runs after the upper bounds and retains
-                    // the residual index-filter ratio, exactly as Go does.
-                    if !max_one_row {
-                        if let Some(floor) = probe_access_rows_floor.filter(|floor| *floor > access_rows) {
-                            let ratio = if access_rows > 0.0 { index_rows / access_rows } else { 1.0 };
-                            access_rows = floor;
-                            index_rows = floor * ratio;
-                        }
-                    }
+                    let index_rows = cap(final_rows / selectivity(&table_filters));
+                    let access_rows = cap(index_rows / selectivity(&index_filters));
                     let scale = |rows| table_stats.as_ref()
                         .map(|stats| stats.scale_by_expect_cnt(rows, ctx.skew_ratio))
                         .unwrap_or_else(|| crate::stats_info::StatsInfo::new(rows, []));
@@ -4380,20 +4369,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             ));
             continue;
         }
-        let skyline_choice = if prop.index_join_prop.is_some() {
-            index_join_skyline_prefers_current(
-                index_join_skyline_count,
-                best_index_join_skyline_count,
-                prop.expected_cnt,
-                ctx.index_join_skyline_threshold,
-            )
-        } else {
-            None
-        };
-        let current_wins = match skyline_choice {
-            Some(wins) => wins,
-            None => best.invalid() || compare_task_cost(ctx.coster, &cur, &best)?,
-        };
+        let current_wins = best.invalid() || compare_task_cost(ctx.coster, &cur, &best)?;
         let better_than_preferred_range = cur_preferred_range
             && best_preferred_range.as_ref().is_none_or(|best_range| {
                 compare_task_cost(ctx.coster, &cur, best_range).unwrap_or(false)
@@ -4405,7 +4381,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 best_preferred_range = Some(cur.clone());
             }
             best = cur;
-            best_index_join_skyline_count = index_join_skyline_count;
         } else if better_than_preferred_range {
             best_preferred_range = Some(cur);
         }
@@ -4621,13 +4596,20 @@ fn enumerate_physical_plans_4_task(
                 }
             }
         }
-        let (slice_task, slice_is_hint) = if !hint_task.invalid() {
+        let (mut slice_task, slice_is_hint) = if !hint_task.invalid() {
             (hint_task, true)
         } else if !normal_prefer_task.invalid() {
             (normal_prefer_task, false)
         } else {
             (normal_iter_task, false)
         };
+        // "It means there is no hint or hint is not applicable. So record
+        // hint warning if necessary."
+        if !slice_is_hint && !slice_task.invalid() {
+            if let Some(warning) = record_warnings(plan, prop, add_enforcer) {
+                slice_task.append_warning(warning);
+            }
+        }
         if slice_is_hint {
             if outer_hint_task.invalid()
                 || compare_task_cost(ctx.coster, &slice_task, &outer_hint_task)?
@@ -4645,6 +4627,81 @@ fn enumerate_physical_plans_4_task(
     } else {
         Ok((outer_hint_task, true))
     }
+}
+
+/// Go `recordWarnings` (`exhaust_physical_plans.go:1332`): the warning an
+/// operator records when none of its hinted physical plans was applicable.
+fn record_warnings(plan: &LogicalPlan, prop: &PhysicalProperty, in_enforce: bool) -> Option<String> {
+    match plan {
+        LogicalPlan::Aggregation(aggregation) => aggregation
+            .prefer_agg_to_cop
+            .then(|| "Optimizer Hint AGG_TO_COP is inapplicable".to_owned()),
+        LogicalPlan::TopN(topn) => topn
+            .prefer_limit_to_cop
+            .then(|| "Optimizer Hint LIMIT_TO_COP is inapplicable".to_owned()),
+        LogicalPlan::Limit(limit) => limit
+            .prefer_limit_to_cop
+            .then(|| "Optimizer Hint LIMIT_TO_COP is inapplicable".to_owned()),
+        LogicalPlan::Join(join) => record_index_join_hint_warnings(join, prop, in_enforce),
+        _ => None,
+    }
+}
+
+/// Go `recordIndexJoinHintWarnings` (`exhaust_physical_plans.go:1371`).
+///
+/// Go handles the MPP join hints first; the plan builder here reports a
+/// matched `BROADCAST_JOIN`/`SHUFFLE_JOIN` as invalid and never sets those
+/// preference bits, so only the index-join arm can fire.
+fn record_index_join_hint_warnings(
+    join: &crate::logical::LogicalJoin,
+    prop: &PhysicalProperty,
+    in_enforce: bool,
+) -> Option<String> {
+    use crate::plan_builder::from::join_hint_flags as hint;
+    if !join.prefer_any(&[
+        hint::RIGHT_AS_INLJ_INNER,
+        hint::RIGHT_AS_INLHJ_INNER,
+        hint::RIGHT_AS_INLMJ_INNER,
+        hint::LEFT_AS_INLJ_INNER,
+        hint::LEFT_AS_INLHJ_INNER,
+        hint::LEFT_AS_INLMJ_INNER,
+    ]) {
+        return None;
+    }
+    // "If the required property is not empty, we will enforce it and try the
+    // hint again. So we only need to generate warning message when the
+    // property is empty" -- or inside the enforced enumeration.
+    if !prop.is_sort_item_empty() && !in_enforce {
+        return None;
+    }
+    let canonical = join
+        .hint_info
+        .as_ref()
+        .and_then(|hints| hints.canonical.as_ref())
+        .map(|canonical| canonical.borrow().index_join.clone())
+        .unwrap_or_default();
+    let mut message = if join.prefer_any(&[hint::LEFT_AS_INLJ_INNER, hint::RIGHT_AS_INLJ_INNER]) {
+        format!(
+            "Optimizer Hint {} or {} is inapplicable",
+            tidb_hint::restore_join_hint("inl_join", &canonical.inlj_tables),
+            tidb_hint::restore_join_hint("tidb_inlj", &canonical.inlj_tables),
+        )
+    } else if join.prefer_any(&[hint::LEFT_AS_INLHJ_INNER, hint::RIGHT_AS_INLHJ_INNER]) {
+        format!(
+            "Optimizer Hint {} is inapplicable",
+            tidb_hint::restore_join_hint("inl_hash_join", &canonical.inlhj_tables),
+        )
+    } else {
+        format!(
+            "Optimizer Hint {} is inapplicable",
+            tidb_hint::restore_join_hint("inl_merge_join", &canonical.inlmj_tables),
+        )
+    };
+    // "Append inapplicable reason."
+    if join.equal_conditions.is_empty() {
+        message.push_str(" without column equal ON condition");
+    }
+    Some(message)
 }
 
 fn task_type_satisfied(required: &PhysicalProperty, task: &Task) -> bool {
@@ -6426,171 +6483,6 @@ mod tests {
             &table_path,
             &runtime,
         ));
-    }
-
-    #[test]
-    fn index_join_probe_floor_uses_only_the_accessed_equality_prefix() {
-        use crate::logical::DataSource;
-        use crate::physical_property::IndexJoinRuntimeProp;
-        use tidb_datatype::{FieldType, FieldTypeCode};
-        use tidb_expr::column::Column;
-
-        let first = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
-        let second = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
-        let source = DataSource {
-            table_stats: Some(
-                StatsInfo::new(2_000.0, [(11, 1_000.0), (12, 2_000.0)]).with_stats_version(1),
-            ),
-            ..DataSource::default()
-        };
-        let runtime = IndexJoinRuntimeProp {
-            other_conditions: Vec::new(),
-            outer_join_keys: vec![Column::new(21, FieldType::new(FieldTypeCode::LongLong))],
-            inner_join_keys: vec![first.clone(), second.clone()],
-            avg_inner_row_count: 1.0,
-            table_range_scan: false,
-        };
-
-        // A path that can only range on the first of two equality keys still
-        // scans one row per distinct first-key value: 2000 / 1000 = 2. The
-        // floor disappears once all equality keys are usable, when Fix44855
-        // is disabled, or when statistics are pseudo.
-        assert_eq!(
-            index_join_probe_access_rows_floor(&source, &[first.clone()], &runtime, true, 0.0),
-            Some(2.0)
-        );
-        assert_eq!(
-            index_join_probe_access_rows_floor(&source, &[first, second], &runtime, true, 0.0),
-            None
-        );
-        assert_eq!(
-            index_join_probe_access_rows_floor(
-                &source,
-                &[Column::new(11, FieldType::new(FieldTypeCode::LongLong))],
-                &runtime,
-                false,
-                0.0,
-            ),
-            None
-        );
-        let pseudo = DataSource {
-            table_stats: Some(StatsInfo::new(2_000.0, [(11, 1_000.0)])),
-            ..DataSource::default()
-        };
-        assert_eq!(
-            index_join_probe_access_rows_floor(
-                &pseudo,
-                &[Column::new(11, FieldType::new(FieldTypeCode::LongLong))],
-                &runtime,
-                true,
-                0.0,
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn index_join_skyline_count_uses_one_stable_runtime_key() {
-        use crate::logical::DataSource;
-        use crate::physical_property::IndexJoinRuntimeProp;
-        use tidb_datatype::{FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
-        use tidb_expr::column::Column;
-
-        let first = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
-        let second = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
-        let source = DataSource {
-            table_stats: Some(
-                StatsInfo::new(200_000.0, [(11, 100.0), (12, 200.0)]).with_stats_version(1),
-            ),
-            ..DataSource::default()
-        };
-        let runtime = IndexJoinRuntimeProp {
-            other_conditions: Vec::new(),
-            outer_join_keys: vec![Column::new(21, FieldType::new(FieldTypeCode::LongLong))],
-            inner_join_keys: vec![first.clone()],
-            avg_inner_row_count: 1.0,
-            table_range_scan: false,
-        };
-
-        // Go divides the ordinary access estimate by the one runtime-key NDV
-        // before applying Fix45132: 200000 / 100 = 2000.
-        assert_eq!(
-            index_join_skyline_count_for_index(
-                &source,
-                &runtime,
-                &[
-                    (first.clone(), UNSPECIFIED_LENGTH),
-                    (second.clone(), UNSPECIFIED_LENGTH)
-                ],
-                Some(200_000.0),
-            ),
-            Some(2_000.0)
-        );
-        // Prefix-index runtime keys, multiple runtime keys, pseudo statistics,
-        // and absent NDV all decline the strong skyline comparison.
-        assert_eq!(
-            index_join_skyline_count_for_index(
-                &source,
-                &runtime,
-                &[(first.clone(), 4)],
-                Some(200_000.0),
-            ),
-            None
-        );
-        let two_keys = IndexJoinRuntimeProp {
-            inner_join_keys: vec![first.clone(), second.clone()],
-            ..runtime.clone()
-        };
-        assert_eq!(
-            index_join_skyline_count_for_index(
-                &source,
-                &two_keys,
-                &[
-                    (first.clone(), UNSPECIFIED_LENGTH),
-                    (second, UNSPECIFIED_LENGTH)
-                ],
-                Some(200_000.0),
-            ),
-            None
-        );
-        let pseudo = DataSource {
-            table_stats: Some(StatsInfo::new(200_000.0, [(11, 100.0)])),
-            ..source.clone()
-        };
-        assert_eq!(
-            index_join_skyline_count_for_index(
-                &pseudo,
-                &runtime,
-                &[(first, UNSPECIFIED_LENGTH)],
-                Some(200_000.0),
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn index_join_skyline_ratio_respects_fix_control_and_row_floor() {
-        assert_eq!(
-            index_join_skyline_prefers_current(Some(200.0), Some(2_000_000.0), f64::MAX, 1_000.0),
-            Some(true)
-        );
-        assert_eq!(
-            index_join_skyline_prefers_current(Some(2_000_000.0), Some(200.0), f64::MAX, 1_000.0),
-            Some(false)
-        );
-        // Go's strict `> 100` guard and non-positive Fix45132 disable value.
-        assert_eq!(
-            index_join_skyline_prefers_current(Some(100.0), Some(200_000.0), f64::MAX, 1_000.0),
-            None
-        );
-        assert_eq!(
-            index_join_skyline_prefers_current(Some(200.0), Some(2_000_000.0), f64::MAX, 0.0),
-            None
-        );
-        assert_eq!(
-            index_join_skyline_prefers_current(Some(200.0), Some(2_000_000.0), 1.0, 1_000.0),
-            None
-        );
     }
 
     #[test]

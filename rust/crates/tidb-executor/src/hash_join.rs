@@ -738,9 +738,16 @@ fn key_part(class: KeyClass, datum: &Datum) -> Result<Option<Vec<u8>>, KeyError>
         // Two byte-valued operands compare under the collation the
         // expression derivation stamped on this `eq`; its sort key is equal
         // exactly when the collation calls the values equal.
-        KeyClass::Str(collation) => match datum.as_raw_bytes() {
-            Some(bytes) => Some(collation.key(bytes)),
-            None => return Err(KeyError),
+        // An ENUM or SET operand compares as its member NAME against a
+        // string (Go `Datum.GetBytes` stores the name for both), so an
+        // index-join probe converted into an ENUM key column keeps the same
+        // equality class as the string it came from.
+        KeyClass::Str(collation) => match datum {
+            Datum::Enum(..) | Datum::Set(..) => Some(collation.key(datum.go_bytes())),
+            _ => match datum.as_raw_bytes() {
+                Some(bytes) => Some(collation.key(bytes)),
+                None => return Err(KeyError),
+            },
         },
     })
 }

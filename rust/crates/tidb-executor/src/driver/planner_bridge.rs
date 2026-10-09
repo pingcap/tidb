@@ -2626,10 +2626,6 @@ pub(crate) fn physical_plan_for_logical(
             !ctx.optimizer_fix_control()
                 .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false),
         )
-        .with_index_join_probe_row_count_fix(
-            ctx.optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_44855, true),
-        )
         .with_index_join_row_count_upper_bound(
             ctx.optimizer_fix_control()
                 .get_bool_with_default(tidb_planner::fix_control::FIX_44855, false),
@@ -2643,6 +2639,15 @@ pub(crate) fn physical_plan_for_logical(
             "Can't find a proper physical plan for this query",
         )
     })?;
+    // Go physicalOptimize: "collect the warnings from task". Every task
+    // warning is a planner `ErrInternal` (hint warnings), code 1815.
+    for warning in task.warnings().get_warnings() {
+        let level = match warning.level {
+            tidb_planner::task::WarnLevel::Warning => tidb_distsql::WarningLevel::Warning,
+            tidb_planner::task::WarnLevel::Note => tidb_distsql::WarningLevel::Note,
+        };
+        ctx.append_leveled(level, 1815, &warning.message);
+    }
     // Go physicalOptimize binds positions before postOptimize removes aliases.
     physical.resolve_indices()?;
     let physical = tidb_planner::physical::eliminate_physical_projection(physical);

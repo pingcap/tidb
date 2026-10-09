@@ -202,6 +202,17 @@ impl BaseLogicalPlan {
         }
     }
 
+    /// Go `LogicalSchemaProducer.Schema()` (`logical_schema_producer.go:80`):
+    /// an operator built without its own schema (a Limit or TopN a push-down
+    /// rule creates) reports its only child's.
+    #[must_use]
+    pub fn schema_or_child_schema(&self) -> Option<&Schema> {
+        self.base.schema().or_else(|| match self.children.as_slice() {
+            [child] => child.schema(),
+            _ => None,
+        })
+    }
+
     /// Go `Children()` (`<17th>`).
     #[must_use]
     pub fn children(&self) -> &[LogicalPlan] {

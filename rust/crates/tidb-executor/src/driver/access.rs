@@ -1918,13 +1918,24 @@ pub(crate) fn try_fast_point_physical_plan(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
-    try_fast_point_physical_plan_with_allocator(
+    let plan = try_fast_point_physical_plan_with_allocator(
         select,
         catalog,
         current_db,
         ctx,
         &tidb_planner::plan_base::PlanIdAllocator::new(),
-    )
+    )?;
+    // Go `TryFastPlan`'s deferred check on a SELECT: a session
+    // `sql_select_limit` discards the fast plan so the ordinary planner can
+    // apply the limit.
+    if plan.is_some() && ctx.select_limit() != u64::MAX {
+        ctx.append_warning_parts(
+            1105,
+            "sql_select_limit is set, so point get plan is not activated",
+        );
+        return Ok(None);
+    }
+    Ok(plan)
 }
 
 /// Go's fast-plan builder using the enclosing statement's plan-id counter.
@@ -1974,16 +1985,23 @@ fn try_fast_point_physical_plan_with_allocator_mode(
     {
         return Ok(None);
     }
-    let Some(table_ref) = single_table_ref(&select.from) else {
+    // The PARTITION clause is decided below, against the table and pin.
+    let Some(table_ref) = sole_table_ref(&select.from) else {
         return Ok(None);
     };
-    if table_ref.as_of.is_some() || table_ref.sample.is_some() || !table_ref.partitions.is_empty() {
+    if table_ref.as_of.is_some() || table_ref.sample.is_some() {
         return Ok(None);
     }
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
     let Some(entry @ TableEntry::Kv(table)) = catalog.get_in(database, name) else {
         return Ok(None);
     };
+    // A PARTITION clause survives only on a partitioned table's global-index
+    // pin below (Go `PointGetPlan.PartitionNames`); the ordinary planner
+    // answers every other shape, including the clause on a plain table.
+    if !table_ref.partitions.is_empty() && table.partition().is_none() {
+        return Ok(None);
+    }
     let columns = entry.column_list();
     let visible = table_ref.alias.as_deref().unwrap_or(name);
     let mut scope = single_table_scope(
@@ -2027,7 +2045,20 @@ fn try_fast_point_physical_plan_with_allocator_mode(
         });
     }
     if let Some(mut batch) = batch {
-        let partition_ids = if let Some(partition) = table.partition() {
+        // Go `newBatchPointGetPlan` keeps a partitioned table's global unique
+        // index: each entry records its row's partition, which the reader
+        // checks against the PARTITION clause (`matchPartitionNames`).
+        let global_index = batch
+            .index
+            .as_ref()
+            .and_then(|(id, _)| table.plan_indexes().find(|index| index.id == *id))
+            .is_some_and(|index| index.global);
+        if !global_index && !table_ref.partitions.is_empty() {
+            return Ok(None);
+        }
+        let partition_ids = if global_index {
+            None
+        } else if let Some(partition) = table.partition() {
             // Go newBatchPointGetPlan requires a bare partition column.
             // Secondary and common keys need their own index-value routing.
             if !matches!(
@@ -2090,7 +2121,11 @@ fn try_fast_point_physical_plan_with_allocator_mode(
                 unsigned_handle: table.unsigned_pk_handle(),
                 ranges,
                 partition_ids,
-                partition_names: Vec::new(),
+                partition_names: if global_index {
+                    table_ref.partitions.clone()
+                } else {
+                    Vec::new()
+                },
                 range_rebuild: None,
                 keep_order: false,
                 desc: false,
@@ -2098,9 +2133,6 @@ fn try_fast_point_physical_plan_with_allocator_mode(
         )));
     }
 
-    if table.partition().is_some() {
-        return Ok(None);
-    }
     let Some(point) = try_point_get(
         &PointPlanStmt::of_select(select),
         table,
@@ -2122,6 +2154,17 @@ fn try_fast_point_physical_plan_with_allocator_mode(
         return Ok(None);
     };
     if !point_get_consumes_where(select, table, &columns, &scope.zone) {
+        return Ok(None);
+    }
+    // Go `tryPointGetPlan` plans partitioned tables too. This fast path
+    // keeps the global unique index, whose entry records the row's
+    // partition; handle and local-index pins take the ordinary planner,
+    // which routes them by the partition expression.
+    let global_index = point
+        .index_id
+        .and_then(|index_id| table.plan_indexes().find(|index| index.id == index_id))
+        .is_some_and(|index| index.global);
+    if table.partition().is_some() && !global_index {
         return Ok(None);
     }
     let index_name = point.index_id.and_then(|index_id| {
@@ -2151,7 +2194,14 @@ fn try_fast_point_physical_plan_with_allocator_mode(
         tidb_planner::physical::PhysicalPointGet {
             base,
             table_id: table.table_id,
-            partition: None,
+            // Go `PointGetPlan.PartitionNames`: a global index applies them
+            // to the partition its entry records.
+            partition: (global_index && !table_ref.partitions.is_empty()).then(|| {
+                tidb_planner::physical::PointGetPartition {
+                    names: table_ref.partitions.clone(),
+                    physical_table_id: None,
+                }
+            }),
             index_id: point.index_id,
             access_cols: None,
             ranges: closed_point_ranges(&[point.key_values]),

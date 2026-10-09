@@ -927,7 +927,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
         sort.base.base.query_block_offset(),
     );
     base.base.set_stats(stats.clone());
-    base.base.set_schema(sort.base.base.schema().cloned());
+    base.base.set_schema(sort.base.schema_or_child_schema().cloned());
     base.set_children_req_props(vec![Some(PhysicalProperty {
         task_tp: prop.task_tp,
         expected_cnt: f64::MAX,
@@ -948,7 +948,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
             sort.base.base.query_block_offset(),
         );
         base.base.set_stats(stats);
-        base.base.set_schema(sort.base.base.schema().cloned());
+        base.base.set_schema(sort.base.schema_or_child_schema().cloned());
         base.set_children_req_props(vec![Some(PhysicalProperty {
             task_tp: TaskType::Root,
             expected_cnt: prop.expected_cnt,
@@ -1112,7 +1112,7 @@ pub fn exhaust_physical_plans_4_logical_limit(
             p.base.base.query_block_offset(),
         );
         base.base.set_stats(p.base.base.stats_info().cloned());
-        base.base.set_schema(p.base.base.schema().cloned());
+        base.base.set_schema(p.base.schema_or_child_schema().cloned());
         base.set_children_req_props(vec![Some(result_prop.clone())]);
         ret.push(PhysicalPlan::Limit(PhysicalLimit {
             base,
@@ -2809,7 +2809,7 @@ pub fn get_phys_limits(
             topn.base.base.query_block_offset(),
         );
         base.base.set_stats(topn.base.base.stats_info().cloned());
-        base.base.set_schema(topn.base.base.schema().cloned());
+        base.base.set_schema(topn.base.schema_or_child_schema().cloned());
         base.set_children_req_props(vec![Some(result_prop.clone())]);
         ret.push(PhysicalPlan::Limit(PhysicalLimit {
             base,
@@ -2939,7 +2939,7 @@ pub fn get_phys_topn(
                 topn.base.base.query_block_offset(),
             );
             base.base.set_stats(topn.base.base.stats_info().cloned());
-            base.base.set_schema(topn.base.base.schema().cloned());
+            base.base.set_schema(topn.base.schema_or_child_schema().cloned());
             base.set_children_req_props(vec![Some(result_prop)]);
             ret.push(PhysicalPlan::TopN(PhysicalTopN {
                 base,
@@ -2968,7 +2968,7 @@ pub fn get_phys_topn(
             topn.base.base.query_block_offset(),
         );
         base.base.set_stats(topn.base.base.stats_info().cloned());
-        base.base.set_schema(topn.base.base.schema().cloned());
+        base.base.set_schema(topn.base.schema_or_child_schema().cloned());
         base.set_children_req_props(vec![Some(result_prop.clone())]);
         ret.push(PhysicalPlan::TopN(PhysicalTopN {
             base,
@@ -2991,7 +2991,7 @@ pub fn get_phys_topn(
                     topn.base.base.query_block_offset(),
                 );
                 base.base.set_stats(topn.base.base.stats_info().cloned());
-                base.base.set_schema(topn.base.base.schema().cloned());
+                base.base.set_schema(topn.base.schema_or_child_schema().cloned());
                 base.set_children_req_props(vec![Some(advisory_prop)]);
                 ret.push(PhysicalPlan::TopN(PhysicalTopN {
                     base,

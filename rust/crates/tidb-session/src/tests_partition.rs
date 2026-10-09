@@ -4736,3 +4736,52 @@ fn partition_lock_batch_outer_join() {
         session.run("ROLLBACK").unwrap();
     }
 }
+
+/// Go `tryPointGetPlan` / `newBatchPointGetPlan` (`globalindex/point_get.test`):
+/// the fast point plan keeps a partitioned table's global unique index and
+/// its `PARTITION (...)` names, which the reader applies to the partition the
+/// entry records. With statistics the ordinary planner would read the
+/// clustered prefix instead, so only the fast plan prints TiDB's
+/// `Point_Get_1`/`Batch_Point_Get_1` (TiDB's recording).
+#[test]
+fn a_global_unique_index_takes_the_fast_point_plan_under_a_partition_clause() {
+    let mut session = Session::new();
+    for sql in [
+        "create table pt (a int, b int, c int, d int default 0, primary key (a, b) clustered, \
+         unique key uidx(c) global) partition by range(a) (partition p0 values less than (3), \
+         partition p1 values less than (6), partition p2 values less than (9), \
+         partition p3 values less than (20))",
+        "insert into pt(a,b,c) values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6)",
+        "analyze table pt",
+        "alter table pt add unique index idx(a) global",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let first_row = |session: &mut Session, sql: &str| {
+        crate::tests_support::row_text(session.run(&format!("explain {sql}")))
+            .into_iter()
+            .next()
+            .map(|row| format!("{} {}", row[0], row[3]))
+            .unwrap_or_default()
+    };
+    for sql in [
+        "select a from pt where a = 1",
+        "select a from pt partition(p1) where a = 1",
+        "select a from pt partition(p0) where a = 1",
+    ] {
+        assert_eq!(first_row(&mut session, sql), "Point_Get_1 table:pt, index:idx(a)", "{sql}");
+    }
+    assert_eq!(
+        first_row(&mut session, "select * from pt partition(p0) where a in (1,2,3)"),
+        "Batch_Point_Get_1 table:pt, index:idx(a)"
+    );
+    assert!(crate::tests_support::row_text(session.run("select a from pt partition(p1) where a = 1")).is_empty());
+    assert_eq!(
+        crate::tests_support::row_text(session.run("select a from pt partition(p0) where a = 1")),
+        vec![vec!["1"]]
+    );
+    assert_eq!(
+        crate::tests_support::row_text(session.run("select a from pt partition(p0) where a in (1,2,3,4) order by a")),
+        vec![vec!["1"], vec!["2"]]
+    );
+}

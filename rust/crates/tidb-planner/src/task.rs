@@ -1243,6 +1243,16 @@ impl Task {
             Task::Mpp(task) => task.warnings.append_warning(message),
         }
     }
+
+    /// Go `Warnings`: the warnings this task and its children recorded.
+    #[must_use]
+    pub const fn warnings(&self) -> &SimpleWarnings {
+        match self {
+            Task::Root(task) => &task.warnings,
+            Task::Cop(task) => &task.warnings,
+            Task::Mpp(task) => &task.warnings,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -34,6 +34,11 @@ impl Col2Len {
         Self(pairs.into_iter().collect())
     }
 
+    /// Records one column's prefix length (Go's `col2Len[id] = length`).
+    pub fn insert(&mut self, column: i64, length: i64) {
+        self.0.insert(column, length);
+    }
+
     /// Returns the number of tracked columns.
     #[must_use]
     pub fn len(&self) -> usize {

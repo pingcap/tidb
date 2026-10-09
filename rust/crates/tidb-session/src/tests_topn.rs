@@ -373,3 +373,28 @@ fn a_pushed_topn_key_over_a_pushed_projection_reads_its_own_columns() {
         vec!["2,10,4", "1,10,4"]
     );
 }
+
+/// Go `LogicalTopN.AttachChild` builds the pushed-down Limit without a
+/// schema, and `ExhaustPhysicalPlans4LogicalLimit` reads it through the lazy
+/// `LogicalSchemaProducer.Schema()`, which answers the child's. A CTE seed
+/// whose Limit sinks into an IndexLookUp with a schema-mending Projection
+/// must therefore still see the seed's columns.
+#[test]
+fn a_cte_seed_limit_sunk_into_an_index_lookup_keeps_its_schema() {
+    let mut session = Session::new();
+    session
+        .run("create table t1 (a int, b int, index idx_a(a))")
+        .unwrap();
+    session
+        .run("insert into t1 values (1, 5), (2, 1), (12, 3)")
+        .unwrap();
+    let sql = "with cte as (select * from t1 where a < 10 order by a limit 1) \
+               select * from cte where cte.a < 18 union select * from cte where cte.b > 1";
+    let explain = plan(&mut session, &format!("explain format='brief' {sql}"));
+    assert!(
+        explain.iter().any(|row| row.contains("limit embedded")),
+        "the seed's limit sinks into the index lookup:\n{}",
+        explain.join("\n")
+    );
+    assert_eq!(flat(row_text(session.run(sql))), vec!["1,5"]);
+}
