@@ -2778,7 +2778,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // candidate here already serves the required order, so a
                 // table range is a preferred range scan. With USE/FORCE INDEX
                 // the table path is available only when forced.
-                cur_preferred_range = !crate::ranger::types::has_full_range(&ranges, false);
+                // Go `getTableCandidate`: `ranger.HasFullRange(path.Ranges,
+                // unsignedIntHandle)`, whose full range of an unsigned
+                // integer handle starts at zero.
+                cur_preferred_range = !crate::ranger::types::has_full_range(
+                    &ranges,
+                    ds.table_scan_penalty.unsigned_int_handle,
+                );
                 cur_always_kept = !ds.forced_index_ids.is_empty();
                 // Go `constructDS2TableScanTask` computes the residual
                 // selectivity from `chosenRemained` BEFORE the inner-only
@@ -3211,7 +3217,15 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     } else {
                         table_range_rebuild
                     },
-                    table_scan_penalty: ds.table_scan_penalty,
+                    // Go `constructDS2TableScanTask` sets the probe's
+                    // `RangeInfo` ("decided by ..."), and
+                    // `getTableScanPenalty` charges no full-range penalty to
+                    // a scan that has one -- its full placeholder range is
+                    // rebuilt per outer row.
+                    table_scan_penalty: crate::plan_cost_ver2::TableScanPenaltyInput {
+                        has_range_info: prop.index_join_prop.is_some(),
+                        ..ds.table_scan_penalty
+                    },
                     tikv_pushdown: None,
                     resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
                         ds.physical_table_id,

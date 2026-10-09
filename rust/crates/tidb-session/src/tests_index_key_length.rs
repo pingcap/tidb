@@ -19,7 +19,7 @@
 //! Every expectation is captured from a real TiDB session (mockstore,
 //! `pkg/session`), warnings and SHOW CREATE TABLE text included.
 
-use crate::tests_support::{show_create, warnings_of};
+use crate::tests_support::{row_text, show_create, warnings_of};
 use crate::*;
 
 fn permissive() -> Session {
@@ -142,4 +142,42 @@ fn a_strict_mode_refuses_the_over_long_key_the_permissive_one_truncates() {
         .unwrap();
     assert!(show_create(&mut session, "ok1").contains("KEY `a` (`a`,`b`)"));
     assert!(warnings_of(&session).is_empty());
+}
+
+/// Go `detachCNFCondAndBuildRangeForIndex` (issue 26029 in Go): with a
+/// prefix key part and consecutive-merge, the points are copied BEFORE
+/// `UnionRanges` fuses them, and the tail column's ranges are appended to that
+/// copy. Appending `col3 != v` to the fused `col2 in (72, 73)` built
+/// `[x 72 -inf, x 73 v), (x 72 v, x 73 +inf]`, two overlapping ranges, and the
+/// lookup returned the one matching row twice.
+#[test]
+fn a_prefix_index_appends_tail_ranges_to_each_unmerged_point() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE IDT_20755 (COL1 varchar(20) DEFAULT NULL, COL2 tinyint(16) DEFAULT NULL, \
+         COL3 timestamp NULL DEFAULT NULL, KEY u_m_col (COL1(10), COL2, COL3)) \
+         DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+        "INSERT INTO IDT_20755 VALUES('xxxxxxxxxxxxxxx', 73, '2010-06-03 07:29:05')",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let sql = "select * from IDT_20755 use index (u_m_col) where col1 = 'xxxxxxxxxxxxxxx' \
+        and col2 in (72, 73) and col3 != '2024-10-19 08:55:32'";
+    let explain = row_text(session.run(&format!("explain format='brief' {sql}")))
+        .into_iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        explain.contains(
+            "[\"xxxxxxxxxx\" 72 -inf,\"xxxxxxxxxx\" 72 2024-10-19 08:55:32), \
+             (\"xxxxxxxxxx\" 72 2024-10-19 08:55:32,\"xxxxxxxxxx\" 72 +inf], \
+             [\"xxxxxxxxxx\" 73 -inf,\"xxxxxxxxxx\" 73 2024-10-19 08:55:32)"
+        ),
+        "{explain}"
+    );
+    assert_eq!(
+        row_text(session.run(sql)),
+        vec![vec!["xxxxxxxxxxxxxxx", "73", "2010-06-03 07:29:05"]]
+    );
 }

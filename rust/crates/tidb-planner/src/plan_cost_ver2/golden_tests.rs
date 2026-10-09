@@ -111,6 +111,7 @@ fn t_penalty(has_index_force: bool) -> TableScanPenaltyInput {
         modify_count: 0,
         has_partition_scan: false,
         has_index_force,
+        unsigned_int_handle: false,
     }
 }
 

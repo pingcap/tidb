@@ -983,16 +983,26 @@ impl RangeDetacher<'_> {
         let eq_or_in_count = access_conds.len();
         res.eq_cond_count = eq_count;
         res.eq_or_in_count = eq_or_in_count;
-        if super::ranger::has_prefix(self.lengths) {
-            ranges = super::ranger::union_ranges(ranges, self.merge_consecutive)?;
-        }
+        // The prefix-and-merge interplay (issue 26029): with a prefix column
+        // and consecutive-merge, the ranges may stop being points after
+        // `UnionRanges`, so Go copies the points BEFORE merging and unions
+        // that copy without consecutive-merge, for the DNF branch to append
+        // tail ranges to. Copying after the merge appended `col3 != v` to a
+        // fused `col2 in (72, 73)` as `[72 -inf, 73 v), (72 v, 73 +inf]`,
+        // two overlapping ranges that read a row twice.
+        let point_ranges = if super::ranger::has_prefix(self.lengths) {
+            if self.merge_consecutive {
+                let point_ranges = super::ranger::union_ranges(ranges.clone(), false)?;
+                ranges = super::ranger::union_ranges(ranges, true)?;
+                point_ranges
+            } else {
+                ranges = super::ranger::union_ranges(ranges, false)?;
+                ranges.clone()
+            }
+        } else {
+            ranges.clone()
+        };
         res.column_values = extraction.column_values;
-        // The prefix-and-merge interplay (issue 26029): point ranges are
-        // kept SEPARATELY when consecutive-merge may fuse them.
-        let mut point_ranges = ranges.clone();
-        if super::ranger::has_prefix(self.lengths) && self.merge_consecutive {
-            point_ranges = super::ranger::union_ranges(point_ranges, false)?;
-        }
         if eq_or_in_count == self.cols.len() || new_conditions.is_empty() {
             res.ranges = ranges;
             res.access_conds = access_conds;

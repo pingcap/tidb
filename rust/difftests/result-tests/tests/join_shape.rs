@@ -588,12 +588,12 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
 
     // Recorded snapshot, not complete join parity. Every count moved the
     // right way when it was last re-recorded (more plans compared, all merge
-    // pairs reproduced, none extra); the seven disagreements left are the
-    // TIDB_SMJ hint over a cross or other-condition join (four statements),
-    // two subqueries Go decorrelates, and an index join Go plans inside an
-    // Apply. Inspect recorded witnesses before updating these counts.
+    // pairs reproduced, none extra); the six disagreements left are the
+    // TIDB_SMJ hint over a cross or other-condition join (four statements)
+    // and two subqueries Go decorrelates. Inspect recorded witnesses before
+    // updating these counts.
     const COMPARED: usize = 756;
-    const BOTH_AGREE: usize = 749;
+    const BOTH_AGREE: usize = 750;
     const RECORDED_MERGE_PAIRS: usize = 114;
     const AGREED_MERGE_PAIRS: usize = 114;
     const EXTRA_MERGE_PAIRS: usize = 0;

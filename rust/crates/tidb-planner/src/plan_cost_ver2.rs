@@ -697,6 +697,10 @@ pub struct TableScanPenaltyInput {
     pub has_partition_scan: bool,
     /// Whether the statement used `USE`/`FORCE INDEX`.
     pub has_index_force: bool,
+    /// Go `getPlanCostVer24PhysicalTableScan`'s `unsignedIntHandle` (an
+    /// unsigned integer primary key is the handle), which
+    /// `ranger.HasFullRange` reads: such a table's full range starts at 0.
+    pub unsigned_int_handle: bool,
 }
 
 /// `getTableScanPenalty`: the extra row count charged to a risky full scan.

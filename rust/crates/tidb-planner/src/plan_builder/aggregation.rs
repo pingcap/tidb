@@ -351,30 +351,27 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             visit_exprs(clause, &mut |node| {
                 // Only a SUBQUERY's interior is Go's concern here: an
                 // aggregate written directly in this block is the ordinary
-                // extractor's.
-                let Expr::Subquery(subquery) = node else {
+                // extractor's. Go's resolver enters every `SelectStmt`, so
+                // EXISTS, IN and quantified-comparison subqueries count too.
+                let Some(subquery) = subquery_of(node) else {
                     return false;
                 };
                 let mut inner = (**subquery).clone();
-                // Go `correlatedAggregateResolver.Enter`/`Leave`: the
-                // subquery's local scope is built beneath this block's.
-                self.outer_schemas.push(outer_schema.clone());
-                self.outer_names.push(names.to_vec());
-                let inner_names = self.subquery_source_names(&inner);
-                self.outer_schemas.pop();
-                self.outer_names.pop();
-                let inner_names = match inner_names {
-                    Ok(names) => names,
-                    Err(error) => {
-                        // The visitor API has no Result channel. Preserve the
-                        // first planner error and stop this subtree; it is
-                        // returned immediately after the walk.
-                        error_slot.get_or_insert(error);
-                        return true;
-                    }
-                };
-                lift_correlated_aggregates(&mut inner, names, &inner_names, slot_base, &mut lifted);
-                **subquery = inner;
+                let mut scopes = Vec::new();
+                if let Err(error) = self.lift_correlated_aggregates_in_query(
+                    &mut inner,
+                    (outer_schema, names),
+                    &mut scopes,
+                    slot_base,
+                    &mut lifted,
+                ) {
+                    // The visitor API has no Result channel. Preserve the
+                    // first planner error and stop this subtree; it is
+                    // returned immediately after the walk.
+                    error_slot.get_or_insert(error);
+                    return true;
+                }
+                **subquery_of(node).expect("matched above") = inner;
                 true
             });
             if let Some(error) = error_slot.take() {
@@ -412,18 +409,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// ownership cannot be inferred from spelling: an unqualified `a` in
     /// `SELECT SUM(a) FROM t` is local when `t.a` exists, even if the outer
     /// block also has an `a`.
-    fn subquery_source_names(
+    fn subquery_source_scope(
         &mut self,
-        query: &tidb_ast::QueryStmt,
-    ) -> Result<Vec<FieldName>, PlanError> {
-        let tidb_ast::QueryStmt::Select(select) = query else {
-            return Ok(Vec::new());
-        };
+        select: &SelectStmt,
+    ) -> Result<(Schema, Vec<FieldName>), PlanError> {
         let handle_depth = self.handle_helper.depth();
         let cte_depth = self.outer_ctes.len();
         let result = (|| {
             if let Some(with) = &select.with {
-                self.build_with(with, &super::cte::cte_consumer_counts(query, with))?;
+                let query = tidb_ast::QueryStmt::Select(Box::new(select.clone()));
+                self.build_with(with, &super::cte::cte_consumer_counts(&query, with))?;
             }
             self.build_table_refs(select.from.as_ref())
         })();
@@ -432,69 +427,234 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         self.outer_ctes.truncate(cte_depth);
         let plan = result?;
+        let schema = plan.schema().cloned().unwrap_or_default();
         let names = plan.output_names().to_vec();
         plan.dismantle();
-        Ok(names)
+        Ok((schema, names))
     }
 }
 
-/// The interior half of `correlatedAggregateResolver.Enter` (`:3163`): inside
-/// `subquery`, replace every aggregate that reads only OUTER (i.e. the current
-/// block's) columns with a [`MarkerKind::CorrelatedAgg`] marker, and hand the
-/// aggregate back to be lifted.
-fn lift_correlated_aggregates(
-    subquery: &mut tidb_ast::QueryStmt,
-    outer_names: &[FieldName],
-    inner_names: &[FieldName],
-    slot_base: usize,
-    lifted: &mut Vec<Expr>,
-) {
-    let tidb_ast::QueryStmt::Select(select) = subquery else {
-        return;
-    };
-    let mut visit = |expr: &mut Expr| {
-        visit_exprs(expr, &mut |node| {
-            if !is_aggregate_call(node) {
-                return false;
+/// The query a subquery-carrying expression holds: `(SELECT ...)`, `EXISTS`,
+/// `IN (SELECT ...)` and `<op> ANY|ALL (SELECT ...)`.
+fn subquery_of(expr: &mut Expr) -> Option<&mut tidb_ast::NodeBox<tidb_ast::QueryStmt>> {
+    match expr {
+        Expr::Subquery(subquery)
+        | Expr::Exists { subquery, .. }
+        | Expr::InSubquery { subquery, .. }
+        | Expr::CompareSubquery { subquery, .. } => Some(subquery),
+        _ => None,
+    }
+}
+
+impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
+    /// Go `correlatedAggregateResolver.Enter` over one nested query: a
+    /// set operation's every SELECT is entered.
+    fn lift_correlated_aggregates_in_query(
+        &mut self,
+        query: &mut tidb_ast::QueryStmt,
+        outer: (&Schema, &[FieldName]),
+        scopes: &mut Vec<(Schema, Vec<FieldName>)>,
+        slot_base: usize,
+        lifted: &mut Vec<Expr>,
+    ) -> Result<(), PlanError> {
+        match query {
+            tidb_ast::QueryStmt::Select(select) => {
+                self.lift_correlated_aggregates_in_select(select, outer, scopes, slot_base, lifted)
             }
-            // Go's condition, restated over names: the aggregate reads a
-            // column of the OUTER block and none of the subquery's own. The
-            // subquery's own FROM has not been built at this point, so the
-            // test is "every column it reads is an outer one".
-            let mut reads_outer = false;
-            let mut reads_only_outer = true;
-            walk_exprs(node, &mut |inner| {
-                let Expr::Column(path) = inner else {
+            tidb_ast::QueryStmt::SetOpr(set_opr) => {
+                self.lift_correlated_aggregates_in_set_opr(set_opr, outer, scopes, slot_base, lifted)
+            }
+        }
+    }
+
+    fn lift_correlated_aggregates_in_set_opr(
+        &mut self,
+        set_opr: &mut tidb_ast::SetOprStmt,
+        outer: (&Schema, &[FieldName]),
+        scopes: &mut Vec<(Schema, Vec<FieldName>)>,
+        slot_base: usize,
+        lifted: &mut Vec<Expr>,
+    ) -> Result<(), PlanError> {
+        for term in &mut set_opr.terms {
+            match &mut term.body {
+                tidb_ast::SetOprTermBody::Select(select) => {
+                    self.lift_correlated_aggregates_in_select(select, outer, scopes, slot_base, lifted)?;
+                }
+                tidb_ast::SetOprTermBody::Nested(nested) => {
+                    self.lift_correlated_aggregates_in_set_opr(nested, outer, scopes, slot_base, lifted)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Go `correlatedAggregateResolver.resolveSelect` (`:3163`), with its
+    /// recursive `resolveCorrelatedAggregates` folded in: an aggregate in
+    /// `select` -- or in any query nested in it, FROM-derived tables included
+    /// -- bubbles out one level at a time while every column it reads
+    /// resolves outside that level (`extractCorrelatedAggFuncs`: correlated
+    /// columns and no plain ones). The ones that reach the CURRENT block
+    /// (`outer`) are replaced by a [`MarkerKind::CorrelatedAgg`] marker and
+    /// handed back to be lifted; the rest stay for the level that owns their
+    /// columns, whose own build resolves them.
+    fn lift_correlated_aggregates_in_select(
+        &mut self,
+        select: &mut SelectStmt,
+        outer: (&Schema, &[FieldName]),
+        scopes: &mut Vec<(Schema, Vec<FieldName>)>,
+        slot_base: usize,
+        lifted: &mut Vec<Expr>,
+    ) -> Result<(), PlanError> {
+        // The scope stack Go's `Enter` pushed: the current block, then every
+        // level between it and this SELECT. The sources are built before
+        // any marker enters this SELECT's derived tables -- a marker resolves
+        // only once the current block's aggregation fills its slot.
+        let depth = self.outer_schemas.len();
+        self.outer_schemas.push(outer.0.clone());
+        self.outer_names.push(outer.1.to_vec());
+        for (schema, names) in scopes.iter() {
+            self.outer_schemas.push(schema.clone());
+            self.outer_names.push(names.clone());
+        }
+        let own = self.subquery_source_scope(select);
+        self.outer_schemas.truncate(depth);
+        self.outer_names.truncate(depth);
+        let own = own?;
+        // Go `collectFromTableRefs`: a FROM-derived table sees the levels
+        // around this SELECT but not this SELECT's own sources.
+        if let Some(from) = select.from.as_mut() {
+            self.lift_correlated_aggregates_in_join(from, outer, scopes, slot_base, lifted)?;
+        }
+
+        let mut clauses: Vec<&mut Expr> = Vec::new();
+        for field in select.fields.fields_mut() {
+            if let tidb_ast::SelectField::Expr { expr, .. } = field {
+                clauses.push(expr);
+            }
+        }
+        if let Some(having) = select.having.as_mut() {
+            clauses.push(having);
+        }
+        for item in select.order_by.iter_mut() {
+            clauses.push(&mut item.expr);
+        }
+        if let Some(where_clause) = select.where_clause.as_mut() {
+            clauses.push(where_clause);
+        }
+        for item in select.group_by.iter_mut() {
+            clauses.push(&mut item.expr);
+        }
+        scopes.push(own);
+        let mut error_slot = None;
+        for clause in clauses {
+            visit_exprs(clause, &mut |node| {
+                // A lifted aggregate moves whole; any other one is still
+                // walked, as Go's visitor enters the queries in its arguments
+                // (`sum((select count(a)))`).
+                if is_aggregate_call(node) && reads_only_the_current_block(node, outer.1, scopes) {
+                    let replaced = marker::substitute(
+                        node,
+                        PlanMarker::new(MarkerKind::CorrelatedAgg, slot_base + lifted.len()),
+                    );
+                    lifted.push(replaced);
+                    return true;
+                }
+                let Some(subquery) = subquery_of(node) else {
                     return false;
                 };
-                if find_field_name(inner_names, path).is_some() {
-                    reads_only_outer = false;
-                } else if find_field_name(outer_names, path).is_some() {
-                    reads_outer = true;
-                } else {
-                    reads_only_outer = false;
+                if let Err(error) = self.lift_correlated_aggregates_in_query(
+                    subquery, outer, scopes, slot_base, lifted,
+                ) {
+                    error_slot.get_or_insert(error);
                 }
                 true
             });
-            if !(reads_outer && reads_only_outer) {
-                return true;
+            if error_slot.is_some() {
+                break;
             }
-            let replaced = marker::substitute(
-                node,
-                PlanMarker::new(MarkerKind::CorrelatedAgg, slot_base + lifted.len()),
-            );
-            lifted.push(replaced);
-            true
-        });
-    };
-    for field in select.fields.fields_mut() {
-        if let tidb_ast::SelectField::Expr { expr, .. } = field {
-            visit(expr);
+        }
+        scopes.pop();
+        match error_slot {
+            Some(error) => Err(error),
+            None => Ok(()),
         }
     }
-    if let Some(having) = select.having.as_mut() {
-        visit(having);
+
+    /// The FROM tree's derived tables (and the subqueries of its ON
+    /// conditions), each a nested level.
+    fn lift_correlated_aggregates_in_join(
+        &mut self,
+        join: &mut tidb_ast::Join,
+        outer: (&Schema, &[FieldName]),
+        scopes: &mut Vec<(Schema, Vec<FieldName>)>,
+        slot_base: usize,
+        lifted: &mut Vec<Expr>,
+    ) -> Result<(), PlanError> {
+        let mut nodes = vec![&mut join.left];
+        if let Some(right) = join.right.as_mut() {
+            nodes.push(right);
+        }
+        for node in nodes {
+            match node {
+                tidb_ast::JoinNode::Table(_) => {}
+                tidb_ast::JoinNode::Derived { subquery, .. } => {
+                    self.lift_correlated_aggregates_in_query(subquery, outer, scopes, slot_base, lifted)?;
+                }
+                tidb_ast::JoinNode::Join(inner) => {
+                    self.lift_correlated_aggregates_in_join(inner, outer, scopes, slot_base, lifted)?;
+                }
+            }
+        }
+        if let Some(on) = join.on.as_mut() {
+            let mut error_slot = None;
+            visit_exprs(on, &mut |node| {
+                let Some(subquery) = subquery_of(node) else {
+                    return false;
+                };
+                if let Err(error) = self.lift_correlated_aggregates_in_query(
+                    subquery, outer, scopes, slot_base, lifted,
+                ) {
+                    error_slot.get_or_insert(error);
+                }
+                true
+            });
+            if let Some(error) = error_slot {
+                return Err(error);
+            }
+        }
+        Ok(())
     }
+}
+
+/// Go `extractCorrelatedAggFuncs`' test at every level up to the current
+/// block: the aggregate reads at least one column, and each resolves -- by
+/// SQL's innermost-first rule over `scopes` -- in the current block's
+/// `outer_names` rather than in any nested level.
+fn reads_only_the_current_block(
+    aggregate: &Expr,
+    outer_names: &[FieldName],
+    scopes: &[(Schema, Vec<FieldName>)],
+) -> bool {
+    let mut reads_outer = false;
+    let mut reads_only_outer = true;
+    walk_exprs(aggregate, &mut |inner| {
+        let Expr::Column(path) = inner else {
+            return false;
+        };
+        if scopes
+            .iter()
+            .rev()
+            .any(|(_, names)| find_field_name(names, path).is_some())
+        {
+            reads_only_outer = false;
+        } else if find_field_name(outer_names, path).is_some() {
+            reads_outer = true;
+        } else {
+            reads_only_outer = false;
+        }
+        true
+    });
+    reads_outer && reads_only_outer
 }
 
 // ***** GROUP BY resolution *****

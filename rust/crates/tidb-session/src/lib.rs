@@ -2755,7 +2755,14 @@ mod session_source_tests {
         drop(context);
         drop(session);
 
-        let sample = global.get_index_usage(41, 7);
+        // The session's close flush only enqueues the delta (Go
+        // `SendDeltaSync`); the global worker merges it on its own thread.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut sample = global.get_index_usage(41, 7);
+        while sample.query_total == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            sample = global.get_index_usage(41, 7);
+        }
         assert_eq!(sample.query_total, 1);
         assert_eq!(sample.kv_req_total, 2);
         assert_eq!(sample.row_access_total, 3);

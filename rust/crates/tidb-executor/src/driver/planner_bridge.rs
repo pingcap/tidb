@@ -2045,6 +2045,12 @@ impl InitStats<'_> {
             modify_count: statistics.map_or(0, |statistics| statistics.modify_count),
             has_partition_scan: false,
             has_index_force: false,
+            unsigned_int_handle: source.handle_is_int
+                && source
+                    .handle_cols
+                    .first()
+                    .and_then(|column| column.ret_type.as_ref())
+                    .is_some_and(tidb_datatype::FieldType::is_unsigned),
         };
         // Go `deriveStats`' `StmtCtx.SetIndexForce()` (`stats.go:165`): the
         // flag is statement-wide, so a hint on ANY occurrence records it here

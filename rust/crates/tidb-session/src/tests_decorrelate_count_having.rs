@@ -225,3 +225,38 @@ fn an_outer_aggregate_in_a_subquery_reads_the_outer_aggregation() {
     session.run("delete from t2 where a = 10").unwrap();
     assert_eq!(row_text(session.run(sql)), vec![vec!["1", "NULL"]]);
 }
+
+/// `r/planner/core/integration.result`'s TestCorrelatedAggregate: Go's
+/// `correlatedAggregateResolver` bubbles an aggregate out of every nested
+/// level -- subqueries in any clause, aggregate arguments and FROM-derived
+/// tables included -- while each column it reads resolves outside that
+/// level. Lifting looked one level deep, so the innermost `count(a)` counted
+/// one row per outer row (six rows of 1 instead of one row of 6), and a
+/// derived table's marker was built before its slot was filled.
+#[test]
+fn a_correlated_aggregate_bubbles_out_of_every_nested_level() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t (a int, b int)",
+        "insert into t values (1,1),(2,1),(2,2),(3,1),(3,2),(3,3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (sql, expected) in [
+        ("select (select (select (select count(a)))) from t", vec![vec!["6"]]),
+        (
+            "select (select (select count(n.a)) from t m order by count(m.b)) from t n",
+            vec![vec!["6"]],
+        ),
+        ("select (select cnt from (select count(a) cnt) s) from t", vec![vec!["6"]]),
+        ("select (select count(cnt) from (select count(a) cnt) s) from t", vec![vec!["1"]]),
+        ("select (select sum((select count(a)))) from t", vec![vec!["6"]]),
+        (
+            "select sum(distinct b), count(a), (select count(a)), \
+             (select cnt from (select sum(distinct b) as cnt) n) from t",
+            vec![vec!["6", "6", "6", "6"]],
+        ),
+    ] {
+        assert_eq!(row_text(session.run(sql)), expected, "{sql}");
+    }
+}

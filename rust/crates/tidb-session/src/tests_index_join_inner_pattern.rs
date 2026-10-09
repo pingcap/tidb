@@ -835,3 +835,26 @@ fn an_inner_index_lookup_over_a_heap_table_reports_the_row_handle() {
     rows.sort();
     assert_eq!(rows, vec![vec!["chad9991", "12"], vec!["chad9992", "9"]]);
 }
+
+/// Go `getTableScanPenalty` charges no full-range penalty to a scan with
+/// `RangeInfo`, which `constructDS2TableScanTask` sets on every index-join
+/// probe. The integer-handle probe carries the full integer range as a
+/// placeholder (rebuilt per outer row), so it was priced as a risky full scan
+/// of 1000 extra rows and lost to a secondary index over the same column.
+/// Go (oracle, verbose): the probe TableRangeScan costs 162.80.
+#[test]
+fn an_integer_handle_probe_scan_pays_no_full_scan_penalty() {
+    let mut session = Session::new();
+    session
+        .run("create table t (a int primary key, b int, index idx(a))")
+        .unwrap();
+    let explain = plan(
+        &mut session,
+        "explain format='brief' select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
+    );
+    assert!(
+        explain.contains("inner:TableReader") && explain.contains("TableRangeScan"),
+        "{explain}"
+    );
+    assert!(!explain.contains("idx(a)"), "{explain}");
+}
