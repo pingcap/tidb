@@ -1353,6 +1353,20 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain(" ")
 	switch n.Kind {
 	case SelectStmtKindSelect:
+		// Optimizer hints must immediately follow SELECT, before its options.
+		if len(n.TableHints) != 0 {
+			ctx.WritePlain("/*+ ")
+			for i, tableHint := range n.TableHints {
+				if i != 0 {
+					ctx.WritePlain(" ")
+				}
+				if err := tableHint.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore SelectStmt.TableHints[%d]", i)
+				}
+			}
+			ctx.WritePlain("*/ ")
+		}
+
 		if n.SelectStmtOpts.Priority > 0 {
 			ctx.WriteKeyWord(mysql.Priority2Str[n.SelectStmtOpts.Priority])
 			ctx.WritePlain(" ")
@@ -1376,19 +1390,6 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 
 		if n.SelectStmtOpts.CalcFoundRows {
 			ctx.WriteKeyWord("SQL_CALC_FOUND_ROWS ")
-		}
-
-		if len(n.TableHints) != 0 {
-			ctx.WritePlain("/*+ ")
-			for i, tableHint := range n.TableHints {
-				if i != 0 {
-					ctx.WritePlain(" ")
-				}
-				if err := tableHint.Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while restore SelectStmt.TableHints[%d]", i)
-				}
-			}
-			ctx.WritePlain("*/ ")
 		}
 
 		if n.Distinct {
