@@ -26,11 +26,20 @@ explain format='brief' select * from t where c > 20;
 # test the TryFastPath short-circuit.
 explain format='brief' select * from t where c = 1;
 
-# test index join(reject)
-explain format='brief' select /*+ inl_join(t2) */ * from t t1, t t2 where t1.a=t2.b;
-explain format='brief' select /*+ inl_join(t2) */ * from tt t1, tt t2 where t1.a=t2.b;
-explain format='brief' select /*+ inl_join(t2) */ * from t t1, t t2 where t1.b=t2.a;
-explain format='brief' select /*+ inl_join(t2) */ * from tt t1, tt t2 where t1.b=t2.a;
+# test index join rejects a partial index whose predicate is not implied by the join.
+# The same join can use normal idx2(b) on tt, but not partial idx2(b) on t.
+explain format='plan_tree' select /*+ inl_join(t2) */ t1.a, t2.b from t t1, t t2 where t1.a=t2.b;
+explain format='plan_tree' select /*+ inl_join(t2) */ t1.a, t2.b from tt t1, tt t2 where t1.a=t2.b;
+
+# issue 69524. Partial-index predicate proof/pruning must run before IndexJoin
+# path construction: equality joins can use partial idx1(a), but NULL-safe equality must not.
+insert into t values (1, 100, 10), (2, 200, 20), (null, 999, 30);
+explain format='plan_tree' select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a = t2.a order by t1.c;
+select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a = t2.a order by t1.c;
+explain format='plan_tree' select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 left join t t2 on t1.a = t2.a order by t1.c;
+select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 left join t t2 on t1.a = t2.a order by t1.c;
+explain format='plan_tree' select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a <=> t2.a order by t1.c, t2.a;
+select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a <=> t2.a order by t1.c, t2.a;
 
 # test index merge(reject)
 explain format='brief' select /*+ use_index_merge(t, idx1, idx2) */ * from t where (a > 10) or (b > 10);
