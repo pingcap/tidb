@@ -96,8 +96,8 @@ func (r *credentialRefresher) startRefresh() error {
 // fetchCredentials fetches credentials from provider, retrying transient
 // failures, e.g. a timeout reaching the Aliyun ECS metadata service, which would
 // otherwise fail store creation. It returns the last error after maxAttempts
-// attempts (about 2 minutes) or when ctx is done, and logs a warning every
-// logInterval attempts while the failure persists.
+// attempts (about 1 minute) or ctx.Err() when ctx is done, and logs a warning
+// every logInterval attempts while the failure persists.
 //
 // On a non-ECS host a metadata dial timeout also delays surfacing a genuine
 // "no credentials configured" misconfiguration. That is acceptable: this path is
@@ -109,8 +109,8 @@ func fetchCredentials(
 ) (*providers.Credentials, error) {
 	const (
 		// maxAttempts is the max number of attempts to fetch credentials. With
-		// retryInterval below, it retries for about 2 minutes.
-		maxAttempts = 60
+		// retryInterval below, it retries for about 1 minute.
+		maxAttempts = 30
 		// retryInterval is the wait between two attempts.
 		retryInterval = 2 * time.Second
 		// logInterval is the number of attempts between two warnings; with
@@ -122,7 +122,7 @@ func fetchCredentials(
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		var cred *providers.Credentials
 		cred, err = provider.GetCredentials()
-		if err == nil || !isTransientNoCredentialsError(err) {
+		if err == nil || !IsTransientNoCredentialsError(err) {
 			return cred, err
 		}
 		if attempt == maxAttempts {
@@ -134,8 +134,6 @@ func fetchCredentials(
 		}
 		select {
 		case <-ctx.Done():
-			// report the cancellation cause instead of the transient provider
-			// error, so callers can tell shutdown from a credential failure.
 			return nil, ctx.Err()
 		case <-time.After(retryInterval):
 		}
