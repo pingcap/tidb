@@ -51,7 +51,7 @@ const (
 	ecsMetadataIP = "100.100.100.200"
 )
 
-// IsTransientNoCredentialsError reports whether err is a transient failure to
+// isTransientNoCredentialsError reports whether err is a transient failure to
 // resolve credentials from the default provider chain because the Aliyun ECS
 // metadata service request timed out or hit its deadline. Permanent causes,
 // e.g. missing credential configuration or the metadata service refusing the
@@ -69,7 +69,7 @@ const (
 // via errors.GetErrStackMsg. So the net.Error type is gone and we match the same
 // signals as text: the metadata host and the Go HTTP timeout messages that the
 // SDK's type check would have caught.
-func IsTransientNoCredentialsError(err error) bool {
+func isTransientNoCredentialsError(err error) bool {
 	if err == nil {
 		return false
 	}
