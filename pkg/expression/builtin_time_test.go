@@ -3293,6 +3293,69 @@ func TestConvertTz(t *testing.T) {
 			require.Error(t, err)
 		}
 	}
+
+	t.Run("UTC range", func(t *testing.T) {
+		// CONVERT_TZ leaves the input unchanged when its UTC value is outside
+		// the supported Unix timestamp range, including Unix second zero.
+		tests := []struct {
+			input, fromTZ, toTZ, expected string
+		}{
+			{"9999-12-31 23:59:59", "+00:00", "+08:00", "9999-12-31 23:59:59"},
+			{"9999-12-31 23:59:59.999999", "UTC", "+08:00", "9999-12-31 23:59:59.999999"},
+			{"1000-01-01 00:00:00", "+00:00", "-08:00", "1000-01-01 00:00:00"},
+			{"0001-01-01 00:00:00", "+00:00", "-08:00", "0001-01-01 00:00:00"},
+			{"1970-01-01 00:00:00.999999", "+00:00", "+08:00", "1970-01-01 00:00:00.999999"},
+			{"1970-01-01 00:00:01", "+00:00", "-08:00", "1969-12-31 16:00:01"},
+			{"1970-01-01 08:00:00", "+08:00", "+00:00", "1970-01-01 08:00:00"},
+			{"1970-01-01 08:00:01.123456", "+08:00", "+00:00", "1970-01-01 00:00:01.123456"},
+			{"1969-12-31 23:00:01", "-01:00", "+00:00", "1970-01-01 00:00:01"},
+			{"3001-01-18 23:59:59.999999", "+00:00", "+08:00", "3001-01-19 07:59:59.999999"},
+			{"3001-01-19 00:00:00", "+00:00", "-08:00", "3001-01-19 00:00:00"},
+			{"3001-01-19 07:59:59.999999", "+08:00", "+00:00", "3001-01-18 23:59:59.999999"},
+			{"3001-01-19 08:00:00", "+08:00", "+00:00", "3001-01-19 08:00:00"},
+			{"3001-01-18 15:59:59", "-08:00", "+00:00", "3001-01-18 23:59:59"},
+			{"3001-01-18 16:00:00", "-08:00", "+00:00", "3001-01-18 16:00:00"},
+			{"9999-12-31 23:59:59", "+00:00", "invalid", ""},
+			{"9999-12-31 23:59:59", "invalid", "+00:00", ""},
+		}
+		datetimeType := types.NewFieldType(mysql.TypeDatetime)
+		datetimeType.SetDecimal(types.MaxFsp)
+		stringType := types.NewFieldType(mysql.TypeString)
+		fieldTypes := []*types.FieldType{datetimeType, stringType, stringType}
+		args := []Expression{
+			&Column{Index: 0, RetType: datetimeType},
+			&Column{Index: 1, RetType: stringType},
+			&Column{Index: 2, RetType: stringType},
+		}
+		f, err := fc.getFunction(ctx, args)
+		require.NoError(t, err)
+		require.True(t, f.vectorized() && f.isChildrenVectorized())
+		input := chunk.NewChunkWithCapacity(fieldTypes, len(tests))
+		for _, test := range tests {
+			dt, err := types.ParseTime(ctx.GetEvalCtx().TypeCtx(), test.input, mysql.TypeDatetime, types.MaxFsp)
+			require.NoError(t, err)
+			input.AppendTime(0, dt)
+			input.AppendString(1, test.fromTZ)
+			input.AppendString(2, test.toTZ)
+		}
+		result := chunk.NewColumn(datetimeType, len(tests))
+		require.NoError(t, vecEvalType(ctx, f, types.ETDatetime, input, result))
+		for i, test := range tests {
+			t.Run(fmt.Sprintf("%s/%s/%s", test.input, test.fromTZ, test.toTZ), func(t *testing.T) {
+				actual, isNull, err := f.evalTime(ctx.GetEvalCtx(), input.GetRow(i))
+				require.NoError(t, err)
+				require.Equal(t, test.expected == "", isNull)
+				require.Equal(t, isNull, result.IsNull(i))
+				if isNull {
+					return
+				}
+				expected, err := types.ParseTime(ctx.GetEvalCtx().TypeCtx(), test.expected, mysql.TypeDatetime, types.MaxFsp)
+				require.NoError(t, err)
+				require.Equal(t, expected, actual)
+				require.Equal(t, expected, result.Times()[i])
+			})
+		}
+	})
 }
 
 func TestPeriodDiff(t *testing.T) {
