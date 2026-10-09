@@ -1611,6 +1611,12 @@ struct LookupPipeline {
 /// `DefExecutorConcurrency` (5).
 const DEFAULT_LOOKUP_FETCH_CONCURRENCY: usize = 5;
 
+/// Go `rebuildIndexRanges` / `PhysicalTableScan.ResolveCorrelatedColumns`:
+/// recomputes a scan's ranges from access conditions over correlated columns
+/// each time an Apply reopens it for a new outer row.
+pub(crate) type RangeRebuilder =
+    std::sync::Arc<dyn Fn() -> Result<Vec<IndexRange>, ExecError> + Send + Sync>;
+
 pub struct IndexRangeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
@@ -1621,6 +1627,9 @@ pub struct IndexRangeSourceExec {
     keep: Vec<usize>,
     index_id: i64,
     ranges: Vec<IndexRange>,
+    /// Rebuilds `ranges` on every open when the scan's access conditions read
+    /// correlated columns (Go `rebuildIndexRanges`).
+    range_rebuilder: Option<RangeRebuilder>,
     /// The next range to open a cursor over.
     next_range: usize,
     /// The open cursor over `ranges[next_range - 1]`.
@@ -1970,6 +1979,11 @@ impl IndexRangeSourceExec {
         self.extra_handle_slot = Some(slot);
     }
 
+    /// Installs Go's per-open range rebuild for correlated access conditions.
+    pub(crate) fn set_range_rebuilder(&mut self, rebuilder: RangeRebuilder) {
+        self.range_rebuilder = Some(rebuilder);
+    }
+
     /// Retains the physical index Selection separately from table predicates.
     pub(crate) fn set_index_conditions(
         &mut self,
@@ -2040,6 +2054,7 @@ impl IndexRangeSourceExec {
             keep,
             index_id,
             ranges,
+            range_rebuilder: None,
             next_range: 0,
             cursor: None,
             produced: crate::executor::RowCount::default(),
@@ -4091,6 +4106,9 @@ impl IndexRangeSourceExec {
 
 impl Executor for IndexRangeSourceExec {
     fn open(&mut self) -> Result<(), ExecError> {
+        if let Some(rebuild) = &self.range_rebuilder {
+            self.ranges = rebuild()?;
+        }
         self.next_range = if self.descending {
             self.ranges.len()
         } else {

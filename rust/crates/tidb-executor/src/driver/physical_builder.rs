@@ -663,6 +663,99 @@ fn resolve_expressions(
         .collect()
 }
 
+/// Whether any access condition reads a correlated column.
+fn has_correlated_access(conditions: &[Expression]) -> bool {
+    conditions
+        .iter()
+        .any(|condition| !tidb_expr::simple_expr::extract_cor_columns(condition).is_empty())
+}
+
+/// Go `SubstituteCorCol2Constant` over each access condition, with the
+/// values the Apply bound for the current outer row.
+fn substitute_correlated_access(
+    conditions: &[Expression],
+    ctx: &crate::StmtContext,
+) -> Result<Vec<Expression>, crate::executor::ExecError> {
+    let builder = tidb_expr::expr_util::builder::RealFunctionBuilder::new(ctx);
+    let options = tidb_expr::expr_util::substitute::SubstituteOptions::new(&builder);
+    conditions
+        .iter()
+        .map(|condition| {
+            let mut condition = condition.clone();
+            super::planner_bridge::materialize_physical_expression(&mut condition);
+            tidb_expr::expr_util::substitute::substitute_cor_col_2_constant(
+                &condition, ctx, &options,
+            )
+            .map_err(|error| crate::executor::ExecError::internal(format!("{error:?}")))
+        })
+        .collect()
+}
+
+/// Go `rebuildIndexRanges` (`executor/distsql.go:160`): an index scan whose
+/// access conditions read correlated columns rebuilds its ranges from them,
+/// with every correlated column replaced by its current value, each time the
+/// enclosing Apply reopens it.
+fn correlated_index_range_rebuilder(
+    scan: &PhysicalIndexScan,
+    ctx: &crate::StmtContext,
+) -> Option<crate::access_path::RangeRebuilder> {
+    let rebuild = scan.range_rebuild.clone()?;
+    if !has_correlated_access(&rebuild.access_conditions) {
+        return None;
+    }
+    let ctx = ctx.clone();
+    Some(std::sync::Arc::new(move || {
+        let access = substitute_correlated_access(&rebuild.access_conditions, &ctx)?;
+        let (ranges, _, _) =
+            tidb_planner::ranger::detacher::detach_simple_cond_and_build_range_for_index_in(
+                &access,
+                &rebuild.index_columns,
+                &rebuild.index_column_lengths,
+                0,
+                &|expression| tidb_expr::eval_expression_once(expression, &ctx),
+            )
+            .map_err(|error| crate::executor::ExecError::internal(format!("{error:?}")))?;
+        Ok(executor_ranges(&ranges))
+    }))
+}
+
+/// Go `PhysicalTableScan.ResolveCorrelatedColumns`: the integer handle's
+/// range from `BuildTableRange`, a common handle's from
+/// `DetachCondAndBuildRangeForIndex`, over the substituted access conditions.
+fn correlated_table_range_rebuilder(
+    scan: &PhysicalTableScan,
+    ctx: &crate::StmtContext,
+) -> Option<crate::access_path::RangeRebuilder> {
+    let rebuild = scan.range_rebuild.clone()?;
+    if !has_correlated_access(&rebuild.access_conditions) {
+        return None;
+    }
+    let ctx = ctx.clone();
+    Some(std::sync::Arc::new(move || {
+        let access = substitute_correlated_access(&rebuild.access_conditions, &ctx)?;
+        let evaluate = |expression: &Expression| tidb_expr::eval_expression_once(expression, &ctx);
+        let ranges = match &rebuild.handle_type {
+            Some(handle_type) => {
+                tidb_planner::ranger::ranger::build_table_range_in(&access, handle_type, 0, &evaluate)
+                    .map_err(|error| crate::executor::ExecError::internal(format!("{error:?}")))?
+                    .ranges
+            }
+            None => {
+                tidb_planner::ranger::detacher::detach_cond_and_build_range_for_index_in(
+                    &access,
+                    &rebuild.common_handle_columns,
+                    &rebuild.common_handle_lengths,
+                    0,
+                    &evaluate,
+                )
+                .map_err(|error| crate::executor::ExecError::internal(format!("{error:?}")))?
+                .ranges
+            }
+        };
+        Ok(executor_ranges(&ranges))
+    }))
+}
+
 fn executor_ranges(ranges: &tidb_planner::ranger::types::Ranges) -> Vec<IndexRange> {
     ranges
         .iter()
@@ -853,6 +946,9 @@ fn build_table_scan(
                 "the physical table scan cannot apply its ranges",
             ));
         }
+    }
+    if let Some(rebuilder) = correlated_table_range_rebuilder(scan, ctx) {
+        source.set_handle_range_rebuilder(rebuilder);
     }
     // Go `PhysicalTableScan.StoreType`: the planner assigned this scan to the
     // columnar replica, so the pushdown request names TiFlash and the storage
@@ -2064,6 +2160,9 @@ fn build_index_reader(
     );
     if let Some(slot) = extra_handle {
         source.read_extra_handle(slot);
+    }
+    if let Some(rebuilder) = correlated_index_range_rebuilder(scan, ctx) {
+        source.set_range_rebuilder(rebuilder);
     }
     source.read_table_columns(keep);
     source.set_lookup_concurrency(ctx.index_lookup_concurrency());

@@ -1345,3 +1345,76 @@ fn scalar_in_with_a_correlated_key_answers_null_for_an_unknown_in_equality() {
         [["1", "NULL"], ["2", "0"], ["3", "1"], ["4", "1"]]
     );
 }
+
+/// Go `SplitCorColAccessCondFromFilters` and `deriveTablePathStats`: under an
+/// Apply, `inner_col = outer_col` on an index, an integer handle or a
+/// clustered handle becomes the inner scan's access condition, printed as
+/// `range: decided by [...]`, and the executor rebuilds the range for every
+/// outer row (`rebuildIndexRanges`, `ResolveCorrelatedColumns`). The answers
+/// must equal the same subquery over a non-indexable `+ 0` form; the plan
+/// shapes and row counts are a Go oracle's.
+#[test]
+fn correlated_access_conditions_rebuild_inner_ranges_per_outer_row() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1 (a int, b int)",
+        "insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5),(null,6),(2,7)",
+        "create table t2 (c1 int, c2 int, key(c1))",
+        "insert into t2 values (1,10),(1,11),(2,20),(3,30),(5,50),(null,60)",
+        "create table t3 (id int primary key, v int)",
+        "insert into t3 values (1,100),(2,200),(4,400)",
+        "create table t5 (x int, y int, v int, primary key (x, y) clustered)",
+        "insert into t5 values (1,1,1000),(2,2,2000),(3,1,3000),(3,3,3300)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let plan = |session: &mut Session, sql: &str| {
+        row_text(session.run(&format!("explain format='brief' {sql}")))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect::<Vec<_>>()
+    };
+    for (sql, control, scan) in [
+        (
+            "select a, (select /*+ NO_DECORRELATE() */ max(c2) from t2 where t2.c1 = t1.a) m from t1 order by b",
+            "select a, (select /*+ NO_DECORRELATE() */ max(c2) from t2 where t2.c1 + 0 = t1.a) m from t1 order by b",
+            "IndexRangeScan(Build)|100000.00|cop[tikv]|table:t2, index:c1(c1)|range: decided by [eq(test.t2.c1, test.t1.a)]",
+        ),
+        (
+            "select a, (select /*+ NO_DECORRELATE() */ max(v) from t3 where t3.id = t1.a) m from t1 order by b",
+            "select a, (select /*+ NO_DECORRELATE() */ max(v) from t3 where t3.id + 0 = t1.a) m from t1 order by b",
+            "TableRangeScan|10000.00|cop[tikv]|table:t3|range: decided by [eq(test.t3.id, test.t1.a)]",
+        ),
+        (
+            "select a, (select /*+ NO_DECORRELATE() */ sum(v) from t5 where t5.x = t1.a and t5.y = 1) m from t1 order by b",
+            "select a, (select /*+ NO_DECORRELATE() */ sum(v) from t5 where t5.x + 0 = t1.a and t5.y = 1) m from t1 order by b",
+            "TableRangeScan|100000.00|cop[tikv]|table:t5|range: decided by [eq(test.t5.x, test.t1.a) eq(test.t5.y, 1)]",
+        ),
+    ] {
+        let explain = plan(&mut session, sql);
+        assert!(
+            explain.iter().any(|row| row.contains(scan)),
+            "{sql}:\n{}",
+            explain.join("\n")
+        );
+        assert_eq!(
+            row_text(session.run(sql)),
+            row_text(session.run(control)),
+            "{sql}"
+        );
+    }
+    assert_eq!(
+        row_text(session.run(
+            "select a, (select /*+ NO_DECORRELATE() */ max(v) from t3 where t3.id = t1.a) m from t1 order by b"
+        )),
+        vec![
+            vec!["1", "100"],
+            vec!["2", "200"],
+            vec!["3", "NULL"],
+            vec!["4", "400"],
+            vec!["5", "NULL"],
+            vec!["NULL", "NULL"],
+            vec!["2", "200"],
+        ]
+    );
+}

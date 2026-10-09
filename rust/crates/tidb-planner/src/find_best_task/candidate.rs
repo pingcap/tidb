@@ -488,6 +488,7 @@ mod skyline_tests {
                 index_filters: vec![eq(&c)],
                 table_filters: Vec::new(),
                 count_after_index: Some(8.0),
+                correlated_access_count: 0,
             }),
             ..Default::default()
         };

@@ -182,6 +182,7 @@ fn prepare_union_index_merge_path_for_or(
                 &pushable,
                 ctx,
                 ctx.opt_prefix_index_single_scan,
+                false,
             ) else {
                 // Go accessPathsForConds declines a partial when derivation fails.
                 continue;
@@ -236,7 +237,7 @@ fn prepare_union_index_merge_path_for_or(
                     }
                 }
                 let (pushable, rejected) = partition_partial_filters(&usable, ctx);
-                if let Ok(mut filled) = super::ordinary::detach_table_path(ds, None, &pushable, ctx)
+                if let Ok(mut filled) = super::ordinary::detach_table_path(ds, None, &pushable, ctx, false)
                     .and_then(|mut filled| {
                         filled.count_after_access =
                             Some(super::ordinary::estimate_int_table_path(ds, &filled, ctx)?);
@@ -383,11 +384,12 @@ fn collect_unfinished_filters(
             &pushable,
             ctx,
             ctx.opt_prefix_index_single_scan,
+            false,
         )
         .ok()?
         .detached
     } else {
-        super::ordinary::detach_table_path(ds, None, &pushable, ctx)
+        super::ordinary::detach_table_path(ds, None, &pushable, ctx, false)
             .ok()?
             .detached
     };

@@ -3991,6 +3991,9 @@ pub struct TableScanExec {
     /// them and this scan took them ([`Executor::accept_handle_ranges`]).
     /// `None` reads the whole table, which is every scan until the offer.
     handle_ranges: Option<Vec<IndexRange>>,
+    /// Rebuilds `handle_ranges` on every open when the scan's access
+    /// conditions read correlated columns (Go `ResolveCorrelatedColumns`).
+    handle_range_rebuilder: Option<crate::access_path::RangeRebuilder>,
     /// The statement class and session zone this scan decodes under. Captured
     /// when the scan is BUILT, because `Executor::open` has no statement
     /// context of its own.
@@ -4087,6 +4090,12 @@ impl PartialSum {
 }
 
 impl TableScanExec {
+    /// Installs Go's per-open handle-range rebuild for correlated access
+    /// conditions.
+    pub(crate) fn set_handle_range_rebuilder(&mut self, rebuilder: crate::access_path::RangeRebuilder) {
+        self.handle_range_rebuilder = Some(rebuilder);
+    }
+
     /// Names the engine the planner assigned this scan to. Only the driver's
     /// physical builder calls this, once per built scan.
     pub fn set_read_engine(&mut self, engine: crate::remote_scan::PushdownReadEngine) -> &mut Self {
@@ -4146,6 +4155,7 @@ impl TableScanExec {
             limit: None,
             emitted: 0,
             handle_ranges: None,
+            handle_range_rebuilder: None,
             read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
             schema_version: 0,
             decode_context,
@@ -4763,6 +4773,9 @@ impl TableScanExec {
 
 impl Executor for TableScanExec {
     fn open(&mut self) -> Result<(), ExecError> {
+        if let Some(rebuild) = &self.handle_range_rebuilder {
+            self.handle_ranges = Some(rebuild()?);
+        }
         self.scanned.set(0);
         self.emitted = 0;
         self.cursor = None;

@@ -2955,10 +2955,15 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 {
                     *count = count.max(floor);
                 }
-                if let (Some(count), Some(ds_stats), Some(base_stats)) = (
+                // Go `deriveTablePathStats` returns before
+                // `adjustCountAfterAccess` for a correlated integer handle.
+                let correlated_int_handle =
+                    common_handle.is_none() && table_path.correlated_access_count > 0;
+                if let (Some(count), Some(ds_stats), Some(base_stats), false) = (
                     count_after_access.as_mut(),
                     ds.base.base.stats_info(),
                     table_stats.as_ref(),
+                    correlated_int_handle,
                 ) {
                     if *count + crate::cost_factors::TOLERANCE_FACTOR < ds_stats.row_count() {
                         *count = (ds_stats.row_count() / crate::cost_factors::SELECTION_FACTOR)
@@ -3674,7 +3679,16 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // every pushed predicate. Rebuilding the latter would feed
                 // residual filters back into the ranger and make a safe
                 // parameter change look uncacheable.
-                let index_range_rebuild = declared_index_prefix_complete
+                // A correlated access condition has no static range: the
+                // executor must rebuild it for every outer row (Go
+                // `rebuildIndexRanges`), so it always keeps its source.
+                let correlated_access = detach.as_ref().is_some_and(|result| {
+                    result
+                        .access_conds
+                        .iter()
+                        .any(|condition| !tidb_expr::simple_expr::extract_cor_columns(condition).is_empty())
+                });
+                let index_range_rebuild = (declared_index_prefix_complete || correlated_access)
                     .then_some(detach.as_ref())
                     .flatten()
                     .filter(|result| !result.access_conds.is_empty())

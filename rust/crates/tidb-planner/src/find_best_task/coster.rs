@@ -1029,7 +1029,7 @@ impl Ver2Coster {
                         // is priced with ZERO keys.
                         num_right_join_keys: 0,
                         num_left_join_keys: 0,
-                        num_ranges: 1.0,
+                        num_ranges: number_of_ranges(probe) as f64,
                         is_semi_join: matches!(
                             join.join_type,
                             crate::find_best_task::LogicalJoinType::Semi
@@ -1077,6 +1077,24 @@ impl Ver2Coster {
             // Everything else prices as its children, conservative.
             _ => self.children_cost(plan, task_type, is_child_of_inl),
         }
+    }
+}
+
+
+/// Go `getNumberOfRanges` (`plan_cost_ver2.go:918`): the ranges every scan
+/// under a plan reads, which the index join's seeking cost multiplies by its
+/// build rows. A lookup's table side carries no ranges of its own.
+fn number_of_ranges(plan: &PhysicalPlan) -> usize {
+    match plan {
+        PhysicalPlan::TableReader(reader) => reader.table_plan.as_deref().map_or(0, number_of_ranges),
+        PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref().map_or(0, number_of_ranges),
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            reader.index_plan.as_deref().map_or(0, number_of_ranges)
+                + reader.table_plan.as_deref().map_or(0, number_of_ranges)
+        }
+        PhysicalPlan::TableScan(scan) => scan.ranges.len(),
+        PhysicalPlan::IndexScan(scan) => scan.ranges.len(),
+        _ => plan.children().iter().map(number_of_ranges).sum(),
     }
 }
 

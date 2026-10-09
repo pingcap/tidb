@@ -964,13 +964,53 @@ fn columns_text(
         .join(", ")
 }
 
+/// Go `PhysicalTableScan/PhysicalIndexScan.haveCorCol`: the access
+/// conditions, when one of them reads a correlated column -- the scan's
+/// ranges are rebuilt per outer row, so it is a range scan "decided by"
+/// them.
+fn correlated_access_conditions(plan: &PhysicalPlan) -> Option<&[tidb_expr::expression::Expression]> {
+    let conditions = match plan {
+        PhysicalPlan::TableScan(scan) => scan
+            .range_rebuild
+            .as_ref()
+            .map(|rebuild| rebuild.access_conditions.as_slice()),
+        PhysicalPlan::IndexScan(scan) => scan
+            .range_rebuild
+            .as_ref()
+            .map(|rebuild| rebuild.access_conditions.as_slice()),
+        _ => None,
+    }?;
+    conditions
+        .iter()
+        .any(|condition| !tidb_expr::simple_expr::extract_cor_columns(condition).is_empty())
+        .then_some(conditions)
+}
+
+/// Go's `range: decided by [...]` over correlated access conditions, each
+/// rendered with `StringWithCtx` and separated by a space.
+fn correlated_decided_by_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    conditions: &[tidb_expr::expression::Expression],
+) -> String {
+    format!(
+        "range: decided by [{}]",
+        conditions
+            .iter()
+            .map(|condition| expression_string_text(eval_ctx, condition))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
+}
+
 fn physical_operator_name(
     plan: &PhysicalPlan,
     index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
     match plan {
         PhysicalPlan::TableScan(scan) => {
-            if is_index_join_table_range(plan, index_join_context) {
+            if is_index_join_table_range(plan, index_join_context)
+                || correlated_access_conditions(plan).is_some()
+            {
                 "TableRangeScan".to_owned()
             } else {
                 scan.scan_kind().map_or_else(
@@ -987,7 +1027,10 @@ fn physical_operator_name(
             // probe owns only the latter (the ranges are decided by the join
             // keys at run time), so the probe must not fall back to
             // `IndexFullScan` just because its static range list is empty.
-            if static_range || is_index_join_index_range(plan, index_join_context) {
+            if static_range
+                || is_index_join_index_range(plan, index_join_context)
+                || correlated_access_conditions(plan).is_some()
+            {
                 "IndexRangeScan".to_owned()
             } else {
                 "IndexFullScan".to_owned()
@@ -1328,6 +1371,8 @@ fn physical_operator_info(
                 // handle range description.
                 let parts_text = index_join_decided_by_text_for_scan(eval_ctx, &ctx);
                 parts.push(parts_text);
+            } else if let Some(conditions) = correlated_access_conditions(plan) {
+                parts.push(correlated_decided_by_text(eval_ctx, conditions));
             } else if scan
                 .scan_kind()
                 .is_some_and(|kind| kind.plan_type() == "TableRangeScan")
@@ -1356,7 +1401,22 @@ fn physical_operator_info(
         PhysicalPlan::Sequence(_) => {
             tidb_planner::physical::PhysicalSequence::explain_info().to_owned()
         }
-        PhysicalPlan::TableReader(reader) => reader.explain_info(ignore_explain_id_suffix),
+        // Go `PhysicalTableReader.ExplainInfo`: the table plan's ExplainID,
+        // which names a scan with runtime or correlated ranges
+        // `TableRangeScan` exactly as the scan's own row does.
+        PhysicalPlan::TableReader(reader) => match reader.table_plan.as_deref() {
+            Some(scan @ PhysicalPlan::TableScan(_))
+                if reader.read_req_type != tidb_planner::physical_table_reader::ReadReqType::Mpp =>
+            {
+                let name = physical_operator_name(scan, index_join_context);
+                if ignore_explain_id_suffix {
+                    format!("data:{name}")
+                } else {
+                    format!("data:{name}_{}", scan.base().base.id())
+                }
+            }
+            _ => reader.explain_info(ignore_explain_id_suffix),
+        },
         PhysicalPlan::IndexScan(scan) => {
             let mut parts = Vec::new();
             if is_index_join_index_range(plan, index_join_context) {
@@ -1364,6 +1424,8 @@ fn physical_operator_info(
                     eval_ctx,
                     index_join_context.expect("index join context"),
                 ));
+            } else if let Some(conditions) = correlated_access_conditions(plan) {
+                parts.push(correlated_decided_by_text(eval_ctx, conditions));
             } else if !scan.ranges.is_empty()
                 && !tidb_planner::ranger::types::has_full_range(&scan.ranges, false)
             {
@@ -1381,13 +1443,24 @@ fn physical_operator_info(
             }
             parts.join(", ")
         }
+        // Go `PhysicalIndexReader.ExplainInfo`: the index plan's ExplainID,
+        // which names an index-join probe `IndexRangeScan` from its runtime
+        // RangeInfo exactly as the scan's own row does.
         PhysicalPlan::IndexReader(reader) => format!(
             "index:{}",
             reader
                 .index_plan
                 .as_deref()
-                .map_or_else(String::new, |plan| {
-                    plan.explain_id(ignore_explain_id_suffix)
+                .map_or_else(String::new, |plan| match plan {
+                    PhysicalPlan::IndexScan(_) => {
+                        let name = physical_operator_name(plan, index_join_context);
+                        if ignore_explain_id_suffix {
+                            name
+                        } else {
+                            format!("{name}_{}", plan.base().base.id())
+                        }
+                    }
+                    _ => plan.explain_id(ignore_explain_id_suffix),
                 })
         ),
         PhysicalPlan::IndexLookUpReader(reader) => reader.pushed_limit.map_or_else(

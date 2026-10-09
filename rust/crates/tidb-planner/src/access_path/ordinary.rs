@@ -30,6 +30,10 @@ pub struct FilledIndexPath {
     pub table_filters: Vec<Expression>,
     /// Go CountAfterIndex; absent when the access estimate is unavailable.
     pub count_after_index: Option<f64>,
+    /// How many trailing access conditions `SplitCorColAccessCondFromFilters`
+    /// moved from the filters: `index_col = correlated_col` equalities, at
+    /// most one closing range, whose ranges are rebuilt per execution.
+    pub correlated_access_count: usize,
 }
 
 pub(crate) fn filter_selectivity(
@@ -55,6 +59,7 @@ pub(crate) fn fill_index_path(
     conditions: &[Expression],
     context: &AccessPathDerivationContext<'_>,
     prefix_single_scan: bool,
+    correlated_access: bool,
 ) -> Result<FilledIndexPath, PlanError> {
     let mut full_columns = source.declared_index_columns(index);
     let mut columns = full_columns
@@ -64,7 +69,7 @@ pub(crate) fn fill_index_path(
     let suffix = source.handle_cols_to_append(index, &columns);
     full_columns.extend(suffix.iter().cloned().map(Some));
     columns.extend(suffix);
-    let detached = if conditions.is_empty() || columns.is_empty() {
+    let mut detached = if conditions.is_empty() || columns.is_empty() {
         crate::ranger::detacher::DetachRangeResult {
             ranges: crate::ranger::points::full_range(),
             remained_conds: conditions.to_vec(),
@@ -83,6 +88,13 @@ pub(crate) fn fill_index_path(
                     PlanError::unsupported_type(message)
                 }
             })?
+    };
+    // IndexMerge partial readers do not rebuild ranges per outer row yet, so
+    // only ordinary paths take Go's correlated access prefix.
+    let correlated_access_count = if correlated_access {
+        split_correlated_access(&mut detached, &columns)
+    } else {
+        0
     };
     let (index_filters, table_filters): (Vec<_>, Vec<_>) = detached
         .remained_conds
@@ -103,7 +115,66 @@ pub(crate) fn fill_index_path(
         index_filters,
         table_filters,
         count_after_index: None,
+        correlated_access_count,
     })
+}
+
+/// Go `deriveIndexPathStats` / `deriveCommonHandleTablePathStats`: when every
+/// access condition is an equality or IN, `SplitCorColAccessCondFromFilters`
+/// extends the access prefix with `index_col = correlated_col` filters (and
+/// at most one closing correlated range) whose ranges the executor rebuilds
+/// for every outer row. Returns how many conditions moved.
+fn split_correlated_access(
+    detached: &mut crate::ranger::detacher::DetachRangeResult,
+    columns: &[(Column, i64)],
+) -> usize {
+    if columns.is_empty() || detached.eq_or_in_count != detached.access_conds.len() {
+        return 0;
+    }
+    let (cols, lengths): (Vec<_>, Vec<_>) = columns.iter().cloned().unzip();
+    let (accesses, remained) = crate::access_path::split_correlated_access_conditions(
+        &detached.remained_conds,
+        &cols,
+        &lengths,
+        detached.eq_or_in_count,
+    );
+    let moved = accesses.len();
+    if moved > 0 {
+        detached.access_conds.extend(accesses);
+        detached.remained_conds = remained;
+    }
+    moved
+}
+
+/// Go's CountAfterAccess for an access prefix extended by correlated
+/// conditions: pseudo statistics answer `PseudoAvgCountPerValue`; otherwise
+/// each moved column divides the count by its NDV scaled to the selected
+/// fraction of the table (never below one).
+pub(crate) fn correlated_access_count_after_access(
+    source: &DataSource,
+    count_after_access: f64,
+    access_columns: &[Column],
+) -> f64 {
+    let Some(stats) = source.table_stats.as_ref() else {
+        return count_after_access;
+    };
+    let hist = stats.hist_coll();
+    let realtime = hist.map_or(stats.row_count(), |hist| hist.realtime_count() as f64);
+    if hist.is_none_or(crate::stats_info::HistColl::pseudo) {
+        return crate::cardinality::pseudo::pseudo_avg_count_per_value(realtime);
+    }
+    let selectivity = count_after_access / realtime;
+    let mut count = count_after_access;
+    for column in access_columns {
+        // Go `cardinality.EstimateColumnNDV`, which the table profile's
+        // column NDVs hold.
+        let mut ndv = stats.col_ndv(column.unique_id);
+        if ndv <= 0.0 {
+            ndv = realtime * crate::cardinality::derive_stats::DISTINCT_FACTOR;
+        }
+        count /= (ndv * selectivity).max(1.0);
+    }
+    count
 }
 
 pub(crate) fn fill_ordinary_index_paths(
@@ -122,17 +193,29 @@ pub(crate) fn fill_ordinary_index_paths(
             continue;
         }
         let mut filled = fill_index_path(
-            source, index, &source.pushed_down_conds, context, prefix_single_scan,
+            source, index, &source.pushed_down_conds, context, prefix_single_scan, true,
         )?;
         let index_filters = &filled.index_filters;
         // Go adjusts access rows before computing CountAfterIndex, preserving
         // the old count as the lower risk bound. Both ordinary and cloned
         // intersection paths must see the same adjusted estimate.
+        let correlated_columns = filled.columns
+            [filled.detached.eq_or_in_count..filled.detached.eq_or_in_count + filled.correlated_access_count]
+            .iter()
+            .map(|(column, _)| column.clone())
+            .collect::<Vec<_>>();
         let estimate = source
             .derived_index_paths
             .get(&index.id)
             .and_then(|path| path.row_estimate)
             .map(|mut estimate| {
+                if !correlated_columns.is_empty() {
+                    estimate.est = correlated_access_count_after_access(
+                        source,
+                        estimate.est,
+                        &correlated_columns,
+                    );
+                }
                 if let (Some(filtered), Some(table)) =
                     (source.base.base.stats_info(), source.table_stats.as_ref())
                 {
@@ -188,6 +271,10 @@ pub struct FilledTablePath {
     pub min_count_after_access: f64,
     /// Go's retained upper access-count bound.
     pub max_count_after_access: f64,
+    /// Access conditions over a correlated column, whose ranges the executor
+    /// rebuilds per outer row: the integer handle's `pk = correlated_col`
+    /// (`deriveTablePathStats`), or the common handle's split prefix.
+    pub correlated_access_count: usize,
 }
 
 /// Derive a table alternative from its own conditions without applying the
@@ -197,6 +284,7 @@ pub(crate) fn detach_table_path(
     primary_index: Option<usize>,
     conditions: &[Expression],
     context: &AccessPathDerivationContext<'_>,
+    correlated_access: bool,
 ) -> Result<FilledTablePath, PlanError> {
     let handle_column = source
         .base
@@ -226,6 +314,7 @@ pub(crate) fn detach_table_path(
             PlanError::unsupported_type(message)
         }
     };
+    let mut correlated_access_count = 0;
     let detached = if common_index.is_some() {
         if conditions.is_empty() || common_columns.is_empty() {
             crate::ranger::detacher::DetachRangeResult {
@@ -235,9 +324,13 @@ pub(crate) fn detach_table_path(
             }
         } else {
             let (columns, lengths): (Vec<_>, Vec<_>) = common_columns.iter().cloned().unzip();
-            context
+            let mut detached = context
                 .detach_index_range(conditions, &columns, &lengths)
-                .map_err(map_error)?
+                .map_err(map_error)?;
+            if correlated_access {
+                correlated_access_count = split_correlated_access(&mut detached, &common_columns);
+            }
+            detached
         }
     } else {
         let access = handle_column.as_ref().map_or_else(Vec::new, |handle| {
@@ -258,7 +351,7 @@ pub(crate) fn detach_table_path(
                 handler.record_range_fallback(context.range_max_size);
             }
         }
-        crate::ranger::detacher::DetachRangeResult {
+        let mut detached = crate::ranger::detacher::DetachRangeResult {
             ranges: built.ranges,
             access_conds: built.access_conds.to_vec(),
             remained_conds: crate::ranger::detacher::remove_conditions(
@@ -266,7 +359,24 @@ pub(crate) fn detach_table_path(
                 built.access_conds,
             ),
             ..Default::default()
+        };
+        // Go `deriveTablePathStats`: with no access condition, the first
+        // `pk = correlated_col` filter becomes the access condition; the
+        // executor rebuilds its range for each outer row.
+        if correlated_access && detached.access_conds.is_empty() {
+            if let Some(handle) = handle_column.as_ref() {
+                if let Some(position) = detached
+                    .remained_conds
+                    .iter()
+                    .position(|condition| is_handle_eq_correlated(condition, handle))
+                {
+                    let condition = detached.remained_conds.remove(position);
+                    detached.access_conds.push(condition);
+                    correlated_access_count = 1;
+                }
+            }
         }
+        detached
     };
     Ok(FilledTablePath {
         handle_column,
@@ -276,7 +386,25 @@ pub(crate) fn detach_table_path(
         count_after_access: None,
         min_count_after_access: 0.0,
         max_count_after_access: 0.0,
+        correlated_access_count,
     })
+}
+
+/// `eq(handle, correlated_col)` in either argument order.
+fn is_handle_eq_correlated(condition: &Expression, handle: &Column) -> bool {
+    let Expression::ScalarFunction(function) = condition else {
+        return false;
+    };
+    if function.func_name.lowercase() != "eq" {
+        return false;
+    }
+    match function.args.as_slice() {
+        [Expression::Column(column), Expression::CorrelatedColumn(_)]
+        | [Expression::CorrelatedColumn(_), Expression::Column(column)] => {
+            column.unique_id == handle.unique_id
+        }
+        _ => false,
+    }
 }
 
 /// Go `pruneEstimateRange` (`core/stats.go:450-469`): each range cut to its
@@ -307,9 +435,16 @@ pub(crate) fn fill_table_path(
     primary_index: Option<usize>,
     context: &AccessPathDerivationContext<'_>,
 ) -> Result<FilledTablePath, PlanError> {
-    let mut filled = detach_table_path(source, primary_index, &source.pushed_down_conds, context)?;
-    let detached = &filled.detached;
+    let mut filled =
+        detach_table_path(source, primary_index, &source.pushed_down_conds, context, true)?;
     let common_index = primary_index.and_then(|index| source.indexes.get(index));
+    // Go `deriveTablePathStats` answers one row for a correlated integer
+    // handle and returns before `adjustCountAfterAccess`.
+    if common_index.is_none() && filled.correlated_access_count > 0 {
+        filled.count_after_access = Some(1.0);
+        return Ok(filled);
+    }
+    let detached = &filled.detached;
     let stats = source
         .table_stats
         .as_ref()
@@ -326,6 +461,15 @@ pub(crate) fn fill_table_path(
             }),
             None => Some(estimate_int_table_path(source, &filled, context)?),
         };
+    }
+    if filled.correlated_access_count > 0 {
+        let first = detached.eq_or_in_count;
+        let columns = filled.common_columns[first..first + filled.correlated_access_count]
+            .iter()
+            .map(|(column, _)| column.clone())
+            .collect::<Vec<_>>();
+        count_after_access = count_after_access
+            .map(|count| correlated_access_count_after_access(source, count, &columns));
     }
     let estimate = common_index
         .and_then(|index| source.derived_index_paths.get(&index.id))
