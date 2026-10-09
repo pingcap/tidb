@@ -145,7 +145,7 @@ func SubTestSampledNDV() func(*testing.T) {
 			require.Equal(t, map[uint64]bool{1: true, 2: true, 3: false, 4: false}, merged.hashset)
 			require.Equal(t, int64(8), merged.NDV())
 			require.Equal(t, int64(20), merged.ndvCounts.nulls)
-			require.Equal(t, int64(16+8*4+24), merged.MemoryUsage())
+			require.Equal(t, int64(80+30*4+24), merged.MemoryUsage())
 		}
 
 		// ANALYZE merges the responses into sketches it allocated beforehand.

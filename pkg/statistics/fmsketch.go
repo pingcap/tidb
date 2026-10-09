@@ -290,9 +290,9 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 
 // MemoryUsage returns the total memory usage of a FMSketch.
 func (s *FMSketch) MemoryUsage() (sum int64) {
-	// As for the variables mask(uint64) and maxSize(int) each will consume 8 bytes. This is the origin of the constant 16.
-	// And for the variables hashset(map[uint64]bool), we estimate 8 bytes per entry (key size only, excluding Go map overhead).
-	sum = int64(16 + 8*len(s.hashset))
+	// 80 is the 32-byte struct plus the 48-byte Go map header. An entry takes about 30 bytes: its slot takes 18
+	// (8-byte key, value padded to 8, a control byte, allocator rounding), and tables are 7/16 to 7/8 full.
+	sum = int64(80 + 30*len(s.hashset))
 	// A sampled sketch also keeps three 8-byte row counts.
 	if s.ndvCounts != nil {
 		sum += 24
