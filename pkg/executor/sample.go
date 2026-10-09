@@ -27,11 +27,14 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 var _ exec.Executor = &TableSampleExecutor{}
@@ -372,6 +375,16 @@ type sampleFetcher struct {
 
 func (s *sampleFetcher) run() {
 	defer close(s.kvChan)
+	// This goroutine is spawned bare (see scanFirstKVForEachRange), so a panic
+	// here would crash the whole tidb-server. Convert it into s.err, which the
+	// syncer observes after kvChan is closed, turning it into a query error.
+	defer func() {
+		if r := recover(); r != nil {
+			s.err = util.GetRecoverError(r)
+			logutil.BgLogger().Error("panic in the recoverable goroutine of table sample fetcher",
+				zap.Any("r", r), zap.Stack("stack trace"))
+		}
+	}()
 	for i, r := range s.ranges {
 		if i%s.concurrency != s.workerID {
 			continue
