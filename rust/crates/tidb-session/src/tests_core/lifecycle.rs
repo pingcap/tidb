@@ -537,7 +537,12 @@ fn mpp_context_uses_the_live_server_info_identity() {
     use tidb_executor::remote_scan::PushdownStatementContext;
 
     let mut session = Session::new();
-    assert_eq!(session.statement_context(false).mpp_server_id(), 0);
+    // Go's Domain reports `serverIDForStandalone` until etcd assigns one, and
+    // the MPP task server ID reads that same `do.ServerID()`.
+    assert_eq!(
+        session.statement_context(false).mpp_server_id(),
+        tidb_util::globalconn::SERVER_ID_FOR_STANDALONE
+    );
     let id = Arc::new(AtomicU64::new(42));
     let getter_id = id.clone();
     let mut info = tidb_domain::serverinfo::ServerInfo::default();

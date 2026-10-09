@@ -953,7 +953,12 @@ impl Session {
             cluster_topology: None,
             cluster_config: None,
             cluster_peer: None,
-            server_id_getter: Arc::new(|| 0),
+            // Go's Domain reports `serverIDForStandalone` until etcd assigns
+            // one (`domain.go:752-753`), and the connection-ID allocator
+            // encodes that same value, so `KILL` recognizes local
+            // connections. A cluster node replaces this through
+            // `set_server_info_syncer`.
+            server_id_getter: Arc::new(|| tidb_util::globalconn::SERVER_ID_FOR_STANDALONE),
             cluster_schema_version: None,
             workload_repository: None,
             index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),

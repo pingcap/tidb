@@ -169,14 +169,27 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
     ] {
         boot.run(sql).unwrap();
     }
+    // Connection IDs Go's allocator would issue on this server: they encode
+    // the standalone server ID that `KILL` checks before reaching the local
+    // registry.
+    let local = |local_conn_id| {
+        tidb_util::globalconn::Gcid {
+            is_64bits: false,
+            local_conn_id,
+            server_id: tidb_util::globalconn::SERVER_ID_FOR_STANDALONE,
+        }
+        .to_conn_id()
+    };
+    let (bob_id, victim, protected_id) = (local(1), local(2), local(3));
+    let kill_victim = format!("KILL {victim}");
     let mut bob = authenticated_session(&privileges, "bob", "%");
     bob.attach_process(
-        2,
-        registry.register(2, "bob".into(), "127.0.0.1:12".into(), String::new(), None),
+        bob_id,
+        registry.register(bob_id, "bob".into(), "127.0.0.1:12".into(), String::new(), None),
     );
     let target = Arc::new(KillCounter::default());
     let _victim = registry.register(
-        4,
+        victim,
         "protected".into(),
         "[::1]:1234".into(),
         String::new(),
@@ -184,37 +197,37 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
     );
     tidb_util::sem::enable();
     assert!(
-        matches!(bob.run("KILL 4"), Err(DriverError::SpecificAccessDenied(name)) if name == "RESTRICTED_CONNECTION_ADMIN")
+        matches!(bob.run(&kill_victim), Err(DriverError::SpecificAccessDenied(name)) if name == "RESTRICTED_CONNECTION_ADMIN")
     );
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     bob.run("SET ROLE killer").unwrap();
-    bob.run("KILL 4").unwrap();
+    bob.run(&kill_victim).unwrap();
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 1);
     bob.run("SET ROLE NONE").unwrap();
     assert!(matches!(
-        bob.run("KILL 4"),
+        bob.run(&kill_victim),
         Err(DriverError::SpecificAccessDenied(_))
     ));
     let mut same_user = authenticated_session(&privileges, "protected", "%");
     same_user.attach_process(
-        6,
-        registry.register(6, "protected".into(), String::new(), String::new(), None),
+        protected_id,
+        registry.register(protected_id, "protected".into(), String::new(), String::new(), None),
     );
-    same_user.run("KILL 4").unwrap();
+    same_user.run(&kill_victim).unwrap();
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     // Granted but non-default target roles do not protect the target.
     privileges.set_default_roles(&("protected".into(), "%".into()), &[]);
-    bob.run("KILL 4").unwrap();
+    bob.run(&kill_victim).unwrap();
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 3);
     // Go matches global_grants independently of the selected user row.
     privileges.create_user("protected", "::1", "");
     privileges.grant_dynamic("protected", "%", "RESTRICTED_USER_ADMIN", false);
     assert!(matches!(
-        bob.run("KILL 4"),
+        bob.run(&kill_victim),
         Err(DriverError::SpecificAccessDenied(_))
     ));
     tidb_util::sem::disable();
-    bob.run("KILL 4").unwrap();
+    bob.run(&kill_victim).unwrap();
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 4);
 }
 
@@ -507,14 +520,25 @@ fn kill_answers_ok_and_reaches_only_live_connections() {
     let registry = process::ProcessRegistry::default();
     let target = Arc::new(Counter::default());
     let mut session = Session::new();
+    // A local connection ID is one Go's allocator would hand out on this
+    // server: it encodes the standalone server ID, which `KILL` compares
+    // against before touching the local registry (`executeKillStmt`). An ID
+    // naming server 0 is never local in Go standalone; Go treats it as remote
+    // and refuses it as "Unexpected ZERO ServerID".
+    let own = tidb_util::globalconn::Gcid {
+        is_64bits: false,
+        local_conn_id: 3,
+        server_id: tidb_util::globalconn::SERVER_ID_FOR_STANDALONE,
+    }
+    .to_conn_id();
     let guard = registry.register(
-        6,
+        own,
         "alice".to_owned(),
         String::new(),
         "test".to_owned(),
         Some(target.clone()),
     );
-    session.attach_process(6, guard);
+    session.attach_process(own, guard);
     // Even 32-bit IDs are valid under Go global kill; odd IDs are truncated.
     // KILL answers with an affected-row count, which the wire front turns
     // into the OK packet Go sends.
@@ -526,12 +550,12 @@ fn kill_answers_ok_and_reaches_only_live_connections() {
     assert_eq!(target.connections.load(Ordering::Acquire), 0);
     // Killing one's own query is legal and only cancels the statement.
     assert_eq!(
-        session.run("kill query 6").unwrap(),
+        session.run(&format!("kill query {own}")).unwrap(),
         StmtResult::Affected(0)
     );
     assert_eq!(target.queries.load(Ordering::Acquire), 1);
     assert_eq!(
-        session.run("kill connection 6").unwrap(),
+        session.run(&format!("kill connection {own}")).unwrap(),
         StmtResult::Affected(0)
     );
     assert_eq!(target.connections.load(Ordering::Acquire), 1);

@@ -48,7 +48,9 @@ use tidb_session::process::ProcessKillTarget;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
-const STANDALONE_SERVER_ID: u64 = 1;
+/// Go `serverIDForStandalone`; shared with the session so `KILL` and the
+/// connection-ID allocator agree. See [`tidb_util::globalconn::SERVER_ID_FOR_STANDALONE`].
+const STANDALONE_SERVER_ID: u64 = tidb_util::globalconn::SERVER_ID_FOR_STANDALONE;
 // A connection worker runs the planner, whose recursion is guarded by
 // `stacker::maybe_grow(red_zone = 2 MB, segment = 16 MB)`. On the default
 // 2 MB thread stack the red-zone check fails on EVERY select, so each

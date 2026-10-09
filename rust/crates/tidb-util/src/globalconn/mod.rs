@@ -149,6 +149,18 @@ impl fmt::Display for ParseConnIdError {
 
 impl std::error::Error for ParseConnIdError {}
 
+/// Go `serverIDForStandalone` (`pkg/domain/domain.go:645`): the server ID a
+/// deployment without etcd uses, set "to enable 'KILL'"
+/// (`domain.go:752-753`).
+///
+/// It must be ONE value read by both halves of global kill. Go's allocator
+/// and `KILL` both read `do.ServerID`; when the connection-ID allocator and
+/// the session's server ID came from two sources here, a standalone node
+/// encoded server 1 into every connection ID while its sessions believed they
+/// were server 0, so `KILL` judged its own connections remote and killed
+/// nothing.
+pub const SERVER_ID_FOR_STANDALONE: u64 = 1;
+
 /// Parses a `u64` connection ID (Go `ParseConnID`). The boolean is
 /// `isTruncated`: older clients truncated 64-bit IDs to 32 bits.
 pub fn parse_conn_id(id: u64) -> Result<(Gcid, bool), ParseConnIdError> {
