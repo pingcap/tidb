@@ -65,6 +65,7 @@ var (
 
 const (
 	partialIndexWorkerType        = "IndexMergePartialIndexWorker"
+	partialFullTextWorkerType     = "IndexMergePartialFullTextWorker"
 	partialTableWorkerType        = "IndexMergePartialTableWorker"
 	processWorkerType             = "IndexMergeProcessWorker"
 	partTblIntersectionWorkerType = "IndexMergePartTblIntersectionWorker"
@@ -134,6 +135,14 @@ type IndexMergeReaderExecutor struct {
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
+
+	// fullTextScans holds, per partial plan, the search of a FULLTEXT index
+	// built in TiKV, or nil for a partial plan that is a coprocessor scan.
+	// Such a partial plan is answered by TiDB's posting-list engine over
+	// fullTextSnapshot rather than by a coprocessor request; see
+	// startPartialFullTextWorker.
+	fullTextScans    []*fullTextScan
+	fullTextSnapshot kv.Snapshot
 
 	partialPlans        [][]base.PhysicalPlan
 	tblPlans            []base.PhysicalPlan
@@ -247,6 +256,23 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 	e.partialWorkerKVRanges = make([][]*kvRangesWithPhysicalTblID, len(e.partialPlans))
 
 	for i, plan := range e.partialPlans {
+		if e.isFullTextPartial(i) {
+			// The index is read by terms of the search string, not by key
+			// ranges. The ranges recorded here serve UnionScan, which finds
+			// the rows this transaction changed by reading them from the
+			// memory buffer within each partial plan's ranges: for this
+			// partial that is the whole record range of each physical table,
+			// so every changed row is re-checked against the MATCH. That is
+			// what lets the index skip rewriting untouched entries.
+			if e.partitionTableMode {
+				for _, p := range e.prunedPartitions {
+					e.partialWorkerKVRanges[i] = append(e.partialWorkerKVRanges[i], fullTextUnionScanRange(p.GetPhysicalID()))
+				}
+			} else {
+				e.partialWorkerKVRanges[i] = append(e.partialWorkerKVRanges[i], fullTextUnionScanRange(getPhysicalTableID(e.table)))
+			}
+			continue
+		}
 		// Determine grouped ranges: use GroupedRanges from the physical plan if available,
 		// otherwise wrap the flat ranges as a single group.
 		var (
@@ -324,7 +350,9 @@ func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	var err error
 	for i := range e.partialPlans {
 		e.idxWorkerWg.Add(1)
-		if e.indexes[i] != nil {
+		if e.isFullTextPartial(i) {
+			err = e.startPartialFullTextWorker(ctx, exitCh, fetchCh, i)
+		} else if e.indexes[i] != nil {
 			err = e.startPartialIndexWorker(ctx, exitCh, fetchCh, i)
 		} else {
 			err = e.startPartialTableWorker(ctx, exitCh, fetchCh, i)

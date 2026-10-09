@@ -1270,7 +1270,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
 			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
-		} else if idxInfo.FullTextInfo != nil {
+		} else if idxInfo.FullTextInfo != nil || idxInfo.TiKVFullText != nil {
 			fmt.Fprintf(buf, "  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.InvertedInfo != nil {
 			fmt.Fprintf(buf, "  COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
@@ -1303,6 +1303,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 		if idxInfo.FullTextInfo != nil {
 			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
+		}
+		if idxInfo.TiKVFullText != nil {
+			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.TiKVFullText.ParserType.SQLName())
 		}
 		if idxInfo.ConditionExprString != "" {
 			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)

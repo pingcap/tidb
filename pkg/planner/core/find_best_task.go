@@ -1890,7 +1890,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if len(c.path.Ranges) > 1 {
 				hasMultiRange = true
 			}
-			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
+			// A FULLTEXT index path reads only the postings of the search's
+			// terms, never the whole table, so it is kept to compete on cost.
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) ||
+				isFullTextIndexPath(c.path) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
@@ -2407,6 +2410,14 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		}
 		if partPath.IsTablePath() {
 			scan = convertToPartialTableScan(ds, effectiveProp, partPath, partMatchPropResult, byItems)
+		} else if partPath.FullText != nil {
+			if !prop.IsSortItemEmpty() {
+				// The posting-list engine yields handles in handle order,
+				// never in index-column order, so it cannot keep an order
+				// even when the sort items name the indexed column.
+				return base.InvalidTask, nil
+			}
+			scan = physicalop.ConvertToFullTextIndexScan(ds, effectiveProp, partPath)
 		} else {
 			var remainingFilters []expression.Expression
 			scan, remainingFilters, err = physicalop.ConvertToPartialIndexScan(ds, cop.PhysPlanPartInfo, effectiveProp, partPath, partMatchPropResult, byItems)
