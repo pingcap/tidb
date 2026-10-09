@@ -1686,20 +1686,12 @@ impl InitStats<'_> {
             .allow_use_modify_count;
         let statistics = stored_statistics.as_deref().map(|statistics| {
             let analyze_count = statistics.analyze_row_count().max(0.0) as i64;
-            // go `GetStatsTable`'s sync load answers `PseudoTable` for tables
-            // whose statistics were never collected
-            // (`tableStatsFromStorage` returns nil without collected
-            // histograms), so the estimate reads
-            // PseudoRowCount=10000 — oracle: EXPLAIN over a stats-less
-            // partition table answers estRows 10.00, not the DML count's
-            // 1.25.
-            if analyze_count == 0 {
-                let mut copied = statistics.clone();
-                copied.pseudo = true;
-                copied.row_count = tidb_stats::PSEUDO_ROW_COUNT;
-                copied.modify_count = 0;
-                return Cow::Owned(copied);
-            }
+            // Go `GetStatsTable` keeps the cached `RealtimeCount` of a table
+            // that has a `stats_meta` row but no analyzed histogram: its
+            // `TableStatsFromStorage` returns that metadata-only table, and
+            // rule 3 (`!IsInitialized`) only marks the copy pseudo. The
+            // 10000-row `PseudoTable` is rule 2's answer to a zero count,
+            // which `realtime_row_count` applies below.
             let ignore_realtime_stats = !allow_use_modify_count
                 && (statistics.row_count != analyze_count || statistics.modify_count != 0);
             let outdated = self.enable_pseudo_for_outdated_stats && statistics.is_outdated();
@@ -1783,26 +1775,24 @@ impl InitStats<'_> {
                     .flat_map(|schema| &schema.columns),
             )
             .map(|(metadata, column)| {
-                // Go `cardinality.EstimateColumnNDV`: a pseudo or missing
-                // histogram uses `RealtimeCount * distinctFactor` (0.8),
-                // while an analyzed histogram scales its NDV from analyze
-                // time to the current realtime row count. A PSEUDO or
-                // histogram-less column has no NDV to divide by: go answers
-                // its equality selectivity with `1.0 / pseudoEqualRate`
-                // (`pkg/planner/cardinality/selectivity.go:89`,
-                // pseudoEqualRate=1000) — the fixed pseudo NDV of 1000 — so
-                // `EXPLAIN SELECT * FROM p1 WHERE a = 5` over a stats-less
-                // partition table answers estRows 10.00, not the
-                // count/(count*0.8) = 1.25 the realtime fallback produced.
-                let ndv = statistics.map_or(1000.0, |statistics| {
-                    if statistics.pseudo {
-                        1000.0
-                    } else {
-                        statistics
-                            .estimate_column_ndv(metadata.id, &loaded_columns, &loaded_indexes)
-                            .unwrap_or(1000.0)
-                    }
-                });
+                // Go `DataSource.initStats` sets every column's NDV from
+                // `cardinality.EstimateColumnNDV`: an initialized histogram's
+                // NDV scaled from analyze time to the realtime row count, and
+                // otherwise `RealtimeCount * distinctFactor` (0.8) -- for a
+                // pseudo table too, whose `PseudoTable` count is 10000.
+                // `pseudoEqualRate` is an equality SELECTIVITY of the pseudo
+                // range estimator, not an NDV.
+                let ndv = statistics
+                    .and_then(|statistics| {
+                        statistics.estimate_column_ndv(
+                            metadata.id,
+                            &loaded_columns,
+                            &loaded_indexes,
+                        )
+                    })
+                    .unwrap_or(
+                        row_count * tidb_planner::cardinality::derive_stats::DISTINCT_FACTOR,
+                    );
                 (column.unique_id, ndv)
             })
             .collect::<Vec<_>>();

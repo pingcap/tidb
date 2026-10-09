@@ -592,13 +592,23 @@ fn try_analyzed_filter_selectivity_in(
                 values.len(),
             );
         }
-        let ndv = table_stats.col_ndv(column.unique_id);
-        if ndv > 0.0 {
-            selectivity_total *= (values.len() as f64 / ndv).min(1.0);
-            recognized = true;
-        } else {
-            selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
+        // Go `GetRowCountByColumnRanges` on a column whose statistics are
+        // invalid answers from `getPseudoRowCountByColumnRanges`: every point
+        // range costs `tableRowCount / pseudoEqualRate`, capped at the table.
+        // The column NDV is not consulted. The ranger's points are distinct,
+        // and `=`/`IN` build no point for NULL (only `<=>` does).
+        let null_safe = function.func_name.lowercase() == "nulleq";
+        let mut points: Vec<&tidb_datatype::Datum> = Vec::new();
+        for value in &values {
+            if (null_safe || !matches!(value, tidb_datatype::Datum::Null))
+                && !points.contains(&value)
+            {
+                points.push(value);
+            }
         }
+        selectivity_total *=
+            (points.len() as f64 / crate::cardinality::pseudo::PSEUDO_EQUAL_RATE).min(1.0);
+        recognized = true;
     }
     if recognized {
         Ok(Some(
