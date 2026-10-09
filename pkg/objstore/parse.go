@@ -54,6 +54,10 @@ func (o BackendOptions) Redacted() BackendOptions {
 	mask(&o.Azblob.AccountKey)
 	mask(&o.Azblob.SASToken)
 	mask(&o.Azblob.EncryptionKey)
+	// A SAS token or userinfo may be written into the endpoint.
+	o.S3.Endpoint = RedactURL(o.S3.Endpoint)
+	o.GCS.Endpoint = RedactURL(o.GCS.Endpoint)
+	o.Azblob.Endpoint = RedactURL(o.Azblob.Endpoint)
 	return o
 }
 
@@ -63,12 +67,18 @@ const InvalidURLPlaceholder = "(invalid storage URL)"
 
 // RedactURL masks the credentials in a storage URL so that it can be put into
 // logs and error messages. An unparseable URL is replaced by
-// InvalidURLPlaceholder, and the query of a URL with an unknown scheme is
-// dropped, since ast.RedactURL cannot tell which parameters are secret there.
+// InvalidURLPlaceholder, the userinfo is removed, and the query of a URL with an
+// unknown scheme is dropped, since ast.RedactURL cannot tell which parameters
+// are secret there.
 func RedactURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return InvalidURLPlaceholder
+	}
+	// ast.RedactURL only masks query parameters, so drop the userinfo first.
+	if u.User != nil {
+		u.User = nil
+		rawURL = u.String()
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "", "file", "local", "hdfs", "noop", "gs", "gcs", "s3", "ks3", "oss", "azure", "azblob":

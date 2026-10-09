@@ -606,6 +606,8 @@ func TestBackendOptionsRedacted(t *testing.T) {
 	opts.Azblob.SASToken = "SAS"
 	opts.Azblob.EncryptionKey = "ENC"
 	opts.Azblob.AccountName = "account"
+	opts.Azblob.Endpoint = "https://account.blob.core.windows.net/?sig=SAS"
+	opts.S3.Endpoint = "https://AKID:SKEY@s3.example.com"
 
 	redacted := opts.Redacted()
 	require.Equal(t, RedactedValue, redacted.S3.AccessKey)
@@ -616,6 +618,8 @@ func TestBackendOptionsRedacted(t *testing.T) {
 	require.Equal(t, RedactedValue, redacted.Azblob.EncryptionKey)
 	require.Equal(t, "us-east-1", redacted.S3.Region)
 	require.Equal(t, "account", redacted.Azblob.AccountName)
+	require.Equal(t, "https://account.blob.core.windows.net/", redacted.Azblob.Endpoint)
+	require.Equal(t, "https://s3.example.com", redacted.S3.Endpoint)
 	require.Equal(t, "AKID", opts.S3.AccessKey)
 	require.Equal(t, BackendOptions{}.Redacted(), BackendOptions{})
 }
@@ -632,6 +636,9 @@ func TestRedactURL(t *testing.T) {
 		{"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
 		{"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
 		{"s3a://bucket/prefix?access-key=AKID&secret-access-key=SKEY", "s3a://bucket/prefix"},
+		{"s3://AKID:SKEY@bucket/prefix?access-key=AKID", "s3://bucket/prefix?access-key=xxxxxx"},
+		{"s3a://AKID:SKEY@bucket/prefix", "s3a://bucket/prefix"},
+		{"https://account.blob.core.windows.net/?sv=2022&sig=SAS", "https://account.blob.core.windows.net/"},
 	}
 	for _, c := range cases {
 		require.Equal(t, c.expected, RedactURL(c.raw), c.raw)
