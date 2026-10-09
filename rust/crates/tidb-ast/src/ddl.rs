@@ -13,6 +13,7 @@
 
 //! `CREATE`/`ALTER`/`RENAME`/`DROP TABLE` statements and their restore.
 
+use crate::expr::restore_keyword;
 use crate::util::{back_quote, escape_string_literal, push_name_path};
 use crate::{CiString, Expr, RestoreContext};
 use serde::{Deserialize, Serialize};
@@ -1073,11 +1074,14 @@ impl AlterTableAction {
                 }
             }
             AlterTableAction::ConvertCharacterSet { charset, collation } => {
+                // Go `AlterTableSpec.Restore` (AlterTableOption) and
+                // `TableOption.Restore` write both names through
+                // `ctx.WriteKeyWord`, so they follow the keyword-case flag.
                 out.push_str("CONVERT TO CHARACTER SET ");
-                out.push_str(charset.as_deref().unwrap_or("DEFAULT"));
+                restore_keyword(out, charset.as_deref().unwrap_or("DEFAULT"), context);
                 if let Some(collation) = collation {
                     out.push_str(" COLLATE ");
-                    out.push_str(collation);
+                    restore_keyword(out, collation, context);
                 }
             }
             AlterTableAction::Cache(mode) => out.push_str(mode.sql()),

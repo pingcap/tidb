@@ -54,20 +54,13 @@ impl Parser {
         self.expect_op("(")?;
         let expr = self.parse_expr(prec::NONE)?;
         if self.is_kw("USING") {
-            let using = self.bump();
+            self.bump();
             let raw = self.parse_using_charset_name()?;
-            // go's CONVERT grammar refuses the USING form AT the USING token:
-            // the plain 1064 near-form anchored there, not a classed charset
-            // error at the charset name (oracle: g-string's
-            // `CONVERT(BINARY('a') USING utf8mb4), CHAR(0)` errors 1064 near
-            // "USING utf8mb4), CHAR(0)" at column 55).
+            // Go `parseConvertFunc`: a name `charset.GetCharsetInfo` cannot
+            // resolve is `ErrUnknownCharacterSet` (`[parser:1115]`) naming
+            // the token, not a positional syntax error.
             let charset = canonical_charset(&raw)
-                .ok_or_else(|| crate::ParseError {
-                    message: String::new(),
-                    offset: using.end_offset,
-                    near_offset: using.offset,
-                    errno: None,
-                })?
+                .ok_or_else(|| self.err_coded(1115, &format!("Unknown character set: '{raw}'")))?
                 .to_string();
             self.expect_op(")")?;
             return Ok(Expr::ConvertUsing {

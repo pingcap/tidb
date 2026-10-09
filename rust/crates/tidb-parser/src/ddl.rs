@@ -24,7 +24,7 @@ use tidb_ast::{
     SplitRegionStmt, SplitTarget, Stmt, TableLock, TableLockType, UserSpec, ViewAlgorithm,
     ViewCheckOption, ViewSecurity,
 };
-use tidb_lexer::{canonical_collation, TokenKind};
+use tidb_lexer::{canonical_charset, canonical_collation, TokenKind};
 
 use crate::{prec, PResult, Parser};
 
@@ -1650,10 +1650,15 @@ impl Parser {
             self.bump();
             Ok(None)
         } else {
-            // go accepts ANY identifier here syntactically — a name that is
-            // not a charset (a collation name, say) fails later with
-            // ErrUnknownCharacterSet (1115), not a 1064.
-            Ok(Some(self.parse_table_option_word()?))
+            // A name that is not a charset (a collation name, say) still
+            // fails later with ErrUnknownCharacterSet (1115), not a 1064.
+            // A known one is stored as Go's `charset.GetCharsetInfo(...).Name`
+            // (`utf8mb3` folds to `utf8`); restore uppercases it.
+            let raw = self.parse_table_option_word()?;
+            Ok(Some(match canonical_charset(&raw) {
+                Some(canonical) => canonical.to_owned(),
+                None => raw,
+            }))
         }
     }
 

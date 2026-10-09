@@ -26,6 +26,18 @@ impl Parser {
     /// (confirmed via `godump restore` that both accept `PARTITION`/
     /// index hints too, not just `SELECT`'s own `FROM` clause).
     pub(crate) fn parse_table_ref(&mut self) -> PResult<TableRef> {
+        self.parse_table_ref_with(false)
+    }
+
+    /// [`Parser::parse_table_ref`] for the table clause of a single-table
+    /// `DELETE FROM`, where Go's `parseDeleteStmt` sets the one-shot
+    /// `disallowReturningAlias` so a following RETURNING starts the
+    /// RETURNING clause instead of naming the table.
+    pub(crate) fn parse_delete_table_ref(&mut self) -> PResult<TableRef> {
+        self.parse_table_ref_with(true)
+    }
+
+    fn parse_table_ref_with(&mut self, disallow_returning_alias: bool) -> PResult<TableRef> {
         let name = self.parse_table_name_path()?;
         let partitions = self.parse_partition_opt()?;
         // `AS OF TIMESTAMP expr` and a plain alias are mutually exclusive
@@ -40,7 +52,10 @@ impl Parser {
             self.expect_kw("TIMESTAMP")?;
             (None, Some(Box::new(self.parse_expr(prec::NONE)?)))
         } else {
-            (self.parse_opt_table_alias()?, None)
+            (
+                self.parse_opt_table_alias_with(disallow_returning_alias)?,
+                None,
+            )
         };
         let mut hints = Vec::new();
         while self.is_kw("USE") || self.is_kw("FORCE") || self.is_kw("IGNORE") {
@@ -608,10 +623,9 @@ impl Parser {
         } else {
             offset + 1
         };
-        let alias = self.peek_n(alias_offset);
-        if !(alias.kind == TokenKind::Ident
-            || (alias.kind == TokenKind::Keyword && !crate::is_reserved(&alias.text)))
-        {
+        // Go `wrapAsTableSource` takes the bare alias through
+        // `CanBeImplicitAlias`.
+        if !self.can_be_implicit_alias_at(alias_offset) {
             return false;
         }
         self.is_op_at(alias_offset + 1, ")")

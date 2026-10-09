@@ -1037,7 +1037,7 @@ fn restore_charset_name(out: &mut String, charset: &str, context: &RestoreContex
     restore_keyword(out, charset, context);
 }
 
-fn restore_keyword(out: &mut String, keyword: &str, context: &RestoreContext) {
+pub(crate) fn restore_keyword(out: &mut String, keyword: &str, context: &RestoreContext) {
     if context.flags().has_keyword_uppercase() {
         out.push_str(&keyword.to_ascii_uppercase());
     } else if context.flags().has_keyword_lowercase() {

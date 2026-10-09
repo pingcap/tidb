@@ -1228,13 +1228,28 @@ impl Parser {
             self.bump();
             return Ok(Some(self.parse_explicit_alias_name()?));
         }
-        if self.can_be_alias_name() {
+        // Go `parseSelectField`: RETURNING is never an implicit field alias,
+        // so that it can start a DML RETURNING clause (yacc:
+        // FieldAsNameOpt %prec higherThanReturning).
+        if !self.is_kw("RETURNING") && self.can_be_alias_name() {
             return Ok(Some(self.parse_alias_name()?));
         }
         Ok(None)
     }
 
     fn parse_opt_table_alias(&mut self) -> PResult<Option<String>> {
+        self.parse_opt_table_alias_with(false)
+    }
+
+    /// Go `parseTableSource`'s alias step. `disallow_returning_alias` is
+    /// Go's one-shot `disallowReturningAlias`: in a single-table DELETE,
+    /// RETURNING after the table name starts a RETURNING clause and is never
+    /// an implicit alias (yacc: TableAsNameOptDelete). A bare string literal
+    /// is a valid implicit table alias there; only the `AS` form rejects it.
+    fn parse_opt_table_alias_with(
+        &mut self,
+        disallow_returning_alias: bool,
+    ) -> PResult<Option<String>> {
         if self.is_kw("AS") {
             self.bump();
             if self.peek().kind == TokenKind::Str {
@@ -1242,7 +1257,7 @@ impl Parser {
             }
             return Ok(Some(self.parse_explicit_alias_name()?));
         }
-        if self.peek().kind != TokenKind::Str && self.can_be_alias_name() {
+        if self.can_be_alias_name() && !(disallow_returning_alias && self.is_kw("RETURNING")) {
             return Ok(Some(self.parse_alias_name()?));
         }
         Ok(None)
@@ -1253,8 +1268,34 @@ impl Parser {
     /// [`Parser::parse_opt_alias`]'s own doc for why this is deliberately
     /// NOT the same gate the explicit `AS name` form uses).
     fn can_be_alias_name(&self) -> bool {
-        matches!(self.peek().kind, TokenKind::Ident | TokenKind::Str)
-            || (self.peek().kind == TokenKind::Keyword && !crate::is_reserved(&self.peek().text))
+        self.can_be_implicit_alias_at(0)
+    }
+
+    /// Go `CanBeImplicitAlias` for the token `n` positions ahead. Plain
+    /// identifiers and string literals always work except FETCH (reserved
+    /// for the LIMIT clause) and WINDOW followed by `identifier AS` (a
+    /// WINDOW clause). Any keyword works unless it is on Go's curated
+    /// exclusion list — reserved words like DATABASE or BINARY included.
+    /// Numeric literals and operator punctuation never do.
+    fn can_be_implicit_alias_at(&self, n: usize) -> bool {
+        let token = self.peek_n(n);
+        match token.kind {
+            TokenKind::Ident | TokenKind::Str => {
+                let literal = if token.kind == TokenKind::Str {
+                    self.decode_string(&token.text)
+                } else {
+                    token.text.clone()
+                };
+                if literal.eq_ignore_ascii_case("FETCH") {
+                    return false;
+                }
+                !(literal.eq_ignore_ascii_case("WINDOW")
+                    && self.peek_n(n + 1).kind == TokenKind::Ident
+                    && self.is_kw_at(n + 2, "AS"))
+            }
+            TokenKind::Keyword => !is_alias_excluded_keyword(&token.text),
+            _ => false,
+        }
     }
 
     /// Reports whether the CURRENT token is eligible as an EXPLICIT `AS
@@ -1339,7 +1380,6 @@ fn is_alias_excluded_keyword(name: &str) -> bool {
             | "INSERT"
             | "INTO"
             | "VALUES"
-            | "RETURNING"
             | "ON"
             | "USING"
             | "AS"
@@ -1392,6 +1432,8 @@ fn is_alias_excluded_keyword(name: &str) -> bool {
             | "DEFAULT"
             | "ALL"
             | "DISTINCT"
+            // Go's lexer maps DISTINCTROW to the same `distinct` token.
+            | "DISTINCTROW"
             | "PARTITION"
             | "WITH"
             | "WINDOW"

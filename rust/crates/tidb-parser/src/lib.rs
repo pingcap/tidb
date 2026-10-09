@@ -117,6 +117,13 @@ impl ParseError {
         if self.message.starts_with('[') {
             return self.message.clone();
         }
+        // A grammar-action terror keeps its bare message (the wire text) and
+        // its errno; Go's `terror.Error.Error()` renders `[class:code]msg`.
+        if let Some(errno) = self.errno {
+            if let Some(class) = go_terror_class(errno) {
+                return format!("[{class}:{errno}]{}", self.message);
+            }
+        }
         let near_offset = self.near_offset.min(sql.len());
         let offset = self.offset.min(sql.len());
         let line_start = sql.as_bytes()[..offset]
@@ -149,6 +156,23 @@ impl ParseError {
             "line {line} column {column} near \"{}\" ",
             &sql[near_offset..near_end]
         )
+    }
+}
+
+/// The Go terror class of each errno this parser raises through
+/// `Parser::err_coded` with a bare message.
+fn go_terror_class(errno: u16) -> Option<&'static str> {
+    match errno {
+        // parser_api.go: ErrUnknownCharacterSet, ErrSyntax and
+        // ErrWrongArguments are `terror.ClassParser`.
+        1115 | 1149 | 1210 => Some("parser"),
+        // ast/ddl.go: ErrWrongUsage (the generated-column check),
+        // ErrNoParts, ErrPartitionColumnList, ErrTooManyValues and
+        // ErrRowSinglePartitionField are `terror.ClassDDL`.
+        1221 | 1504 | 1653 | 1657 | 1658 => Some("ddl"),
+        // types/etc.go: ErrIllegalValueForType is `terror.ClassTypes`.
+        1367 => Some("types"),
+        _ => None,
     }
 }
 
@@ -298,15 +322,13 @@ fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
             // its first token (oracle: `SELECT 1 SELECT 2` errors 1064 near
             // "SELECT 2" -- go's yacc cannot reduce a second statement
             // without the `;`, and the first statement's own shape checks
-            // must not preempt the parse error).
+            // must not preempt the parse error). The reason matches
+            // `parse_multi_with_parser`'s: a token the first statement left
+            // unconsumed (Go `parseInfixExpr`'s predicate latch stops at the
+            // second LIKE of `'a' LIKE 'b' LIKE 'c'`) is a syntax error that
+            // carries a message, as Go's does.
             if !saw_semicolon {
-                let tok = p.peek();
-                return Err(crate::ParseError {
-                    message: String::new(),
-                    offset: tok.end_offset,
-                    near_offset: tok.offset,
-                    errno: None,
-                });
+                return Err(p.err_here("expected ';' between statements"));
             }
             p.parse_statement()?;
             saw_semicolon = p.is_op(";");

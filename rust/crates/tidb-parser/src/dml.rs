@@ -765,7 +765,7 @@ impl Parser {
                 }
             } else {
                 self.pos = save;
-                DeleteKind::Single(self.parse_table_ref()?)
+                DeleteKind::Single(self.parse_delete_table_ref()?)
             }
         } else {
             // Multi-table `DELETE targets FROM join`.
