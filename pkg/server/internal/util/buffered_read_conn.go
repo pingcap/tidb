@@ -16,10 +16,8 @@ package util
 
 import (
 	"bufio"
-	"io"
 	"net"
-	"sync"
-	"time"
+	"syscall"
 )
 
 // DefaultReaderSize is the default size of bufio.Reader.
@@ -29,15 +27,11 @@ const DefaultReaderSize = 16 * 1024
 type BufferedReadConn struct {
 	net.Conn
 	rb *bufio.Reader
-	// `mu` is for `IsAlive()` function.
-	// We use this to ensure that `SetReadDeadline` is not called concurrently.
-	mu *sync.Mutex
 }
 
 // NewBufferedReadConn creates a BufferedReadConn.
 func NewBufferedReadConn(conn net.Conn) *BufferedReadConn {
 	return &BufferedReadConn{
-		mu:   &sync.Mutex{},
 		Conn: conn,
 		rb:   bufio.NewReaderSize(conn, DefaultReaderSize),
 	}
@@ -48,37 +42,42 @@ func (conn BufferedReadConn) Read(b []byte) (n int, err error) {
 	return conn.rb.Read(b)
 }
 
-// Peek peeks from the connection.
-func (conn BufferedReadConn) Peek(n int) ([]byte, error) {
-	return conn.rb.Peek(n)
-}
-
 // IsAlive detects the connection is alive or not.
-// return value < 0, means unknow
+// return value < 0, means unknown
 // return value = 0, means not alive
 // return value = 1, means still alive
+//
+// It probes the underlying socket with a non-consuming peek instead of reading
+// through the shared bufio.Reader. This matters because the probe is invoked
+// from SQLKiller checkpoints on arbitrary goroutines and therefore runs
+// concurrently with the connection read loop: touching rb from both goroutines
+// corrupts the reader (see pingcap/tidb#71852), and even a synchronized peek
+// would consume protocol bytes the read loop still needs.
 func (conn BufferedReadConn) IsAlive() int {
-	if conn.mu.TryLock() {
-		defer conn.mu.Unlock()
-		err := conn.SetReadDeadline(time.Now().Add(30 * time.Microsecond))
-		if err != nil {
-			return -1
+	sc := unwrapSyscallConn(conn.Conn)
+	if sc == nil {
+		return -1
+	}
+	return probeConnAlive(sc)
+}
+
+// unwrapSyscallConn returns a syscall.Conn for c so that the peer-liveness probe
+// can work on the underlying file descriptor. TiDB wraps the raw socket with
+// BufferedReadConn and, when TLS is enabled, with a *tls.Conn, so unwrap those
+// wrappers before giving up. It returns nil when no probed connection is found.
+func unwrapSyscallConn(c net.Conn) syscall.Conn {
+	for depth := 0; c != nil && depth < 16; depth++ {
+		if sc, ok := c.(syscall.Conn); ok {
+			return sc
 		}
-		// nolint:errcheck
-		defer conn.SetReadDeadline(time.Time{})
-		// At the TCP level, a successful `Peek` operation doesn't guarantee
-		// the connection remains active. However, in the MySQL protocol,
-		// clients shouldn't send new data while the server is processing SQL.
-		// Therefore, we can safely assume `Peek` won't intercept any data
-		// during this period. Even if `Peek` does capture data, it only means
-		// the liveness check might be inaccurate - this won't impact the
-		// actual connection state or its operations.
-		_, err = conn.Peek(1)
-		if err == io.EOF {
-			return 0
-		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
-			return 1
+		switch v := c.(type) {
+		case interface{ NetConn() net.Conn }: // *tls.Conn
+			c = v.NetConn()
+		case *BufferedReadConn:
+			c = v.Conn
+		default:
+			return nil
 		}
 	}
-	return -1
+	return nil
 }
