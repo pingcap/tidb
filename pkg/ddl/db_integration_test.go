@@ -1649,6 +1649,21 @@ func TestDefaultValueAsExpressions(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	t.Run("binary expression defaults", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table binary_defaults (id int primary key, u binary(50) default (uuid()), b binary(50) default (uuid_to_bin(uuid())), v varbinary(50) default (uuid()), literal binary(4) default 'a', nullable binary(4) default null)")
+		defer tk.MustExec("drop table binary_defaults")
+		tk.MustExec("insert into binary_defaults(id) values (1), (2)")
+		tk.MustQuery("select length(u), length(b), length(v), hex(literal), nullable is null, hex(substr(u,37)) = repeat('00',14), hex(substr(b,17)) = repeat('00',34) from binary_defaults order by id").Check(testkit.Rows("50 50 36 61000000 1 1 1", "50 50 36 61000000 1 1 1"))
+		tk.MustQuery("select count(distinct u), count(distinct b) from binary_defaults").Check(testkit.Rows("2 2"))
+		tk.MustExec("alter table binary_defaults alter column u set default (uuid())")
+		tk.MustExec("insert into binary_defaults(id) values (3)")
+		tk.MustQuery("select length(u), hex(substr(u,37)) = repeat('00',14) from binary_defaults where id = 3").Check(testkit.Rows("50 1"))
+		tk.MustExec("alter table binary_defaults modify column u binary(60) default (uuid())")
+		tk.MustExec("insert into binary_defaults(id) values (4)")
+		tk.MustQuery("select length(u), hex(substr(u,37)) = repeat('00',24) from binary_defaults where id = 4").Check(testkit.Rows("60 1"))
+	})
 	tk.MustExec("drop table if exists t, t1, t2")
 
 	// date_format
