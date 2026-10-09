@@ -111,6 +111,10 @@ type BuildContext interface {
 	// GetSysdateIsNow returns a bool to determine whether Sysdate is an alias of Now function.
 	// It is the value of variable `tidb_sysdate_is_now`.
 	GetSysdateIsNow() bool
+	// IsNotNullScalarFuncEnabled returns whether `IS NOT NULL` should be built as the
+	// single `isnotnull` ScalarFunction instead of the composed `not(isnull(x))` form.
+	// It is the value of variable `tidb_enable_isnotnull_scalar_function`.
+	IsNotNullScalarFuncEnabled() bool
 	// GetNoopFuncsMode returns the noop function mode: OFF/ON/WARN values as 0/1/2.
 	GetNoopFuncsMode() int
 	// Rng is used to generate random values.

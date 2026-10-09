@@ -17,6 +17,9 @@ package issuetest
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -990,4 +993,108 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where a=-1;").Check(testkit.Rows("<nil> <nil>"))
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
+}
+
+// splitTopLevel splits an EXPLAIN operator info on the commas that separate its
+// top-level items, i.e. ignoring the commas inside a function's argument list.
+func splitTopLevel(s string) []string {
+	parts := make([]string, 0, 4)
+	depth, start := 0, 0
+	for i, c := range s {
+		switch c {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				parts = append(parts, strings.TrimSpace(s[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	return append(parts, strings.TrimSpace(s[start:]))
+}
+
+// TestIssue9965IsNotNullScalarFunction covers the single `isnotnull` ScalarFunction
+// introduced for https://github.com/pingcap/tidb/issues/9965. With
+// `tidb_enable_isnotnull_scalar_function` on, `IS NOT NULL` is built as one
+// ScalarFunction instead of `not(isnull(x))`; both the results and the shape of the
+// plan must stay the same.
+func TestIssue9965IsNotNullScalarFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b varchar(20), c datetime, d decimal(10, 2), key idx_a(a), key idx_b(b(3)))")
+	tk.MustExec("insert into t values (1, 'xyz', '2020-01-01 00:00:00', 1.5), (null, null, null, null)")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t2 values (1, 1)")
+	tk.MustExec("create table tp (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (maxvalue))")
+	tk.MustExec("insert into tp values (1, 1), (100, 2)")
+
+	queries := []string{
+		"select a, b, c, d from t where a is not null",
+		"select a from t where b is not null",
+		"select a from t where c is not null",
+		"select a from t where d is not null",
+		"select a from t where a is not null and a < 10",
+		"select b from t use index(idx_b) where b is not null",
+		"select a from t where not (a is not null)",
+		"select a is not null, b is not null, c is not null, d is not null from t order by 1, 2, 3, 4",
+		"select count(*) from t left join t2 on t.a = t2.a where t2.b is not null",
+		"select a from tp where a is not null and a < 10",
+	}
+
+	// `not(isnull(x))` and `isnotnull(x)` are the two spellings of the same predicate,
+	// so normalizing one into the other makes the two plans directly comparable.
+	composedForm := regexp.MustCompile(`not\(isnull\((.*?)\)\)`)
+	normalize := func(rows [][]any) []string {
+		normalized := make([]string, 0, len(rows))
+		for _, row := range rows {
+			cols := make([]string, 0, len(row))
+			for _, col := range row {
+				text := composedForm.ReplaceAllString(fmt.Sprintf("%v", col), "isnotnull($1)")
+				// EXPLAIN sorts a Selection's conditions by their textual form, which the
+				// rename above can change, so compare the conditions as a set.
+				parts := splitTopLevel(text)
+				slices.Sort(parts)
+				cols = append(cols, strings.Join(parts, ", "))
+			}
+			normalized = append(normalized, strings.Join(cols, " | "))
+		}
+		return normalized
+	}
+
+	tk.MustExec("set @@tidb_enable_isnotnull_scalar_function = off")
+	offResults := make([][][]any, 0, len(queries))
+	offPlans := make([][]string, 0, len(queries))
+	for _, q := range queries {
+		offResults = append(offResults, tk.MustQuery(q).Sort().Rows())
+		plan := tk.MustQuery("explain format='brief' " + q)
+		// The composed form is what plans look like when the variable is off.
+		plan.CheckNotContain("isnotnull(")
+		offPlans = append(offPlans, normalize(plan.Rows()))
+	}
+
+	tk.MustExec("set @@tidb_enable_isnotnull_scalar_function = on")
+	for i, q := range queries {
+		require.Equal(t, offResults[i], tk.MustQuery(q).Sort().Rows(), "query: %s", q)
+		plan := tk.MustQuery("explain format='brief' " + q)
+		plan.CheckNotContain("not(isnull(")
+		require.Equal(t, offPlans[i], normalize(plan.Rows()), "query: %s", q)
+	}
+
+	// The predicate really is a single ScalarFunction now, and it is still pushed down
+	// to the storage layer instead of being left as a TiDB-side selection.
+	tk.MustQuery("explain format='brief' select a from t where b is not null").
+		MultiCheckContain([]string{"cop[tikv]", "isnotnull(test.t.b)"})
+
+	// Null rejection still turns the left join into an inner join.
+	tk.MustQuery("explain format='brief' select count(*) from t left join t2 on t.a = t2.a where t2.b is not null").
+		CheckContain("inner join")
+
+	// `IS NOT NULL` on a NOT NULL column still folds away.
+	tk.MustExec("create table t3 (a int not null, key(a))")
+	tk.MustQuery("explain format='brief' select a from t3 where a is not null").
+		MultiCheckNotContain([]string{"isnotnull(", "isnull("})
 }
