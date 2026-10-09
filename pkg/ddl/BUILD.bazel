@@ -189,6 +189,7 @@ go_library(
         "//pkg/util/regionsplit",
         "//pkg/util/rowDecoder",
         "//pkg/util/rowcodec",
+        "//pkg/util/sem/compat",
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/slice",
