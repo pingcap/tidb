@@ -4837,3 +4837,40 @@ func TestTiDBDecodeKeyCommonHandleVarcharNonBin(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select tidb_decode_key('%s')", hexKey)).Check(testkit.Rows(
 		fmt.Sprintf(`{"handle":{"b":"42"},"table_id":%d}`, tbl.Meta().ID)))
 }
+
+func TestTiDBDecodeKeyCommonHandleVarcharTrailingSpaces(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	collate.SetNewCollationEnabledForTest(true)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(16) collate utf8mb4_bin not null, b varchar(16) collate utf8mb4_bin, primary key (a) /*T![clustered_index] CLUSTERED */, key ib (b))")
+	tk.MustExec("insert into t values ('hello  ', 'world  ')")
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+
+	// utf8mb4_bin is PAD SPACE: the keys hold the values without their trailing
+	// spaces, which are restored from the row value. Decoding a key alone gives
+	// the trimmed value, for the clustered handle as for a secondary index.
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, txn.Rollback()) }()
+	prefix := tablecodec.EncodeTablePrefix(tblID)
+	it, err := txn.Iter(prefix, prefix.PrefixNext())
+	require.NoError(t, err)
+	defer it.Close()
+	decoded := make([]string, 0, 2)
+	for it.Valid() && it.Key().HasPrefix(prefix) {
+		hexKey := hex.EncodeToString(codec.EncodeBytes(nil, it.Key()))
+		decoded = append(decoded, tk.MustQuery(fmt.Sprintf("select tidb_decode_key('%s')", hexKey)).Rows()[0][0].(string))
+		require.NoError(t, it.Next())
+	}
+	require.ElementsMatch(t, []string{
+		fmt.Sprintf(`{"handle":{"a":"hello"},"table_id":%d}`, tblID),
+		fmt.Sprintf(`{"index_id":%d,"index_vals":{"b":"world"},"table_id":%d}`, tbl.Meta().FindIndexByName("ib").ID, tblID),
+	}, decoded)
+	tk.MustQuery("select count(*) from t where a = 'hello'").Check(testkit.Rows("1"))
+}
