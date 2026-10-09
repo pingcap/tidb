@@ -132,15 +132,16 @@ struct Session {
 }
 
 impl QuerySession for Session {
+    fn set_collation(&mut self, collation_id: u8) -> Result<(), SqlQueryError> {
+        // Go TiDBDriver.OpenCtx applies the handshake collation (46,
+        // utf8mb4_bin) directly -- no statement -- before commands.
+        assert_eq!(collation_id, 46);
+        self.initialized = true;
+        Ok(())
+    }
+
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        if !self.initialized {
-            // Go TiDBDriver.OpenCtx applies handshake collation before commands.
-            assert_eq!(sql, "SET NAMES 'utf8mb4' COLLATE 'utf8mb4_bin'");
-            self.initialized = true;
-            return Ok(QueryResult::new(Box::new(
-                tidb_server::MaterializedResultSetSource::new(Vec::new(), Vec::new()),
-            )));
-        }
+        assert!(self.initialized, "the handshake collation precedes every command");
         assert_eq!(sql, "select id from campaign21.rows");
         Ok(QueryResult::new(Box::new(Rows {
             rows: [vec![Datum::Int(42)]].into(),

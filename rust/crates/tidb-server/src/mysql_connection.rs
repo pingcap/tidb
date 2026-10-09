@@ -1643,6 +1643,22 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     };
+    // Go `TiDBDriver.OpenCtx` runs `session.SetCollation` with the
+    // handshake's collation id as soon as the session exists, before the
+    // initial database: character_set_client/connection/results take the
+    // collation's charset and collation_connection the collation, written
+    // directly, with no statement. A pymysql client's utf8mb4 handshake
+    // therefore governs connection comparisons with utf8mb4_general_ci, not
+    // this server's bin default. An id Go does not know fails the connection.
+    if let Err(error) = engine.set_collation(response.collation) {
+        write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
+        return Ok(ConnectionReport {
+            connection_id,
+            queries: 0,
+            commands: *commands,
+            exit: ConnectionExit::SessionRejected,
+        });
+    }
     // Go's `openSessionAndDoAuth`: the handshake's initial database is applied
     // before the connection is reported ready, and a schema that does not
     // exist ends the connection with its own errno rather than the OK packet.
@@ -1666,19 +1682,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 exit: ConnectionExit::SessionRejected,
             });
         }
-    }
-    // Go `clientConn.setConn` (pkg/server/conn.go): the handshake's collation
-    // id seeds character_set_client, collation_connection and
-    // character_set_results. A pymysql client's utf8mb4 handshake therefore
-    // governs connection comparisons with utf8mb4_general_ci -- not this
-    // server's bin default. The three names ride the session's own SET NAMES
-    // validation; a registry miss leaves the defaults untouched (the client
-    // asked for something this server does not know).
-    if let Ok(collation) = tidb_datatype::get_collation_by_id(response.collation as i32) {
-        let _ = engine.execute(&format!(
-            "SET NAMES '{}' COLLATE '{}'",
-            collation.charset_name, collation.name
-        ));
     }
     write_ok(
         &mut output,

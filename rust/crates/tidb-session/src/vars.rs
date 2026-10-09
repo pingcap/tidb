@@ -3456,9 +3456,35 @@ impl SessionVars {
                     .to_owned(),
             ));
         }
+        self.set_session_from_hook(key, validated.value)?;
+        Ok(validated.truncated)
+    }
+
+    /// Go `SessionVars.SetSystemVarWithoutValidation`: stores `value` for a
+    /// registered session variable through its session hook only. No
+    /// `Validation` closure, scope check or read-only check runs, so a
+    /// caller that already holds a canonical value (Go `session.SetCollation`
+    /// seeding the handshake collation) writes it exactly as Go does.
+    pub fn set_system_var_without_validation(
+        &mut self,
+        name: &str,
+        value: String,
+    ) -> Result<(), VarError> {
+        if get_sys_var(name).is_none() {
+            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
+        }
+        self.set_session_from_hook(name.to_ascii_lowercase(), value)
+    }
+
+    /// Go `SysVar.SetSessionFromHook`: the variable's `SetSession` hook, the
+    /// stored value, and the same value for its alias. Shared by the
+    /// validating [`Self::set_system`] and
+    /// [`Self::set_system_var_without_validation`], so both writers keep the
+    /// typed fields and derived variables in lockstep.
+    fn set_session_from_hook(&mut self, key: String, value: String) -> Result<(), VarError> {
         let parsed_fix_control = if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
             Some(
-                OptimizerFixControl::parse(&validated.value)
+                OptimizerFixControl::parse(&value)
                     .map_err(|error| VarError::ValidationRefused(error.to_string()))?
                     .0,
             )
@@ -3467,7 +3493,7 @@ impl SessionVars {
         };
         let parsed_sql_mode = if key == "sql_mode" {
             Some(
-                tidb_mysql::get_sql_mode(&validated.value)
+                tidb_mysql::get_sql_mode(&value)
                     .map_err(|error| VarError::ValidationRefused(error.to_string()))?,
             )
         } else {
@@ -3475,7 +3501,7 @@ impl SessionVars {
         };
         let parsed_snapshot_ts = if key == "tidb_snapshot" || key == "tx_read_ts" {
             Some(parse_read_timestamp(
-                &validated.value,
+                &value,
                 &self.time_zone,
                 key == "tidb_snapshot",
             )?)
@@ -3483,12 +3509,12 @@ impl SessionVars {
             None
         };
         if key == tidb_vardef::tidb_vars::TIDB_DML_TYPE
-            && !validated.value.eq_ignore_ascii_case("standard")
-            && !validated.value.eq_ignore_ascii_case("bulk")
+            && !value.eq_ignore_ascii_case("standard")
+            && !value.eq_ignore_ascii_case("bulk")
         {
             return Err(VarError::ValidationRefused(format!(
                 "unsupport DML type: {}",
-                validated.value
+                value
             )));
         }
         // Go's charset/collation hooks keep each pair in lockstep. A charset
@@ -3498,25 +3524,25 @@ impl SessionVars {
         // variable. Keep the derived names in the session image so all later
         // reads observe the same side effects as Go's `SessionVars.systems`.
         let charset_default_collation = match key.as_str() {
-            "character_set_connection" => tidb_datatype::get_charset_info(&validated.value)
+            "character_set_connection" => tidb_datatype::get_charset_info(&value)
                 .ok()
                 .map(|charset| ("collation_connection", charset.default_collation)),
-            "character_set_database" => tidb_datatype::get_charset_info(&validated.value)
+            "character_set_database" => tidb_datatype::get_charset_info(&value)
                 .ok()
                 .map(|charset| ("collation_database", charset.default_collation)),
-            "character_set_server" => tidb_datatype::get_charset_info(&validated.value)
+            "character_set_server" => tidb_datatype::get_charset_info(&value)
                 .ok()
                 .map(|charset| ("collation_server", charset.default_collation)),
             _ => None,
         };
         let collation_charset = match key.as_str() {
-            "collation_connection" => tidb_datatype::get_collation_by_name(&validated.value)
+            "collation_connection" => tidb_datatype::get_collation_by_name(&value)
                 .ok()
                 .map(|collation| ("character_set_connection", collation.charset_name)),
-            "collation_database" => tidb_datatype::get_collation_by_name(&validated.value)
+            "collation_database" => tidb_datatype::get_collation_by_name(&value)
                 .ok()
                 .map(|collation| ("character_set_database", collation.charset_name)),
-            "collation_server" => tidb_datatype::get_collation_by_name(&validated.value)
+            "collation_server" => tidb_datatype::get_collation_by_name(&value)
                 .ok()
                 .map(|collation| ("character_set_server", collation.charset_name)),
             _ => None,
@@ -3525,19 +3551,18 @@ impl SessionVars {
         // its own validation skipped -- `tx_isolation` and
         // `transaction_isolation` are one value under two spellings.
         if let Some(other) = alias_of(&key) {
-            self.systems
-                .insert(other.to_owned(), validated.value.clone());
+            self.systems.insert(other.to_owned(), value.clone());
         }
-        self.systems.insert(key.clone(), validated.value.clone());
+        self.systems.insert(key.clone(), value.clone());
         if let Some(ts) = parsed_snapshot_ts {
             if key == "tidb_snapshot" {
                 self.snapshot_ts = ts;
-                if !validated.value.is_empty() {
+                if !value.is_empty() {
                     self.set_txn_read_ts(0);
                 }
             } else {
                 self.set_txn_read_ts(ts);
-                if !validated.value.is_empty() {
+                if !value.is_empty() {
                     self.snapshot_ts = 0;
                 }
             }
@@ -3555,41 +3580,36 @@ impl SessionVars {
             self.note_system_change(name);
         }
         if key == "autocommit" {
-            self.autocommit = validated.value == "ON";
+            self.autocommit = value == "ON";
         }
         if let Some(parsed) = parsed_sql_mode {
             self.sql_mode = parsed;
         }
         if key == "max_allowed_packet" {
-            self.max_allowed_packet = validated
-                .value
+            self.max_allowed_packet = value
                 .parse::<u64>()
                 .expect("max_allowed_packet validation stores unsigned decimal bytes");
         }
         if key == "tidb_max_keys_read" {
-            self.max_keys_read = validated
-                .value
+            self.max_keys_read = value
                 .parse::<u64>()
                 .expect("tidb_max_keys_read validation stores unsigned decimal keys");
         }
         if key == "max_execution_time" {
-            self.max_execution_time = validated
-                .value
+            self.max_execution_time = value
                 .parse::<u64>()
                 .expect("max_execution_time validation stores unsigned decimal milliseconds");
         }
         if key == "time_zone" {
-            self.time_zone = resolve_session_time_zone_value(&validated.value);
+            self.time_zone = resolve_session_time_zone_value(&value);
         }
         if key == "sql_select_limit" {
-            self.select_limit = validated
-                .value
+            self.select_limit = value
                 .parse::<u64>()
                 .expect("sql_select_limit validation stores unsigned decimal rows");
         }
         if key == tidb_vardef::tidb_vars::TIDB_OPT_SELECTIVITY_FACTOR {
-            self.selectivity_factor = validated
-                .value
+            self.selectivity_factor = value
                 .parse::<f64>()
                 .expect("selectivity factor validation stores a decimal fraction");
         }
@@ -3597,68 +3617,61 @@ impl SessionVars {
             self.multi_statement_mode = Self::multi_statement_mode_from_systems(&self.systems);
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE {
-            self.enable_prepared_plan_cache = validated.value == "ON";
+            self.enable_prepared_plan_cache = value == "ON";
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE {
-            self.enable_shared_lock_upgrade = validated.value == "ON";
+            self.enable_shared_lock_upgrade = value == "ON";
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION {
-            self.shared_lock_promotion = validated.value == "ON";
+            self.shared_lock_promotion = value == "ON";
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION {
-            self.enable_window_function = validated.value == "ON";
+            self.enable_window_function = value == "ON";
         }
         if key == tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE {
-            self.enable_mview = validated.value == "ON";
+            self.enable_mview = value == "ON";
         }
         if key == tidb_vardef::tidb_vars::TIDB_QUERY_COP_STORE_LIMIT {
-            self.query_cop_store_limit = validated
-                .value
+            self.query_cop_store_limit = value
                 .parse::<i64>()
                 .expect("query cop store limit validation stores an integer");
         }
         if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN {
-            self.ti_flash_max_bytes_before_ext_join = validated
-                .value
+            self.ti_flash_max_bytes_before_ext_join = value
                 .parse::<i64>()
                 .expect("TiFlash external join threshold validation stores signed bytes");
         }
         if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY {
-            self.ti_flash_max_bytes_before_ext_agg = validated
-                .value
+            self.ti_flash_max_bytes_before_ext_agg = value
                 .parse::<i64>()
                 .expect("TiFlash external group-by threshold validation stores signed bytes");
         }
         if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT {
-            self.ti_flash_max_bytes_before_ext_sort = validated
-                .value
+            self.ti_flash_max_bytes_before_ext_sort = value
                 .parse::<i64>()
                 .expect("TiFlash external sort threshold validation stores signed bytes");
         }
         if key == tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE {
-            self.ti_flash_mem_quota_query_per_node = validated
-                .value
+            self.ti_flash_mem_quota_query_per_node = value
                 .parse::<i64>()
                 .expect("TiFlash per-node quota validation stores signed bytes");
         }
         if key == tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO {
-            self.ti_flash_query_spill_ratio = validated
-                .value
+            self.ti_flash_query_spill_ratio = value
                 .parse::<f64>()
                 .expect("TiFlash spill ratio validation stores a decimal fraction");
         }
         if key == tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING {
-            self.pessimistic_transaction_fair_locking = validated.value == "ON";
+            self.pessimistic_transaction_fair_locking = value == "ON";
         }
         if key == tidb_vardef::tidb_vars::TIDB_DML_TYPE {
-            self.bulk_dml_enabled = validated.value.eq_ignore_ascii_case("bulk");
+            self.bulk_dml_enabled = value.eq_ignore_ascii_case("bulk");
         }
         if key == tidb_vardef::tidb_vars::TIDB_REPLICA_READ {
             self.replica_read = Self::replica_read_from_systems(&self.systems);
         }
         if key == tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE {
-            self.analyze_store_batch_size = validated
-                .value
+            self.analyze_store_batch_size = value
                 .parse::<i64>()
                 .expect("analyze store batch size validation stores an integer");
         }
@@ -3666,7 +3679,7 @@ impl SessionVars {
         if let Some(parsed) = parsed_fix_control {
             self.optimizer_fix_control = parsed;
         }
-        Ok(validated.truncated)
+        Ok(())
     }
 
     /// `SET GLOBAL name = value`: writes only the shared table, never this

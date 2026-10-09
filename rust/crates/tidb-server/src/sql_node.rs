@@ -1422,6 +1422,17 @@ pub trait QuerySession {
     /// Sessions that keep no schema of their own do nothing, which leaves
     /// them exactly as they were.
     fn deselect_database(&mut self) {}
+
+    /// Seeds the connection charset and collation from the handshake's
+    /// collation id (Go `session.SetCollation`, run by
+    /// `TiDBDriver.OpenCtx`). Go writes the session variables directly and
+    /// issues no statement; an id outside Go's collation table fails the
+    /// connection with Go's `GetCharsetInfoByID` error.
+    ///
+    /// Sessions that keep no charset variables of their own do nothing.
+    fn set_collation(&mut self, _collation_id: u8) -> Result<(), SqlQueryError> {
+        Ok(())
+    }
 }
 
 /// Go `mysql.ErrBadDB` (1049): the errno a schema that does not exist gets.

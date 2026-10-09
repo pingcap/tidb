@@ -32,12 +32,15 @@ const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 struct Session;
 
 impl QuerySession for Session {
-    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        // Go TiDBDriver.OpenCtx installs the handshake collation before commands.
-        assert_eq!(sql, "SET NAMES 'utf8mb4' COLLATE 'utf8mb4_bin'");
-        Ok(QueryResult::new(Box::new(
-            tidb_server::MaterializedResultSetSource::new(Vec::new(), Vec::new()),
-        )))
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        unreachable!("these sessions only log in; Go's login issues no statement")
+    }
+
+    fn set_collation(&mut self, collation_id: u8) -> Result<(), SqlQueryError> {
+        // Go TiDBDriver.OpenCtx installs the handshake collation (46,
+        // utf8mb4_bin) directly, before commands.
+        assert_eq!(collation_id, 46);
+        Ok(())
     }
 }
 

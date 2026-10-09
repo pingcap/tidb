@@ -1260,10 +1260,9 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     assert_eq!(report.commands.stmt_close_commands, 0);
     assert_eq!(
         queries.lock().unwrap().as_slice(),
-        [
-            "SET NAMES 'utf8mb4' COLLATE 'utf8mb4_bin'",
-            "select balance as amount, id from campaign20.rows\0"
-        ]
+        // Go's login seeds the handshake collation with `SetCollation`, not
+        // a statement, so the client's query is the only one executed.
+        ["select balance as amount, id from campaign20.rows\0"]
     );
     let lifecycle = lifecycle.lock().unwrap();
     assert_eq!(lifecycle.finished, 1);

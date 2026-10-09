@@ -137,6 +137,34 @@ fn authenticate_with_capabilities(
     reader: &mut PacketReader<TcpStream>,
     additional_capabilities: u32,
 ) {
+    let reply = handshake_reply(client, reader, additional_capabilities, 46);
+    assert_eq!(reply[0], 0, "auth OK");
+    // This handshake carries NO initial database, which is what a client
+    // started without `-D` sends. Go leaves `CurrentDB` empty in that state
+    // (`preprocess.go handleTableName` raises `ErrNoDB` for every unqualified
+    // name), so a schema has to be chosen before the unqualified statements
+    // below can run -- exactly as a real client must. This used to be
+    // unnecessary only because the node defaulted the session into `test`
+    // itself.
+    let mut use_test = vec![COM_QUERY];
+    use_test.extend_from_slice(b"USE test");
+    write_packet(client, 0, &use_test);
+    reader.set_sequence(1);
+    assert_eq!(
+        reader.read_packet().unwrap()[0],
+        0,
+        "USE test answers with an OK packet"
+    );
+}
+
+/// Sends alice's HandshakeResponse41 carrying `collation` and returns the
+/// server's reply to it: the OK packet, or the ERR that refused the login.
+fn handshake_reply(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    additional_capabilities: u32,
+    collation: u8,
+) -> Vec<u8> {
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
     assert_eq!(
@@ -154,7 +182,7 @@ fn authenticate_with_capabilities(
     let mut response = Vec::new();
     response.extend_from_slice(&capabilities.to_le_bytes());
     response.extend_from_slice(&(DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
-    response.push(46);
+    response.push(collation);
     response.extend_from_slice(&[0; 23]);
     response.extend_from_slice(b"alice");
     response.push(0);
@@ -165,23 +193,7 @@ fn authenticate_with_capabilities(
     response.push(0);
     write_packet(client, 1, &response);
     reader.set_sequence(2);
-    assert_eq!(reader.read_packet().unwrap()[0], 0, "auth OK");
-    // This handshake carries NO initial database, which is what a client
-    // started without `-D` sends. Go leaves `CurrentDB` empty in that state
-    // (`preprocess.go handleTableName` raises `ErrNoDB` for every unqualified
-    // name), so a schema has to be chosen before the unqualified statements
-    // below can run -- exactly as a real client must. This used to be
-    // unnecessary only because the node defaulted the session into `test`
-    // itself.
-    let mut use_test = vec![COM_QUERY];
-    use_test.extend_from_slice(b"USE test");
-    write_packet(client, 0, &use_test);
-    reader.set_sequence(1);
-    assert_eq!(
-        reader.read_packet().unwrap()[0],
-        0,
-        "USE test answers with an OK packet"
-    );
+    reader.read_packet().unwrap()
 }
 
 /// Reads a protocol length-encoded string, including the multi-byte length
@@ -1713,6 +1725,86 @@ fn system_variable_scope_errors_reach_text_and_prepare_wire() {
     assert_eq!(report.commands.stmt_prepare_commands, 2);
     assert_eq!(report.commands.stmt_prepare_successes, 0);
     assert_eq!(report.exit, ConnectionExit::Quit);
+}
+
+/// Go `TiDBDriver.OpenCtx` seeds the connection charset variables from the
+/// handshake collation id with `session.SetCollation`: a direct write, with
+/// no statement and no validation. Collation 8 (`latin1_swedish_ci`) is not
+/// one the new collation framework supports, so Go stores `latin1` for the
+/// client and results charsets and substitutes `utf8mb4_bin` for the
+/// collation, whose hook then makes `character_set_connection` `utf8mb4`.
+/// The substitution belongs to `SetCollation` alone; no `SET NAMES`
+/// statement produces this state.
+///
+/// An id outside Go's collation table is Go's `GetCharsetInfoByID` error,
+/// which `OpenCtx` returns, so the login is refused with it.
+#[test]
+fn the_handshake_collation_seeds_the_charset_variables_as_go_set_collation() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let store = users();
+        let factory = PipelineSessionFactory::with_configured_store(&store);
+        let mut reports = Vec::new();
+        for _ in 0..2 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            reports.push(
+                serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    &factory,
+                    &store,
+                    &worker_tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+                .unwrap(),
+            );
+        }
+        reports
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    assert_eq!(
+        handshake_reply(&mut client, &mut reader, 0, 8)[0],
+        0,
+        "auth OK"
+    );
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT @@character_set_client, @@character_set_connection, \
+             @@character_set_results, @@collation_connection",
+        ),
+        vec![vec![
+            "latin1".to_owned(),
+            "utf8mb4".to_owned(),
+            "latin1".to_owned(),
+            "utf8mb4_bin".to_owned(),
+        ]]
+    );
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    assert_error_packet_exact(
+        &handshake_reply(&mut client, &mut reader, 0, 0),
+        1105,
+        b"HY000",
+        "Unknown collation id 0",
+    );
+    drop(client);
+
+    let reports = worker.join().unwrap();
+    // The login itself is not a statement: only the one SELECT counts.
+    assert_eq!(reports[0].commands.text_query_commands, 1);
+    assert_eq!(reports[0].exit, ConnectionExit::Quit);
+    assert_eq!(reports[1].exit, ConnectionExit::SessionRejected);
 }
 
 /// Cursor materialization is part of the executing statement's memory

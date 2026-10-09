@@ -1865,6 +1865,49 @@ impl Session {
         self.vars.set_system(name, value.into()).map(|_| ())
     }
 
+    /// Go `session.SetCollation` (`pkg/session/session.go`), which
+    /// `TiDBDriver.OpenCtx` runs with the handshake's collation id before the
+    /// connection authenticates. The charset and collation are written
+    /// straight into the session variables, without validation and without a
+    /// statement, so the login touches no statement counter, warning buffer
+    /// or statement-observability state.
+    ///
+    /// An id outside Go's collation table is Go's `GetCharsetInfoByID` error,
+    /// which fails the connection; its text is the error's whole diagnostic.
+    pub fn set_collation(&mut self, collation_id: i32) -> Result<(), String> {
+        let (charset, collation, error) = tidb_datatype::get_charset_info_by_id(collation_id);
+        if let Some(error) = error {
+            // Go logs this inside `GetCharsetInfoByID`; tidb-datatype has no
+            // logger, so the warning is raised by its caller here.
+            tidb_log::warn(
+                &format!(
+                    "unable to get collation name from collation ID, return default charset and collation instead ID={collation_id}"
+                ),
+                &[],
+            );
+            return Err(error.to_string());
+        }
+        // If new collations are enabled, switch to the default collation if
+        // this one is not supported.
+        let collation = tidb_datatype::substitute_missing_collation_to_default(&collation);
+        for name in [
+            "character_set_client",
+            "character_set_connection",
+            "character_set_results",
+        ] {
+            if let Err(error) = self
+                .vars
+                .set_system_var_without_validation(name, charset.clone())
+            {
+                // Go `terror.Log`: logged at error level, not returned.
+                tidb_log::error(&format!("encountered error: {error:?}"), &[]);
+            }
+        }
+        self.vars
+            .set_system_var_without_validation("collation_connection", collation)
+            .map_err(|error| format!("{error:?}"))
+    }
+
     /// Installs the hosting server's start timestamp (Go
     /// `ServerInfo.StartTimestamp`), the `Uptime` provider's input.
     pub fn set_server_start_timestamp(&mut self, unix_seconds: i64) {

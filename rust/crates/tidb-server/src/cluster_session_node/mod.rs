@@ -7650,6 +7650,12 @@ impl QuerySession for ClusterServerSession {
         self.session.deselect_database();
     }
 
+    fn set_collation(&mut self, collation_id: u8) -> Result<(), SqlQueryError> {
+        self.session
+            .set_collation(i32::from(collation_id))
+            .map_err(SqlQueryError::unknown)
+    }
+
     fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
         self.rebuild_catalog_if_stale();
         self.session.select_database(name).map_err(map_error)
