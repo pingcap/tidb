@@ -14,6 +14,7 @@ fn try_sql(session: &mut Session, sql: &str) -> String {
                             format!("s:{}", String::from_utf8_lossy(v.bytes()))
                         }
                         tidb_datatype::Datum::Null => "Null".to_owned(),
+                        tidb_datatype::Datum::Json(v) => format!("j:{v}"),
                         other => format!("{other:?}"),
                     })
                     .collect::<Vec<_>>()
@@ -36,7 +37,8 @@ fn one_and_all_modes() {
             &mut session,
             "select json_search('{\"a\": \"xyz\", \"b\": \"abc\"}', 'one', '%y%')"
         ),
-        "s:\"$.a\""
+        // JSON_SEARCH returns JSON, as in Go: the path is a JSON string.
+        "j:\"$.a\""
     );
 
     // 'all': every matching path.
@@ -45,7 +47,7 @@ fn one_and_all_modes() {
             &mut session,
             "select json_search('{\"a\": \"xy\", \"b\": \"xy\"}', 'all', 'xy')"
         ),
-        "s:[\"$.a\", \"$.b\"]"
+        "j:[\"$.a\", \"$.b\"]"
     );
 
     // No match: NULL.

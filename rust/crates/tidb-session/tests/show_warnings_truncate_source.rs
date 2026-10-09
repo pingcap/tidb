@@ -44,5 +44,8 @@ fn truncation_warning_is_visible_through_show_warnings() {
         strings(&mut session, "show warnings"),
         vec!["Warning|1406|Data too long for column 'b' at row 1"]
     );
-    assert_eq!(strings(&mut session, "select @@warning_count"), vec!["1"]);
+    // Go's `warning_count` is a TypeStr session variable, and
+    // `rewriteSystemVariable` builds its constant from `GetNativeValType`:
+    // the value is the STRING '1', which this helper prints quoted.
+    assert_eq!(strings(&mut session, "select @@warning_count"), vec!["'1'"]);
 }

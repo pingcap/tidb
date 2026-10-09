@@ -43,7 +43,8 @@ fn limit_bound_edges() {
     // Offset 2 with a large count: only the remainder.
     assert_eq!(rows(&mut session, "select id from t limit 2, 100"), "i:3");
 
-    // Negative bound refuses at parse.
+    // Negative bound refuses at parse: Go's parser answers 1064 near "-1".
     let error = rows(&mut session, "select id from t limit -1");
-    assert!(error.contains("integer literal"), "{error}");
+    assert!(error.contains("You have an error in your SQL syntax"), "{error}");
+    assert!(error.contains("near \"-1\""), "{error}");
 }

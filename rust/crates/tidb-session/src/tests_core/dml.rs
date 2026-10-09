@@ -662,9 +662,10 @@ fn update_ignore_downgrades_a_value_error_to_a_warning() {
     );
     assert_eq!(session.warnings().len(), 1);
     assert_eq!(session.warnings()[0].code, 1406);
+    // Go's UPDATE IGNORE keeps the conversion's own text.
     assert_eq!(
         session.warnings()[0].message,
-        "Data too long for column 'v' at row 1"
+        "Data Too Long, field len 2, data len 4"
     );
     assert_eq!(
         row_text(session.run("SELECT v FROM update_ignore WHERE id = 1")),

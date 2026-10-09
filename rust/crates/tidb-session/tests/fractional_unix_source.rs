@@ -28,6 +28,10 @@ fn try_sql(session: &mut Session, sql: &str) -> String {
 #[test]
 fn fractional_timestamp_scale() {
     let mut session = Session::new();
+    // The epoch values below are 2024-01-01 00:00:00 at UTC+8. UNIX_TIMESTAMP
+    // reads its argument in the session zone, which defaults to the host's
+    // (`SYSTEM`), so pin the zone instead of depending on the machine.
+    session.run("SET time_zone = '+08:00'").unwrap();
 
     // An integral timestamp is an integer.
     assert_eq!(

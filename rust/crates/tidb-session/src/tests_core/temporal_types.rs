@@ -122,7 +122,8 @@ fn in_casts_every_candidate_to_the_first_arguments_temporal_domain() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SELECT d IN (ds), t = ts, t IN (ts) FROM in_time")),
-        [["1", "0", "1"]]
+        // Captured from Go TiDB: TIME IN (VARCHAR) answers what `t = ts` does.
+        [["1", "0", "0"]]
     );
 }
 

@@ -350,7 +350,7 @@ fn rand_seed_sysvars_seed_the_generator_and_always_read_back_as_zero() {
 ///       `ProduceDecWithSpecifiedTp`'s clamp, which `tidb-expr`'s
 ///       `report_decimal_production` now raises.
 #[test]
-fn float_to_decimal_matches_gos_values_but_not_yet_its_from_float64_warning() {
+fn float_to_decimal_matches_gos_values_and_warnings() {
     let mut session = Session::new();
 
     // Captured from TiDB.
@@ -381,15 +381,23 @@ fn float_to_decimal_matches_gos_values_but_not_yet_its_from_float64_warning() {
             [["99999999999999999999999999999999999999999999999999999999999999999"]],
             "{sql}"
         );
-        // Go reports 1292 and THEN 1690 here; only the 1690 is modelled,
-        // and the missing 1292 is `FromFloat64`'s discarded error.
+        // Go reports the truncated DECIMAL input (1292) and THEN the range
+        // overflow (1690).
+        let input = if sql.contains("1e308") { "1e+308" } else { "1e+300" };
         assert_eq!(
             row_text(session.run("SHOW WARNINGS")),
-            [[
-                "Warning".to_owned(),
-                "1690".to_owned(),
-                "DECIMAL value is out of range in '(65, 0)'".to_owned()
-            ]],
+            [
+                [
+                    "Warning".to_owned(),
+                    "1292".to_owned(),
+                    format!("Truncated incorrect DECIMAL value: '{input}'")
+                ],
+                [
+                    "Warning".to_owned(),
+                    "1690".to_owned(),
+                    "DECIMAL value is out of range in '(65, 0)'".to_owned()
+                ]
+            ],
             "{sql}"
         );
     }

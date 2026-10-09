@@ -10008,13 +10008,16 @@ fn generated_write_policy_reaches_cluster_storage_and_prepared_execution() {
             &[tidb_protocol::PreparedValue::SignedLongLong(2000)],
         )
         .unwrap();
+    // Go answers a non-strict UPDATE's generated-column overflow with the
+    // conversion's own warning, not INSERT's 1264: `castColumnValue` hands
+    // `ErrOverflow` ("constant %v overflows %s", 1690) to
+    // `TypeCtx.HandleTruncate`, which under TruncateAsWarning appends it and
+    // returns nil, so `handleUpdateError`'s 1264 mapping never sees an
+    // error. Captured from Go TiDB on this exact sequence:
+    // `[[Warning 1690 constant 2000 overflows tinyint]]`.
     assert_eq!(
         displayed(rows(&mut session, "SHOW WARNINGS")),
-        [[
-            "Warning",
-            "1264",
-            "Out of range value for column 'b' at row 1"
-        ]]
+        [["Warning", "1690", "constant 2000 overflows tinyint"]]
     );
     assert_eq!(
         displayed(rows(&mut session, "SELECT a,b FROM generated_policy")),

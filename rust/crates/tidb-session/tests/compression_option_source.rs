@@ -29,12 +29,18 @@ fn alter_replaces_compression_and_last_wins() {
         "fresh table must not print COMPRESSION"
     );
 
-    session.run("alter table t compression = 'lz4'").unwrap();
+    // Go has no ALTER TABLE action for COMPRESSION: `[ddl:8200]This type of
+    // ALTER TABLE is currently unsupported`, and the table is unchanged.
+    let error = session
+        .run("alter table t compression = 'lz4'")
+        .expect_err("Go refuses ALTER TABLE ... COMPRESSION");
     assert!(
-        strings(&mut session, "show create table t").contains("COMPRESSION='lz4'"),
-        "{:?}",
-        strings(&mut session, "show create table t")
+        error
+            .to_string()
+            .contains("This type of ALTER TABLE is currently unsupported"),
+        "{error}"
     );
+    assert!(!strings(&mut session, "show create table t").contains("COMPRESSION="));
 
     // Several options at CREATE: the last one wins (Go's loop overwrites).
     session

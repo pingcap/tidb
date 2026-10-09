@@ -36,12 +36,14 @@ fn time_boundary_writes() {
     session.run("insert into t values (1, '838:59:59')").unwrap();
     assert_eq!(rows(&mut session, "select tm from t"), "838:59:59");
 
-    // An over-long value is refused under strict mode (1264).
+    // An over-long value is refused under strict mode with Go's 1292.
     let error = session
         .run("insert into t values (2, '839:00:00')")
         .expect_err("839 hours is out of range");
     assert!(
-        error.to_string().contains("Out of range value for column 'tm' at row 1"),
+        error
+            .to_string()
+            .contains("Incorrect time value: '839:00:00' for column 'tm' at row 1"),
         "{error}"
     );
 
