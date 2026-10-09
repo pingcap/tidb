@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"os"
 	"reflect"
@@ -54,6 +55,206 @@ func TestBooleanMatchTiFlashE2E(t *testing.T) {
 	t.Run("collations", f.testCollations)
 	t.Run("review_regressions", f.testReviewRegressions)
 	t.Run("token_semantics", f.testTokenSemantics)
+}
+
+func TestLocalMatchRandomDifferentialTiFlashE2E(t *testing.T) {
+	dsn := os.Getenv("TIDB_FTS_E2E_DSN")
+	if dsn == "" {
+		t.Skip("set TIDB_FTS_E2E_DSN to run the deterministic differential matrix")
+	}
+	f := newFixture(t, dsn)
+	rng := rand.New(rand.NewPCG(70484, 70485))
+	words := []string{"foo", "bar", "baz", "cafe", "CAFE", "café", "the", "The", "tidb", "TiDB", "数据", "𞤀bar", "foo_bar", "𝟙𝟚𝟛", "a", "an", "on"}
+	separators := []string{" ", ".", ",", "🙃", "👁", "-", "/", "\u0301"}
+	rows := []string{"VALUES (1, NULL, NULL, NULL, NULL, NULL)", "VALUES (2, '', '', '', '', '')"}
+	for id := 3; id <= 66; id++ {
+		var text strings.Builder
+		for j, n := 0, 2+rng.IntN(20); j < n; j++ {
+			if j > 0 {
+				text.WriteString(separators[rng.IntN(len(separators))])
+			}
+			text.WriteString(words[rng.IntN(len(words))])
+		}
+		body := strings.ReplaceAll(text.String(), "'", "''")
+		rows = append(rows, fmt.Sprintf("VALUES (%d, '%s', '%s', '%s', '%s', '%s')", id, body, body, body, body, body))
+	}
+	collations := []string{"utf8mb4_bin", "utf8mb4_0900_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci"}
+	queries := []string{"+foo foo.bar", "+foo -foo.bar", "+foo +bar", `+foo +"foo bar"`, "+foo -the", "+foo +caf*"}
+	for len(queries) < 24 {
+		query := "+foo"
+		for j, n := 0, 1+rng.IntN(4); j < n; j++ {
+			modifier := []string{"", "+", "-"}[rng.IntN(3)]
+			term := words[rng.IntN(len(words))]
+			switch rng.IntN(4) {
+			case 0:
+				term += "." + words[rng.IntN(len(words))]
+			case 1:
+				term = `"` + term + " " + words[rng.IntN(len(words))] + `"`
+			case 2:
+				term += "*"
+			}
+			query += " " + modifier + term
+		}
+		queries = append(queries, query)
+	}
+	for _, parser := range []string{"standard", "ngram"} {
+		var ddl strings.Builder
+		ddl.WriteString("CREATE TABLE %s (id INT PRIMARY KEY")
+		for i, collation := range collations {
+			fmt.Fprintf(&ddl, ", c%d TEXT COLLATE %s, FULLTEXT INDEX ft%d(c%d)", i, collation, i, i)
+			if parser == "ngram" {
+				ddl.WriteString(" WITH PARSER NGRAM")
+			}
+		}
+		ddl.WriteString(")")
+		family := "random_" + parser
+		f.makePair(family, ddl.String(), rows)
+		for i, collation := range collations {
+			for _, stopword := range []string{"ON", "OFF"} {
+				for _, conn := range []*sql.Conn{f.native, f.local} {
+					f.exec(conn, "SET SESSION innodb_ft_enable_stopword="+stopword)
+					f.exec(conn, "SET SESSION collation_server='"+collation+"'")
+				}
+				for j, search := range queries {
+					t.Run(fmt.Sprintf("%s/%s/stopword_%s/query_%02d", parser, collation, stopword, j), func(t *testing.T) {
+						predicate := fmt.Sprintf("MATCH(c%d) AGAINST('%s' IN BOOLEAN MODE)", i, search)
+						nativeSQL := "SELECT id FROM " + family + "_native WHERE " + predicate
+						localSQL := "SELECT id FROM " + family + "_local WHERE " + predicate
+						assertPlan(t, f.native, nativeSQL, true)
+						assertPlan(t, f.local, localSQL, false)
+						a, b := queryIDs(t, f.native, nativeSQL), queryIDs(t, f.local, localSQL)
+						if !reflect.DeepEqual(a, b) {
+							t.Fatalf("seed=70484/70485 query=%q TiFlash=%v TiDB=%v", search, a, b)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestLocalMatchSnapshotTiFlashE2E(t *testing.T) {
+	dsn := os.Getenv("TIDB_FTS_E2E_DSN")
+	if dsn == "" {
+		t.Skip("set TIDB_FTS_E2E_DSN to run snapshot isolation checks")
+	}
+	f := newFixture(t, dsn)
+	f.makePair("snapshot_docs", `CREATE TABLE %s (id INT PRIMARY KEY, body TEXT, FULLTEXT INDEX ft(body))`,
+		[]string{"VALUES (1, 'foo')", "VALUES (2, 'bar')"})
+	query := func(table string) string {
+		return "SELECT id FROM " + table + " WHERE MATCH(body) AGAINST('+foo' IN BOOLEAN MODE)"
+	}
+	for _, conn := range []*sql.Conn{f.native, f.local} {
+		f.exec(conn, "BEGIN")
+		defer func() { _, _ = conn.ExecContext(context.Background(), "ROLLBACK") }()
+	}
+	assertPlan(t, f.native, query("snapshot_docs_native"), true)
+	assertPlan(t, f.local, query("snapshot_docs_local"), false)
+	for _, path := range []struct {
+		conn  *sql.Conn
+		table string
+	}{{f.native, "snapshot_docs_native"}, {f.local, "snapshot_docs_local"}} {
+		if got := queryIDs(t, path.conn, query(path.table)); !reflect.DeepEqual(got, []int{1}) {
+			t.Fatalf("initial snapshot %s: %v", path.table, got)
+		}
+	}
+	var snapshot string
+	must(t, f.native.QueryRowContext(context.Background(), "SELECT @@tidb_current_ts").Scan(&snapshot))
+	latestNative, latestLocal := f.connect(), f.connect()
+	for _, path := range []struct {
+		conn   *sql.Conn
+		engine string
+	}{{latestNative, "tiflash"}, {latestLocal, "tikv"}} {
+		f.exec(path.conn, "SET SESSION tidb_enable_local_match_against=ON")
+		f.exec(path.conn, "SET SESSION tidb_allow_tiflash_cop=ON")
+		f.exec(path.conn, "SET SESSION tidb_isolation_read_engines='"+path.engine+"'")
+	}
+	// Both read transactions stay open while a different connection commits
+	// atomic changes to both tables. Hand-stepped commits give exact expected
+	// results without racing two unrelated latest-read timestamps.
+	for step := 1; step <= 7; step++ {
+		f.exec(f.admin, "BEGIN")
+		for _, table := range []string{"snapshot_docs_native", "snapshot_docs_local"} {
+			f.exec(f.admin, "DELETE FROM "+table+" WHERE id=3")
+			if step%2 == 1 {
+				f.exec(f.admin, "UPDATE "+table+" SET body=IF(id=1,'bar','foo')")
+				f.exec(f.admin, "INSERT INTO "+table+" VALUES (3,'foo')")
+			} else {
+				f.exec(f.admin, "UPDATE "+table+" SET body=IF(id=1,'foo','bar')")
+			}
+		}
+		f.exec(f.admin, "COMMIT")
+		for _, path := range []struct {
+			conn  *sql.Conn
+			table string
+		}{{f.native, "snapshot_docs_native"}, {f.local, "snapshot_docs_local"}} {
+			if got := queryIDs(t, path.conn, query(path.table)); !reflect.DeepEqual(got, []int{1}) {
+				t.Fatalf("step %d repeatable read %s: %v", step, path.table, got)
+			}
+		}
+		want := []int{1}
+		if step%2 == 1 {
+			want = []int{2, 3}
+		}
+		for _, path := range []struct {
+			conn  *sql.Conn
+			table string
+		}{{latestNative, "snapshot_docs_native"}, {latestLocal, "snapshot_docs_local"}} {
+			if got := queryIDs(t, path.conn, query(path.table)); !reflect.DeepEqual(got, want) {
+				t.Fatalf("step %d latest read %s: want %v got %v", step, path.table, want, got)
+			}
+		}
+	}
+	for _, path := range []struct {
+		conn  *sql.Conn
+		table string
+	}{{f.native, "snapshot_docs_native"}, {f.local, "snapshot_docs_local"}} {
+		f.exec(path.conn, "ROLLBACK")
+		f.exec(path.conn, "SET SESSION tidb_snapshot='"+snapshot+"'")
+		defer func() { _, _ = path.conn.ExecContext(context.Background(), "SET SESSION tidb_snapshot=''") }()
+		if got := queryIDs(t, path.conn, query(path.table)); !reflect.DeepEqual(got, []int{1}) {
+			t.Fatalf("historical snapshot %s: %v", path.table, got)
+		}
+	}
+}
+
+func TestLocalMatchLargeDocumentsTiFlashE2E(t *testing.T) {
+	dsn := os.Getenv("TIDB_FTS_E2E_DSN")
+	if dsn == "" {
+		t.Skip("set TIDB_FTS_E2E_DSN to run bounded large-document checks")
+	}
+	f := newFixture(t, dsn)
+	documents := []string{strings.Repeat("foo bar 数据 café ", 8192), strings.Repeat("bar baz 科学 CAFE ", 8192),
+		strings.Repeat("baz_qux ", 32768), strings.Repeat("foo_bar ", 32768), strings.Repeat("foo ", 32768) + "foo𞤀bar"}
+	rows := []string{"VALUES (6, NULL)"}
+	totalBytes := 0
+	for i, body := range documents {
+		totalBytes += len(body)
+		rows = append(rows, fmt.Sprintf("VALUES (%d, '%s')", i+1, body))
+	}
+	f.makePair("large_docs", `CREATE TABLE %s (id INT PRIMARY KEY, body MEDIUMTEXT COLLATE utf8mb4_bin, FULLTEXT INDEX ft(body))`, rows)
+	for i, tc := range []struct {
+		search string
+		want   []int
+	}{{"+foo", []int{1, 5}}, {"+数据", []int{}}, {`+"foo bar"`, []int{1}}, {"+foo*", []int{1, 4, 5}},
+		{"foo.bar", []int{1, 2, 5}}, {"+foo -bar", []int{5}}, {"+foo" + strings.Repeat(" bar", 256), []int{1, 5}}} {
+		t.Run(fmt.Sprintf("query_%d", i), func(t *testing.T) {
+			for _, path := range []struct {
+				conn   *sql.Conn
+				table  string
+				native bool
+			}{{f.native, "large_docs_native", true}, {f.local, "large_docs_local", false}} {
+				query := "SELECT id FROM " + path.table + " WHERE MATCH(body) AGAINST('" + tc.search + "' IN BOOLEAN MODE)"
+				assertPlan(t, path.conn, query, path.native)
+				start := time.Now()
+				got := queryIDs(t, path.conn, query)
+				t.Logf("%s: document_bytes=%d query_bytes=%d elapsed=%s", path.table, totalBytes, len(tc.search), time.Since(start))
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("%s: want %v got %v", path.table, tc.want, got)
+				}
+			}
+		})
+	}
 }
 
 // Run this separately against a freshly bootstrapped old-collation cluster.
