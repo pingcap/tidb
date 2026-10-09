@@ -713,3 +713,65 @@ fn an_index_join_compares_the_appended_handle_slot() {
         assert_eq!(row_text(session.run(&sql)), vec![vec!["33"]], "{sql}");
     }
 }
+
+/// Go `ExtractTableAlias` gives an alias whose names carry no database, a
+/// derived table's, the current database -- the one the hint's own table
+/// defaulted to -- so `INL_JOIN(tmp)` matches the aggregated subquery and
+/// drives an index join through it instead of warning that no table matches.
+#[test]
+fn an_index_join_hint_matches_a_derived_table_alias() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t (a int, b int, index idx(a, b))",
+        "create table t1 (a int, b int, index idx(a, b))",
+        "insert into t values (1, 1), (1, 2), (2, 3)",
+        "insert into t1 values (1, 10), (3, 30)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let sql = "select /*+ INL_JOIN(tmp) */ * from (select a, count(b) from t group by a) tmp, t1 \
+               where tmp.a = t1.a";
+    let explain = plan(&mut session, &format!("explain format='brief' {sql}"));
+    assert!(explain.contains("IndexJoin"), "{explain}");
+    assert!(explain.contains("range: decided by [eq(test.t.a, test.t1.a)]"), "{explain}");
+    assert_eq!(row_text(session.run("show warnings")), Vec::<Vec<String>>::new());
+    assert_eq!(row_text(session.run(sql)), vec![vec!["1", "2", "1", "10"]]);
+}
+
+/// Go `constructDS2TableScanTask` / `constructDS2IndexScanTask`: "If the inner
+/// task need to keep order, the partition table reader can't satisfy it."
+/// A stream aggregate over a partitioned inner table therefore cannot take
+/// the index-join probe, and the hinted join falls back to a hash join.
+#[test]
+fn a_partitioned_inner_table_cannot_keep_order_for_an_index_join() {
+    let mut session = Session::new();
+    for sql in [
+        "create table p (a int, b int, c int, key ia(a)) partition by hash(c) partitions 2",
+        "create table q (a int, b int, c int, key ia(a))",
+        "create table o (a int, c int)",
+        "insert into p values (1, 1, 1), (1, 3, 2), (11, 2, 3)",
+        "insert into q values (1, 1, 1), (1, 3, 2), (11, 2, 3)",
+        "insert into o values (1, 5), (11, 6)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let query = |table: &str| {
+        format!(
+            "select /*+ inl_join(s) */ o.c, s.m from o join (select /*+ stream_agg() */ a, \
+             max(b) m from {table} group by a) s on o.a = s.a order by o.c"
+        )
+    };
+    let explain = plan(&mut session, &format!("explain format='brief' {}", query("p")));
+    assert!(explain.contains("HashJoin") && !explain.contains("IndexJoin"), "{explain}");
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        vec![vec![
+            "Warning",
+            "1815",
+            "Optimizer Hint /*+ INL_JOIN(s) */ or /*+ TIDB_INLJ(s) */ is inapplicable"
+        ]]
+    );
+    assert_eq!(row_text(session.run(&query("p"))), vec![vec!["5", "3"], vec!["6", "2"]]);
+    let explain = plan(&mut session, &format!("explain format='brief' {}", query("q")));
+    assert!(explain.contains("IndexJoin"), "{explain}");
+}

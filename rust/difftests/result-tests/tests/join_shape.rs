@@ -593,8 +593,8 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // TIDB_INLJ hint on a semi join, two subqueries Go decorrelates, and an
     // index join Go plans inside an Apply. Inspect recorded witnesses before
     // updating these counts.
-    const COMPARED: usize = 279;
-    const BOTH_AGREE: usize = 271;
+    const COMPARED: usize = 310;
+    const BOTH_AGREE: usize = 302;
     const RECORDED_MERGE_PAIRS: usize = 100;
     const AGREED_MERGE_PAIRS: usize = 100;
     const EXTRA_MERGE_PAIRS: usize = 0;

@@ -221,6 +221,9 @@ pub struct JoinHints {
     pub leading: Option<Vec<tidb_ast::LeadingElement>>,
     pub(crate) canonical: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
     pub(crate) select_offset: i32,
+    /// Go `SessionVars.CurrentDB`, which `ExtractTableAlias` gives an alias
+    /// whose names carry no database (a derived table's).
+    pub(crate) current_db: String,
 }
 
 impl JoinHints {
@@ -230,6 +233,7 @@ impl JoinHints {
     pub fn from_plan_hints(
         canonical: Rc<RefCell<tidb_hint::PlanHints>>,
         select_offset: i32,
+        current_db: &str,
     ) -> Self {
         let plan = canonical.borrow();
         let mut hints = Self::default();
@@ -269,6 +273,7 @@ impl JoinHints {
         drop(plan);
         hints.canonical = Some(canonical);
         hints.select_offset = select_offset;
+        hints.current_db = current_db.to_ascii_lowercase();
         hints
     }
 
@@ -278,8 +283,15 @@ impl JoinHints {
     pub fn prefers(&self, alias: Option<&HintedTable>, flag: u32) -> bool {
         let Some(alias) = alias else { return false };
         if let Some(canonical) = &self.canonical {
+            // Go `ExtractTableAlias`: "if dbName.L == "" { dbName =
+            // CurrentDB }", the database the hint's own table defaulted to.
+            let database_name = if alias.db_name.is_empty() {
+                self.current_db.clone()
+            } else {
+                alias.db_name.clone()
+            };
             let table = tidb_hint::HintedTable {
-                database_name: alias.db_name.clone(),
+                database_name,
                 table_name: alias.table_name.clone(),
                 select_offset: self.select_offset,
                 ..tidb_hint::HintedTable::default()

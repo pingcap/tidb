@@ -125,4 +125,6 @@ pub const TOPICS: &[&str] = &[
     "imdbload",
     "clustered_index",
     "explain_indexmerge_stats",
+    "planner/core/indexjoin",
+    "explain_complex_stats",
 ];

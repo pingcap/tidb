@@ -1504,6 +1504,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         let current_join_hints = Rc::new(from::JoinHints::from_plan_hints(
             Rc::clone(&current_plan_hints),
             select_offset,
+            self.source.current_database(),
         ));
         let current_index_merge_hints = index_merge_hints_from_plan(&current_plan_hints.borrow());
         let (current_index_hints, current_no_lookup_hints) =

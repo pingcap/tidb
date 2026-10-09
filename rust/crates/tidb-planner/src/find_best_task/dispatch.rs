@@ -2644,6 +2644,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 if keep_order && !table_path_matches_order(ds, prop) {
                     continue 'paths;
                 }
+                // Go `constructDS2TableScanTask`: "If the inner task need to
+                // keep order, the partition table reader can't satisfy it."
+                if keep_order
+                    && prop.index_join_prop.is_some()
+                    && !ds.partition_definition_ids.is_empty()
+                {
+                    continue 'paths;
+                }
                 let fallback_table_path;
                 let table_path = if let Some(path) = ds
                     .derived_access_paths
@@ -3377,6 +3385,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     ctx.forced_partial_order_paths.insert(path_key);
                 }
                 let keep_order = ordered || partial_order_match.is_some();
+                // Go `constructDS2IndexScanTask`: a partitioned inner reader
+                // cannot keep order for an index join.
+                if keep_order
+                    && prop.index_join_prop.is_some()
+                    && !ds.partition_definition_ids.is_empty()
+                {
+                    continue 'paths;
+                }
                 if (!keep_order && ds.force_keep_order_index_ids.contains(&source_index.id))
                     || (keep_order && ds.force_no_keep_order_index_ids.contains(&source_index.id))
                 {
