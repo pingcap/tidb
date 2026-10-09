@@ -2702,24 +2702,34 @@ impl KvTable {
                 continue;
             }
             let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
-            let (key, distinct) = self.index_key(&index, row, handle, physical_id, &zone)?;
-            let key = Key::from_bytes(key);
-            if distinct {
-                self.check_insert_key(
-                    &key,
-                    &duplicate_value_text(&self.index_values(&index, row)),
-                    &self.qualified_key(&index.name),
-                    false,
+            let duplicate_value = duplicate_value_text(&self.index_values(&index, row));
+            for entry in self.index_entry_keys(&index, row, handle, physical_id, &zone)? {
+                let key = Key::from_bytes(entry.key);
+                if entry.distinct {
+                    self.check_insert_key(
+                        &key,
+                        &duplicate_value,
+                        &self.qualified_key(&index.name),
+                        false,
+                    )?;
+                }
+                // The same entry value an INSERT writes, restored data and
+                // all -- a backfill that stored a simpler one would leave the
+                // index holding two different formats for the same table.
+                let value = self.index_entry_value(
+                    &index,
+                    &entry.values,
+                    row,
+                    handle,
+                    entry.distinct,
+                    physical_id,
+                    &zone,
                 )?;
+                self.store.set(key, value).map_err(KvTableError::from)?;
             }
-            // The same entry value an INSERT writes, restored data and all --
-            // a backfill that stored a simpler one would leave the index
-            // holding two different formats for the same table.
-            let value =
-                self.index_entry_value(&index, row, handle, distinct, physical_id, &zone)?;
-            self.store.set(key, value).map_err(KvTableError::from)?;
         }
         self.max_index_id = self.max_index_id.max(index.id);
+        self.record_mv_key_part_source(&index);
         self.indexes_mut().push(index);
         Ok(())
     }
@@ -3171,29 +3181,34 @@ impl KvTable {
             }
             // A distinct entry's key does not carry the handle, so the
             // candidate handle below is only a placeholder for the key build.
-            let (key, distinct) =
-                self.index_key(&index, row, &TableHandle::Int(0), physical_id, &zone)?;
-            if !distinct {
-                continue;
-            }
-            let value = match self.store.get(&Key::from_bytes(key)) {
-                Ok(value) if !value.is_empty() => value,
-                Ok(_) | Err(StorageError::NotFound) => continue,
-                Err(error) => return Err(error.into()),
-            };
-            let handle = tidb_tablecodec::decode_handle_in_index_value(&value)
-                .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-            let handle = handle
-                .ok_or_else(|| KvTableError::Decode("index value contains no handle".to_owned()))?;
-            let handle = index_entries::convert_handle(&handle);
-            if !found.iter().any(|conflict| conflict.handle == handle) {
-                found.push(RowConflict {
-                    handle,
-                    error: KvTableError::DuplicateEntry {
-                        value: duplicate_value_text(&self.index_values(&index, row)),
-                        key: self.qualified_key(&index.name),
-                    },
-                });
+            // A multi-valued index checks every element key (Go
+            // `getKeysNeedCheckOneRow` iterates `GenIndexKVIter`).
+            for entry in
+                self.index_entry_keys(&index, row, &TableHandle::Int(0), physical_id, &zone)?
+            {
+                if !entry.distinct {
+                    continue;
+                }
+                let value = match self.store.get(&Key::from_bytes(entry.key)) {
+                    Ok(value) if !value.is_empty() => value,
+                    Ok(_) | Err(StorageError::NotFound) => continue,
+                    Err(error) => return Err(error.into()),
+                };
+                let handle = tidb_tablecodec::decode_handle_in_index_value(&value)
+                    .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+                let handle = handle.ok_or_else(|| {
+                    KvTableError::Decode("index value contains no handle".to_owned())
+                })?;
+                let handle = index_entries::convert_handle(&handle);
+                if !found.iter().any(|conflict| conflict.handle == handle) {
+                    found.push(RowConflict {
+                        handle,
+                        error: KvTableError::DuplicateEntry {
+                            value: duplicate_value_text(&self.index_values(&index, row)),
+                            key: self.qualified_key(&index.name),
+                        },
+                    });
+                }
             }
         }
         Ok(found)
@@ -3253,7 +3268,38 @@ impl KvTable {
             index.clustered_primary = true;
         }
         self.max_index_id = self.max_index_id.max(index.id);
+        self.record_mv_key_part_source(&index);
         self.indexes_mut().push(index);
+    }
+
+    /// Go `completeError`'s lookup: the name of the index whose key part is
+    /// the column at `offset` -- the last such index, as Go's loop leaves it.
+    pub(crate) fn func_index_name(&self, offset: usize) -> Option<&str> {
+        self.indexes
+            .iter()
+            .rev()
+            .find(|index| index.column_offsets.contains(&offset))
+            .map(|index| index.name.as_str())
+    }
+
+    /// Records a multi-valued index's source column from its ARRAY key part's
+    /// generation dependencies, which is what the cluster loader reads from
+    /// `IndexInfo.MVIndex` and the hidden column's `Dependences`; a local
+    /// index and a loaded one then look the same to the planner.
+    fn record_mv_key_part_source(&mut self, index: &KvIndex) {
+        let Some(generated) = index
+            .column_offsets
+            .iter()
+            .filter_map(|offset| self.columns.get(*offset))
+            .find(|column| column.field_type.is_array())
+            .and_then(|column| column.generated.as_ref())
+        else {
+            return;
+        };
+        if let [source] = generated.dependencies.as_slice() {
+            let source = source.go_to_lower();
+            self.mv_key_part_sources.insert(index.id, source);
+        }
     }
 
     /// Go `NextGlobalAutoID`, which SHOW CREATE TABLE prints: the shared
@@ -3715,17 +3761,22 @@ impl KvTable {
         self.indexes.as_ref().clone()
     }
 
-    /// [`KvTable::index_key`] for [`crate::admin_check`]: the entry key one
-    /// row's values encode to under `index`.
-    pub fn index_key_for_check(
+    /// [`KvTable::index_entry_keys`] for [`crate::admin_check`]: the entry
+    /// keys one row's values encode to under `index`, each with its
+    /// `distinct` flag.
+    pub fn index_keys_for_check(
         &mut self,
         index: &KvIndex,
         row: &[Datum],
         handle: &TableHandle,
         zone: &SessionTimeZone,
-    ) -> Result<(Vec<u8>, bool), KvTableError> {
+    ) -> Result<Vec<(Vec<u8>, bool)>, KvTableError> {
         let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
-        self.index_key(index, row, handle, physical_id, zone)
+        Ok(self
+            .index_entry_keys(index, row, handle, physical_id, zone)?
+            .into_iter()
+            .map(|entry| (entry.key, entry.distinct))
+            .collect())
     }
 
     /// Removes one stored key without touching anything else -- the only way

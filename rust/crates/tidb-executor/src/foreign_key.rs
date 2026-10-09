@@ -663,7 +663,7 @@ fn cascade_at_depth(
                     }
                     if let Some(TableEntry::Kv(kv)) = catalog.get_in(&child_db, &child_table) {
                         crate::driver::materialize_generated_for_write(
-                            &kv.columns,
+                            kv,
                             &mut new,
                             ctx,
                             crate::driver::GeneratedWrite::Update {

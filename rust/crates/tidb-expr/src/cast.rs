@@ -315,6 +315,158 @@ pub(crate) fn eval_numeric_cast_with_type(
 /// fractional value to an integer before Go's constant-refinement step.
 pub(crate) const UNSPECIFIED_CAST_SCALE: u32 = u32::MAX;
 
+/// Go `castJSONAsArrayFunctionSig.evalJSON` (`builtin_cast.go`): the JSON
+/// array a multi-valued index stores, each element converted to the array's
+/// element type. A scalar is a one-element array; an object is refused.
+/// Conversions run under Go's `fakeSctx` (`StrictFlags`), so any truncation
+/// or overflow is an error rather than a warning.
+pub(crate) fn eval_cast_json_as_array(
+    value: Datum,
+    ret_type: &FieldType,
+) -> Result<Datum, EvalError> {
+    let json = match value {
+        Datum::Null => return Ok(Datum::Null),
+        Datum::Json(json) => json,
+        _ => {
+            return Err(EvalError::Unsupported(
+                "CAST(... AS ... ARRAY) received a non-JSON argument",
+            ))
+        }
+    };
+    if json.type_code() == tidb_datatype::JSON_TYPE_CODE_OBJECT {
+        return Err(EvalError::NotImplemented(
+            "CAST-ing JSON OBJECT type to array".into(),
+        ));
+    }
+    let element = ret_type.array_type();
+    // Go resolves `convertJSON2Tp` before reading any element, so an
+    // unsupported element type fails even for an empty array.
+    if !matches!(
+        element.eval_type(),
+        EvalType::String | EvalType::Int | EvalType::Real | EvalType::Datetime | EvalType::Duration
+    ) {
+        return Err(EvalError::NotImplemented(
+            format!("CAS-ing data to array of {}", element.source_string()).into(),
+        ));
+    }
+    let mut values = Vec::new();
+    if json.type_code() == tidb_datatype::JSON_TYPE_CODE_ARRAY {
+        let count = json.element_count().map_err(json_eval_error)?;
+        for position in 0..count {
+            let item = json
+                .array_get(position)
+                .map_err(json_eval_error)?
+                .ok_or(EvalError::Unsupported("a JSON array element is missing"))?;
+            values.push(convert_json_to_array_element(&item, &element)?);
+        }
+    } else {
+        values.push(convert_json_to_array_element(&json, &element)?);
+    }
+    tidb_datatype::BinaryJSON::from_typed_value(&tidb_datatype::BinaryJSONValue::Array(values))
+        .map(Datum::Json)
+        .map_err(json_eval_error)
+}
+
+/// Go `convertJSON2Tp`: one array element converted to `target`, or Go's
+/// `ErrInvalidJSONForFuncIndex` when its JSON type does not fit the target's
+/// evaluation type.
+fn convert_json_to_array_element(
+    item: &tidb_datatype::BinaryJSON,
+    target: &FieldType,
+) -> Result<tidb_datatype::BinaryJSONValue, EvalError> {
+    use tidb_datatype::{
+        BinaryJSONValue, JSON_TYPE_CODE_FLOAT64, JSON_TYPE_CODE_INT64, JSON_TYPE_CODE_UINT64,
+    };
+    let code = item.type_code();
+    match target.eval_type() {
+        EvalType::String => {
+            if code != JSON_TYPE_CODE_STRING {
+                return Err(invalid_json_for_func_index());
+            }
+            let text = item.as_string().unwrap_or_default().to_vec();
+            // Go `ProduceStrWithSpecifiedTp`: only truncation can fail it,
+            // which the port reports as an event.
+            let produced = tidb_datatype::produce_string_with_type(text, target, false)
+                .map_err(|_| EvalError::Unsupported("a multi-valued string element did not convert"))?;
+            if produced.event.is_some() {
+                return Err(EvalError::Conversion(tidb_datatype::ERR_DATA_TOO_LONG.clone()));
+            }
+            Ok(BinaryJSONValue::String(
+                String::from_utf8_lossy(&produced.value).into_owned(),
+            ))
+        }
+        EvalType::Int => {
+            if code != JSON_TYPE_CODE_INT64 && code != JSON_TYPE_CODE_UINT64 {
+                return Err(invalid_json_for_func_index());
+            }
+            let unsigned = target.is_unsigned();
+            let converted = tidb_datatype::json_to_int(
+                item,
+                unsigned,
+                target.code(),
+                ConversionFlags::default(),
+            );
+            if converted.event.is_some() {
+                return Err(EvalError::Conversion(tidb_datatype::ERR_OVERFLOW.clone()));
+            }
+            Ok(if unsigned {
+                BinaryJSONValue::Uint64(converted.value as u64)
+            } else {
+                BinaryJSONValue::Int64(converted.value)
+            })
+        }
+        EvalType::Real => {
+            if code != JSON_TYPE_CODE_FLOAT64
+                && code != JSON_TYPE_CODE_INT64
+                && code != JSON_TYPE_CODE_UINT64
+            {
+                return Err(invalid_json_for_func_index());
+            }
+            let converted = tidb_datatype::json_to_float(item);
+            if converted.event.is_some() {
+                return Err(EvalError::Conversion(tidb_datatype::ERR_OVERFLOW.clone()));
+            }
+            Ok(BinaryJSONValue::Float64(converted.value))
+        }
+        EvalType::Datetime => {
+            let expected = if target.code() == FieldTypeCode::Date {
+                JSON_TYPE_CODE_DATE
+            } else {
+                JSON_TYPE_CODE_DATETIME
+            };
+            if code != expected {
+                return Err(invalid_json_for_func_index());
+            }
+            let time = item.as_time(target.decimal()).map_err(json_eval_error)?;
+            Ok(BinaryJSONValue::Binary(tidb_datatype::BinaryJSON::from_time(time)))
+        }
+        EvalType::Duration => {
+            if code != JSON_TYPE_CODE_DURATION {
+                return Err(invalid_json_for_func_index());
+            }
+            let duration = item.as_duration().map_err(json_eval_error)?;
+            Ok(BinaryJSONValue::Binary(tidb_datatype::BinaryJSON::from_duration(duration)))
+        }
+        _ => Err(EvalError::NotImplemented(
+            format!("CAS-ing data to array of {}", target.source_string()).into(),
+        )),
+    }
+}
+
+/// Go `expression.ErrInvalidJSONForFuncIndex` (3903), raised without the
+/// index name: the DML that evaluated the expression names the index
+/// (`completeError`).
+pub fn invalid_json_for_func_index() -> EvalError {
+    EvalError::Conversion(tidb_error::terror::TerrorError::registered_std(
+        tidb_error::terror::TerrorClass::Expression,
+        tidb_error::terror::TerrorCode::new(3903),
+    ))
+}
+
+fn json_eval_error(_: tidb_datatype::BinaryJSONError) -> EvalError {
+    EvalError::Unsupported("a malformed JSON value reached CAST(... AS ... ARRAY)")
+}
+
 /// Evaluates a [`CastType`] against an already-evaluated, non-`NULL`
 /// operand (`NULL` is handled by the caller — every target type maps
 /// `NULL` to `NULL`, so there's no per-type NULL case to write here).

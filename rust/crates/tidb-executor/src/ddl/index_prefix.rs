@@ -265,6 +265,22 @@ pub fn stored_index_length_with_max(
     Ok(declared)
 }
 
+/// Go `buildIndexColumns`' multi-valued rule: at most one key part of an
+/// index may be an ARRAY (`IndexInfo.MVIndex`). Folds `field_type` into
+/// `mv_index` and returns Go's refusal (1235) for a second array part.
+pub fn note_multi_valued_part(
+    mv_index: &mut bool,
+    field_type: &FieldType,
+) -> Result<(), &'static str> {
+    if field_type.is_array() {
+        if *mv_index {
+            return Err("more than one multi-valued key part per index");
+        }
+        *mv_index = true;
+    }
+    Ok(())
+}
+
 /// Go `getIndexColumnLength` (`pkg/ddl/index.go:307`): the BYTES one key part
 /// occupies in the index.
 ///

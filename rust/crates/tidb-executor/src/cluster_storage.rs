@@ -1830,8 +1830,9 @@ mod tests {
             let non_unique = table.index_list_for_check().remove(1);
             let non_unique_key = Key::from_bytes(
                 table
-                    .index_key_for_check(&non_unique, &updated, &handle, &ctx.session_zone())
+                    .index_keys_for_check(&non_unique, &updated, &handle, &ctx.session_zone())
                     .unwrap()
+                    .remove(0)
                     .0,
             );
             let keys = buffer.staged_keys();

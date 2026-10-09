@@ -208,6 +208,12 @@ pub trait ColumnResolver {
         None
     }
 
+    /// Go `expressionRewriter.allowBuildCastArray`: only a functional
+    /// index's generated expression may build `CAST(... AS ... ARRAY)`.
+    fn allow_build_cast_array(&self) -> bool {
+        false
+    }
+
     /// Construction mode inherited from the current AST parent.
     fn fold_mode(&self) -> ConstantFoldMode {
         ConstantFoldMode::Normal
@@ -241,6 +247,9 @@ pub trait ColumnResolver {
 impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
     fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
         (**self).user_vars()
+    }
+    fn allow_build_cast_array(&self) -> bool {
+        (**self).allow_build_cast_array()
     }
 
     fn rewrite_grouping(&self, args: &[Expression]) -> Result<Expression, EvalError> {
@@ -1156,6 +1165,84 @@ fn rewrite_expr_resolved_inner(
     resolver.fold_constant(&mut built, fold_mode);
     prepare_in_string_hash_sets(&mut built);
     Ok(built)
+}
+
+/// The cast's target type with its character set settled: `BINARY`, a named
+/// charset with its default collation, or the connection's.
+fn resolved_cast_target(
+    cast: &tidb_ast::CastExpr,
+    resolver: &impl ColumnResolver,
+) -> Result<(&'static str, FieldType), EvalError> {
+    let (name, mut ret_type) = cast_target(&cast.cast_type).ok_or(EvalError::Unsupported(
+        "this CAST target type has no value domain yet",
+    ))?;
+    if let tidb_ast::CastType::Char { charset, .. } = &cast.cast_type {
+        match charset.as_deref() {
+            Some("BINARY" | "binary") => set_binary_charset(&mut ret_type),
+            Some(charset) => {
+                let charset = tidb_datatype::Charset::from_name(charset)
+                    .ok_or(EvalError::Unsupported("unknown CAST character set"))?;
+                ret_type.set_charset_name(charset.name());
+                ret_type.set_collation_name(charset.default_collation().name());
+            }
+            None => {
+                let (charset, collation) = resolver.connection_charset_info();
+                ret_type.set_charset_name(charset);
+                ret_type.set_collation_name(collation);
+            }
+        }
+    }
+    Ok((name, ret_type))
+}
+
+/// Go `castAsArrayFunctionClass` (`builtin_cast.go`), reached through the
+/// rewriter's `allowBuildCastArray` gate: `CAST(json AS <type> ARRAY)` builds
+/// a JSON array of `<type>` values, the key part of a multi-valued index.
+fn rewrite_cast_array(
+    cast: &tidb_ast::CastExpr,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    if !resolver.allow_build_cast_array() {
+        return Err(EvalError::NotImplemented(
+            "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions"
+                .into(),
+        ));
+    }
+    validate_cast_type(cast)?;
+    let (_, element) = resolved_cast_target(cast, resolver)?;
+    let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
+    // `verifyArgs`: "args[0].GetType(ctx).EvalType() != types.ETJson".
+    if arg.static_type().map(FieldType::eval_type) != Some(tidb_datatype::EvalType::Json) {
+        return Err(EvalError::Json(JsonError::InvalidTypeForJson {
+            argument: 1,
+            function: "cast_as_array",
+        }));
+    }
+    if matches!(
+        element.code(),
+        FieldTypeCode::Year | FieldTypeCode::Json | FieldTypeCode::Float | FieldTypeCode::NewDecimal
+    ) {
+        return Err(EvalError::NotImplemented(
+            format!("CAST-ing data to array of {}", element.source_string()).into(),
+        ));
+    }
+    if element.eval_type() == tidb_datatype::EvalType::String {
+        if !matches!(element.charset_name(), "utf8mb4" | "binary") {
+            return Err(EvalError::NotImplemented(
+                "specifying charset for multi-valued index".into(),
+            ));
+        }
+        if element.flen() == tidb_datatype::UNSPECIFIED_LENGTH {
+            return Err(EvalError::NotImplemented(
+                "CAST-ing data to array of char/binary BLOBs with unspecified length".into(),
+            ));
+        }
+    }
+    Ok(Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("cast_array"),
+        element.with_array(true),
+        vec![arg],
+    )))
 }
 
 fn prepare_in_string_hash_sets(expr: &mut Expression) {
@@ -2516,30 +2603,10 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         }
         Expr::Cast(cast) => {
             if cast.array {
-                return Err(EvalError::Unsupported(
-                    "a CAST with the ARRAY modifier is not supported yet",
-                ));
+                return rewrite_cast_array(cast, resolver);
             }
             validate_cast_type(cast)?;
-            let (name, mut ret_type) = cast_target(&cast.cast_type).ok_or(
-                EvalError::Unsupported("this CAST target type has no value domain yet"),
-            )?;
-            if let tidb_ast::CastType::Char { charset, .. } = &cast.cast_type {
-                match charset.as_deref() {
-                    Some("BINARY" | "binary") => set_binary_charset(&mut ret_type),
-                    Some(charset) => {
-                        let charset = tidb_datatype::Charset::from_name(charset)
-                            .ok_or(EvalError::Unsupported("unknown CAST character set"))?;
-                        ret_type.set_charset_name(charset.name());
-                        ret_type.set_collation_name(charset.default_collation().name());
-                    }
-                    None => {
-                        let (charset, collation) = resolver.connection_charset_info();
-                        ret_type.set_charset_name(charset);
-                        ret_type.set_collation_name(collation);
-                    }
-                }
-            }
+            let (name, ret_type) = resolved_cast_target(cast, resolver)?;
             let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
             // `CAST(x AS BINARY)` is Go's `funcPropAuto` binary-result arm:
             // a gbk-charset argument transcodes on the way in, which is why

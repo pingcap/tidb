@@ -151,8 +151,9 @@ pub enum EvalError {
     /// the warning spelling appends.
     AllowedPacketOverflowed(String),
     /// go raises `ErrNotSupportedYet` (1235) for functions whose classes are
-    /// registered but refuse to build outside their hosting feature.
-    NotImplemented(&'static str),
+    /// registered but refuse to build outside their hosting feature, and for
+    /// the forms `CAST(... AS ... ARRAY)` declines, whose text names a type.
+    NotImplemented(std::borrow::Cow<'static, str>),
     /// Go `types.ErrWrongValueForType` (1411): a builtin argument carries a
     /// value of the wrong shape for its type. The three fields render go's
     /// `Incorrect %s value: '%.200s' for function %s`.

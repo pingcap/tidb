@@ -242,6 +242,7 @@ pub(crate) fn table_indexes(
         // per-part checks; the field type of each part is what that sum needs,
         // and a hidden expression column's type is only in hand here.
         let mut part_types: Vec<tidb_datatype::FieldType> = Vec::with_capacity(index.parts.len());
+        let mut mv_index = false;
         for (position, part) in index.parts.iter().enumerate() {
             match part {
                 tidb_ast::IndexPart::Column {
@@ -273,6 +274,11 @@ pub(crate) fn table_indexes(
                     part_types.push(built[index_in_built].1.field_type.clone());
                 }
             }
+            crate::ddl::index_prefix::note_multi_valued_part(
+                &mut mv_index,
+                part_types.last().expect("this part's type was just pushed"),
+            )
+            .map_err(|feature| DriverError::NotSupportedYet(feature.into()))?;
         }
         // Go `buildIndexColumns`: the sum of every key part's stored bytes
         // must stay within `config.MaxIndexLength`, checked in declaration
@@ -952,9 +958,12 @@ pub(crate) fn primary_key_column(
                 name, prefix_len, ..
             } = part
             else {
-                return Err(DriverError::unsupported(
-                    "an expression primary key is not supported yet",
-                ));
+                // Go `CheckPKOnGeneratedColumn`: the key part is a hidden
+                // virtual column, which a primary key may not be (3756).
+                return Err(DriverError::DdlCoded {
+                    errno: tidb_error::tidb::errcode::ErrFunctionalIndexPrimaryKey,
+                    message: "The primary key cannot be an expression index".to_owned(),
+                });
             };
             // Go `checkIndexColumn` reaches a primary key's key parts too,
             // so an illegal length here is the same error it would be on any

@@ -2173,6 +2173,9 @@ pub(crate) fn generated_column_error(
         GeneratedDdlError::DisallowedFunction(column) => {
             DriverError::GeneratedColumnFunctionNotAllowed(column)
         }
+        GeneratedDdlError::CastArrayOutsideIndex => DriverError::NotSupportedYet(
+            "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions".into(),
+        ),
         GeneratedDdlError::Unsupported(reason) => {
             DriverError::UnsupportedOnGeneratedColumn(reason.to_owned())
         }

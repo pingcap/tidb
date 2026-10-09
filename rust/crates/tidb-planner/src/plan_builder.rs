@@ -612,6 +612,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `SessionVars.PlannerSelectBlockAsName`: each derived table's alias
     /// by its query block, which join-hint aliases read.
     pub(crate) select_block_as_names: Rc<RefCell<std::collections::BTreeMap<i32, String>>>,
+    /// Go `allowBuildCastArray`: set only around a virtual generated column's
+    /// rebuild, where a multi-valued index's `CAST(... AS ... ARRAY)` lives.
+    allow_build_cast_array: std::cell::Cell<bool>,
     /// Go `isSampling`: disables logical rewrites for TABLESAMPLE queries.
     pub is_sampling: bool,
     /// Go `curClause`.
@@ -868,6 +871,9 @@ pub struct PlanScopeResolver<'a> {
     /// contract cannot raise, so an ambiguous path records its written name
     /// here and the rewrite caller swaps the 1054 fall-through for 1052.
     ambiguous_column: std::cell::RefCell<Option<String>>,
+    /// Go `expressionRewriter.allowBuildCastArray`: only the rebuild of a
+    /// virtual generated column may contain `CAST(... AS ... ARRAY)`.
+    allow_build_cast_array: bool,
 }
 
 impl<'a> PlanScopeResolver<'a> {
@@ -901,6 +907,7 @@ impl<'a> PlanScopeResolver<'a> {
             warning_context: None,
             clause_message: "expression",
             ambiguous_column: std::cell::RefCell::new(None),
+            allow_build_cast_array: false,
         }
     }
 
@@ -937,6 +944,7 @@ impl<'a> PlanScopeResolver<'a> {
             warning_context: None,
             clause_message: "expression",
             ambiguous_column: std::cell::RefCell::new(None),
+            allow_build_cast_array: false,
         }
     }
 
@@ -1002,6 +1010,14 @@ impl<'a> PlanScopeResolver<'a> {
     #[must_use]
     pub const fn with_clause_message(mut self, clause: &'static str) -> Self {
         self.clause_message = clause;
+        self
+    }
+
+    /// Allow `CAST(... AS ... ARRAY)` in this rewrite (Go
+    /// `allowBuildCastArray`).
+    #[must_use]
+    pub const fn with_allow_build_cast_array(mut self, allow: bool) -> Self {
+        self.allow_build_cast_array = allow;
         self
     }
 
@@ -1132,6 +1148,10 @@ impl ColumnResolver for PlanScopeResolver<'_> {
 
     fn clause_message(&self) -> &'static str {
         self.clause_message
+    }
+
+    fn allow_build_cast_array(&self) -> bool {
+        self.allow_build_cast_array
     }
 
     fn like_default_escape(&self) -> u8 {
@@ -1340,6 +1360,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             partition_processor_enabled: true,
             advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
             select_block_as_names: Rc::default(),
+            allow_build_cast_array: std::cell::Cell::new(false),
             is_sampling: false,
             cur_clause: ClauseCode::Unknow,
             qb_offset: Vec::new(),
@@ -1713,6 +1734,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction())
         .with_div_precision_increment(self.ctx.div_precision_increment())
         .with_clause_message(self.cur_clause.message())
+        .with_allow_build_cast_array(self.allow_build_cast_array.get())
         .with_warning_context(self.ctx);
         resolver.block_expand = self.current_block_expand.as_ref();
         let resolver = match (full_schema, full_names) {
@@ -2533,9 +2555,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let generated_schema = Schema::new(schema_columns.clone());
             let no_markers = BTreeMap::new();
             for (offset, expression) in generated_expressions {
+                let original = self.allow_build_cast_array.replace(true);
                 let expression =
-                    self.rewrite_scalar(&expression, &generated_schema, &names, &no_markers)?;
-                schema_columns[offset].virtual_expr = Some(Box::new(expression));
+                    self.rewrite_scalar(&expression, &generated_schema, &names, &no_markers);
+                self.allow_build_cast_array.set(original);
+                schema_columns[offset].virtual_expr = Some(Box::new(expression?));
             }
         }
 

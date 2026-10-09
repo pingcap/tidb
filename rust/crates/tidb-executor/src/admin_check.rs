@@ -280,6 +280,11 @@ pub fn check_table(
     // Go `admin.CheckIndicesCount` runs first and, for `ADMIN CHECK INDEX`,
     // is the error the client sees.
     for index in &selected {
+        // Go `CheckTableExec.Next` leaves a multi-valued index out of
+        // `CheckIndicesCount`: one row files any number of entries.
+        if table.is_mv_index(index) {
+            continue;
+        }
         let entries = index_entries(table, index.id)?;
         let index_count = entries.len() as i64;
         let expected_count = partial_index_rows(table, index, &rows, context)?.len() as i64;
@@ -300,14 +305,21 @@ pub fn check_table(
         // `CheckRecordAndIndex` (ROW -> INDEX).
         let stored = index_entries(table, index.id)?;
         let matching_rows = partial_index_rows(table, index, &rows, context)?;
+        if table.is_mv_index(index) {
+            check_mv_index(table, index, &stored, matching_rows, context)?;
+            checked += 1;
+            continue;
+        }
         let expected_count = matching_rows.len() as i64;
         if expected_count > stored.len() as i64 {
             let mut expected: BTreeMap<Vec<u8>, (TableHandle, &Vec<Datum>)> = BTreeMap::new();
             for (handle, row) in matching_rows {
-                let (key, _) = table
-                    .index_key_for_check(index, row, handle, context.zone())
-                    .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
-                expected.insert(key, (handle.clone(), row));
+                for (key, _) in table
+                    .index_keys_for_check(index, row, handle, context.zone())
+                    .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?
+                {
+                    expected.insert(key, (handle.clone(), row));
+                }
             }
             let stored_keys: BTreeMap<Vec<u8>, TableHandle> = stored
                 .iter()
@@ -406,6 +418,68 @@ pub fn check_table(
     Ok(checked)
 }
 
+/// Go `CheckTableExec` over a multi-valued index: `checkIndexHandle` (every
+/// entry names a row that files that very key) and then `checkTableRecord`
+/// (every key a row files is stored, naming that row). The key comparison is
+/// what Go's `CompareIndexAndVal` array containment amounts to: an entry
+/// matches its row exactly when the row's expansion produces its key.
+fn check_mv_index(
+    table: &mut KvTable,
+    index: &KvIndex,
+    stored: &[crate::kv_table::IndexEntryForCheck],
+    matching_rows: Vec<(&TableHandle, &Vec<Datum>)>,
+    context: &RowDecodeContext,
+) -> Result<(), AdminCheckError> {
+    let decode = |error| AdminCheckError::Decode(format!("{error:?}"));
+    let mut expected: BTreeMap<Vec<u8>, (TableHandle, &Vec<Datum>)> = BTreeMap::new();
+    for (handle, row) in matching_rows {
+        for (key, _) in table
+            .index_keys_for_check(index, row, handle, context.zone())
+            .map_err(decode)?
+        {
+            expected.insert(key, (handle.clone(), row));
+        }
+    }
+    for entry in stored {
+        if expected
+            .get(&entry.key)
+            .is_some_and(|(handle, _)| *handle == entry.handle)
+        {
+            continue;
+        }
+        let indexed = table
+            .index_entry_values_for_check(index, &entry.key, &entry.value, context.zone())
+            .map_err(decode)?;
+        return Err(AdminCheckError::Inconsistent {
+            table: table.name.clone(),
+            index: index.name.clone(),
+            handle: render_handle(&entry.handle),
+            index_values: render_record(&entry.handle, &indexed),
+            record_values: String::new(),
+        });
+    }
+    let stored_keys: BTreeMap<&[u8], &TableHandle> = stored
+        .iter()
+        .map(|entry| (entry.key.as_slice(), &entry.handle))
+        .collect();
+    for (key, (handle, row)) in &expected {
+        if stored_keys
+            .get(key.as_slice())
+            .is_some_and(|stored_handle| *stored_handle == handle)
+        {
+            continue;
+        }
+        return Err(AdminCheckError::Inconsistent {
+            table: table.name.clone(),
+            index: index.name.clone(),
+            handle: render_handle(handle),
+            index_values: String::new(),
+            record_values: render_record(handle, &table.index_values_for_check(index, row)),
+        });
+    }
+    Ok(())
+}
+
 /// `ADMIN CHECK INDEX t idx (begin, end), ...`: the entries of one index whose
 /// row handle falls in one of the half-open intervals, in INDEX order.
 ///
@@ -450,15 +524,15 @@ pub fn check_index_ranges(
     let rows = table
         .scan_rows_with_handles_recomputed(context)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
-    let by_handle: BTreeMap<Vec<u8>, (TableHandle, Vec<Datum>)> = rows
-        .iter()
-        .map(|(handle, row)| {
-            let (key, _) = table
-                .index_key_for_check(&index, row, handle, context.zone())
-                .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
-            Ok((key, (handle.clone(), row.clone())))
-        })
-        .collect::<Result<_, AdminCheckError>>()?;
+    let mut by_handle: BTreeMap<Vec<u8>, (TableHandle, Vec<Datum>)> = BTreeMap::new();
+    for (handle, row) in &rows {
+        for (key, _) in table
+            .index_keys_for_check(&index, row, handle, context.zone())
+            .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?
+        {
+            by_handle.insert(key, (handle.clone(), row.clone()));
+        }
+    }
 
     // Iterating the map is iterating the encoded index keys in ascending
     // order, which IS index order -- the same order the stored entries have,

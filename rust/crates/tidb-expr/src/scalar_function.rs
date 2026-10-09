@@ -2273,6 +2273,13 @@ impl ScalarFunction {
                 return Ok(result);
             }
         }
+        if name == "cast_array" && self.args.len() == 1 {
+            let value = self.args[0].eval(ctx, row)?;
+            let ret_type = self
+                .get_static_type()
+                .ok_or(EvalError::Unsupported("a cast with no result type"))?;
+            return crate::cast::eval_cast_json_as_array(value, ret_type);
+        }
         if let Some(target) = name.strip_prefix("cast_") {
             if self.args.len() == 1 {
                 if target == "json" {

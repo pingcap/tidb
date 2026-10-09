@@ -1633,6 +1633,10 @@ fn generated_column_admission_error(
             tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
             format!("'{reason}' is not supported for generated columns."),
         ),
+        GeneratedDdlError::CastArrayOutsideIndex => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrNotSupportedYet,
+            "This version of TiDB doesn't yet support 'Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions'",
+        ),
         GeneratedDdlError::Unbuildable(reason) => DdlAdmissionError::unsupported(reason),
     }
 }
@@ -1840,6 +1844,7 @@ fn build_table(
         let mut index_columns = Vec::with_capacity(constraint.parts.len());
         let mut part_lengths: Vec<(tidb_datatype::FieldType, i64)> =
             Vec::with_capacity(constraint.parts.len());
+        let mut mv_index = false;
         for part in &constraint.parts {
             let Some(column) = table.columns.iter_deref().find(|column| {
                 column
@@ -1865,6 +1870,16 @@ fn build_table(
             // is what it did before this call existed.
             let column = column.read();
             let length = prefix_length(&column.field_type, column.name.original(), part)?;
+            tidb_executor::ddl::index_prefix::note_multi_valued_part(
+                &mut mv_index,
+                &column.field_type,
+            )
+            .map_err(|feature| {
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrNotSupportedYet,
+                    format!("This version of TiDB doesn't yet support '{feature}'"),
+                )
+            })?;
             part_lengths.push((column.field_type.clone(), length));
             index_columns.push(IndexColumn {
                 name: column.name.clone(),
@@ -1896,6 +1911,7 @@ fn build_table(
             primary,
             invisible: constraint.invisible,
             global: constraint.global,
+            mv_index,
             ..IndexInfo::default()
         });
     }

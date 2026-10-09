@@ -461,13 +461,14 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
                 .expect("row 2 index entry");
             let row = vec![tidb_datatype::Datum::Int(2), tidb_datatype::Datum::Int(100)];
             let (new_key, _) = table
-                .index_key_for_check(
+                .index_keys_for_check(
                     &index,
                     &row,
                     &tidb_executor::kv_table::TableHandle::Int(2),
                     &tidb_datatype::SessionTimeZone::utc(),
                 )
-                .expect("wrong index key");
+                .expect("wrong index key")
+                .remove(0);
             table
                 .move_raw_value_for_test(old_key, new_key)
                 .expect("move the index entry");

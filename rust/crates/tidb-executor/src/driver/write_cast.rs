@@ -61,13 +61,14 @@ impl GeneratedWrite {
 /// INSERT also handles each NULL here; UPDATE keeps its later row-wide NULL pass.
 /// Storage must not repeat these expressions or their warning side effects.
 pub(crate) fn materialize_generated_for_write(
-    columns: &[crate::kv_table::KvColumn],
+    table: &crate::kv_table::KvTable,
     row: &mut Vec<Datum>,
     ctx: &crate::StmtContext,
     policy: GeneratedWrite,
 ) -> Result<(), DriverError> {
+    let columns = table.columns.as_slice();
     row.resize(row.len().max(columns.len()), Datum::Null);
-    crate::generated_column::materialize_with(columns, row, false, ctx, |column, value| {
+    let result = crate::generated_column::materialize_with(columns, row, false, ctx, |column, value| {
         let mut value = match policy {
             GeneratedWrite::Insert { row_index, .. } => cast_value_for_column(
                 value,
@@ -106,7 +107,98 @@ pub(crate) fn materialize_generated_for_write(
             )?;
         }
         Ok(value)
+    });
+    result.map_err(|failure| match failure {
+        GeneratedWriteFailure::Driver(error) => error,
+        GeneratedWriteFailure::Generation(error) => {
+            let array_offset = columns
+                .iter()
+                .position(|column| column.name == error.column)
+                .filter(|offset| columns[*offset].field_type.is_array());
+            match (policy, array_offset, error.eval) {
+                // Go `fillRow`: an array column's evaluation error is
+                // completed with its index's name before any truncation
+                // handling.
+                (GeneratedWrite::Insert { row_index, .. }, Some(offset), Some(eval)) => {
+                    DriverError::Exec(crate::ExecError::Eval(complete_func_index_error(
+                        table, offset, row_index, eval,
+                    )))
+                }
+                (_, _, eval) => DriverError::from(crate::generated_column::GenerationError {
+                    eval,
+                    ..error
+                }),
+            }
+        }
     })
+}
+
+/// [`materialize_generated_for_write`]'s two failure sources, kept apart so
+/// a generation failure can still be completed with its column's index.
+enum GeneratedWriteFailure {
+    Generation(crate::generated_column::GenerationError),
+    Driver(DriverError),
+}
+
+impl From<crate::generated_column::GenerationError> for GeneratedWriteFailure {
+    fn from(error: crate::generated_column::GenerationError) -> Self {
+        Self::Generation(error)
+    }
+}
+
+impl From<DriverError> for GeneratedWriteFailure {
+    fn from(error: DriverError) -> Self {
+        Self::Driver(error)
+    }
+}
+
+/// Go `completeError` (`insert_common.go`): names the expression index whose
+/// multi-valued column failed -- 3903 for an element of the wrong JSON type,
+/// 3752 for an out-of-range number (with the 1-based row), 3907 for a string
+/// too long -- and leaves any other error as it was.
+fn complete_func_index_error(
+    table: &crate::kv_table::KvTable,
+    offset: usize,
+    row_index: usize,
+    error: tidb_expr::EvalError,
+) -> tidb_expr::EvalError {
+    use tidb_error::mysql::FormatArg;
+    use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+    let tidb_expr::EvalError::Conversion(cause) = &error else {
+        return error;
+    };
+    let name = table
+        .func_index_name(offset)
+        .unwrap_or("expression_index")
+        .to_owned();
+    let completed = |code: u16, args: &[FormatArg]| {
+        tidb_expr::EvalError::Conversion(
+            TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(code as isize))
+                .generate_with_stack_by_args(args),
+        )
+    };
+    let identity = cause.identity();
+    if cause.class() == TerrorClass::Expression
+        && cause.code()
+            == TerrorCode::new(tidb_error::tidb::errcode::ErrInvalidJSONValueForFuncIndex as isize)
+    {
+        completed(
+            tidb_error::tidb::errcode::ErrInvalidJSONValueForFuncIndex,
+            &[FormatArg::from(name)],
+        )
+    } else if identity == tidb_datatype::ERR_OVERFLOW.identity() {
+        completed(
+            tidb_error::tidb::errcode::ErrDataOutOfRangeFunctionalIndex,
+            &[FormatArg::from(name), FormatArg::from(row_index + 1)],
+        )
+    } else if identity == tidb_datatype::ERR_DATA_TOO_LONG.identity() {
+        completed(
+            tidb_error::tidb::errcode::ErrFunctionalIndexDataIsTooLong,
+            &[FormatArg::from(name)],
+        )
+    } else {
+        error
+    }
 }
 
 impl From<crate::generated_column::GenerationError> for DriverError {

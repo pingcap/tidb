@@ -530,6 +530,29 @@ pub(crate) fn eval_over_row(
     expr.eval(ctx, chunk.get_row(0))
 }
 
+/// Whether `expr` contains a `CAST(... AS ... ARRAY)` anywhere (Go
+/// `illegalFunctionChecker.hasCastArrayFunc`).
+pub(crate) fn expression_has_cast_array(expr: &tidb_ast::Expr) -> bool {
+    struct Finder {
+        found: bool,
+    }
+    impl tidb_ast::Visitor for Finder {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(tidb_ast::Expr::Cast(cast)) = node.downcast_mut::<tidb_ast::Expr>() {
+                self.found |= cast.array;
+            }
+            self.found
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let mut finder = Finder { found: false };
+    let mut owned = expr.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut finder);
+    finder.found
+}
+
 /// Why DDL refused a generated column.
 #[derive(Clone, Debug)]
 pub enum GeneratedDdlError {
@@ -542,6 +565,9 @@ pub enum GeneratedDdlError {
     NonPrior,
     /// Go `ErrGeneratedColumnFunctionIsNotAllowed` (3102).
     DisallowedFunction(String),
+    /// Go `checkIllegalFn4Generated`'s `typeColumn` arm: `CAST(... AS ...
+    /// ARRAY)` belongs to functional indexes only (1235).
+    CastArrayOutsideIndex,
     /// Go `ErrUnsupportedOnGeneratedColumn` (3106) with the reason as its
     /// argument, e.g. `Defining a virtual generated column as primary key`.
     Unsupported(&'static str),
@@ -599,6 +625,9 @@ pub fn build_generated_columns_with_like_default_escape(
         };
         if generated_expression_has_disallowed_function(expression) {
             return Err(GeneratedDdlError::DisallowedFunction(def.name.clone()));
+        }
+        if expression_has_cast_array(expression) {
+            return Err(GeneratedDdlError::CastArrayOutsideIndex);
         }
         let resolver = TableColumnResolver::with_like_default_escape(
             names,
@@ -688,6 +717,9 @@ pub fn build_added_generated_column_with_like_default_escape(
 ) -> Result<GeneratedColumn, GeneratedDdlError> {
     if generated_expression_has_disallowed_function(expression) {
         return Err(GeneratedDdlError::DisallowedFunction(name.to_owned()));
+    }
+    if expression_has_cast_array(expression) {
+        return Err(GeneratedDdlError::CastArrayOutsideIndex);
     }
     let resolver = TableColumnResolver::with_like_default_escape(
         names,
@@ -839,6 +871,15 @@ impl<'a> TableColumnResolver<'a> {
 }
 
 impl ColumnResolver for TableColumnResolver<'_> {
+    /// Go builds a functional index's hidden column and rebuilds every
+    /// generated column for DML with `allowBuildCastArray`
+    /// (`BuildHiddenColumnInfo`, `resolveGeneratedColumns`); an ordinary
+    /// generated column's DDL refuses the cast first
+    /// ([`expression_has_cast_array`]).
+    fn allow_build_cast_array(&self) -> bool {
+        true
+    }
+
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
         self.zone_read.set(true);
         self.zone.clone()

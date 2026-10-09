@@ -153,9 +153,9 @@
 //! `CAST(... AS ... ARRAY)` is the remaining shape, and it is the opposite
 //! direction: Go ACCEPTS it as a multi-valued index, whose hidden column is
 //! JSON with `IsArray` set -- which is exactly why the 3753 arm tests
-//! `!col.FieldType.IsArray()`. This tier declines it earlier, at 1105, so the
-//! array arm is written to Go's rule and unreachable until multi-valued
-//! indexes land.
+//! `!col.FieldType.IsArray()`. The cast is legal only as the whole key part
+//! (Go `illegalFunctionChecker`); the write path then files one entry per
+//! array element (`KvTable::indexed_value_tuples`).
 //!
 //! Two smaller residuals, both the safe direction (this tier refuses what Go
 //! accepts, never the reverse): `MATCH ... AGAINST` and `DEFAULT(a)` are
@@ -258,6 +258,10 @@ struct AdmissibilityScan {
     other: Option<DriverError>,
     /// Go `hasNotGAFunc4ExprIdx`: reported LAST, as 8200.
     not_ga_func: bool,
+    /// Go `disallowCastArrayFunc`, inverted: true until the walk enters its
+    /// first node other than parentheses, so `CAST(... AS ... ARRAY)` is
+    /// admitted only as the whole expression.
+    cast_array_allowed: bool,
 }
 
 impl AdmissibilityScan {
@@ -265,6 +269,13 @@ impl AdmissibilityScan {
     /// terminal flag -- so the subtree under an aggregate or a row value is
     /// never scanned and cannot set a flag of its own.
     fn walk(&mut self, expr: &Expr) {
+        // Go's `Enter` returns before `c.disallowCastArrayFunc = true` only
+        // for parentheses.
+        let cast_array_allowed = if matches!(expr, Expr::Paren(_)) {
+            self.cast_array_allowed
+        } else {
+            std::mem::replace(&mut self.cast_array_allowed, false)
+        };
         match expr {
             // Leaves and the operators Go never routes through a function
             // check: `+`, unary minus, `IS NULL`, `IN`, `BETWEEN`, `LIKE`,
@@ -364,14 +375,12 @@ impl AdmissibilityScan {
                 }
                 // An ordinary `*ast.FuncCastExpr` is not a function call, so
                 // it never meets the GA list -- `((cast(a as char(10))))` is
-                // ACCEPTED by Go, captured. The ARRAY form is multi-valued
-                // indexing, a feature of its own that this tier does not
-                // maintain, so it is declined rather than built as an
-                // ordinary scalar index -- which would index the whole JSON
-                // document under a multi-valued index's name.
-                if cast.array {
-                    self.decline(DriverError::unsupported(
-                        "a multi-valued index (CAST(... AS ... ARRAY)) is not supported yet",
+                // ACCEPTED by Go, captured. The ARRAY form makes the key part
+                // multi-valued, admitted only as the whole expression.
+                if cast.array && !cast_array_allowed {
+                    self.decline(DriverError::NotSupportedYet(
+                        "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions"
+                            .into(),
                     ));
                     return;
                 }
@@ -506,7 +515,10 @@ impl AdmissibilityScan {
 }
 
 fn check_admissible(index_name: &str, expr: &Expr) -> Result<(), DriverError> {
-    let mut scan = AdmissibilityScan::default();
+    let mut scan = AdmissibilityScan {
+        cast_array_allowed: true,
+        ..AdmissibilityScan::default()
+    };
     scan.walk(expr);
     scan.verdict(index_name)
 }
@@ -568,17 +580,20 @@ pub fn build_hidden_columns_with_like_default_escape(
         );
         let built_expr = match tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver) {
             Ok(built_expr) => built_expr,
-            Err(_) => {
-                return Err(match resolver.missing_name() {
+            Err(error) => {
+                return Err(match (resolver.missing_name(), error) {
                     // Go reports 1054 with the clause `expression`, not the
                     // `generated column function` a column generation uses.
-                    Some(missing) => DriverError::UnknownColumnInClause {
+                    (Some(missing), _) => DriverError::UnknownColumnInClause {
                         column: missing,
                         clause: "expression".to_owned(),
                     },
-                    None => DriverError::unsupported(
+                    (None, tidb_expr::EvalError::Unsupported(_)) => DriverError::unsupported(
                         "this expression index's expression is not supported yet",
                     ),
+                    // Go returns `BuildSimpleExpr`'s own error, such as
+                    // `CAST(j AS JSON ARRAY)`'s 1235.
+                    (None, error) => DriverError::Exec(crate::ExecError::Eval(error)),
                 });
             }
         };
@@ -633,11 +648,34 @@ pub fn build_hidden_columns_with_like_default_escape(
         // entry as, so it is refused rather than given a guessed one: an
         // index whose key type disagrees with the value it stores reads back
         // the wrong rows and `ADMIN CHECK TABLE` would call it consistent.
-        let Some(field_type) = built_expr.static_type().cloned() else {
+        let Some(mut field_type) = built_expr.static_type().cloned() else {
             return Err(DriverError::unsupported(
                 "an expression index over an expression with no static type is not supported yet",
             ));
         };
+        // Go `BuildHiddenColumnInfo` resets flags a wrong type inference may
+        // have left, widens an unspecified temporal fsp to the maximum, and
+        // gives an array the binary collation ("will influence how TiKV
+        // handles the index value").
+        field_type.del_flags(
+            tidb_datatype::FieldTypeFlags::PRI_KEY
+                | tidb_datatype::FieldTypeFlags::UNIQUE_KEY
+                | tidb_datatype::FieldTypeFlags::AUTO_INCREMENT,
+        );
+        if matches!(
+            field_type.code(),
+            tidb_datatype::FieldTypeCode::Datetime
+                | tidb_datatype::FieldTypeCode::Date
+                | tidb_datatype::FieldTypeCode::Timestamp
+                | tidb_datatype::FieldTypeCode::Duration
+        ) && field_type.decimal() == tidb_datatype::UNSPECIFIED_LENGTH
+        {
+            field_type.set_decimal(tidb_datatype::MAX_FSP);
+        }
+        if field_type.is_array() {
+            field_type.set_charset_name("binary");
+            field_type.set_collation_name("binary");
+        }
         let expr_text = expr.restore_with_flags(hidden_restore_flags());
         // Go `pkg/ddl/index.go`'s `checkIndexColumn`, which `buildIndexColumns`
         // runs over EVERY non-columnar key part including this hidden one.

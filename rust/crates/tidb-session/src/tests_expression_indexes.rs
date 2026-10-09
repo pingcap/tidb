@@ -448,19 +448,6 @@ fn a_user_column_can_collide_with_the_hidden_columns_name() {
     );
 }
 
-/// A multi-valued index is a feature of its own -- it indexes each ELEMENT of
-/// a JSON array, not the document -- so it is refused rather than built as an
-/// ordinary scalar index under a multi-valued index's name. Go accepts it;
-/// this is a named gap, not a claimed parity.
-#[test]
-fn a_multi_valued_index_is_refused_rather_than_built_as_a_scalar_one() {
-    let mut session = Session::new();
-    session.run("CREATE TABLE mv (j JSON)").unwrap();
-    assert!(session
-        .run("CREATE INDEX i ON mv((cast(j->'$.a' as unsigned array)))")
-        .is_err());
-}
-
 /// A failed `CREATE INDEX` must leave the table exactly as it was: the hidden
 /// column has to exist before the index is backfilled, so the failure path
 /// takes it back off.

@@ -470,6 +470,7 @@ fn build_index_definition(
     let mut part_types: Vec<tidb_datatype::FieldType> = Vec::with_capacity(parts.len());
     let mut built = hidden.into_iter();
     let mut pending = Vec::new();
+    let mut mv_index = false;
     for part in parts {
         match part {
             tidb_ast::IndexPart::Column {
@@ -507,6 +508,11 @@ fn build_index_definition(
                 pending.push(column);
             }
         }
+        crate::ddl::index_prefix::note_multi_valued_part(
+            &mut mv_index,
+            part_types.last().expect("this part's type was just pushed"),
+        )
+        .map_err(|feature| DriverError::NotSupportedYet(feature.into()))?;
     }
     // Go `buildIndexColumns` runs the same running sum for ADD INDEX as for
     // CREATE TABLE: each part may be legal and their total still refused.

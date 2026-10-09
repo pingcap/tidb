@@ -490,12 +490,12 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
         // only supported in starter deployment mode'").
         "fts_match_word" => {
             return crate::EvalError::NotImplemented(
-                "FTS_MATCH_WORD() is only supported in starter deployment mode",
+                "FTS_MATCH_WORD() is only supported in starter deployment mode".into(),
             )
         }
         "match_against" => {
             return crate::EvalError::NotImplemented(
-                "MATCH_AGAINST() is only supported in starter deployment mode",
+                "MATCH_AGAINST() is only supported in starter deployment mode".into(),
             )
         }
         _ => None,

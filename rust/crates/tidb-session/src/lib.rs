@@ -2826,6 +2826,8 @@ mod tests_domain_serverinfo_syncer_source;
 #[cfg(test)]
 mod tests_enum_index_range;
 #[cfg(test)]
+mod tests_multi_valued_index;
+#[cfg(test)]
 mod tests_eval_bool;
 #[cfg(test)]
 mod tests_explain;

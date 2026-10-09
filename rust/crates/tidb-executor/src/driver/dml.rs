@@ -1039,7 +1039,7 @@ fn run_insert_with_physical(
             // outside generation, then append it after the complete hidden tail.
             let extra_handle = extra_handle_offset.map(|_| row.pop().expect("extra handle slot"));
             materialize_generated_for_write(
-                &kv.columns,
+                kv,
                 &mut row,
                 ctx,
                 GeneratedWrite::Insert {

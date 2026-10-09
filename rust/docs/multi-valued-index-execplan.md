@@ -16,9 +16,9 @@ After this work, `create table ... index kj((cast(j as signed array)))` succeeds
 
 ## Progress
 
-- [ ] M1: DDL accepts MV key parts (hidden array column, `IndexInfo.MVIndex`), with Go's validation errors.
-- [ ] M2: `CAST(json AS T ARRAY)` evaluates as Go's `castJSONAsArrayFunctionSig`.
-- [ ] M3: DML index maintenance expands MV keys (Go `index.getIndexedValue`, `NewMultiValueIndexKVGenerator`), including unique MV indexes and `Exist`.
+- [x] (2026-10-09) M1: DDL accepts MV key parts (hidden array column with binary collation, `IndexInfo.MVIndex` in the cluster builder, the local key-part source recorded by `KvTable::add_index`), with Go's validation errors (1235 more than one array part, 3756 primary key, 1235 element types, the cast outside an index).
+- [x] (2026-10-09) M2: `CAST(json AS T ARRAY)` evaluates as Go's `castJSONAsArrayFunctionSig` (`tidb_expr::cast::eval_cast_json_as_array`); the planner rebuilds a virtual column under Go's `allowBuildCastArray`.
+- [x] (2026-10-09) M3: DML index maintenance expands MV keys (`KvTable::indexed_value_tuples`, Go `getIndexedValue`) for INSERT, DELETE, UPDATE (remove all old keys, then create all new ones, as `rebuildUpdateRecordIndices` does), ADD INDEX backfill and unique conflict lookup; INSERT completes 3903/3752/3907 with the index name (Go `completeError`); ADMIN CHECK skips the count test and checks both directions per key (Go `CheckTableExec` for MV).
 - [ ] M4: Planner MV IndexMerge paths (`pkg/planner/core/indexmerge_path.go` MV half).
 - [ ] M5: Executor reads MV partial paths (IndexMerge handle de-duplication, JSON comparison for lookups).
 - [ ] M6: ADMIN CHECK TABLE/INDEX and ANALYZE over MV indexes.
@@ -33,6 +33,9 @@ After this work, `create table ... index kj((cast(j as signed array)))` succeeds
   Evidence: `grep -rn set_mv_key_part_source rust/crates/*/src`.
 
 
+- Observation: two expression-layer gaps block M4's plan text. The port names `MEMBER OF` `json_member_of` and passes its arguments raw, where Go builds `json_memberof` through `newBaseBuiltinFuncWithTp(..., ETJson, ETJson)`, which wraps a non-JSON argument as `cast(x, json BINARY)` (recorded plans print `json_memberof(cast(1, json BINARY), test.t.j)`); `json_contains`/`json_overlaps` arguments likewise. Go's `checkAccessFilter4IdxCol` unwraps exactly that cast, so the MV access-filter match depends on it. Second, the port's array cast is a scalar function named `cast_array`; Go's `unwrapJSONCast` matches `FuncName == "cast"` with a JSON result, so M4's port must accept the port's name for the same node.
+  Evidence: `grep -n json_member_of rust/crates/tidb-expr/src/rewriter.rs`; `tests/integrationtest/r/planner/core/indexmerge_path.result`.
+
 ## Decision Log
 
 - Decision: port by Go call site, milestone by milestone, DDL first.
@@ -45,7 +48,7 @@ After this work, `create table ... index kj((cast(j as signed array)))` succeeds
 
 ## Outcomes & Retrospective
 
-Nothing yet.
+M1–M3 landed together (batch 20). A local MV table answers `member of`/`json_overlaps` through a table scan and filter (no IndexMerge until M4), files exactly Go's keys, and passes ADMIN CHECK after INSERT/UPDATE/DELETE/ADD INDEX. Regression tests: `rust/crates/tidb-session/src/tests_multi_valued_index.rs`.
 
 
 ## Context and Orientation

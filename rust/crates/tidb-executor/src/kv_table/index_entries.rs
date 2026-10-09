@@ -49,6 +49,15 @@ pub(crate) struct IndexEntryForCheck {
     pub(crate) handle: TableHandle,
 }
 
+/// One entry key a row files under one index (see
+/// [`KvTable::index_entry_keys`]).
+pub(crate) struct IndexEntryKey {
+    pub(crate) key: Vec<u8>,
+    pub(crate) distinct: bool,
+    /// The value tuple the key encodes, before key truncation.
+    pub(crate) values: Vec<Datum>,
+}
+
 pub(super) struct UniquePointRead {
     physical_ids: Vec<i64>,
     index_id: i64,
@@ -267,22 +276,115 @@ impl KvTable {
             .collect()
     }
 
-    /// Go `GenIndexKey`: the entry key for one index over `row`, plus Go's
-    /// `distinct` flag.
+    /// Go `IndexInfo.MVIndex`: whether one of `index`'s key parts is a
+    /// multi-valued (`CAST(... AS ... ARRAY)`) hidden column. Go's DDL sets
+    /// the flag from exactly this test (`buildIndexColumns`).
+    pub(crate) fn is_mv_index(&self, index: &KvIndex) -> bool {
+        index.column_offsets.iter().any(|offset| {
+            self.columns
+                .get(*offset)
+                .is_some_and(|column| column.field_type.is_array())
+        })
+    }
+
+    /// Go `index.getIndexedValue`: the value tuples one row files under
+    /// `index`. An ordinary index files the one tuple `values` is; a
+    /// multi-valued index files one tuple per DISTINCT element of its array
+    /// part (deduplicated by `BinaryJSON.HashValue`), one tuple holding the
+    /// NULL when the array is NULL, and nothing for an empty array.
+    pub(crate) fn indexed_value_tuples(
+        &self,
+        index: &KvIndex,
+        values: Vec<Datum>,
+    ) -> Result<Vec<Vec<Datum>>, KvTableError> {
+        if !self.is_mv_index(index) {
+            return Ok(vec![values]);
+        }
+        let is_array_part = |position: usize| {
+            self.columns
+                .get(index.column_offsets[position])
+                .is_some_and(|column| column.field_type.is_array())
+        };
+        let json_error = |error| KvTableError::Encode(format!("{error:?}"));
+        let mut tuples = Vec::new();
+        let mut json_index = 0;
+        let mut json_is_null = false;
+        let mut seen = std::collections::HashSet::new();
+        while !json_is_null {
+            let mut tuple = Vec::with_capacity(values.len());
+            for (position, value) in values.iter().enumerate() {
+                if !is_array_part(position) {
+                    tuple.push(value.clone());
+                    continue;
+                }
+                // A non-JSON datum here is an element a cleanup passed in
+                // directly; it files as itself, like a NULL array.
+                let Datum::Json(array) = value else {
+                    tuple.push(value.clone());
+                    json_is_null = true;
+                    continue;
+                };
+                let element_count = array.element_count().map_err(json_error)?;
+                loop {
+                    if json_index >= element_count {
+                        return Ok(tuples);
+                    }
+                    let element = array
+                        .array_get(json_index)
+                        .map_err(json_error)?
+                        .ok_or_else(|| KvTableError::Encode("a JSON array element is missing".to_owned()))?;
+                    json_index += 1;
+                    if !seen.insert(element.hash_value().map_err(json_error)?) {
+                        continue;
+                    }
+                    tuple.push(json_element_datum(&element)?);
+                    break;
+                }
+            }
+            tuples.push(tuple);
+        }
+        Ok(tuples)
+    }
+
+    /// Go `index.create`/`Delete`'s per-tuple `GenIndexKey`: every entry key
+    /// one row produces for one index, each with Go's `distinct` flag and the
+    /// value tuple it encodes.
     ///
     /// `distinct` is true only for a unique index whose indexed values are all
     /// non-NULL -- MySQL lets a unique index hold any number of NULLs, so a
     /// NULL-bearing entry is stored the non-distinct way (handle appended to
     /// the key) and never collides.
-    pub(crate) fn index_key(
+    pub(crate) fn index_entry_keys(
         &self,
         index: &KvIndex,
         row: &[Datum],
         handle: &TableHandle,
         physical_id: i64,
         zone: &SessionTimeZone,
+    ) -> Result<Vec<IndexEntryKey>, KvTableError> {
+        self.indexed_value_tuples(index, self.index_values(index, row))?
+            .into_iter()
+            .map(|values| {
+                let (key, distinct) =
+                    self.index_key_of_values(index, values.clone(), handle, physical_id, zone)?;
+                Ok(IndexEntryKey {
+                    key,
+                    distinct,
+                    values,
+                })
+            })
+            .collect()
+    }
+
+    /// Go `GenIndexKey` over one value tuple.
+    fn index_key_of_values(
+        &self,
+        index: &KvIndex,
+        mut values: Vec<Datum>,
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
-        let mut values = self.index_values(index, row);
         let handle = match handle {
             TableHandle::Int(value) => tidb_txnkv::IntHandle::new(*value).into(),
             TableHandle::Common(bytes) => tidb_txnkv::CommonHandle::new(bytes.clone())
@@ -451,6 +553,7 @@ impl KvTable {
     pub(in crate::kv_table) fn index_entry_value(
         &self,
         index: &KvIndex,
+        values: &[Datum],
         row: &[Datum],
         handle: &TableHandle,
         distinct: bool,
@@ -474,7 +577,7 @@ impl KvTable {
             // touched without changing; this tier writes only committed
             // entries.
             false,
-            &self.index_values(index, row),
+            values,
             &handle,
             if index.global { physical_id } else { 0 },
             &self.handle_restored_data(row),
@@ -504,13 +607,53 @@ impl KvTable {
             if !self.index_condition_holds(index, row, zone)? {
                 continue;
             }
-            let (key, distinct) = self.index_key(index, row, handle, physical_id, zone)?;
-            let value = self.index_entry_value(index, row, handle, distinct, physical_id, zone)?;
-            let key = Key::from_bytes(key);
-            let lazy_check = if distinct {
+            self.create_index_entries(
+                index,
+                row,
+                handle,
+                physical_id,
+                zone,
+                lazy_dup_check,
+                pessimistic,
+                check_in_prewrite,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Go `index.create` for one index over `row`: every entry key it files,
+    /// a unique one checked for a duplicate first.
+    #[allow(clippy::too_many_arguments)]
+    fn create_index_entries(
+        &mut self,
+        index: &KvIndex,
+        row: &[Datum],
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+        lazy_dup_check: bool,
+        pessimistic: bool,
+        check_in_prewrite: bool,
+    ) -> Result<(), KvTableError> {
+        // Go `addIndices` composes the message from the row's (cut) values
+        // before any multi-valued expansion, which is why a duplicate element
+        // reports the whole array (`'["y"]'`).
+        let duplicate_value = duplicate_value_text(&self.index_values(index, row));
+        for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
+            let value = self.index_entry_value(
+                index,
+                &entry.values,
+                row,
+                handle,
+                entry.distinct,
+                physical_id,
+                zone,
+            )?;
+            let key = Key::from_bytes(entry.key);
+            let lazy_check = if entry.distinct {
                 self.check_insert_key(
                     &key,
-                    &duplicate_value_text(&self.index_values(index, row)),
+                    &duplicate_value,
                     &self.qualified_key(&index.name),
                     lazy_dup_check,
                 )?
@@ -527,8 +670,26 @@ impl KvTable {
                     key,
                     value,
                     assertion,
-                    distinct && lazy_check && pessimistic && check_in_prewrite,
+                    entry.distinct && lazy_check && pessimistic && check_in_prewrite,
                 )
+                .map_err(KvTableError::from)?;
+        }
+        Ok(())
+    }
+
+    /// Go `index.Delete` for one index over `row`: removes every entry key it
+    /// filed.
+    fn remove_index_entries(
+        &mut self,
+        index: &KvIndex,
+        row: &[Datum],
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<(), KvTableError> {
+        for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
+            self.store
+                .delete_with_assertion(Key::from_bytes(entry.key), AssertionOp::AssertExist)
                 .map_err(KvTableError::from)?;
         }
         Ok(())
@@ -552,10 +713,7 @@ impl KvTable {
             if !self.index_condition_holds(index, row, zone)? {
                 continue;
             }
-            let (key, _) = self.index_key(index, row, handle, physical_id, zone)?;
-            self.store
-                .delete_with_assertion(Key::from_bytes(key), AssertionOp::AssertExist)
-                .map_err(KvTableError::from)?;
+            self.remove_index_entries(index, row, handle, physical_id, zone)?;
         }
         Ok(())
     }
@@ -599,42 +757,20 @@ impl KvTable {
             match (old_holds, new_holds) {
                 (false, false) => continue,
                 (false, true) => {
-                    let (new_key, new_distinct) =
-                        self.index_key(index, new_row, handle, physical_id, zone)?;
-                    let value = self.index_entry_value(
+                    self.create_index_entries(
                         index,
                         new_row,
                         handle,
-                        new_distinct,
                         physical_id,
                         zone,
+                        lazy_dup_check,
+                        pessimistic,
+                        check_in_prewrite,
                     )?;
-                    let key = Key::from_bytes(new_key);
-                    let lazy_check = if new_distinct {
-                        self.check_insert_key(
-                            &key,
-                            &duplicate_value_text(&self.index_values(index, new_row)),
-                            &self.qualified_key(&index.name),
-                            lazy_dup_check,
-                        )?
-                    } else {
-                        false
-                    };
-                    self.store
-                        .set_with_constraint_check(
-                            key,
-                            value,
-                            AssertionOp::AssertNotExist,
-                            lazy_check && pessimistic && check_in_prewrite,
-                        )
-                        .map_err(KvTableError::from)?;
                     continue;
                 }
                 (true, false) => {
-                    let (old_key, _) = self.index_key(index, old_row, handle, physical_id, zone)?;
-                    self.store
-                        .delete_with_assertion(Key::from_bytes(old_key), AssertionOp::AssertExist)
-                        .map_err(KvTableError::from)?;
+                    self.remove_index_entries(index, old_row, handle, physical_id, zone)?;
                     continue;
                 }
                 (true, true) => {}
@@ -651,13 +787,35 @@ impl KvTable {
             {
                 continue;
             }
+            // A multi-valued row files a SET of keys, which the old and new
+            // arrays may share. Go `rebuildUpdateRecordIndices` removes every
+            // old key and then creates every new one; a shared key keeps the
+            // delete's AssertExist because the first assertion wins
+            // (`setAssertion`).
+            if self.is_mv_index(index) {
+                self.remove_index_entries(index, old_row, handle, physical_id, zone)?;
+                self.create_index_entries(
+                    index,
+                    new_row,
+                    handle,
+                    physical_id,
+                    zone,
+                    lazy_dup_check,
+                    pessimistic,
+                    check_in_prewrite,
+                )?;
+                continue;
+            }
+            let old_values = self.index_values(index, old_row);
+            let new_values = self.index_values(index, new_row);
             let (old_key, old_distinct) =
-                self.index_key(index, old_row, handle, physical_id, zone)?;
+                self.index_key_of_values(index, old_values.clone(), handle, physical_id, zone)?;
             let (new_key, new_distinct) =
-                self.index_key(index, new_row, handle, physical_id, zone)?;
+                self.index_key_of_values(index, new_values.clone(), handle, physical_id, zone)?;
             if old_key == new_key && old_distinct == new_distinct {
                 let old_value = self.index_entry_value(
                     index,
+                    &old_values,
                     old_row,
                     handle,
                     old_distinct,
@@ -666,6 +824,7 @@ impl KvTable {
                 )?;
                 let new_value = self.index_entry_value(
                     index,
+                    &new_values,
                     new_row,
                     handle,
                     new_distinct,
@@ -687,13 +846,20 @@ impl KvTable {
                     .map_err(KvTableError::from)?;
                 continue;
             }
-            let value =
-                self.index_entry_value(index, new_row, handle, new_distinct, physical_id, zone)?;
+            let value = self.index_entry_value(
+                index,
+                &new_values,
+                new_row,
+                handle,
+                new_distinct,
+                physical_id,
+                zone,
+            )?;
             let key = Key::from_bytes(new_key);
             let lazy_check = if new_distinct {
                 self.check_insert_key(
                     &key,
-                    &duplicate_value_text(&self.index_values(index, new_row)),
+                    &duplicate_value_text(&new_values),
                     &self.qualified_key(&index.name),
                     lazy_dup_check,
                 )?
@@ -877,6 +1043,33 @@ impl KvTable {
             .stored_record_key(handle)?
             .map(|key| decode_table_id(key.as_bytes())))
     }
+}
+
+/// Go `types.NewDatum(BinaryJSON.GetValue())`: the datum a multi-valued
+/// index files for one array element, which `CAST(... AS ... ARRAY)` already
+/// converted to the element type.
+fn json_element_datum(element: &tidb_datatype::BinaryJSON) -> Result<Datum, KvTableError> {
+    use tidb_datatype::{
+        JSON_TYPE_CODE_DATE, JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION,
+        JSON_TYPE_CODE_FLOAT64, JSON_TYPE_CODE_INT64, JSON_TYPE_CODE_STRING,
+        JSON_TYPE_CODE_UINT64,
+    };
+    let json_error = |error| KvTableError::Encode(format!("{error:?}"));
+    Ok(match element.type_code() {
+        JSON_TYPE_CODE_INT64 => element.as_i64().map_or(Datum::Null, Datum::Int),
+        JSON_TYPE_CODE_UINT64 => element.as_u64().map_or(Datum::Null, Datum::UInt),
+        JSON_TYPE_CODE_FLOAT64 => element.as_f64().map_or(Datum::Null, Datum::Real),
+        JSON_TYPE_CODE_STRING => element
+            .as_string()
+            .map_or(Datum::Null, |bytes| Datum::Bytes(bytes.to_vec())),
+        JSON_TYPE_CODE_DURATION => Datum::Duration(element.as_duration().map_err(json_error)?),
+        // Go `GetTime` reads the default fsp (0).
+        JSON_TYPE_CODE_DATE | JSON_TYPE_CODE_DATETIME => {
+            Datum::Time(element.as_time(0).map_err(json_error)?)
+        }
+        // Go logs "unreachable JSON type" and files `NewDatum(nil)`.
+        _ => Datum::Null,
+    })
 }
 
 /// Go `stringutil.GetTailSpaceCount`: how many trailing spaces a bin

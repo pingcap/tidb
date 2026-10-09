@@ -590,10 +590,13 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // right way when it was last re-recorded (more plans compared, all merge
     // pairs reproduced, none extra); the six disagreements left are the
     // TIDB_SMJ hint over a cross or other-condition join (four statements)
-    // and two subqueries Go decorrelates. Inspect recorded witnesses before
-    // updating these counts.
-    const COMPARED: usize = 756;
-    const BOTH_AGREE: usize = 750;
+    // and two subqueries Go decorrelates. The 757th plan is push_down's
+    // `t4a8656d1 join tld47bc815`, reachable once its multi-valued index
+    // could be created: TiDB records an inner HashJoin with no keep order
+    // (push_down.result:264), which the port reproduces. Inspect recorded
+    // witnesses before updating these counts.
+    const COMPARED: usize = 757;
+    const BOTH_AGREE: usize = 751;
     const RECORDED_MERGE_PAIRS: usize = 114;
     const AGREED_MERGE_PAIRS: usize = 114;
     const EXTRA_MERGE_PAIRS: usize = 0;
