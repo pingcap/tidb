@@ -37,7 +37,7 @@ type Pool interface {
 var _ Pool = (*pool)(nil)
 
 type pool struct {
-	// This gpool is used to reuse goroutines in the global stats merge.
+	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 	gpool *gp.Pool
 	pool  util.DestroyableSessionPool
 }

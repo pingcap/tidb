@@ -48,20 +48,6 @@ type skipItem struct {
 	partitionID int64
 }
 
-// StatsWrapper wrapper stats
-type StatsWrapper struct {
-	AllHg   []*statistics.Histogram
-	AllTopN []*statistics.TopN
-}
-
-// NewStatsWrapper returns wrapper
-func NewStatsWrapper(hg []*statistics.Histogram, topN []*statistics.TopN) *StatsWrapper {
-	return &StatsWrapper{
-		AllHg:   hg,
-		AllTopN: topN,
-	}
-}
-
 // toSQLIndex is used to convert bool to int64.
 func toSQLIndex(isIndex bool) int {
 	var index = int(0)
@@ -299,7 +285,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, killer *sqlkiller.SQLKiller, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, analyzeVersion int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Warn("cpuWorker panic", zap.Stack("stack"), zap.Any("error", r))
@@ -333,7 +319,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 			panic("test for PanicSameTime")
 		}
 	})
-	err = a.dealHistogramAndTopN(stmtCtx, killer, opts, isIndex)
+	err = a.dealHistogramAndTopN(stmtCtx, sctx, killer, opts, isIndex, analyzeVersion)
 	if err != nil {
 		statslogutil.StatsLogger().Warn("dealHistogramAndTopN failed", zap.Error(err))
 		return err
@@ -353,6 +339,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	isIndex bool,
 ) error {
 	a.skipMissingPartitionStats = sctx.GetSessionVars().SkipMissingPartitionStats
+	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	// Capture the caller's SQLKiller here. Inside CallWithSCtx the
 	// passed-in sctx is a pooled stats session whose lifecycle is
@@ -372,7 +359,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 				return a.ioWorker(sctx, isIndex)
 			})
 			mergeWg.Go(func() error {
-				return a.cpuWorker(stmtCtx, killer, opts, isIndex)
+				return a.cpuWorker(stmtCtx, sctx, killer, opts, isIndex, analyzeVersion)
 			})
 			err = metawg.Wait()
 			if err != nil {
@@ -555,7 +542,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketch() error {
 	}
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, killer *sqlkiller.SQLKiller, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, analyzeVersion int) (err error) {
 	failpoint.Inject("dealHistogramAndTopNErr", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			failpoint.Return(errors.New("dealHistogramAndTopNErr returned error"))
@@ -576,17 +563,25 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			var err error
 			wrapper := item.item
 			globalHg := &(a.globalStats.Hg[item.idx])
-			a.globalStats.TopN[item.idx], *globalHg, err = mergeTopNAndHist(
-				stmtCtx, killer,
-				wrapper.AllTopN, wrapper.AllHg,
-				opts, isIndex, a.hasV1Stats[item.idx],
-			)
+			if a.hasV1Stats[item.idx] {
+				a.globalStats.TopN[item.idx], *globalHg, err = mergeV1TopNAndHist(a.statsHandle.GPool(), sctx, stmtCtx,
+					wrapper, analyzeVersion, opts, isIndex)
+			} else {
+				// Combined TopN + histogram merge.
+				a.globalStats.TopN[item.idx], *globalHg, err = statistics.MergePartTopNAndHistToGlobal(
+					stmtCtx, killer,
+					wrapper.AllTopN, wrapper.AllHg,
+					uint32(opts[ast.AnalyzeOptNumTopN]),
+					int64(opts[ast.AnalyzeOptNumBuckets]),
+					isIndex,
+				)
+			}
 			if err != nil {
 				return err
 			}
 
-			// mergeTopNAndHist already leaves bucket NDV = 0; here we just
-			// set the table-level NDV.
+			// Both merges already leave bucket NDV = 0; here we just set the
+			// table-level NDV.
 			if *globalHg != nil {
 				(*globalHg).NDV = a.globalStatsNDV[item.idx]
 			}

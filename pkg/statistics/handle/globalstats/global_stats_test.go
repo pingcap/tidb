@@ -1201,14 +1201,21 @@ func TestGlobalStatsMergePathConsistency(t *testing.T) {
 }
 
 // TestGlobalStatsMergeV1 covers global stats merged from analyze version
-// 1 partition stats, which take the separate TopN and histogram merges.
+// 1 partition stats, which take the separate TopN and histogram merges,
+// single-threaded and concurrent.
 func TestGlobalStatsMergeV1(t *testing.T) {
-	for _, async := range []string{"OFF", "ON"} {
-		t.Run("async="+async, func(t *testing.T) {
+	for _, tc := range []struct{ async, concurrency string }{
+		{"OFF", "1"}, {"OFF", "4"}, {"ON", "1"}, {"ON", "4"},
+	} {
+		t.Run("async="+tc.async+",concurrency="+tc.concurrency, func(t *testing.T) {
 			store := testkit.CreateMockStore(t)
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			tk.MustExec("set @@tidb_enable_async_merge_global_stats = " + async)
+			tk.MustExec("set @@tidb_enable_async_merge_global_stats = " + tc.async)
+			// The blocking merge reads the session value, the async merge
+			// reads the global value through its stats session.
+			tk.MustExec("set @@global.tidb_merge_partition_stats_concurrency = " + tc.concurrency)
+			tk.MustExec("set @@tidb_merge_partition_stats_concurrency = " + tc.concurrency)
 			tk.MustExec("set @@tidb_analyze_version = 1")
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 
@@ -1314,12 +1321,18 @@ func TestGlobalStatsMergeV1(t *testing.T) {
 // still have version 1 stats, and the merge takes the separate TopN and
 // histogram merges for them.
 func TestGlobalStatsMergeMixedV1V2(t *testing.T) {
-	for _, async := range []string{"OFF", "ON"} {
-		t.Run("async="+async, func(t *testing.T) {
+	for _, tc := range []struct{ async, concurrency string }{
+		{"OFF", "1"}, {"OFF", "4"}, {"ON", "1"}, {"ON", "4"},
+	} {
+		t.Run("async="+tc.async+",concurrency="+tc.concurrency, func(t *testing.T) {
 			store := testkit.CreateMockStore(t)
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			tk.MustExec("set @@tidb_enable_async_merge_global_stats = " + async)
+			tk.MustExec("set @@tidb_enable_async_merge_global_stats = " + tc.async)
+			// The blocking merge reads the session value, the async merge
+			// reads the global value through its stats session.
+			tk.MustExec("set @@global.tidb_merge_partition_stats_concurrency = " + tc.concurrency)
+			tk.MustExec("set @@tidb_merge_partition_stats_concurrency = " + tc.concurrency)
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 			tk.MustExec("create table t (a int, b int) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
 			// b = 1: 10 rows in p0, 3 in p1. b = 2: 5 rows in p1.

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "global_stats.go",
         "global_stats_async.go",
+        "merge_worker.go",
         "topn.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/globalstats",
@@ -26,6 +27,7 @@ go_library(
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tiancaiamao_gp//:gp",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_zap//:zap",
     ],
