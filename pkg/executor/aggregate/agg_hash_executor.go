@@ -155,6 +155,11 @@ type HashAggExec struct {
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
 
+	// UniqueLimitTarget controls early stop for unique-limit optimization.
+	// When it is greater than 0, HashAgg can stop scanning child after collecting this
+	// many unique groups.
+	UniqueLimitTarget uint64
+
 	invalidMemoryUsageForTrackingTest bool
 
 	FileNamePrefixForTest string
@@ -766,6 +771,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		var tmpBuf [1]chunk.Row
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
+			isNewGroup := false
 			if _, ok := e.groupSet.M[groupKey]; !ok {
 				if atomic.LoadUint32(&e.inSpillMode) == 1 && len(e.groupSet.M) > 0 {
 					sel = append(sel, j)
@@ -773,6 +779,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 				}
 				allMemDelta += e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
+				isNewGroup = true
 			}
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
@@ -782,6 +789,11 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 					return err
 				}
 				allMemDelta += memDelta
+			}
+			if isNewGroup && e.UniqueLimitTarget > 0 && uint64(len(e.groupSet.M)) >= e.UniqueLimitTarget {
+				failpoint.Inject("ConsumeRandomPanic", nil)
+				e.memTracker.Consume(allMemDelta)
+				return nil
 			}
 		}
 
