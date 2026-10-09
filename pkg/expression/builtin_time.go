@@ -2203,7 +2203,7 @@ func (b *builtinSysDateWithFspSig) evalTime(ctx EvalContext, row chunk.Row) (val
 
 	loc := location(ctx)
 	now := time.Now().In(loc)
-	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeHalfUp)
+	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeTruncate)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2228,7 +2228,7 @@ func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
 func (b *builtinSysDateWithoutFspSig) evalTime(ctx EvalContext, row chunk.Row) (val types.Time, isNull bool, err error) {
 	tz := location(ctx)
 	now := time.Now().In(tz)
-	result, err := convertTimeToMysqlTime(now, 0, types.ModeHalfUp)
+	result, err := convertTimeToMysqlTime(now, 0, types.ModeTruncate)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2333,7 +2333,7 @@ func (b *builtinCurrentTime0ArgSig) evalDuration(ctx EvalContext, row chunk.Row)
 		return types.Duration{}, true, err
 	}
 	dur := nowTs.In(tz).Format(types.TimeFormat)
-	res, _, err := types.ParseDuration(typeCtx(ctx), dur, types.MinFsp)
+	res, _, err := types.ParseDurationTruncateFsp(typeCtx(ctx), dur, types.MinFsp)
 	if err != nil {
 		return types.Duration{}, true, err
 	}
@@ -2364,8 +2364,7 @@ func (b *builtinCurrentTime1ArgSig) evalDuration(ctx EvalContext, row chunk.Row)
 		return types.Duration{}, true, err
 	}
 	dur := nowTs.In(tz).Format(types.TimeFSPFormat)
-	tc := typeCtx(ctx)
-	res, _, err := types.ParseDuration(tc, dur, int(fsp))
+	res, _, err := types.ParseDurationTruncateFsp(typeCtx(ctx), dur, int(fsp))
 	if err != nil {
 		return types.Duration{}, true, err
 	}
@@ -2565,7 +2564,7 @@ func evalUTCTimestampWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
-	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeHalfUp)
+	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeTruncate)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -6873,7 +6872,7 @@ func (b *builtinUTCTimeWithoutArgSig) evalDuration(ctx EvalContext, row chunk.Ro
 	if err != nil {
 		return types.Duration{}, true, err
 	}
-	v, _, err := types.ParseDuration(typeCtx(ctx), nowTs.UTC().Format(types.TimeFormat), 0)
+	v, _, err := types.ParseDurationTruncateFsp(typeCtx(ctx), nowTs.UTC().Format(types.TimeFormat), 0)
 	return v, false, err
 }
 
@@ -6908,7 +6907,7 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(ctx EvalContext, row chunk.Row) 
 	if err != nil {
 		return types.Duration{}, true, err
 	}
-	v, _, err := types.ParseDuration(typeCtx(ctx), nowTs.UTC().Format(types.TimeFSPFormat), int(fsp))
+	v, _, err := types.ParseDurationTruncateFsp(typeCtx(ctx), nowTs.UTC().Format(types.TimeFSPFormat), int(fsp))
 	return v, false, err
 }
 
