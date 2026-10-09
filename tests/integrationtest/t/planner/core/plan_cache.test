@@ -1795,3 +1795,43 @@ CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL);
 INSERT INTO t VALUES (1, current_date());
 PREPARE stmt FROM 'SELECT a FROM t WHERE b=current_date()';
 EXECUTE stmt;
+
+# TestPlanCacheCoalesce
+drop table if exists t_plan_cache_coalesce;
+create table t_plan_cache_coalesce (a int primary key, b int, key(b));
+insert into t_plan_cache_coalesce values (1, null), (2, 20);
+
+prepare st_coalesce_expr from 'select a, coalesce(b, ?) from t_plan_cache_coalesce where a = coalesce(?, 1)';
+set @fallback=100, @key=1;
+execute st_coalesce_expr using @fallback, @key;
+select @@last_plan_from_cache;
+set @fallback=200, @key=2;
+execute st_coalesce_expr using @fallback, @key;
+select @@last_plan_from_cache;
+deallocate prepare st_coalesce_expr;
+
+drop table if exists t_plan_cache_coalesce_outer, t_plan_cache_coalesce_inner;
+create table t_plan_cache_coalesce_outer (a int primary key);
+create table t_plan_cache_coalesce_inner (a int primary key, b int);
+insert into t_plan_cache_coalesce_outer values (1), (2);
+insert into t_plan_cache_coalesce_inner values (2, 5);
+prepare st_coalesce_left_join from 'select o.a, i.b from t_plan_cache_coalesce_outer o left join t_plan_cache_coalesce_inner i on o.a = i.a where coalesce(i.b, ?) > 0 order by o.a';
+set @fallback=0;
+execute st_coalesce_left_join using @fallback;
+select @@last_plan_from_cache;
+set @fallback=1;
+execute st_coalesce_left_join using @fallback;
+select @@last_plan_from_cache;
+deallocate prepare st_coalesce_left_join;
+
+set tidb_enable_non_prepared_plan_cache=1;
+select a, coalesce(b, 100) from t_plan_cache_coalesce where a = coalesce(1, a);
+select @@last_plan_from_cache;
+select a, coalesce(b, 100) from t_plan_cache_coalesce where a = coalesce(2, a);
+select @@last_plan_from_cache;
+
+select o.a, i.b from t_plan_cache_coalesce_outer o left join t_plan_cache_coalesce_inner i on o.a = i.a where coalesce(i.b, 0) > 0 order by o.a;
+select @@last_plan_from_cache;
+select o.a, i.b from t_plan_cache_coalesce_outer o left join t_plan_cache_coalesce_inner i on o.a = i.a where coalesce(i.b, 1) > 0 order by o.a;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=default;
