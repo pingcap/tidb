@@ -130,12 +130,13 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     // h1 errors `Table 'fdq.h1' doesn't exist`, not the source query's own
     // 1146 (oracle m13).
     resolve_insert_target(insert, catalog, current_db, ctx)?;
+    let extended_source = insert_plan_source(insert, catalog, current_db);
     let mut fresh = physical_plan
         .is_none()
         .then(|| {
             physical_dml_plan(
                 "Insert",
-                insert.source.as_deref(),
+                extended_source.as_ref().or(insert.source.as_deref()),
                 None,
                 catalog,
                 current_db,
@@ -159,6 +160,16 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
         fk_triggers,
         runtime,
     )
+}
+
+/// The query an `INSERT ... SELECT` plans: its own source, or Go's
+/// ON DUPLICATE extension of it (see [`super::on_duplicate_scope`]).
+pub(crate) fn insert_plan_source(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<tidb_ast::QueryStmt> {
+    super::on_duplicate_scope::extended_source(insert, catalog, current_db).map(|(query, _)| query)
 }
 
 fn dml_execution_parts<'a>(
@@ -576,6 +587,16 @@ fn resolve_insert_target(
             }
         }
     }
+    // Go `initInsertColumns`' `table.CheckOnce`, after the planner's checks:
+    // a column named twice, in the column list or the SET form.
+    for (position, &offset) in target_offsets.iter().enumerate() {
+        if target_offsets[..position].contains(&offset) {
+            return Err(DriverError::DdlCoded {
+                errno: 1110,
+                message: format!("Column '{}' specified twice", column_list[offset].0),
+            });
+        }
+    }
     Ok(InsertTargetLayout {
         database,
         table_name,
@@ -606,11 +627,18 @@ fn run_insert_with_physical(
         chunk.set_num_virtual_rows(1);
         chunk
     };
-    let source_output_names = insert
-        .source
-        .as_ref()
-        .map(|query| source_output_names(query, catalog, current_db))
-        .unwrap_or_default();
+    // Go `buildInsert`'s `Names4OnDuplicate` and `ResolveOnDuplicate`: the
+    // assignment values resolve at plan time, conflict or not.
+    let on_duplicate_scope = super::on_duplicate_scope::OnDuplicateScope::build(
+        insert,
+        catalog,
+        current_db,
+        &target_layout.column_list,
+        &target_layout.database,
+        &target_layout.table_name,
+        &target_layout.target_offsets,
+    );
+    on_duplicate_scope.validate(&insert.on_duplicate)?;
     let select_on_duplicate = if insert.source.is_some() {
         Some(prepare_on_duplicate_assignments(
             &insert.on_duplicate,
@@ -655,6 +683,18 @@ fn run_insert_with_physical(
             Some(rows)
         }
         None => None,
+    };
+    // The fields Go appended for ON DUPLICATE ride past the row's own values.
+    let mut source_rows = source_rows;
+    let source_extras: Vec<Vec<Datum>> = match (
+        source_rows.as_mut(),
+        on_duplicate_scope.actual_col_len(),
+    ) {
+        (Some(rows), Some(actual)) => rows
+            .iter_mut()
+            .map(|row| row.split_off(actual.min(row.len())))
+            .collect(),
+        _ => Vec::new(),
     };
 
     let InsertTargetLayout {
@@ -720,9 +760,13 @@ fn run_insert_with_physical(
     // `strict` alone: the single-row promotion holds in every SQL mode, so an
     // `IGNORE` statement has to override it separately. Captured from TiDB,
     // `INSERT IGNORE INTO t(a INT NOT NULL) VALUES (NULL)` under the default
-    // strict mode warns 1048 and stores `0`.
+    // strict mode warns 1048 and stores `0`. Go's rule also needs
+    // `tidb_enable_strict_not_null_check`, which the statement context
+    // carries.
     let bad_null_level = crate::bad_null::NullLevel::from_is_error(
-        !ctx.ignore_err() && (ctx.strict() || insert.rows.len() == 1),
+        !ctx.ignore_err()
+            && (ctx.strict() || insert.rows.len() == 1)
+            && ctx.strict_not_null_check(),
     );
 
     enum PreparedInsertValue {
@@ -913,7 +957,7 @@ fn run_insert_with_physical(
         assignments: on_duplicate_assignments,
         extra_handle: extra_handle_offset.is_some(),
         selected_partitions: insert_partition_ids.clone(),
-        source_output_names,
+        scope: on_duplicate_scope,
     };
 
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
@@ -1142,28 +1186,58 @@ fn run_insert_with_physical(
                 // hand back and the counter is drawn from as usual. The cursor
                 // is read lazily so that a row carrying its OWN id does not
                 // consume from it -- see `apply_auto_increment`.
-                let outcome = kv
-                    .apply_auto_increment_in(
-                        &mut new_rows[*index],
-                        ctx.auto_increment_step(),
-                        || ctx.reuse_auto_increment_id(),
-                        &crate::kv_table::AutoIdCall::statement(&ctx.statement_memory()),
-                    )
-                    .map_err(|error| {
+                let outcome = match kv.apply_auto_increment_in(
+                    &mut new_rows[*index],
+                    ctx.auto_increment_step(),
+                    || ctx.reuse_auto_increment_id(),
+                    &crate::kv_table::AutoIdCall::statement(&ctx.statement_memory()),
+                ) {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
                         if let Err(killed) = ctx.statement_memory().check() {
-                            return DriverError::Exec(killed);
+                            return Err(DriverError::Exec(killed));
                         }
                         match error {
-                            AutoIdError::Exhausted => DriverError::AutoincReadFailed,
+                            AutoIdError::Exhausted => return Err(DriverError::AutoincReadFailed),
                             // An id that does not fit the COLUMN is not a full
-                            // domain: Go casts the allocated id and reports the
-                            // cast's own 1690, which names the value and type.
+                            // domain: Go `setDatumAutoIDAndCast` casts the
+                            // allocated id, and the cast's 1690 names the value
+                            // and type. Under IGNORE or a non-strict mode the
+                            // cast warns and clamps instead; the clamped id may
+                            // duplicate an existing one, which only an ON
+                            // DUPLICATE KEY UPDATE may go on with (issue
+                            // 38950). Otherwise it is 1467, which IGNORE's
+                            // error context makes a warning that ends the
+                            // statement (insert.go `insertRows`'s caller).
                             AutoIdError::OutOfRange { value, type_name } => {
-                                DriverError::ConstantOverflows { value, type_name }
+                                if ctx.strict() && !insert.ignore {
+                                    return Err(DriverError::ConstantOverflows { value, type_name });
+                                }
+                                ctx.append_warning_parts(
+                                    1690,
+                                    &format!("constant {value} overflows {type_name}"),
+                                );
+                                if insert.on_duplicate.is_empty() {
+                                    if !insert.ignore {
+                                        return Err(DriverError::AutoincReadFailed);
+                                    }
+                                    ctx.append_warning_parts(
+                                        1467,
+                                        "Failed to read auto-increment value from storage engine",
+                                    );
+                                    return Ok((0, None));
+                                }
+                                kv.clamp_auto_increment(&mut new_rows[*index]);
+                                AutoIncrement::Allocated(value.parse::<i64>().unwrap_or_else(
+                                    |_| value.parse::<u64>().map_or(0, |id| id as i64),
+                                ))
                             }
-                            AutoIdError::Store(detail) => DriverError::AutoIdUnavailable(detail.0),
+                            AutoIdError::Store(detail) => {
+                                return Err(DriverError::AutoIdUnavailable(detail.0));
+                            }
                         }
-                    })?;
+                    }
+                };
                 // Recorded whether it was drawn, handed back, or supplied by
                 // the row, so the NEXT attempt replays this attempt's
                 // assignment exactly. Go records in all three arms
@@ -1340,6 +1414,7 @@ fn run_insert_with_physical(
                     &database,
                     &conflicts[0].handle,
                     candidate_values,
+                    source_extras.get(position).map_or(&[][..], Vec::as_slice),
                     &prepared_on_duplicate,
                     &column_list,
                     position,
@@ -1585,11 +1660,8 @@ struct PreparedOnDuplicate {
     assignments: Vec<PreparedOnDuplicateAssignment>,
     on_update_now: PreparedOnUpdateNow,
     selected_partitions: Option<Vec<i64>>,
-    /// The source query's output names, in output order — the names an ODKU
-    /// assignment may use to read the row the insert would have written.
-    /// Empty when there is no source (plain VALUES) or it could not be
-    /// resolved.
-    source_output_names: Vec<String>,
+    /// Go `Names4OnDuplicate`: what each name an assignment value uses reads.
+    scope: super::on_duplicate_scope::OnDuplicateScope,
 }
 
 /// Resolves ON DUPLICATE assignments once, whether or not an inserted row
@@ -1699,6 +1771,7 @@ fn apply_on_duplicate(
     database: &str,
     handle: &crate::kv_table::TableHandle,
     candidate: &[Datum],
+    extras: &[Datum],
     prepared: &PreparedOnDuplicate,
     column_list: &[(String, FieldType)],
     row_index: usize,
@@ -1750,13 +1823,8 @@ fn apply_on_duplicate(
                 // `VALUES(col)` is the value the insert would have written,
                 // resolved only after this candidate exists. DEFAULT leaves
                 // remain bound to the statement constants prepared earlier.
-                let bound = substitute_values_references(
-                    value,
-                    candidate,
-                    column_list,
-                    &prepared.source_output_names,
-                    target_table_name,
-                )?;
+                let bound =
+                    substitute_values_references(value, candidate, extras, &prepared.scope)?;
                 rewrite_with_prepared_defaults(&bound, &resolver, defaults)?
             }
         };
@@ -1799,7 +1867,8 @@ fn apply_on_duplicate(
 }
 
 /// Replaces every `VALUES(col)` in an `ON DUPLICATE KEY UPDATE` assignment
-/// with the literal the insert would have written for that column.
+/// with the literal the insert would have written for that column, and
+/// every source column (or field Go appended to the SELECT) with its value.
 ///
 /// Go does not substitute at all: its expression rewriter handles
 /// `*ast.ValuesExpr` in `Enter` (`expression_rewriter.go:623`) by pushing a
@@ -1816,128 +1885,21 @@ fn apply_on_duplicate(
 /// and subquery, where it then resolved as an unknown function. Riding the
 /// package-wide [`tidb_ast::Visitable`] walk -- the same traversal Go's
 /// `Node.Accept` gives its rewriter -- removes the variant list entirely.
-/// The output column names a source query exposes, in output order — the
-/// names an ODKU assignment may use to read the row the insert would have
-/// written. Wildcards expand from the catalog (a sole FROM table); anything
-/// unresolvable stays absent, which only degrades resolution for those
-/// names.
-pub(crate) fn source_output_names(
-    source: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Vec<String> {
-    match source {
-        tidb_ast::QueryStmt::Select(select) => select_output_names(select, catalog, current_db),
-        tidb_ast::QueryStmt::SetOpr(set_opr) => set_opr
-            .terms
-            .first()
-            .map(|term| match &term.body {
-                tidb_ast::SetOprTermBody::Select(select) => {
-                    select_output_names(select, catalog, current_db)
-                }
-                tidb_ast::SetOprTermBody::Nested(nested) => {
-                    // A nested set-op term recursively bottoms out in the
-                    // first SELECT; recurse through the same match shape.
-                    select_output_names_nested(nested, catalog, current_db)
-                }
-            })
-            .unwrap_or_default(),
-    }
-}
-
-fn select_output_names(
-    select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Vec<String> {
-    let wildcard_names = |scope: &[String]| -> Vec<String> {
-        // `t.*` names the table aliased/renamed `t`; `*` needs a sole table.
-        let matches_scope = |table_ref: &tidb_ast::TableRef| -> bool {
-            scope.is_empty()
-                || scope.last().is_some_and(|prefix| {
-                    table_ref
-                        .alias
-                        .as_deref()
-                        .is_some_and(|alias| alias.eq_ignore_ascii_case(prefix))
-                        || table_ref
-                            .name
-                            .last()
-                            .is_some_and(|name| name.eq_ignore_ascii_case(prefix))
-                })
-        };
-        let Some(table_ref) = super::access::sole_table_ref(&select.from) else {
-            return Vec::new();
-        };
-        if !matches_scope(table_ref) {
-            return Vec::new();
-        }
-        let Ok((database, name)) = super::from::single_table_name(table_ref, current_db) else {
-            return Vec::new();
-        };
-        catalog
-            .get_in(&database, &name)
-            .map(|entry| {
-                entry
-                    .column_list()
-                    .iter()
-                    .map(|(column, _)| column.clone())
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let mut names = Vec::new();
-    for field in select.fields.fields() {
-        match field {
-            tidb_ast::SelectField::Wildcard(scope) => names.extend(wildcard_names(scope)),
-            tidb_ast::SelectField::Expr { expr, alias } => {
-                if let Some(alias) = alias {
-                    names.push(alias.clone());
-                } else if let tidb_ast::Expr::Column(path) = expr {
-                    if let Some(last) = path.last() {
-                        names.push(last.clone());
-                    }
-                }
-            }
-        }
-    }
-    names
-}
-
-/// A set-op's parenthesized nested body: its first SELECT's output names
-/// (UNION output names come from the first term).
-fn select_output_names_nested(
-    nested: &tidb_ast::SetOprStmt,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Vec<String> {
-    nested
-        .terms
-        .first()
-        .map(|term| match &term.body {
-            tidb_ast::SetOprTermBody::Select(select) => {
-                select_output_names(select, catalog, current_db)
-            }
-            tidb_ast::SetOprTermBody::Nested(inner) => {
-                select_output_names_nested(inner, catalog, current_db)
-            }
-        })
-        .unwrap_or_default()
-}
-
+/// Which column a name reads is Go's `Names4OnDuplicate` resolution
+/// ([`super::on_duplicate_scope::OnDuplicateScope`]).
 fn substitute_values_references(
     expr: &tidb_ast::Expr,
     candidate: &[Datum],
-    column_list: &[(String, FieldType)],
-    source_output_names: &[String],
-    target_table_name: &str,
+    extras: &[Datum],
+    scope: &super::on_duplicate_scope::OnDuplicateScope,
 ) -> Result<tidb_ast::Expr, DriverError> {
+    use super::on_duplicate_scope::OnDuplicateBinding;
     use tidb_ast::Visitable;
 
     struct Substitute<'a> {
         candidate: &'a [Datum],
-        column_list: &'a [(String, FieldType)],
-        source_output_names: &'a [String],
-        target_table_name: &'a str,
+        extras: &'a [Datum],
+        scope: &'a super::on_duplicate_scope::OnDuplicateScope,
         error: Option<DriverError>,
     }
 
@@ -1946,30 +1908,36 @@ fn substitute_values_references(
             let Some(tidb_ast::Expr::Column(path)) = args.first() else {
                 return Err(DriverError::unsupported("VALUES() takes a column name"));
             };
-            let name = path
-                .last()
-                .ok_or(DriverError::unsupported("VALUES() takes a column name"))?;
-            let offset = self
-                .column_list
-                .iter()
-                .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
-                // Go scopes the same failure to the insert's field list:
-                // `plannererrors.ErrUnknownColumn.GenWithStackByArgs(
-                // v.Column.Name.OrigColName(), "field list")`.
-                .ok_or_else(|| DriverError::UnknownColumnInClause {
-                    column: name.clone(),
-                    clause: "field list".to_owned(),
-                })?;
+            // Go reads `insertPlan.TableColNames` only, scoping a failure to
+            // the field list.
+            let offset = self.scope.resolve_values(path)?;
             datum_to_literal(&self.candidate[offset])
+        }
+
+        fn column(&self, path: &[String]) -> Result<Option<tidb_ast::Expr>, DriverError> {
+            Ok(match self.scope.resolve(path)? {
+                // The stored row, read by the assignment's own evaluation.
+                Some(OnDuplicateBinding::Target(_)) | None => None,
+                Some(OnDuplicateBinding::Extra(position)) => {
+                    Some(datum_to_literal(&self.extras[position])?)
+                }
+                Some(OnDuplicateBinding::NewRow(offset)) => {
+                    Some(datum_to_literal(&self.candidate[offset])?)
+                }
+            })
         }
     }
 
     impl tidb_ast::Visitor for Substitute<'_> {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if node.is::<tidb_ast::QueryStmt>() {
+                return true;
+            }
             let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
                 return false;
             };
             match expr {
+                tidb_ast::Expr::Subquery(_) => true,
                 tidb_ast::Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("values") => {
                     match self.value_of(args) {
                         Ok(literal) => *expr = literal,
@@ -1979,36 +1947,14 @@ fn substitute_values_references(
                     // its replacement is a literal: nothing below is left to visit.
                     true
                 }
-                // A source-table column reference (`src.v` in `INSERT ... SELECT
-                // ... FROM src ... ON DUPLICATE KEY UPDATE t.v = src.v`) reads the
-                // row the insert would have written, exactly like `VALUES(src.v)`.
-                // Go resolves an ODKU assignment column against the target tables
-                // first and falls back to the source's output; an unqualified name
-                // that lives on BOTH sides reads the TARGET (the stored row).
+                // A source column (`src.v` in `INSERT ... SELECT ... FROM src
+                // ... ON DUPLICATE KEY UPDATE t.v = src.v`) reads the row the
+                // insert would have written, or a field Go appended to the
+                // SELECT for it; a target column reads the stored row.
                 tidb_ast::Expr::Column(path) => {
-                    let Some(last) = path.last() else {
-                        return false;
-                    };
-                    let Some(source_offset) = self
-                        .source_output_names
-                        .iter()
-                        .position(|name| name.eq_ignore_ascii_case(last))
-                    else {
-                        return false;
-                    };
-                    let reads_target = if path.len() > 1 {
-                        path.first()
-                            .is_some_and(|first| first.eq_ignore_ascii_case(self.target_table_name))
-                    } else {
-                        self.column_list
-                            .iter()
-                            .any(|(name, _)| name.eq_ignore_ascii_case(last))
-                    };
-                    if reads_target {
-                        return false;
-                    }
-                    match datum_to_literal(&self.candidate[source_offset]) {
-                        Ok(literal) => *expr = literal,
+                    match self.column(path) {
+                        Ok(Some(literal)) => *expr = literal,
+                        Ok(None) => {}
                         Err(error) => self.error = Some(error),
                     }
                     true
@@ -2027,9 +1973,8 @@ fn substitute_values_references(
     let mut rewritten = expr.clone();
     let mut visitor = Substitute {
         candidate,
-        column_list,
-        source_output_names,
-        target_table_name,
+        extras,
+        scope,
         error: None,
     };
     rewritten.accept(&mut visitor);
@@ -2640,7 +2585,8 @@ fn cached_dml_physical_plan(
     };
     let (operator, source, update) = match dml.as_ref() {
         tidb_ast::DmlStmt::Insert(insert) => {
-            let source = insert.source.as_deref().cloned();
+            let source = insert_plan_source(insert, catalog, current_database)
+                .or_else(|| insert.source.as_deref().cloned());
             ("Insert", source, None)
         }
         tidb_ast::DmlStmt::Update(update) => {

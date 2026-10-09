@@ -363,10 +363,9 @@ pub fn align<'a>(items: &'a [Item], result: &str) -> Result<Vec<(&'a Item, Vec<S
 /// before alignment would either reject those topics or corrupt the bytes that
 /// need to be compared.
 pub fn align_bytes<'a>(items: &'a [Item], result: &[u8]) -> Result<AlignedBytes<'a>, String> {
-    let mut lines: Vec<&[u8]> = result
-        .split(|byte| *byte == b'\n')
-        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
-        .collect();
+    // A recording is LF-terminated; a `\r` before an LF is a value's own
+    // byte (`'ab\r\r'`, `' \r\n  .col'`), never a line ending.
+    let mut lines: Vec<&[u8]> = result.split(|byte| *byte == b'\n').collect();
     if lines.last().is_some_and(|line| line.is_empty()) {
         lines.pop();
     }
@@ -505,6 +504,14 @@ mod tests {
         assert!(matches!(aligned[0].0, Item::Stmt(s) if s.sorted && !s.expect_error));
         assert!(aligned[1].1.is_empty());
         assert!(matches!(aligned[2].0, Item::Stmt(s) if s.expect_error));
+    }
+
+    #[test]
+    fn byte_alignment_keeps_a_carriage_return_ending_a_cell() {
+        let items = parse_test("select a;\n").unwrap();
+        let recorded = b"select a;\na\nab\r\r\n";
+        let aligned = align_bytes(&items, recorded).unwrap();
+        assert_eq!(aligned[0].1, vec![b"a".to_vec(), b"ab\r\r".to_vec()]);
     }
 
     #[test]

@@ -2902,9 +2902,10 @@ pub fn explain_insert_stmt(
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
     let fk_spec = crate::driver::fk_spec_for_insert(insert, current_db)?;
+    let extended_source = crate::driver::insert_plan_source(insert, catalog, current_db);
     let physical = crate::driver::physical_dml_plan(
         "Insert",
-        insert.source.as_deref(),
+        extended_source.as_ref().or(insert.source.as_deref()),
         None,
         catalog,
         current_db,
@@ -2932,9 +2933,10 @@ pub fn explain_analyze_insert_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    let extended_source = crate::driver::insert_plan_source(insert, catalog, current_db);
     let mut physical = crate::driver::physical_dml_plan(
         "Insert",
-        insert.source.as_deref(),
+        extended_source.as_ref().or(insert.source.as_deref()),
         None,
         catalog,
         current_db,

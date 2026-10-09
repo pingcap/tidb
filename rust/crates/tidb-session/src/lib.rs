@@ -555,8 +555,7 @@ pub struct Session {
     /// is both halves: it is swapped into the shared table object for the
     /// statement's duration and CLEARED at each transaction end, which is
     /// what `ON COMMIT DELETE ROWS` means here.
-    global_temporary_data:
-        std::collections::HashMap<i64, Box<dyn tidb_executor::storage::TableStorage>>,
+    global_temporary_data: std::collections::HashMap<i64, tidb_executor::TemporaryTableTxnData>,
     /// The session's system and user variables.
     vars: SessionVars,
     /// Go `SessionVars.ResourceGroupName`: the connection's selected resource
@@ -2830,6 +2829,8 @@ mod tests_enum_index_range;
 mod tests_multi_valued_index;
 #[cfg(test)]
 mod tests_index_merge_union;
+#[cfg(test)]
+mod tests_insert_go;
 #[cfg(test)]
 mod tests_nontransactional;
 #[cfg(test)]

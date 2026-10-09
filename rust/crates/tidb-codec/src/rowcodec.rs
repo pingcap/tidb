@@ -721,12 +721,33 @@ fn decode_column_datum(
             Datum::new_collation_string(bytes.to_vec(), field_type.collation())
         }
         FieldTypeCode::NewDecimal => {
-            let (_, mut value, _, encoded_scale) = decode_decimal(bytes)?;
-            if target == DecodeTarget::Chunk
-                && field_type.decimal() >= 0
-                && i64::from(encoded_scale) > field_type.decimal()
-            {
-                value = value.round_to_scale(field_type.decimal() as i32);
+            let (_, mut value, encoded_precision, encoded_scale) = decode_decimal(bytes)?;
+            match target {
+                DecodeTarget::Chunk => {
+                    if field_type.decimal() >= 0 && i64::from(encoded_scale) > field_type.decimal()
+                    {
+                        value = value.round_to_scale(field_type.decimal() as i32);
+                    }
+                    // A row read here is Go's chunk row read back through
+                    // `Row.GetDatum`, which stamps the column's flen and
+                    // decimal (the value's own frac when unspecified): the
+                    // shape an index key is encoded under, so a backfilled
+                    // key is the one INSERT and DELETE compute.
+                    let frac = if field_type.decimal() < 0 {
+                        i64::from(value.storage_scale())
+                    } else {
+                        field_type.decimal()
+                    };
+                    value = value.with_declared_shape(field_type.flen(), frac);
+                }
+                // Go `DatumMapDecoder.decodeColDatum`: `SetLength(precision)`
+                // and `SetFrac(frac)` from the encoding.
+                DecodeTarget::Map => {
+                    value = value.with_declared_shape(
+                        i64::from(encoded_precision),
+                        i64::from(encoded_scale),
+                    );
+                }
             }
             Datum::Decimal(value)
         }

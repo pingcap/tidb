@@ -59,6 +59,7 @@ use integration_plan_property::{access_property, plan_statement, PlanStatement};
 use mysqltest_connections::Connections;
 use mysqltest_script::{align_bytes, parse_test, recording_path, split_warnings_bytes, Item, Stmt};
 use tidb_datatype::Datum;
+use tidb_executor::DriverError;
 use tidb_session::{Session, StmtOutput};
 
 /// A topic listed twice is replayed twice, and every statement it compares is
@@ -475,6 +476,21 @@ fn survey_unwatched_warning(session: &mut Session, stmt: &Stmt) {
     eprintln!("UNWATCHED WARNING: {} -> {texts}", stmt.sql);
 }
 
+/// One recorded statement line as mysql-tester sends it: one COM_QUERY,
+/// which the server splits and runs statement by statement (Go
+/// `handleQuery`, `conn.go:1861`), stopping at the first error. A line such
+/// as `truncate t1;truncate t2;` is several statements, admitted by the
+/// connection's `@@tidb_multi_statement_mode` (see `Connections::open`).
+/// Only the last statement's output reaches the recorder's result block.
+fn run_command(session: &mut Session, sql: &str) -> Result<StmtOutput, DriverError> {
+    let statements = session.split_statements(sql, false)?;
+    let mut output = StmtOutput::Affected(0);
+    for statement in &statements {
+        output = session.run_with_columns(statement)?;
+    }
+    Ok(output)
+}
+
 /// Reports how this session's warnings differ from the recorded ones, or
 /// `None` when they agree.
 ///
@@ -633,7 +649,7 @@ fn compare_output(
         // happened here and the next four `select @@global.x` diverged on a
         // value this driver had suppressed rather than on anything the engine
         // does. Run it, discard the outcome, and count the skip.
-        drop(session.run_with_columns(stmt_sql));
+        drop(run_command(session, stmt_sql));
         report.skip(SkipClass::RecorderRewroteOutput(reason));
         return Err(None);
     }
@@ -655,7 +671,7 @@ fn compare_output(
         // hint-deprecation warning a following `show warnings` reads. Run the
         // default-format spelling for the effects, discard the output.
         Some(PlanStatement::RunAndDiscard { sql, reason }) if !recorded_error => {
-            drop(session.run_with_columns(sql));
+            drop(run_command(session, sql));
             report.skip(SkipClass::PlanFormatNotComparable(reason));
             return Err(None);
         }
@@ -672,7 +688,7 @@ fn compare_output(
         eprintln!("SQL> {sql}");
     }
     let started = std::time::Instant::now();
-    let outcome = session.run_with_columns(sql);
+    let outcome = run_command(session, sql);
     if traced {
         eprintln!("SQL< {}ms", started.elapsed().as_millis());
     }

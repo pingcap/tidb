@@ -445,6 +445,15 @@ impl tidb_expr::Columns for IndexConditionContext<'_> {
     }
 }
 
+/// One session transaction's state of a GLOBAL temporary table: Go
+/// `TxnCtx.TemporaryTables[id]`, its rows and its auto-id allocator.
+#[derive(Clone, Debug)]
+pub struct TemporaryTableTxnData {
+    store: Box<dyn TableStorage>,
+    auto_id: AutoIdAllocator,
+    row_id: Option<AutoIdAllocator>,
+}
+
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
 #[derive(Clone, Debug)]
 pub struct KvTable {
@@ -516,6 +525,9 @@ pub struct KvTable {
     /// so that a consumed id is never returned (see [`AutoIdAllocator`]).
     auto_id: AutoIdAllocator,
     row_id: Option<AutoIdAllocator>,
+    /// Go `TableInfo.AutoIncID` as CREATE's `AUTO_INCREMENT = n` set it: the
+    /// base a temporary table's per-transaction allocator starts from.
+    auto_inc_id: i64,
     /// The `AUTO_RANDOM` handle layout and its distinct TARID allocator.
     auto_random: Option<AutoRandomSpec>,
     auto_random_id: AutoIdAllocator,
@@ -1168,6 +1180,7 @@ impl KvTable {
             auto_increment_offset: None,
             auto_id: AutoIdAllocator::new(),
             row_id: None,
+            auto_inc_id: 0,
             auto_random: None,
             auto_random_id: AutoIdAllocator::new(),
             charset: TableCharset::default(),
@@ -2018,6 +2031,46 @@ impl KvTable {
     /// other's rows, which is the single thing the type exists to prevent.
     pub fn swap_storage(&mut self, store: Box<dyn TableStorage>) -> Box<dyn TableStorage> {
         std::mem::replace(&mut self.store, store)
+    }
+
+    /// Go `TempTableFromMeta`, the entry `TxnCtx.TemporaryTables` holds for a
+    /// GLOBAL temporary table: empty rows and `NewAllocatorFromTempTblInfo`'s
+    /// in-memory allocator, ONE for the auto-increment column and
+    /// `_tidb_rowid` alike, rebased to `AutoIncID - 1` when CREATE set it.
+    /// A transaction starts both afresh, which is why its first id is 1
+    /// again.
+    #[must_use]
+    pub fn new_temporary_txn_data(&self) -> TemporaryTableTxnData {
+        let mut auto_id = AutoIdAllocator::new();
+        auto_id.set_unsigned(self.auto_id.unsigned);
+        if self.auto_inc_id > 1 {
+            // `inMemoryAllocator.Rebase` cannot fail.
+            let _ = auto_id.rebase_to_next(self.auto_inc_id as u64);
+            auto_id.forget_reservation();
+        }
+        TemporaryTableTxnData {
+            store: Box::new(MemTableStorage::new()),
+            auto_id,
+            row_id: None,
+        }
+    }
+
+    /// Exchanges this table's rows and allocators for a session's
+    /// transaction-scoped ones (see [`Self::new_temporary_txn_data`]),
+    /// returning what it held. The session's GLOBAL temporary table overlay
+    /// swaps them in for a statement and back out afterwards, as
+    /// [`Self::swap_storage`] does for the rows alone.
+    pub fn swap_temporary_txn_data(&mut self, data: TemporaryTableTxnData) -> TemporaryTableTxnData {
+        TemporaryTableTxnData {
+            store: std::mem::replace(&mut self.store, data.store),
+            auto_id: std::mem::replace(&mut self.auto_id, data.auto_id),
+            row_id: std::mem::replace(&mut self.row_id, data.row_id),
+        }
+    }
+
+    /// Records Go `TableInfo.AutoIncID` from CREATE's `AUTO_INCREMENT = n`.
+    pub fn set_auto_inc_id(&mut self, auto_inc_id: i64) {
+        self.auto_inc_id = auto_inc_id;
     }
 
     /// Whether this table's row backend is rolled back by the cluster
@@ -3132,20 +3185,36 @@ impl KvTable {
     /// error), which is why a single REPLACE can delete more than one row --
     /// captured: replacing a row that duplicates one row's primary key and
     /// another row's unique key deletes BOTH.
+    ///
+    /// An UPDATE reports a conflict as Go's table layer does (`addIndices`,
+    /// `getDuplicateError`): the key's values, a prefix column cut to its
+    /// prefix.
     pub(crate) fn row_conflicts(
         &mut self,
         row: &[Datum],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<Vec<RowConflict>, KvTableError> {
-        self.row_conflicts_with_row_id(row, None, ctx)
+        self.row_conflicts_reported_as(row, None, ctx, DuplicateText::TableLayer)
     }
 
-    /// Go's candidate handle key also includes an explicitly supplied heap ID.
+    /// An INSERT's conflicts, reported as Go's batch checker does
+    /// (`getKeysNeedCheckOneRow`); its candidate handle key also includes an
+    /// explicitly supplied heap ID.
     pub(crate) fn row_conflicts_with_row_id(
         &mut self,
         row: &[Datum],
         row_id: Option<i64>,
         ctx: &impl tidb_expr::Columns,
+    ) -> Result<Vec<RowConflict>, KvTableError> {
+        self.row_conflicts_reported_as(row, row_id, ctx, DuplicateText::BatchChecker)
+    }
+
+    fn row_conflicts_reported_as(
+        &mut self,
+        row: &[Datum],
+        row_id: Option<i64>,
+        ctx: &impl tidb_expr::Columns,
+        text: DuplicateText,
     ) -> Result<Vec<RowConflict>, KvTableError> {
         let zone = ctx.time_zone();
         let physical_id = self.record_physical_id(row, ctx)?;
@@ -3158,10 +3227,20 @@ impl KvTable {
         };
         if let Some(handle) = candidate_handle {
             if read_stored_record_one(self.store.as_mut(), physical_id, &handle)?.is_some() {
-                let value = if clustered {
-                    clustered_key_text(self, row)
-                } else {
-                    row_id.expect("explicit heap handle").to_string()
+                // Go `getKeysNeedCheckOneRow`: a common handle reports its
+                // columns' row values through `dataToStrings`, an integer
+                // handle its value.
+                let value = match (text, self.pk_handle_offset) {
+                    (DuplicateText::TableLayer, _) if clustered => clustered_key_text(self, row),
+                    (DuplicateText::BatchChecker, Some(offset)) => {
+                        datum_text(row.get(offset).unwrap_or(&Datum::Null))
+                    }
+                    (DuplicateText::BatchChecker, None) if clustered => batch_check_key_text(
+                        self.common_handle_offsets
+                            .iter()
+                            .map(|offset| row.get(*offset).unwrap_or(&Datum::Null)),
+                    ),
+                    _ => row_id.expect("explicit heap handle").to_string(),
                 };
                 found.push(RowConflict {
                     handle,
@@ -3204,7 +3283,17 @@ impl KvTable {
                     found.push(RowConflict {
                         handle,
                         error: KvTableError::DuplicateEntry {
-                            value: duplicate_value_text(&self.index_values(&index, row)),
+                            // Both renderings read the key's values: Go's
+                            // batch checker formats `FetchValues` after
+                            // `GenIndexKVIter`'s `Next` cut them in place.
+                            value: match text {
+                                DuplicateText::BatchChecker => {
+                                    batch_check_key_text(self.index_values(&index, row).iter())
+                                }
+                                DuplicateText::TableLayer => {
+                                    duplicate_value_text(&self.index_values(&index, row))
+                                }
+                            },
                             key: self.qualified_key(&index.name),
                         },
                     });
@@ -4175,6 +4264,62 @@ impl KvTable {
         ctx.update_table_delta(physical_id, -1, 1);
         Ok(())
     }
+}
+
+/// Which of Go's two renderings a duplicate entry takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DuplicateText {
+    /// `batch_checker.go`'s `getKeysNeedCheckOneRow` (INSERT IGNORE, ON
+    /// DUPLICATE KEY UPDATE, REPLACE): `dataToStrings` over a unique index's
+    /// cut values, but over a common handle's uncut row values (only
+    /// `buildHandleFromDatumRow`'s copies are cut).
+    BatchChecker,
+    /// The table layer's `addIndices` and `getDuplicateError` (UPDATE):
+    /// `genIndexKeyStrs` over the key's values, cut by `TruncateIndexValues`.
+    TableLayer,
+}
+
+/// Go `batch_checker.go`'s `dataToStrings`, joined as `GenKeyExistsErr`
+/// joins it: a binary string, a BIT or a binary literal drops its trailing
+/// `0x00` bytes (keeping one, binary strings only) and shows each
+/// non-printable byte as `\xNN` (`util.FmtNonASCIIPrintableCharToHex`).
+fn batch_check_key_text<'a>(values: impl Iterator<Item = &'a Datum>) -> String {
+    values
+        .map(|value| {
+            let bytes: Option<(&[u8], bool)> = match value {
+                Datum::Bytes(bytes) => Some((bytes, true)),
+                Datum::String(text) if text.collation() == tidb_datatype::Collation::Binary => {
+                    Some((text.bytes(), true))
+                }
+                Datum::Bit(literal) | Datum::BinaryLiteral(literal) => {
+                    Some((literal.as_bytes(), false))
+                }
+                _ => None,
+            };
+            let Some((mut bytes, trim_zeros)) = bytes else {
+                return datum_text(value);
+            };
+            if trim_zeros {
+                let kept = bytes.iter().rposition(|byte| *byte != 0).map_or(0, |last| last + 1);
+                bytes = if kept == 0 { &[0] } else { &bytes[..kept] };
+            }
+            fmt_non_ascii_printable_char_to_hex(bytes)
+        })
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Go `util.FmtNonASCIIPrintableCharToHex(str, len(str), true)`.
+fn fmt_non_ascii_printable_char_to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        if (0x20..=0x7e).contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("\\x{byte:02X}"));
+        }
+    }
+    out
 }
 
 /// The text a clustered-key duplicate reports: the key columns joined by `-`,

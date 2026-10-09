@@ -172,7 +172,7 @@ pub(crate) struct Savepoint {
     /// The corpus asserts exactly this -- `executor/executor_txn`'s
     /// `TestSavepointWithTemporaryTable` inserts three rows under three
     /// savepoints and rolls back to each in turn.
-    global_temporary: std::collections::HashMap<i64, Box<dyn tidb_executor::storage::TableStorage>>,
+    global_temporary: std::collections::HashMap<i64, tidb_executor::TemporaryTableTxnData>,
 }
 
 /// The session's temporary-table state while it is OFF the catalog, and the
@@ -193,7 +193,7 @@ pub(crate) struct Savepoint {
 /// table's `TableInfo` is genuinely shared and must stay where it is.
 struct TemporaryTableOverlay {
     local: Vec<(String, String, tidb_executor::KvTable)>,
-    global: std::collections::HashMap<i64, Box<dyn tidb_executor::storage::TableStorage>>,
+    global: std::collections::HashMap<i64, tidb_executor::TemporaryTableTxnData>,
 }
 
 impl TemporaryTableOverlay {
@@ -240,11 +240,13 @@ impl TemporaryTableOverlay {
                 continue;
             };
             let id = table.table_id;
-            let incoming = self.global.remove(&id).unwrap_or_else(|| {
-                Box::new(tidb_executor::storage::MemTableStorage::new())
-                    as Box<dyn tidb_executor::storage::TableStorage>
-            });
-            let outgoing = table.swap_storage(incoming);
+            // Go `TxnCtx.TemporaryTables`: the transaction's rows and its
+            // own allocator, created at its first touch of the table.
+            let incoming = self
+                .global
+                .remove(&id)
+                .unwrap_or_else(|| table.new_temporary_txn_data());
+            let outgoing = table.swap_temporary_txn_data(incoming);
             self.global.insert(id, outgoing);
         }
     }

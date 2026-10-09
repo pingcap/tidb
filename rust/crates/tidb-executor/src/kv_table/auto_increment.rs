@@ -433,6 +433,24 @@ impl KvTable {
     /// bound IS the domain end, so this check can never fire there and the
     /// allocator's own exhaustion rule (`1467`, one id earlier) stays the
     /// only limit -- the two rules do not overlap.
+    /// Go `CastValue`'s clamp of an out-of-range auto id: the column's own
+    /// upper bound, written in its domain, which `setDatumAutoIDAndCast` keeps
+    /// when an ON DUPLICATE KEY UPDATE may go on with it.
+    pub(crate) fn clamp_auto_increment(&self, row: &mut [Datum]) {
+        let Some(offset) = self.auto_increment_offset else {
+            return;
+        };
+        let Some(column) = self.columns.get(offset) else {
+            return;
+        };
+        let code = column.field_type.code();
+        row[offset] = if self.auto_id.unsigned {
+            Datum::UInt(integer_unsigned_upper_bound(code))
+        } else {
+            Datum::Int(integer_signed_upper_bound(code))
+        };
+    }
+
     fn check_auto_increment_fits(&self, offset: usize, allocated: u64) -> Result<(), AutoIdError> {
         let Some(column) = self.columns.get(offset) else {
             return Ok(());

@@ -472,6 +472,10 @@ pub struct StmtContextData {
     /// Go `ErrGroupBadNull`, used by SLEEP's NULL/negative argument alias and
     /// by the same statement-level policy as column NOT NULL failures.
     bad_null: ErrorLevel,
+    /// Go `SessionVars.EnableStrictNotNullCheck`
+    /// (`tidb_enable_strict_not_null_check`), which an INSERT's bad-NULL level
+    /// also requires.
+    strict_not_null_check: bool,
     /// Go's truncation flags (`IgnoreTruncateErr` / `TruncateAsWarning`)
     /// collapsed to the level `types.Context.HandleTruncate` acts on. It is
     /// NOT derivable from `strict`: a SELECT warns in every mode, while a
@@ -2009,6 +2013,7 @@ impl StmtContext {
             } else {
                 ErrorLevel::Warn
             },
+            strict_not_null_check: true,
             truncate,
             strict,
             strict_sql_mode: strict,
@@ -2229,6 +2234,13 @@ impl StmtContext {
         context
     }
 
+    /// Go `SessionVars.EnableStrictNotNullCheck`, as
+    /// [`Self::with_single_insert_bad_null_policy`] recorded it.
+    #[must_use]
+    pub(crate) fn strict_not_null_check(&self) -> bool {
+        self.strict_not_null_check
+    }
+
     /// Applies Go's one-row INSERT bad-NULL rule after the parser has exposed
     /// the row count and the session switch.
     #[must_use]
@@ -2245,6 +2257,7 @@ impl StmtContext {
         } else {
             ErrorLevel::Warn
         };
+        self.strict_not_null_check = enable_strict_not_null_check;
         self
     }
 

@@ -49,6 +49,7 @@ mod agg_build;
 mod catalog;
 pub(crate) use catalog::sync_load;
 mod dml;
+mod on_duplicate_scope;
 mod errors;
 mod from;
 mod index_usage_reporter;

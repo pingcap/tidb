@@ -1640,6 +1640,7 @@ pub fn run_create_table_in(
         // `BIGINT UNSIGNED` column. Only ALTER rebases in the column's own
         // domain; captured from Go, the two really do disagree here.
         if let Some(seed) = auto_increment_option(&create.table_options)? {
+            table.set_auto_inc_id(seed);
             if seed > 1 {
                 table
                     .rebase_auto_increment(seed)

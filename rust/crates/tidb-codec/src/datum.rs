@@ -469,9 +469,16 @@ pub fn decode_one(input: &[u8]) -> Result<(&[u8], Datum), CodecError> {
         }
         COMPACT_BYTES_FLAG => crate::decode_compact_bytes(payload)
             .map(|(remain, value)| (remain, Datum::new_bytes(value))),
-        DECIMAL_FLAG => {
-            decode_decimal(payload).map(|(remain, value, _, _)| (remain, Datum::new_decimal(value)))
-        }
+        // Go `DecodeOne`'s `decimalFlag`: the datum keeps the encoded
+        // precision and frac (`SetLength`/`SetFrac`).
+        DECIMAL_FLAG => decode_decimal(payload).map(|(remain, value, precision, scale)| {
+            (
+                remain,
+                Datum::new_decimal(
+                    value.with_declared_shape(i64::from(precision), i64::from(scale)),
+                ),
+            )
+        }),
         DURATION_FLAG => decode_int(payload).and_then(|(remain, value)| {
             MySqlDuration::from_nanoseconds(value, 6)
                 .map(|value| (remain, Datum::new_duration(value)))

@@ -140,10 +140,14 @@ pub(crate) fn zero_value(field_type: &FieldType) -> Datum {
         FieldTypeCode::Float => Datum::Float32(0.0),
         FieldTypeCode::Double => Datum::Real(0.0),
         // Go sets the datum's length and frac from the column, which is what
-        // makes a DECIMAL(6,2) read back as `0.00` and not `0`.
-        FieldTypeCode::NewDecimal => {
-            Datum::new_decimal(Decimal::from_int(0).round_to_scale(field_type.decimal() as i32))
-        }
+        // makes a DECIMAL(6,2) read back as `0.00` and not `0` -- and what the
+        // key codec encodes under, so the zero value's index key is the one a
+        // cast `0` produces.
+        FieldTypeCode::NewDecimal => Datum::new_decimal(
+            Decimal::from_int(0)
+                .round_to_scale(field_type.decimal() as i32)
+                .with_declared_shape(field_type.flen(), field_type.decimal()),
+        ),
         // Go's `mysql.TypeString` arm is the one that is NOT an empty string:
         // a fixed-width BINARY(n) zero value is n zero BYTES, so the row on
         // disk carries the column's full declared width. Only the fixed-width

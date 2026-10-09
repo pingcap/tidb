@@ -164,4 +164,5 @@ pub const TOPICS: &[&str] = &[
     "planner/core/grouped_ranges_order_by",
     "planner/core/indexmerge_path",
     "session/nontransactional",
+    "executor/insert",
 ];

@@ -265,6 +265,7 @@ pub use join::{JoinExec, JoinKind};
 pub use kv_table::{
     DecodedRow, FkAction, GeneratedColumnSelection, IndexRange, KvColumn, KvForeignKey, KvIndex,
     KvTable, RowDecodeContext, RowDecoder, TableCharset, TableHandle, TableScanExec,
+    TemporaryTableTxnData,
 };
 pub use limit::LimitExec;
 pub use mem_quota::{OomAction, SessionMemory, StatementCancellation, StatementMemory};
