@@ -630,6 +630,7 @@ func TestRedactURL(t *testing.T) {
 		expected string
 	}{
 		{"/local/path", "/local/path"},
+		{"/data/my files/100%off", "/data/my files/100%off"},
 		{"s3://bucket/prefix", "s3://bucket/prefix"},
 		{"s3://bucket/prefix?access-key=AKID&secret-access-key=SKEY&region=us", "s3://bucket/prefix?access-key=xxxxxx&region=us&secret-access-key=xxxxxx"},
 		{"azure://bucket/prefix?sas-token=SAS", "azure://bucket/prefix?sas-token=xxxxxx"},

@@ -36,9 +36,8 @@ type BackendOptions struct {
 	Azblob AzblobBackendOptions    `json:"azblob" toml:"azblob"`
 }
 
-// RedactedValue replaces a credential in redacted output. It is the same value
-// as the one ast.RedactURL uses.
-const RedactedValue = "xxxxxx"
+// RedactedValue replaces a credential in redacted output.
+const RedactedValue = ast.RedactedValue
 
 // Redacted returns a copy of the options with the credentials masked, so that
 // the options can be logged. The receiver is not modified.
@@ -71,6 +70,11 @@ const InvalidURLPlaceholder = "(invalid storage URL)"
 // unknown scheme is dropped, since ast.RedactURL cannot tell which parameters
 // are secret there.
 func RedactURL(rawURL string) string {
+	// A plain local path has nothing to mask, and parsing it would escape or
+	// reject characters such as spaces and '%'.
+	if !strings.Contains(rawURL, "://") && !strings.Contains(rawURL, "?") {
+		return rawURL
+	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return InvalidURLPlaceholder
@@ -98,7 +102,7 @@ func ParseRawURL(rawURL string) (*url.URL, error) {
 	if err != nil {
 		// Neither url.Error nor its inner reason can be put into the error:
 		// they carry the whole URL or fragments of it, which may be credentials.
-		return nil, errors.New("parse storage URL failed: invalid format")
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "parse storage URL failed: invalid format")
 	}
 	return u, nil
 }
