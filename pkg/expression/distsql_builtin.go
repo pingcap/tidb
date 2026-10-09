@@ -1259,6 +1259,9 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 		return nil, err
 	}
 	if expr.Sig == tipb.ScalarFuncSig_LocalMatchAgainstBoolean {
+		if len(args) < 2 {
+			return nil, errors.New("Local MATCH requires a search argument and at least one column")
+		}
 		query := &tipb.LocalMatchAgainstBooleanQuery{}
 		if err := proto.Unmarshal(expr.Val, query); err != nil {
 			return nil, errors.Trace(err)
@@ -1266,8 +1269,12 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 		// Expr.val contains the Local MATCH semantic protocol version. TiDB only
 		// decodes versions it understands; TiFlash support must be deployed before
 		// TiDB starts emitting a newer version.
-		if query.GetVersion() != fulltext.LocalMatchAgainstProtocolVersion {
-			return nil, errors.Errorf("invalid Local MATCH protocol version %d", query.GetVersion())
+		config, err := fulltext.AnalyzerConfigFromLocalMatchAgainstBooleanQuery(query, args[1].GetType(ctx.GetEvalCtx()).GetCollate())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err := SetLocalMatchAgainstEvalInfo(sf.(*ScalarFunction), &LocalMatchAgainstEvalInfo{AnalyzerConfig: config}); err != nil {
+			return nil, errors.Trace(err)
 		}
 		if err := SetLocalMatchAgainstTiFlashEvalInfo(sf.(*ScalarFunction), &LocalMatchAgainstTiFlashEvalInfo{
 			BooleanQuery: query,

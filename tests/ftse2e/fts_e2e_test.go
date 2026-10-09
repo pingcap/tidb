@@ -52,6 +52,45 @@ func TestBooleanMatchTiFlashE2E(t *testing.T) {
 	t.Run("standard", f.testStandard)
 	t.Run("ngram", f.testNgram)
 	t.Run("collations", f.testCollations)
+	t.Run("review_regressions", f.testReviewRegressions)
+}
+
+// Run this separately against a freshly bootstrapped old-collation cluster.
+// Toggling a SQL session variable cannot change the cluster's collation mode.
+func TestLegacyCollationLocalMatchTiFlashE2E(t *testing.T) {
+	dsn := os.Getenv("TIDB_FTS_LEGACY_E2E_DSN")
+	if dsn == "" {
+		t.Skip("set TIDB_FTS_LEGACY_E2E_DSN to test an old-collation TiUP cluster")
+	}
+	f := newFixture(t, dsn)
+	var mode string
+	must(t, f.db.QueryRowContext(context.Background(), "SELECT variable_value FROM mysql.tidb WHERE variable_name='new_collation_enabled'").Scan(&mode))
+	if mode != "False" {
+		t.Fatalf("requires new_collation_enabled=False, got %q", mode)
+	}
+	f.makePair("legacy_docs", `CREATE TABLE %s (id INT PRIMARY KEY, body TEXT COLLATE utf8mb4_general_ci,
+		FULLTEXT INDEX ft_body(body))`, []string{"VALUES (1, 'TiDB storage'), (2, 'tidb storage'), (3, 'The'), (4, 'the')"})
+	for _, conn := range []*sql.Conn{f.native, f.local} {
+		f.exec(conn, "SET SESSION collation_server='utf8mb4_general_ci'")
+	}
+	for _, tc := range []struct {
+		search string
+		want   []int
+	}{{"+tidb", []int{2}}, {"+TiDB", []int{1}}, {"+the", []int{}}, {"+The", []int{3}}} {
+		t.Run(tc.search, func(t *testing.T) {
+			for _, path := range []struct {
+				conn  *sql.Conn
+				table string
+			}{{f.native, "legacy_docs_native"}, {f.local, "legacy_docs_local"}} {
+				query := "SELECT id FROM " + path.table + " WHERE MATCH(body) AGAINST(? IN BOOLEAN MODE)"
+				assertRootMatchPlan(t, path.conn, query, tc.search)
+				got := queryIDs(t, path.conn, query, tc.search)
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("%s: want %v, got %v", path.table, tc.want, got)
+				}
+			}
+		})
+	}
 }
 
 func newFixture(t *testing.T, dsn string) *fixture {
@@ -191,9 +230,50 @@ func (f *fixture) check(tableFamily string, tc matchCase) {
 	})
 }
 
-func assertPlan(t *testing.T, conn *sql.Conn, query string, native bool) {
+func assertPlan(t *testing.T, conn *sql.Conn, query string, native bool, args ...any) {
 	t.Helper()
-	rows, err := conn.QueryContext(context.Background(), "EXPLAIN FORMAT='brief' "+query)
+	text := explainPlan(t, conn, query, args...)
+	assertPlanText(t, query, text, native, false)
+}
+
+func assertPlanText(t *testing.T, query, text string, native, allowCop bool) {
+	t.Helper()
+	if strings.Contains(text, "cop[tici]") {
+		t.Fatalf("unexpected TiCI plan for %s:\n%s", query, text)
+	}
+	if native {
+		isTiFlash := func(text string) bool {
+			return strings.Contains(text, "mpp[tiflash]") || (allowCop && strings.Contains(text, "cop[tiflash]"))
+		}
+		if !isTiFlash(text) || !strings.Contains(text, "tablefullscan") {
+			t.Fatalf("expected TiFlash TableFullScan for %s:\n%s", query, text)
+		}
+		mppSelection := false
+		for _, line := range strings.Split(text, "\n") {
+			if !strings.Contains(line, "selection") {
+				continue
+			}
+			if !isTiFlash(line) {
+				t.Fatalf("MATCH remains in a TiDB-side Selection for %s:\n%s", query, text)
+			}
+			mppSelection = true
+		}
+		if !mppSelection {
+			t.Fatalf("expected MATCH to execute in a TiFlash Selection for %s:\n%s", query, text)
+		}
+	} else if strings.Contains(text, "mpp[tiflash]") || !strings.Contains(text, "match_against") {
+		t.Fatalf("expected TiDB local MATCH fallback for %s:\n%s", query, text)
+	}
+}
+
+func explainPlan(t *testing.T, conn *sql.Conn, query string, args ...any) string {
+	t.Helper()
+	return queryPlan(t, conn, "EXPLAIN FORMAT='brief' "+query, args...)
+}
+
+func queryPlan(t *testing.T, conn *sql.Conn, query string, args ...any) string {
+	t.Helper()
+	rows, err := conn.QueryContext(context.Background(), query, args...)
 	must(t, err)
 	defer rows.Close()
 	cols, err := rows.Columns()
@@ -213,36 +293,35 @@ func assertPlan(t *testing.T, conn *sql.Conn, query string, native bool) {
 		plan.WriteByte('\n')
 	}
 	must(t, rows.Err())
-	text := strings.ToLower(plan.String())
-	if strings.Contains(text, "cop[tici]") {
-		t.Fatalf("unexpected TiCI plan for %s:\n%s", query, text)
+	return strings.ToLower(plan.String())
+}
+
+func assertRootMatchPlan(t *testing.T, conn *sql.Conn, query string, args ...any) {
+	t.Helper()
+	plan := explainPlan(t, conn, query, args...)
+	found := false
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.Contains(line, "match_against") {
+			if !strings.Contains(line, "selection") || !strings.Contains(line, "root") {
+				t.Fatalf("unsafe MATCH was pushed down:\n%s", plan)
+			}
+			found = true
+		}
 	}
-	if native {
-		if !strings.Contains(text, "mpp[tiflash]") || !strings.Contains(text, "tablefullscan") {
-			t.Fatalf("expected TiFlash TableFullScan for %s:\n%s", query, text)
-		}
-		mppSelection := false
-		for _, line := range strings.Split(text, "\n") {
-			if !strings.Contains(line, "selection") {
-				continue
-			}
-			if !strings.Contains(line, "mpp[tiflash]") {
-				t.Fatalf("MATCH remains in a TiDB-side Selection for %s:\n%s", query, text)
-			}
-			mppSelection = true
-		}
-		if strings.Count(strings.ToLower(query), "match(") > 1 && !mppSelection {
-			t.Fatalf("expected compound MATCH predicates to execute in a TiFlash Selection for %s:\n%s", query, text)
-		}
-	} else if strings.Contains(text, "mpp[tiflash]") || !strings.Contains(text, "match_against") {
-		t.Fatalf("expected TiDB local MATCH fallback for %s:\n%s", query, text)
+	if !found || strings.Contains(plan, "cop[tici]") {
+		t.Fatalf("expected TiDB-side Local MATCH Selection:\n%s", plan)
 	}
 }
 
-func queryIDs(t *testing.T, conn *sql.Conn, query string) []int {
+func queryIDs(t *testing.T, conn *sql.Conn, query string, args ...any) []int {
 	t.Helper()
-	rows, err := conn.QueryContext(context.Background(), query)
+	rows, err := conn.QueryContext(context.Background(), query, args...)
 	must(t, err)
+	return readIDs(t, rows)
+}
+
+func readIDs(t *testing.T, rows *sql.Rows) []int {
+	t.Helper()
 	defer rows.Close()
 	ids := make([]int, 0)
 	for rows.Next() {
@@ -253,6 +332,98 @@ func queryIDs(t *testing.T, conn *sql.Conn, query string) []int {
 	must(t, rows.Err())
 	sort.Ints(ids)
 	return ids
+}
+
+func (f *fixture) testReviewRegressions(t *testing.T) {
+	f.t = t
+	f.makePair("review_docs", `CREATE TABLE %s (id INT PRIMARY KEY, body TEXT COLLATE utf8mb4_general_ci,
+		FULLTEXT INDEX ft_body(body))`, []string{
+		"VALUES (1, '123'), (2, '456'), (3, 'foo barista'), (4, 'foo only'), (5, 'barista only'), (6, 'baz foo'), (7, 'baz barista'), (8, 'baz other')",
+	})
+	nativeSQL := "SELECT id FROM review_docs_native WHERE MATCH(body) AGAINST(? IN BOOLEAN MODE)"
+	localSQL := "SELECT id FROM review_docs_local WHERE MATCH(body) AGAINST(? IN BOOLEAN MODE)"
+	var summaryEnabled int
+	must(t, f.admin.QueryRowContext(context.Background(), "SELECT @@global.tidb_enable_stmt_summary").Scan(&summaryEnabled))
+	if summaryEnabled != 1 {
+		t.Fatal("prepared-statement plan verification requires tidb_enable_stmt_summary=ON in the test cluster")
+	}
+	nativeStmt, err := f.native.PrepareContext(context.Background(), nativeSQL)
+	must(t, err)
+	defer nativeStmt.Close()
+	localStmt, err := f.local.PrepareContext(context.Background(), localSQL)
+	must(t, err)
+	defer localStmt.Close()
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  []int
+	}{
+		{"numeric_123", int64(123), []int{1}},
+		{"numeric_456", int64(456), []int{2}},
+		{"string_123", "123", []int{1}},
+		{"null", nil, []int{}},
+		{"numeric_after_null", int64(456), []int{2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, path := range []struct {
+				stmt   *sql.Stmt
+				table  string
+				native bool
+			}{{nativeStmt, "review_docs_native", true}, {localStmt, "review_docs_local", false}} {
+				rows, err := path.stmt.QueryContext(context.Background(), tc.value)
+				must(t, err)
+				got := readIDs(t, rows)
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("parameter %v: want %v, got %v", tc.value, tc.want, got)
+				}
+				if tc.value != nil {
+					// This branch's EXPLAIN FOR CONNECTION can retain a stale
+					// plan after binary EXECUTE. Statement summary records the
+					// executed plan, keyed by SQL and plan digest. Check every
+					// sampled non-NULL MATCH plan, allowing both TiFlash engines.
+					plans, err := f.admin.QueryContext(context.Background(),
+						"SELECT PLAN FROM information_schema.statements_summary WHERE SCHEMA_NAME=? AND DIGEST_TEXT LIKE ? AND PLAN LIKE '%match_against%'",
+						f.schema, "select %from `"+path.table+"` %")
+					must(t, err)
+					count := 0
+					for plans.Next() {
+						var plan string
+						must(t, plans.Scan(&plan))
+						assertPlanText(t, path.table, strings.ToLower(plan), path.native, true)
+						count++
+					}
+					must(t, plans.Err())
+					must(t, plans.Close())
+					if count == 0 {
+						t.Fatalf("missing executed MATCH plan for %s", path.table)
+					}
+				}
+			}
+		})
+	}
+	for _, tc := range []struct {
+		search string
+		want   []int
+	}{
+		{"+foo.bar*", []int{3}},
+		{"foo.bar*", []int{3, 4, 5, 6, 7}},
+		{"baz -foo.bar*", []int{8}},
+	} {
+		t.Run(tc.search, func(t *testing.T) {
+			// A replica may still supply the scan, but the unsafe scalar must
+			// remain in a root Selection and use TiDB's evaluator.
+			assertRootMatchPlan(t, f.native, nativeSQL, tc.search)
+			for _, path := range []struct {
+				conn *sql.Conn
+				sql  string
+			}{{f.native, nativeSQL}, {f.local, localSQL}} {
+				got := queryIDs(t, path.conn, path.sql, tc.search)
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("%s: want %v, got %v", tc.search, tc.want, got)
+				}
+			}
+		})
+	}
 }
 
 func assertMySQLError(t *testing.T, conn *sql.Conn, query string, wantCode uint16) {

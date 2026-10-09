@@ -2459,6 +2459,12 @@ func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(
 	if replica := tblInfo.TiFlashReplica; replica == nil || !replica.Available || replica.Count == 0 {
 		return nil, false
 	}
+	// In old-collation mode TiDB uses binary comparisons, while TiFlash's
+	// absent field collator enables lowercase analysis. Keep MATCH in TiDB
+	// until the scalar protocol can preserve these legacy semantics.
+	if !collate.NewCollationEnabled() {
+		return nil, false
+	}
 	sessVars := er.planCtx.builder.ctx.GetSessionVars()
 	analyzerConfig, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, indexInfo.FullTextInfo.ParserType)
 	if err != nil || !localMatchAgainstTiFlashAnalyzerConfigSupported(analyzerConfig) {
@@ -2472,9 +2478,14 @@ func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(
 	if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constant}) {
 		er.sctx.SetSkipPlanCache("TiFlash row-wise MATCH ... AGAINST serializes the Boolean query into the scalar expression")
 	}
-	queryText := ""
-	if !constant.Value.IsNull() {
-		queryText = constant.Value.GetString()
+	// Parameter markers may hold numeric values. Use the same conversion as
+	// the evaluator rather than reading Datum's string storage directly.
+	queryText, isNull, err := constant.EvalString(er.sctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return nil, false
+	}
+	if isNull {
+		queryText = ""
 	}
 	booleanQuery, err := fulltext.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(queryText, analyzerConfig)
 	if err != nil {

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -129,6 +130,96 @@ func TestMatchAgainstTiDBFallbackWhenTiFlashIsNotSelected(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows("1"))
 	plan := strings.ToLower(fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows()))
 	require.NotContains(t, plan, "mpp[tiflash]")
+}
+
+func TestMatchAgainstPreparedNumericSearchPushdown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table numeric_docs(id int primary key, body text, fulltext index ft(body))")
+	tk.MustExec("insert into numeric_docs values(1, '123'),(2, '456')")
+	tk.MustExec("set tidb_enable_local_match_against=ON,tidb_allow_tiflash_cop=ON,tidb_enable_prepared_plan_cache=ON")
+	tk.MustExec("prepare p from 'select id from numeric_docs where match(body) against(? in boolean mode)'")
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("numeric_docs"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	for _, tc := range []struct{ value, text, want string }{
+		{"123", "123", "1"}, {"456", "456", "2"}, {"'123'", "123", "1"}, {"NULL", "", ""},
+	} {
+		tk.MustExec("set @q=" + tc.value)
+		tk.MustExec("set tidb_isolation_read_engines='tikv'")
+		if tc.want == "" {
+			tk.MustQuery("execute p using @q").Check(testkit.Rows())
+		} else {
+			tk.MustQuery("execute p using @q").Check(testkit.Rows(tc.want))
+		}
+		tk.MustExec("set tidb_isolation_read_engines='tiflash'")
+		plan := compilePhysicalPlan(t, tk, "execute p using @q").(*core.Execute).Plan
+		if tc.text == "" {
+			continue // NULL may be folded to an empty plan rather than serialized.
+		}
+		metadata := assertLocalMatchAgainstScalarSelection(t, tk, plan, 1)
+		require.Len(t, metadata.Nodes, 1)
+		require.Equal(t, tc.text, metadata.Nodes[0].Text)
+	}
+}
+
+func TestMatchAgainstUnsafePushdownUsesTiDB(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table prefix_docs(id int primary key, body text collate utf8mb4_general_ci, fulltext index ft(body))")
+	tk.MustExec("insert into prefix_docs values(1, 'foo barista'),(2, 'foo only'),(3, 'barista only'),(4, 'baz foo'),(5, 'baz barista'),(6, 'baz other'),(7, 'TiDB storage')")
+	tk.MustExec("set tidb_enable_local_match_against=ON,tidb_allow_tiflash_cop=ON,tidb_isolation_read_engines='tikv,tiflash'")
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("prefix_docs"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	for _, tc := range []struct {
+		search string
+		want   []string
+	}{
+		{"+foo.bar*", []string{"1"}},
+		{"foo.bar*", []string{"1", "2", "3", "4", "5"}},
+		{"baz -foo.bar*", []string{"6"}},
+	} {
+		sql := "select id from prefix_docs where match(body) against('" + tc.search + "' in boolean mode) order by id"
+		assertMatchAgainstRootSelection(t, tk, sql)
+		// The fake replica permits plan inspection, but has no TiFlash peer
+		// to serve a coprocessor scan. Execute result assertions through TiKV.
+		tk.MustExec("set tidb_isolation_read_engines='tikv'")
+		tk.MustQuery(sql).Check(testkit.Rows(tc.want...))
+		tk.MustExec("set tidb_isolation_read_engines='tikv,tiflash'")
+	}
+
+	oldMode := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(false)
+	t.Cleanup(func() { collate.SetNewCollationEnabledForTest(oldMode) })
+	for _, tc := range []struct{ search, want string }{{"+tidb", ""}, {"+TiDB", "7"}} {
+		sql := "select id from prefix_docs where match(body) against('" + tc.search + "' in boolean mode)"
+		assertMatchAgainstRootSelection(t, tk, sql)
+		tk.MustExec("set tidb_isolation_read_engines='tikv'")
+		if tc.want == "" {
+			tk.MustQuery(sql).Check(testkit.Rows())
+		} else {
+			tk.MustQuery(sql).Check(testkit.Rows(tc.want))
+		}
+		tk.MustExec("set tidb_isolation_read_engines='tikv,tiflash'")
+	}
+}
+
+func assertMatchAgainstRootSelection(t *testing.T, tk *testkit.TestKit, sql string) {
+	t.Helper()
+	found := false
+	for _, row := range tk.MustQuery("explain format='brief' " + sql).Rows() {
+		text := strings.ToLower(fmt.Sprint(row))
+		if strings.Contains(text, "match_against") {
+			require.Contains(t, text, "selection")
+			require.Contains(t, text, "root")
+			require.NotContains(t, text, "mpp[tiflash]")
+			found = true
+		}
+	}
+	require.True(t, found)
 }
 
 func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {

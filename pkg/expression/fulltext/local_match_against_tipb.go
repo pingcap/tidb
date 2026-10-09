@@ -58,6 +58,17 @@ func BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search string, parserT
 	if containsLocalMatchAgainstBooleanSubExpression(group) {
 		return nil, fmt.Errorf("nested BOOLEAN MODE groups are not supported by TiFlash Local MATCH pushdown")
 	}
+	if parserType == model.FullTextParserTypeStandardV1 {
+		for _, clauses := range [][]matchagainst.BooleanClause{group.Must, group.Should, group.MustNot} {
+			for _, clause := range clauses {
+				if term, ok := clause.Expr.(*matchagainst.BooleanTerm); ok && term.Wildcard && len(PreserveUnderscoreTokenize(term.Text())) > 1 {
+					// TiDB treats the earlier tokens as exact terms and only the
+					// last token as a prefix. TiFlash currently expects one token.
+					return nil, fmt.Errorf("split STANDARD prefix terms require TiDB Local MATCH evaluation")
+				}
+			}
+		}
+	}
 	query, err := buildLocalMatchAgainstBooleanGroup(group)
 	if err != nil {
 		return nil, err
@@ -73,6 +84,46 @@ func BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search string, parserT
 		query.NgramTokenSize = uint32(ngramTokenSize)
 	}
 	return query, nil
+}
+
+// AnalyzerConfigFromLocalMatchAgainstBooleanQuery restores the wire analyzer
+// settings for Go coprocessor/mock-MPP evaluation. Never read session sysvars
+// here: they may differ from the session that constructed the request.
+func AnalyzerConfigFromLocalMatchAgainstBooleanQuery(query *tipb.LocalMatchAgainstBooleanQuery, collation string) (AnalyzerConfig, error) {
+	if query.GetVersion() != LocalMatchAgainstProtocolVersion {
+		return AnalyzerConfig{}, fmt.Errorf("invalid Local MATCH protocol version %d", query.GetVersion())
+	}
+	config := AnalyzerConfig{
+		Collation:            collation,
+		StopwordCollation:    query.GetStopwordCollation(),
+		InnodbFtMinTokenSize: int(query.GetInnodbFtMinTokenSize()),
+		InnodbFtMaxTokenSize: int(query.GetInnodbFtMaxTokenSize()),
+		NgramTokenSize:       int(query.GetNgramTokenSize()),
+	}
+	switch query.GetParser() {
+	case tipb.LocalMatchAgainstParser_LocalMatchAgainstParserStandard:
+		config.ParserType = model.FullTextParserTypeStandardV1
+	case tipb.LocalMatchAgainstParser_LocalMatchAgainstParserNgram:
+		config.ParserType = model.FullTextParserTypeNgramV1
+	default:
+		return AnalyzerConfig{}, fmt.Errorf("invalid Local MATCH parser %d", query.GetParser())
+	}
+	switch query.GetStopwordMode() {
+	case tipb.LocalMatchAgainstStopwordMode_LocalMatchAgainstStopwordModeDisabled:
+	case tipb.LocalMatchAgainstStopwordMode_LocalMatchAgainstStopwordModeBuiltin:
+		config.InnodbFtEnableStopword = true
+	default:
+		return AnalyzerConfig{}, fmt.Errorf("unsupported Local MATCH stopword mode %d", query.GetStopwordMode())
+	}
+	// Version 1 defines these defaults for omitted analyzer fields, matching
+	// TiFlash. In particular, an explicit min=0 with max>0 is not a default.
+	if config.InnodbFtMinTokenSize == 0 && config.InnodbFtMaxTokenSize == 0 {
+		config.InnodbFtMinTokenSize, config.InnodbFtMaxTokenSize = 3, 84
+	}
+	if config.NgramTokenSize == 0 {
+		config.NgramTokenSize = 2
+	}
+	return config, nil
 }
 
 // BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig carries the same analyzer settings

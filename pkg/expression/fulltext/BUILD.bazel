@@ -15,6 +15,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/util/collate",
         "@com_github_pingcap_tipb//go-tipb",
     ],
 )
@@ -33,6 +34,7 @@ go_test(
     deps = [
         "//pkg/meta/model",
         "//pkg/sessionctx/variable",
+        "//pkg/util/collate",
         "//pkg/util/mock",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",

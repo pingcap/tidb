@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -2062,6 +2063,22 @@ func TestLocalMatchAgainstBooleanQueryUsesVersionedPayload(t *testing.T) {
 	decodedInfo, ok := GetLocalMatchAgainstTiFlashEvalInfo(decodedSF)
 	require.True(t, ok)
 	require.Equal(t, query, decodedInfo.BooleanQuery)
+	localInfo, ok := GetLocalMatchAgainstEvalInfo(decodedSF)
+	require.True(t, ok, "decoded scalar must be executable by Go coprocessors, not just serializable")
+	require.Equal(t, 3, localInfo.AnalyzerConfig.InnodbFtMinTokenSize)
+	require.Equal(t, 84, localInfo.AnalyzerConfig.InnodbFtMaxTokenSize)
+	require.True(t, localInfo.AnalyzerConfig.InnodbFtEnableStopword)
+	require.Equal(t, mysql.DefaultCollationName, localInfo.AnalyzerConfig.StopwordCollation)
+	for _, tc := range []struct {
+		document string
+		want     float64
+	}{{"tidb storage", 1}, {"tidb mysql", 0}, {"postgresql", 0}} {
+		row := chunk.MutRowFromValues("", tc.document).ToRow()
+		value, isNull, err := decodedSF.EvalReal(ctx, row)
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, tc.want, value, tc.document)
+	}
 
 	unsupportedQuery := proto.Clone(query).(*tipb.LocalMatchAgainstBooleanQuery)
 	unsupportedQuery.Version++
@@ -2071,6 +2088,45 @@ func TestLocalMatchAgainstBooleanQueryUsesVersionedPayload(t *testing.T) {
 	unsupportedExpr.Val = unsupportedPayload
 	_, err = PBToExpr(ctx, unsupportedExpr, []*types.FieldType{nil, matchColumn.RetType})
 	require.ErrorContains(t, err, "invalid Local MATCH protocol version")
+}
+
+func TestLocalMatchAgainstDecodedAnalyzerEvaluation(t *testing.T) {
+	ctx := mock.NewContext()
+	column := genColumn(mysql.TypeVarchar, 0)
+	column.RetType.SetCollate(mysql.DefaultCollationName)
+	for _, tc := range []struct {
+		name, search, document string
+		config                 fulltext.AnalyzerConfig
+		want                   float64
+	}{
+		{"standard_stopwords_on", "+the", "the", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 3, InnodbFtMaxTokenSize: 84, InnodbFtEnableStopword: true}, 0},
+		{"standard_stopwords_off", "+the", "the", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 3, InnodbFtMaxTokenSize: 84}, 1},
+		{"standard_min_zero", "+a", "a", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 0, InnodbFtMaxTokenSize: 16}, 1},
+		{"standard_max_two", "+tidb", "tidb", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 0, InnodbFtMaxTokenSize: 2}, 0},
+		{"ngram_two", "+数据库", "数据库", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 2}, 1},
+		{"ngram_three", "+数据库", "数据库", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 3}, 1},
+		{"ngram_three_short", "+数据", "数据库", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 3}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.config.StopwordCollation = mysql.DefaultCollationName
+			query, err := fulltext.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(tc.search, tc.config)
+			require.NoError(t, err)
+			payload, err := proto.Marshal(query)
+			require.NoError(t, err)
+			search := NewStrConst(tc.search)
+			converter := PbConverter{client: new(mock.Client), ctx: ctx}
+			decoded, err := PBToExpr(ctx, &tipb.Expr{
+				Tp: tipb.ExprType_ScalarFunc, Sig: tipb.ScalarFuncSig_LocalMatchAgainstBoolean,
+				FieldType: ToPBFieldType(types.NewFieldType(mysql.TypeDouble)), Val: payload,
+				Children: []*tipb.Expr{converter.ExprToPB(search), converter.ExprToPB(column)},
+			}, []*types.FieldType{column.RetType})
+			require.NoError(t, err)
+			value, isNull, err := decoded.EvalReal(ctx, chunk.MutRowFromValues(tc.document).ToRow())
+			require.NoError(t, err)
+			require.False(t, isNull)
+			require.Equal(t, tc.want, value)
+		})
+	}
 }
 
 func TestLocalMatchAgainstIsNotSerializedForStorage(t *testing.T) {

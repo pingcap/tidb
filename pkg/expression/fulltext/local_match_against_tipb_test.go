@@ -110,3 +110,48 @@ func TestBuildLocalMatchAgainstBooleanQuerySupportsNgramAndRejectsUnsupportedSyn
 		require.Error(t, err, "unsupported Boolean extensions must not enter the scalar wire protocol: %s", unsupported)
 	}
 }
+
+func TestBuildLocalMatchAgainstBooleanQueryRejectsSplitStandardPrefix(t *testing.T) {
+	for _, search := range []string{"+foo.bar*", "foo.bar*", "baz -foo.bar*", "+foo.a*"} {
+		_, err := BuildLocalMatchAgainstBooleanQuery(search, model.FullTextParserTypeStandardV1)
+		require.ErrorContains(t, err, "split STANDARD prefix", search)
+	}
+	for _, search := range []string{"+foobar*", "+foo_bar*"} {
+		_, err := BuildLocalMatchAgainstBooleanQuery(search, model.FullTextParserTypeStandardV1)
+		require.NoError(t, err, search)
+	}
+	_, err := BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize("+foo.bar*", model.FullTextParserTypeNgramV1, 2)
+	require.NoError(t, err, "NGRAM uses a different prefix normalization")
+}
+
+func TestAnalyzerConfigFromLocalMatchAgainstBooleanQuery(t *testing.T) {
+	for _, parser := range []model.FullTextParserType{model.FullTextParserTypeStandardV1, model.FullTextParserTypeNgramV1} {
+		for _, stopwords := range []bool{false, true} {
+			config := AnalyzerConfig{ParserType: parser, Collation: "utf8mb4_bin", StopwordCollation: "utf8mb4_general_ci",
+				InnodbFtMinTokenSize: 0, InnodbFtMaxTokenSize: 16, NgramTokenSize: 3, InnodbFtEnableStopword: stopwords}
+			query, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+database", config)
+			require.NoError(t, err)
+			decoded, err := AnalyzerConfigFromLocalMatchAgainstBooleanQuery(query, config.Collation)
+			require.NoError(t, err)
+			require.Equal(t, config.ParserType, decoded.ParserType)
+			require.Equal(t, config.Collation, decoded.Collation)
+			require.Equal(t, config.StopwordCollation, decoded.StopwordCollation)
+			require.Equal(t, config.InnodbFtEnableStopword, decoded.InnodbFtEnableStopword)
+			if parser == model.FullTextParserTypeStandardV1 {
+				require.Equal(t, config.InnodbFtMinTokenSize, decoded.InnodbFtMinTokenSize)
+				require.Equal(t, config.InnodbFtMaxTokenSize, decoded.InnodbFtMaxTokenSize)
+			} else {
+				require.Equal(t, config.NgramTokenSize, decoded.NgramTokenSize)
+			}
+		}
+	}
+	for _, query := range []*tipb.LocalMatchAgainstBooleanQuery{
+		nil,
+		{Version: LocalMatchAgainstProtocolVersion + 1},
+		{Version: LocalMatchAgainstProtocolVersion, Parser: tipb.LocalMatchAgainstParser(99)},
+		{Version: LocalMatchAgainstProtocolVersion, Parser: tipb.LocalMatchAgainstParser_LocalMatchAgainstParserStandard, StopwordMode: tipb.LocalMatchAgainstStopwordMode(99)},
+	} {
+		_, err := AnalyzerConfigFromLocalMatchAgainstBooleanQuery(query, "utf8mb4_bin")
+		require.Error(t, err)
+	}
+}
