@@ -1638,6 +1638,27 @@ func (p *LogicalJoin) updateEQCond() {
 					rKey = rProj.AppendExpr(rKey)
 				}
 				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+				args := eqCond.(*expression.ScalarFunction).GetArgs()
+				_, lIsCol := args[0].(*expression.Column)
+				_, rIsCol := args[1].(*expression.Column)
+				if !lIsCol || !rIsCol {
+					// Building the equality can introduce implicit casts. Materialize
+					// them too: join keys must remain plain columns for later rules.
+					lKey, rKey = args[0], args[1]
+					if !lIsCol {
+						if lProj == nil {
+							lProj = p.getProj(0)
+						}
+						lKey = lProj.AppendExpr(lKey)
+					}
+					if !rIsCol {
+						if rProj == nil {
+							rProj = p.getProj(1)
+						}
+						rKey = rProj.AppendExpr(rKey)
+					}
+					eqCond = expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+				}
 				if isNA {
 					p.NAEQConditions = append(p.NAEQConditions, eqCond.(*expression.ScalarFunction))
 				} else {
