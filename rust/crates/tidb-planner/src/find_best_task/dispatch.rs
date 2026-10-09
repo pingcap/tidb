@@ -3026,10 +3026,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         table_stats
                         .as_ref()
                         .and_then(|stats| {
+                            // Go passes ds.PossibleAccessPaths; once derived,
+                            // each path's IdxCols equal Idx2ColUniqueIDs.
                             crate::logical::rewrite::analyzed_filter_selectivity_in(
                                 stats,
                                 &residual_table_filters,
                                 &ctx.access_path_derivation_context(),
+                                None,
                             )
                         })
                         .filter(|value| *value > 0.0)
@@ -3940,7 +3943,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         }
                         table_stats.as_ref().and_then(|stats| {
                             crate::logical::rewrite::analyzed_filter_selectivity_in(
-                                stats, filters, &ctx.access_path_derivation_context(),
+                                stats, filters, &ctx.access_path_derivation_context(), None,
                             )
                         }).filter(|ratio| *ratio > 0.0)
                             .unwrap_or(crate::cost_factors::SELECTION_FACTOR)

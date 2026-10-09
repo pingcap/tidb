@@ -48,7 +48,16 @@ pub struct SelectivityContext<'a> {
     pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
     /// `ExprCtx.IsUseCache()`, consulted by `MaybeOverOptimized4PlanCache`.
     pub use_plan_cache: bool,
+    /// Go `recordUsedItemStatsStatus`: told of every column (by its
+    /// `ColumnInfo` ID, `false`) and index (`true`) the estimate consults.
+    pub record_used_item: Option<&'a dyn Fn(i64, bool)>,
 }
+
+/// Go `Selectivity`'s `filledPaths`, keyed as its `id2Paths`: each possible
+/// access path that carries an index, with the unique IDs of that path's
+/// `IdxCols` when the estimate runs. A common-handle table path carries its
+/// PRIMARY index with no columns until `deriveCommonHandleTablePathStats`.
+pub type FilledPaths = std::collections::BTreeMap<i64, Vec<i64>>;
 
 impl<'a> SelectivityContext<'a> {
     /// A context with no range-fallback recorder and plan caching off.
@@ -58,15 +67,26 @@ impl<'a> SelectivityContext<'a> {
             evaluate,
             range_fallback_handler: None,
             use_plan_cache: false,
+            record_used_item: None,
+        }
+    }
+
+    fn record_used_item(&self, item_id: i64, is_index: bool) {
+        // Go skips `_tidb_rowid` (ID -1) and other non-positive IDs.
+        if item_id > 0 {
+            if let Some(record) = self.record_used_item {
+                record(item_id, is_index);
+            }
         }
     }
 }
 
-/// Go `Selectivity(ctx, coll, exprs, nil)`.
+/// Go `Selectivity(ctx, coll, exprs, filledPaths)`.
 pub fn selectivity(
     ctx: &SelectivityContext<'_>,
     coll: &HistColl,
     exprs: &[Expression],
+    filled_paths: Option<&FilledPaths>,
 ) -> Result<f64, EstimationError> {
     let realtime = coll.realtime_count();
     if realtime == 0 || exprs.is_empty() {
@@ -106,12 +126,16 @@ pub fn selectivity(
             continue;
         }
         if !coll.has_column(column.unique_id) {
+            if !column.is_hidden {
+                ctx.record_used_item(column.id, false);
+            }
             continue;
         }
         let Some(field_type) = column.ret_type.as_ref() else {
             continue;
         };
         let (mask, ranges) = column_mask_and_ranges(ctx, &remained, column, field_type)?;
+        ctx.record_used_item(column.id, false);
         let is_handle = column_is_handle(coll, column, field_type);
         let estimate = get_row_count_by_column_ranges(
             coll.histogram_for_estimation(column.unique_id)
@@ -139,7 +163,12 @@ pub fn selectivity(
         if info.is_some_and(|info| info.mv_index) {
             continue;
         }
-        let index_columns = find_prefix_of_index(&extracted, coll.index_columns(index_id));
+        // Go `findPrefixOfIndexByCol`: a possible path decides by its own
+        // `IdxCols`; an index without one by `Idx2ColUniqueIDs`.
+        let index_column_ids = filled_paths
+            .and_then(|paths| paths.get(&index_id))
+            .map_or_else(|| coll.index_columns(index_id), Vec::as_slice);
+        let index_columns = find_prefix_of_index(&extracted, index_column_ids);
         if index_columns.is_empty() {
             continue;
         }
@@ -166,6 +195,7 @@ pub fn selectivity(
             } else {
                 (covered_mask(&remained, &detached.access_conds), false, 0)
             };
+        ctx.record_used_item(index_id, true);
         let estimate = get_row_count_by_index_ranges(
             coll,
             index_id,
@@ -302,7 +332,8 @@ pub fn selectivity(
                 }
                 _ => vec![item.clone()],
             };
-            let current = selectivity(ctx, coll, &cnf).unwrap_or(ctx.options.selectivity_factor);
+            let current =
+                selectivity(ctx, coll, &cnf, None).unwrap_or(ctx.options.selectivity_factor);
             dnf_selectivity = dnf_selectivity + current - dnf_selectivity * current;
         }
         if dnf_selectivity != 0.0 {

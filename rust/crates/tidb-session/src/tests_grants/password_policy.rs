@@ -599,9 +599,23 @@ fn password_history_cutoff_follows_go_local_text_and_session_timestamp_conversio
         )),
         [[expected.to_string()]]
     );
-    // getValidTime renders process-local UTC text, then SQL interprets it at +08:00.
-    // The source protects this credential for another eight hours in this session.
-    registry.clock().advance(52 * 3600);
+    // getValidTime renders the two-day cutoff as process-local text, which
+    // the TIMESTAMP comparison reads at the session's +08:00: the credential
+    // stays protected 2 days + 8 hours minus the process zone's UTC offset
+    // at the cutoff (56 hours where the process runs in UTC).
+    let created = registry.clock().now_unix();
+    let local_offset = |instant: i64| {
+        i64::from(
+            chrono::TimeZone::timestamp_opt(&chrono::Local, instant, 0)
+                .single()
+                .expect("an unambiguous instant")
+                .offset()
+                .local_minus_utc(),
+        )
+    };
+    let mut window = 56 * 3600 - local_offset(created + 8 * 3600);
+    window = 56 * 3600 - local_offset(created + window - 48 * 3600);
+    registry.clock().advance(window - 3600);
     assert_eq!(
         session
             .run("SET PASSWORD FOR history_zone = 'first'")
@@ -610,7 +624,7 @@ fn password_history_cutoff_follows_go_local_text_and_session_timestamp_conversio
             .code,
         3638
     );
-    registry.clock().advance(9 * 3600);
+    registry.clock().advance(2 * 3600);
     session
         .run("SET PASSWORD FOR history_zone = 'first'")
         .unwrap();

@@ -178,6 +178,7 @@ pub(crate) fn analyzed_filter_selectivity_in(
     table_stats: &StatsInfo,
     conditions: &[Expression],
     context: &crate::access_path::AccessPathDerivationContext<'_>,
+    filled_paths: Option<&crate::cardinality::selectivity::FilledPaths>,
 ) -> Option<f64> {
     // The derivation context carries the statement's own snapshot of these
     // session variables.
@@ -197,6 +198,7 @@ pub(crate) fn analyzed_filter_selectivity_in(
                 context.expression_evaluator,
             )
         },
+        filled_paths,
     )
 }
 
@@ -211,6 +213,7 @@ pub fn analyzed_filter_selectivity_with_evaluator(
         table_stats,
         conditions,
         &crate::cardinality::selectivity::SelectivityContext::new(options, evaluate),
+        None,
     )
 }
 
@@ -218,14 +221,15 @@ pub fn analyzed_filter_selectivity_with_evaluator(
 /// `HistColl`; an estimation error falls back to `cost.SelectionFactor`.
 /// `None` only for a profile without a collection, which Go never builds
 /// for a table.
-fn filter_selectivity(
+pub fn filter_selectivity(
     table_stats: &StatsInfo,
     conditions: &[Expression],
     ctx: &crate::cardinality::selectivity::SelectivityContext<'_>,
+    filled_paths: Option<&crate::cardinality::selectivity::FilledPaths>,
 ) -> Option<f64> {
     let hist_coll = table_stats.hist_coll()?;
     Some(
-        crate::cardinality::selectivity::selectivity(ctx, hist_coll, conditions)
+        crate::cardinality::selectivity::selectivity(ctx, hist_coll, conditions, filled_paths)
             .unwrap_or(crate::cost_factors::SELECTION_FACTOR),
     )
 }
@@ -2178,10 +2182,12 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             range_fallback_handler: self.range_fallback_handler,
                             expression_evaluator: &evaluate,
                         };
+                        let filled_paths = op.derive_stats_filled_paths();
                         let range_selectivity = analyzed_filter_selectivity_in(
                             &table_stats,
                             &op.pushed_down_conds,
                             &derivation,
+                            Some(&filled_paths),
                         );
                         let stats = range_selectivity.map_or_else(
                             || {
@@ -2739,7 +2745,7 @@ mod analyzed_filter_selectivity_tests {
         );
         let hist = stats.hist_coll().unwrap();
         let estimate = |exprs: &[Expression]| {
-            crate::cardinality::selectivity::selectivity(&ctx, hist, exprs)
+            crate::cardinality::selectivity::selectivity(&ctx, hist, exprs, None)
         };
         assert!(estimate(&cnf).is_err());
         assert_eq!(analyzed_filter_selectivity(&stats, &cnf), Some(0.8));

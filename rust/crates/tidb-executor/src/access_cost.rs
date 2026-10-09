@@ -1135,34 +1135,6 @@ pub(crate) fn selectivity_of_conjuncts_with_range_context_observing(
     .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
 }
 
-/// Estimates datasource filters with the access paths TiDB has already filled.
-/// The appended common-handle columns retain their physical prefix lengths,
-/// matching `deriveStatsByFilter(..., AllPossibleAccessPaths)` in Go.
-pub(crate) fn selectivity_with_filled_path_context_observing(
-    predicate: &tidb_ast::Expr,
-    table: &KvTable,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-    stats: Option<&TableStatistics>,
-    defaults: SelectivityDefaults,
-    range_context: crate::index_range::RangeContext<'_>,
-    filled_path_appended_columns: &BTreeMap<i64, Vec<(usize, i64)>>,
-    observe: &mut dyn FnMut(i64, bool),
-) -> f64 {
-    let mut conjuncts = Vec::new();
-    crate::plan_trace::collect_and(predicate, &mut conjuncts);
-    try_selectivity_of_conjuncts_with_filled_paths_observing(
-        &conjuncts,
-        table,
-        resolver,
-        stats,
-        defaults,
-        range_context,
-        filled_path_appended_columns,
-        observe,
-    )
-    .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
-}
-
 /// [`selectivity`] over conditions already split out of the `AND` tree, which
 /// is the shape Go's `cardinality.Selectivity` takes and the shape the index
 /// filters arrive in.
@@ -1232,29 +1204,6 @@ fn try_selectivity_of_conjuncts_with_defaults_observing(
         defaults,
         range_context,
         None,
-        observe,
-    )
-}
-
-fn try_selectivity_of_conjuncts_with_filled_paths_observing(
-    conjuncts: &[&tidb_ast::Expr],
-    table: &KvTable,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-    stats: Option<&TableStatistics>,
-    defaults: SelectivityDefaults,
-    range_context: crate::index_range::RangeContext<'_>,
-    filled_path_appended_columns: &BTreeMap<i64, Vec<(usize, i64)>>,
-    observe: &mut dyn FnMut(i64, bool),
-) -> Result<f64, tidb_planner::cardinality::row_count_estimator::EstimationError> {
-    selectivity_of_conjuncts_with_path_context(
-        conjuncts,
-        table,
-        resolver,
-        stats,
-        true,
-        defaults,
-        range_context,
-        Some(filled_path_appended_columns),
         observe,
     )
 }

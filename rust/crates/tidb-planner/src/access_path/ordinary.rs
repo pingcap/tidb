@@ -43,7 +43,7 @@ pub(crate) fn filter_selectivity(
     let Some(stats) = &source.table_stats else {
         return crate::cost_factors::SELECTION_FACTOR;
     };
-    crate::logical::rewrite::analyzed_filter_selectivity_in(stats, conditions, context)
+    crate::logical::rewrite::analyzed_filter_selectivity_in(stats, conditions, context, None)
         .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
 }
 

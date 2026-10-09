@@ -1447,53 +1447,6 @@ fn handle_columns_to_append(
 }
 
 
-fn same_statistics_predicate(
-    left: &tidb_expr::expression::Expression,
-    right: &tidb_expr::expression::Expression,
-) -> bool {
-    use tidb_expr::expression::Expression;
-    if left.equal(right) {
-        return true;
-    }
-    let (Expression::ScalarFunction(lhs), Expression::ScalarFunction(rhs)) = (left, right) else {
-        return false;
-    };
-    if lhs.func_name.lowercase() != rhs.func_name.lowercase() {
-        return false;
-    }
-    if lhs.func_name.lowercase() == "not" {
-        // The same logical NOT can be assigned different integer result
-        // widths by the AST and pushed-expression builders (LongLong vs Tiny).
-        // It is still the same predicate when its operand is identical.
-        return lhs.args.len() == rhs.args.len()
-            && lhs
-                .args
-                .iter()
-                .zip(&rhs.args)
-                .all(|(left, right)| same_statistics_predicate(left, right));
-    }
-    let split = match lhs.func_name.lowercase() {
-        "and" => tidb_expr::expr_util::split_cnf_items,
-        "or" => tidb_expr::expr_util::split_dnf_items,
-        _ => return false,
-    };
-    let left = split(left);
-    let mut right = split(right);
-    if left.len() != right.len() {
-        return false;
-    }
-    for item in left {
-        let Some(index) = right
-            .iter()
-            .position(|other| same_statistics_predicate(&item, other))
-        else {
-            return false;
-        };
-        right.swap_remove(index);
-    }
-    true
-}
-
 /// Go `getGeneralAttributesFromPaths`: minimum access-path selectivity used
 /// by `GetOriginalPhysicalIndexScan` to decide whether LIMIT row-count
 /// adjustment is safe. `Some(index_filter_selectivity)` identifies a path
@@ -1529,49 +1482,6 @@ mod access_path_min_selectivity_tests {
         // The final index path uses max(54, 50)/1000.
         assert_eq!(min_access_path_selectivity(paths, 50.0, 1000.0), 0.05);
         assert_eq!(min_access_path_selectivity([], 50.0, 0.0), 1.0);
-    }
-}
-
-#[cfg(test)]
-mod same_statistics_predicate_tests {
-    use super::same_statistics_predicate;
-    use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_expr::column::Column;
-    use tidb_expr::expression::Expression;
-    use tidb_expr::scalar_function::ScalarFunction;
-
-    fn not_regexp(
-        not_type: FieldTypeCode,
-        regexp_type: FieldTypeCode,
-        column_id: i64,
-    ) -> Expression {
-        let column = Expression::Column(Column::new(
-            column_id,
-            FieldType::new(FieldTypeCode::VarString),
-        ));
-        let regexp = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("regexp"),
-            FieldType::new(regexp_type),
-            vec![column],
-        ));
-        Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("not"),
-            FieldType::new(not_type),
-            vec![regexp],
-        ))
-    }
-
-    #[test]
-    fn not_predicate_identity_ignores_only_boolean_result_width() {
-        let source = not_regexp(FieldTypeCode::LongLong, FieldTypeCode::LongLong, 1);
-        let pushed = not_regexp(FieldTypeCode::Tiny, FieldTypeCode::LongLong, 1);
-        assert!(same_statistics_predicate(&source, &pushed));
-
-        let different_column = not_regexp(FieldTypeCode::Tiny, FieldTypeCode::LongLong, 2);
-        assert!(!same_statistics_predicate(&source, &different_column));
-
-        let different_operand_type = not_regexp(FieldTypeCode::Tiny, FieldTypeCode::Tiny, 1);
-        assert!(!same_statistics_predicate(&source, &different_operand_type));
     }
 }
 
@@ -1871,8 +1781,13 @@ impl InitStats<'_> {
                     .collect::<Vec<_>>();
                 // This snapshot is consumed after path preparation. Mirror
                 // fillIndexPath's extension of the initial retained-index map,
-                // which only ever appends the integer handle.
-                if columns.len() == index.columns.len() {
+                // which only ever appends the integer handle, and runs only
+                // for the paths in AllPossibleAccessPaths.
+                let has_possible_path = source.enumerated_paths.iter().any(|path| {
+                    matches!(path, tidb_planner::access_path::PossiblePath::Index { index: position }
+                        if source.indexes.get(*position).is_some_and(|candidate| candidate.id == index.id))
+                });
+                if has_possible_path && columns.len() == index.columns.len() {
                     columns.extend(source.handle_cols_to_append(index, &declared)
                         .into_iter().map(|(column, _)| column.unique_id));
                 }
@@ -2189,7 +2104,6 @@ impl InitStats<'_> {
                     .or(Some(row_count));
             let mut index_path_filter_selectivities = BTreeMap::new();
             let simple_expr_schema = source.base.base.schema().cloned();
-            let mut filled_path_appended_handle_columns = BTreeMap::new();
             let simple_expr_names = source
                 .columns
                 .iter()
@@ -2214,8 +2128,6 @@ impl InitStats<'_> {
                 let appended_handle_columns = source_index.map_or_else(Vec::new, |source_index| {
                     handle_columns_to_append(source, source_index, index, table)
                 });
-                filled_path_appended_handle_columns
-                    .insert(index.id, appended_handle_columns.clone());
                 let mut columns = index
                     .column_offsets
                     .iter()
@@ -2358,8 +2270,11 @@ impl InitStats<'_> {
                     (!index_filter_conjuncts.is_empty(), index_filter_selectivity),
                 );
             }
+            // Go `deriveStatsByFilter(ds, ds.PushedDownConds,
+            // ds.AllPossibleAccessPaths)`: one `Selectivity`, with an error
+            // answered by `cost.SelectionFactor`.
             let selectivity = {
-                let mut observe = |item_id, is_index| {
+                let record = |item_id, is_index| {
                     record_used_item_stats_status(
                         self.context,
                         &source.table_name,
@@ -2369,87 +2284,34 @@ impl InitStats<'_> {
                         is_index,
                     );
                 };
-                let defaults = tidb_planner::selectivity_greedy::SelectivityDefaults {
-                    trigger_load: false,
-                    estimator_options: self
-                        .context
-                        .optimizer_cost_env()
-                        .session
-                        .estimator_options.clone(),
-                    ..tidb_planner::selectivity_greedy::SelectivityDefaults::from_session(
-                        self.default_string_match_selectivity,
-                        self.selectivity_factor,
+                let evaluate = |expression: &tidb_expr::expression::Expression| {
+                    tidb_expr::eval_expression_once(expression, self.context)
+                };
+                let options = self.context.optimizer_cost_env().session.estimator_options.clone();
+                let filled_paths = source.derive_stats_filled_paths();
+                let selectivity_context = tidb_planner::cardinality::selectivity::SelectivityContext {
+                    range_fallback_handler: Some(self.context.range_fallback_handler()),
+                    record_used_item: Some(&record),
+                    ..tidb_planner::cardinality::selectivity::SelectivityContext::new(
+                        &options, &evaluate,
                     )
                 };
-                if source.pushed_down_conds.is_empty() {
-                    crate::access_cost::selectivity_with_filled_path_context_observing(
-                        predicate,
-                        table,
-                        &resolver,
-                        statistics,
-                        defaults,
-                        self.range_context,
-                        &filled_path_appended_handle_columns,
-                        &mut observe,
-                    )
-                } else {
-                    let evaluate = |expression: &tidb_expr::expression::Expression| {
-                        tidb_expr::eval_expression_once(expression, self.context)
-                    };
-                    source
-                        .table_stats
-                        .as_ref()
-                        .and_then(|stats| {
-                            tidb_planner::logical::rewrite::analyzed_filter_selectivity_with_evaluator(
-                                stats,
-                                &source.pushed_down_conds,
-                                &defaults.estimator_options,
-                                &evaluate,
-                            )
-                        })
-                        .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
-                }
+                source
+                    .table_stats
+                    .as_ref()
+                    .and_then(|stats| {
+                        tidb_planner::logical::rewrite::filter_selectivity(
+                            stats,
+                            &source.pushed_down_conds,
+                            &selectivity_context,
+                            Some(&filled_paths),
+                        )
+                    })
+                    .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
             };
-            let cached_predicate_matches = source.base.base.schema().is_some_and(|schema| {
-                let names = source
-                    .columns
-                    .iter()
-                    .map(|column| {
-                        tidb_datatype::FieldName::new(tidb_datatype::FieldNameMetadata {
-                            table: tidb_datatype::IdentifierMetadata::new(
-                                source
-                                    .table_as_name
-                                    .as_deref()
-                                    .unwrap_or(&source.table_name),
-                            ),
-                            column: tidb_datatype::IdentifierMetadata::new(&column.name),
-                            ..Default::default()
-                        })
-                    })
-                    .collect();
-                let options = tidb_expr::simple_expr::BuildOptions::new()
-                    .with_input_schema_and_names(schema.clone(), names);
-                tidb_expr::simple_expr::build_simple_expr(&resolver, predicate, &options)
-                    .ok()
-                    .is_some_and(|expression| {
-                        let conditions = tidb_expr::expr_util::split_cnf_items(&expression);
-                        let mut unmatched = source.pushed_down_conds.iter().collect::<Vec<_>>();
-                        conditions.len() == source.pushed_down_conds.len()
-                            && conditions.iter().all(|condition| {
-                                let Some(index) = unmatched.iter().position(|pushed| {
-                                    same_statistics_predicate(condition, pushed)
-                                }) else {
-                                    return false;
-                                };
-                                unmatched.swap_remove(index);
-                                true
-                            })
-                    })
-            });
-            // A source estimate belongs to its predicates. Optimizer-added
-            // filters must be derived from the current expressions, not the
-            // original statement's WHERE clause.
-            if cached_predicate_matches || !source.pushed_down_conds.is_empty() {
+            // A source estimate belongs to its pushed-down predicates; before
+            // push-down the planner derives it at the first DeriveStats.
+            if !source.pushed_down_conds.is_empty() {
                 let filtered_stats = table_stats.scale(
                     selectivity,
                     self.context.optimizer_cost_env().session.scale_ndv_skew_ratio,

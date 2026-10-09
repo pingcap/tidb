@@ -369,6 +369,42 @@ impl DataSource {
         }
     }
 
+    /// Go `deriveStatsByFilter(ds, conds, ds.AllPossibleAccessPaths)`'s
+    /// `filledPaths` (`stats.go:577`): every possible index path with its
+    /// `IdxCols`, which `fillIndexPath` has just filled (the collection's
+    /// `Idx2ColUniqueIDs`, handle included); and a common-handle table path's
+    /// PRIMARY index with none, because Go fills table paths only after this
+    /// estimate. The PRIMARY index therefore contributes no `Selectivity`
+    /// node to the data source's own row count.
+    #[must_use]
+    pub fn derive_stats_filled_paths(&self) -> crate::cardinality::selectivity::FilledPaths {
+        let hist_coll = self.table_stats.as_ref().and_then(StatsInfo::hist_coll);
+        let mut paths = crate::cardinality::selectivity::FilledPaths::new();
+        for path in &self.enumerated_paths {
+            match path {
+                crate::access_path::PossiblePath::Table {
+                    primary_index: Some(position),
+                    ..
+                } => {
+                    if let Some(index) = self.indexes.get(*position) {
+                        paths.insert(index.id, Vec::new());
+                    }
+                }
+                crate::access_path::PossiblePath::Index { index: position } => {
+                    if let Some(index) = self.indexes.get(*position) {
+                        let columns = hist_coll
+                            .map(|coll| coll.index_columns(index.id).to_vec())
+                            .unwrap_or_default();
+                        paths.insert(index.id, columns);
+                    }
+                }
+                crate::access_path::PossiblePath::Table { .. }
+                | crate::access_path::PossiblePath::TiFlashTable => {}
+            }
+        }
+        paths
+    }
+
     /// Go `fillIndexPath`'s suffix (`stats.go:177-197`): a complete,
     /// non-unique secondary key gains the signed integer handle, in the path
     /// columns and in `HistColl.Idx2ColUniqueIDs`. A clustered common handle

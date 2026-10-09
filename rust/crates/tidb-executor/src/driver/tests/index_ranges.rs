@@ -116,25 +116,6 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
         &ctx,
     )
     .unwrap();
-    let TableEntry::Kv(table) = catalog.get_mut_in("test", "new_order").unwrap() else {
-        panic!("new_order is not a KV table");
-    };
-    let table = std::sync::Arc::make_mut(table);
-    table.add_index(
-        crate::kv_table::KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-            column_offsets: vec![2, 1, 0],
-            visible: true,
-            global: false,
-            global_index_version: 0,
-            clustered_primary: false,
-        },
-        false,
-    );
     scale_analyzed_tpcc_table(
         &mut catalog,
         "new_order",

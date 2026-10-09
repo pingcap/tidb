@@ -673,7 +673,11 @@ fn changing_column_cast_uses_the_statement_error_level() {
     .unwrap_err();
     let error =
         tidb_executor::DriverError::from(tidb_executor::ExecError::from(error)).to_mysql_error();
-    assert_eq!(error.code, 1264);
+    // Go `GetChangingColVal` casts with `CastColumnValue(..., false, false)`:
+    // the strict statement's `HandleTruncate` returns `ConvertTo`'s overflow
+    // as is. Only an INSERT's own column cast rewrites it to 1264.
+    assert_eq!(error.code, 1690);
+    assert_eq!(error.message, "constant 300 overflows tinyint");
 }
 
 #[test]
