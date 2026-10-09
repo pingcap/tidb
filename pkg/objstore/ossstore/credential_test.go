@@ -105,7 +105,7 @@ func TestFetchCredentials(t *testing.T) {
 			_, err := fetchCredentials(context.Background(), provider, logger)
 			require.ErrorContains(t, err, "i/o timeout")
 			// maxAttempts in fetchCredentials.
-			require.Equal(t, 60, attempts)
+			require.Equal(t, 30, attempts)
 		})
 	})
 

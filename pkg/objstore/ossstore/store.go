@@ -51,11 +51,14 @@ const (
 	ecsMetadataIP = "100.100.100.200"
 )
 
-// isTransientNoCredentialsError reports whether err is a transient failure to
+// IsTransientNoCredentialsError reports whether err is a transient failure to
 // resolve credentials from the default provider chain because the Aliyun ECS
 // metadata service request timed out or hit its deadline. Permanent causes,
 // e.g. missing credential configuration or the metadata service refusing the
 // request, are not reported as retryable.
+//
+// It is exported so callers that run on top of this store, such as IMPORT INTO,
+// can classify a failed store creation as retryable.
 //
 // The reason it is matched this way is that the Aliyun SDK does its own
 // transient-error detection the same way. The OSS SDK's ConnectionErrorRetryable
@@ -69,7 +72,7 @@ const (
 // via errors.GetErrStackMsg. So the net.Error type is gone and we match the same
 // signals as text: the metadata host and the Go HTTP timeout messages that the
 // SDK's type check would have caught.
-func isTransientNoCredentialsError(err error) bool {
+func IsTransientNoCredentialsError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -161,16 +164,11 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 		// https://github.com/aliyun/credentials-go/blob/7d2a3e68402630904f518531e80b370b3649c6a1/credentials/providers/default.go#L101
 		if strings.Contains(cred.ProviderName, ecsRAMRoleProviderName) {
 			httpCli := httputil.NewClient(nil)
-			regionID, regionErr := httputil.GetText(httpCli, regionIDMetaURL)
-			if regionErr != nil {
-				// The region ID is only used to decide whether the traffic-saving
-				// internal endpoint can be used, so a transient metadata failure
-				// here must not fail store creation. Fall back to the public
-				// endpoint instead.
-				logger.Warn("failed to get region ID from ECS metadata service, fallback to public endpoint",
-					zap.Error(regionErr))
-			} else {
-				ecsRegionID = regionID
+			ecsRegionID, err = httputil.GetText(httpCli, regionIDMetaURL)
+			if err != nil {
+				// shouldn't happen normally, we just successfully got ECS RAM
+				// role credentials from the metadata service.
+				return nil, errors.Annotatef(err, "failed to get region ID from ECS metadata service")
 			}
 		}
 		if qs.RoleArn != "" {
