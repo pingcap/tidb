@@ -2207,7 +2207,7 @@ func MergePartTopNAndHistToGlobal(
 	}
 
 	tz := sc.TimeZone()
-	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal start",
+	statslogutil.StatsLogger().Debug("MergePartTopNAndHistToGlobal start",
 		zap.Int64("histID", firstHist.ID),
 		zap.Stringer("tp", firstHist.Tp),
 		zap.Bool("isIndex", isIndex),
@@ -2229,7 +2229,7 @@ func MergePartTopNAndHistToGlobal(
 	if err != nil {
 		return nil, nil, err
 	}
-	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1a: sorted partition TopN",
+	statslogutil.StatsLogger().Debug("MergePartTopNAndHistToGlobal step 1a: sorted partition TopN",
 		zap.Int("topNEntries", len(allTopN)))
 
 	// 1b. Collect partition totals and build the bucket-group cursor
@@ -2241,7 +2241,7 @@ func MergePartTopNAndHistToGlobal(
 		return nil, nil, err
 	}
 	topNCur := &topNCursor{entries: allTopN}
-	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1b: built k-way merge heap",
+	statslogutil.StatsLogger().Debug("MergePartTopNAndHistToGlobal step 1b: built k-way merge heap",
 		zap.Int("heapSize", bucketCur.heap.Len()),
 		zap.Int("totalBuckets", totalBuckets))
 
@@ -2325,7 +2325,7 @@ func MergePartTopNAndHistToGlobal(
 	// The cursor collected every popped ref in upper-bound order; Pass 2
 	// reuses this stream without rebuilding the heap.
 	sortedRefs := bucketCur.sortedRefs
-	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1c: merge-walked TopN + buckets",
+	statslogutil.StatsLogger().Debug("MergePartTopNAndHistToGlobal step 1c: merge-walked TopN + buckets",
 		zap.Int("sortedRefs", len(sortedRefs)),
 		zap.Int("topNHeapSize", topNHeap.Len()))
 
@@ -2343,7 +2343,7 @@ func MergePartTopNAndHistToGlobal(
 	if globalTopN != nil {
 		globalTopNSize = len(globalTopN.TopN)
 	}
-	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1d: extracted global TopN",
+	statslogutil.StatsLogger().Debug("MergePartTopNAndHistToGlobal step 1d: extracted global TopN",
 		zap.Int("globalTopN", globalTopNSize),
 		zap.Int64("totHistCount", totHistCount))
 
@@ -2635,7 +2635,7 @@ func buildGlobalHistogram(
 		firstHist.Tp, int(expBucketNumber), totColSize)
 
 	if totHistCount <= 0 || refs.numRefs() == 0 {
-		statslogutil.StatsLogger().Info("buildGlobalHistogram: empty histogram (early return)")
+		statslogutil.StatsLogger().Debug("buildGlobalHistogram: empty histogram (early return)")
 		return globalHist, nil
 	}
 
@@ -2845,7 +2845,7 @@ func buildGlobalHistogram(
 		globalHist.AppendBucketWithNDV(&globalBucketsRtl[k].lower, &globalBucketsRtl[k].upper, cum, globalBucketsRtl[k].repeat, 0)
 	}
 
-	statslogutil.StatsLogger().Info("buildGlobalHistogram: built global histogram",
+	statslogutil.StatsLogger().Debug("buildGlobalHistogram: built global histogram",
 		zap.Int("buckets", len(globalHist.Buckets)))
 
 	return globalHist, nil

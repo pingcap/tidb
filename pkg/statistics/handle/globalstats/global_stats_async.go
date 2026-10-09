@@ -139,7 +139,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 	a.globalStats.Num = len(a.histIDs)
 	a.globalStatsNDV = make([]int64, 0, a.globalStats.Num)
 	a.hasV1Stats = make([]bool, len(a.histIDs))
-	statslogutil.StatsLogger().Info("global stats prepare: fetching per-partition meta",
+	statslogutil.StatsLogger().Debug("global stats prepare: fetching per-partition meta",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
 		zap.Bool("isIndex", isIndex),
@@ -197,7 +197,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 			}
 		}
 	}
-	statslogutil.StatsLogger().Info("global stats prepare: done",
+	statslogutil.StatsLogger().Debug("global stats prepare: done",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
 		zap.Bool("isIndex", isIndex),
@@ -374,7 +374,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Context, isIndex bool) error {
-	statslogutil.StatsLogger().Info("global stats load: fmsketch",
+	statslogutil.StatsLogger().Debug("global stats load: fmsketch",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
 		zap.Bool("isIndex", isIndex),
@@ -410,7 +410,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
 	failpoint.Inject("PanicInIOWorker", nil)
-	statslogutil.StatsLogger().Info("global stats load: cmsketch",
+	statslogutil.StatsLogger().Debug("global stats load: cmsketch",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
 		zap.Bool("isIndex", isIndex),
@@ -450,7 +450,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			failpoint.Return(errors.New("ErrorSameTime returned error"))
 		}
 	})
-	statslogutil.StatsLogger().Info("global stats load: histogram + topN",
+	statslogutil.StatsLogger().Debug("global stats load: histogram + topN",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
 		zap.Bool("isIndex", isIndex),
