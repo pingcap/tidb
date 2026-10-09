@@ -835,9 +835,14 @@ fn skip_decorrelate_projection_for_left_outer_apply(
         .and_then(LogicalPlan::schema)
         .cloned()
         .unwrap_or_default();
+    // Go `outerPlan.Schema().ColumnsIndices(cols) != nil`: true when every
+    // plain column of the expression is an outer one, vacuously so for an
+    // expression with none (a correlated column only, as a lifted
+    // `sum(outer.a)` reads), whose value the join cannot null-extend either.
     projection.exprs.iter().any(|expr| {
-        let columns = extract_columns(expr);
-        !columns.is_empty() && columns.iter().all(|column| outer_schema.contains(column))
+        extract_columns(expr)
+            .iter()
+            .all(|column| outer_schema.contains(column))
     })
 }
 

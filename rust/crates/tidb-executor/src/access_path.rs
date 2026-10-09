@@ -5187,7 +5187,12 @@ impl LookupForkTemplate {
             remote_handles: None,
             last_partition_id: None,
             lookup_rows: Vec::new(),
+            lookup_handles: Vec::new(),
             lookup_row_at: 0,
+            // A fork serves a common-handle prefix lookup; a clustered table
+            // has no `_tidb_rowid` to report.
+            emit_extra_handle: false,
+            current_handle: None,
             produced: crate::executor::RowCount::default(),
             decode_context: self.decode_context.clone(),
             statement: self.statement.clone(),
@@ -5280,7 +5285,16 @@ pub struct IndexJoinLookupExec {
     /// Rows returned by one batched handle lookup. Keeping the batch across
     /// output chunks avoids one remote point read per row handle.
     lookup_rows: Vec<Option<Vec<Datum>>>,
+    /// The handle each pending lookup row came from, parallel to
+    /// `lookup_rows`.
+    lookup_handles: Vec<Option<TableHandle>>,
     lookup_row_at: usize,
+    /// Whether each row carries Go's `_tidb_rowid` just past the stored
+    /// columns: an inner IndexLookUp over a heap table keeps the handle in
+    /// its schema (a Projection above it prunes the column).
+    emit_extra_handle: bool,
+    /// The handle of the row [`Self::next_lookup_row`] returned last.
+    current_handle: Option<TableHandle>,
     /// Rows produced since `open`, which the trace reads as `actRows`.
     produced: crate::executor::RowCount,
     /// See [`HandleSourceExec`].
@@ -5377,7 +5391,10 @@ impl IndexJoinLookupExec {
             remote_handles: None,
             last_partition_id: None,
             lookup_rows: Vec::new(),
+            lookup_handles: Vec::new(),
             lookup_row_at: 0,
+            emit_extra_handle: false,
+            current_handle: None,
             produced: crate::executor::RowCount::default(),
             decode_context,
             statement,
@@ -5411,6 +5428,7 @@ impl IndexJoinLookupExec {
         self.remote_cursor = None;
         self.remote_handles = None;
         self.lookup_rows.clear();
+        self.lookup_handles.clear();
         self.lookup_row_at = 0;
         self.open_remote_index_handles()
     }
@@ -5627,11 +5645,19 @@ impl IndexJoinLookupExec {
         let mut decode_offsets = BTreeSet::new();
         decode_offsets.extend(required_offsets);
         if let Some(offsets) = &output_offsets {
-            decode_offsets.extend(offsets.iter().copied());
+            // The extra handle's slot past the stored columns is not decoded.
+            let stored = self.table.columns().len();
+            decode_offsets.extend(offsets.iter().copied().filter(|offset| *offset < stored));
         }
         decode_offsets.extend(expression_column_offsets(&self.filters));
         self.decode_offsets = Some(decode_offsets.into_iter().collect());
         self.output_offsets = output_offsets;
+    }
+
+    /// Emits each row's handle as the column just past the stored ones,
+    /// which an output offset of `table.columns().len()` selects.
+    pub(crate) fn emit_extra_handle(&mut self) {
+        self.emit_extra_handle = true;
     }
 
     /// The live count of rows this source produced.
@@ -6165,6 +6191,9 @@ impl IndexJoinLookupExec {
     /// The decoded column each output column reads, or `None` when an
     /// output column is not among the decoded ones.
     fn chunk_output_columns(&self) -> Option<Vec<usize>> {
+        if self.emit_extra_handle {
+            return None;
+        }
         let visible = self.table.visible_column_count();
         let sources: Vec<usize> = match &self.output_offsets {
             Some(offsets) => offsets.clone(),
@@ -6323,22 +6352,26 @@ impl IndexJoinLookupExec {
     /// the range scan carries every row occurrence named by the handles,
     /// including duplicate handles from a non-unique index; this matches
     /// Go's `TableHandlesToKVRanges` request shape and the batch-get answer.
+    /// One window's rows, each with the handle it was read by.
     fn window_rows(
         &mut self,
         handles: &[TableHandle],
         physical_ids: Option<&[i64]>,
-    ) -> Result<Vec<Option<Vec<Datum>>>, ExecError> {
+    ) -> Result<Vec<(Option<TableHandle>, Option<Vec<Datum>>)>, ExecError> {
         if let Some(rows) = self.window_rows_by_ranges(handles, physical_ids)? {
             return Ok(rows);
         }
-        self.table
+        // The batch-get answers one slot per handle, in handle order.
+        let rows = self
+            .table
             .get_rows_by_routed_handles_projected_with_context(
                 handles,
                 physical_ids,
                 self.decode_offsets.as_deref(),
                 &self.decode_context,
             )
-            .map_err(ExecError::from)
+            .map_err(ExecError::from)?;
+        Ok(handles.iter().cloned().map(Some).zip(rows).collect())
     }
 
     /// One window's rows through a record-range coprocessor scan. `None`
@@ -6348,7 +6381,7 @@ impl IndexJoinLookupExec {
         &mut self,
         handles: &[TableHandle],
         physical_ids: Option<&[i64]>,
-    ) -> Result<Option<Vec<Option<Vec<Datum>>>>, ExecError> {
+    ) -> Result<Option<Vec<(Option<TableHandle>, Option<Vec<Datum>>)>>, ExecError> {
         let keep = self
             .decode_offsets
             .clone()
@@ -6379,7 +6412,12 @@ impl IndexJoinLookupExec {
         else {
             return Ok(None);
         };
-        Ok(Some(pairs.into_iter().map(|(_, row)| Some(row)).collect()))
+        Ok(Some(
+            pairs
+                .into_iter()
+                .map(|(handle, row)| (Some(handle), Some(row)))
+                .collect(),
+        ))
     }
 
     fn next_batched_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
@@ -6404,8 +6442,14 @@ impl IndexJoinLookupExec {
     }
 
     fn next_lookup_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
+        self.current_handle = None;
         if self.covering {
             if let Some(remote) = self.remote_handles.as_mut() {
+                if self.emit_extra_handle {
+                    return Err(ExecError::unsupported(
+                        "a remote covering index-join reader cannot report the row handle",
+                    ));
+                }
                 return remote.next_projected_row().map_err(ExecError::from);
             }
             if self.table.partition().is_none()
@@ -6414,9 +6458,11 @@ impl IndexJoinLookupExec {
                 // Go rebuilds the chosen IndexReader for each outer task;
                 // its rows come from the index, including native fallback.
                 let mut row = Vec::new();
-                return self
-                    .next_handle(Some(&mut row))
-                    .map(|handle| handle.map(|_| row));
+                let handle = self.next_handle(Some(&mut row))?;
+                return Ok(handle.map(|handle| {
+                    self.current_handle = Some(handle);
+                    row
+                }));
             }
         }
         let complete_common_handle = matches!(self.object, LookupObject::CommonHandle)
@@ -6442,10 +6488,14 @@ impl IndexJoinLookupExec {
                     if handles.is_empty() {
                         return Ok(None);
                     }
-                    self.lookup_rows = self.window_rows(
-                        &handles,
-                        (physical_ids.len() == handles.len()).then_some(physical_ids.as_slice()),
-                    )?;
+                    (self.lookup_handles, self.lookup_rows) = self
+                        .window_rows(
+                            &handles,
+                            (physical_ids.len() == handles.len())
+                                .then_some(physical_ids.as_slice()),
+                        )?
+                        .into_iter()
+                        .unzip();
                     // A window every row of which is gone -- the index named
                     // handles whose records no longer exist, and a range scan
                     // answers exactly what exists -- contributes nothing;
@@ -6458,8 +6508,10 @@ impl IndexJoinLookupExec {
                     }
                 }
                 let row = self.lookup_rows[self.lookup_row_at].take();
+                let handle = self.lookup_handles[self.lookup_row_at].take();
                 self.lookup_row_at += 1;
                 if row.is_some() {
+                    self.current_handle = handle;
                     return Ok(row);
                 }
             }
@@ -6589,6 +6641,7 @@ impl Executor for IndexJoinLookupExec {
         self.remote_cursor = None;
         self.remote_handles = None;
         self.lookup_rows.clear();
+        self.lookup_handles.clear();
         self.lookup_row_at = 0;
         self.produced.set(0);
         self.filter_chunk.reset();
@@ -6610,10 +6663,18 @@ impl Executor for IndexJoinLookupExec {
             };
             // An index entry whose row is gone is not a row, as in
             // [`IndexRangeSourceExec`].
-            let physical = self.physical_row(&row)?;
+            let mut physical = self.physical_row(&row)?;
             let passes = self.row_passes_filters(&physical)?;
             if !passes {
                 continue;
+            }
+            if self.emit_extra_handle {
+                physical.push(
+                    self.current_handle
+                        .as_ref()
+                        .and_then(TableHandle::int_value)
+                        .map_or(Datum::Null, Datum::Int),
+                );
             }
             if let Some(offsets) = &self.output_offsets {
                 for (output, source) in offsets.iter().copied().enumerate() {
@@ -6638,6 +6699,7 @@ impl Executor for IndexJoinLookupExec {
         self.remote_cursor = None;
         self.remote_handles = None;
         self.lookup_rows.clear();
+        self.lookup_handles.clear();
         self.lookup_row_at = 0;
         Ok(())
     }

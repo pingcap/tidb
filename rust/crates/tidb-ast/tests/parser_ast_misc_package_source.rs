@@ -461,6 +461,7 @@ impl RenameStub {
 fn table_optimizer_hint_restore() {
     let hint = |name: &str, kind: HintKind| Hint {
         name: name.to_string(),
+        written_name: None,
         kind,
     };
     let table = |name: &str| HintTable {

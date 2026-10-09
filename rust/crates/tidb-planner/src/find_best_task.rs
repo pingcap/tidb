@@ -324,6 +324,92 @@ pub(crate) fn hash_join_shapes(
         .collect()
 }
 
+/// Go `getHashJoins`' hint resolution, once per enumeration of a join under a
+/// property hash joins can serve: the build side HASH_JOIN_BUILD /
+/// HASH_JOIN_PROBE force after Go drops conflicting or unsupported ones
+/// (warning for each), whether the hash family is forced, and
+/// `ShouldSkipHashJoin`.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct HashJoinHints {
+    pub(crate) force_left: bool,
+    pub(crate) force_right: bool,
+    /// Go `forced`: HASH_JOIN, or a build side still forced.
+    pub(crate) forced: bool,
+    /// Go `ShouldSkipHashJoin`: NO_HASH_JOIN or `tidb_opt_enable_hash_join`
+    /// off. A forced family is kept anyway, with a warning.
+    pub(crate) skip: bool,
+}
+
+pub(crate) fn resolve_hash_join_hints(
+    join: &LogicalJoin,
+    prefer_join_type: u32,
+    use_hash_join_v2: bool,
+    disable_hash_join: bool,
+    warn: &mut dyn FnMut(String),
+) -> HashJoinHints {
+    use crate::plan_builder::from::join_hint_flags as hint;
+    let mut force_left =
+        prefer_join_type & (hint::LEFT_AS_HJ_BUILD | hint::RIGHT_AS_HJ_PROBE) != 0;
+    let mut force_right =
+        prefer_join_type & (hint::RIGHT_AS_HJ_BUILD | hint::LEFT_AS_HJ_PROBE) != 0;
+    if force_left && force_right {
+        warn(
+            "Conflicting HASH_JOIN_BUILD and HASH_JOIN_PROBE hints detected. \
+             Both sides cannot be specified to use the same table. Please review the hints"
+                .to_owned(),
+        );
+        force_left = false;
+        force_right = false;
+    }
+    let join_type_name = crate::logical::LogicalJoin::join_type_name(join.join_type);
+    match join.join_type {
+        LogicalJoinType::Semi | LogicalJoinType::AntiSemi
+            if !semi_outer_build(join, use_hash_join_v2) && (force_left || force_right) =>
+        {
+            warn(format!(
+                "The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for {join_type_name} \
+                 with hash join version 1. Please remove these hints"
+            ));
+            force_left = false;
+            force_right = false;
+        }
+        LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
+            if force_left || force_right =>
+        {
+            warn(format!(
+                "HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for {join_type_name} \
+                 because the build side is fixed. Please remove these hints"
+            ));
+            force_left = false;
+            force_right = false;
+        }
+        _ => {}
+    }
+    let forced = prefer_join_type & hint::HASH_JOIN != 0 || force_left || force_right;
+    let skip = prefer_join_type & hint::NO_HASH_JOIN != 0 || disable_hash_join;
+    if forced && skip {
+        warn(
+            "A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, \
+             or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."
+                .to_owned(),
+        );
+    }
+    HashJoinHints {
+        force_left,
+        force_right,
+        forced,
+        skip,
+    }
+}
+
+/// Go `CanUseHashJoinV2` under `UseHashJoinV2`: whether a semi or anti-semi
+/// join may also build its outer side (equality keys present, none
+/// null-safe, no null-aware keys). Go's non-GA gate is
+/// `UseHashJoinV2ForNonGAJoin`, flipped to true in its `init()`.
+fn semi_outer_build(join: &LogicalJoin, use_hash_join_v2: bool) -> bool {
+    use_hash_join_v2 && !join.left_keys.is_empty() && !join.has_null_eq && !join.has_na_keys
+}
+
 /// `exhaustPhysicalPlans4LogicalJoin` for a root task with no hints: every
 /// physical candidate this join may become UNDER `prop`, in Go's enumeration
 /// order -- merge joins, then index joins, then hash joins.
@@ -336,6 +422,7 @@ pub fn exhaust_join(
     join: &LogicalJoin,
     prop: &PhysicalProperty,
     use_hash_join_v2: bool,
+    hash_force: (bool, bool),
 ) -> Vec<EnumeratedJoin> {
     // Go `exhaustPhysicalPlans4LogicalJoin`: `if !p.IsNAAJ() && prop.IndexJoinProp
     // == nil { ...generate merge join and index join... }` -- merge join and
@@ -346,7 +433,7 @@ pub fn exhaust_join(
     // data source can return `IndexJoinInfo`; a NAAJ's null-aware hash build
     // and probe reads `na_eq_conditions` directly off the original operator.
     if prop.index_join_prop.is_some() || join.has_na_keys {
-        return hash_join_candidates(join, prop, use_hash_join_v2);
+        return hash_join_candidates(join, prop, use_hash_join_v2, hash_force);
     }
     let mut out = Vec::new();
     out.extend(merge_join_candidates(join, prop));
@@ -357,7 +444,7 @@ pub fn exhaust_join(
         }
     }
     out.extend(index_join_candidates(join, prop));
-    out.extend(hash_join_candidates(join, prop, use_hash_join_v2));
+    out.extend(hash_join_candidates(join, prop, use_hash_join_v2, hash_force));
     out
 }
 
@@ -565,6 +652,7 @@ fn hash_join_candidates(
     join: &LogicalJoin,
     prop: &PhysicalProperty,
     use_hash_join_v2: bool,
+    (force_left, force_right): (bool, bool),
 ) -> Vec<EnumeratedJoin> {
     if !prop.is_sort_item_empty() {
         return Vec::new();
@@ -586,14 +674,12 @@ fn hash_join_candidates(
     };
     let mut candidates = Vec::new();
     // Go `getHashJoins`: with hash join v2 a semi or anti-semi join also
-    // enumerates the build on its outer side when `CanUseHashJoinV2` holds
-    // (equality keys present, none null-safe, no null-aware keys); the cost
-    // model then prefers the smaller build (TPC-H Q22 builds the 10,834
-    // filtered customers rather than the 1.5M orders). Go's non-GA gate is
-    // `UseHashJoinV2ForNonGAJoin`, flipped to true in its `init()`.
-    let semi_outer_build =
-        use_hash_join_v2 && !join.left_keys.is_empty() && !join.has_null_eq && !join.has_na_keys;
-    for shape in hash_join_shapes(join.join_type, false, false, semi_outer_build) {
+    // enumerates the build on its outer side; the cost model then prefers
+    // the smaller build (TPC-H Q22 builds the 10,834 filtered customers
+    // rather than the 1.5M orders). A forced build side (already resolved
+    // by `resolve_hash_join_hints`) enumerates only its own shapes.
+    let semi_outer_build = semi_outer_build(join, use_hash_join_v2);
+    for shape in hash_join_shapes(join.join_type, force_left, force_right, semi_outer_build) {
         if let Some(runtime) = &prop.index_join_prop {
             // Go `getHashJoin`: for a parent index-join runtime property,
             // enumerate one candidate per child that may contain the target
@@ -738,7 +824,7 @@ mod tests {
             no_cop_push_down: true,
             ..PhysicalProperty::default()
         };
-        let candidates = exhaust_join(&join, &prop, true);
+        let candidates = exhaust_join(&join, &prop, true, (false, false));
         assert!(!candidates.is_empty());
         // Go enumerates both probe paths and join families before the inner
         // datasource checks available access paths; sort properties are not

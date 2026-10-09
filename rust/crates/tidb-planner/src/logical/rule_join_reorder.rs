@@ -330,7 +330,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
 
     let left_preserved = current_leading
         .as_ref()
-        .is_some_and(|hint| derived_table_in_leading_hint(left, hint));
+        .is_some_and(|hint| crate::joinorder::is_derived_table_in_leading_hint(left, hint));
     let mut left_result = if join_snapshot.join_type != LogicalJoinType::RightOuter
         && !left_has_hint
         && !left_preserved
@@ -352,7 +352,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
 
     let right_preserved = current_leading
         .as_ref()
-        .is_some_and(|hint| derived_table_in_leading_hint(right, hint));
+        .is_some_and(|hint| crate::joinorder::is_derived_table_in_leading_hint(right, hint));
     let mut right_result = if join_snapshot.join_type != LogicalJoinType::LeftOuter
         && !right_has_hint
         && !right_preserved
@@ -489,34 +489,6 @@ fn single_group(plan: LogicalPlan) -> JoinGroupResult {
         group: vec![plan],
         ..JoinGroupResult::default()
     }
-}
-
-fn derived_table_in_leading_hint(
-    plan: &LogicalPlan,
-    hints: &crate::plan_builder::from::JoinHints,
-) -> bool {
-    if plan.query_block_offset() <= 1 {
-        return false;
-    }
-    let Some(alias) = crate::plan_builder::from::extract_table_alias(plan.output_names()) else {
-        return false;
-    };
-    fn contains(elements: &[tidb_ast::LeadingElement], database: &str, table: &str) -> bool {
-        elements.iter().any(|element| match element {
-            tidb_ast::LeadingElement::Table(hint) => {
-                hint.name.eq_ignore_ascii_case(table)
-                    && hint
-                        .db_name
-                        .as_deref()
-                        .is_none_or(|db| db == "*" || db.eq_ignore_ascii_case(database))
-            }
-            tidb_ast::LeadingElement::Group(group) => contains(group, database, table),
-        })
-    }
-    hints
-        .leading
-        .as_deref()
-        .is_some_and(|leading| contains(leading, &alias.db_name, &alias.table_name))
 }
 
 fn try_inline_projection(
@@ -714,7 +686,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
         };
         let original = plans.clone();
         let (leading, remaining, applicable) =
-            self.build_leading_tree(elements, plans, has_outer_join)?;
+            self.build_leading_tree(elements, plans, hints, has_outer_join)?;
         if !applicable {
             return Ok(None);
         }
@@ -730,6 +702,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
         &mut self,
         elements: &[tidb_ast::LeadingElement],
         mut available: Vec<LogicalPlan>,
+        hints: &crate::plan_builder::from::JoinHints,
         has_outer_join: bool,
     ) -> Result<(Option<LogicalPlan>, Vec<LogicalPlan>, bool), PlanError> {
         if elements.is_empty() {
@@ -740,9 +713,8 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
         for element in elements {
             let next = match element {
                 tidb_ast::LeadingElement::Table(table) => {
-                    let Some(index) = available
-                        .iter()
-                        .position(|plan| hinted_plan_matches(plan, table))
+                    let Some(index) =
+                        crate::joinorder::find_plan_by_ast_hint(&available, table, hints, |plan| Some(plan))
                     else {
                         return Ok((None, original, false));
                     };
@@ -750,7 +722,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
                 }
                 tidb_ast::LeadingElement::Group(group) => {
                     let (nested, remaining, applicable) =
-                        self.build_leading_tree(group, available, has_outer_join)?;
+                        self.build_leading_tree(group, available, hints, has_outer_join)?;
                     if !applicable {
                         return Ok((None, original, false));
                     }
@@ -1352,7 +1324,11 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
         join_type: LogicalJoinType,
     ) -> Result<LogicalPlan, PlanError> {
         let mut join = crate::joinorder::new_cartesian_join(self.context, join_type, left, right)?;
-        crate::joinorder::set_new_join_with_hint(&mut join, &self.info.join_method_hints);
+        crate::joinorder::set_new_join_with_hint(
+            self.context,
+            &mut join,
+            &self.info.join_method_hints,
+        );
         join.equal_conditions = equal_conditions;
         join.other_conditions = other_conditions;
         join.left_conditions = left_conditions;
@@ -1425,7 +1401,11 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
                     left,
                     right,
                 )?;
-                crate::joinorder::set_new_join_with_hint(&mut join, &self.info.join_method_hints);
+                crate::joinorder::set_new_join_with_hint(
+            self.context,
+            &mut join,
+            &self.info.join_method_hints,
+        );
                 let schema = join.base.base.schema().cloned().unwrap_or_default();
                 self.info.other_conditions.retain(|condition| {
                     if extract_columns(condition)
@@ -1523,25 +1503,6 @@ fn find_node_for_column_nodes(
                 .is_some_and(|schema| schema.contains(column))
         })
         .ok_or_else(|| PlanError::internal("unknown column in join reorder"))
-}
-
-fn hinted_plan_matches(plan: &LogicalPlan, table: &tidb_ast::HintTable) -> bool {
-    let Some(alias) = crate::plan_builder::from::extract_table_alias(plan.output_names()) else {
-        return false;
-    };
-    let database_matches = table
-        .db_name
-        .as_deref()
-        .is_none_or(|database| database == "*" || database.eq_ignore_ascii_case(&alias.db_name));
-    let table_matches = table.name.eq_ignore_ascii_case(&alias.table_name);
-    let query_block_matches = table.qb_name.as_deref().is_none_or(|query_block| {
-        query_block
-            .strip_prefix("sel_")
-            .and_then(|offset| offset.parse::<i32>().ok())
-            .filter(|offset| *offset > 0)
-            .is_none_or(|offset| offset == plan.query_block_offset())
-    });
-    database_matches && table_matches && query_block_matches
 }
 
 #[cfg(test)]

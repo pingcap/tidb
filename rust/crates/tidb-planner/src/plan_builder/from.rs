@@ -526,44 +526,29 @@ pub fn set_preferred_join_type_and_order(
         );
         join.prefer_join_type = 0;
     }
-    if let Some(leading) = &hints.leading {
-        let mut tables = Vec::new();
-        collect_leading_tables(leading, &mut tables);
-        // go applies the LEADING hint when ANY of the join's tables appears
-        // in its list; the unlisted aliases float freely (oracle g-hint:
-        // LEADING(t2) over `hi t1, hi t2` applies without the unmatched
-        // warning).
-        join.prefer_join_order = [lhs.as_ref(), rhs.as_ref()].iter().any(|alias| {
-            alias.is_some_and(|alias| {
-                tables.iter().any(|table| {
-                    table.name.eq_ignore_ascii_case(&alias.table_name)
-                        && table
-                            .db_name
-                            .as_deref()
-                            .is_none_or(|db| db == "*" || db.eq_ignore_ascii_case(&alias.db_name))
-                })
+    // Go `if hintInfo.LeadingJoinOrder != nil { p.PreferJoinOrder =
+    // hintInfo.MatchTableName(...) }`: ANY of the join's aliases in the
+    // LEADING tables (by database, name and query block) marks it; the
+    // unlisted aliases float freely. ParsePlanHints empties the tables when
+    // several LEADING hints or STRAIGHT_JOIN void them, so no join is marked
+    // although the first hint's LeadingList stays.
+    if let Some(canonical) = &hints.canonical {
+        let aliases = [lhs.as_ref(), rhs.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|alias| tidb_hint::HintedTable {
+                database_name: hints.alias_database(alias),
+                table_name: alias.table_name.clone(),
+                select_offset: alias.select_offset,
+                ..tidb_hint::HintedTable::default()
             })
-        });
-        if join.prefer_join_order {
-            if let Some(canonical) = &hints.canonical {
-                let aliases = [lhs.as_ref(), rhs.as_ref()]
-                    .into_iter()
-                    .flatten()
-                    .map(|alias| tidb_hint::HintedTable {
-                        database_name: hints.alias_database(alias),
-                        table_name: alias.table_name.clone(),
-                        select_offset: alias.select_offset,
-                        ..tidb_hint::HintedTable::default()
-                    })
-                    .collect::<Vec<_>>();
-                let candidates = aliases.iter().map(Some).collect::<Vec<_>>();
-                let mut canonical = canonical.borrow_mut();
-                tidb_hint::PlanHints::match_table_names(
-                    &candidates,
-                    &mut canonical.leading_join_order,
-                );
-            }
-        }
+            .collect::<Vec<_>>();
+        let candidates = aliases.iter().map(Some).collect::<Vec<_>>();
+        let mut canonical = canonical.borrow_mut();
+        join.prefer_join_order = tidb_hint::PlanHints::match_table_names(
+            &candidates,
+            &mut canonical.leading_join_order,
+        );
     }
     if join.prefer_join_type != 0 || join.prefer_join_order {
         join.hint_info = Some(Rc::clone(hints));
@@ -595,18 +580,6 @@ fn contain_different_join_types(prefer_join_type: u32) -> bool {
         .filter(|side_mask| prefer_join_type & side_mask > 0)
         .count()
         > 1
-}
-
-fn collect_leading_tables<'a>(
-    elements: &'a [tidb_ast::LeadingElement],
-    tables: &mut Vec<&'a tidb_ast::HintTable>,
-) {
-    for element in elements {
-        match element {
-            tidb_ast::LeadingElement::Table(table) => tables.push(table),
-            tidb_ast::LeadingElement::Group(group) => collect_leading_tables(group, tables),
-        }
-    }
 }
 
 /// Go `findJoinFullSchema(p)` (`:645`): the `FullSchema`/`FullNames` of the

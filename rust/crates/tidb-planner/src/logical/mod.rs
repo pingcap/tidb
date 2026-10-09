@@ -644,22 +644,29 @@ impl LogicalPlan {
             .unwrap_or_else(|| Schema::new(Vec::new()))
     }
 
-    /// Go `BaseLogicalPlan.OutputNames()` (`base_logical_plan.go:107`), with
-    /// the same own-then-first-child rule as [`Self::schema`].
+    /// Go `BaseLogicalPlan.OutputNames()` (`base_logical_plan.go:107`), which
+    /// reads `children[0]`, and its `LogicalSchemaProducer` override
+    /// (`logical_schema_producer.go:94`), which keeps its own names and
+    /// propagates a child's only when it has exactly one: a join or union
+    /// whose names were never set has none, so `ExtractTableAlias` finds no
+    /// alias on it (a static-mode partition union, a join reorder's join).
     #[must_use]
     pub fn output_names(&self) -> &[tidb_datatype::FieldName] {
         let own = self.base().base.output_names();
         if !own.is_empty() {
             return own;
         }
-        self.children().first().map_or(&[][..], Self::output_names)
+        let children = self.children();
+        if self.is_schema_producer() && children.len() != 1 {
+            return &[];
+        }
+        children.first().map_or(&[][..], Self::output_names)
     }
 
-    /// Go `BaseLogicalPlan.SetOutputNames(names)` (`base_logical_plan.go:112`),
-    /// which forwards to `children[0]`; a schema-producing leaf stores the
-    /// names locally, matching Go's `LogicalSchemaProducer` override.
-    pub fn set_output_names(&mut self, names: Vec<tidb_datatype::FieldName>) {
-        if matches!(
+    /// Whether Go's operator embeds `LogicalSchemaProducer`, owning its
+    /// schema and output names instead of forwarding them to `children[0]`.
+    fn is_schema_producer(&self) -> bool {
+        matches!(
             self,
             Self::Projection(_)
                 | Self::Join(_)
@@ -681,7 +688,14 @@ impl LogicalPlan {
                 | Self::ShowDDLJobs(_)
                 | Self::TiKVSingleGather(_)
                 | Self::TableDual(_)
-        ) {
+        )
+    }
+
+    /// Go `BaseLogicalPlan.SetOutputNames(names)` (`base_logical_plan.go:112`),
+    /// which forwards to `children[0]`; a schema-producing leaf stores the
+    /// names locally, matching Go's `LogicalSchemaProducer` override.
+    pub fn set_output_names(&mut self, names: Vec<tidb_datatype::FieldName>) {
+        if self.is_schema_producer() {
             self.base_mut().base.set_output_names(names);
             return;
         }

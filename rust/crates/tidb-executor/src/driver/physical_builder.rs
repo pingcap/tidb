@@ -1949,17 +1949,22 @@ fn lower_index_lookup_selections(
     Ok(())
 }
 
+/// Go `ExtraHandleID`'s `_tidb_rowid`, by ID or by its name.
+fn is_extra_handle_column(column: &Column) -> bool {
+    column.id == tidb_model::column::EXTRA_HANDLE_ID
+        || column
+            .orig_name
+            .rsplit('.')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME))
+}
+
 fn reader_output_offsets(
     schema: &Schema,
     scan: &PhysicalIndexScan,
     table: &crate::KvTable,
 ) -> Result<(Schema, Vec<usize>, Option<usize>), DriverError> {
-    let extra_handle = schema.columns.iter().position(|column| {
-        column.id == tidb_model::column::EXTRA_HANDLE_ID
-            || column.orig_name.rsplit('.').next().is_some_and(|name| {
-                name.eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)
-            })
-    });
+    let extra_handle = schema.columns.iter().position(is_extra_handle_column);
     let mut source_columns = Vec::with_capacity(schema.columns.len());
     let mut offsets = Vec::with_capacity(schema.columns.len());
     let mut extra_handle_slot = None;
@@ -2424,6 +2429,9 @@ fn collect_index_inner_filters(
     Ok(())
 }
 
+/// Each reader output column's physical table offset. Go's `_tidb_rowid`
+/// (the handle an inner IndexLookUp over a heap table keeps) maps to the slot
+/// just past the stored columns, which the lookup fills with the row handle.
 fn index_inner_output_offsets(
     schema: &Schema,
     table: &crate::KvTable,
@@ -2432,6 +2440,9 @@ fn index_inner_output_offsets(
         .columns
         .iter()
         .map(|column| {
+            if is_extra_handle_column(column) {
+                return Ok(table.columns().len());
+            }
             table
                 .logical_columns()
                 .iter()
@@ -2771,6 +2782,7 @@ fn build_index_inner_reader(
     // the table row; project the aggregate's INPUT columns instead.
     let row_schema = offset_schema.unwrap_or(&schema);
     let output_offsets = index_inner_output_offsets(row_schema, &table)?;
+    let emits_extra_handle = row_schema.columns.iter().any(is_extra_handle_column);
     let index_side = match plan {
         PhysicalPlan::IndexLookUpReader(reader) => reader.index_plan.as_deref(),
         _ => Some(embedded),
@@ -2825,6 +2837,9 @@ fn build_index_inner_reader(
     source.set_filters(filters, ctx.clone());
     source.set_index_filters(index_filters);
     source.set_column_projection(Some(output_offsets), []);
+    if emits_extra_handle {
+        source.emit_extra_handle();
+    }
     if let Some((true, desc)) = index_inner_scan_order(plan) {
         source.set_keep_order(desc);
     }

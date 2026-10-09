@@ -334,7 +334,7 @@ pub fn parse_plan_hints(
         if requires_table_names(&name) && tables.is_empty() {
             warnings.push(HintWarning::optimizer(format!(
                 "Hint {} is inapplicable. Please specify the table names in the arguments.",
-                hint.restore()
+                hint.restore_unflagged()
             )));
             continue;
         }
@@ -774,6 +774,7 @@ pub fn remove_duplicated_hints(hints: &[Hint]) -> Vec<Hint> {
                 for (store, tables) in groups {
                     let single = Hint {
                         name: hint.name.clone(),
+                        written_name: hint.written_name.clone(),
                         kind: HintKind::ReadFromStorage {
                             qb_name: qb_name.clone(),
                             groups: vec![(store.clone(), tables.clone())],
@@ -786,6 +787,7 @@ pub fn remove_duplicated_hints(hints: &[Hint]) -> Vec<Hint> {
                 if !kept.is_empty() {
                     result.push(Hint {
                         name: hint.name.clone(),
+                        written_name: hint.written_name.clone(),
                         kind: HintKind::ReadFromStorage {
                             qb_name: qb_name.clone(),
                             groups: kept,
@@ -887,6 +889,7 @@ mod tests {
     fn read_from_storage(groups: &[(&str, &[&str])]) -> Hint {
         Hint {
             name: "READ_FROM_STORAGE".to_owned(),
+            written_name: None,
             kind: HintKind::ReadFromStorage {
                 qb_name: None,
                 groups: groups

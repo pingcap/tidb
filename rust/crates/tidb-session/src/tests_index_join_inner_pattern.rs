@@ -807,3 +807,31 @@ fn a_query_block_qualified_join_hint_matches_the_subquery_table() {
     assert!(explain.contains("IndexJoin"), "{explain}");
     assert_eq!(row_text(session.run("show warnings")), Vec::<Vec<String>>::new());
 }
+
+/// `r/planner/core/casetest/physicalplantest/physical_plan.result`'s
+/// decorrelated scalar `sum`: an IndexHashJoin whose inner StreamAgg reads a
+/// heap table through an IndexLookUp. That reader keeps `_tidb_rowid` in its
+/// schema (the Projection above it prunes the column), so the lookup must
+/// report each row's handle; it refused the column and the statement failed.
+#[test]
+fn an_inner_index_lookup_over_a_heap_table_reports_the_row_handle() {
+    let mut session = Session::new();
+    for sql in [
+        "create table ta(id int, code int, name varchar(20), index idx_ta_id(id), index idx_ta_name(name), index idx_ta_code(code))",
+        "create table tb(id int, code int, name varchar(20), index idx_tb_id(id), index idx_tb_name(name))",
+        "insert into ta values (1, 10, 'chad9991'), (2, 20, 'chad9992'), (3, 30, 'x')",
+        "insert into tb values (1, 5, 'a'), (1, 7, 'b'), (2, 9, 'c')",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let sql = "SELECT ta.NAME, (SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code \
+        FROM ta WHERE ta.NAME LIKE 'chad999%'";
+    let explain = plan(&mut session, &format!("explain format='brief' {sql}"));
+    assert!(
+        explain.contains("IndexHashJoin") && explain.contains("inner:StreamAgg"),
+        "{explain}"
+    );
+    let mut rows = row_text(session.run(sql));
+    rows.sort();
+    assert_eq!(rows, vec![vec!["chad9991", "12"], vec!["chad9992", "9"]]);
+}

@@ -195,3 +195,33 @@ fn the_recorded_explain_easy_shape_reads_both_tables_in_key_order() {
         "the covering c2 index is the Apply plan's pick, not the join's: {plan:?}"
     );
 }
+
+/// `r/planner/core/casetest/physicalplantest/physical_plan.result`: an
+/// aggregate written in a subquery over only OUTER columns
+/// (`sum(t1.a)` below) is evaluated by the outer block. Go's
+/// `buildAggregation` maps it to its output column (`correlatedAggMapper`)
+/// and the subquery reads that column correlated; the marker was never
+/// resolved, so the statement failed with "Unknown column '#corragg#0'".
+/// Go then keeps the Apply: a projection of only correlated columns cannot
+/// be pulled above a left outer join, whose unmatched row must read NULL.
+#[test]
+fn an_outer_aggregate_in_a_subquery_reads_the_outer_aggregation() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1(a int primary key, b int not null)",
+        "create table t2(a int primary key, b int not null)",
+        "insert into t1 values (1, 1), (2, 2)",
+        "insert into t2 values (1, 1), (2, 1), (10, 3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let sql = "select t1.a, (select sum(t1.a) from t2 where t2.a = 10) from t1";
+    let explain = row_text(session.run(&format!("explain format = 'plan_tree' {sql}")))
+        .into_iter()
+        .map(|row| row[0].clone())
+        .collect::<Vec<_>>();
+    assert!(explain.iter().any(|id| id.contains("Apply")), "{explain:?}");
+    assert_eq!(row_text(session.run(sql)), vec![vec!["1", "3"]]);
+    session.run("delete from t2 where a = 10").unwrap();
+    assert_eq!(row_text(session.run(sql)), vec![vec!["1", "NULL"]]);
+}

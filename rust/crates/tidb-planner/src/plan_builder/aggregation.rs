@@ -344,6 +344,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             clauses.push(&mut item.expr);
         }
 
+        // Markers number `correlatedAggMapper` slots across the statement.
+        let slot_base = self.correlated_agg_columns.len();
         let mut error_slot = None;
         for clause in clauses {
             visit_exprs(clause, &mut |node| {
@@ -371,7 +373,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         return true;
                     }
                 };
-                lift_correlated_aggregates(&mut inner, names, &inner_names, &mut lifted);
+                lift_correlated_aggregates(&mut inner, names, &inner_names, slot_base, &mut lifted);
                 **subquery = inner;
                 true
             });
@@ -444,6 +446,7 @@ fn lift_correlated_aggregates(
     subquery: &mut tidb_ast::QueryStmt,
     outer_names: &[FieldName],
     inner_names: &[FieldName],
+    slot_base: usize,
     lifted: &mut Vec<Expr>,
 ) {
     let tidb_ast::QueryStmt::Select(select) = subquery else {
@@ -478,7 +481,7 @@ fn lift_correlated_aggregates(
             }
             let replaced = marker::substitute(
                 node,
-                PlanMarker::new(MarkerKind::CorrelatedAgg, lifted.len()),
+                PlanMarker::new(MarkerKind::CorrelatedAgg, slot_base + lifted.len()),
             );
             lifted.push(replaced);
             true

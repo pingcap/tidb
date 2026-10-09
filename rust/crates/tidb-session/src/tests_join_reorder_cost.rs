@@ -347,3 +347,150 @@ fn an_ordered_derived_child_keeps_its_ordered_scan() {
         ]
     );
 }
+
+/// `t/planner/core/casetest/rule/rule_join_reorder.test`'s LEADING schema:
+/// eight indexed tables, none analyzed.
+fn leading_hint_session() -> Session {
+    let mut session = Session::new();
+    for name in ["t", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8"] {
+        session
+            .run(&format!("create table {name}(a int, b int, key(a))"))
+            .unwrap();
+    }
+    session
+}
+
+/// The operator column and, for joins, the operator info of a plan.
+fn join_lines(session: &mut Session, sql: &str) -> Vec<String> {
+    row_text(session.run(sql))
+        .into_iter()
+        .map(|row| {
+            let id = row[0].trim_start_matches(['│', '├', '└', '─', ' ']);
+            if id.starts_with("HashJoin") {
+                format!("{id} {}", row[3])
+            } else {
+                id.to_owned()
+            }
+        })
+        .collect()
+}
+
+/// Go `FindAndRemovePlanByAstHint`'s second step: a LEADING table that no
+/// plan's own alias matches names the derived table whose query block has
+/// that alias (`PlannerSelectBlockAsName`). The projection over `t2` is
+/// eliminated, so the join group holds `t2` itself, and `tx` reaches it only
+/// through its block. Recorded: no warning, `t2` joins `t1` first.
+#[test]
+fn a_leading_table_names_a_derived_table_through_its_query_block() {
+    let mut session = leading_hint_session();
+    let sql = "select /*+ leading(tx, t1, t3) */ * from t1, (select * from t2) tx, t3 \
+        where t1.a=tx.a and tx.a=t3.a";
+    let plan = join_lines(&mut session, &format!("explain format='plan_tree' {sql}"));
+    assert_eq!(warnings_of(&session), Vec::new());
+    assert_eq!(
+        plan,
+        vec![
+            "Projection",
+            "HashJoin inner join, equal:[eq(test.t2.a, test.t3.a)]",
+            "TableReader(Build)",
+            "Selection",
+            "TableFullScan",
+            "HashJoin(Probe) inner join, equal:[eq(test.t2.a, test.t1.a)]",
+            "TableReader(Build)",
+            "Selection",
+            "TableFullScan",
+            "TableReader(Probe)",
+            "Selection",
+            "TableFullScan",
+        ]
+    );
+}
+
+/// Go `LogicalSchemaProducer.OutputNames` propagates a child's names only
+/// when there is exactly one child, and the static-mode partition processor
+/// sets none on its `LogicalPartitionUnionAll`, so `ExtractTableAlias` finds
+/// no alias for a partitioned table read through the union and LEADING
+/// cannot name it. Recorded warning for each statement below.
+#[test]
+fn a_static_mode_partition_union_carries_no_alias_for_leading() {
+    let mut session = Session::new();
+    session.run("create table t(a int, b int, key(a))").unwrap();
+    session
+        .run("create table t1(a int, b int) partition by hash(a) partitions 4")
+        .unwrap();
+    session
+        .run("create table t2(a int, b int) partition by hash(a) partitions 5")
+        .unwrap();
+    session
+        .run("create table t3(a int, b int) partition by hash(b) partitions 3")
+        .unwrap();
+    session
+        .run("set @@tidb_partition_prune_mode='static'")
+        .unwrap();
+    let inapplicable = vec![(
+        1815,
+        "leading hint is inapplicable, check if the leading hint table is valid".to_owned(),
+    )];
+    for sql in [
+        "select /*+ leading(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b",
+        "select /*+ leading(t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b",
+    ] {
+        session.run(&format!("explain format='plan_tree' {sql}")).unwrap();
+        assert_eq!(warnings_of(&session), inapplicable, "{sql}");
+    }
+}
+
+/// Go `SetPreferredJoinTypeAndOrder` marks a join from `MatchTableName`
+/// over `LeadingJoinOrder`, which ParsePlanHints empties when several
+/// LEADING hints void each other; the first hint's LeadingList survives,
+/// but no join carries it. Marking from the LeadingList applied
+/// `leading(t1, t2)` here; a Go oracle run reports only the conflict
+/// warning and plans the statement as if unhinted.
+#[test]
+fn voided_leading_hints_mark_no_join() {
+    let mut session = leading_hint_session();
+    let sql = "select /*+ leading(t1, t2) leading(t3, t4) */ * from t1 join t2 on t1.b=t2.b \
+        join t3 on t2.a=t3.a join t4 on t3.a=t4.a";
+    let hinted = join_lines(&mut session, &format!("explain format='plan_tree' {sql}"));
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1815,
+            "We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+                .to_owned()
+        )]
+    );
+    let unhinted = join_lines(
+        &mut session,
+        "explain format='plan_tree' select * from t1 join t2 on t1.b=t2.b \
+            join t3 on t2.a=t3.a join t4 on t3.a=t4.a",
+    );
+    assert_eq!(hinted, unhinted);
+}
+
+/// Go restores a table-less join hint for its warning with
+/// `format.NewRestoreCtx(0, ...)`, which writes the hint name as written.
+#[test]
+fn a_table_less_join_hint_warns_with_its_name_as_written() {
+    let mut session = leading_hint_session();
+    for (hint, written) in [
+        ("no_hash_join()", "no_hash_join()"),
+        ("NO_MERGE_JOIN()", "NO_MERGE_JOIN()"),
+        ("Hash_Join()", "Hash_Join()"),
+    ] {
+        session
+            .run(&format!(
+                "explain format='plan_tree' select /*+ {hint} */ * from t1, t2 where t1.a=t2.a"
+            ))
+            .unwrap();
+        assert_eq!(
+            warnings_of(&session),
+            vec![(
+                1815,
+                format!(
+                    "Hint {written} is inapplicable. Please specify the table names in the arguments."
+                )
+            )]
+        );
+    }
+}

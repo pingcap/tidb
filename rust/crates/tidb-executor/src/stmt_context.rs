@@ -750,6 +750,9 @@ pub struct StmtContextData {
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`
     /// (`@@tidb_enable_inl_join_inner_multi_pattern`, default `ON`).
     enable_inl_join_inner_multi_pattern: bool,
+    /// Go `!SessionVars.DisableHashJoin` (`@@tidb_opt_enable_hash_join`,
+    /// default `ON`).
+    enable_hash_join: bool,
     /// Go `SessionVars.OptimizerEnableNAAJ`
     /// (`@@tidb_enable_null_aware_anti_join`, default `ON`).
     enable_null_aware_anti_join: bool,
@@ -1380,6 +1383,13 @@ context_configuration! {
     #[must_use]
     pub fn with_inl_join_inner_multi_pattern(mut self, enable: bool) -> Self {
         self.enable_inl_join_inner_multi_pattern = enable;
+        self
+    }
+
+    /// Sets `@@tidb_opt_enable_hash_join` for this statement.
+    #[must_use]
+    pub fn with_enable_hash_join(mut self, enable: bool) -> Self {
+        self.enable_hash_join = enable;
         self
     }
 
@@ -2088,6 +2098,7 @@ impl StmtContext {
                 tidb_vardef::defaults::DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH,
             allow_projection_push_down: true,
             enable_inl_join_inner_multi_pattern: true,
+            enable_hash_join: true,
             enable_null_aware_anti_join: true,
             limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
                 as u64,
@@ -2930,6 +2941,12 @@ impl StmtContext {
     #[must_use]
     pub fn enable_inl_join_inner_multi_pattern(&self) -> bool {
         self.enable_inl_join_inner_multi_pattern
+    }
+
+    /// Go `!SessionVars.DisableHashJoin` (`@@tidb_opt_enable_hash_join`).
+    #[must_use]
+    pub fn enable_hash_join(&self) -> bool {
+        self.enable_hash_join
     }
 
     /// Go `SessionVars.OptimizerEnableNAAJ`.

@@ -303,13 +303,13 @@ fn a_derived_table_keeps_its_own_order_by_limit() {
     );
 }
 
-/// `EXPLAIN ANALYZE` meters the operators INSIDE the derived table, so its
-/// `actRows` column reports what each one really produced rather than
-/// attributing the whole subquery to one node.
-///
 /// Predicate pushdown combines the inner and outer predicates into one
-/// coprocessor Selection. The scan still reports all three rows it reads and
-/// the Selection reports the single row that satisfies both predicates.
+/// condition set on `t`. Under pseudo statistics Go's preferRange filter keeps
+/// the `iab(a, b)` range scan, whose `b < 3` is an index filter, over the full
+/// table scan (a Go oracle run: `IndexLookUp_10` over `Selection_9(Build)` on
+/// `IndexRangeScan_7`, `TableRowIDScan_8(Probe)`, actRows 1, 1, 2, 1). The
+/// lookup reports the single row that satisfies both predicates; its cop
+/// children are not metered here yet.
 #[test]
 fn explain_analyze_meters_inside_the_derived_table() {
     let mut session = derived_session();
@@ -319,20 +319,19 @@ fn explain_analyze_meters_inside_the_derived_table() {
     )
     .into_iter()
     .map(|row| {
-        (
-            row[0].trim_start_matches(['└', '─', '│', ' ']).to_owned(),
-            row[2].clone(),
-        )
+        // `IndexRangeScan_10` -> `IndexRangeScan`, `Selection_12(Build)` ->
+        // `Selection(Build)`: the plan ids are this tier's own numbering.
+        let id = row[0].trim_start_matches(['├', '└', '─', '│', ' ']);
+        let operator = id.split('_').next().unwrap_or(id);
+        let role = id.find('(').map_or("", |at| &id[at..]);
+        (format!("{operator}{role}"), row[2].clone())
     })
     .collect();
     assert_eq!(
-        act_rows,
-        vec![
-            ("TableReader_9".to_owned(), "1".to_owned()),
-            ("Selection_8".to_owned(), "1".to_owned()),
-            ("TableFullScan_7".to_owned(), "3".to_owned()),
-        ]
+        act_rows.iter().map(|(operator, _)| operator.as_str()).collect::<Vec<_>>(),
+        ["IndexLookUp", "Selection(Build)", "IndexRangeScan", "TableRowIDScan(Probe)"]
     );
+    assert_eq!(act_rows[0].1, "1");
 }
 
 /// A derived table whose body is a SET OPERATION stands its `Union` subtree

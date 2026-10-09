@@ -65,12 +65,24 @@ pub enum IndexHintScope {
 /// nullary shapes. Malformed occurrences are diagnosed and omitted by the
 /// hint parser, as in Go; names routed to Go's unsupported-hint parser are
 /// likewise diagnosed and omitted rather than represented here.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Hint {
     /// The canonical (uppercase) hint name.
     pub name: String,
+    /// Go `HintName.O`: the name as written when its case differs from
+    /// `name`; `None` for a hint built in code. Only a flags-0 restore
+    /// ([`Hint::restore_unflagged`]) reads it.
+    pub written_name: Option<String>,
     /// The hint's own argument shape and payload.
     pub kind: HintKind,
+}
+
+/// Go compares hint names by `HintName.L`; the written case is not part of
+/// a hint's identity.
+impl PartialEq for Hint {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.kind == other.kind
+    }
 }
 
 /// [`Hint`]'s own argument shape.
@@ -312,7 +324,32 @@ impl Hint {
         out
     }
 
+    /// Go `TableOptimizerHint.Restore` under `format.NewRestoreCtx(0, ...)`
+    /// (ParsePlanHints's "Please specify the table names" warning): the
+    /// name keeps its written case and names are not back-quoted.
+    pub fn restore_unflagged(&self) -> String {
+        let mut out = String::new();
+        self.restore_into_styled(&mut out, true);
+        out
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
+        self.restore_into_styled(out, false);
+    }
+
+    fn restore_into_styled(&self, out: &mut String, unflagged: bool) {
+        let back_quote = |name: &str| {
+            if unflagged {
+                name.to_owned()
+            } else {
+                back_quote(name)
+            }
+        };
+        let hint_name = if unflagged {
+            self.written_name.as_deref().unwrap_or(&self.name)
+        } else {
+            &self.name
+        };
         // `ReadFromStorage` bypasses the generic `NAME(...)` wrapper
         // below entirely — see its own doc for why one written
         // occurrence restores as MULTIPLE separate `NAME(...)` blocks.
@@ -324,7 +361,7 @@ impl Hint {
                 if i > 0 {
                     out.push_str(", ");
                 }
-                out.push_str(&self.name);
+                out.push_str(hint_name);
                 out.push('(');
                 if let Some(qb) = qb_name {
                     out.push('@');
@@ -353,7 +390,7 @@ impl Hint {
             }
             return;
         }
-        out.push_str(&self.name);
+        out.push_str(hint_name);
         out.push('(');
         match &self.kind {
             HintKind::Nullary { qb_name } => {
@@ -572,11 +609,16 @@ impl crate::Visitable for Hint {
         if visitor.enter(self) {
             return visitor.leave(self);
         }
-        let Self { name, kind } = self;
+        let Self {
+            name,
+            written_name,
+            kind,
+        } = self;
         if !crate::Visitable::accept(kind, visitor) {
             return false;
         }
         let _ = name;
+        let _ = written_name;
         let _ = kind;
         visitor.leave(self)
     }

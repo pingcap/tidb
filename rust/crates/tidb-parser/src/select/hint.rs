@@ -32,10 +32,21 @@ impl Parser {
         if !matches!(self.peek().kind, TokenKind::Ident | TokenKind::Keyword) {
             return Err(self.err_here("expected an optimizer hint name"));
         }
-        let name = self.bump().text.to_ascii_uppercase();
+        let written = self.bump().text.clone();
+        let mut hint = self.parse_named_hint(written.to_ascii_uppercase())?;
+        if written != hint.name {
+            hint.written_name = Some(written);
+        }
+        Ok(hint)
+    }
+
+    /// The production for the hint named `name` (uppercase), whose name
+    /// token is already consumed.
+    fn parse_named_hint(&mut self, name: String) -> PResult<Hint> {
         match name.as_str() {
             "JOIN_FIXED_ORDER" if !self.is_op("(") => Ok(Hint {
                 name,
+                written_name: None,
                 kind: HintKind::Nullary { qb_name: None },
             }),
             "INL_JOIN"
@@ -82,6 +93,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Tables { qb_name, tables },
                 })
             }
@@ -108,6 +120,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Tables { qb_name, tables },
                 })
             }
@@ -145,6 +158,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Tables { qb_name, tables },
                 })
             }
@@ -184,6 +198,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Index {
                         qb_name,
                         table,
@@ -214,6 +229,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     // Go's `parseLeadingHint` accepts an optional hint-level
                     // QB prefix before the recursive table list. Preserve it
                     // in the same tree instead of flattening nested groups.
@@ -228,6 +244,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::SetVar { var_name, value },
                 })
             }
@@ -250,6 +267,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Bool { qb_name, value },
                 })
             }
@@ -257,6 +275,7 @@ impl Parser {
                 if !self.is_op("(") {
                     return Ok(Hint {
                         name,
+                        written_name: None,
                         kind: HintKind::Nullary { qb_name: None },
                     });
                 }
@@ -273,6 +292,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Bool {
                         qb_name: None,
                         value,
@@ -297,6 +317,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Name {
                         qb_name,
                         name: group_name,
@@ -319,6 +340,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Keyword { qb_name, value },
                 })
             }
@@ -353,6 +375,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::MemoryQuota { qb_name, bytes },
                 })
             }
@@ -370,6 +393,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::TimeRange { from, to },
                 })
             }
@@ -399,6 +423,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Number { qb_name, value },
                 })
             }
@@ -452,6 +477,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::QbName { qb_name, views },
                 })
             }
@@ -480,6 +506,7 @@ impl Parser {
                         }
                         return Ok(Hint {
                             name,
+                            written_name: None,
                             kind: HintKind::ReadFromStorage { qb_name, groups },
                         });
                     }
@@ -508,6 +535,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::ReadFromStorage { qb_name, groups },
                 })
             }
@@ -538,6 +566,7 @@ impl Parser {
                 };
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Nullary { qb_name },
                 })
             }
@@ -551,6 +580,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
+                    written_name: None,
                     kind: HintKind::Nullary { qb_name },
                 })
             }
@@ -852,10 +882,12 @@ fn parse_standalone_hint_occurrence(
     match parser.parse_one_hint() {
         Ok(Hint {
             name,
+            written_name,
             kind: HintKind::ReadFromStorage { qb_name, groups },
         }) => {
             hints.extend(groups.into_iter().map(|group| Hint {
                 name: name.clone(),
+                written_name: written_name.clone(),
                 kind: HintKind::ReadFromStorage {
                     qb_name: qb_name.clone(),
                     groups: vec![group],

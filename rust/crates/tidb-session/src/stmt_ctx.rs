@@ -86,6 +86,7 @@ pub(crate) struct StatementVarSnapshot {
     ordering_index_selectivity_threshold: f64,
     allow_projection_push_down: bool,
     enable_inl_join_inner_multi_pattern: bool,
+    enable_hash_join: bool,
     enable_null_aware_anti_join: bool,
     limit_push_down_threshold: u64,
     enable_adaptive_limit_scan: bool,
@@ -914,6 +915,7 @@ impl Session {
             enable_inl_join_inner_multi_pattern: not_off(
                 tidb_vardef::tidb_vars::TIDB_ENABLE_INL_JOIN_INNER_MULTI_PATTERN,
             ),
+            enable_hash_join: not_off(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_HASH_JOIN),
             enable_null_aware_anti_join: on(tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_NAAJ),
             limit_push_down_threshold: self
                 .vars
@@ -1148,6 +1150,7 @@ impl Session {
         let ordering_index_selectivity_threshold = snapshot.ordering_index_selectivity_threshold;
         let allow_projection_push_down = snapshot.allow_projection_push_down;
         let enable_inl_join_inner_multi_pattern = snapshot.enable_inl_join_inner_multi_pattern;
+        let enable_hash_join = snapshot.enable_hash_join;
         let enable_null_aware_anti_join = snapshot.enable_null_aware_anti_join;
         let limit_push_down_threshold = snapshot.limit_push_down_threshold;
         let enable_adaptive_limit_scan = snapshot.enable_adaptive_limit_scan;
@@ -1293,6 +1296,7 @@ impl Session {
                     .with_ordering_index_selectivity_threshold(ordering_index_selectivity_threshold)
                     .with_projection_push_down(allow_projection_push_down)
                     .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
+                    .with_enable_hash_join(enable_hash_join)
                     .with_enable_null_aware_anti_join(enable_null_aware_anti_join)
                     .with_limit_push_down_threshold(limit_push_down_threshold)
                     .with_enable_adaptive_limit_scan(enable_adaptive_limit_scan)
@@ -1533,6 +1537,7 @@ impl Session {
                 .with_ordering_index_selectivity_threshold(ordering_index_selectivity_threshold)
                 .with_projection_push_down(allow_projection_push_down)
                 .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
+                .with_enable_hash_join(enable_hash_join)
                 .with_enable_null_aware_anti_join(enable_null_aware_anti_join)
                 .with_limit_push_down_threshold(limit_push_down_threshold)
                 .with_enable_adaptive_limit_scan(enable_adaptive_limit_scan)

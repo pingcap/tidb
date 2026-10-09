@@ -833,6 +833,9 @@ pub struct PlanScopeResolver<'a> {
     marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
     /// The side vector `MarkerKind::Constant` markers index.
     marker_constants: Option<&'a [Expression]>,
+    /// Go `correlatedAggMapper`'s values, which `MarkerKind::CorrelatedAgg`
+    /// markers index.
+    correlated_agg_columns: &'a [tidb_expr::column::CorrelatedColumn],
     outer_schemas: &'a [Schema],
     outer_names: &'a [Vec<FieldName>],
     time_zone: SessionTimeZone,
@@ -885,6 +888,7 @@ impl<'a> PlanScopeResolver<'a> {
             full_names: None,
             marker_columns,
             marker_constants: None,
+            correlated_agg_columns: &[],
             block_expand: None,
             outer_schemas: &[],
             outer_names: &[],
@@ -920,6 +924,7 @@ impl<'a> PlanScopeResolver<'a> {
             full_names: None,
             marker_columns,
             marker_constants: None,
+            correlated_agg_columns: &[],
             block_expand: None,
             outer_schemas,
             outer_names,
@@ -963,6 +968,17 @@ impl<'a> PlanScopeResolver<'a> {
     #[must_use]
     pub const fn with_marker_constants(mut self, constants: &'a [Expression]) -> Self {
         self.marker_constants = Some(constants);
+        self
+    }
+
+    /// Attach the correlated columns `MarkerKind::CorrelatedAgg` markers
+    /// select from.
+    #[must_use]
+    pub const fn with_correlated_agg_columns(
+        mut self,
+        columns: &'a [tidb_expr::column::CorrelatedColumn],
+    ) -> Self {
+        self.correlated_agg_columns = columns;
         self
     }
 
@@ -1261,6 +1277,15 @@ impl ColumnResolver for PlanScopeResolver<'_> {
                         .marker_constants
                         .and_then(|constants| constants.get(marker.index))
                         .cloned();
+                }
+                // Go `correlatedAggMapper`: an aggregate the enclosing block
+                // evaluates reads as its output column, correlated.
+                if marker.kind == MarkerKind::CorrelatedAgg {
+                    return self
+                        .correlated_agg_columns
+                        .get(marker.index)
+                        .cloned()
+                        .map(Expression::CorrelatedColumn);
                 }
             }
         }
@@ -1683,6 +1708,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         )
         .with_connection_charset_info(self.ctx.connection_charset_info())
         .with_marker_constants(&self.subquery_constants)
+        .with_correlated_agg_columns(&self.correlated_agg_columns)
         .with_like_default_escape(self.ctx.like_default_escape())
         .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction())
         .with_div_precision_increment(self.ctx.div_precision_increment())
@@ -4360,6 +4386,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             None => Vec::new(),
         };
         let mut order_items: Vec<tidb_ast::OrderItem> = select.order_by.clone();
+        // Go `correlatedAggMap`: each lifted aggregate's auxiliary field, by
+        // its `correlatedAggMapper` slot.
+        let correlated_agg_base = self.correlated_agg_columns.len();
+        let correlated_agg_from = fields.len();
         self.resolve_correlated_aggregates(
             &mut fields,
             having.as_mut(),
@@ -4367,6 +4397,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             &source_names,
             &snapshot_schema_and_names(&plan).0,
         )?;
+        let correlated_agg_fields = correlated_agg_from..fields.len();
         // 6a's ORDER BY half, which appends its own hidden fields past the
         // select list. Go resolves them with `orderByResolver`, so record the
         // slice they occupy and build it with the OrderBy clause.
@@ -4493,6 +4524,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // resolutions above is exactly "some clause produced an aggregate or a
         // GROUP BY was written".
         let mut select_aggs = self.extract_agg_funcs_in_select_fields(&mut fields);
+        // Each lifted aggregate's position in `aggFuncList`: its auxiliary
+        // field now holds the `#agg#k` marker extraction bound.
+        let correlated_agg_slots: Vec<(usize, usize)> = correlated_agg_fields
+            .clone()
+            .enumerate()
+            .filter_map(|(slot, position)| {
+                let tidb_ast::Expr::Column(path) = &fields[position].expr else {
+                    return None;
+                };
+                let [name] = path.as_slice() else {
+                    return None;
+                };
+                PlanMarker::decode(name)
+                    .filter(|marker| marker.kind == MarkerKind::Agg)
+                    .map(|marker| (correlated_agg_base + slot, marker.index))
+            })
+            .collect();
         let has_agg =
             !select_aggs.is_empty() || !having_aggs.is_empty() || !select.group_by.is_empty();
         if has_agg && self.building_recursive_part_for_cte {
@@ -4546,6 +4594,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // documentation sets out.
             let agg_schema = plan.schema().cloned().unwrap_or_default();
             let columns = aggregation::agg_marker_columns(&agg_index_map, &agg_schema);
+            // Go `buildAggregation`: "b.correlatedAggMapper[aggFunc] =
+            // &expression.CorrelatedColumn{Column: column}" for the
+            // aggregate's output column, combined duplicates included.
+            for (slot, agg_index) in &correlated_agg_slots {
+                if let (Some(entry), Some(column)) = (
+                    self.correlated_agg_columns.get_mut(*slot),
+                    columns.get(*agg_index),
+                ) {
+                    *entry = tidb_expr::column::CorrelatedColumn::new(column.clone());
+                }
+            }
             // `Agg` is bound over the WHOLE list — the select list's markers
             // index its head, and the auxiliary `sel_agg_<n>` fields appended
             // above index its tail.

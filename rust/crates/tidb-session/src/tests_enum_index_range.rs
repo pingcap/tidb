@@ -193,3 +193,37 @@ fn enum_endpoints_order_by_member_number_not_name() {
         vec![vec!["c"], vec!["b"], vec!["a"]]
     );
 }
+
+/// Go `convertPointInPlace`: an integer past the last member truncates when
+/// converted to the ENUM, and "We should cover Enum upper overflow, and
+/// convert to the biggest value" -- the last member's number, not the
+/// truncation's zero. `e > 5` over a four-member enum is then `(4, +inf]`
+/// and answers nothing, as
+/// `r/planner/core/casetest/physicalplantest/physical_plan.result` records;
+/// read from zero it answered every member.
+#[test]
+fn an_integer_past_the_last_member_bounds_the_range_at_that_member() {
+    let mut session = Session::new();
+    session
+        .run("create table t(e enum('c','b','a',''), index idx(e))")
+        .unwrap();
+    session
+        .run("insert ignore into t values(0),(1),(2),(3),(4)")
+        .unwrap();
+    assert_eq!(
+        range(&mut session, "explain format='plan_tree' select e from t where e > 5"),
+        "(\"\",+inf]"
+    );
+    assert_eq!(
+        row_text(session.run("select e from t where e > 5")),
+        Vec::<Vec<String>>::new()
+    );
+    assert_eq!(
+        row_text(session.run("select e+0 from t where e >= 5")),
+        Vec::<Vec<String>>::new()
+    );
+    assert_eq!(
+        row_text(session.run("select e+0 from t where e < 5 order by e+0")),
+        vec![vec!["0"], vec!["1"], vec!["2"], vec!["3"], vec!["4"]]
+    );
+}

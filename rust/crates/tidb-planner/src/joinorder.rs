@@ -230,14 +230,27 @@ fn extract_join_group(context: &RuleContext<'_>, plan: Rc<LogicalPlan>) -> JoinG
     group
 }
 
-fn is_derived_table_in_leading_hint(
+/// Go `joinorder.IsDerivedTableInLeadingHint`: whether `plan` stands for a
+/// derived table, a query block with an alias in `PlannerSelectBlockAsName`,
+/// that the LEADING hint names, so the join group keeps it whole.
+pub(crate) fn is_derived_table_in_leading_hint(
     plan: &LogicalPlan,
     hint: &crate::plan_builder::from::JoinHints,
 ) -> bool {
-    if plan.query_block_offset() <= 1 {
+    let Some(elements) = hint.leading.as_deref() else {
+        return false;
+    };
+    // "Only blockOffset values in [2, len(queryBlockNames)-1] can represent
+    // subqueries / derived tables."
+    let block_offset = plan.query_block_offset();
+    if block_offset <= 1 {
         return false;
     }
-    let Some(alias) = crate::plan_builder::from::extract_table_alias(plan.output_names()) else {
+    let block_names = hint.block_as_names.borrow();
+    let Some(alias) = block_names
+        .get(&block_offset)
+        .filter(|alias| !alias.is_empty())
+    else {
         return false;
     };
     fn contains(elements: &[tidb_ast::LeadingElement], database: &str, table_name: &str) -> bool {
@@ -245,15 +258,89 @@ fn is_derived_table_in_leading_hint(
             tidb_ast::LeadingElement::Table(table) => {
                 table.name.eq_ignore_ascii_case(table_name)
                     && table.db_name.as_deref().is_none_or(|hint_database| {
-                        hint_database == "*" || hint_database.eq_ignore_ascii_case(database)
+                        hint_database.is_empty()
+                            || hint_database == "*"
+                            || hint_database.eq_ignore_ascii_case(database)
                     })
             }
             tidb_ast::LeadingElement::Group(group) => contains(group, database, table_name),
         })
     }
-    hint.leading
-        .as_deref()
-        .is_some_and(|elements| contains(elements, &alias.db_name, &alias.table_name))
+    // Go records each derived table under the session's current database.
+    contains(elements, &hint.current_db, alias)
+}
+
+/// Go `joinorder.FindAndRemovePlanByAstHint`'s lookup: the index of the plan
+/// a LEADING table names. A plan's own alias is tried first (database, name
+/// and an `@sel_N` block); only when none matches does the derived-table
+/// alias of a plan's query block count, and an alias several plans share
+/// (a derived table whose join was flattened into the group) matches none.
+pub(crate) fn find_plan_by_ast_hint<T>(
+    plans: &[T],
+    table: &tidb_ast::HintTable,
+    hint: &crate::plan_builder::from::JoinHints,
+    plan_of: impl Fn(&T) -> Option<&LogicalPlan>,
+) -> Option<usize> {
+    let hint_database = table.db_name.as_deref().unwrap_or("");
+    for (index, item) in plans.iter().enumerate() {
+        let Some(plan) = plan_of(item) else {
+            continue;
+        };
+        let Some(alias) = crate::plan_builder::from::extract_table_alias(plan.output_names())
+        else {
+            continue;
+        };
+        // Go `ExtractTableAlias(plan, plan.QueryBlockOffset())`: the plan's
+        // own block, and the current database for a name without one.
+        let alias_database = if alias.db_name.is_empty() {
+            hint.current_db.as_str()
+        } else {
+            alias.db_name.as_str()
+        };
+        let database_matches = hint_database.is_empty()
+            || hint_database == "*"
+            || hint_database.eq_ignore_ascii_case(alias_database);
+        let table_matches = table.name.eq_ignore_ascii_case(&alias.table_name);
+        let query_block_matches = table.qb_name.as_deref().is_none_or(|query_block| {
+            extract_select_offset(query_block)
+                .filter(|offset| *offset > 0)
+                .is_none_or(|offset| offset == plan.query_block_offset())
+        });
+        if database_matches && table_matches && query_block_matches {
+            return Some(index);
+        }
+    }
+    let block_names = hint.block_as_names.borrow();
+    let mut matched = None;
+    for (index, item) in plans.iter().enumerate() {
+        let Some(plan) = plan_of(item) else {
+            continue;
+        };
+        let block_offset = plan.query_block_offset();
+        if block_offset <= 1 {
+            continue;
+        }
+        let Some(block_name) = block_names.get(&block_offset) else {
+            continue;
+        };
+        let database_matches =
+            hint_database.is_empty() || hint_database.eq_ignore_ascii_case(&hint.current_db);
+        if database_matches && table.name.eq_ignore_ascii_case(block_name) {
+            if matched.is_some() {
+                return None;
+            }
+            matched = Some(index);
+        }
+    }
+    matched
+}
+
+/// Go `extractSelectOffset`: the `x` of a `sel_x` query block name.
+fn extract_select_offset(query_block: &str) -> Option<i32> {
+    query_block
+        .to_ascii_lowercase()
+        .strip_prefix("sel_")
+        .and_then(|offset| offset.parse::<i32>().ok())
 }
 
 /// Go `joinorder.ConflictDetector`, the CD-C join-legality graph.
@@ -958,7 +1045,7 @@ fn make_non_inner_join(
     check_result.node1.plan = Some(Rc::new(left.clone()));
     check_result.node2.plan = Some(Rc::new(right.clone()));
     let mut join = new_cartesian_join(context, edge.join_type, left, right)?;
-    set_new_join_with_hint(&mut join, vertex_hints);
+    set_new_join_with_hint(context, &mut join, vertex_hints);
     let join_schema = join
         .base
         .base
@@ -1050,13 +1137,15 @@ fn make_inner_join(
         .map(|edge| edge.join_type)
         .ok_or_else(|| PlanError::internal("missing inner edge"))?;
     let mut join = new_cartesian_join(context, join_type, left, right)?;
-    set_new_join_with_hint(&mut join, vertex_hints);
+    set_new_join_with_hint(context, &mut join, vertex_hints);
     join.equal_conditions = equal_conditions;
     join.other_conditions = other_conditions;
     Ok(LogicalPlan::Join(join))
 }
 
+/// Go `SetNewJoinWithHint`, ending in `LogicalJoin.SetPreferredJoinType`.
 pub(crate) fn set_new_join_with_hint(
+    context: &RuleContext<'_>,
     join: &mut LogicalJoin,
     vertex_hints: &BTreeMap<i32, JoinMethodHint>,
 ) {
@@ -1071,9 +1160,16 @@ pub(crate) fn set_new_join_with_hint(
         join.right_prefer_join_type = hint.prefer_join_method;
         join.hint_info = Some(Rc::clone(&hint.hint_info));
     }
+    if join.left_prefer_join_type == 0 && join.right_prefer_join_type == 0 {
+        return;
+    }
     join.prefer_join_type = preferred_join_type_from_side(join.left_prefer_join_type, true)
         | preferred_join_type_from_side(join.right_prefer_join_type, false);
     if contains_different_join_types(join.prefer_join_type) {
+        set_hint_warning(
+            context,
+            "Join hints conflict after join reorder phase, you can only specify one type of join",
+        );
         join.prefer_join_type = 0;
     }
 }
@@ -1453,40 +1549,13 @@ fn move_greedy_start_to_front(mut nodes: Vec<Node>, start_index: usize) -> Vec<N
     nodes
 }
 
-fn hinted_node_matches(node: &Node, table: &tidb_ast::HintTable) -> bool {
-    let Some(plan) = node.plan.as_ref() else {
-        return false;
-    };
-    let Some(alias) = crate::plan_builder::from::extract_table_alias(plan.output_names()) else {
-        return false;
-    };
-    let database_matches = table
-        .db_name
-        .as_deref()
-        .is_none_or(|database| database == "*" || database.eq_ignore_ascii_case(&alias.db_name));
-    let table_matches = table.name.eq_ignore_ascii_case(&alias.table_name);
-    let query_block_matches = table.qb_name.as_deref().is_none_or(|query_block| {
-        query_block
-            .strip_prefix("sel_")
-            .and_then(|offset| offset.parse::<i32>().ok())
-            .is_none_or(|offset| offset == plan.query_block_offset())
-    });
-    database_matches && table_matches && query_block_matches
-}
-
-fn take_hinted_node(nodes: &mut Vec<Node>, table: &tidb_ast::HintTable) -> Option<Node> {
-    let index = nodes
-        .iter()
-        .position(|node| hinted_node_matches(node, table))?;
-    Some(nodes.remove(index))
-}
-
 fn build_leading_tree_from_elements(
     context: &RuleContext<'_>,
     detector: &mut ConflictDetector,
     elements: &[tidb_ast::LeadingElement],
     nodes: &mut Vec<Node>,
     group: &JoinGroup,
+    hint: &crate::plan_builder::from::JoinHints,
 ) -> Result<Option<Node>, PlanError> {
     if elements.is_empty() {
         return Ok(None);
@@ -1495,9 +1564,12 @@ fn build_leading_tree_from_elements(
     let mut current: Option<Node> = None;
     for element in elements {
         let next = match element {
-            tidb_ast::LeadingElement::Table(table) => take_hinted_node(nodes, table),
+            tidb_ast::LeadingElement::Table(table) => {
+                find_plan_by_ast_hint(nodes, table, hint, |node| node.plan.as_deref())
+                    .map(|index| nodes.remove(index))
+            }
             tidb_ast::LeadingElement::Group(nested) => {
-                build_leading_tree_from_elements(context, detector, nested, nodes, group)?
+                build_leading_tree_from_elements(context, detector, nested, nodes, group, hint)?
             }
         };
         let Some(next) = next else {
@@ -1552,8 +1624,14 @@ fn build_join_by_leading_hint(
         return Ok((None, nodes.to_vec()));
     };
     let mut remaining = nodes.to_vec();
-    let hinted =
-        build_leading_tree_from_elements(context, detector, elements, &mut remaining, group)?;
+    let hinted = build_leading_tree_from_elements(
+        context,
+        detector,
+        elements,
+        &mut remaining,
+        group,
+        first,
+    )?;
     if hinted.is_none() {
         if group.has_user_leading_hint {
             set_hint_warning(

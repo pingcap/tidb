@@ -563,6 +563,7 @@ pub(crate) fn restore_keys_per_group(hint: &Hint) -> Vec<String> {
                 .map(|(store, tables)| {
                     let single = Hint {
                         name: hint.name.clone(),
+                        written_name: hint.written_name.clone(),
                         kind: HintKind::ReadFromStorage {
                             qb_name: qb_name.clone(),
                             groups: vec![(store.clone(), tables.clone())],
@@ -599,6 +600,7 @@ mod tests {
     fn read_from_storage(groups: &[(&str, &[&str])]) -> Hint {
         Hint {
             name: "READ_FROM_STORAGE".to_owned(),
+            written_name: None,
             kind: HintKind::ReadFromStorage {
                 qb_name: None,
                 groups: groups

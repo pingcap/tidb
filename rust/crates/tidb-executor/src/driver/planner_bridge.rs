@@ -2626,6 +2626,7 @@ pub(crate) fn physical_plan_for_logical(
                 .max(1.0) as usize,
         )
         .with_use_hash_join_v2(ctx.optimizer_cost_env().session.use_hash_join_v2)
+        .with_disable_hash_join(!ctx.enable_hash_join())
         .with_apply_cache_capacity(ctx.apply_cache_capacity())
         .with_point_get_conversion(
             !ctx.optimizer_fix_control()

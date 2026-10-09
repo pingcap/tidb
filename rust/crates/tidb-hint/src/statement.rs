@@ -513,6 +513,7 @@ mod tests {
     fn number_hint(name: &str, value: i64) -> Hint {
         Hint {
             name: name.to_owned(),
+            written_name: None,
             kind: HintKind::Number {
                 qb_name: None,
                 value,
@@ -547,6 +548,7 @@ mod tests {
         }
         let hints = vec![Hint {
             name: "HYPO_INDEX".to_owned(),
+            written_name: None,
             kind: HintKind::Tables {
                 qb_name: None,
                 tables: vec![

@@ -157,6 +157,9 @@ pub struct DispatchContext<'a> {
     pub group_ndv_skew_ratio: f64,
     /// Go `SessionVars.UseHashJoinV2`; see `CostSessionOpts::use_hash_join_v2`.
     pub use_hash_join_v2: bool,
+    /// Go `SessionVars.DisableHashJoin` (`tidb_opt_enable_hash_join` off),
+    /// which `ShouldSkipHashJoin` reads.
+    pub disable_hash_join: bool,
     /// Go `SessionVars.MemQuotaApplyCache`, used by
     /// `exhaustPhysicalPlans4LogicalApply` after estimating the correlated
     /// value hit ratio.
@@ -244,6 +247,7 @@ impl<'a> DispatchContext<'a> {
             shuffle_options: Default::default(),
             group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
             use_hash_join_v2: true,
+            disable_hash_join: false,
             apply_cache_capacity: 0,
             index_join_row_count_upper_bound: false,
             enable_point_get_conversion: true,
@@ -440,6 +444,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_use_hash_join_v2(mut self, enabled: bool) -> Self {
         self.use_hash_join_v2 = enabled;
+        self
+    }
+
+    /// Sets Go `SessionVars.DisableHashJoin`.
+    #[must_use]
+    pub const fn with_disable_hash_join(mut self, disabled: bool) -> Self {
+        self.disable_hash_join = disabled;
         self
     }
 
@@ -762,10 +773,33 @@ fn exhaust_physical_plans(
                     .cloned()
             };
             let mut joins = Vec::new();
+            // Go `getHashJoins` resolves the hash-join hints (warning as it
+            // drops them) each time the join is enumerated under a property
+            // it reaches: past the MPP early returns, asking for no order.
+            let hash_hints = if prop.is_sort_item_empty() && !prop.is_flash_prop() {
+                let sink = ctx.mpp_warning_sink;
+                crate::find_best_task::resolve_hash_join_hints(
+                    &reduced,
+                    op.prefer_join_type,
+                    ctx.use_hash_join_v2,
+                    ctx.disable_hash_join,
+                    &mut |message| {
+                        if let Some(sink) = sink {
+                            sink.set_hint_warning(&message);
+                        }
+                    },
+                )
+            } else {
+                crate::find_best_task::HashJoinHints::default()
+            };
             // Burn/construct hash candidates first (`getHashJoins` runs before
             // `tryToEnumerateIndexJoin` in Go), then the merge/index family.
-            let all_join_candidates =
-                crate::find_best_task::exhaust_join(&reduced, prop, ctx.use_hash_join_v2);
+            let all_join_candidates = crate::find_best_task::exhaust_join(
+                &reduced,
+                prop,
+                ctx.use_hash_join_v2,
+                (hash_hints.force_left, hash_hints.force_right),
+            );
             let (hash_candidates, other_candidates): (Vec<_>, Vec<_>) = all_join_candidates
                 .into_iter()
                 .partition(|candidate| matches!(candidate.strategy, JoinStrategy::Hash(_)));
@@ -796,7 +830,8 @@ fn exhaust_physical_plans(
                     }
                 }
                 let filtered = match &strategy {
-                    JoinStrategy::Hash(_) => op.prefer_any(&[join_hint_flags::NO_HASH_JOIN]),
+                    // Go: `if !forced && shouldSkipHashJoin { return nil }`.
+                    JoinStrategy::Hash(_) => !hash_hints.forced && hash_hints.skip,
                     JoinStrategy::Merge { .. } => op.prefer_any(&[join_hint_flags::NO_MERGE_JOIN]),
                     JoinStrategy::Index { kind, .. } => match kind {
                         crate::plan_cost_ver2::IndexJoinKind::IndexJoin => {
@@ -1035,15 +1070,17 @@ fn exhaust_physical_plans(
                 .partition(|candidate| matches!(candidate, PhysicalPlan::HashJoin(_)));
             let mut joins = others;
             joins.extend(hashes);
-            // Go returns a forced HashJoin/MergeJoin family immediately.
+            // Go returns a forced HashJoin/MergeJoin family immediately
+            // (`if forced && len(hashJoins) > 0`, then PreferMergeJoin).
             // IndexJoin hints remain undecided until the inner task builds.
             for hash in [true, false] {
                 if joins.iter().any(|candidate| {
-                    (if hash {
-                        matches!(candidate, PhysicalPlan::HashJoin(_))
+                    if hash {
+                        hash_hints.forced && matches!(candidate, PhysicalPlan::HashJoin(_))
                     } else {
                         matches!(candidate, PhysicalPlan::MergeJoin(_))
-                    }) && logical_join_hint_applies(plan, candidate)
+                            && logical_join_hint_applies(plan, candidate)
+                    }
                 }) {
                     joins.retain(|candidate| {
                         if hash {
@@ -2608,10 +2645,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         partial_order.map_or(false, |info| info.all_same_order().1)
     };
     let mut best = Task::invalid_task();
-    let mut best_preferred_range: Option<Task> = None;
-    let mut best_is_preferred_range = false;
-    let mut best_is_full_range = true;
     let mut ordinary_candidates = Vec::new();
+    // Go `rule.ShouldPreferIndexMerge`, read by the preferRange filter.
+    let prefer_merge = !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
     // Go `getBestIndexJoinInnerTaskByProp`: an index-join probe prices only
     // the path its rules choose -- the common handle path or the integer
     // handle for a table-range probe, the `indexJoinPathCompare` winner of
@@ -2648,8 +2684,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 continue;
             }
         }
+        // Go `skylinePruning`'s preferRange filter: a preferred range scan,
+        // and a path it keeps regardless (forced, TiFlash, global, MV).
         let mut cur_preferred_range = false;
-        let mut cur_is_full_range = true;
+        let mut cur_always_kept = false;
         let mut candidate_metrics = None;
         let mut heuristic = None;
         let cop = match path {
@@ -2736,7 +2774,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     ds.base.base.query_block_offset(),
                 );
                 base.base.set_schema(ds.base.base.schema().cloned());
-                cur_is_full_range = crate::ranger::types::has_full_range(&ranges, false);
+                // Go marks every table path `IsSingleScan`, and a table
+                // candidate here already serves the required order, so a
+                // table range is a preferred range scan. With USE/FORCE INDEX
+                // the table path is available only when forced.
+                cur_preferred_range = !crate::ranger::types::has_full_range(&ranges, false);
+                cur_always_kept = !ds.forced_index_ids.is_empty();
                 // Go `constructDS2TableScanTask` computes the residual
                 // selectivity from `chosenRemained` BEFORE the inner-only
                 // access conditions are re-attached to the Selection.
@@ -3496,14 +3539,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         .set_noncacheable_reason("IndexScan of partial index is uncacheable");
                 }
                 base.base.set_schema(Some(tidb_expr::schema::Schema::new(index_schema)));
-                // Go `indexFilters := c.eqOrInCount > 0 || ...` plus
-                // `!c.isFullRange`: this candidate is what the prefer-range
-                // override keeps.
-                cur_is_full_range = crate::ranger::types::has_full_range(&ranges, false);
-                cur_preferred_range = detach
-                    .as_ref()
-                    .is_some_and(|result| result.eq_or_in_count > 0)
-                    && !cur_is_full_range;
+                let cur_is_full_range = crate::ranger::types::has_full_range(&ranges, false);
                 let remained_conds = match index_join_probe {
                     Some(result) => result.core.chosen_remained.clone(),
                     None => detach.as_ref().map_or_else(
@@ -3543,6 +3579,22 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         ctx.opt_prefix_index_single_scan,
                     )
                 };
+                // Go `skylinePruning`: "Preference plans with equals/IN
+                // predicates or where there is more filtering in the index
+                // than against the table", or a single scan, serving the
+                // required order.
+                let index_filter_count = remained_conds
+                    .iter()
+                    .filter(|condition| covered(condition))
+                    .count();
+                let index_filters = detach.as_ref().is_some_and(|result| result.eq_or_in_count > 0)
+                    || remained_conds.len() - index_filter_count < index_filter_count;
+                cur_preferred_range = (prefer_merge
+                    || ((single_scan || index_filters) && (!ordered || keep_order)))
+                    && !cur_is_full_range;
+                cur_always_kept = ds.forced_index_ids.contains(&source_index.id)
+                    || source_index.global
+                    || source_index.is_multi_valued;
                 heuristic = detach.as_ref().map(|detached| {
                     crate::find_best_task::candidate::HeuristicPath {
                         range_count: ranges.len(),
@@ -4192,25 +4244,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 cur,
                 candidate_metrics,
                 cur_preferred_range,
-                cur_is_full_range,
+                cur_always_kept,
                 heuristic,
             ));
             continue;
         }
-        let current_wins = best.invalid() || compare_task_cost(ctx.coster, &cur, &best)?;
-        let better_than_preferred_range = cur_preferred_range
-            && best_preferred_range.as_ref().is_none_or(|best_range| {
-                compare_task_cost(ctx.coster, &cur, best_range).unwrap_or(false)
-            });
-        if current_wins {
-            best_is_preferred_range = cur_preferred_range;
-            best_is_full_range = cur_is_full_range;
-            if better_than_preferred_range {
-                best_preferred_range = Some(cur.clone());
-            }
+        if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
             best = cur;
-        } else if better_than_preferred_range {
-            best_preferred_range = Some(cur);
         }
     }
     // The unordered root enumeration contains all candidates. Ordered and
@@ -4245,31 +4285,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         );
         idx_missing_stats |= missing_stats;
     }
-    for (cur, _, preferred, full_range, _) in skyline_candidates {
-        let better_range = if preferred {
-            match best_preferred_range.as_ref() {
-                Some(best_range) => compare_task_cost(ctx.coster, &cur, best_range)?,
-                None => true,
-            }
-        } else {
-            false
-        };
-        if better_range {
-            best_preferred_range = Some(cur.clone());
-        }
-        if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
-            best = cur;
-            best_is_preferred_range = preferred;
-            best_is_full_range = full_range;
-        }
-    }
-    if heuristic_selected {
-        return Ok(best);
-    }
     // Go keeps preferRange enabled only when the skyline saw an unanalyzed
     // index winner, the table statistics are pseudo, or the table is empty
     // -- or an index merge is preferred (`ShouldPreferIndexMerge`).
-    let prefer_merge = !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
     let prefer_range = ctx.prefer_range_scan
         && prop.index_join_prop.is_none()
         && (prefer_merge
@@ -4280,10 +4298,27 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 .as_ref()
                 .or_else(|| ds.base.base.stats_info())
                 .is_none_or(|stats| stats.row_count() < 1.0));
-    // Go `skylinePruning`'s preferRange filter keeps only the preferred
-    // range-scan candidates once one exists; an index merge candidate is one
-    // only when an index merge is preferred.
-    let merges_pruned = prefer_range && !prefer_merge && best_preferred_range.is_some();
+    // Go `skylinePruning`'s preferRange filter: once several candidates
+    // include a preferred range scan, only the preferred ones and the paths
+    // kept regardless remain; an index merge candidate is preferred only
+    // when an index merge is preferred.
+    let has_range_scan_path = skyline_candidates.iter().any(|candidate| candidate.2)
+        || (prefer_merge && !merge_candidates.is_empty());
+    let keep_preferred_only = prefer_range
+        && skyline_candidates.len() + merge_candidates.len() > 1
+        && has_range_scan_path;
+    for (cur, _, preferred, always_kept, _) in skyline_candidates {
+        if keep_preferred_only && !preferred && !always_kept {
+            continue;
+        }
+        if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
+            best = cur;
+        }
+    }
+    if heuristic_selected {
+        return Ok(best);
+    }
+    let merges_pruned = keep_preferred_only && !prefer_merge;
     // All alternative choices were fixed before ordinary physical construction.
     for candidate in merge_candidates.iter().filter(|_| !merges_pruned) {
         let mut merge_task = match candidate {
@@ -4300,16 +4335,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         }
         if best.invalid() || compare_task_cost(ctx.coster, &merge_task, &best)? {
             best = merge_task;
-            best_is_full_range = false;
-        }
-    }
-    // This decision comes after candidate comparisons; making it before
-    // enumeration misses idxMissingStats for a new index on analyzed columns.
-    if prefer_range && best_is_full_range {
-        if let Some(range_task) = best_preferred_range {
-            if !best_is_preferred_range {
-                best = range_task;
-            }
         }
     }
     Ok(best)

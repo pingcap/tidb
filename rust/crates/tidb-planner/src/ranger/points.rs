@@ -1517,8 +1517,29 @@ pub fn convert_point_in_place(
                 // decimal/float overflow trims to the boundary, enum
                 // truncation clamps, bit too-long is ignored.
                 *skip_plan_cache_reason = Some(format!("{event:?} when converting {:?}", p.value));
+                // Go: "We should cover Enum upper overflow, and convert to
+                // the biggest value" -- when `p.value.GetInt64() > 0`.
+                if new_tp.code() == FieldTypeCode::Enum
+                    && matches!(event, tidb_datatype::ScalarConversionEvent::Truncated)
+                    && go_datum_int64_field(&p.value) > 0
+                {
+                    let upper = new_tp.with_elems_visible(|elems| {
+                        elems.last().map(|last| {
+                            tidb_datatype::MysqlEnum::new(last.clone(), elems.len() as u64)
+                        })
+                    });
+                    let Some(upper) = upper else {
+                        return Err(PointBuilderError::Unsupported(
+                            "an enum without members has no upper value".to_owned(),
+                        ));
+                    };
+                    Datum::Enum(upper, new_tp.collation())
+                } else {
+                    converted.value
+                }
+            } else {
+                converted.value
             }
-            converted.value
         }
         Err(error) => {
             *skip_plan_cache_reason = Some(format!("{error} when converting {:?}", p.value));
@@ -1557,6 +1578,21 @@ pub fn convert_point_in_place(
         p.excl = true;
     }
     Ok(())
+}
+
+/// Go `Datum.GetInt64()` -- the raw `i` field -- for the kinds a point
+/// converted to an ENUM can hold: the value of an integer, the bits of a
+/// float, the ordinal of an enum or set; zero for the kinds that keep `i`
+/// unused (strings, decimals).
+fn go_datum_int64_field(value: &Datum) -> i64 {
+    match value {
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => *value as i64,
+        Datum::Real(value) | Datum::Float32(value) => value.to_bits() as i64,
+        Datum::Enum(value, _) => value.value() as i64,
+        Datum::Set(value, _) => value.value() as i64,
+        _ => 0,
+    }
 }
 
 /// Go `convertPointsToSortKeyInPlace` (`points.go:110`).

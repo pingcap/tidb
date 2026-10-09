@@ -149,6 +149,8 @@ pub const TOPICS: &[&str] = &[
     "planner/core/binary_plan",
     "planner/core/casetest/point_get_plan",
     "planner/core/casetest/rule/rule_derive_topn_from_window",
+    "planner/core/casetest/rule/rule_join_reorder",
+    "planner/core/casetest/hint/hint",
     "planner/core/enforce_mpp",
     "planner/core/indexmerge_intersection",
     "planner/core/rule_join_reorder",
