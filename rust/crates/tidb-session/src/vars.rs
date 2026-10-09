@@ -3756,28 +3756,73 @@ impl SessionVars {
         self.set_system(name, value).map(|_truncated| ())
     }
 
-    /// Go `SET NAMES <charset>`: sets the three client character-set
-    /// variables together, plus the connection collation.
-    pub fn set_names(&mut self, charset: &str, collation: Option<&str>) -> Result<(), VarError> {
-        // go `SetNamesVar` validation: an unknown charset name answers
-        // 1115 `Unknown character set: '...'` (the parser defers the check
-        // here, which is what makes `SET NAMES anyword` a runtime error).
-        if !tidb_datatype::charset_known(charset) {
+    /// Go `SetExecutor.setCharset` (`pkg/executor/set.go`): `SET NAMES`
+    /// when `is_set_names`, otherwise `SET CHARACTER SET`. `DEFAULT` arrives
+    /// as Go's `mysql.DefaultCharset` with no collation.
+    ///
+    /// Without a collation, `utf8mb4` takes the session's
+    /// `default_collation_for_utf8mb4` and any other charset its default
+    /// collation. A named collation resolves through Go's
+    /// `collate.GetCollationByName` (unknown, or unsupported by the new
+    /// collation framework, is 1273) and must belong to `charset` (1253).
+    /// `SET NAMES` then writes the three `SetNamesVariables` and
+    /// `collation_connection`; `SET CHARACTER SET` writes the client and
+    /// results charsets and takes the connection pair from the GLOBAL
+    /// database charset and collation.
+    pub fn set_charset(
+        &mut self,
+        charset: &str,
+        collation: Option<&str>,
+        is_set_names: bool,
+    ) -> Result<(), VarError> {
+        // Go's parser validates the charset name (`charset.GetCharsetInfo`)
+        // and answers 1115 `Unknown character set: '...'`; this parser
+        // defers that check here, which is what makes `SET NAMES anyword` a
+        // runtime error.
+        let Ok(charset_info) = tidb_datatype::get_charset_info(charset) else {
             return Err(VarError::SqlError(tidb_error::mysql::SqlError::new(
                 tidb_error::mysql::errcode::ErrUnknownCharacterSet,
                 &[tidb_error::mysql::FormatArg::from(charset)],
             )));
+        };
+        let collation = match collation {
+            None if charset == "utf8mb4" => self.get_system("default_collation_for_utf8mb4")?,
+            None => charset_info.default_collation,
+            Some(name) => {
+                let collation =
+                    crate::sysvar::supported_collation(name, name).map_err(VarError::SqlError)?;
+                if collation.charset_name != charset {
+                    return Err(VarError::SqlError(tidb_error::mysql::SqlError::new(
+                        tidb_error::mysql::errcode::ErrCollationCharsetMismatch,
+                        &[
+                            tidb_error::mysql::FormatArg::from(collation.name.as_str()),
+                            tidb_error::mysql::FormatArg::from(charset),
+                        ],
+                    )));
+                }
+                name.to_owned()
+            }
+        };
+        if is_set_names {
+            for name in [
+                "character_set_client",
+                "character_set_connection",
+                "character_set_results",
+            ] {
+                self.set_system(name, charset.to_owned())?;
+            }
+            self.set_system("collation_connection", collation)?;
+            return Ok(());
         }
-        for name in [
-            "character_set_client",
-            "character_set_connection",
-            "character_set_results",
-        ] {
+        // Set charset statement, see also
+        // https://dev.mysql.com/doc/refman/8.0/en/set-character-set.html.
+        for name in ["character_set_client", "character_set_results"] {
             self.set_system(name, charset.to_owned())?;
         }
-        if let Some(collation) = collation {
-            self.set_system("collation_connection", collation.to_owned())?;
-        }
+        let charset_database = self.get_global("character_set_database")?;
+        let collation_database = self.get_global("collation_database")?;
+        self.set_system("character_set_connection", charset_database)?;
+        self.set_system("collation_connection", collation_database)?;
         Ok(())
     }
 
@@ -5153,7 +5198,8 @@ mod tests {
         vars.set_system("autocommit", "OFF".to_owned()).unwrap();
         assert_eq!(vars.get_system("autocommit").unwrap(), "OFF");
 
-        vars.set_names("latin1", Some("latin1_bin")).unwrap();
+        vars.set_charset("latin1", Some("latin1_bin"), true)
+            .unwrap();
         for name in [
             "character_set_client",
             "character_set_connection",

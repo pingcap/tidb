@@ -253,12 +253,12 @@ impl Session {
                 Ok(Some(()))
             }
             SessionStmt::SetCharset {
+                kind,
                 charset,
                 collation,
                 assignments,
-                ..
             } => {
-                self.apply_charset(charset.as_deref(), collation.as_deref())?;
+                self.apply_charset(*kind, charset.as_deref(), collation.as_deref())?;
                 for assignment in assignments {
                     self.apply_assignment(assignment)?;
                 }
@@ -271,8 +271,10 @@ impl Session {
                             self.apply_assignment(assignment)?;
                         }
                         tidb_ast::SetItem::Charset {
-                            charset, collation, ..
-                        } => self.apply_charset(charset.as_deref(), collation.as_deref())?,
+                            kind,
+                            charset,
+                            collation,
+                        } => self.apply_charset(*kind, charset.as_deref(), collation.as_deref())?,
                     }
                 }
                 Ok(Some(()))
@@ -1253,16 +1255,19 @@ impl Session {
         self.vars.reset_system(name).map_err(var_error)
     }
 
-    /// `SET NAMES` / `SET CHARACTER SET`.
+    /// `SET NAMES` / `SET CHARACTER SET`: Go `SetExecutor.executeSet` hands
+    /// both to `setCharset`, with `DEFAULT` as `mysql.DefaultCharset` and no
+    /// collation.
     fn apply_charset(
         &mut self,
+        kind: tidb_ast::CharsetSetKind,
         charset: Option<&str>,
         collation: Option<&str>,
     ) -> Result<(), DriverError> {
-        // `DEFAULT` restores the registry default, which is what the charset
-        // variables already hold when nothing has overridden them.
-        let charset = charset.unwrap_or("utf8mb4");
-        self.vars.set_names(charset, collation).map_err(var_error)
+        let charset = charset.unwrap_or(tidb_mysql::DefaultCharset);
+        self.vars
+            .set_charset(charset, collation, kind == tidb_ast::CharsetSetKind::Names)
+            .map_err(var_error)
     }
 
     /// Evaluates a `SET` right-hand side. Go runs it through the expression

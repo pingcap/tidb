@@ -1157,25 +1157,17 @@ impl SysVarDef {
                 "invalid TTL job schedule window time: {original}"
             )));
         }
-        // Go's mutable collation validation (`sysvar.go`'s `checkCollation`)
-        // resolves names through the parser registry, stores the canonical
-        // spelling, and returns `ErrUnknownCollation` (1273) for a missing
-        // entry.  The registry lookup is case-insensitive and also knows the
-        // UTF8MB3 aliases, matching `collate.GetCollationByName`.
         // Go routes connection, server, and database collations through
-        // `checkCollation` (`varsutil.go:57`): resolve the name case-insensitively,
-        // store the canonical spelling, refuse a miss with 1273.
+        // `checkCollation` (`varsutil.go:57`): resolve the name through
+        // `collate.GetCollationByName`, store the canonical spelling, and
+        // refuse a miss or a collation the new framework does not implement
+        // with 1273.
         if matches!(
             self.name,
             "collation_connection" | "collation_database" | "collation_server"
         ) {
-            let collation =
-                tidb_datatype::get_collation_by_name(&validated.value).map_err(|_| {
-                    ValidationError::SqlError(SqlError::new(
-                        tidb_error::mysql::errcode::ErrUnknownCollation,
-                        &[FormatArg::from(original)],
-                    ))
-                })?;
+            let collation = supported_collation(&validated.value, original)
+                .map_err(ValidationError::SqlError)?;
             return Ok(Validated {
                 value: collation.name,
                 truncated: validated.truncated,
@@ -1187,13 +1179,8 @@ impl SysVarDef {
         // is the registered TiDB error 3721 rather than a generic variable
         // error, so preserve its catalogued message and code here.
         if self.name == "default_collation_for_utf8mb4" {
-            let collation =
-                tidb_datatype::get_collation_by_name(&validated.value).map_err(|_| {
-                    ValidationError::SqlError(SqlError::new(
-                        tidb_error::mysql::errcode::ErrUnknownCollation,
-                        &[FormatArg::from(original)],
-                    ))
-                })?;
+            let collation = supported_collation(&validated.value, original)
+                .map_err(ValidationError::SqlError)?;
             if !matches!(
                 collation.name.as_str(),
                 "utf8mb4_bin" | "utf8mb4_general_ci" | "utf8mb4_0900_ai_ci"
@@ -2164,6 +2151,30 @@ pub fn order_by_dependency<S: AsRef<str>>(names: &[S]) -> Vec<String> {
     }
     depended.extend(not_depended);
     depended
+}
+
+
+/// Go `collate.GetCollationByName` (`pkg/util/collate/collate.go`), which
+/// `checkCollation` and `checkDefaultCollationForUTF8MB4` (`varsutil.go`)
+/// resolve through: a name outside the parser registry is
+/// `ErrUnknownCollation`, and a registered collation the new collation
+/// framework does not implement is `ErrUnsupportedCollation`. Both are 1273.
+pub(crate) fn supported_collation(
+    value: &str,
+    original: &str,
+) -> Result<tidb_datatype::CollationInfo, SqlError> {
+    tidb_datatype::get_supported_collation_by_name(value).map_err(|error| match error {
+        tidb_datatype::CollationError::UnsupportedCollation(_) => SqlError::new_f(
+            tidb_error::mysql::errcode::ErrUnknownCollation,
+            "Unsupported collation when new collation is enabled: '%-.64s'",
+            &[],
+            &[FormatArg::from(original)],
+        ),
+        tidb_datatype::CollationError::Registry(_) => SqlError::new(
+            tidb_error::mysql::errcode::ErrUnknownCollation,
+            &[FormatArg::from(original)],
+        ),
+    })
 }
 
 #[cfg(test)]
