@@ -35,13 +35,13 @@ func TestPublicFTSIndexOnColumns(t *testing.T) {
 		Columns:      []*model.IndexColumn{{Name: body}},
 		FullTextInfo: &model.FullTextIndexInfo{ParserType: model.FullTextParserTypeStandardV1},
 	}
-	unsupportedIndex := &model.IndexInfo{
-		State: model.StatePublic,
+	nonPublicIndex := &model.IndexInfo{
+		State: model.StateWriteOnly,
 		Columns: []*model.IndexColumn{
 			{Name: title},
 			{Name: body},
 		},
-		FullTextInfo: &model.FullTextIndexInfo{ParserType: model.FullTextParserTypeMultilingualV1},
+		FullTextInfo: &model.FullTextIndexInfo{ParserType: model.FullTextParserTypeNgramV1},
 	}
 	compositeIndex := &model.IndexInfo{
 		State: model.StatePublic,
@@ -49,14 +49,15 @@ func TestPublicFTSIndexOnColumns(t *testing.T) {
 			{Name: title},
 			{Name: body},
 		},
-		FullTextInfo: &model.FullTextIndexInfo{ParserType: model.FullTextParserTypeNgramV1},
+		FullTextInfo: &model.FullTextIndexInfo{ParserType: model.FullTextParserTypeMultilingualV1},
 	}
-	tblInfo := &model.TableInfo{Indices: []*model.IndexInfo{titleIndex, bodyIndex, unsupportedIndex, compositeIndex}}
+	tblInfo := &model.TableInfo{Indices: []*model.IndexInfo{titleIndex, bodyIndex, nonPublicIndex, compositeIndex}}
 
-	require.Same(t, compositeIndex, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title, body}, true))
-	require.Nil(t, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{body, title}, true))
-	require.Same(t, unsupportedIndex, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title, body}, false))
-	require.Same(t, titleIndex, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title}, true))
-	require.Nil(t, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title, pmodel.NewCIStr("missing")}, true))
-	require.Nil(t, publicFTSIndexOnColumns(nil, []pmodel.CIStr{title, body}, true))
+	// Index lookup matches the FULLTEXT definition; parser support is checked
+	// separately when deciding whether TiFlash can evaluate the same analyzer.
+	require.Same(t, compositeIndex, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title, body}))
+	require.Nil(t, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{body, title}))
+	require.Same(t, titleIndex, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title}))
+	require.Nil(t, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title, pmodel.NewCIStr("missing")}))
+	require.Nil(t, publicFTSIndexOnColumns(nil, []pmodel.CIStr{title, body}))
 }

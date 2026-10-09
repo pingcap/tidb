@@ -286,36 +286,25 @@ func TestCompileBooleanQueryNgramUnicodeNumber(t *testing.T) {
 	require.True(t, matchQueryForTest(t, config, "²", []ColumnInput{{Text: "²"}}))
 }
 
-func TestCompiledQueryEstimationMetadata(t *testing.T) {
+func TestCompiledQueryMatchCost(t *testing.T) {
 	simple, err := CompileBooleanQuery("+tidb", standardConfigForTest())
 	require.NoError(t, err)
 	require.False(t, simple.MatchesNothing())
 	require.Zero(t, simple.DocumentMatchCost())
-	term, ok := simple.SelectivityTerm()
-	require.True(t, ok)
-	require.Equal(t, "tidb", term)
 
 	filtered, err := CompileBooleanQuery("+go", standardConfigForTest())
 	require.NoError(t, err)
 	require.True(t, filtered.MatchesNothing())
-	_, ok = filtered.SelectivityTerm()
-	require.False(t, ok)
 
 	phrase, err := CompileBooleanQuery(`"tidb database"`, standardConfigForTest())
 	require.NoError(t, err)
 	require.Greater(t, phrase.MatchCost(), simple.MatchCost())
 	require.Equal(t, float64(1), phrase.DocumentMatchCost())
-	_, ok = phrase.SelectivityTerm()
-	require.False(t, ok)
 
 	sparsePhrase, err := CompileBooleanQuery(`"tidb a database"`, standardConfigForTest())
 	require.NoError(t, err)
 	require.Greater(t, sparsePhrase.DocumentMatchCost(), phrase.DocumentMatchCost())
 
-	ngram, err := CompileBooleanQuery("tidb", ngramConfigForTest())
-	require.NoError(t, err)
-	_, ok = ngram.SelectivityTerm()
-	require.False(t, ok)
 }
 
 func matchQueryForTest(t *testing.T, config AnalyzerConfig, query string, columns []ColumnInput) bool {

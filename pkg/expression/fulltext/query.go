@@ -29,7 +29,6 @@ type Query struct {
 	matchCost         float64
 	documentMatchCost float64
 	matchesNothing    bool
-	selectivityTerm   string
 	collator          collate.Collator
 }
 
@@ -56,9 +55,6 @@ func CompileBooleanQuery(search string, config AnalyzerConfig) (*Query, error) {
 		documentMatchCost: work.perDocument,
 		matchesNothing:    queryNodeMatchesNothing(root),
 		collator:          parserInfoFromConfig(config).collator,
-	}
-	if config.ParserType == model.FullTextParserTypeStandardV1 && !query.matchesNothing {
-		query.selectivityTerm, _ = singlePositiveTerm(root)
 	}
 	return query, nil
 }
@@ -95,15 +91,6 @@ func (q *Query) DocumentMatchCost() float64 {
 // match, for example because a required term was removed by the analyzer.
 func (q *Query) MatchesNothing() bool {
 	return q == nil || q.matchesNothing
-}
-
-// SelectivityTerm returns the analyzed token when a STANDARD query can be
-// approximated by one string-match predicate for cardinality estimation.
-func (q *Query) SelectivityTerm() (string, bool) {
-	if q == nil || q.selectivityTerm == "" {
-		return "", false
-	}
-	return q.selectivityTerm, true
 }
 
 func parseBooleanQuery(search string, parserType model.FullTextParserType) (*matchagainst.BooleanGroup, error) {
@@ -372,27 +359,6 @@ func queryNodeMatchesNothing(node queryNode) bool {
 	default:
 		return false
 	}
-}
-
-func singlePositiveTerm(node queryNode) (string, bool) {
-	group, ok := node.(groupNode)
-	if !ok || len(group.mustNot) > 0 {
-		return "", false
-	}
-	var child queryNode
-	switch {
-	case len(group.must) == 1:
-		child = group.must[0]
-	case len(group.must) == 0 && len(group.should) == 1:
-		child = group.should[0]
-	default:
-		return "", false
-	}
-	term, ok := child.(termNode)
-	if !ok {
-		return "", false
-	}
-	return term.token, true
 }
 
 func (n groupNode) match(doc *Document, collator collate.Collator) bool {

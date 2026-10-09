@@ -2294,7 +2294,7 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST outside direct IN BOOLEAN MODE predicate context")
 		return
 	}
-	indexInfo, err := er.resolveLocalMatchAgainstConfigIndex(numCols, stackLen)
+	tableInfo, indexInfo, err := er.resolveLocalMatchAgainstConfigIndex(numCols, stackLen)
 	if err != nil {
 		er.err = err
 		return
@@ -2304,20 +2304,20 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	// the same Boolean query, TiFlash serialization metadata as well. Physical
 	// planning can then choose the storage placement by its normal cost model;
 	// if TiFlash pushdown is unavailable or not selected, TiDB evaluates it.
-	tiFlashInfo, _ := er.localMatchAgainstTiFlashRowWiseViable(v.Modifier, numCols, stackLen)
+	tiFlashInfo, _ := er.localMatchAgainstTiFlashRowWiseViable(v.Modifier, tableInfo, indexInfo, stackLen)
 	er.matchAgainstToLocalBuiltin(v, numCols, stackLen, indexInfo, tiFlashInfo)
 }
 
 // resolveLocalMatchAgainstConfigIndex reads parser/analyzer settings from the
 // matching FULLTEXT index definition; Local MATCH itself is evaluated row by row.
-func (er *expressionRewriter) resolveLocalMatchAgainstConfigIndex(numCols, stackLen int) (*model.IndexInfo, error) {
+func (er *expressionRewriter) resolveLocalMatchAgainstConfigIndex(numCols, stackLen int) (*model.TableInfo, *model.IndexInfo, error) {
 	nameStart := stackLen - numCols - 1
 	if nameStart < 0 || er.planCtx == nil || er.planCtx.builder == nil {
-		return nil, plannererrors.ErrFtMatchingKeyNotFound
+		return nil, nil, plannererrors.ErrFtMatchingKeyNotFound
 	}
 	first := er.ctxNameStk[nameStart]
 	if first == nil {
-		return nil, plannererrors.ErrFtMatchingKeyNotFound
+		return nil, nil, plannererrors.ErrFtMatchingKeyNotFound
 	}
 	dbName, tblName := first.DBName, first.OrigTblName
 	if tblName.L == "" {
@@ -2328,43 +2328,57 @@ func (er *expressionRewriter) resolveLocalMatchAgainstConfigIndex(numCols, stack
 	}
 	tblInfo, err := er.planCtx.builder.is.TableInfoByName(dbName, tblName)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
-	columnNames := make([]string, numCols)
+	columnNames := make([]pmodel.CIStr, numCols)
 	for i := range numCols {
 		name := er.ctxNameStk[nameStart+i]
 		if name == nil {
-			return nil, plannererrors.ErrFtMatchingKeyNotFound
+			return nil, nil, plannererrors.ErrFtMatchingKeyNotFound
 		}
 		nameTable := name.OrigTblName
 		if nameTable.L == "" {
 			nameTable = name.TblName
 		}
 		if nameTable.L != tblName.L || name.DBName.L != "" && name.DBName.L != dbName.L {
-			return nil, plannererrors.ErrFtMatchingKeyNotFound
+			return nil, nil, plannererrors.ErrFtMatchingKeyNotFound
 		}
 		colName := name.OrigColName
 		if colName.L == "" {
 			colName = name.ColName
 		}
-		columnNames[i] = colName.L
+		columnNames[i] = colName
 	}
-	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic || idx.FullTextInfo == nil || len(idx.Columns) != len(columnNames) {
+	indexInfo := publicFTSIndexOnColumns(tblInfo, columnNames)
+	if indexInfo == nil {
+		return nil, nil, plannererrors.ErrFtMatchingKeyNotFound
+	}
+	return tblInfo, indexInfo, nil
+}
+
+// publicFTSIndexOnColumns finds a public FULLTEXT index whose ordered columns
+// exactly match the MATCH column list. Separate single-column indexes are not
+// an equivalent substitute for one multi-column MATCH expression.
+func publicFTSIndexOnColumns(tblInfo *model.TableInfo, columnNames []pmodel.CIStr) *model.IndexInfo {
+	if tblInfo == nil || len(columnNames) == 0 {
+		return nil
+	}
+	for _, index := range tblInfo.Indices {
+		if index.FullTextInfo == nil || !index.IsPublic() || len(index.Columns) != len(columnNames) {
 			continue
 		}
 		matched := true
-		for i, col := range idx.Columns {
-			if col.Name.L != columnNames[i] {
+		for i, column := range index.Columns {
+			if column.Name.L != columnNames[i].L {
 				matched = false
 				break
 			}
 		}
 		if matched {
-			return idx, nil
+			return index
 		}
 	}
-	return nil, plannererrors.ErrFtMatchingKeyNotFound
+	return nil
 }
 
 func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int, indexInfo *model.IndexInfo, tiFlashInfo *expression.LocalMatchAgainstTiFlashEvalInfo) {
@@ -2404,14 +2418,10 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 	info := &expression.LocalMatchAgainstEvalInfo{AnalyzerConfig: config}
 	if constExpr, isConst := against.(*expression.Constant); isConst &&
 		!expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {
-		query, err := expression.CompileLocalMatchAgainstQuery(er.sctx.GetEvalCtx(), sf, config)
+		_, err := expression.CompileLocalMatchAgainstQuery(er.sctx.GetEvalCtx(), sf, config)
 		if err != nil {
 			er.err = err
 			return
-		}
-		if query != nil {
-			info.MatchNothing = query.MatchesNothing()
-			info.SelectivityTerm, _ = query.SelectivityTerm()
 		}
 	}
 	if err := expression.SetLocalMatchAgainstEvalInfo(sf, info); err != nil {
@@ -2428,102 +2438,49 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 }
 
 // localMatchAgainstTiFlashRowWiseViable reports whether MATCH(...) can be
-// evaluated by TiFlash's row-wise Boolean MATCH scalar function. It walks the resolved
-// column FieldNames sitting on ctxNameStk (stack layout is
-// [..., col1, ..., colN, against]) and requires for each column:
-//   - the originating table has an available TiFlash replica;
-//   - the column list matches one public FULLTEXT index on that table.
+// evaluated by TiFlash's row-wise Boolean MATCH scalar function. It reuses the
+// table and FULLTEXT index resolved for TiDB evaluation and checks whether that
+// table has an available TiFlash replica and the index analyzer is supported.
 //
 // BOOLEAN MODE requires a parser and analyzer configuration represented by the
 // scalar-expression protocol. This is the row-wise TiFlash path, not a TiCI
 // index lookup.
-func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) (*expression.LocalMatchAgainstTiFlashEvalInfo, bool) {
-	if numCols <= 0 {
+func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(
+	modifier ast.FulltextSearchModifier,
+	tblInfo *model.TableInfo,
+	indexInfo *model.IndexInfo,
+	stackLen int,
+) (*expression.LocalMatchAgainstTiFlashEvalInfo, bool) {
+	if !matchAgainstAllowsTiFlashRowWise(modifier) || tblInfo == nil || indexInfo == nil ||
+		indexInfo.FullTextInfo == nil || er.planCtx == nil || er.planCtx.builder == nil ||
+		stackLen <= 0 || stackLen > len(er.ctxStack) {
 		return nil, false
 	}
-	if !matchAgainstAllowsTiFlashRowWise(modifier) {
+	if replica := tblInfo.TiFlashReplica; replica == nil || !replica.Available || replica.Count == 0 {
 		return nil, false
 	}
-	builder := er.planCtx.builder
-	sessVars := builder.ctx.GetSessionVars()
-	nameStart := stackLen - numCols - 1
-	if nameStart < 0 || stackLen > len(er.ctxNameStk) || stackLen > len(er.ctxStack) {
+	sessVars := er.planCtx.builder.ctx.GetSessionVars()
+	analyzerConfig, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, indexInfo.FullTextInfo.ParserType)
+	if err != nil || !localMatchAgainstTiFlashAnalyzerConfigSupported(analyzerConfig) {
 		return nil, false
 	}
-	matchColumnNames := make([]pmodel.CIStr, 0, numCols)
-	var matchTable *model.TableInfo
-	for i := range numCols {
-		name := er.ctxNameStk[nameStart+i]
-		if name == nil {
-			return nil, false
-		}
-		tblName := name.OrigTblName
-		if tblName.L == "" {
-			tblName = name.TblName
-		}
-		if tblName.L == "" {
-			return nil, false
-		}
-		dbName := name.DBName
-		if dbName.L == "" {
-			dbName = pmodel.NewCIStr(sessVars.CurrentDB)
-		}
-		tblInfo, err := builder.is.TableInfoByName(dbName, tblName)
-		if err != nil {
-			return nil, false
-		}
-		if modifier.IsBooleanMode() {
-			if matchTable == nil {
-				matchTable = tblInfo
-			} else if tblInfo.ID != matchTable.ID {
-				// A Boolean MATCH must resolve to one composite FULLTEXT index
-				// on one table; independent indexes on different tables cannot
-				// represent one MATCH column list.
-				return nil, false
-			}
-		}
-		if tblInfo.TiFlashReplica == nil || !tblInfo.TiFlashReplica.Available || tblInfo.TiFlashReplica.Count == 0 {
-			return nil, false
-		}
-		colName := name.OrigColName
-		if colName.L == "" {
-			colName = name.ColName
-		}
-		if !tableHasPublicFTSIndexOnColumnWithParser(tblInfo, colName.L, modifier.IsBooleanMode()) {
-			return nil, false
-		}
-		if modifier.IsBooleanMode() {
-			matchColumnNames = append(matchColumnNames, colName)
-		}
+	against := er.ctxStack[stackLen-1]
+	constant, ok := against.(*expression.Constant)
+	if !ok {
+		return nil, false
 	}
-	if modifier.IsBooleanMode() {
-		matchingIndex := publicFTSIndexOnColumns(matchTable, matchColumnNames, true)
-		if matchingIndex == nil {
-			return nil, false
-		}
-		analyzerConfig, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, matchingIndex.FullTextInfo.ParserType)
-		if err != nil || !localMatchAgainstTiFlashAnalyzerConfigSupportedForParser(sessVars, matchingIndex.FullTextInfo.ParserType) {
-			return nil, false
-		}
-		against := er.ctxStack[stackLen-1]
-		constant, ok := against.(*expression.Constant)
-		if !ok {
-			return nil, false
-		}
-		if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constant}) {
-			er.sctx.SetSkipPlanCache("TiFlash row-wise MATCH ... AGAINST serializes the Boolean query into the scalar expression")
-		}
-		queryText := ""
-		if !constant.Value.IsNull() {
-			queryText = constant.Value.GetString()
-		}
-		booleanQuery, err := fulltext.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(queryText, analyzerConfig)
-		if err != nil {
-			return nil, false
-		}
-		return &expression.LocalMatchAgainstTiFlashEvalInfo{BooleanQuery: booleanQuery}, true
+	if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constant}) {
+		er.sctx.SetSkipPlanCache("TiFlash row-wise MATCH ... AGAINST serializes the Boolean query into the scalar expression")
 	}
-	return nil, true
+	queryText := ""
+	if !constant.Value.IsNull() {
+		queryText = constant.Value.GetString()
+	}
+	booleanQuery, err := fulltext.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(queryText, analyzerConfig)
+	if err != nil {
+		return nil, false
+	}
+	return &expression.LocalMatchAgainstTiFlashEvalInfo{BooleanQuery: booleanQuery}, true
 }
 
 // matchAgainstAllowsTiFlashRowWise reports whether a MATCH modifier can be
@@ -2533,34 +2490,12 @@ func matchAgainstAllowsTiFlashRowWise(modifier ast.FulltextSearchModifier) bool 
 	return modifier.IsBooleanMode() && !modifier.WithQueryExpansion()
 }
 
-// tableHasPublicFTSIndexOnColumn reports whether tblInfo has a public FULLTEXT
-// index covering the given column.
-func tableHasPublicFTSIndexOnColumn(tblInfo *model.TableInfo, columnNameL string) bool {
-	return tableHasPublicFTSIndexOnColumnWithParser(tblInfo, columnNameL, false)
-}
-
-func tableHasPublicFTSIndexOnColumnWithParser(tblInfo *model.TableInfo, columnNameL string, standardParserOnly bool) bool {
-	for _, idx := range tblInfo.Indices {
-		if idx.FullTextInfo == nil || !idx.IsPublic() {
-			continue
-		}
-		if standardParserOnly && !isNativeFTSParser(idx.FullTextInfo.ParserType) {
-			continue
-		}
-		if idx.FindColumnByName(columnNameL) != nil {
-			return true
-		}
-	}
-	return false
-}
-
-func localMatchAgainstTiFlashAnalyzerConfigSupportedForParser(sessVars *variable.SessionVars, parserType model.FullTextParserType) bool {
-	config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, parserType)
-	if err != nil || (config.InnodbFtEnableStopword &&
-		!localMatchAgainstTiFlashCollationSupported(config.StopwordCollation)) {
+func localMatchAgainstTiFlashAnalyzerConfigSupported(config fulltext.AnalyzerConfig) bool {
+	if config.InnodbFtEnableStopword &&
+		!localMatchAgainstTiFlashCollationSupported(config.StopwordCollation) {
 		return false
 	}
-	switch parserType {
+	switch config.ParserType {
 	case model.FullTextParserTypeStandardV1:
 		return config.InnodbFtMinTokenSize >= 0 && config.InnodbFtMaxTokenSize > 0
 	case model.FullTextParserTypeNgramV1:

@@ -51,9 +51,7 @@ type builtinMysqlMatchAgainstSig struct {
 // boolean predicate positions, so relevance-score positions never receive a
 // 0/1 value.
 type LocalMatchAgainstEvalInfo struct {
-	AnalyzerConfig  fulltext.AnalyzerConfig
-	SelectivityTerm string
-	MatchNothing    bool
+	AnalyzerConfig fulltext.AnalyzerConfig
 }
 
 // LocalMatchAgainstTiFlashEvalInfo carries the Boolean query AST for TiFlash's
@@ -244,13 +242,6 @@ func (b *builtinMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row) (
 	if err != nil || isNull {
 		return 0, isNull, err
 	}
-	// Note there is deliberately no short-circuit on
-	// localEvalInfo.MatchNothing here. That flag is derived from the search
-	// string seen at plan time, and a plan can be re-executed with a different
-	// one; MatchesNothing below is read from the query compiled for the search
-	// string actually in hand, so it cannot go stale. The flag saves nothing at
-	// runtime either, since the compiled query is cached per search string and
-	// the check below short-circuits before any document is analyzed.
 	plan, err := b.getOrBuildLocalNoScorePlan(search)
 	if err != nil {
 		return 0, false, err
@@ -287,18 +278,6 @@ func (b *builtinMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search string) 
 		return nil, err
 	}
 	b.localPlan = &localMatchAgainstEvalPlan{search: search, query: query, analyzer: analyzer}
-
-	// Re-derive the search-dependent metadata from the query just compiled, so
-	// it describes the search string this signature last saw rather than the
-	// one present when the plan was built. Only the planner reads it today, and
-	// only for a stable constant, so this changes nothing in practice; it keeps
-	// the two from being able to disagree if that ever stops holding.
-	if b.localEvalInfo != nil {
-		refreshed := *b.localEvalInfo
-		refreshed.MatchNothing = query.MatchesNothing()
-		refreshed.SelectivityTerm, _ = query.SelectivityTerm()
-		b.localEvalInfo = &refreshed
-	}
 	return b.localPlan, nil
 }
 

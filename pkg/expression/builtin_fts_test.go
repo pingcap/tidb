@@ -393,42 +393,23 @@ func TestLocalMatchAgainstCloneMetadata(t *testing.T) {
 	ctx := mock.NewContext()
 	sf := newLocalMatchAgainstForTest(t, ctx, "+tidb", 1, ast.FulltextSearchModifierBooleanMode)
 	info := localEvalInfoForTest()
-	info.SelectivityTerm = "tidb"
 	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, info))
 
 	cloned := sf.Clone().(*ScalarFunction)
 	clonedInfo, ok := GetLocalMatchAgainstEvalInfo(cloned)
 	require.True(t, ok)
-	require.Equal(t, "tidb", clonedInfo.SelectivityTerm)
+	require.Equal(t, info.AnalyzerConfig, clonedInfo.AnalyzerConfig)
 
 	// The clone carries its own copy: mutating it must not affect the original.
-	clonedInfo.SelectivityTerm = "changed"
+	clonedInfo.AnalyzerConfig.NgramTokenSize++
 	originalInfo, ok := GetLocalMatchAgainstEvalInfo(sf)
 	require.True(t, ok)
-	require.Equal(t, "tidb", originalInfo.SelectivityTerm)
+	require.Equal(t, info.AnalyzerConfig.NgramTokenSize, originalInfo.AnalyzerConfig.NgramTokenSize)
 
 	v, isNull, err := cloned.EvalReal(ctx, stringRow("TiDB storage"))
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, float64(1), v)
-}
-
-// TestLocalMatchAgainstIgnoresStaleMatchNothing checks that the
-// plan-time MatchNothing flag does not override the query actually in hand. The
-// flag describes the search string seen when the plan was built, and a plan can
-// be re-executed with a different one, so evaluation reads match-nothing from
-// the compiled query instead.
-func TestLocalMatchAgainstIgnoresStaleMatchNothing(t *testing.T) {
-	ctx := mock.NewContext()
-	sf := newLocalMatchAgainstForTest(t, ctx, "+tidb", 1, ast.FulltextSearchModifierBooleanMode)
-	info := localEvalInfoForTest()
-	info.MatchNothing = true // stale: "+tidb" does match documents
-	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, info))
-
-	v, isNull, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
-	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, float64(1), v, "a stale flag must not suppress a real match")
 }
 
 // TestLocalMatchAgainstMatchNothingQuery covers a query that really
@@ -478,46 +459,4 @@ func twoStringRow(a, b string) chunk.Row {
 
 func nullStringRow() chunk.Row {
 	return chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}).ToRow()
-}
-
-// TestGetLocalMatchAgainstEvalInfoTracksSearch checks the search-dependent
-// metadata follows the search string the signature last evaluated, rather than
-// staying at whatever the plan was built with. Only the planner reads it today,
-// and only for a stable constant, so this pins the guarantee rather than a
-// currently reachable bug.
-func TestGetLocalMatchAgainstEvalInfoTracksSearch(t *testing.T) {
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().PlanCacheParams.Reset()
-	ctx.GetSessionVars().PlanCacheParams.Append(types.NewStringDatum("tidb"))
-	stringTp := types.NewFieldType(mysql.TypeVarchar)
-	search := &Constant{RetType: stringTp, ParamMarker: &ParamMarker{order: 0}}
-	col := &Column{Index: 0, RetType: stringTp}
-	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, col)
-	require.NoError(t, err)
-	sf := fn.(*ScalarFunction)
-	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
-
-	// Deliberately stale to start with, as if the plan were built elsewhere.
-	stale := localEvalInfoForTest()
-	stale.MatchNothing = true
-	stale.SelectivityTerm = "stale"
-	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, stale))
-
-	evalWith := func(bind string) *LocalMatchAgainstEvalInfo {
-		ctx.GetSessionVars().PlanCacheParams.Reset()
-		ctx.GetSessionVars().PlanCacheParams.Append(types.NewStringDatum(bind))
-		_, _, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
-		require.NoError(t, err)
-		info, ok := GetLocalMatchAgainstEvalInfo(sf)
-		require.True(t, ok)
-		return info
-	}
-
-	info := evalWith("tidb")
-	require.False(t, info.MatchNothing, "metadata must follow the evaluated search")
-	require.Equal(t, "tidb", info.SelectivityTerm)
-
-	// A required term the analyzer drops leaves a query that matches nothing.
-	info = evalWith("+ab")
-	require.True(t, info.MatchNothing)
 }
