@@ -1,0 +1,140 @@
+CREATE DATABASE IF NOT EXISTS udf_test;
+USE udf_test;
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS counters;
+CREATE TABLE counters (
+name VARCHAR(50) PRIMARY KEY,
+value INT NOT NULL DEFAULT 0
+);
+CREATE TABLE audit_log (
+id INT AUTO_INCREMENT PRIMARY KEY,
+action VARCHAR(100),
+old_value INT,
+new_value INT,
+created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO counters (name, value) VALUES ('page_views', 0);
+DROP FUNCTION IF EXISTS simple_add;
+CREATE FUNCTION simple_add(a INT, b INT)
+RETURNS INT
+DETERMINISTIC
+BEGIN
+RETURN a + b;
+END//
+SELECT simple_add(3, 5) AS result;
+result
+8
+SELECT simple_add(10, 20) AS result;
+result
+30
+DROP FUNCTION IF EXISTS factorial;
+CREATE FUNCTION factorial(n INT)
+RETURNS INT
+DETERMINISTIC
+BEGIN
+DECLARE result INT DEFAULT 1;
+DECLARE i INT DEFAULT 1;
+WHILE i <= n DO
+SET result = result * i;
+SET i = i + 1;
+END WHILE;
+RETURN result;
+END//
+SELECT factorial(5) AS result;
+result
+120
+SELECT factorial(6) AS result;
+result
+720
+SELECT factorial(0) AS result;
+result
+1
+SELECT factorial(1) AS result;
+result
+1
+DROP FUNCTION IF EXISTS increment_counter;
+CREATE FUNCTION increment_counter(counter_name VARCHAR(50), increment_by INT)
+RETURNS INT
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+DECLARE current_val INT DEFAULT 0;
+DECLARE new_val INT;
+SELECT value FROM udf_test.counters WHERE name = counter_name INTO current_val;
+SET new_val = current_val + increment_by;
+UPDATE udf_test.counters SET value = new_val WHERE name = counter_name;
+INSERT INTO udf_test.audit_log (action, old_value, new_value) VALUES (CONCAT('INCREMENT:', counter_name), current_val, new_val);
+RETURN new_val;
+END//
+SELECT * FROM counters;
+name	value
+page_views	0
+SELECT increment_counter('page_views', 5) AS new_value;
+new_value
+5
+SELECT * FROM counters;
+name	value
+page_views	5
+SELECT id, action, old_value, new_value FROM audit_log;
+id	action	old_value	new_value
+1	INCREMENT:page_views	0	5
+SELECT increment_counter('page_views', 10) AS new_value;
+new_value
+15
+SELECT * FROM counters;
+name	value
+page_views	5
+SELECT id, action, old_value, new_value FROM audit_log ORDER BY id;
+id	action	old_value	new_value
+1	INCREMENT:page_views	0	5
+2	INCREMENT:page_views	0	5
+DROP FUNCTION IF EXISTS adjust_counter;
+CREATE FUNCTION adjust_counter(counter_name VARCHAR(50), target_value INT)
+RETURNS VARCHAR(50)
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+DECLARE current_val INT DEFAULT 0;
+DECLARE result VARCHAR(50);
+SELECT value FROM udf_test.counters WHERE name = counter_name INTO current_val;
+IF current_val < target_value THEN
+UPDATE udf_test.counters SET value = target_value WHERE name = counter_name;
+INSERT INTO udf_test.audit_log (action, old_value, new_value) VALUES (CONCAT('INCREASE:', counter_name), current_val, target_value);
+SET result = 'INCREASED';
+ELSEIF current_val > target_value THEN
+UPDATE udf_test.counters SET value = target_value WHERE name = counter_name;
+INSERT INTO udf_test.audit_log (action, old_value, new_value) VALUES (CONCAT('DECREASE:', counter_name), current_val, target_value);
+SET result = 'DECREASED';
+ELSE
+SET result = 'NO_CHANGE';
+END IF;
+RETURN result;
+END//
+UPDATE counters SET value = 10 WHERE name = 'page_views';
+SELECT adjust_counter('page_views', 20) AS result;
+result
+INCREASED
+SELECT * FROM counters;
+name	value
+page_views	20
+SELECT adjust_counter('page_views', 5) AS result;
+result
+DECREASED
+SELECT * FROM counters;
+name	value
+page_views	5
+SELECT adjust_counter('page_views', 5) AS result;
+result
+NO_CHANGE
+SELECT * FROM counters;
+name	value
+page_views	5
+DROP FUNCTION IF EXISTS simple_add;
+DROP FUNCTION IF EXISTS factorial;
+DROP FUNCTION IF EXISTS increment_counter;
+DROP FUNCTION IF EXISTS adjust_counter;
+SELECT simple_add(1, 2);
+Error 1305 (42000): FUNCTION udf_test.simple_add does not exist
+DROP TABLE audit_log;
+DROP TABLE counters;
+DROP DATABASE udf_test;

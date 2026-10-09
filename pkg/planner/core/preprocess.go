@@ -177,6 +177,9 @@ const (
 	initTxnContextProvider
 	// inImportInto is set when visiting an import into statement.
 	inImportInto
+	// inFunctionStmt is set when visiting a CREATE/DROP FUNCTION statement.
+	// This flag prevents the FuncName from being resolved as a table.
+	inFunctionStmt
 	// inAnalyze is set when visiting an analyze statement.
 	inAnalyze
 )
@@ -422,6 +425,12 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
 		}
+	case *ast.CreateFunctionStmt:
+		// Skip table name resolution for CREATE FUNCTION - FuncName is not a table
+		p.flag |= inFunctionStmt
+	case *ast.DropFunctionStmt:
+		// Skip table name resolution for DROP FUNCTION - FuncName is not a table
+		p.flag |= inFunctionStmt
 	case *ast.TableSource:
 		isModeOracle := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 		_, isSelectStmt := node.Source.(*ast.SelectStmt)
@@ -693,6 +702,10 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 				break
 			}
 		}
+		// Skip table resolution in CREATE/DROP FUNCTION - FuncName is not a table
+		if p.flag&inFunctionStmt != 0 {
+			break
+		}
 		p.handleTableName(x)
 	case *ast.TableSource:
 		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
@@ -743,6 +756,8 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 		if x.Kind == ast.BRIEKindRestore {
 			p.flag &= ^inCreateOrDropTable
 		}
+	case *ast.CreateFunctionStmt, *ast.DropFunctionStmt:
+		p.flag &= ^inFunctionStmt
 	case *ast.CommonTableExpression, *ast.SubqueryExpr:
 		with := p.preprocessWith
 		lenWithCteBeforeOffset := len(with.cteBeforeOffset)

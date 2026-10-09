@@ -993,6 +993,50 @@ const (
 		schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
 		processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
 		PRIMARY KEY(ddl_job_id, sub_job_id))`
+	// CreateTiDBUDFTable is the CREATE TABLE SQL of `tidb_udf` for storing user-defined functions.
+	CreateTiDBUDFTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_udf (
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(64) NOT NULL,
+		schema_name VARCHAR(64) NOT NULL DEFAULT '',
+		param_names JSON NOT NULL,
+		param_types JSON NOT NULL,
+		return_type INT NOT NULL,
+		language VARCHAR(32) NOT NULL DEFAULT 'sql',
+		source_code LONGTEXT NOT NULL,
+		is_deterministic TINYINT(1) NOT NULL DEFAULT 0,
+		is_aggregate TINYINT(1) NOT NULL DEFAULT 0,
+		init_code LONGTEXT,
+		update_code LONGTEXT,
+		finalize_code LONGTEXT,
+		definer VARCHAR(288) NOT NULL,
+		sql_security VARCHAR(16) NOT NULL DEFAULT 'DEFINER',
+		func_comment VARCHAR(2048) NOT NULL DEFAULT '',
+		data_access VARCHAR(32) NOT NULL DEFAULT 'CONTAINS SQL',
+		created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+		version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+		KEY idx_schema_name (schema_name, name)
+	)`
+
+	// CreateTiDBStoredProcedureTable is the CREATE TABLE SQL of `tidb_stored_procedure` for storing stored procedures.
+	CreateTiDBStoredProcedureTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_stored_procedure (
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(64) NOT NULL,
+		schema_name VARCHAR(64) NOT NULL DEFAULT '',
+		param_names JSON NOT NULL,
+		param_types JSON NOT NULL,
+		param_modes JSON NOT NULL,
+		language VARCHAR(32) NOT NULL DEFAULT 'sql',
+		source_code LONGTEXT NOT NULL,
+		is_deterministic TINYINT(1) NOT NULL DEFAULT 0,
+		definer VARCHAR(288) NOT NULL,
+		sql_security VARCHAR(16) NOT NULL DEFAULT 'DEFINER',
+		proc_comment VARCHAR(2048) NOT NULL DEFAULT '',
+		data_access VARCHAR(32) NOT NULL DEFAULT 'CONTAINS SQL',
+		created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+		version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+		KEY idx_schema_name (schema_name, name)
+	)`
+
 	// CreateTiDBStorageClassTransitionHistoryTable is the CREATE TABLE SQL of
 	// `tidb_storage_class_transition_history`.
 	CreateTiDBStorageClassTransitionHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_storage_class_transition_history (

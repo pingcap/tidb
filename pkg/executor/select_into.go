@@ -21,6 +21,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -37,41 +38,102 @@ type SelectIntoExec struct {
 	intoOpt *ast.SelectIntoOption
 	core.LineFieldsInfo
 
-	lineBuf   []byte
-	realBuf   []byte
-	fieldBuf  []byte
-	escapeBuf []byte
-	enclosed  bool
-	writer    *bufio.Writer
-	dstFile   *os.File
-	chk       *chunk.Chunk
-	started   bool
+	lineBuf      []byte
+	realBuf      []byte
+	fieldBuf     []byte
+	escapeBuf    []byte
+	enclosed     bool
+	writer       *bufio.Writer
+	dstFile      *os.File
+	chk          *chunk.Chunk
+	started      bool
+	varsAssigned bool // For SelectIntoVars: whether we've already processed a row
 }
 
 // Open implements the Executor Open interface.
 func (s *SelectIntoExec) Open(ctx context.Context) error {
-	// only 'select ... into outfile' is supported now
-	if s.intoOpt.Tp != ast.SelectIntoOutfile {
+	switch s.intoOpt.Tp {
+	case ast.SelectIntoOutfile:
+		// MySQL-compatible behavior: allow files to be group-readable
+		f, err := os.OpenFile(s.intoOpt.FileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0640) // #nosec G302
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.started = true
+		s.dstFile = f
+		s.writer = bufio.NewWriter(s.dstFile)
+		s.lineBuf = make([]byte, 0, 1024)
+		s.fieldBuf = make([]byte, 0, 64)
+		s.escapeBuf = make([]byte, 0, 64)
+	case ast.SelectIntoVars:
+		// SELECT ... INTO @var1, @var2, ... or SELECT ... INTO local_var1, local_var2, ...
+		s.started = true
+		s.varsAssigned = false
+	default:
 		return errors.New("unsupported SelectInto type")
 	}
-
-	// MySQL-compatible behavior: allow files to be group-readable
-	f, err := os.OpenFile(s.intoOpt.FileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0640) // #nosec G302
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.started = true
-	s.dstFile = f
-	s.writer = bufio.NewWriter(s.dstFile)
 	s.chk = exec.TryNewCacheChunk(s.Children(0))
-	s.lineBuf = make([]byte, 0, 1024)
-	s.fieldBuf = make([]byte, 0, 64)
-	s.escapeBuf = make([]byte, 0, 64)
 	return s.BaseExecutor.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
 func (s *SelectIntoExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	switch s.intoOpt.Tp {
+	case ast.SelectIntoOutfile:
+		for {
+			if err := exec.Next(ctx, s.Children(0), s.chk); err != nil {
+				return err
+			}
+			if s.chk.NumRows() == 0 {
+				break
+			}
+			if err := s.dumpToOutfile(); err != nil {
+				return err
+			}
+		}
+	case ast.SelectIntoVars:
+		if err := s.assignToVars(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// assignToVars handles SELECT ... INTO @var1, @var2, ... or SELECT ... INTO var1, var2, ...
+// It reads exactly one row from the child executor and assigns column values to variables.
+func (s *SelectIntoExec) assignToVars(ctx context.Context) error {
+	sessVars := s.Ctx().GetSessionVars()
+	varList := s.intoOpt.VariableList
+	cols := s.Children(0).Schema().Columns
+
+	// Read the first chunk
+	if err := exec.Next(ctx, s.Children(0), s.chk); err != nil {
+		return err
+	}
+
+	if s.chk.NumRows() == 0 {
+		// No rows returned - set all variables to NULL (MySQL behavior)
+		for _, v := range varList {
+			if v.UserVar != nil {
+				sessVars.UnsetUserVar(strings.ToLower(v.UserVar.Name))
+			}
+		}
+		return nil
+	}
+
+	// Copy datum values from first row immediately (chunk.Row references are invalidated by Next)
+	row := s.chk.GetRow(0)
+	datums := make([]types.Datum, len(varList))
+	colTypes := make([]*types.FieldType, len(varList))
+	for i := range varList {
+		if i < len(cols) {
+			colTypes[i] = cols[i].GetType(s.Ctx().GetExprCtx().GetEvalCtx())
+			datums[i] = row.GetDatum(i, colTypes[i])
+		}
+	}
+	rowCount := s.chk.NumRows()
+
+	// Check for additional rows (error case: more than one row)
 	for {
 		if err := exec.Next(ctx, s.Children(0), s.chk); err != nil {
 			return err
@@ -79,10 +141,25 @@ func (s *SelectIntoExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if s.chk.NumRows() == 0 {
 			break
 		}
-		if err := s.dumpToOutfile(); err != nil {
-			return err
+		rowCount += s.chk.NumRows()
+		if rowCount > 1 {
+			return errors.New("Result consisted of more than one row")
 		}
 	}
+
+	// Assign the copied values to session variables
+	for i, v := range varList {
+		if v.UserVar != nil {
+			varName := strings.ToLower(v.UserVar.Name)
+			if i < len(cols) {
+				sessVars.SetUserVarVal(varName, datums[i])
+				sessVars.SetUserVarType(varName, colTypes[i])
+			} else {
+				sessVars.UnsetUserVar(varName)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -221,15 +298,22 @@ func (s *SelectIntoExec) Close() error {
 	if !s.started {
 		return nil
 	}
-	err1 := s.writer.Flush()
-	err2 := s.dstFile.Close()
-	err3 := s.BaseExecutor.Close()
-	if err1 != nil {
-		return errors.Trace(err1)
-	} else if err2 != nil {
-		return errors.Trace(err2)
+	switch s.intoOpt.Tp {
+	case ast.SelectIntoOutfile:
+		err1 := s.writer.Flush()
+		err2 := s.dstFile.Close()
+		err3 := s.BaseExecutor.Close()
+		if err1 != nil {
+			return errors.Trace(err1)
+		} else if err2 != nil {
+			return errors.Trace(err2)
+		}
+		return err3
+	case ast.SelectIntoVars:
+		return s.BaseExecutor.Close()
+	default:
+		return s.BaseExecutor.Close()
 	}
-	return err3
 }
 
 const (

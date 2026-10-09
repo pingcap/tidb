@@ -231,10 +231,23 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	}
 
 	if !ok {
+		// Try to look up UDF from mysql.tidb_udf table
 		db := ctx.GetEvalCtx().CurrentDB()
 		if db == "" {
 			return nil, errors.Trace(plannererrors.ErrNoDB)
 		}
+		udfFC, err := LookupUDF(ctx, db, funcName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if udfFC != nil {
+			fc = udfFC
+			ok = true
+		}
+	}
+
+	if !ok {
+		db := ctx.GetEvalCtx().CurrentDB()
 		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
 	noopFuncsMode := ctx.GetNoopFuncsMode()

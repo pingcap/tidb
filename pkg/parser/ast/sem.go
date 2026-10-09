@@ -162,6 +162,8 @@ const (
 	ShowCreateResourceGroupCommand = "SHOW CREATE RESOURCE GROUP"
 	// ShowCreateProcedureCommand represents SHOW CREATE PROCEDURE statement
 	ShowCreateProcedureCommand = "SHOW CREATE PROCEDURE"
+	// ShowCreateFunctionCommand represents SHOW CREATE FUNCTION statement
+	ShowCreateFunctionCommand = "SHOW CREATE FUNCTION"
 	// ShowDatabasesCommand represents SHOW DATABASES statement
 	ShowDatabasesCommand = "SHOW DATABASES"
 	// ShowTableCommand represents SHOW TABLES statement
@@ -488,6 +490,8 @@ const (
 	// ProcedureCommand represents all statements in procedure. It's too rough
 	// but still fine for now.
 	ProcedureCommand = "PROCEDURE"
+	// FunctionCommand represents CREATE/DROP FUNCTION statements
+	FunctionCommand = "FUNCTION"
 	// UnknownCommand represents unknown statements
 	UnknownCommand = "UNKNOWN"
 	// SetOprCommand represents UNION/INTERSECT/EXCEPT statement
@@ -806,6 +810,8 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowCreateResourceGroupCommand
 	case ShowCreateProcedure:
 		return ShowCreateProcedureCommand
+	case ShowCreateFunction:
+		return ShowCreateFunctionCommand
 	case ShowDatabases:
 		return ShowDatabasesCommand
 	case ShowTables:
@@ -1415,4 +1421,34 @@ func (n *ProcedureErrorVal) SEMCommand() string {
 // SEMCommand returns the command string for the statement.
 func (n *ProcedureErrorState) SEMCommand() string {
 	return ProcedureCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *ProcedureLoopStmt) SEMCommand() string {
+	return ProcedureCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *CreateFunctionStmt) SEMCommand() string {
+	return FunctionCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropFunctionStmt) SEMCommand() string {
+	return FunctionCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *ReturnStmt) SEMCommand() string {
+	return FunctionCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *SignalStmt) SEMCommand() string {
+	return FunctionCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *ResignalStmt) SEMCommand() string {
+	return FunctionCommand
 }

@@ -1,0 +1,158 @@
+# Test UDF with DML operations
+# This test verifies CREATE FUNCTION with MODIFIES SQL DATA characteristic
+# and tests UDFs that perform INSERT, UPDATE operations within the function body
+
+CREATE DATABASE IF NOT EXISTS udf_test;
+USE udf_test;
+
+# Create tables for UDF testing
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS counters;
+
+CREATE TABLE counters (
+    name VARCHAR(50) PRIMARY KEY,
+    value INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE audit_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    action VARCHAR(100),
+    old_value INT,
+    new_value INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+# Initialize counter
+INSERT INTO counters (name, value) VALUES ('page_views', 0);
+
+# UDF 1: Simple addition (no DML)
+DROP FUNCTION IF EXISTS simple_add;
+
+DELIMITER //
+
+CREATE FUNCTION simple_add(a INT, b INT)
+RETURNS INT
+DETERMINISTIC
+BEGIN
+    RETURN a + b;
+END//
+
+DELIMITER ;
+
+# Test simple_add
+SELECT simple_add(3, 5) AS result;
+SELECT simple_add(10, 20) AS result;
+
+# UDF 2: Factorial with loop
+DROP FUNCTION IF EXISTS factorial;
+
+DELIMITER //
+
+CREATE FUNCTION factorial(n INT)
+RETURNS INT
+DETERMINISTIC
+BEGIN
+    DECLARE result INT DEFAULT 1;
+    DECLARE i INT DEFAULT 1;
+    WHILE i <= n DO
+        SET result = result * i;
+        SET i = i + 1;
+    END WHILE;
+    RETURN result;
+END//
+
+DELIMITER ;
+
+# Test factorial
+SELECT factorial(5) AS result;
+SELECT factorial(6) AS result;
+SELECT factorial(0) AS result;
+SELECT factorial(1) AS result;
+
+# UDF 3: Increment counter with DML (UPDATE + INSERT)
+# Note: TiDB uses SELECT ... FROM ... INTO var (INTO at end) instead of MySQL's SELECT ... INTO var FROM ...
+DROP FUNCTION IF EXISTS increment_counter;
+
+DELIMITER //
+
+CREATE FUNCTION increment_counter(counter_name VARCHAR(50), increment_by INT)
+RETURNS INT
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+    DECLARE current_val INT DEFAULT 0;
+    DECLARE new_val INT;
+    SELECT value FROM udf_test.counters WHERE name = counter_name INTO current_val;
+    SET new_val = current_val + increment_by;
+    UPDATE udf_test.counters SET value = new_val WHERE name = counter_name;
+    INSERT INTO udf_test.audit_log (action, old_value, new_value) VALUES (CONCAT('INCREMENT:', counter_name), current_val, new_val);
+    RETURN new_val;
+END//
+
+DELIMITER ;
+
+# Test increment_counter
+SELECT * FROM counters;
+SELECT increment_counter('page_views', 5) AS new_value;
+SELECT * FROM counters;
+SELECT id, action, old_value, new_value FROM audit_log;
+
+SELECT increment_counter('page_views', 10) AS new_value;
+SELECT * FROM counters;
+SELECT id, action, old_value, new_value FROM audit_log ORDER BY id;
+
+# UDF 4: Conditional logic with IF/ELSEIF
+DROP FUNCTION IF EXISTS adjust_counter;
+
+DELIMITER //
+
+CREATE FUNCTION adjust_counter(counter_name VARCHAR(50), target_value INT)
+RETURNS VARCHAR(50)
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+    DECLARE current_val INT DEFAULT 0;
+    DECLARE result VARCHAR(50);
+    SELECT value FROM udf_test.counters WHERE name = counter_name INTO current_val;
+    IF current_val < target_value THEN
+        UPDATE udf_test.counters SET value = target_value WHERE name = counter_name;
+        INSERT INTO udf_test.audit_log (action, old_value, new_value) VALUES (CONCAT('INCREASE:', counter_name), current_val, target_value);
+        SET result = 'INCREASED';
+    ELSEIF current_val > target_value THEN
+        UPDATE udf_test.counters SET value = target_value WHERE name = counter_name;
+        INSERT INTO udf_test.audit_log (action, old_value, new_value) VALUES (CONCAT('DECREASE:', counter_name), current_val, target_value);
+        SET result = 'DECREASED';
+    ELSE
+        SET result = 'NO_CHANGE';
+    END IF;
+    RETURN result;
+END//
+
+DELIMITER ;
+
+# Reset counter for adjust_counter tests
+UPDATE counters SET value = 10 WHERE name = 'page_views';
+
+SELECT adjust_counter('page_views', 20) AS result;
+SELECT * FROM counters;
+
+SELECT adjust_counter('page_views', 5) AS result;
+SELECT * FROM counters;
+
+SELECT adjust_counter('page_views', 5) AS result;
+SELECT * FROM counters;
+
+# Test DROP FUNCTION
+DROP FUNCTION IF EXISTS simple_add;
+DROP FUNCTION IF EXISTS factorial;
+DROP FUNCTION IF EXISTS increment_counter;
+DROP FUNCTION IF EXISTS adjust_counter;
+
+# Verify functions are dropped
+--error 1305
+SELECT simple_add(1, 2);
+
+# Cleanup
+DROP TABLE audit_log;
+DROP TABLE counters;
+DROP DATABASE udf_test;

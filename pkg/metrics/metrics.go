@@ -115,6 +115,7 @@ func InitMetrics() {
 	InitGlobalSortMetrics()
 	InitInfoSchemaV2Metrics()
 	InitMemoryMetrics()
+	InitUDFMetrics()
 	timermetrics.InitTimerMetrics()
 
 	InitBRMetrics()
@@ -401,6 +402,16 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StmtSummaryWindowRecordCount)
 	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
 	prometheus.MustRegister(StmtSummaryEvictedLogCounter)
+
+	// UDF and Stored Procedure
+	prometheus.MustRegister(UDFExecutionDuration)
+	prometheus.MustRegister(UDFExecutionCounter)
+	prometheus.MustRegister(UDFErrorCounter)
+	prometheus.MustRegister(UDFActiveGauge)
+	prometheus.MustRegister(UDFCacheHitCounter)
+	prometheus.MustRegister(ProcedureExecutionDuration)
+	prometheus.MustRegister(ProcedureExecutionCounter)
+	prometheus.MustRegister(ProcedureErrorCounter)
 
 	// Channelz
 	setupChannelzCollector()

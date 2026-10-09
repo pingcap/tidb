@@ -225,6 +225,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	long              "LONG"
 	longblobType      "LONGBLOB"
 	longtextType      "LONGTEXT"
+	loop              "LOOP"
 	lowPriority       "LOW_PRIORITY"
 	match             "MATCH"
 	maxValue          "MAXVALUE"
@@ -270,6 +271,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	repeat            "REPEAT"
 	replace           "REPLACE"
 	require           "REQUIRE"
+	resignal          "RESIGNAL"
 	restrict          "RESTRICT"
 	revoke            "REVOKE"
 	right             "RIGHT"
@@ -281,6 +283,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	selectKwd         "SELECT"
 	set               "SET"
 	show              "SHOW"
+	signal            "SIGNAL"
 	smallIntType      "SMALLINT"
 	spatial           "SPATIAL"
 	sql               "SQL"
@@ -412,6 +415,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	connection                 "CONNECTION"
 	consistency                "CONSISTENCY"
 	consistent                 "CONSISTENT"
+	contains                   "CONTAINS"
 	context                    "CONTEXT"
 	cpu                        "CPU"
 	csvBackslashEscape         "CSV_BACKSLASH_ESCAPE"
@@ -432,6 +436,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	definer                    "DEFINER"
 	delayKeyWrite              "DELAY_KEY_WRITE"
 	delta                      "DELTA"
+	deterministic              "DETERMINISTIC"
 	digest                     "DIGEST"
 	directory                  "DIRECTORY"
 	disable                    "DISABLE"
@@ -540,6 +545,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	minValue                   "MINVALUE"
 	minRows                    "MIN_ROWS"
 	mode                       "MODE"
+	modifies                   "MODIFIES"
 	modify                     "MODIFY"
 	monitor                    "MONITOR"
 	month                      "MONTH"
@@ -608,6 +614,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	query                      "QUERY"
 	quick                      "QUICK"
 	rateLimit                  "RATE_LIMIT"
+	reads                      "READS"
 	rebuild                    "REBUILD"
 	recommend                  "RECOMMEND"
 	recover                    "RECOVER"
@@ -629,7 +636,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	restores                   "RESTORES"
 	resume                     "RESUME"
 	retain                     "RETAIN"
+	returnKwd                  "RETURN"
 	returning                  "RETURNING"
+	returns                    "RETURNS"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
 	role                       "ROLE"
@@ -1066,6 +1075,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	CreatePolicyStmt              "CREATE PLACEMENT POLICY statement"
 	CreateMaskingPolicyStmt       "CREATE MASKING POLICY statement"
 	CreateProcedureStmt           "CREATE PROCEDURE statement"
+	CreateFunctionStmt            "CREATE FUNCTION statement"
 	AddQueryWatchStmt             "ADD QUERY WATCH statement"
 	CreateResourceGroupStmt       "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt            "CREATE SEQUENCE statement"
@@ -1074,6 +1084,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	DropDatabaseStmt              "DROP DATABASE statement"
 	DropIndexStmt                 "DROP INDEX statement"
 	DropProcedureStmt             "DROP PROCEDURE statement"
+	DropFunctionStmt              "DROP FUNCTION statement"
 	DropQueryWatchStmt            "DROP QUERY WATCH statement"
 	DropResourceGroupStmt         "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt            "DROP STATISTICS statement"
@@ -1177,8 +1188,20 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ProcedurelabeledLoopStmt      "The loop block with label in procedure"
 	ProcedureIterate              "The iterate statement in procedure, expressed by `iterate ...`"
 	ProcedureLeave                "The leave statement in procedure, expressed by `leave ...`"
+	ProcedureReturn               "The return statement in function, expressed by `return expr`"
+	ProcedureSignal               "The signal statement in procedure, expressed by `signal sqlstate ...`"
+	ProcedureResignal             "The resignal statement in procedure, expressed by `resignal ...`"
 
 %type	<item>
+	SignalInfoItemList                     "Signal information item list"
+	SignalInfoItem                         "Signal information item"
+	OptFunctionParams                      "Optional function parameters"
+	FunctionParams                         "Function parameters list"
+	FunctionParam                          "Function parameter"
+	OptFunctionCharacteristics             "Optional function characteristics"
+	FunctionCharacteristic                 "Function characteristic"
+	OptProcedureCharacteristics            "Optional procedure characteristics"
+	ProcedureCharacteristic                "Procedure characteristic"
 	AdminShowSlow                          "Admin Show Slow statement"
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	LikeOrIlikeEscapeOpt                   "like or ilike escape option"
@@ -1515,6 +1538,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	VariableAssignment                     "set variable value"
 	VariableAssignmentList                 "set variable value list"
 	ViewAlgorithm                          "view algorithm"
+	ViewAlgorithmWithDefiner               "view algorithm with definer"
 	ViewCheckOption                        "view check option"
 	ViewDefiner                            "view definer"
 	ViewName                               "view name"
@@ -1755,6 +1779,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ProcedurceLabelOpt              "Optional Procedure label name"
 
 %precedence empty
+%precedence into
 %precedence masking
 %precedence statsExtended
 %precedence as
@@ -5543,16 +5568,67 @@ LikeTableWithOrWithoutParen:
  *          as select Col1,Col2 from table WITH LOCAL CHECK OPTION
  *******************************************************************/
 CreateViewStmt:
-	"CREATE" OrReplace ViewAlgorithm ViewDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" CreateViewSelectOpt ViewCheckOption
+	"CREATE" OrReplace ViewAlgorithmWithDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" CreateViewSelectOpt ViewCheckOption
+	{
+		startOffset := parser.startOffset(&yyS[yypt-1])
+		endOffset := parser.yylval.offset
+		selStmt := $9.(ast.StmtNode)
+		algDef := $3.([]interface{})
+		x := &ast.CreateViewStmt{
+			OrReplace: $2.(bool),
+			ViewName:  $6.(*ast.TableName),
+			Select:    selStmt,
+			Algorithm: algDef[0].(ast.ViewAlgorithm),
+			Definer:   algDef[1].(*auth.UserIdentity),
+			Security:  $4.(ast.ViewSecurity),
+		}
+		if $7 != nil {
+			x.Cols = $7.([]ast.CIStr)
+		}
+		if $10 != nil {
+			x.CheckOption = $10.(ast.ViewCheckOption)
+			endOffset = parser.startOffset(&yyS[yypt])
+		} else {
+			x.CheckOption = ast.CheckOptionCascaded
+		}
+		parser.setNodeText(selStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		$$ = x
+	}
+|	"CREATE" OrReplace ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" CreateViewSelectOpt ViewCheckOption
+	{
+		startOffset := parser.startOffset(&yyS[yypt-1])
+		endOffset := parser.yylval.offset
+		selStmt := $8.(ast.StmtNode)
+		x := &ast.CreateViewStmt{
+			OrReplace: $2.(bool),
+			ViewName:  $5.(*ast.TableName),
+			Select:    selStmt,
+			Algorithm: ast.AlgorithmUndefined,
+			Definer:   &auth.UserIdentity{CurrentUser: true},
+			Security:  $3.(ast.ViewSecurity),
+		}
+		if $6 != nil {
+			x.Cols = $6.([]ast.CIStr)
+		}
+		if $9 != nil {
+			x.CheckOption = $9.(ast.ViewCheckOption)
+			endOffset = parser.startOffset(&yyS[yypt])
+		} else {
+			x.CheckOption = ast.CheckOptionCascaded
+		}
+		parser.setNodeText(selStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		$$ = x
+	}
+|	"CREATE" "DEFINER" "=" Username ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" CreateViewSelectOpt ViewCheckOption
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
 		endOffset := parser.yylval.offset
 		selStmt := $10.(ast.StmtNode)
 		x := &ast.CreateViewStmt{
-			OrReplace: $2.(bool),
+			OrReplace: false,
 			ViewName:  $7.(*ast.TableName),
 			Select:    selStmt,
-			Algorithm: $3.(ast.ViewAlgorithm),
+			Algorithm: ast.AlgorithmUndefined,
 			Definer:   $4.(*auth.UserIdentity),
 			Security:  $5.(ast.ViewSecurity),
 		}
@@ -5561,6 +5637,31 @@ CreateViewStmt:
 		}
 		if $11 != nil {
 			x.CheckOption = $11.(ast.ViewCheckOption)
+			endOffset = parser.startOffset(&yyS[yypt])
+		} else {
+			x.CheckOption = ast.CheckOptionCascaded
+		}
+		parser.setNodeText(selStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		$$ = x
+	}
+|	"CREATE" "OR" "REPLACE" "DEFINER" "=" Username ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" CreateViewSelectOpt ViewCheckOption
+	{
+		startOffset := parser.startOffset(&yyS[yypt-1])
+		endOffset := parser.yylval.offset
+		selStmt := $12.(ast.StmtNode)
+		x := &ast.CreateViewStmt{
+			OrReplace: true,
+			ViewName:  $9.(*ast.TableName),
+			Select:    selStmt,
+			Algorithm: ast.AlgorithmUndefined,
+			Definer:   $6.(*auth.UserIdentity),
+			Security:  $7.(ast.ViewSecurity),
+		}
+		if $10 != nil {
+			x.Cols = $10.([]ast.CIStr)
+		}
+		if $13 != nil {
+			x.CheckOption = $13.(ast.ViewCheckOption)
 			endOffset = parser.startOffset(&yyS[yypt])
 		} else {
 			x.CheckOption = ast.CheckOptionCascaded
@@ -5595,6 +5696,20 @@ ViewAlgorithm:
 |	"ALGORITHM" "=" "TEMPTABLE"
 	{
 		$$ = ast.AlgorithmTemptable
+	}
+
+ViewAlgorithmWithDefiner:
+	"ALGORITHM" "=" "UNDEFINED" ViewDefiner
+	{
+		$$ = []interface{}{ast.AlgorithmUndefined, $4}
+	}
+|	"ALGORITHM" "=" "MERGE" ViewDefiner
+	{
+		$$ = []interface{}{ast.AlgorithmMerge, $4}
+	}
+|	"ALGORITHM" "=" "TEMPTABLE" ViewDefiner
+	{
+		$$ = []interface{}{ast.AlgorithmTemptable, $4}
 	}
 
 ViewDefiner:
@@ -8204,6 +8319,12 @@ UnReservedKeyword:
 |	"PAGE_COMPRESSION_LEVEL"
 |	"TRANSACTIONAL"
 |	"IETF_QUOTES"
+|	"CONTAINS"
+|	"DETERMINISTIC"
+|	"MODIFIES"
+|	"RETURN"
+|	"RETURNS"
+|	"READS"
 
 TiDBKeyword:
 	"ADMIN"
@@ -10647,6 +10768,73 @@ SelectStmt:
 		}
 		$$ = st
 	}
+/* MySQL-compatible SELECT ... INTO var_list FROM ... syntax */
+|	SelectStmtBasic "INTO" ColumnNameOrUserVariableList "FROM" TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause WindowClauseOptional OrderByOptional SelectStmtLimitOpt SelectLockOpt
+	{
+		st := $1.(*ast.SelectStmt)
+		st.From = $5.(*ast.TableRefsClause)
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			lastEnd := parser.endOffset(&yyS[yypt-10])
+			parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
+		}
+		if $6 != nil {
+			st.Where = $6.(ast.ExprNode)
+		}
+		if $7 != nil {
+			st.GroupBy = $7.(*ast.GroupByClause)
+		}
+		if $8 != nil {
+			st.Having = $8.(*ast.HavingClause)
+		}
+		if $9 != nil {
+			st.WindowSpecs = ($9.([]ast.WindowSpec))
+		}
+		if $10 != nil {
+			st.OrderBy = $10.(*ast.OrderByClause)
+		}
+		if $11 != nil {
+			st.Limit = $11.(*ast.Limit)
+		}
+		if $12 != nil {
+			st.LockInfo = $12.(*ast.SelectLockInfo)
+		}
+		// Convert MySQL-style INTO var_list to SelectIntoOpt
+		varList := $3.([]*ast.ColumnNameOrUserVar)
+		st.SelectIntoOpt = &ast.SelectIntoOption{
+			Tp:           ast.SelectIntoVars,
+			VariableList: varList,
+		}
+		$$ = st
+	}
+/* SELECT ... INTO OUTFILE (without FROM clause, export to file) */
+|	SelectStmtBasic "INTO" "OUTFILE" stringLit Fields Lines
+	{
+		st := $1.(*ast.SelectStmt)
+		x := &ast.SelectIntoOption{
+			Tp:       ast.SelectIntoOutfile,
+			FileName: $4,
+		}
+		if $5 != nil {
+			x.FieldsInfo = $5.(*ast.FieldsClause)
+		}
+		if $6 != nil {
+			x.LinesInfo = $6.(*ast.LinesClause)
+		}
+		st.SelectIntoOpt = x
+		$$ = st
+	}
+/* SELECT ... INTO var_list (without FROM clause, for expressions like SELECT 1+1 INTO @var) */
+|	SelectStmtBasic "INTO" ColumnNameOrUserVariableList
+	{
+		st := $1.(*ast.SelectStmt)
+		varList := $3.([]*ast.ColumnNameOrUserVar)
+		st.SelectIntoOpt = &ast.SelectIntoOption{
+			Tp:           ast.SelectIntoVars,
+			VariableList: varList,
+		}
+		$$ = st
+	}
 |	"TABLE" TableName OrderByOptional SelectStmtLimitOpt SelectLockOpt SelectStmtIntoOption
 	{
 		st := &ast.SelectStmt{
@@ -11549,6 +11737,15 @@ SelectStmtIntoOption:
 		}
 
 		$$ = x
+	}
+|	"INTO" ColumnNameOrUserVariableList
+	{
+		// SELECT ... INTO var1, var2, @var3, ... for stored procedures
+		varList := $2.([]*ast.ColumnNameOrUserVar)
+		$$ = &ast.SelectIntoOption{
+			Tp:           ast.SelectIntoVars,
+			VariableList: varList,
+		}
 	}
 
 // See https://dev.mysql.com/doc/refman/5.7/en/subqueries.html
@@ -12964,6 +13161,13 @@ ShowStmt:
 			Procedure: $4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "CREATE" "FUNCTION" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:       ast.ShowCreateFunction,
+			FuncName: $4.(*ast.TableName),
+		}
+	}
 |	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
@@ -13600,6 +13804,7 @@ Statement:
 |	CreatePolicyStmt
 |	CreateMaskingPolicyStmt
 |	CreateProcedureStmt
+|	CreateFunctionStmt
 |	CreateResourceGroupStmt
 |	AddQueryWatchStmt
 |	CreateSequenceStmt
@@ -13615,6 +13820,7 @@ Statement:
 |	DropIndexStmt
 |	DropTableStmt
 |	DropProcedureStmt
+|	DropFunctionStmt
 |	DropPolicyStmt
 |	DropSequenceStmt
 |	DropViewStmt
@@ -17776,13 +17982,28 @@ ProcedureStatementStmt:
 |	UseStmt
 |	InsertIntoStmt
 |	ReplaceIntoStmt
+|	BeginTransactionStmt
 |	CommitStmt
 |	RollbackStmt
+|	SavepointStmt
+|	ReleaseSavepointStmt
 |	ExplainStmt
 |	SetOprStmt
 |	DeleteFromStmt
 |	AnalyzeTableStmt
 |	TruncateTableStmt
+|	CallStmt
+// DDL statements allowed in stored procedures (but NOT in stored functions - checked at runtime)
+|	CreateTableStmt
+|	AlterTableStmt
+|	DropTableStmt
+|	CreateIndexStmt
+|	DropIndexStmt
+|	CreateDatabaseStmt
+|	DropDatabaseStmt
+|	AlterDatabaseStmt
+|	CreateViewStmt
+|	RenameTableStmt
 
 ProcedureCursorSelectStmt:
 	SelectStmt
@@ -18173,6 +18394,12 @@ ProcedureUnlabelLoopStmt:
 			Condition: $4.(ast.ExprNode),
 		}
 	}
+|	"LOOP" ProcedureProcStmt1s "END" "LOOP"
+	{
+		$$ = &ast.ProcedureLoopStmt{
+			Body: $2.([]ast.StmtNode),
+		}
+	}
 
 ProcedureLabeledBlock:
 	identifier ':' ProcedureBlockContent ProcedurceLabelOpt
@@ -18243,6 +18470,128 @@ ProcedureProcStmt:
 |	ProcedurelabeledLoopStmt
 |	ProcedureIterate
 |	ProcedureLeave
+|	ProcedureReturn
+|	ProcedureSignal
+|	ProcedureResignal
+
+ProcedureReturn:
+	"RETURN" Expression
+	{
+		$$ = &ast.ReturnStmt{
+			ReturnValue: $2,
+		}
+	}
+
+ProcedureSignal:
+	"SIGNAL" "SQLSTATE" stringLit
+	{
+		$$ = &ast.SignalStmt{
+			SQLState: $3,
+		}
+	}
+|	"SIGNAL" "SQLSTATE" "VALUE" stringLit
+	{
+		$$ = &ast.SignalStmt{
+			SQLState: $4,
+		}
+	}
+|	"SIGNAL" "SQLSTATE" stringLit "SET" SignalInfoItemList
+	{
+		$$ = &ast.SignalStmt{
+			SQLState:  $3,
+			InfoItems: $5.([]ast.SignalInfo),
+		}
+	}
+|	"SIGNAL" "SQLSTATE" "VALUE" stringLit "SET" SignalInfoItemList
+	{
+		$$ = &ast.SignalStmt{
+			SQLState:  $4,
+			InfoItems: $6.([]ast.SignalInfo),
+		}
+	}
+|	"SIGNAL" Identifier
+	{
+		$$ = &ast.SignalStmt{
+			ConditionName: $2,
+		}
+	}
+|	"SIGNAL" Identifier "SET" SignalInfoItemList
+	{
+		$$ = &ast.SignalStmt{
+			ConditionName: $2,
+			InfoItems:     $4.([]ast.SignalInfo),
+		}
+	}
+
+ProcedureResignal:
+	"RESIGNAL"
+	{
+		$$ = &ast.ResignalStmt{}
+	}
+|	"RESIGNAL" "SQLSTATE" stringLit
+	{
+		$$ = &ast.ResignalStmt{
+			SQLState: $3,
+		}
+	}
+|	"RESIGNAL" "SQLSTATE" "VALUE" stringLit
+	{
+		$$ = &ast.ResignalStmt{
+			SQLState: $4,
+		}
+	}
+|	"RESIGNAL" "SQLSTATE" stringLit "SET" SignalInfoItemList
+	{
+		$$ = &ast.ResignalStmt{
+			SQLState:  $3,
+			InfoItems: $5.([]ast.SignalInfo),
+		}
+	}
+|	"RESIGNAL" "SQLSTATE" "VALUE" stringLit "SET" SignalInfoItemList
+	{
+		$$ = &ast.ResignalStmt{
+			SQLState:  $4,
+			InfoItems: $6.([]ast.SignalInfo),
+		}
+	}
+|	"RESIGNAL" "SET" SignalInfoItemList
+	{
+		$$ = &ast.ResignalStmt{
+			InfoItems: $3.([]ast.SignalInfo),
+		}
+	}
+|	"RESIGNAL" Identifier
+	{
+		$$ = &ast.ResignalStmt{
+			ConditionName: $2,
+		}
+	}
+|	"RESIGNAL" Identifier "SET" SignalInfoItemList
+	{
+		$$ = &ast.ResignalStmt{
+			ConditionName: $2,
+			InfoItems:     $4.([]ast.SignalInfo),
+		}
+	}
+
+SignalInfoItemList:
+	SignalInfoItem
+	{
+		$$ = []ast.SignalInfo{$1.(ast.SignalInfo)}
+	}
+|	SignalInfoItemList ',' SignalInfoItem
+	{
+		$$ = append($1.([]ast.SignalInfo), $3.(ast.SignalInfo))
+	}
+
+SignalInfoItem:
+	Identifier eq Expression
+	{
+		$$ = ast.SignalInfo{
+			ItemName: $1,
+			Value:    $3,
+		}
+	}
 
 /********************************************************************************************
  *
@@ -18263,16 +18612,46 @@ ProcedureProcStmt:
  *  Valid SQL routine statement
  ********************************************************************************************/
 CreateProcedureStmt:
-	"CREATE" "PROCEDURE" IfNotExists TableName '(' OptSpPdparams ')' ProcedureProcStmt
+	"CREATE" "PROCEDURE" IfNotExists TableName '(' OptSpPdparams ')' OptProcedureCharacteristics ProcedureProcStmt
 	{
+		chars := $8.(map[string]interface{})
 		x := &ast.ProcedureInfo{
-			IfNotExists:    $3.(bool),
-			ProcedureName:  $4.(*ast.TableName),
-			ProcedureParam: $6.([]*ast.StoreParameter),
-			ProcedureBody:  $8,
+			IfNotExists:     $3.(bool),
+			ProcedureName:   $4.(*ast.TableName),
+			ProcedureParam:  $6.([]*ast.StoreParameter),
+			IsDeterministic: chars["deterministic"].(bool),
+			Comment:         chars["comment"].(string),
+			DataAccess:      chars["data_access"].(string),
+			SQLSecurity:     chars["sql_security"].(string),
+			ProcedureBody:   $9,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		originStmt := $8
+		originStmt := $9
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
+		startOffset = parser.startOffset(&yyS[yypt-3])
+		if parser.src[startOffset] == '(' {
+			startOffset++
+		}
+		endOffset := parser.startOffset(&yyS[yypt-1])
+		x.ProcedureParamStr = strings.TrimSpace(parser.src[startOffset:endOffset])
+		$$ = x
+	}
+|	"CREATE" "DEFINER" "=" Username "PROCEDURE" IfNotExists TableName '(' OptSpPdparams ')' OptProcedureCharacteristics ProcedureProcStmt
+	{
+		chars := $11.(map[string]interface{})
+		x := &ast.ProcedureInfo{
+			Definer:         $4.(*auth.UserIdentity),
+			IfNotExists:     $6.(bool),
+			ProcedureName:   $7.(*ast.TableName),
+			ProcedureParam:  $9.([]*ast.StoreParameter),
+			IsDeterministic: chars["deterministic"].(bool),
+			Comment:         chars["comment"].(string),
+			DataAccess:      chars["data_access"].(string),
+			SQLSecurity:     chars["sql_security"].(string),
+			ProcedureBody:   $12,
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		originStmt := $12
 		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
 		startOffset = parser.startOffset(&yyS[yypt-3])
 		if parser.src[startOffset] == '(' {
@@ -18292,6 +18671,297 @@ DropProcedureStmt:
 		$$ = &ast.DropProcedureStmt{
 			IfExists:      $3.(bool),
 			ProcedureName: $4.(*ast.TableName),
+		}
+	}
+
+/********************************************************************************************
+ *
+ *  Create Function Statement (MySQL SQL functions with BEGIN...END)
+ *
+ *  Syntax:
+ *    CREATE [OR REPLACE]
+ *    FUNCTION [IF NOT EXISTS] func_name ([param_name type[,...]])
+ *    RETURNS type
+ *    [characteristic ...]
+ *    BEGIN ... END
+ *
+ *  characteristic:
+ *    COMMENT 'string'
+ *    | DETERMINISTIC | NOT DETERMINISTIC
+ *    | NO SQL
+ *    | SQL SECURITY { DEFINER | INVOKER }
+ ********************************************************************************************/
+CreateFunctionStmt:
+	"CREATE" OrReplace "FUNCTION" IfNotExists TableName '(' OptFunctionParams ')' "RETURNS" Type OptFunctionCharacteristics ProcedureBlockContent
+	{
+		chars := $11.(map[string]interface{})
+		$$ = &ast.CreateFunctionStmt{
+			OrReplace:       $2.(bool),
+			IfNotExists:     $4.(bool),
+			FuncName:        $5.(*ast.TableName),
+			Parameters:      $7.([]*ast.FunctionParam),
+			ReturnType:      $10.(*types.FieldType),
+			IsDeterministic: chars["deterministic"].(bool),
+			Comment:         chars["comment"].(string),
+			DataAccess:      chars["data_access"].(string),
+			SQLSecurity:     chars["sql_security"].(string),
+			SQLBody:         $12,
+		}
+	}
+
+OptFunctionCharacteristics:
+	/* Empty */
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	OptFunctionCharacteristics FunctionCharacteristic
+	{
+		chars := $1.(map[string]interface{})
+		newChar := $2.(map[string]interface{})
+		for k, v := range newChar {
+			if v != "" && v != false {
+				chars[k] = v
+			}
+		}
+		$$ = chars
+	}
+
+FunctionCharacteristic:
+	"COMMENT" stringLit
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       $2,
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	"DETERMINISTIC"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": true,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	"NOT" "DETERMINISTIC"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	"NO" "SQL"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "NO SQL",
+			"sql_security":  "",
+		}
+	}
+|	"SQL" "SECURITY" "DEFINER"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "DEFINER",
+		}
+	}
+|	"SQL" "SECURITY" "INVOKER"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "INVOKER",
+		}
+	}
+|	"CONTAINS" "SQL"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "CONTAINS SQL",
+			"sql_security":  "",
+		}
+	}
+|	"READS" "SQL" "DATA"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "READS SQL DATA",
+			"sql_security":  "",
+		}
+	}
+|	"MODIFIES" "SQL" "DATA"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "MODIFIES SQL DATA",
+			"sql_security":  "",
+		}
+	}
+
+OptFunctionParams:
+	/* Empty */
+	{
+		$$ = []*ast.FunctionParam{}
+	}
+|	FunctionParams
+	{
+		$$ = $1
+	}
+
+FunctionParams:
+	FunctionParams ',' FunctionParam
+	{
+		l := $1.([]*ast.FunctionParam)
+		l = append(l, $3.(*ast.FunctionParam))
+		$$ = l
+	}
+|	FunctionParam
+	{
+		$$ = []*ast.FunctionParam{$1.(*ast.FunctionParam)}
+	}
+
+FunctionParam:
+	Identifier Type
+	{
+		$$ = &ast.FunctionParam{
+			Name: $1,
+			Type: $2.(*types.FieldType),
+		}
+	}
+
+/********************************************************************************************
+ *  Optional procedure characteristics (same as function characteristics)
+ ********************************************************************************************/
+OptProcedureCharacteristics:
+	/* Empty */
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	OptProcedureCharacteristics ProcedureCharacteristic
+	{
+		chars := $1.(map[string]interface{})
+		newChar := $2.(map[string]interface{})
+		for k, v := range newChar {
+			if v != "" && v != false {
+				chars[k] = v
+			}
+		}
+		$$ = chars
+	}
+
+ProcedureCharacteristic:
+	"COMMENT" stringLit
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       $2,
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	"DETERMINISTIC"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": true,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	"NOT" "DETERMINISTIC"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	"CONTAINS" "SQL"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "CONTAINS SQL",
+			"sql_security":  "",
+		}
+	}
+|	"NO" "SQL"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "NO SQL",
+			"sql_security":  "",
+		}
+	}
+|	"READS" "SQL" "DATA"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "READS SQL DATA",
+			"sql_security":  "",
+		}
+	}
+|	"MODIFIES" "SQL" "DATA"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "MODIFIES SQL DATA",
+			"sql_security":  "",
+		}
+	}
+|	"SQL" "SECURITY" "DEFINER"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "DEFINER",
+		}
+	}
+|	"SQL" "SECURITY" "INVOKER"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "INVOKER",
+		}
+	}
+
+/********************************************************************************************
+ *  DROP FUNCTION [IF EXISTS] func_name
+ ********************************************************************************************/
+DropFunctionStmt:
+	"DROP" "FUNCTION" IfExists TableName
+	{
+		$$ = &ast.DropFunctionStmt{
+			IfExists: $3.(bool),
+			FuncName: $4.(*ast.TableName),
 		}
 	}
 

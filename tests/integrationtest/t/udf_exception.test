@@ -1,0 +1,388 @@
+# Test UDF with SQL Exception handling
+# This test verifies DECLARE HANDLER, SIGNAL, and RESIGNAL in stored functions/procedures
+
+CREATE DATABASE IF NOT EXISTS udf_exception_test;
+USE udf_exception_test;
+
+# Create tables for testing
+DROP TABLE IF EXISTS error_log;
+DROP TABLE IF EXISTS test_data;
+
+CREATE TABLE test_data (
+    id INT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    value INT DEFAULT 0
+);
+
+CREATE TABLE error_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    error_msg VARCHAR(255),
+    error_code INT,
+    logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO test_data (id, name, value) VALUES (1, 'item1', 100);
+INSERT INTO test_data (id, name, value) VALUES (2, 'item2', 200);
+
+# ============================================================
+# Test 1: CONTINUE handler for SQLEXCEPTION
+# ============================================================
+
+DROP FUNCTION IF EXISTS test_continue_handler;
+
+DELIMITER //
+
+CREATE FUNCTION test_continue_handler(p_id INT)
+RETURNS VARCHAR(50)
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+    DECLARE v_result VARCHAR(50) DEFAULT 'unknown';
+    DECLARE CONTINUE HANDLER FOR SQLEXCEPTION SET v_result = 'error_caught';
+    INSERT INTO udf_exception_test.test_data (id, name, value) VALUES (p_id, 'new_item', 0);
+    SET v_result = 'insert_success';
+    RETURN v_result;
+END//
+
+DELIMITER ;
+
+# Test with new id (should succeed)
+SELECT test_continue_handler(100) AS result;
+SELECT * FROM test_data WHERE id = 100;
+
+# Test with existing id (should catch error and continue)
+SELECT test_continue_handler(1) AS result;
+
+# Cleanup
+DELETE FROM test_data WHERE id = 100;
+
+# ============================================================
+# Test 2: EXIT handler for SQLEXCEPTION
+# ============================================================
+
+DROP FUNCTION IF EXISTS test_exit_handler;
+
+DELIMITER //
+
+CREATE FUNCTION test_exit_handler(p_id INT)
+RETURNS VARCHAR(50)
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+    DECLARE v_result VARCHAR(50) DEFAULT 'started';
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN INSERT INTO udf_exception_test.error_log (error_msg) VALUES ('Exit handler triggered'); RETURN 'exit_on_error'; END;
+    INSERT INTO udf_exception_test.test_data (id, name, value) VALUES (p_id, 'test', 0);
+    SET v_result = 'after_insert';
+    SET v_result = 'completed';
+    RETURN v_result;
+END//
+
+DELIMITER ;
+
+# Test with new id
+SELECT test_exit_handler(101) AS result;
+
+# Test with existing id - should exit early
+SELECT test_exit_handler(1) AS result;
+
+# Check error log
+SELECT error_msg FROM error_log ORDER BY id;
+
+# Cleanup
+DELETE FROM test_data WHERE id = 101;
+TRUNCATE TABLE error_log;
+
+# ============================================================
+# Test 3: NOT FOUND handler (for SELECT INTO with no rows)
+# ============================================================
+
+DROP FUNCTION IF EXISTS test_not_found_handler;
+
+DELIMITER //
+
+CREATE FUNCTION test_not_found_handler(p_id INT)
+RETURNS VARCHAR(50)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_name VARCHAR(50);
+    DECLARE v_found INT DEFAULT 1;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_found = 0;
+    SELECT name FROM udf_exception_test.test_data WHERE id = p_id INTO v_name;
+    IF v_found = 0 THEN
+        RETURN 'not_found';
+    END IF;
+    RETURN v_name;
+END//
+
+DELIMITER ;
+
+# Test with existing id
+SELECT test_not_found_handler(1) AS result;
+
+# Test with non-existing id
+SELECT test_not_found_handler(999) AS result;
+
+# ============================================================
+# Test 4: SIGNAL statement - raise custom error
+# ============================================================
+
+DROP FUNCTION IF EXISTS test_signal_basic;
+
+DELIMITER //
+
+CREATE FUNCTION test_signal_basic(p_value INT)
+RETURNS INT
+DETERMINISTIC
+BEGIN
+    IF p_value < 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Value cannot be negative';
+    END IF;
+    RETURN p_value * 2;
+END//
+
+DELIMITER ;
+
+# Test with positive value
+SELECT test_signal_basic(10) AS result;
+
+# Test with negative value (should raise error)
+--error 1105
+SELECT test_signal_basic(-5) AS result;
+
+# ============================================================
+# Test 5: Handler catching SIGNAL
+# ============================================================
+
+DROP FUNCTION IF EXISTS test_signal_with_handler;
+
+DELIMITER //
+
+CREATE FUNCTION test_signal_with_handler(p_value INT)
+RETURNS VARCHAR(100)
+DETERMINISTIC
+BEGIN
+    DECLARE v_result VARCHAR(100) DEFAULT 'ok';
+    DECLARE CONTINUE HANDLER FOR SQLSTATE '45000' SET v_result = 'custom_error_caught';
+    IF p_value < 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Negative value';
+    END IF;
+    IF v_result = 'ok' THEN
+        SET v_result = CONCAT('doubled: ', p_value * 2);
+    END IF;
+    RETURN v_result;
+END//
+
+DELIMITER ;
+
+# Test with positive value
+SELECT test_signal_with_handler(5) AS result;
+
+# Test with negative value - handler should catch
+SELECT test_signal_with_handler(-5) AS result;
+
+# ============================================================
+# Test 6: Handler for specific MySQL error code
+# ============================================================
+
+DROP FUNCTION IF EXISTS test_error_code_handler;
+
+DELIMITER //
+
+CREATE FUNCTION test_error_code_handler(p_id INT)
+RETURNS VARCHAR(50)
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+    DECLARE v_result VARCHAR(50) DEFAULT 'unknown';
+    DECLARE CONTINUE HANDLER FOR 1062 SET v_result = 'duplicate_key';
+    INSERT INTO udf_exception_test.test_data (id, name, value) VALUES (p_id, 'test', 0);
+    SET v_result = 'inserted';
+    RETURN v_result;
+END//
+
+DELIMITER ;
+
+# Test with new id
+SELECT test_error_code_handler(102) AS result;
+
+# Test with existing id - should catch 1062
+SELECT test_error_code_handler(1) AS result;
+
+# Cleanup
+DELETE FROM test_data WHERE id = 102;
+
+# ============================================================
+# Test 7: Multiple handlers with priority
+# ============================================================
+
+DROP FUNCTION IF EXISTS test_multiple_handlers;
+
+DELIMITER //
+
+CREATE FUNCTION test_multiple_handlers(p_id INT, p_mode INT)
+RETURNS VARCHAR(50)
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+    DECLARE v_result VARCHAR(50) DEFAULT 'unknown';
+    DECLARE v_name VARCHAR(50);
+    DECLARE CONTINUE HANDLER FOR 1062 SET v_result = 'dup_key_handler';
+    DECLARE CONTINUE HANDLER FOR SQLEXCEPTION SET v_result = 'general_handler';
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_result = 'not_found_handler';
+    IF p_mode = 1 THEN
+        INSERT INTO udf_exception_test.test_data (id, name, value) VALUES (p_id, 'test', 0);
+        SET v_result = 'insert_ok';
+    ELSEIF p_mode = 2 THEN
+        SELECT name FROM udf_exception_test.test_data WHERE id = 99999 INTO v_name;
+        SET v_result = CONCAT('found:', v_name);
+    ELSE
+        SET v_result = 'no_error';
+    END IF;
+    RETURN v_result;
+END//
+
+DELIMITER ;
+
+# Test mode 0 - no error
+SELECT test_multiple_handlers(1, 0) AS result;
+
+# Test mode 1 with duplicate key
+SELECT test_multiple_handlers(1, 1) AS result;
+
+# Test mode 2 - not found
+SELECT test_multiple_handlers(1, 2) AS result;
+
+# ============================================================
+# Test 8: Nested function with exception handling
+# ============================================================
+
+DROP FUNCTION IF EXISTS inner_func_with_error;
+DROP FUNCTION IF EXISTS outer_func_handler;
+
+DELIMITER //
+
+CREATE FUNCTION inner_func_with_error(p_value INT)
+RETURNS INT
+DETERMINISTIC
+BEGIN
+    IF p_value = 0 THEN
+        SIGNAL SQLSTATE '45001' SET MESSAGE_TEXT = 'Zero not allowed';
+    END IF;
+    RETURN 100 / p_value;
+END//
+
+CREATE FUNCTION outer_func_handler(p_value INT)
+RETURNS VARCHAR(50)
+DETERMINISTIC
+BEGIN
+    DECLARE v_result INT;
+    DECLARE v_msg VARCHAR(50) DEFAULT 'ok';
+    DECLARE CONTINUE HANDLER FOR SQLSTATE '45001' SET v_msg = 'inner_error_caught';
+    SET v_result = inner_func_with_error(p_value);
+    IF v_msg = 'ok' THEN
+        SET v_msg = CONCAT('result:', v_result);
+    END IF;
+    RETURN v_msg;
+END//
+
+DELIMITER ;
+
+# Test with non-zero value
+SELECT outer_func_handler(10) AS result;
+
+# Test with zero - inner function signals error, outer catches it
+SELECT outer_func_handler(0) AS result;
+
+# ============================================================
+# Test 9: SQLWARNING handler
+# ============================================================
+
+DROP FUNCTION IF EXISTS test_warning_handler;
+
+DELIMITER //
+
+CREATE FUNCTION test_warning_handler(p_value VARCHAR(10))
+RETURNS VARCHAR(50)
+DETERMINISTIC
+BEGIN
+    DECLARE v_num INT;
+    DECLARE v_warning INT DEFAULT 0;
+    DECLARE CONTINUE HANDLER FOR SQLWARNING SET v_warning = 1;
+    SET v_num = CAST(p_value AS SIGNED);
+    IF v_warning = 1 THEN
+        RETURN 'warning_occurred';
+    END IF;
+    RETURN CONCAT('converted:', v_num);
+END//
+
+DELIMITER ;
+
+# Test with valid number
+SELECT test_warning_handler('123') AS result;
+
+# Test with invalid number (may produce warning)
+SELECT test_warning_handler('abc') AS result;
+
+# ============================================================
+# Test 10: Handler with block statement
+# ============================================================
+
+DROP FUNCTION IF EXISTS test_handler_block;
+
+DELIMITER //
+
+CREATE FUNCTION test_handler_block(p_id INT)
+RETURNS VARCHAR(100)
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+    DECLARE v_result VARCHAR(100) DEFAULT 'started';
+    DECLARE v_error_count INT DEFAULT 0;
+    DECLARE CONTINUE HANDLER FOR SQLEXCEPTION BEGIN SET v_error_count = v_error_count + 1; INSERT INTO udf_exception_test.error_log (error_msg, error_code) VALUES (CONCAT('Error #', v_error_count), v_error_count); SET v_result = CONCAT('error_', v_error_count); END;
+    INSERT INTO udf_exception_test.test_data (id, name, value) VALUES (p_id, 'first', 1);
+    INSERT INTO udf_exception_test.test_data (id, name, value) VALUES (p_id, 'second', 2);
+    IF v_error_count = 0 THEN
+        SET v_result = 'both_succeeded';
+    ELSEIF v_error_count = 1 THEN
+        SET v_result = 'one_error';
+    ELSE
+        SET v_result = CONCAT('errors:', v_error_count);
+    END IF;
+    RETURN v_result;
+END//
+
+DELIMITER ;
+
+# Test with existing id - first insert fails, second also fails
+SELECT test_handler_block(1) AS result;
+
+# Test with new id - first succeeds, second fails (duplicate)
+SELECT test_handler_block(200) AS result;
+
+# Check error log
+SELECT error_msg, error_code FROM error_log ORDER BY id;
+
+# Cleanup
+DELETE FROM test_data WHERE id = 200;
+TRUNCATE TABLE error_log;
+
+# ============================================================
+# Cleanup: Drop all test functions and tables
+# ============================================================
+
+DROP FUNCTION IF EXISTS test_continue_handler;
+DROP FUNCTION IF EXISTS test_exit_handler;
+DROP FUNCTION IF EXISTS test_not_found_handler;
+DROP FUNCTION IF EXISTS test_signal_basic;
+DROP FUNCTION IF EXISTS test_signal_with_handler;
+DROP FUNCTION IF EXISTS test_error_code_handler;
+DROP FUNCTION IF EXISTS test_multiple_handlers;
+DROP FUNCTION IF EXISTS inner_func_with_error;
+DROP FUNCTION IF EXISTS outer_func_handler;
+DROP FUNCTION IF EXISTS test_warning_handler;
+DROP FUNCTION IF EXISTS test_handler_block;
+
+DROP TABLE error_log;
+DROP TABLE test_data;
+DROP DATABASE udf_exception_test;
