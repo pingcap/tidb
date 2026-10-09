@@ -114,6 +114,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 
 	err = adjustConfig(conf,
 		buildTLSConfig,
+		validateDumpService,
 		validateSpecifiedSQL,
 		adjustFileFormat,
 		validateIncludeGeneratedColumns)
@@ -130,6 +131,14 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 			}
 		}()
 	})
+
+	if conf.DumpService != "" {
+		err = runSteps(d,
+			initLogger,
+			createExternalStore,
+			startHTTPService)
+		return d, err
+	}
 
 	err = runSteps(d,
 		initLogger,
@@ -153,6 +162,9 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 // nolint: gocyclo
 func (d *Dumper) Dump() (dumpErr error) {
 	initColumnTypeSets()
+	if d.conf.DumpService != "" {
+		return d.dumpFromService()
+	}
 	var (
 		conn    *sql.Conn
 		err     error
