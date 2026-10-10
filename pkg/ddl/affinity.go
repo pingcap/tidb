@@ -33,7 +33,7 @@ import (
 // the keyspace ID when the table uses a NextGen keyspace codec.
 func GetTableAffinityGroupID(codec tikv.Codec, tableID int64) string {
 	if label.UseKeyspaceAwareRules(codec) {
-		return fmt.Sprintf("_tidb_t_%d_%d", codec.GetKeyspaceID(), tableID)
+		return fmt.Sprintf("_tidb_ks%d_t_%d", codec.GetKeyspaceID(), tableID)
 	}
 	return fmt.Sprintf("_tidb_t_%d", tableID)
 }
@@ -42,7 +42,7 @@ func GetTableAffinityGroupID(codec tikv.Codec, tableID int64) string {
 // including the keyspace ID when the partition uses a NextGen keyspace codec.
 func GetPartitionAffinityGroupID(codec tikv.Codec, tableID, partitionID int64) string {
 	if label.UseKeyspaceAwareRules(codec) {
-		return fmt.Sprintf("_tidb_pt_%d_%d_p%d", codec.GetKeyspaceID(), tableID, partitionID)
+		return fmt.Sprintf("_tidb_ks%d_pt_%d_p%d", codec.GetKeyspaceID(), tableID, partitionID)
 	}
 	return fmt.Sprintf("_tidb_pt_%d_p%d", tableID, partitionID)
 }
@@ -61,7 +61,7 @@ func buildAffinityGroupKeyRange(codec tikv.Codec, physicalID int64) pdhttp.Affin
 
 // buildAffinityGroupDefinitions constructs affinity group definitions based on table's affinity configuration.
 // It generates affinity group IDs in two different formats depending on the affinity level.
-// In NextGen, the keyspace ID is inserted after the affinity type to keep IDs
+// In NextGen, the keyspace ID is included with an explicit marker to keep IDs
 // unique when different keyspaces allocate the same table ID.
 func buildAffinityGroupDefinitions(codec tikv.Codec, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) (map[string][]pdhttp.AffinityGroupKeyRange, error) {
 	if tblInfo == nil || tblInfo.Affinity == nil {

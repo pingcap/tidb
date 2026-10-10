@@ -82,8 +82,8 @@ func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
 	tableGroupID := ddl.GetTableAffinityGroupID(codec, tableID)
 	partitionGroupID := ddl.GetPartitionAffinityGroupID(codec, tableID, partitionID)
 	if kerneltype.IsNextGen() {
-		require.Equal(t, "_tidb_t_42_123", tableGroupID)
-		require.Equal(t, "_tidb_pt_42_123_p456", partitionGroupID)
+		require.Equal(t, "_tidb_ks42_t_123", tableGroupID)
+		require.Equal(t, "_tidb_ks42_pt_123_p456", partitionGroupID)
 		require.NotEqual(t, tableGroupID, ddl.GetTableAffinityGroupID(otherCodec, tableID))
 		require.NotEqual(t, partitionGroupID, ddl.GetPartitionAffinityGroupID(otherCodec, tableID, partitionID))
 	} else {
