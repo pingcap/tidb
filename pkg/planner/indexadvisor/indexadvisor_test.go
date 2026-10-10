@@ -547,6 +547,15 @@ func TestIndexAdvisorRunFor(t *testing.T) {
 	tk.MustQueryToErr(`recommend index run for ";;xx;"`)
 	r = tk.MustQuery(`recommend index run for ";;select * from t1 where a=1;; ;;  ;"`)
 	require.True(t, len(r.Rows()) == 1)
+
+	r = tk.MustQuery(`recommend index return result for "select * from t1 where a=1;select * from t2 where b=1"`)
+	require.Len(t, r.Rows(), 2)
+	r = tk.MustQuery(`recommend index return result for "select * from t1 where a=1;select * from t2 where b=1" with max_num_index=1`)
+	require.Len(t, r.Rows(), 1)
+	for _, sql := range []string{";", "xxx", ";;;", ";;xx;"} {
+		tk.MustQueryToErr(fmt.Sprintf(`recommend index return result for '%s'`, sql))
+	}
+	tk.MustQueryToErr(`recommend index return result for 'select a from t1' with timeout='xxx'`)
 }
 
 func TestIndexAdvisorStorage(t *testing.T) {
@@ -556,9 +565,21 @@ func TestIndexAdvisorStorage(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, c int, d varchar(32))`)
 	q := `select index_columns, index_details->'$.Reason' from mysql.index_advisor_results`
 
-	tk.MustQuery(`recommend index run for "select a from t where a=1"`)
+	results := tk.MustQuery(`recommend index return result for "select a from t where a=1"`).Rows()
+	require.Len(t, results, 1)
+	tk.MustQuery(q).Check(testkit.Rows())
+
+	require.Equal(t, results, tk.MustQuery(`recommend index run for "select a from t where a=1"`).Rows())
 	tk.MustQuery(q).Sort().Check(testkit.Rows(
 		"a \"Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` from `test` . `t` where `a` = ?\""))
+
+	// Detect both new inserts and upserts, even if two calls finish in the same second.
+	tk.MustExec(`update mysql.index_advisor_results set updated_at='2000-01-01', index_details='{}'`)
+	stored := tk.MustQuery(`select * from mysql.index_advisor_results order by id`).Rows()
+	require.Equal(t, results, tk.MustQuery(`recommend index return result for "select a from t where a=1"`).Rows())
+	require.Len(t, tk.MustQuery(`recommend index return result for "select b from t where b=1"`).Rows(), 1)
+	require.Equal(t, stored, tk.MustQuery(`select * from mysql.index_advisor_results order by id`).Rows())
+	tk.MustQuery(`recommend index run for "select a from t where a=1"`)
 
 	tk.MustQuery(`recommend index run for "select b from t where b=1"`)
 	tk.MustQuery(q).Sort().Check(testkit.Rows(

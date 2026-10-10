@@ -48,6 +48,18 @@ type Option struct {
 // AdviseIndexes is the entry point for the index advisor.
 func AdviseIndexes(ctx context.Context, sctx sessionctx.Context, userSQLs []string,
 	userOptions []ast.RecommendIndexOption) (results []*Recommendation, err error) {
+	return adviseIndexesForSQLs(ctx, sctx, userSQLs, userOptions, true)
+}
+
+// AdviseIndexesWithoutPersist analyzes the specified SQL statements and returns
+// recommendations without writing them to mysql.index_advisor_results.
+func AdviseIndexesWithoutPersist(ctx context.Context, sctx sessionctx.Context, userSQLs []string,
+	userOptions []ast.RecommendIndexOption) (results []*Recommendation, err error) {
+	return adviseIndexesForSQLs(ctx, sctx, userSQLs, userOptions, false)
+}
+
+func adviseIndexesForSQLs(ctx context.Context, sctx sessionctx.Context, userSQLs []string,
+	userOptions []ast.RecommendIndexOption, persist bool) (results []*Recommendation, err error) {
 	advisorLogger().Info("fill index advisor option")
 	option := &Option{SpecifiedSQLs: userSQLs}
 	if err := fillOption(sctx, option, userOptions); err != nil {
@@ -55,11 +67,11 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context, userSQLs []stri
 		return nil, err
 	}
 
-	return adviseIndexesWithOption(ctx, sctx, option)
+	return adviseIndexesWithOption(ctx, sctx, option, persist)
 }
 
 func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
-	option *Option) (results []*Recommendation, err error) {
+	option *Option, persist bool) (results []*Recommendation, err error) {
 	if ctx == nil || sctx == nil || option == nil {
 		return nil, errors.New("nil input")
 	}
@@ -103,7 +115,9 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 		return nil, err
 	}
 
-	saveRecommendations(sctx, results)
+	if persist {
+		saveRecommendations(sctx, results)
+	}
 
 	if len(results) == 0 {
 		indexableColsTmp := make([]string, 0, 5)
