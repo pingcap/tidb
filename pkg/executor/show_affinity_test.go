@@ -201,7 +201,7 @@ func TestShowAffinityColumns(t *testing.T) {
 	is := tk.Session().GetLatestInfoSchema()
 	tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
-	groupID := ddl.GetTableAffinityGroupID(tbl.ID)
+	groupID := ddl.GetTableAffinityGroupIDWithCodec(store.GetCodec(), tbl.ID)
 
 	// Step 3: Set up mock PD client
 	mockCli := &mockPDCliForAffinity{}

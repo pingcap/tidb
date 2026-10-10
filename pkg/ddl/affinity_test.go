@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
@@ -37,6 +39,10 @@ import (
 
 type mockCodec struct {
 	tikv.Codec
+}
+
+func (mockCodec) GetKeyspaceMeta() *keyspacepb.KeyspaceMeta {
+	return nil
 }
 
 func (mockCodec) EncodeRegionRange(start, end []byte) ([]byte, []byte) {
@@ -59,6 +65,31 @@ func TestAffinityBuildGroupDefinitionsTable(t *testing.T) {
 		StartKey: append([]byte("k:"), tablecodec.EncodeTablePrefix(123)...),
 		EndKey:   append([]byte("k:"), tablecodec.EncodeTablePrefix(124)...),
 	}, ranges[0])
+}
+
+func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
+	codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+	})
+	require.NoError(t, err)
+	otherCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 43},
+	})
+	require.NoError(t, err)
+
+	tableID := int64(123)
+	partitionID := int64(456)
+	tableGroupID := ddl.GetTableAffinityGroupIDWithCodec(codec, tableID)
+	partitionGroupID := ddl.GetPartitionAffinityGroupIDWithCodec(codec, tableID, partitionID)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, "_tidb_t_42_123", tableGroupID)
+		require.Equal(t, "_tidb_pt_42_123_p456", partitionGroupID)
+		require.NotEqual(t, tableGroupID, ddl.GetTableAffinityGroupIDWithCodec(otherCodec, tableID))
+		require.NotEqual(t, partitionGroupID, ddl.GetPartitionAffinityGroupIDWithCodec(otherCodec, tableID, partitionID))
+	} else {
+		require.Equal(t, ddl.GetTableAffinityGroupID(tableID), tableGroupID)
+		require.Equal(t, ddl.GetPartitionAffinityGroupID(tableID, partitionID), partitionGroupID)
+	}
 }
 
 func TestAffinityBuildGroupDefinitionsPartition(t *testing.T) {
@@ -101,6 +132,7 @@ func TestAffinityBuildGroupDefinitionsPartitionMissing(t *testing.T) {
 // PD interaction tests
 
 type affinityGroupCheck struct {
+	codec        tikv.Codec
 	tableID      int64
 	partitionIDs []int64
 	shouldExist  bool
@@ -115,11 +147,11 @@ func (c *affinityGroupCheck) check(t *testing.T) {
 	var groupIDs []string
 	if len(c.partitionIDs) == 0 {
 		// Non-partitioned table
-		groupIDs = []string{ddl.GetTableAffinityGroupID(c.tableID)}
+		groupIDs = []string{ddl.GetTableAffinityGroupIDWithCodec(c.codec, c.tableID)}
 	} else {
 		// Partitioned table
 		for _, partID := range c.partitionIDs {
-			groupIDs = append(groupIDs, ddl.GetPartitionAffinityGroupID(c.tableID, partID))
+			groupIDs = append(groupIDs, ddl.GetPartitionAffinityGroupIDWithCodec(c.codec, c.tableID, partID))
 		}
 	}
 
@@ -152,6 +184,7 @@ func checkAffinityGroupsInPD(t *testing.T, do *domain.Domain, dbName, tbName str
 		_ = meta.NewMutator(txn)
 
 		check := &affinityGroupCheck{
+			codec:       do.Store().GetCodec(),
 			tableID:     tblInfo.Meta().ID,
 			shouldExist: shouldExist,
 			rangeCount:  1,
@@ -205,7 +238,7 @@ func TestAffinityPDInteraction(t *testing.T) {
 	tk.MustExec("drop table t1")
 	// Verify affinity groups are deleted
 	ctx := context.Background()
-	groups, err := affinity.GetGroups(ctx, []string{ddl.GetTableAffinityGroupID(t1ID)})
+	groups, err := affinity.GetGroups(ctx, []string{ddl.GetTableAffinityGroupIDWithCodec(dom.Store().GetCodec(), t1ID)})
 	require.NoError(t, err)
 	require.Empty(t, groups, "affinity groups should be deleted after dropping table")
 
@@ -220,7 +253,7 @@ func TestAffinityPDInteraction(t *testing.T) {
 	tk.MustExec("truncate table t2")
 	checkAffinityGroupsInPD(t, dom, "test", "t2", true)
 	// Old table ID's affinity group should be deleted
-	groups, err = affinity.GetGroups(ctx, []string{ddl.GetTableAffinityGroupID(oldTableID)})
+	groups, err = affinity.GetGroups(ctx, []string{ddl.GetTableAffinityGroupIDWithCodec(dom.Store().GetCodec(), oldTableID)})
 	require.NoError(t, err)
 	require.Empty(t, groups, "old table's affinity groups should be deleted after truncate")
 
@@ -236,7 +269,7 @@ func TestAffinityPDInteraction(t *testing.T) {
 	tk.MustExec("alter table tp2 truncate partition p0")
 	checkAffinityGroupsInPD(t, dom, "test", "tp2", true)
 	// Old partition's affinity group should be deleted
-	groups, err = affinity.GetGroups(ctx, []string{ddl.GetPartitionAffinityGroupID(tblInfo.Meta().ID, oldPartitionID)})
+	groups, err = affinity.GetGroups(ctx, []string{ddl.GetPartitionAffinityGroupIDWithCodec(dom.Store().GetCodec(), tblInfo.Meta().ID, oldPartitionID)})
 	require.NoError(t, err)
 	require.Empty(t, groups, "old partition's affinity group should be deleted after truncate partition")
 
@@ -285,10 +318,11 @@ func TestAffinityDropDatabase(t *testing.T) {
 
 	ctx := context.Background()
 	groupIDs := make([]string, 0, 2+len(tp1Info.Meta().Partition.Definitions))
-	groupIDs = append(groupIDs, ddl.GetTableAffinityGroupID(t1Info.Meta().ID))
-	groupIDs = append(groupIDs, ddl.GetTableAffinityGroupID(t2Info.Meta().ID))
+	codec := dom.Store().GetCodec()
+	groupIDs = append(groupIDs, ddl.GetTableAffinityGroupIDWithCodec(codec, t1Info.Meta().ID))
+	groupIDs = append(groupIDs, ddl.GetTableAffinityGroupIDWithCodec(codec, t2Info.Meta().ID))
 	for _, def := range tp1Info.Meta().Partition.Definitions {
-		groupIDs = append(groupIDs, ddl.GetPartitionAffinityGroupID(tp1Info.Meta().ID, def.ID))
+		groupIDs = append(groupIDs, ddl.GetPartitionAffinityGroupIDWithCodec(codec, tp1Info.Meta().ID, def.ID))
 	}
 
 	groups, err := affinity.GetGroups(ctx, groupIDs)

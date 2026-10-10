@@ -31,6 +31,7 @@ import (
 func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
+	codec := e.Ctx().GetStore().GetCodec()
 
 	var (
 		fieldPatternsLike collate.WildcardPattern
@@ -70,7 +71,7 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 
 			switch tblInfo.Affinity.Level {
 			case ast.TableAffinityLevelTable:
-				groupID := ddl.GetTableAffinityGroupID(tblInfo.ID)
+				groupID := ddl.GetTableAffinityGroupIDWithCodec(codec, tblInfo.ID)
 				infos = append(infos, tablePartitionInfo{
 					dbName:        dbName,
 					tableName:     tblInfo.Name.O,
@@ -81,7 +82,7 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 			case ast.TableAffinityLevelPartition:
 				if tblInfo.Partition != nil {
 					for _, def := range tblInfo.Partition.Definitions {
-						groupID := ddl.GetPartitionAffinityGroupID(tblInfo.ID, def.ID)
+						groupID := ddl.GetPartitionAffinityGroupIDWithCodec(codec, tblInfo.ID, def.ID)
 						infos = append(infos, tablePartitionInfo{
 							dbName:        dbName,
 							tableName:     tblInfo.Name.O,
