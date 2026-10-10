@@ -43,7 +43,27 @@ import (
 
 type manifest struct {
 	Schema, Parser, Collation, Version, State string
+	StopwordCollation                         string
 	Rows, Bytes, NgramSize, MinSize, MaxSize  int
+}
+
+const analyzerSettingsSQL = "SELECT @@global.ngram_token_size,@@global.innodb_ft_min_token_size,@@global.innodb_ft_max_token_size,@@global.collation_server"
+
+func verifyAnalyzerSettings(ctx context.Context, db *sql.DB, m manifest) error {
+	// Stopword comparison uses collation_server, independently of the MATCH
+	// column collation. Older manifests lack this evidence and must be recreated.
+	if m.StopwordCollation == "" {
+		return fmt.Errorf("manifest lacks stopword collation; set up a new corpus")
+	}
+	var ngramSize, minSize, maxSize int
+	var stopwordCollation string
+	if err := db.QueryRowContext(ctx, analyzerSettingsSQL).Scan(&ngramSize, &minSize, &maxSize, &stopwordCollation); err != nil {
+		return err
+	}
+	if ngramSize != m.NgramSize || minSize != m.MinSize || maxSize != m.MaxSize || stopwordCollation != m.StopwordCollation {
+		return fmt.Errorf("analyzer settings differ from corpus setup: token sizes=%d/%d/%d stopword collation=%s; expected %d/%d/%d %s", ngramSize, minSize, maxSize, stopwordCollation, m.NgramSize, m.MinSize, m.MaxSize, m.StopwordCollation)
+	}
+	return nil
 }
 
 type options struct {
@@ -165,7 +185,7 @@ func setup(ctx context.Context, db *sql.DB, o options) error {
 		return err
 	}
 	m := manifest{Schema: fmt.Sprintf("fts_bench_%d", time.Now().UnixNano()), Parser: o.parser, Collation: o.collation, Version: version, State: "creating", Rows: o.rows, Bytes: o.size}
-	if err = db.QueryRowContext(ctx, "SELECT @@global.ngram_token_size,@@global.innodb_ft_min_token_size,@@global.innodb_ft_max_token_size").Scan(&m.NgramSize, &m.MinSize, &m.MaxSize); err != nil {
+	if err = db.QueryRowContext(ctx, analyzerSettingsSQL).Scan(&m.NgramSize, &m.MinSize, &m.MaxSize, &m.StopwordCollation); err != nil {
 		return err
 	}
 	if err = saveManifest(o.file, m, true); err != nil {
@@ -246,6 +266,20 @@ func connect(ctx context.Context, db *sql.DB, m manifest, o options, path string
 			c.Close()
 			return nil, err
 		}
+	}
+	// Pin every worker, including connections reused from the SQL pool. Do not
+	// rely on a GLOBAL default inherited when the connection was first opened.
+	if _, err = c.ExecContext(ctx, "SET SESSION collation_server=?", m.StopwordCollation); err != nil {
+		c.Close()
+		return nil, err
+	}
+	var effective string
+	if err = c.QueryRowContext(ctx, "SELECT @@session.collation_server").Scan(&effective); err != nil || effective != m.StopwordCollation {
+		c.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("stopword collation was not applied: got %s, expected %s", effective, m.StopwordCollation)
 	}
 	return c, nil
 }
@@ -464,12 +498,8 @@ func run(ctx context.Context, db *sql.DB, o options) error {
 	if !schemaName.MatchString(m.Schema) || m.State != "ready" || m.Rows <= 0 {
 		return fmt.Errorf("manifest does not identify a ready owned corpus")
 	}
-	var ngramSize, minSize, maxSize int
-	if err = db.QueryRowContext(ctx, "SELECT @@global.ngram_token_size,@@global.innodb_ft_min_token_size,@@global.innodb_ft_max_token_size").Scan(&ngramSize, &minSize, &maxSize); err != nil {
+	if err = verifyAnalyzerSettings(ctx, db, m); err != nil {
 		return err
-	}
-	if ngramSize != m.NgramSize || minSize != m.MinSize || maxSize != m.MaxSize {
-		return fmt.Errorf("analyzer settings differ from corpus setup")
 	}
 	var ready, localReplicas int
 	if err = db.QueryRowContext(ctx, "SELECT AVAILABLE FROM information_schema.tiflash_replica WHERE TABLE_SCHEMA=? AND TABLE_NAME='docs_native'", m.Schema).Scan(&ready); err != nil {

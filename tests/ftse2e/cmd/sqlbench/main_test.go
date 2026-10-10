@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"regexp"
 	"sort"
 	"testing"
 	"time"
@@ -145,6 +146,62 @@ func TestRequireDefaultMPPSettings(t *testing.T) {
 			t.Fatalf("unexpected settings verdict for %v: %v", settings, err)
 		}
 		conn.Close()
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+	}
+}
+
+func TestVerifyAnalyzerSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name, stored, current string
+		gram                  int
+		wantError             bool
+	}{
+		{"same", "utf8mb4_bin", "utf8mb4_bin", 2, false},
+		{"changed_stopword_collation", "utf8mb4_bin", "utf8mb4_general_ci", 2, true},
+		{"changed_token_size", "utf8mb4_bin", "utf8mb4_bin", 3, true},
+		{"missing_stopword_collation", "", "utf8mb4_bin", 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if tc.stored != "" {
+				mock.ExpectQuery(regexp.QuoteMeta(analyzerSettingsSQL)).WillReturnRows(sqlmock.NewRows([]string{"ngram", "min", "max", "collation"}).AddRow(tc.gram, 3, 84, tc.current))
+			}
+			err = verifyAnalyzerSettings(context.Background(), db, manifest{NgramSize: 2, MinSize: 3, MaxSize: 84, StopwordCollation: tc.stored})
+			if (err != nil) != tc.wantError {
+				t.Fatalf("unexpected analyzer verdict: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestConnectPinsStopwordCollation(t *testing.T) {
+	for _, effective := range []string{"utf8mb4_bin", "utf8mb4_general_ci"} {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, q := range []string{"USE `fts_bench_1`", "SET SESSION tidb_enable_local_match_against=ON", "SET SESSION tidb_isolation_read_engines='tikv'", "SET SESSION innodb_ft_enable_stopword=ON", "SET SESSION tidb_max_tiflash_threads=1"} {
+			mock.ExpectExec(regexp.QuoteMeta(q)).WillReturnResult(sqlmock.NewResult(0, 0))
+		}
+		mock.ExpectExec(regexp.QuoteMeta("SET SESSION collation_server=?")).WithArgs("utf8mb4_bin").WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT @@session.collation_server")).WillReturnRows(sqlmock.NewRows([]string{"collation"}).AddRow(effective))
+		conn, err := connect(context.Background(), db, manifest{Schema: "fts_bench_1", StopwordCollation: "utf8mb4_bin"}, options{stopwords: true, threads: 1}, "local")
+		if (err == nil) != (effective == "utf8mb4_bin") {
+			t.Fatalf("unexpected session verdict for %s: %v", effective, err)
+		}
+		if conn != nil {
+			conn.Close()
+		}
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Fatal(err)
 		}

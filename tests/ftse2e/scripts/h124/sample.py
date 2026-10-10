@@ -5,7 +5,10 @@ import os
 import sys
 import time
 
-client, cluster = map(int, sys.argv[1:])
+client, cluster = map(int, sys.argv[1:3])
+interval = float(sys.argv[3]) if len(sys.argv) == 4 else 1.0
+if not 0.05 <= interval <= 10:
+    raise SystemExit("sample interval must be 0.05..10 seconds")
 hz = os.sysconf("SC_CLK_TCK")
 page = os.sysconf("SC_PAGE_SIZE")
 
@@ -29,6 +32,15 @@ def snapshot():
                 "rss_bytes": int(fields[21]) * page,
             }
             try:
+                # VmHWM is a process-lifetime high-water mark, not a per-query
+                # allocation peak. Keep both counters to distinguish them.
+                with open(entry.path + "/status", encoding="utf-8") as stream:
+                    for line in stream:
+                        if line.startswith("VmHWM:"):
+                            processes[pid]["rss_high_water_bytes"] = int(line.split()[1]) * 1024
+            except (OSError, ValueError, IndexError):
+                pass
+            try:
                 with open(entry.path + "/io", encoding="utf-8") as stream:
                     io = dict(line.split(":", 1) for line in stream)
                 processes[pid]["read_bytes"] = int(io["read_bytes"])
@@ -49,10 +61,12 @@ def snapshot():
 
 initial, _ = snapshot()
 client_start = initial.get(client, {}).get("start_ticks")
+cluster_start = initial.get(cluster, {}).get("start_ticks")
 while True:
     all_processes, owned = snapshot()
     current = all_processes.get(client)
-    if current is None or current["start_ticks"] != client_start:
+    root = all_processes.get(cluster)
+    if current is None or current["start_ticks"] != client_start or root is None or root["start_ticks"] != cluster_start:
         break
-    print(json.dumps({"time": time.time(), "processes": owned}), flush=True)
-    time.sleep(1)
+    print(json.dumps({"time": time.time(), "interval_seconds": interval, "processes": owned}), flush=True)
+    time.sleep(interval)
