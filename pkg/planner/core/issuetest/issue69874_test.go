@@ -19,7 +19,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 // Bug #69874: Query in transaction got stuck.
@@ -36,9 +38,13 @@ func TestIssue69874TxnStuck(t *testing.T) {
 
 	tk1.MustExec("create table t0(c0 float)")
 	tk1.MustExec("create index i0 on t0(c0)")
-	tk1.MustExec("insert ignore into t0(c0) values (-1.79065138e8), (0.9634314192628589), (0.5916481635621268)")
 
 	for attempt := 1; attempt <= 3; attempt++ {
+		// Reset the fixture so every attempt starts from identical data and
+		// Session 2's UPDATE deterministically matches exactly one row.
+		tk1.MustExec("DELETE FROM t0")
+		tk1.MustExec("insert ignore into t0(c0) values (-1.79065138e8), (0.9634314192628589), (0.5916481635621268)")
+
 		// Session 1: READ COMMITTED + optimistic transaction
 		tk1.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
 		tk1.MustExec("BEGIN OPTIMISTIC")
@@ -46,7 +52,8 @@ func TestIssue69874TxnStuck(t *testing.T) {
 		// Session 2: concurrent snapshot txn that updates + commits
 		tk2.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
 		tk2.MustExec("START TRANSACTION WITH CONSISTENT SNAPSHOT")
-		tk2.MustExec("UPDATE t0 SET c0 = 683 WHERE t0.c0 = false")
+		tk2.MustExec("UPDATE t0 SET c0 = 683 WHERE t0.c0 < 0")
+		tk2.MustQuery("SELECT ROW_COUNT()").Check(testkit.Rows("1"))
 		tk2.MustExec("COMMIT")
 
 		// Session 1: this UPDATE + SELECT sequence hangs in the buggy version
@@ -62,8 +69,12 @@ func TestIssue69874TxnStuck(t *testing.T) {
 		select {
 		case <-done:
 			// query completed — bug not triggered this attempt;
-			// COMMIT may legitimately hit an optimistic write conflict — ignore
-			tk1.Exec("COMMIT")
+			// COMMIT is expected to hit an optimistic write conflict because
+			// Session 2 committed a row that this transaction also wrote;
+			// any other non-nil error must fail the test.
+			if err := tk1.ExecToErr("COMMIT"); err != nil {
+				require.True(t, kv.ErrWriteConflict.Equal(err), "unexpected COMMIT error: %v", err)
+			}
 		case <-time.After(10 * time.Second):
 			buf := make([]byte, 1<<20)
 			n := runtime.Stack(buf, true)
