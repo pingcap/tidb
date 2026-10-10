@@ -502,7 +502,20 @@ func TestRecoverTableWithTTL(t *testing.T) {
 	// recover table
 	tk.MustExec("create table t_recover1 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover1")
-	tk.MustExec("recover table t_recover1")
+	tk.MustExec("create table recover_marker(a int)")
+	tk.MustContainErrMsg("recover table t_recover1 1", "in DDL history jobs")
+	tk.MustQuery("show tables like 't_recover1'").Check(testkit.Rows())
+	tk.MustExec("recover table t_recover1 2")
+	// Exercise a limit spanning more than one history iterator batch.
+	tk.MustExec("create table recover_batch(a int)")
+	tk.MustExec("insert into recover_batch values (70985)")
+	tk.MustExec("drop table recover_batch")
+	for i := range ddl.DefNumHistoryJobs {
+		tk.MustExec(fmt.Sprintf("create table recover_marker_%d(a int)", i))
+	}
+	tk.MustContainErrMsg(fmt.Sprintf("recover table recover_batch %d", ddl.DefNumHistoryJobs), "in DDL history jobs")
+	tk.MustExec(fmt.Sprintf("recover table recover_batch %d", ddl.DefNumHistoryJobs+1))
+	tk.MustQuery("select * from recover_batch").Check(testkit.Rows("70985"))
 	tk.MustQuery("show create table t_recover1").Check(testkit.Rows("t_recover1 CREATE TABLE `t_recover1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
 
 	// recover table with job id
