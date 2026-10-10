@@ -223,35 +223,33 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
         .any(|database| database.info.name.lowercase() == "metrics_schema")
     {
         let mut tables = Vec::new();
-        for (index, (name, labels)) in tidb_executor::metric_tables_def::METRIC_TABLES
+        for (index, (name, def)) in tidb_metadef::metric_table_def::METRIC_TABLE_MAP
             .iter()
             .enumerate()
         {
             let table_id = -900_000 - index as i64;
+            // Go `MetricTableDef.genColumnInfos`: time, the labels,
+            // `quantile` only for a quantile metric, then value.
+            let mut names = vec![("time", FieldTypeCode::Datetime)];
+            names.extend(
+                def.labels
+                    .iter()
+                    .map(|label| (*label, FieldTypeCode::VarString)),
+            );
+            if def.quantile > 0.0 {
+                names.push(("quantile", FieldTypeCode::Double));
+            }
+            names.push(("value", FieldTypeCode::Double));
             let mut columns = GoSharedPointerSlice::<ColumnInfo>::default();
-            columns.push_go(ColumnInfo {
-                id: table_id * 10,
-                name: CiString::new("time"),
-                offset: 0,
-                field_type: FieldType::new(FieldTypeCode::Datetime),
-                ..Default::default()
-            });
-            for (label_offset, label) in labels.iter().enumerate() {
+            for (offset, (column, code)) in names.into_iter().enumerate() {
                 columns.push_go(ColumnInfo {
-                    id: table_id * 10 + label_offset as i64 + 1,
-                    name: CiString::new(*label),
-                    offset: label_offset as i64 + 1,
-                    field_type: FieldType::new(FieldTypeCode::VarString),
+                    id: table_id * 10 + offset as i64,
+                    name: CiString::new(column),
+                    offset: offset as i64,
+                    field_type: FieldType::new(code),
                     ..Default::default()
                 });
             }
-            columns.push_go(ColumnInfo {
-                id: table_id * 10 + labels.len() as i64 + 1,
-                name: CiString::new("value"),
-                offset: labels.len() as i64 + 1,
-                field_type: FieldType::new(FieldTypeCode::Double),
-                ..Default::default()
-            });
             tables.push(TableInfo {
                 id: table_id,
                 name: CiString::new(*name),

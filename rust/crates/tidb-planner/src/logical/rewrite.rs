@@ -840,10 +840,12 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 Descend::Stop(LogicalTableDual::predicate_push_down(predicates))
             }
             // Go `LogicalMemTable.PredicatePushDown` (`logical_mem_table.go:62`).
-            LogicalPlan::MemTable(op) => {
-                let (remained, _has_extractor) = op.predicate_push_down(predicates);
-                Descend::Stop(remained)
-            }
+            LogicalPlan::MemTable(op) => Descend::Stop(op.predicate_push_down(
+                self.ctx.eval_context,
+                &own_schema,
+                &names,
+                predicates,
+            )),
             // Go `LogicalShow.PredicatePushDown` (`logical_show.go:118`).
             LogicalPlan::Show(op) => {
                 Descend::Stop(op.predicate_push_down(&own_schema, &names, predicates))
@@ -1214,8 +1216,19 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
             }
             // Go `LogicalMemTable.PruneColumns` (`logical_mem_table.go:80`).
             LogicalPlan::MemTable(op) => {
-                op.prune_columns(&mut own_schema, &parent_used_cols);
+                let pruned = op.prune_columns(&mut own_schema, &parent_used_cols);
                 set_own_schema(node, own_schema);
+                // Go deletes the output name with each pruned column, which
+                // keeps the names aligned for the extractor's `findColumn`.
+                if !pruned.is_empty() {
+                    let mut names = node.base().base.output_names().to_vec();
+                    for position in pruned {
+                        if position < names.len() {
+                            names.remove(position);
+                        }
+                    }
+                    node.base_mut().base.set_output_names(names);
+                }
                 Descend::Stop(())
             }
             // Go `LogicalTableDual.PruneColumns` (`logical_table_dual.go:80`).
@@ -1553,17 +1566,12 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 }
             }
             // Go `LogicalMemTable.PushDownTopN` (`logical_mem_table.go:114`):
-            // the TopN is ALWAYS re-attached; only hints travel inward.
-            //
-            // NARROWING: the hints the local half computes are handed to the
-            // mem-table's predicate extractor in Go
-            // (`LogicalMemTable.Extractor.SetLimit` / `SetDesc`), and this
-            // crate's `LogicalMemTable` does not carry a live extractor. The
-            // hint is computed and DISCARDED, which costs a coprocessor-side
-            // row limit and never changes the result.
+            // the TopN is ALWAYS re-attached; only hints travel inward, to the
+            // extractor.
             LogicalPlan::MemTable(op) => {
                 if let Some(topn) = &topn {
-                    let _hints = op.push_down_topn(topn);
+                    let hints = op.push_down_topn(topn);
+                    op.apply_topn_hints(hints);
                 }
                 self.stash
                     .push(topn.map_or(PendingTopN::Nothing, PendingTopN::Reattach));

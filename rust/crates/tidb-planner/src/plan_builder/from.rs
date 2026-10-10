@@ -1599,12 +1599,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// "We can use the `TableInfo.Columns` directly because the memory table
     /// has a stable schema and there is no online DDL on the memory table."
-    ///
-    /// boundary: the `Extractor` switch (`:5416-5470`) picks one of ~20
-    /// `MemTablePredicateExtractor`s by `INFORMATION_SCHEMA` table name. None
-    /// of them is transcreated, and [`LogicalMemTable`] models the presence of
-    /// one as [`LogicalMemTable::has_extractor`]; the SELECT spine reads
-    /// nothing else off it.
+    /// The `Extractor` switch is
+    /// [`crate::memtable_predicate_extractor::MemTablePredicateExtractor::for_table`].
     pub fn build_mem_table(
         &mut self,
         db_name: &str,
@@ -1666,6 +1662,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         );
         mem_table.table_columns.clone_from(&columns);
         mem_table.columns = columns;
+        // Some memory tables can receive some predicates.
+        mem_table.extractor =
+            crate::memtable_predicate_extractor::MemTablePredicateExtractor::for_table(
+                db_name,
+                &table.table_name,
+            );
         mem_table
             .base
             .base

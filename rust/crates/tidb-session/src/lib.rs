@@ -1592,7 +1592,7 @@ impl Session {
     /// failures as warnings while retaining successful nodes.
     fn cluster_config_table_rows(
         &mut self,
-        filters: &[tidb_planner::cluster_table_extractor::ClusterTableFilter],
+        filters: &[tidb_planner::memtable_predicate_extractor::ClusterTableFilter],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         if filters.iter().all(|filter| filter.skip_request()) {
             return Ok(Vec::new());
@@ -1625,6 +1625,39 @@ impl Session {
             self.append_warning(WarningLevel::Warning, 1105, warning);
         }
         Ok(rows)
+    }
+
+    /// Go `clusterLogRetriever.retrieve` and `initialize`: a contradiction
+    /// reads nothing; otherwise PROCESS is required, and the search needs a
+    /// start time, an end time, and at least one pattern, level, instance or
+    /// node type. The log search itself (diagnostics `SearchLog` against each
+    /// server) is not ported, so a search Go would send is refused.
+    fn cluster_log_table_rows(
+        &mut self,
+        extractors: &[tidb_planner::memtable_predicate_extractor::ClusterLogTableExtractor],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        let Some(extractor) = extractors.iter().find(|extractor| !extractor.skip_request) else {
+            return Ok(Vec::new());
+        };
+        if !self.has_scoped_privilege("", "", privilege::GlobalPriv::Process) {
+            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+        }
+        let refusal = if extractor.start_time == 0 {
+            "denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`"
+        } else if extractor.end_time == 0 {
+            "denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`"
+        } else if extractor.patterns.is_empty()
+            && extractor.log_levels.is_empty()
+            && extractor.instances.is_empty()
+            && extractor.node_types.is_empty()
+        {
+            "denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)"
+        } else {
+            "CLUSTER_LOG search is not supported"
+        };
+        Err(DriverError::Exec(tidb_executor::ExecError::Eval(
+            tidb_executor::EvalError::Unsupported(refusal),
+        )))
     }
 
     /// Go's seven-source GetClusterServerInfo in dataForTiDBClusterInfo column order.
@@ -2912,6 +2945,8 @@ mod tests_json;
 mod tests_mem_quota;
 #[cfg(test)]
 mod tests_mdl_related;
+#[cfg(test)]
+mod tests_memtable_extractor;
 #[cfg(test)]
 mod tests_merge_join_mixed_key_types;
 #[cfg(test)]

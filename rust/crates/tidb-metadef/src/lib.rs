@@ -17,6 +17,7 @@
 
 pub mod bootstrap_tables;
 pub mod db;
+pub mod metric_table_def;
 pub mod system;
 pub mod system_tables_def;
 

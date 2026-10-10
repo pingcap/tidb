@@ -25,16 +25,13 @@
 //!
 //! # Narrowings, by name
 //!
-//! * `Extractor base.MemTablePredicateExtractor`. The extractor interface, its
-//!   per-table implementations in `pkg/planner/core/memtable_predicate_extractor.go`,
-//!   and the `skipExtractor` failpoint are not transcreated, so
-//!   `PredicatePushDown` cannot run `Extractor.Extract`; see
-//!   [`LogicalMemTable::predicate_push_down`], which reports whether the
-//!   extractor would have run instead of guessing what it would have kept.
+//! * `Extractor base.MemTablePredicateExtractor` is
+//!   [`crate::memtable_predicate_extractor::MemTablePredicateExtractor`]; the
+//!   `skipExtractor` failpoint is not transcreated.
 //! * `base.MemTableRowLimitHintSetter` / `base.MemTableDescHintSetter` are the
 //!   two OPTIONAL halves of that interface. `PushDownTopN`'s whole decision is
-//!   which hint to set, so [`MemTableTopNHints`] carries the decision and the
-//!   caller applies it to whatever extractor it holds.
+//!   which hint to set, so [`MemTableTopNHints`] carries the decision and
+//!   [`LogicalMemTable::apply_topn_hints`] hands it to the extractor.
 //! * `TableInfo *model.TableInfo` / `Columns []*model.ColumnInfo`.
 //!   `pkg/meta/model` is transcreated in `tidb-model`, which this crate does not
 //!   depend on. The three facts these bodies read off it are kept directly: the
@@ -52,8 +49,11 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
+use tidb_datatype::FieldName;
+
 use crate::logical::topn::LogicalTopN;
 use crate::logical::{schema_producer, BaseLogicalPlan};
+use crate::memtable_predicate_extractor::MemTablePredicateExtractor;
 use crate::stats_info::StatsInfo;
 
 /// Go `variable.SlowLogTimeStr`.
@@ -100,10 +100,6 @@ pub const PRUNABLE_MEM_TABLES: &[&str] = &[
     "CLUSTER_DEADLOCKS",
     // `infoschema.TableTables`
     "TABLES",
-    // `infoschema.TablePartitions`
-    "PARTITIONS",
-    // `infoschema.TableTiFlashReplica`
-    "TIFLASH_REPLICA",
 ];
 
 /// What the ported `LogicalMemTable` bodies read off a `*model.ColumnInfo`.
@@ -153,9 +149,8 @@ pub struct LogicalMemTable {
     pub columns: Vec<MemTableColumn>,
     /// Go `QueryTimeRange`.
     pub query_time_range: QueryTimeRange,
-    /// Whether the operator carries a `base.MemTablePredicateExtractor`; see
-    /// this module's header.
-    pub has_extractor: bool,
+    /// Go `Extractor`: the predicates this table can claim.
+    pub extractor: Option<MemTablePredicateExtractor>,
 }
 
 impl LogicalMemTable {
@@ -179,17 +174,26 @@ impl LogicalMemTable {
 
     /// Go `LogicalMemTable.PredicatePushDown(predicates)`
     /// (`logical_mem_table.go:68`): the predicates are handed to the table's own
-    /// EXTRACTOR, and whatever it does not claim comes back.
-    ///
-    /// BOUNDARY: `base.MemTablePredicateExtractor.Extract` is not transcreated,
-    /// so this cannot run the extraction. It returns the predicates unchanged —
-    /// which is Go's answer whenever there is no extractor, and the SAFE half
-    /// otherwise, since an unclaimed predicate is still evaluated above — and
-    /// reports whether an extractor would have run, so a caller cannot mistake
-    /// the two cases.
-    #[must_use]
-    pub fn predicate_push_down(&self, predicates: Vec<Expression>) -> (Vec<Expression>, bool) {
-        (predicates, self.has_extractor)
+    /// extractor, and whatever it does not claim comes back.
+    pub fn predicate_push_down(
+        &mut self,
+        ctx: &dyn tidb_expr::Columns,
+        schema: &Schema,
+        names: &[FieldName],
+        predicates: Vec<Expression>,
+    ) -> Vec<Expression> {
+        match &mut self.extractor {
+            Some(extractor) => extractor.extract(ctx, schema, names, predicates),
+            None => predicates,
+        }
+    }
+
+    /// Hands [`Self::push_down_topn`]'s hints to the extractor, which keeps
+    /// them only when it implements Go's hint setters.
+    pub fn apply_topn_hints(&mut self, hints: MemTableTopNHints) {
+        if let Some(extractor) = &mut self.extractor {
+            extractor.apply_topn_hints(hints);
+        }
     }
 
     /// Go `LogicalMemTable.PruneColumns(parentUsedCols)`'s table test
@@ -203,7 +207,8 @@ impl LogicalMemTable {
 
     /// The rest of `LogicalMemTable.PruneColumns` (`logical_mem_table.go:98`):
     /// drop every unused column from the schema and from [`Self::columns`] in
-    /// lockstep, walking backwards.
+    /// lockstep, walking backwards. Go deletes the output name at each pruned
+    /// position too; the caller owns the names.
     ///
     /// Go's extra guard `p.Schema().Len() > 1` keeps the LAST column whatever
     /// happens: a mem-table reader with a zero-column schema has nothing to
@@ -333,7 +338,7 @@ impl LogicalMemTable {
             table_columns: self.table_columns.clone(),
             columns: self.columns.clone(),
             query_time_range: self.query_time_range.clone(),
-            has_extractor: self.has_extractor,
+            extractor: self.extractor.clone(),
         }
     }
 }

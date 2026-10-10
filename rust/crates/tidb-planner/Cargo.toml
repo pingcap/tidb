@@ -12,7 +12,9 @@ autotests = false
 workspace = true
 
 [dependencies]
+chrono.workspace = true
 prometheus = { version = "0.14", default-features = false }
+regex.workspace = true
 tidb-hack = { path = "../tidb-hack" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
@@ -24,6 +26,7 @@ tidb-expr = { path = "../tidb-expr" }
 tidb-funcdep = { path = "../tidb-funcdep" }
 tidb-hash = { path = "../tidb-hash" }
 tidb-hint = { path = "../tidb-hint" }
+tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }

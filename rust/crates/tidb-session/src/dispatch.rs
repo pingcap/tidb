@@ -258,7 +258,7 @@ fn information_schema_tables_in_join(
 
 /// Continues [`information_schema_tables_in_join`] across a derived query's
 /// SELECT or nested set-operation terms.
-fn information_schema_tables_in_query(
+pub(crate) fn information_schema_tables_in_query(
     query: &tidb_ast::QueryStmt,
     current_db: &str,
     out: &mut Vec<String>,
@@ -640,10 +640,11 @@ impl Session {
             needs_storage_stats,
             needs_column_lengths,
             &Self::information_schema_read_columns(&physical),
-            &tidb_planner::cluster_table_extractor::cluster_table_filters(
+            &tidb_planner::memtable_predicate_extractor::cluster_table_filters(
                 &physical,
                 "CLUSTER_CONFIG",
             ),
+            &tidb_planner::memtable_predicate_extractor::cluster_log_extractors(&physical),
         )?;
         tidb_executor::driver::open_query_meta_stmt_with_physical(
             query,
@@ -654,7 +655,7 @@ impl Session {
         )
     }
 
-    fn information_schema_planning_catalog(
+    pub(crate) fn information_schema_planning_catalog(
         &mut self,
         table_names: &[String],
         written_db: Option<String>,
@@ -701,7 +702,8 @@ impl Session {
         needs_storage_stats: bool,
         needs_column_lengths: bool,
         required_columns: &std::collections::HashMap<String, std::collections::HashSet<String>>,
-        cluster_config_filters: &[tidb_planner::cluster_table_extractor::ClusterTableFilter],
+        cluster_config_filters: &[tidb_planner::memtable_predicate_extractor::ClusterTableFilter],
+        cluster_log_extractors: &[tidb_planner::memtable_predicate_extractor::ClusterLogTableExtractor],
     ) -> Result<Catalog, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
@@ -804,13 +806,7 @@ impl Session {
                     tidb_executor::EvalError::Unsupported("pd http client unavailable"),
                 )));
             } else if table_name.eq_ignore_ascii_case("CLUSTER_LOG") {
-                // go `ClusterLogRetriever`: the log scan requires an explicit
-                // start time and errors 1105 without one (oracle-captured).
-                return Err(DriverError::Exec(tidb_executor::ExecError::Eval(
-                    tidb_executor::EvalError::Unsupported(
-                        "denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`",
-                    ),
-                )));
+                self.cluster_log_table_rows(cluster_log_extractors)?
             } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
                 self.user_privileges_table_rows()
             } else if table_name.eq_ignore_ascii_case("USER_ATTRIBUTES") {

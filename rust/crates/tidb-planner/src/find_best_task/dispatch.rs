@@ -1544,6 +1544,7 @@ fn find_best_task_4_logical_mem_table(
         table_name: mem_table.table_name.clone(),
         columns: mem_table.columns.clone(),
         query_time_range: mem_table.query_time_range.clone(),
+        extractor: mem_table.extractor.clone(),
     });
     let mut root = crate::task::RootTask::default();
     root.set_plan(physical);

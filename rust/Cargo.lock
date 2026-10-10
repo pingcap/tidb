@@ -3854,7 +3854,9 @@ dependencies = [
 name = "tidb-planner"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "prometheus 0.14.0",
+ "regex",
  "tidb-ast",
  "tidb-chunk",
  "tidb-codec",
@@ -3865,6 +3867,7 @@ dependencies = [
  "tidb-hack",
  "tidb-hash",
  "tidb-hint",
+ "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",

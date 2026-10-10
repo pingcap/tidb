@@ -625,16 +625,22 @@ impl Default for Catalog {
         // storage is absent) -- mirrored here as empty MemTables of the
         // same shape (oracle g-is).
         let metric_tables: std::collections::HashMap<String, std::sync::Arc<TableEntry>> =
-            crate::metric_tables_def::METRIC_TABLES
+            tidb_metadef::metric_table_def::METRIC_TABLE_MAP
                 .iter()
-                .map(|(name, labels)| {
+                .map(|(name, def)| {
+                    // Go `MetricTableDef.genColumnInfos`: time, the labels,
+                    // `quantile` only for a quantile metric, then value.
                     let mut columns =
                         vec![("time".to_owned(), FieldType::new(FieldTypeCode::Datetime))];
-                    for label in *labels {
+                    for label in def.labels {
                         columns.push((
                             (*label).to_owned(),
                             FieldType::new(FieldTypeCode::VarString),
                         ));
+                    }
+                    if def.quantile > 0.0 {
+                        columns
+                            .push(("quantile".to_owned(), FieldType::new(FieldTypeCode::Double)));
                     }
                     columns.push(("value".to_owned(), FieldType::new(FieldTypeCode::Double)));
                     (
@@ -1721,10 +1727,21 @@ impl Catalog {
                         tables.insert(key(), source_table);
                     }
                     TableEntry::Mem(table) => {
+                        // Go's memory-table `TableInfo.Name.O` is the
+                        // table's own spelling, which the scan's access
+                        // object and output names print.
+                        let table_name = if database.name.eq_ignore_ascii_case(
+                            crate::driver::infoschema_meta::INFORMATION_SCHEMA,
+                        ) {
+                            crate::driver::infoschema_meta::canonical_table_name(entry_name)
+                                .map_or_else(|| entry_name.clone(), str::to_owned)
+                        } else {
+                            entry_name.clone()
+                        };
                         let mut source_table = SourceTable {
                             is_memory_table: true,
                             table_id: synthetic_table_id,
-                            table_name: entry_name.clone(),
+                            table_name,
                             db_name: database.name.clone(),
                             physical_table_id: synthetic_table_id,
                             columns: table

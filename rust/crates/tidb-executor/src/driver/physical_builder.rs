@@ -1092,9 +1092,22 @@ fn build_mem_table(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // The extractor's claimed predicates left the Selection above this scan;
+    // Go's reader requests only what they keep, so the whole materialized
+    // table is filtered by them here.
+    let column_names: Vec<&str> = table
+        .columns
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
     let rows = table
         .rows
         .iter()
+        .filter(|row| {
+            scan.extractor
+                .as_ref()
+                .is_none_or(|extractor| extractor.keeps_row(&column_names, row))
+        })
         .map(|row| {
             offsets
                 .iter()

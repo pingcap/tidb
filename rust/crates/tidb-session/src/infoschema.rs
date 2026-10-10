@@ -2015,8 +2015,6 @@ pub const PERFORMANCE_SCHEMA_TABLES: &[(&str, i64)] = &[
 
 pub const SYS_TABLES: &[(&str, i64)] = &[("schema_unused_indexes", 122)];
 
-include!("metrics_tables_rows.rs");
-
 fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     // go's TABLES output lists the USER schemas first (the ci-alphabetical
     // order), then information_schema's own tables, then the
@@ -2024,6 +2022,11 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
     // not an information_schema row.
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        // information_schema's own tables are listed once, as the SYSTEM
+        // VIEW rows below; their catalog entries are not base tables.
+        if schema.eq_ignore_ascii_case(INFORMATION_SCHEMA) {
+            continue;
+        }
         // go seeds metrics_schema/performance_schema/sys with SYSTEM VIEW
         // rows (InnoDB/Compact, every storage cell zero, ids from its
         // bootstrap block) -- the seeded placeholder tables render the same
@@ -2893,19 +2896,18 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
     entries.into_iter().map(|(_, _, row)| row).collect()
 }
 
+/// Go `memtableRetriever.setDataForMetricTables`: one row per metric table,
+/// sorted by name, with the labels comma-joined.
 fn metrics_tables_rows() -> Vec<Vec<Datum>> {
-    METRICS_TABLES_ROWS
+    tidb_metadef::metric_table_def::METRIC_TABLE_MAP
         .iter()
-        .map(|cells| {
-            let quantile = cells[3].parse::<f64>().ok();
+        .map(|(name, def)| {
             vec![
-                tidb_datatype::Datum::Bytes(cells[0].as_bytes().to_vec()),
-                tidb_datatype::Datum::Bytes(cells[1].as_bytes().to_vec()),
-                tidb_datatype::Datum::Bytes(cells[2].as_bytes().to_vec()),
-                quantile.map_or(tidb_datatype::Datum::Null, |value| {
-                    tidb_datatype::Datum::Real(value)
-                }),
-                tidb_datatype::Datum::Bytes(cells[4].as_bytes().to_vec()),
+                Datum::Bytes(name.as_bytes().to_vec()),
+                Datum::Bytes(def.prom_ql.as_bytes().to_vec()),
+                Datum::Bytes(def.labels.join(",").into_bytes()),
+                Datum::Real(def.quantile),
+                Datum::Bytes(def.comment.as_bytes().to_vec()),
             ]
         })
         .collect()

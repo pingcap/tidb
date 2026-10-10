@@ -1178,6 +1178,51 @@ fn point_handle_text_unsigned(range: &tidb_planner::ranger::types::Range) -> Str
     }
 }
 
+/// The session facts a memory-table extractor's `ExplainInfo` reads.
+struct MemTableExplainSession<'a> {
+    eval_ctx: &'a dyn tidb_expr::Columns,
+}
+
+impl MemTableExplainSession<'_> {
+    fn sysvar_int(&self, name: &str, default: i64) -> i64 {
+        self.eval_ctx
+            .sysvar(None, name)
+            .and_then(|value| value.sql_string().ok())
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    }
+}
+
+impl tidb_planner::memtable_predicate_extractor::MemTableExplainEnv for MemTableExplainSession<'_> {
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        self.eval_ctx.time_zone()
+    }
+
+    fn slow_query_file(&self) -> String {
+        // Go's `SessionVars.SlowQueryFile` starts as the configured
+        // `log.slow-query-file`, `tidb-slow.log` by default.
+        self.eval_ctx
+            .sysvar(None, tidb_vardef::tidb_vars::TIDB_SLOW_QUERY_FILE)
+            .and_then(|value| value.sql_string().ok())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "tidb-slow.log".to_owned())
+    }
+
+    fn metric_schema_step(&self) -> i64 {
+        self.sysvar_int(
+            tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_STEP,
+            tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_STEP,
+        )
+    }
+
+    fn metric_schema_range_duration(&self) -> i64 {
+        self.sysvar_int(
+            tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_RANGE_DURATION,
+            tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_RANGE_DURATION,
+        )
+    }
+}
+
 fn physical_operator_info(
     eval_ctx: &dyn tidb_expr::Columns,
     statement_context: &crate::StmtContext,
@@ -1401,7 +1446,9 @@ fn physical_operator_info(
         }
         PhysicalPlan::TableDual(dual) => dual.explain_info(),
         PhysicalPlan::TableSample(_) => String::new(),
-        PhysicalPlan::MemTable(_) => String::new(),
+        PhysicalPlan::MemTable(scan) => scan.extractor.as_ref().map_or_else(String::new, |e| {
+            e.explain_info(&scan.table_name, &MemTableExplainSession { eval_ctx })
+        }),
         PhysicalPlan::CTE(cte) => cte.operator_info(),
         PhysicalPlan::CTETable(table) => table.explain_info(),
         PhysicalPlan::Lock(lock) => lock.explain_info(),

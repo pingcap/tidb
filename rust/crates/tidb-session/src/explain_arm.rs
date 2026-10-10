@@ -168,15 +168,40 @@ impl Session {
                 return Ok(Some(output));
             }
         }
-        let (columns, rows) = match target {
-            Stmt::Query(query) => self.with_catalog_mut(|catalog| match &**query {
+        // A query over information_schema plans its virtual tables as memory
+        // tables (Go `buildDataSource`'s `LogicalMemTable`): plan against the
+        // same schema-only overlay the query itself plans against.
+        let mut memory_tables = Vec::new();
+        let mut written_db = None;
+        if let Stmt::Query(query) = target {
+            crate::dispatch::information_schema_tables_in_query(
+                query,
+                &current_db,
+                &mut memory_tables,
+                &mut written_db,
+            );
+        }
+        let planning_catalog = if memory_tables.is_empty() {
+            None
+        } else {
+            memory_tables.sort_unstable_by_key(|name| name.to_ascii_lowercase());
+            memory_tables.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+            Some(self.information_schema_planning_catalog(&memory_tables, written_db)?)
+        };
+        let explain_query =
+            |query: &tidb_ast::QueryStmt, catalog: &tidb_executor::Catalog| match query {
                 tidb_ast::QueryStmt::Select(select) => {
                     tidb_executor::explain_select_stmt(select, catalog, &current_db, &ctx, format)
                 }
                 tidb_ast::QueryStmt::SetOpr(set_opr) => {
                     tidb_executor::explain_set_opr_stmt(set_opr, catalog, &current_db, &ctx, format)
                 }
-            })?,
+            };
+        let (columns, rows) = match target {
+            Stmt::Query(query) => match &planning_catalog {
+                Some(catalog) => explain_query(query, catalog)?,
+                None => self.with_catalog_mut(|catalog| explain_query(query, catalog))?,
+            },
             // A write's plan is the same plan recorder run over the read path
             // the driver's write executes; nothing is executed -- no row is
             // read or written -- which is also what Go does (`EXPLAIN

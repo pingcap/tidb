@@ -1202,6 +1202,9 @@ pub struct PhysicalMemTable {
     pub columns: Vec<crate::logical::mem_table::MemTableColumn>,
     /// Go `QueryTimeRange`.
     pub query_time_range: crate::logical::mem_table::QueryTimeRange,
+    /// Go `Extractor`, carried from the logical scan after it claimed its
+    /// predicates.
+    pub extractor: Option<crate::memtable_predicate_extractor::MemTablePredicateExtractor>,
 }
 
 impl PhysicalTableScan {
@@ -4536,6 +4539,7 @@ impl PhysicalPlan {
                 table_name: op.table_name.clone(),
                 columns: op.columns.clone(),
                 query_time_range: op.query_time_range.clone(),
+                extractor: op.extractor.clone(),
             }),
             Self::TableDual(op) => Self::TableDual(PhysicalTableDual {
                 base: base_of(&op.base),
