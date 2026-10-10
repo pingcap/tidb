@@ -582,7 +582,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 			{Expr: args[0], Desc: true},
 		}
 	}
-	partialDesc, finalDesc := desc.Split([]int{0, 1})
+	partialDesc, finalDesc := desc.Split(ctx, []int{0, 1})
 
 	// build partial func for partial phase.
 	partialFunc := aggfuncs.Build(ctx, partialDesc, 0)
@@ -708,7 +708,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx *mock.Context, p multiArg
 		}
 	}
 	ctor := collate.GetCollator(args[0].GetType(ctx).GetCollate())
-	partialDesc, finalDesc := desc.Split([]int{0, 1})
+	partialDesc, finalDesc := desc.Split(ctx, []int{0, 1})
 
 	// build partial func for partial phase.
 	partialFunc := aggfuncs.Build(ctx, partialDesc, 0)
@@ -855,7 +855,7 @@ func testParallelDistinctAggFunc(t *testing.T, p parallelDistinctAggTestCase, mu
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, true)
 	require.NoError(t, err)
 
-	partialDesc, finalDesc := desc.Split(ordinal)
+	partialDesc, finalDesc := desc.Split(ctx, ordinal)
 	partialFunc := aggfuncs.Build(ctx, partialDesc, 0)
 	finalFunc := aggfuncs.Build(ctx, finalDesc, 0)
 
