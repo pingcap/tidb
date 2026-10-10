@@ -553,7 +553,7 @@ func TestBindingStillWorksAfterReloadingBrokenStorageSQLDigest(t *testing.T) {
 }
 
 func TestDropBindBySQLDigest(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -599,21 +599,17 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		{"select t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)"},
 	}
 
-	h := dom.BindingHandle()
 	// global scope
 	for _, c := range cases {
 		utilCleanBindingEnv(tk)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
-		h.LoadFromStorageToCache(true, false)
 		res := tk.MustQuery(`show global bindings`).Rows()
 
 		require.Equalf(t, 1, len(res), "sql: %s", sql)
 		require.Equalf(t, 11, len(res[0]), "sql: %s", sql)
 		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		require.NoError(t, h.GCBinding(), "sql: %s", sql)
-		h.LoadFromStorageToCache(true, false)
 		tk.MustQuery("show global bindings").Check(testkit.Rows())
 	}
 
@@ -628,7 +624,6 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		require.Equalf(t, 11, len(res[0]), "sql: %s", sql)
 		drop := fmt.Sprintf("drop binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		require.NoError(t, h.GCBinding(), "sql: %s", sql)
 		tk.MustQuery("show bindings").Check(testkit.Rows())
 	}
 
