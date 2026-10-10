@@ -21,7 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -29,6 +31,67 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
+
+type testIngestDiskRoot struct {
+	count atomic.Int64
+}
+
+func (d *testIngestDiskRoot) Add(_ int64, _ ingest.ResourceTracker) {
+	d.count.Add(1)
+	ingest.TrackerCountForTest.Add(1)
+}
+
+func (d *testIngestDiskRoot) Remove(_ int64) {
+	d.count.Add(-1)
+	ingest.TrackerCountForTest.Add(-1)
+}
+
+func (d *testIngestDiskRoot) Count() int {
+	return int(d.count.Load())
+}
+
+func (*testIngestDiskRoot) UpdateUsage() {}
+
+func (*testIngestDiskRoot) ShouldImport() bool {
+	return false
+}
+
+func (*testIngestDiskRoot) UsageInfo() string {
+	return "test disk root"
+}
+
+func (*testIngestDiskRoot) PreCheckUsage() error {
+	return nil
+}
+
+func (*testIngestDiskRoot) StartupCheck() error {
+	return nil
+}
+
+func useTestIngestDiskRoot(t *testing.T) {
+	oldDiskRoot := ingest.LitDiskRoot
+	diskRoot := &testIngestDiskRoot{}
+	ingest.LitDiskRoot = diskRoot
+	t.Cleanup(func() {
+		require.Zero(t, diskRoot.Count())
+		ingest.LitDiskRoot = oldDiskRoot
+	})
+}
+
+func useMergeTempIndexMode(t *testing.T, tk *testkit.TestKit) {
+	if kerneltype.IsNextGen() {
+		return
+	}
+	rows := tk.MustQuery("select @@global.tidb_ddl_enable_fast_reorg, @@global.tidb_enable_dist_task").Rows()
+	enableFastReorg := fmt.Sprintf("%v", rows[0][0])
+	enableDistTask := fmt.Sprintf("%v", rows[0][1])
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_enable_fast_reorg = %s", enableFastReorg))
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %s", enableDistTask))
+	})
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
+	tk.MustExec("set @@global.tidb_enable_dist_task = on")
+}
 
 func TestMergeTempIndexBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -169,7 +232,9 @@ func TestMergeTempIndexBasic(t *testing.T) {
 
 func TestMergeTempIndexStuck(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
+	useTestIngestDiskRoot(t)
 	tk := testkit.NewTestKit(t, store)
+	useMergeTempIndexMode(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, a bigint)")
