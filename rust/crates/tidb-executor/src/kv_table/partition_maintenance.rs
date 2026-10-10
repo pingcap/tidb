@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::*;
-use crate::partition_routing::{PartitionDef, PartitionKind};
+use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
 
 impl KvTable {
     fn clear_partition_data(
@@ -32,21 +32,55 @@ impl KvTable {
         }
 
         for physical_id in physical_ids.iter().copied() {
-            let (low, high) = get_table_handle_key_range(physical_id);
-            let mut upper = high;
-            upper.push(0);
+            self.delete_physical_records(physical_id)?;
+        }
+        Ok(())
+    }
+
+    /// Deletes every record key stored under `physical_id`.
+    fn delete_physical_records(&mut self, physical_id: i64) -> Result<(), KvTableError> {
+        let (low, high) = get_table_handle_key_range(physical_id);
+        let mut upper = high;
+        upper.push(0);
+        let mut iterator = self
+            .store
+            .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
+            .map_err(KvTableError::from)?;
+        let mut keys = Vec::new();
+        while iterator.valid() {
+            keys.push(iterator.key().clone());
+            iterator.next().map_err(KvTableError::from)?;
+        }
+        iterator.close();
+        for key in keys {
+            self.store.delete(key).map_err(KvTableError::from)?;
+        }
+        Ok(())
+    }
+
+    /// Deletes every entry `index` owns: under the table id for a global
+    /// index, under each physical table otherwise.
+    fn delete_index_key_ranges(&mut self, index: &KvIndex) -> Result<(), KvTableError> {
+        let physical_ids = if index.global {
+            vec![self.table_id]
+        } else {
+            self.partition
+                .as_ref()
+                .map_or_else(|| vec![self.table_id], |partition| partition.physical_ids())
+        };
+        for physical_id in physical_ids {
+            let (low, high) = crate::admin_check::index_key_bounds(physical_id, index.id);
             let mut iterator = self
                 .store
-                .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
-                .map_err(KvTableError::from)?;
+                .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))?;
             let mut keys = Vec::new();
             while iterator.valid() {
                 keys.push(iterator.key().clone());
-                iterator.next().map_err(KvTableError::from)?;
+                iterator.next()?;
             }
             iterator.close();
             for key in keys {
-                self.store.delete(key).map_err(KvTableError::from)?;
+                self.store.delete(key)?;
             }
         }
         Ok(())
@@ -284,7 +318,193 @@ impl KvTable {
     }
 }
 
+/// What Go `onReorganizePartition` leaves behind once its job is done,
+/// applied in one synchronous step: REORGANIZE PARTITION, `ALTER TABLE ...
+/// PARTITION BY` and REMOVE PARTITIONING.
+pub(crate) struct PartitionReorg {
+    /// The physical tables whose rows move, in the order Go backfills them:
+    /// the dropped definitions in definition order, or the table itself when
+    /// it was not partitioned.
+    pub source_ids: Vec<i64>,
+    /// The partitioning afterwards; `None` once partitioning is removed.
+    pub partition: Option<PartitionSpec>,
+    /// The partitions a moved row may land in, when narrower than
+    /// [`Self::partition`]: REORGANIZE PARTITION routes through Go's
+    /// `GetReorganizedPartitionedTable`, which holds only the new
+    /// definitions, so a row no new partition accepts fails the statement
+    /// even when an untouched DEFAULT partition would take it.
+    pub routing: Option<PartitionSpec>,
+    /// Go `PartitionInfo.NewTableID`, which PARTITION BY and REMOVE
+    /// PARTITIONING give the table at the end of the job.
+    pub new_table_id: Option<i64>,
+    /// The indexes Go recreates under new ids: every one that is global
+    /// before or after the change.
+    pub recreated_indexes: Vec<RecreatedIndex>,
+}
+
+/// One index `onReorganizePartition` duplicates (`AllocateIndexID`) and
+/// whose old copy it drops at the end.
+pub(crate) struct RecreatedIndex {
+    pub old_id: i64,
+    pub new_id: i64,
+    pub global: bool,
+    /// Go `setGlobalIndexVersion` for the duplicate.
+    pub global_index_version: u8,
+}
+
 impl KvTable {
+    /// Applies a partition reorganization.
+    ///
+    /// Go copies each source row's raw record into the partition the new
+    /// definitions route it to (`reorgPartitionWorker.BackfillData`), then
+    /// builds the new partitions' indexes and the recreated global indexes,
+    /// and finally drops the source partitions and the replaced indexes.
+    /// Check constraints are not re-evaluated, since the rows are copied, not
+    /// inserted. A heap table can hold the same `_tidb_rowid` in two
+    /// partitions after EXCHANGE PARTITION: when a row lands on a record key
+    /// another moved row already holds, Go skips it if the stored bytes are
+    /// the same and otherwise gives it a new `_tidb_rowid`.
+    pub(crate) fn reorganize_partitions(
+        &mut self,
+        reorg: PartitionReorg,
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
+        let decode = RowDecodeContext::for_write(ctx);
+        let zone = ctx.session_zone();
+        let mut moved = Vec::new();
+        for physical_id in &reorg.source_ids {
+            moved.extend(self.rows_of_physical_table(*physical_id, &decode)?);
+        }
+        // Every moved row is routed before anything changes, so a row no
+        // target accepts fails the statement and leaves the table as it was.
+        let routing = reorg.routing.clone().or_else(|| reorg.partition.clone());
+        let targets = match routing {
+            Some(routing) => {
+                let current = self.partition.replace(Box::new(routing));
+                let routed = moved
+                    .iter()
+                    .map(|(_, row)| self.record_physical_id(row, ctx))
+                    .collect::<Result<Vec<_>, _>>();
+                self.partition = current;
+                routed?
+            }
+            None => vec![reorg.new_table_id.unwrap_or(self.table_id); moved.len()],
+        };
+        // The partitions that survive unchanged keep their rows, which the
+        // recreated indexes must still cover.
+        let mut untouched = Vec::new();
+        if !reorg.recreated_indexes.is_empty() {
+            let surviving = reorg.partition.as_ref().map_or_else(Vec::new, |partition| {
+                partition
+                    .definitions
+                    .iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>()
+            });
+            for physical_id in self.record_physical_ids() {
+                if surviving.contains(&physical_id) && !reorg.source_ids.contains(&physical_id) {
+                    untouched.extend(
+                        self.rows_of_physical_table(physical_id, &decode)?
+                            .into_iter()
+                            .map(|(handle, row)| (physical_id, handle, row)),
+                    );
+                }
+            }
+        }
+        // The replaced indexes' entries go first, under the ids and the table
+        // id they were written with.
+        for recreated in &reorg.recreated_indexes {
+            let index = self
+                .indexes
+                .iter()
+                .find(|index| index.id == recreated.old_id)
+                .cloned()
+                .expect("DDL names an existing index");
+            self.delete_index_key_ranges(&index)?;
+        }
+        if self.partition.is_some() {
+            self.clear_partition_data(&reorg.source_ids, ctx)?;
+        } else {
+            let source = self.table_id;
+            let decode_rows = self.rows_of_physical_table(source, &decode)?;
+            for (handle, row) in decode_rows {
+                self.delete_index_entries(&row, &handle, source, &zone)?;
+            }
+            self.delete_physical_records(source)?;
+        }
+
+        let old_table_id = self.table_id;
+        self.partition = reorg.partition.map(Box::new);
+        self.read_partitions = None;
+        if let Some(new_table_id) = reorg.new_table_id {
+            self.table_id = new_table_id;
+        }
+        let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
+        let mut recreated_indexes = Vec::with_capacity(reorg.recreated_indexes.len());
+        for recreated in &reorg.recreated_indexes {
+            let position = self
+                .indexes
+                .iter()
+                .position(|index| index.id == recreated.old_id)
+                .expect("DDL names an existing index");
+            let mut index = self.indexes_mut().remove(position);
+            index.id = recreated.new_id;
+            index.global = recreated.global;
+            index.global_index_version = recreated.global_index_version;
+            self.max_index_id = self.max_index_id.max(index.id);
+            recreated_indexes.push(index);
+        }
+        // Go appends each duplicate after the existing indexes and drops the
+        // original, so a recreated index moves to the end.
+        self.indexes_mut().extend(recreated_indexes.iter().cloned());
+
+        let heap = !clustered;
+        let mut written = std::collections::HashSet::new();
+        for ((handle, row), physical_id) in moved.into_iter().zip(targets) {
+            let value = self.encode_row_value(&row, &zone)?;
+            let mut handle = handle;
+            let key = Key::from_bytes(encode_row_key_with_handle(
+                physical_id,
+                &handle.record_handle(),
+            ));
+            if heap && written.contains(key.as_bytes()) {
+                let existing = self.store.get(&key).map_err(KvTableError::from)?;
+                if existing == value {
+                    continue;
+                }
+                handle = self.handle_of_row(&row, &zone, 0)?;
+            }
+            let key = Key::from_bytes(encode_row_key_with_handle(
+                physical_id,
+                &handle.record_handle(),
+            ));
+            self.write_index_entries(&row, &handle, physical_id, &zone, false, false, false)?;
+            written.insert(key.as_bytes().to_vec());
+            self.store.set(key, value).map_err(KvTableError::from)?;
+        }
+
+        // The recreated indexes also cover the rows that did not move.
+        for index in &recreated_indexes {
+            for (physical_id, handle, row) in &untouched {
+                if self.index_condition_holds(index, row, &zone)? {
+                    self.create_index_entries(
+                        index,
+                        row,
+                        handle,
+                        *physical_id,
+                        &zone,
+                        false,
+                        false,
+                        false,
+                    )?;
+                }
+            }
+        }
+        ctx.staged_writes().mark_dirty(old_table_id);
+        ctx.staged_writes().mark_dirty(self.table_id);
+        Ok(())
+    }
+
     /// Rebuilds a HASH table to `new_ids.len()` partitions, redistributing
     /// every row by the new modulus. Go `hashPartitionManagement`
     /// (`pkg/ddl/executor.go:2782-2814`) reaches the same observable state

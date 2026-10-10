@@ -96,7 +96,7 @@ fn affinity_reads_back_and_refuses_what_go_refuses() {
         ),
         (
             8200,
-            "Unsupported DDL operation: ADD PARTITION of a table with AFFINITY option".to_owned()
+            "Unsupported ADD PARTITION of a table with AFFINITY option".to_owned()
         )
     );
     session.run("alter table t1 affinity = 'none'").unwrap();

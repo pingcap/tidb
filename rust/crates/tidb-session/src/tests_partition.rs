@@ -3046,35 +3046,46 @@ fn a_partition_expression_is_stored_the_way_go_spells_it() {
     }
 }
 
-/// `RANGE ... INTERVAL (...)` GENERATES partition definitions from a step.
-/// This node does not expand them, so it must refuse the clause: accepting it
-/// and ignoring the INTERVAL would build a table with DIFFERENT partitions
-/// from the ones the statement asked for, which is worse than not serving it.
-///
-/// The refusal has to cover the COLUMNS spelling too. Go's
-/// `generatePartitionDefinitionsFromInterval` handles both, and the check
-/// here sits after the COLUMNS arms have already returned.
+/// `RANGE ... INTERVAL (...)` GENERATES partition definitions from a step
+/// (Go `generatePartitionDefinitionsFromInterval`), for the expression and
+/// the COLUMNS spelling alike.
 #[test]
-fn interval_partitioning_is_refused_on_every_spelling() {
-    let statements = [
-        "CREATE TABLE i1 (a INT) PARTITION BY RANGE (a) \
-         INTERVAL (10) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (100)",
-        "CREATE TABLE i2 (a DATE) PARTITION BY RANGE COLUMNS (a) \
-         INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2020-01-01') \
-         LAST PARTITION LESS THAN ('2020-06-01')",
-    ];
-    for sql in statements {
+fn interval_partitioning_expands_on_every_spelling() {
+    for (sql, table, expected) in [
+        (
+            "CREATE TABLE i1 (a INT) PARTITION BY RANGE (a) \
+             INTERVAL (10) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (100)",
+            "i1",
+            vec![
+                "P_LT_0", "P_LT_10", "P_LT_20", "P_LT_30", "P_LT_40", "P_LT_50", "P_LT_60",
+                "P_LT_70", "P_LT_80", "P_LT_90", "P_LT_100",
+            ],
+        ),
+        (
+            "CREATE TABLE i2 (a DATE) PARTITION BY RANGE COLUMNS (a) \
+             INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2020-01-01') \
+             LAST PARTITION LESS THAN ('2020-06-01')",
+            "i2",
+            vec![
+                "P_LT_2020-01-01",
+                "P_LT_2020-02-01",
+                "P_LT_2020-03-01",
+                "P_LT_2020-04-01",
+                "P_LT_2020-05-01",
+                "P_LT_2020-06-01",
+            ],
+        ),
+    ] {
         let mut session = Session::new();
-        let rendered = session
-            .run(sql)
-            .expect_err("INTERVAL must be refused, not silently ignored")
-            .to_mysql_error();
-        assert!(
-            rendered.message.contains("INTERVAL"),
-            "the refusal must name INTERVAL, so it cannot be turned into an \
-             acceptance by a change elsewhere: {sql}\n  got: {}",
-            rendered.message
-        );
+        session.run(sql).unwrap();
+        let names = tests_support::row_text(session.run(&format!(
+            "SELECT partition_name FROM information_schema.partitions \
+             WHERE table_name = '{table}' ORDER BY partition_ordinal_position"
+        )))
+        .into_iter()
+        .map(|row| row[0].clone())
+        .collect::<Vec<_>>();
+        assert_eq!(names, expected, "{sql}");
     }
 }
 
@@ -3604,26 +3615,38 @@ fn truncate_empties_a_partitioned_table() {
     );
 }
 
-/// Go onReorganizePartition must move data before publishing new physical
-/// IDs. The local owner must refuse until it can execute that durable job.
+/// Go refuses partition reorganization inside a multi-schema change
+/// (`fillMultiSchemaInfo`) and leaves the table as it was; on its own the
+/// same REORGANIZE moves the rows.
 #[test]
-fn unserved_partition_management_is_refused_not_ignored() {
+fn multi_schema_reorganize_is_refused_like_go() {
     let mut session = Session::new();
     session.run("CREATE TABLE pm (a INT) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN(10), PARTITION p1 VALUES LESS THAN(20))").unwrap();
     session.run("INSERT INTO pm VALUES(1),(11)").unwrap();
-    session.run("CREATE TABLE plain (a INT)").unwrap();
     let original = show_create(&mut session, "pm");
-    for sql in [
-        "ALTER TABLE pm REORGANIZE PARTITION p0, p1 INTO (PARTITION q0 VALUES LESS THAN(20))",
-        "ALTER TABLE pm ADD COLUMN b INT, REORGANIZE PARTITION p0, p1 INTO (PARTITION q0 VALUES LESS THAN(20))",
-        "ALTER TABLE plain PARTITION BY HASH(a) PARTITIONS 2",
-    ] {
-        assert!(session.run(sql).is_err(), "unsupported action accepted: {sql}");
-        assert_eq!(show_create(&mut session, "pm"), original);
-        assert_eq!(tests_support::row_text(session.run("SELECT a FROM pm ORDER BY a")), [["1"], ["11"]]);
-        assert_eq!(tests_support::row_text(session.run("SELECT a FROM pm PARTITION(p0)")), [["1"]]);
-        assert_eq!(tests_support::row_text(session.run("SELECT a FROM pm PARTITION(p1)")), [["11"]]);
-    }
+    let error = session
+        .run("ALTER TABLE pm ADD COLUMN b INT, REORGANIZE PARTITION p0, p1 INTO (PARTITION q0 VALUES LESS THAN(20))")
+        .expect_err("Go refuses REORGANIZE inside a multi-schema change")
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            8200,
+            "Unsupported multi schema change for alter table reorganize partition"
+        )
+    );
+    assert_eq!(show_create(&mut session, "pm"), original);
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a FROM pm PARTITION(p0)")),
+        [["1"]]
+    );
+    session
+        .run("ALTER TABLE pm REORGANIZE PARTITION p0, p1 INTO (PARTITION q0 VALUES LESS THAN(20))")
+        .unwrap();
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a FROM pm PARTITION(q0) ORDER BY a")),
+        [["1"], ["11"]]
+    );
 }
 
 /// `information_schema.PARTITIONS`, per Go's `setDataFromPartitions`

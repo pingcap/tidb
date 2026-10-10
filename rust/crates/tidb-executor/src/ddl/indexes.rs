@@ -532,6 +532,27 @@ fn build_index_definition(
         max_index_length,
     )
     .map_err(crate::ddl::index_prefix::driver_error)?;
+    // Go `checkCreateGlobalIndex`: GLOBAL needs a partitioned table, a
+    // unique index on one must cover the partition columns unless it is
+    // GLOBAL, and a global index over a prefix or virtual part warns.
+    if global && table.partition().is_none() {
+        return Err(global_index_on_non_partitioned_table());
+    }
+    if global {
+        warn_global_index_needs_manual_analyze(
+            ctx,
+            index_name,
+            offsets.iter().zip(&prefix_lengths).map(|(offset, prefix)| {
+                let virtual_generated = table.columns.get(*offset).map_or(true, |column| {
+                    column
+                        .generated
+                        .as_ref()
+                        .is_some_and(|generated| !generated.stored)
+                });
+                virtual_generated || *prefix != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+            }),
+        );
+    }
     // Go `checkPartitionKeysConstraint` reaches ADD INDEX too: a unique index
     // on a partitioned table must include every partitioning column unless it
     // is GLOBAL (8264). It is not merely a rule to copy -- this tier keys
@@ -624,6 +645,33 @@ pub(crate) fn check_invisible_index_on_pk(
 /// Go `ErrPKIndexCantBeInvisible` (3522).
 pub(crate) fn pk_index_cant_be_invisible() -> DriverError {
     DriverError::PrimaryKeyCantBeInvisible
+}
+
+/// Go `checkGlobalIndex` / `checkCreateGlobalIndex`: a GLOBAL index on a
+/// table that is not partitioned.
+pub(crate) fn global_index_on_non_partitioned_table() -> DriverError {
+    DriverError::DdlCoded {
+        errno: 8200,
+        message: "Unsupported Global Index on non-partitioned table".to_owned(),
+    }
+}
+
+/// Go `validateGlobalIndexWithGeneratedColumns`: auto analyze cannot
+/// sample a global index with a prefix or virtual generated part, so Go
+/// warns once (`ErrWarnGlobalIndexNeedManuallyAnalyze`).
+pub(crate) fn warn_global_index_needs_manual_analyze(
+    ctx: &crate::StmtContext,
+    index_name: &str,
+    mut part_is_prefix_or_virtual: impl Iterator<Item = bool>,
+) {
+    if part_is_prefix_or_virtual.any(|flag| flag) {
+        ctx.append_warning_parts(
+            tidb_error::tidb::errcode::ErrWarnGlobalIndexNeedManuallyAnalyze,
+            &format!(
+                "Auto analyze is not effective for index '{index_name}', need analyze manually"
+            ),
+        );
+    }
 }
 
 /// Go `setGlobalIndexVersion`: a global index on a table without a clustered

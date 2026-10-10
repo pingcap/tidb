@@ -135,21 +135,6 @@ pub fn run_alter_table_in(
             "only ALTER TABLE is supported here",
         ));
     };
-    // Repartition and REORGANIZE require Go's durable reorganization owner. Refuse
-    // before applying any action while that owner is unavailable.
-    if alter.actions.iter().any(|action| {
-        matches!(
-            action,
-            tidb_ast::AlterTableAction::Partition(
-                tidb_ast::AlterPartitionAction::Repartition(_)
-                    | tidb_ast::AlterPartitionAction::Reorganize { .. }
-            )
-        )
-    }) {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE partition reorganization requires its durable DDL owner",
-        ));
-    }
     // Go owns rollback for the entire multi-schema job. In this synchronous
     // owner, stage the catalog and its copy-on-write row/index storage for
     // every ALTER, including grouped specifications within a single action.
@@ -612,6 +597,19 @@ fn run_alter_table_in_inner(
             submitted_jobs(action, prepared.change.as_ref(), catalog, &database, &name)
         })
         .collect::<Vec<_>>();
+    // Go `fillMultiSchemaInfo`: a multi-schema change takes only the column,
+    // index, foreign-key and table-metadata jobs it knows how to merge.
+    if actions.len() > 1 {
+        if let Some(job) = jobs
+            .iter()
+            .find(|job| !multi_schema_job_allowed(job.action))
+        {
+            return Err(DriverError::DdlCoded {
+                errno: 8200,
+                message: format!("Unsupported multi schema change for {}", job.action),
+            });
+        }
+    }
     super::bdr::admit(catalog, ctx.ddl_cdc_write_source(), &database, &jobs)?;
     for (action, prepared) in actions.iter().zip(changes) {
         if let Some(change) = prepared.change {
@@ -680,6 +678,38 @@ fn run_alter_table_in_inner(
                 current_db,
                 ctx,
             )?,
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Reorganize {
+                names,
+                definitions,
+                ..
+            }) => super::partition_reorg::reorganize_partition_action(
+                catalog,
+                &database,
+                &name,
+                names,
+                definitions,
+                ctx,
+            )?,
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Repartition(
+                partitioning,
+            )) => super::partition_reorg::alter_table_partitioning_action(
+                catalog,
+                &database,
+                &name,
+                partitioning,
+                ctx,
+            )?,
+            tidb_ast::AlterTableAction::Partition(
+                tidb_ast::AlterPartitionAction::RemovePartitioning,
+            ) => {
+                super::partition_reorg::remove_partitioning_action(catalog, &database, &name, ctx)?
+            }
+            tidb_ast::AlterTableAction::Partition(
+                tidb_ast::AlterPartitionAction::FirstPartitionLessThan { expr, .. },
+            ) => first_partition_less_than_action(catalog, &database, &name, expr, ctx)?,
+            tidb_ast::AlterTableAction::Partition(
+                tidb_ast::AlterPartitionAction::LastPartitionLessThan { expr, .. },
+            ) => last_partition_less_than_action(catalog, &database, &name, expr, ctx)?,
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE action is not supported yet",
@@ -757,7 +787,12 @@ fn submitted_jobs(
             Partition::Truncate { .. }
             | Partition::Drop { .. }
             | Partition::Add { .. }
-            | Partition::Coalesce { .. },
+            | Partition::Coalesce { .. }
+            | Partition::Reorganize { .. }
+            | Partition::Repartition(_)
+            | Partition::RemovePartitioning
+            | Partition::FirstPartitionLessThan { .. }
+            | Partition::LastPartitionLessThan { .. },
         ) => true,
         _ => false,
     };
@@ -901,13 +936,11 @@ fn truncate_partition_action(
 
 /// Go's partition-management refusal of a table with AFFINITY
 /// (`ErrGeneralUnsupportedDDL`, 8200).
-fn refuse_affinity(table: &crate::KvTable, operation: &str) -> Result<(), DriverError> {
+pub(super) fn refuse_affinity(table: &crate::KvTable, operation: &str) -> Result<(), DriverError> {
     if table.has_affinity() {
         return Err(DriverError::DdlCoded {
             errno: 8200,
-            message: format!(
-                "Unsupported DDL operation: {operation} of a table with AFFINITY option"
-            ),
+            message: format!("Unsupported {operation} of a table with AFFINITY option"),
         });
     }
     Ok(())
@@ -1488,19 +1521,28 @@ fn add_partition_action(
     };
     // The bound TEXT a RANGE addition prints, rendered from the folded bound
     // by the SAME helper a CREATE uses, so the two cannot drift.
-    let range_bound_text = |ordinal: usize| match &added_kind {
-        PartitionKind::Range {
-            less_than,
-            unsigned,
-        } => less_than
-            .get(ordinal)
-            .map(|bound| {
-                vec![super::table_partition::stored_range_bound_text(
-                    *bound, *unsigned,
-                )]
-            })
-            .unwrap_or_default(),
-        _ => Vec::new(),
+    let range_bound_text = |ordinal: usize| -> Result<Vec<String>, DriverError> {
+        Ok(match &added_kind {
+            PartitionKind::Range {
+                less_than,
+                unsigned,
+            } => less_than
+                .get(ordinal)
+                .map(|bound| {
+                    vec![super::table_partition::stored_range_bound_text(
+                        *bound, *unsigned,
+                    )]
+                })
+                .unwrap_or_default(),
+            PartitionKind::RangeColumns {
+                less_than,
+                field_types,
+            } => super::table_partition::stored_range_columns_bound_text(
+                less_than.get(ordinal).map_or(&[][..], Vec::as_slice),
+                field_types,
+            )?,
+            _ => Vec::new(),
+        })
     };
     let mut added_definitions = Vec::with_capacity(definitions.len());
     for (ordinal, definition) in definitions.iter().enumerate() {
@@ -1509,7 +1551,7 @@ fn add_partition_action(
             // `assignPartitionIDs` runs last.
             id: 0,
             name: definition.name.clone(),
-            less_than: range_bound_text(ordinal),
+            less_than: range_bound_text(ordinal)?,
             in_values: super::table_partition::stored_in_values(
                 Some(definition),
                 &list_field_types,
@@ -1549,6 +1591,120 @@ fn add_partition_action(
     };
     std::sync::Arc::make_mut(table).append_partitions(added_definitions, added_kind, ctx);
     Ok(())
+}
+
+/// Go `DropTablePartition` for `FIRST PARTITION LESS THAN (expr)`: the
+/// INTERVAL the table was generated with names the partitions below the new
+/// first one, which are then dropped like written names.
+fn first_partition_less_than_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    expr: &tidb_ast::Expr,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let names = {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE ... PARTITION needs a storage-backed table",
+            ));
+        };
+        let Some(partition) = table.partition() else {
+            return Err(DriverError::PartitionManagementOnNonpartitioned);
+        };
+        let unsupported = |message: &str| DriverError::DdlCoded {
+            errno: 8200,
+            message: format!("Unsupported {message}"),
+        };
+        let Some(interval) = super::partition_interval::interval_from_table(partition, ctx) else {
+            return Err(unsupported(
+                "FIRST PARTITION, does not seem like an INTERVAL partitioned table",
+            ));
+        };
+        let generated = super::partition_interval::generate_from_interval(
+            &interval.interval(),
+            super::partition_interval::IntervalStatement::DropFirst(expr),
+            interval.column.as_ref(),
+            partition.definitions.len(),
+            ctx,
+        )?;
+        let null_offset = usize::from(interval.null_partition);
+        if generated.is_empty() || generated.len() >= partition.definitions.len() - null_offset {
+            return Err(unsupported(
+                "FIRST PARTITION, number of partitions does not match",
+            ));
+        }
+        if generated.len() <= 1 {
+            return Err(unsupported(
+                "FIRST PARTITION, given value does not generate a list of partition names to be dropped",
+            ));
+        }
+        // The last generated partition becomes the new first one.
+        partition.definitions[null_offset..null_offset + generated.len() - 1]
+            .iter()
+            .map(|definition| definition.name.clone())
+            .collect::<Vec<_>>()
+    };
+    drop_partition_action(catalog, database, table_name, false, &names, ctx)
+}
+
+/// Go `AddTablePartitions` for `LAST PARTITION LESS THAN (expr)`
+/// (`buildAddedPartitionDefs`): the INTERVAL the table was generated with
+/// extends it up to the new last bound.
+fn last_partition_less_than_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    expr: &tidb_ast::Expr,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let definitions = {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE ... PARTITION needs a storage-backed table",
+            ));
+        };
+        let Some(partition) = table.partition() else {
+            return Err(DriverError::PartitionManagementOnNonpartitioned);
+        };
+        refuse_affinity(table, "ADD PARTITION")?;
+        let unsupported = |message: &str| DriverError::DdlCoded {
+            errno: 8200,
+            message: format!("Unsupported {message}"),
+        };
+        match partition.kind {
+            PartitionKind::Hash | PartitionKind::Key => {
+                return Err(unsupported("LAST PARTITION of HASH/KEY partitioned table"))
+            }
+            PartitionKind::List { .. } | PartitionKind::ListColumns { .. } => {
+                return Err(DriverError::PartitionsMustBeDefined("LIST"))
+            }
+            _ => {}
+        }
+        let Some(interval) = super::partition_interval::interval_from_table(partition, ctx) else {
+            return Err(unsupported(
+                "LAST PARTITION, does not seem like an INTERVAL partitioned table",
+            ));
+        };
+        if interval.maxvalue_partition {
+            return Err(unsupported("LAST PARTITION when MAXVALUE partition exists"));
+        }
+        super::partition_interval::generate_from_interval(
+            &interval.interval(),
+            super::partition_interval::IntervalStatement::AddLast(expr),
+            interval.column.as_ref(),
+            partition.definitions.len(),
+            ctx,
+        )?
+    };
+    add_partition_action(
+        catalog,
+        database,
+        table_name,
+        false,
+        &tidb_ast::AddPartitionSpec::Definitions(definitions),
+        ctx,
+    )
 }
 
 /// Go `rebuildStorageClassForPartitions`: resolves the table's
@@ -1743,6 +1899,30 @@ impl PreparedMetadataChange {
         }
         Ok(())
     }
+}
+
+/// The job types Go's `fillMultiSchemaInfo` accepts as sub-jobs.
+fn multi_schema_job_allowed(action: tidb_model::ActionType) -> bool {
+    use tidb_model::ActionType as A;
+    matches!(
+        action,
+        A::ACTION_ADD_COLUMN
+            | A::ACTION_DROP_COLUMN
+            | A::ACTION_DROP_INDEX
+            | A::ACTION_DROP_PRIMARY_KEY
+            | A::ACTION_ADD_INDEX
+            | A::ACTION_ADD_PRIMARY_KEY
+            | A::ACTION_RENAME_INDEX
+            | A::ACTION_MODIFY_COLUMN
+            | A::ACTION_SET_DEFAULT_VALUE
+            | A::ACTION_ALTER_INDEX_VISIBILITY
+            | A::ACTION_REBASE_AUTO_ID
+            | A::ACTION_MODIFY_TABLE_COMMENT
+            | A::ACTION_MODIFY_TABLE_CHARSET_AND_COLLATE
+            | A::ACTION_MODIFY_ENGINE_ATTRIBUTE
+            | A::ACTION_ADD_FOREIGN_KEY
+            | A::ACTION_DROP_FOREIGN_KEY
+    )
 }
 
 fn is_metadata_change(action: &tidb_ast::AlterTableAction) -> bool {

@@ -137,7 +137,7 @@ fn wrong_db_name(name: &str) -> DriverError {
 }
 
 /// `dbterror.ErrWrongNameForIndex` (1280).
-fn wrong_name_for_index(name: &str) -> DriverError {
+pub(crate) fn wrong_name_for_index(name: &str) -> DriverError {
     DriverError::DdlCoded {
         errno: tidb_error::mysql::errcode::ErrWrongNameForIndex,
         message: format!("Incorrect index name '{name}'"),
@@ -145,7 +145,7 @@ fn wrong_name_for_index(name: &str) -> DriverError {
 }
 
 /// `dbterror.ErrWrongPartitionName` (1567).
-fn wrong_partition_name() -> DriverError {
+pub(crate) fn wrong_partition_name() -> DriverError {
     DriverError::DdlCoded {
         errno: tidb_error::mysql::errcode::ErrWrongPartitionName,
         message: "Incorrect partition name".to_owned(),

@@ -329,6 +329,8 @@ mod index_changes;
 pub mod index_prefix;
 mod indexes;
 pub mod mview_schedule_expr;
+mod partition_interval;
+mod partition_reorg;
 pub mod placement_policy;
 pub mod preprocess;
 pub mod storage_class;
@@ -1981,6 +1983,24 @@ pub fn run_create_table_in(
     {
         return Err(crate::ddl::indexes::pk_index_cant_be_invisible());
     }
+    // Go `buildTableInfo`, right after: a clustered index cannot be global.
+    if clustered
+        && create.table_constraints.iter().any(|constraint| {
+            matches!(
+                constraint,
+                tidb_ast::TableConstraint::Index(index)
+                    if index.kind == tidb_ast::IndexConstraintKind::PrimaryKey
+                        && index.options.global
+            )
+        })
+    {
+        return Err(DriverError::DdlCoded {
+            errno: 8200,
+            message:
+                "Unsupported create an index that is both a global index and a clustered index"
+                    .to_owned(),
+        });
+    }
     crate::ddl::indexes::check_invisible_index_on_pk(
         &table,
         &table.indexes().iter().collect::<Vec<_>>(),
@@ -2174,6 +2194,32 @@ pub fn run_create_table_in(
                 "partial index on partitioned table is not supported",
             ));
         }
+    }
+    // Go `checkGlobalIndexes` (`checkTableInfoValidExtra`).
+    for index in table.indexes() {
+        if !index.global {
+            continue;
+        }
+        if table.partition().is_none() {
+            return Err(indexes::global_index_on_non_partitioned_table());
+        }
+        indexes::warn_global_index_needs_manual_analyze(
+            ctx,
+            &index.name,
+            index
+                .column_offsets
+                .iter()
+                .zip(&index.prefix_lengths)
+                .map(|(offset, prefix)| {
+                    let virtual_generated = table.columns.get(*offset).map_or(true, |column| {
+                        column
+                            .generated
+                            .as_ref()
+                            .is_some_and(|generated| !generated.stored)
+                    });
+                    virtual_generated || *prefix != index_prefix::UNSPECIFIED_LENGTH
+                }),
+        );
     }
     // Go's `checkTableForeignKeyValid` re-checks children that were created
     // earlier with `foreign_key_checks=0` when their referenced parent lands.

@@ -31,39 +31,43 @@ fn add_and_truncate_partition_lifecycle() {
     assert_eq!(rows(&mut session, "select a from t partition (p1)"), "12");
 }
 
-/// Containment until the complete durable partition owner is available.
-/// Go supports these changes through online reorganization; silently swapping
-/// routing without that owner must not lose access to the existing records.
+/// Go `AlterTablePartitioning`: the table is repartitioned with its rows,
+/// whether or not it was partitioned before; combined with another
+/// specification it is a multi-schema change Go refuses
+/// (`fillMultiSchemaInfo`), leaving the table as it was.
 #[test]
-fn repartition_refusal_preserves_rows_and_schema() {
+fn repartition_moves_rows_and_refuses_a_multi_schema_change() {
     for create in [
         "CREATE TABLE t (a INT)",
         "CREATE TABLE t (a INT) PARTITION BY RANGE(a) \
          (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
     ] {
-        for alter in [
-            "ALTER TABLE t PARTITION BY HASH(a) PARTITIONS 2",
-            "ALTER TABLE t ADD COLUMN b INT PARTITION BY HASH(a) PARTITIONS 2",
-        ] {
-            tidb_parser::parse(alter).expect("the refused action list must reach DDL admission");
-            let mut session = Session::new();
-            session.run(create).unwrap();
-            session.run("INSERT INTO t VALUES (1),(11)").unwrap();
-            let schema_before = format!("{:?}", session.run("SHOW CREATE TABLE t").unwrap());
+        let mut session = Session::new();
+        session.run(create).unwrap();
+        session.run("INSERT INTO t VALUES (1),(11)").unwrap();
+        let schema_before = format!("{:?}", session.run("SHOW CREATE TABLE t").unwrap());
+        let error = session
+            .run("ALTER TABLE t ADD COLUMN b INT PARTITION BY HASH(a) PARTITIONS 2")
+            .expect_err("Go refuses PARTITION BY inside a multi-schema change")
+            .to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (
+                8200,
+                "Unsupported multi schema change for alter table partition by"
+            )
+        );
+        assert_eq!(
+            format!("{:?}", session.run("SHOW CREATE TABLE t").unwrap()),
+            schema_before
+        );
 
-            let outcome = session.run(alter);
-            assert_eq!(rows(&mut session, "SELECT a FROM t ORDER BY a"), "1;11");
-            assert_eq!(
-                format!("{:?}", session.run("SHOW CREATE TABLE t").unwrap()),
-                schema_before,
-                "a refused repartition must preserve the whole schema: {alter}"
-            );
-            assert!(
-                outcome.is_err(),
-                "unaccepted repartition was dispatched: {alter}"
-            );
-            session.run("INSERT INTO t VALUES (2)").unwrap();
-            assert_eq!(rows(&mut session, "SELECT a FROM t ORDER BY a"), "1;2;11");
-        }
+        session
+            .run("ALTER TABLE t PARTITION BY HASH(a) PARTITIONS 2")
+            .unwrap();
+        assert_eq!(rows(&mut session, "SELECT a FROM t ORDER BY a"), "1;11");
+        assert_eq!(rows(&mut session, "SELECT a FROM t PARTITION (p1)"), "1;11");
+        session.run("INSERT INTO t VALUES (2)").unwrap();
+        assert_eq!(rows(&mut session, "SELECT a FROM t PARTITION (p0)"), "2");
     }
 }

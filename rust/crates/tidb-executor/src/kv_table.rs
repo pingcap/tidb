@@ -43,6 +43,7 @@ mod cache;
 mod column_deps;
 mod index_entries;
 mod partition_maintenance;
+pub(crate) use partition_maintenance::{PartitionReorg, RecreatedIndex};
 mod row_decoder;
 pub(crate) mod table_meta;
 mod table_scan;

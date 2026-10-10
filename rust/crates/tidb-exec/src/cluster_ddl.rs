@@ -7432,7 +7432,7 @@ fn check_exchange_tables(
     if standalone.affinity.is_some() || partitioned.affinity.is_some() {
         return Err(exchange_refusal(
             8200,
-            "Unsupported DDL operation: EXCHANGE PARTITION of a table with AFFINITY option",
+            "Unsupported EXCHANGE PARTITION of a table with AFFINITY option",
         ));
     }
     if !standalone.foreign_keys.is_empty() {

@@ -111,30 +111,54 @@ pub fn build_table_partitioning(
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &crate::StmtContext,
 ) -> Result<Option<PartitionSpec>, DriverError> {
-    let Some(mut spec) = build_table_partitioning_inner(
-        create,
+    create
+        .partitioning
+        .as_ref()
+        .map(|partitioning| {
+            build_partitioning(
+                partitioning,
+                names,
+                types,
+                indexes,
+                handle_offsets,
+                allocate_id,
+                ctx,
+            )
+        })
+        .transpose()
+}
+
+/// Go `buildTablePartitionInfo` for one written partition clause, the
+/// CREATE TABLE battery that `ALTER TABLE ... PARTITION BY` and REORGANIZE
+/// PARTITION's `checkReorgPartitionDefs` run as well.
+pub(crate) fn build_partitioning(
+    partitioning: &tidb_ast::TablePartitioning,
+    names: &[String],
+    types: &[FieldType],
+    indexes: &[KvIndex],
+    handle_offsets: &[usize],
+    allocate_id: &mut dyn FnMut() -> i64,
+    ctx: &crate::StmtContext,
+) -> Result<PartitionSpec, DriverError> {
+    let mut spec = build_table_partitioning_inner(
+        partitioning,
         names,
         types,
         indexes,
         handle_offsets,
         allocate_id,
         ctx,
-    )?
-    else {
-        return Ok(None);
-    };
-    if let Some(partitioning) = create.partitioning.as_ref() {
-        let stored = stored_definitions_for(partitioning, &spec, ctx)?;
-        for (routing, stored) in spec.definitions.iter_mut().zip(&stored) {
-            routing.less_than.clone_from(&stored.less_than);
-            routing.in_values.clone_from(&stored.in_values);
-        }
+    )?;
+    let stored = stored_definitions_for(partitioning, &spec, ctx)?;
+    for (routing, stored) in spec.definitions.iter_mut().zip(&stored) {
+        routing.less_than.clone_from(&stored.less_than);
+        routing.in_values.clone_from(&stored.in_values);
     }
-    Ok(Some(spec))
+    Ok(spec)
 }
 
 fn build_table_partitioning_inner(
-    create: &CreateTableStmt,
+    partitioning: &tidb_ast::TablePartitioning,
     names: &[String],
     types: &[FieldType],
     indexes: &[KvIndex],
@@ -144,10 +168,7 @@ fn build_table_partitioning_inner(
     // depend on the session `time_zone`. Go threads its `BuildContext` down
     // the same path (`buildTablePartitionInfo` -> `checkPartitionValuesIsInt`).
     ctx: &crate::StmtContext,
-) -> Result<Option<PartitionSpec>, DriverError> {
-    let Some(partitioning) = &create.partitioning else {
-        return Ok(None);
-    };
+) -> Result<PartitionSpec, DriverError> {
     let method = &partitioning.method;
     if !matches!(
         method.kind,
@@ -180,25 +201,50 @@ fn build_table_partitioning_inner(
         )));
     }
 
-    // `INTERVAL (...)` GENERATES partition definitions from a step, which
-    // this tier does not expand. Accepting it would build a table with
-    // DIFFERENT partitions from the ones the statement asked for, which is
-    // worse than not serving the clause at all.
-    //
-    // Go's `generatePartitionDefinitionsFromInterval` runs before the method
-    // is dispatched and handles the COLUMNS spelling too, so this refusal
-    // belongs ahead of the arms rather than inside the scalar one. Sitting
-    // below them, it was reached only by `RANGE (expr)`; the COLUMNS
-    // spellings fell through to "For RANGE partitions each partition must be
-    // defined" -- an incidental refusal that happened to fire because
-    // INTERVAL leaves the definition list empty. That message names the
-    // wrong problem, and anything that later filled the list before this
-    // point would have turned it into a silent acceptance.
+    // Go `generatePartitionDefinitionsFromInterval`: INTERVAL expands into
+    // ordinary RANGE definitions right after `checkColumnsPartitionType` and
+    // the partition expression's own checks, and the expansion is then built
+    // like a written clause.
     if method.interval.is_some() {
-        return Err(DriverError::unsupported(format!(
-            "CREATE TABLE ... PARTITION BY {} ... INTERVAL is not supported by this node",
-            method.kind.sql()
-        )));
+        let mut column = None;
+        let mut unsigned = false;
+        if let Some(expr) = &method.expr {
+            let (_, built, _, _) = build_partition_expression(
+                expr,
+                names,
+                types,
+                &ctx.session_zone(),
+                ctx.like_default_escape(),
+                PartitionBuildMode::Create,
+            )?;
+            unsigned = super::table_partition_range::partition_expression_is_unsigned(&built);
+        } else if let [path] = method.columns.as_slice() {
+            let name = path
+                .last()
+                .ok_or(DriverError::PartitionColumnValueWrongType)?;
+            let offset = names
+                .iter()
+                .position(|candidate| candidate.eq_ignore_ascii_case(name))
+                .ok_or(DriverError::PartitionFieldNotFound)?;
+            if !super::table_partition_list::list_columns_type_allowed(&types[offset]) {
+                return Err(DriverError::PartitionFieldTypeNotAllowed(name.clone()));
+            }
+            column = Some(&types[offset]);
+        }
+        let definitions =
+            super::partition_interval::expand_interval(partitioning, column, unsigned, ctx)?;
+        let mut expanded = partitioning.clone();
+        expanded.definitions = definitions;
+        expanded.method.interval = None;
+        return build_table_partitioning_inner(
+            &expanded,
+            names,
+            types,
+            indexes,
+            handle_offsets,
+            allocate_id,
+            ctx,
+        );
     }
 
     if method.kind == PartitionType::KEY {
@@ -212,7 +258,8 @@ fn build_table_partitioning_inner(
         //   last, `checkPartitioningKeysConstraints` -- 1105 and 1503.
         let (dependencies, unresolved_with_keys) =
             build_key_partition_columns(&method.columns, names, types, handle_offsets, indexes)?;
-        let definitions = build_hash_partition_definitions(create, method.count, allocate_id, ctx)?;
+        let definitions =
+            build_hash_partition_definitions(partitioning, method.count, allocate_id, ctx)?;
         check_partition_name_unique(&definitions)?;
         if definitions.len() as u64 > MAX_PARTITIONS {
             return Err(DriverError::PartitionTooMany);
@@ -233,8 +280,9 @@ fn build_table_partitioning_inner(
                     .expect("KEY names resolved above")
             })
             .collect::<Vec<_>>();
-        check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
-        return Ok(Some(PartitionSpec {
+        let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
+        check_unique_keys_include_partition_columns(&indexes, handle_offsets, &dependency_offsets)?;
+        return Ok(PartitionSpec {
             overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: method.columns.is_empty(),
             kind: PartitionKind::Key,
@@ -251,7 +299,7 @@ fn build_table_partitioning_inner(
             ),
             dependencies,
             definitions,
-        }));
+        });
     }
 
     if method.kind == PartitionType::LIST && method.expr.is_none() {
@@ -279,8 +327,9 @@ fn build_table_partitioning_inner(
                     .expect("LIST COLUMNS names resolved above")
             })
             .collect::<Vec<_>>();
-        check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
-        return Ok(Some(PartitionSpec {
+        let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
+        check_unique_keys_include_partition_columns(&indexes, handle_offsets, &dependency_offsets)?;
+        return Ok(PartitionSpec {
             overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: false,
             kind,
@@ -299,7 +348,7 @@ fn build_table_partitioning_inner(
             ),
             dependencies,
             definitions,
-        }));
+        });
     }
 
     if method.kind == PartitionType::RANGE && method.expr.is_none() {
@@ -334,8 +383,9 @@ fn build_table_partitioning_inner(
                     .expect("RANGE COLUMNS names resolved above")
             })
             .collect::<Vec<_>>();
-        check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
-        return Ok(Some(PartitionSpec {
+        let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
+        check_unique_keys_include_partition_columns(&indexes, handle_offsets, &dependency_offsets)?;
+        return Ok(PartitionSpec {
             overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: false,
             kind: PartitionKind::RangeColumns {
@@ -357,7 +407,7 @@ fn build_table_partitioning_inner(
             ),
             dependencies,
             definitions,
-        }));
+        });
     }
 
     let Some(expr) = &method.expr else {
@@ -408,7 +458,7 @@ fn build_table_partitioning_inner(
         }
         _ => (
             PartitionKind::Hash,
-            build_hash_partition_definitions(create, method.count, allocate_id, ctx)?,
+            build_hash_partition_definitions(partitioning, method.count, allocate_id, ctx)?,
             None,
         ),
     };
@@ -441,9 +491,10 @@ fn build_table_partitioning_inner(
     if definitions.is_empty() {
         return Err(DriverError::PartitionNoParts("partitions"));
     }
-    check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
+    let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
+    check_unique_keys_include_partition_columns(&indexes, handle_offsets, &dependency_offsets)?;
 
-    Ok(Some(PartitionSpec {
+    Ok(PartitionSpec {
         overlapping_dropping_partition_indices: Vec::new(),
         is_empty_columns: false,
         kind,
@@ -451,8 +502,40 @@ fn build_table_partitioning_inner(
         expr: built,
         dependencies,
         definitions,
-    }))
+    })
 }
+/// Go `buildTablePartitionInfo`'s `UPDATE INDEXES (name GLOBAL|LOCAL, ...)`:
+/// the table's indexes with each named one's locality replaced, which the
+/// unique-key rule then reads. An unknown or repeated name is 1280; naming
+/// `PRIMARY` on a table whose primary key is the integer handle is 1503,
+/// since that key has no index to move.
+pub(super) fn apply_update_indexes(
+    partitioning: &tidb_ast::TablePartitioning,
+    indexes: &[KvIndex],
+    handle_offsets: &[usize],
+) -> Result<Vec<KvIndex>, DriverError> {
+    let mut updated = indexes.to_vec();
+    let mut seen = std::collections::HashSet::new();
+    for update in &partitioning.update_indexes {
+        let Some(index) = updated
+            .iter_mut()
+            .find(|index| index.name.eq_ignore_ascii_case(&update.name))
+        else {
+            if update.name.eq_ignore_ascii_case("primary") && !handle_offsets.is_empty() {
+                return Err(DriverError::PartitionUniqueKeyNeedAllFields(
+                    "CLUSTERED INDEX".to_owned(),
+                ));
+            }
+            return Err(super::preprocess::wrong_name_for_index(&update.name));
+        };
+        if !seen.insert(go_to_lower(&update.name)) {
+            return Err(super::preprocess::wrong_name_for_index(&update.name));
+        }
+        index.global = update.global;
+    }
+    Ok(updated)
+}
+
 /// Resolve Go `PARTITION BY KEY` columns.  An empty list means the table's
 /// primary key; a heap table therefore hashes the empty byte stream, exactly
 /// as Go's `ForKeyPruning` does when `PartitionInfo.Columns` remains empty.
@@ -877,7 +960,7 @@ fn unwrap_parentheses(expr: &Expr) -> &Expr {
 /// Go `buildHashPartitionDefinitions`: `n` partitions, named `p0..pn-1`
 /// unless the statement named them itself.
 fn build_hash_partition_definitions(
-    create: &CreateTableStmt,
+    partitioning: &tidb_ast::TablePartitioning,
     count: u64,
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &crate::StmtContext,
@@ -897,10 +980,7 @@ fn build_hash_partition_definitions(
     // A HASH partition definition carries no VALUES -- `tidb_parser`'s
     // `validate_definition` already rejects them -- so the written
     // definitions contribute their names and their comments.
-    let written = create
-        .partitioning
-        .as_ref()
-        .map_or(&[][..], |partitioning| &partitioning.definitions);
+    let written = &partitioning.definitions[..];
     debug_assert!(written
         .iter()
         .all(|definition| matches!(definition.clause, PartitionDefinitionClause::None)));
@@ -1591,12 +1671,11 @@ fn check_partition_columns_unique(columns: &[String]) -> Result<(), DriverError>
 }
 
 fn check_partition_name_unique(definitions: &[PartitionDef]) -> Result<(), DriverError> {
-    for (index, definition) in definitions.iter().enumerate() {
-        let folded = go_to_lower(&definition.name);
-        if definitions[..index]
-            .iter()
-            .any(|earlier| go_to_lower(&earlier.name) == folded)
-        {
+    // Go keeps a map of the lowered names (`checkPartitionNameUnique`), one
+    // pass; an INTERVAL clause can generate thousands of definitions.
+    let mut seen = std::collections::HashSet::with_capacity(definitions.len());
+    for definition in definitions {
+        if !seen.insert(go_to_lower(&definition.name)) {
             // Go reports the LATER occurrence, original-cased
             // (`partition.go:1761`).
             return Err(DriverError::PartitionSameName(definition.name.clone()));
@@ -1811,7 +1890,7 @@ fn stored_clause(
 
 /// The stored definitions as the AST nodes the bound builders read, which is
 /// the shape Go reconstructs when it re-parses `LessThan`/`InValues`.
-fn stored_definitions_as_ast(
+pub(super) fn stored_definitions_as_ast(
     definitions: &[StoredPartitionDefinition],
 ) -> Result<Vec<PartitionDefinition>, DriverError> {
     definitions
@@ -2251,14 +2330,7 @@ fn stored_definitions_for(
                 field_types,
             } => {
                 let bounds = less_than.get(ordinal).map_or(&[][..], Vec::as_slice);
-                for (position, bound) in bounds.iter().enumerate() {
-                    entry.less_than.push(match bound {
-                        RangeColumnBound::MaxValue => PARTITION_MAX_VALUE.to_owned(),
-                        RangeColumnBound::Value(datum) => {
-                            stored_value_text(datum, field_types.get(position))?
-                        }
-                    });
-                }
+                entry.less_than = stored_range_columns_bound_text(bounds, field_types)?;
             }
             PartitionKind::List { .. } | PartitionKind::ListColumns { .. } => {
                 entry.in_values = stored_in_values(
@@ -2274,6 +2346,22 @@ fn stored_definitions_for(
         stored.push(entry);
     }
     Ok(stored)
+}
+
+/// One RANGE COLUMNS bound tuple in the text Go stores
+/// (`generatePartValuesWithTp`), `MAXVALUE` as that word.
+pub(super) fn stored_range_columns_bound_text(
+    bounds: &[RangeColumnBound],
+    field_types: &[FieldType],
+) -> Result<Vec<String>, DriverError> {
+    bounds
+        .iter()
+        .enumerate()
+        .map(|(position, bound)| match bound {
+            RangeColumnBound::MaxValue => Ok(PARTITION_MAX_VALUE.to_owned()),
+            RangeColumnBound::Value(datum) => stored_value_text(datum, field_types.get(position)),
+        })
+        .collect()
 }
 
 /// Go's `partitionMaxValue`, stored as that literal word and matched back

@@ -110,7 +110,7 @@ pub(super) fn exchange_partition_action(
     if standalone.has_affinity() || partitioned.has_affinity() {
         return Err(coded(
             8200,
-            "Unsupported DDL operation: EXCHANGE PARTITION of a table with AFFINITY option",
+            "Unsupported EXCHANGE PARTITION of a table with AFFINITY option",
         ));
     }
     if !standalone.foreign_keys().is_empty() {

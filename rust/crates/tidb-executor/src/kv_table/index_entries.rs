@@ -640,7 +640,7 @@ impl KvTable {
     /// Go `index.create` for one index over `row`: every entry key it files,
     /// a unique one checked for a duplicate first.
     #[allow(clippy::too_many_arguments)]
-    fn create_index_entries(
+    pub(in crate::kv_table) fn create_index_entries(
         &mut self,
         index: &KvIndex,
         row: &[Datum],
