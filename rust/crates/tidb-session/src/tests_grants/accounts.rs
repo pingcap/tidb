@@ -477,11 +477,13 @@ fn require_policies_are_stored_shown_and_invalid_forms_are_refused() {
     assert!(shown(&mut session, "plain").contains(" REQUIRE SSL "));
     session.run("ALTER USER 'plain'@'%' REQUIRE NONE").unwrap();
     assert!(shown(&mut session, "plain").contains(" REQUIRE NONE "));
-    // A password-only ALTER leaves the requirement alone.
+    // Go `executeAlterUser` rewrites the policy on every ALTER USER, `{}`
+    // for one without REQUIRE, so a password-only ALTER clears it
+    // (captured on this branch).
     session
         .run("ALTER USER 'ssl'@'%' IDENTIFIED BY 'x'")
         .unwrap();
-    assert!(shown(&mut session, "ssl").contains(" REQUIRE SSL "));
+    assert!(shown(&mut session, "ssl").contains(" REQUIRE NONE "));
 
     session.run("CREATE USER 'x509'@'%' REQUIRE X509").unwrap();
     assert!(shown(&mut session, "x509").contains(" REQUIRE X509 "));
@@ -495,10 +497,15 @@ fn require_policies_are_stored_shown_and_invalid_forms_are_refused() {
             .run(&format!("CREATE USER '{account}'@'%' REQUIRE {clause}"))
             .unwrap();
         assert!(shown(&mut session, account).contains(&format!(" REQUIRE {clause} ")));
+        // Every ALTER USER rewrites the policy (see above).
         session
             .run(&format!(
                 "ALTER USER '{account}'@'%' IDENTIFIED BY 'rotated'"
             ))
+            .unwrap();
+        assert!(shown(&mut session, account).contains(" REQUIRE NONE "));
+        session
+            .run(&format!("ALTER USER '{account}'@'%' REQUIRE {clause}"))
             .unwrap();
         assert!(shown(&mut session, account).contains(&format!(" REQUIRE {clause} ")));
         session
@@ -625,5 +632,211 @@ fn show_create_user_renders_the_mysql_user_row() {
         "CREATE USER 'u3'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE \
          PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE \
          INTERVAL DEFAULT ATTRIBUTE '{\"age\": 20}'"
+    );
+}
+
+/// The privilege tables hold what Go's account executors write into them
+/// (`grant.go`, `revoke.go`, `simple.go`), step for step on one account.
+/// Captured from Go TiDB.
+#[test]
+fn account_statements_write_the_privilege_tables_like_go() {
+    let privs = privilege::PrivilegeRegistry::default();
+    let mut session = bootstrap_session(&privs);
+    session.set_user("root@%".into(), "root@%".into());
+    let rows = |session: &mut Session, sql: &str| row_text(session.run(sql));
+    let run = |session: &mut Session, sql: &str| {
+        session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    };
+    run(&mut session, "create user u0");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select priv from mysql.global_priv where user='u0'"
+        ),
+        [["{}"]]
+    );
+    run(&mut session, "create user u1 require ssl");
+    run(&mut session, "alter user u1 identified by 'x'");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select priv from mysql.global_priv where user='u1'"
+        ),
+        [["{}"]]
+    );
+    run(&mut session, "alter user u1 require x509");
+    run(&mut session, "grant select on *.* to u1");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select priv from mysql.global_priv where user='u1'"
+        ),
+        [[r#"{"ssl_type":2}"#]]
+    );
+    run(&mut session, "create role r1");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select priv from mysql.global_priv where user='r1'"
+        ),
+        [["{}"]]
+    );
+
+    run(&mut session, "grant select on test.* to u0");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select Host, DB, User, Select_priv, Insert_priv from mysql.db where user='u0'"
+        ),
+        [["%", "test", "u0", "Y", "N"]]
+    );
+    run(&mut session, "create table test.t(a int, b int)");
+    run(&mut session, "grant insert, select(a) on test.t to u0");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select Grantor, Table_priv, Column_priv from mysql.tables_priv where user='u0'"
+        ),
+        [["root@%", "Insert", "Insert"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "select Column_name, Column_priv from mysql.columns_priv where user='u0'"
+        ),
+        [["a", "Select"]]
+    );
+    let table_privs = "select Table_priv, Column_priv from mysql.tables_priv where user='u0'";
+    run(
+        &mut session,
+        "grant select, update on test.t to u0 with grant option",
+    );
+    assert_eq!(
+        rows(&mut session, table_privs),
+        [["Select,Insert,Update,Grant", "Select,Insert,Update"]]
+    );
+    run(&mut session, "revoke insert, select on test.t from u0");
+    assert_eq!(
+        rows(&mut session, table_privs),
+        [["Update,Grant", "Update"]]
+    );
+    run(&mut session, "revoke all on test.t from u0");
+    assert_eq!(rows(&mut session, table_privs), [["Grant", ""]]);
+    run(&mut session, "revoke select(a) on test.t from u0");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select count(*) from mysql.columns_priv where user='u0'"
+        ),
+        [["0"]]
+    );
+    run(&mut session, "revoke select on test.* from u0");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select count(*) from mysql.db where user='u0'"
+        ),
+        [["0"]]
+    );
+    let error = session
+        .run("revoke select on test.* from u0")
+        .expect_err("the db row is gone")
+        .to_mysql_error();
+    assert_eq!(
+        error.message,
+        "There is no such grant defined for user 'u0' on host '%' on database test"
+    );
+    // Go's `revokePriv` returns before touching the row for USAGE, so the
+    // empty row `GRANT USAGE` created survives any number of revokes; and
+    // `DB`/`Table_name` are utf8mb4_general_ci, so a REVOKE spelling the
+    // table differently reaches the row the GRANT spelled
+    // (executor/revoke.result).
+    run(&mut session, "grant usage on test.* to u0");
+    run(&mut session, "revoke usage on test.* from u0");
+    run(&mut session, "revoke usage on test.* from u0");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select Select_priv from mysql.db where user='u0'"
+        ),
+        [["N"]]
+    );
+    run(&mut session, "create table test.TABLE_PRIV(id int)");
+    run(&mut session, "grant select on test.table_priv to u0");
+    run(&mut session, "revoke select on test.TABLE_PRIV from u0");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select count(*) from mysql.tables_priv where user='u0' and table_name='table_priv'"
+        ),
+        [["0"]]
+    );
+
+    run(
+        &mut session,
+        "grant backup_admin on *.* to u0 with grant option",
+    );
+    run(&mut session, "grant restore_admin on *.* to u0");
+    let dynamic = "select user, host, priv, with_grant_option from mysql.global_grants \
+                   where user='u0' order by priv";
+    assert_eq!(
+        rows(&mut session, dynamic),
+        [
+            ["u0", "%", "BACKUP_ADMIN", "Y"],
+            ["u0", "%", "RESTORE_ADMIN", "N"]
+        ]
+    );
+    run(&mut session, "revoke backup_admin on *.* from u0");
+    assert_eq!(
+        rows(&mut session, dynamic),
+        [["u0", "%", "RESTORE_ADMIN", "N"]]
+    );
+
+    run(&mut session, "grant r1 to u0");
+    assert_eq!(
+        rows(&mut session, "select * from mysql.role_edges"),
+        [["%", "r1", "%", "u0", "N"]]
+    );
+    run(&mut session, "set default role r1 to u0");
+    assert_eq!(
+        rows(&mut session, "select * from mysql.default_roles"),
+        [["%", "u0", "%", "r1"]]
+    );
+    run(&mut session, "set default role all to u0");
+    assert_eq!(
+        rows(&mut session, "select * from mysql.default_roles"),
+        [["%", "u0", "%", "r1"]]
+    );
+
+    run(&mut session, "grant select on test.* to u0");
+    run(&mut session, "rename user u0 to u9");
+    assert_eq!(
+        rows(&mut session, "select user from mysql.db where db='test'"),
+        [["u9"]]
+    );
+    assert_eq!(
+        rows(&mut session, "select * from mysql.role_edges"),
+        [["%", "r1", "%", "u9", "N"]]
+    );
+    assert_eq!(
+        rows(&mut session, "select user from mysql.global_grants"),
+        [["u9"]]
+    );
+    run(&mut session, "drop user u9");
+    for table in ["db", "role_edges", "default_roles", "global_grants"] {
+        assert_eq!(
+            rows(&mut session, &format!("select count(*) from mysql.{table}")),
+            [["0"]],
+            "{table}"
+        );
+    }
+    assert_eq!(
+        rows(
+            &mut session,
+            "select count(*) from mysql.global_priv where user='u9'"
+        ),
+        [["0"]]
     );
 }

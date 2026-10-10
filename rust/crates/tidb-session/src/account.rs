@@ -731,6 +731,15 @@ impl Session {
                     password_lifetime,
                 )?;
                 self.mirror_account_policy_and_history(&registry, &user, &host)?;
+                // Go `executeCreateUser`: `INSERT IGNORE INTO
+                // mysql.global_priv`, whose `tlsOption2GlobalPriv` is `{}`
+                // for a statement without REQUIRE.
+                self.mirror_global_priv(
+                    &user,
+                    &host,
+                    &tls_policy,
+                    crate::user_table::GlobalPrivWrite::CreateUser,
+                )?;
             } else if !if_not_exists {
                 return Err(DriverError::CreateUserAlreadyExists {
                     user: user.to_owned(),
@@ -802,6 +811,14 @@ impl Session {
                     None,
                 )?;
                 self.mirror_account_policy_and_history(&registry, &role, &host)?;
+                // Go `executeCreateUser` with `IsCreateRole` writes the
+                // same `{}` policy row.
+                self.mirror_global_priv(
+                    &role,
+                    &host,
+                    "{}",
+                    crate::user_table::GlobalPrivWrite::CreateUser,
+                )?;
             } else if !if_not_exists {
                 return Err(DriverError::CannotUserRole {
                     operation: "CREATE ROLE",
@@ -846,6 +863,7 @@ impl Session {
         for grantee in &grantees {
             for role in &roles {
                 registry.grant_role(role, grantee);
+                self.mirror_role_edge((&role.0, &role.1), (&grantee.0, &grantee.1), true)?;
             }
         }
         Ok(StmtOutput::Affected(0))
@@ -880,6 +898,7 @@ impl Session {
         for grantee in &grantees {
             for role in &roles {
                 registry.revoke_role(role, grantee);
+                self.mirror_role_edge((&role.0, &role.1), (&grantee.0, &grantee.1), false)?;
             }
         }
         // Go drops a revoked role from the CURRENT session's active set in
@@ -1059,6 +1078,15 @@ impl Session {
                 .zip(&replacements)
                 .map(|(account, roles)| (account, roles.as_slice())),
         );
+        // Go `setDefaultRoleNone` / `setDefaultRoleRegular` /
+        // `setDefaultRoleAll`.
+        for (account, roles) in accounts.iter().zip(&replacements) {
+            let roles = match &set_default.selection {
+                tidb_ast::DefaultRoleSelection::All => None,
+                _ => Some(roles.as_slice()),
+            };
+            self.mirror_default_roles(&account.0, &account.1, roles)?;
+        }
         Ok(StmtOutput::Affected(0))
     }
 
@@ -1222,6 +1250,7 @@ impl Session {
             // with the account, authentication string included.
             self.mirror_rename_user_row(&old_user, &old_host, &new_user, &new_host)?;
             self.mirror_rename_password_history(&old_user, &old_host, &new_user, &new_host)?;
+            self.mirror_rename_user_privileges(&old_user, &old_host, &new_user, &new_host)?;
         }
         Ok(StmtOutput::Affected(0))
     }
@@ -1298,6 +1327,7 @@ impl Session {
                 // (reachable only under IF EXISTS) deletes nothing.
                 self.mirror_drop_user_row(&spec.user, &spec.host)?;
                 self.mirror_delete_password_history(&spec.user, &spec.host)?;
+                self.mirror_drop_user_privileges(&spec.user, &spec.host)?;
             }
         }
         // A dropped role stops being active in THIS session too; the edge it
@@ -1411,6 +1441,11 @@ impl Session {
                     // here, so only the static mask is mirrored.
                     let (user, host) = (user.to_owned(), host.to_owned());
                     self.mirror_global_priv_columns(&user, &host, mask, true)?;
+                    // Go `grantDynamicPriv`: one `mysql.global_grants` row
+                    // per dynamic privilege.
+                    for name in &dynamic {
+                        self.mirror_dynamic_priv(&user, &host, name, Some(grant.with_grant))?;
+                    }
                 }
             }
             tidb_ast::GrantLevel::Database(database) => {
@@ -1428,6 +1463,8 @@ impl Session {
                         return Err(DriverError::GrantToUnknownUser);
                     }
                     registry.grant_db(user, host, &database, mask);
+                    let (user, host) = (user.to_owned(), host.to_owned());
+                    self.mirror_db_privs(&user, &host, &database, mask, true)?;
                 }
             }
             tidb_ast::GrantLevel::Table { database, table } => {
@@ -1461,6 +1498,17 @@ impl Session {
                 // (A)` prints back as `SELECT(a)`.
                 let columns = self.resolve_grant_columns(&database, table, &columns)?;
                 tls_policy = load_tls_policy()?;
+                // Go `GrantExec.Next` appends a GRANT element under `WITH
+                // GRANT OPTION`; `ALL` is told apart because Go's
+                // `composeTablePrivUpdateForGrant` replaces the sets for it.
+                let table_all = grant
+                    .privileges
+                    .iter()
+                    .any(|privilege| privilege.name == "ALL" && privilege.columns.is_empty());
+                let mut table_privs_written = privs.clone();
+                if with_grant != 0 {
+                    table_privs_written.push(privilege::GlobalPriv::GrantOption);
+                }
                 self.create_grantees(&registry, &grant.users, &missing)?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
@@ -1476,12 +1524,29 @@ impl Session {
                     for (column, column_mask) in &columns {
                         registry.grant_column(user, host, &database, table, column, *column_mask);
                     }
+                    let (user, host) = (user.to_owned(), host.to_owned());
+                    self.mirror_table_privs(
+                        &user,
+                        &host,
+                        &database,
+                        table,
+                        &table_privs_written,
+                        table_all,
+                        true,
+                    )?;
+                    self.mirror_column_privs(&user, &host, &database, table, &columns, true)?;
                 }
             }
         }
         if let Some(policy) = tls_policy {
             for spec in &grant.users {
                 registry.set_tls_policy(&spec.user.user, &spec.user.host, &policy);
+                self.mirror_global_priv(
+                    &spec.user.user,
+                    &spec.user.host,
+                    &policy,
+                    crate::user_table::GlobalPrivWrite::Grant,
+                )?;
             }
         }
         Ok(StmtOutput::Affected(0))
@@ -1599,6 +1664,13 @@ impl Session {
                     // revoked bits flip the same `mysql.user` columns back.
                     let (user, host) = (user.to_owned(), host.to_owned());
                     self.mirror_global_priv_columns(&user, &host, mask, false)?;
+                    // Go `revokeGlobalPriv` / `revokeDynamicPriv`.
+                    if revoke_all_dynamic {
+                        self.mirror_revoke_all_dynamic(&user, &host)?;
+                    }
+                    for name in &dynamic {
+                        self.mirror_dynamic_priv(&user, &host, name, None)?;
+                    }
                 }
                 // An unregistered name is a WARNING here, not the error
                 // `GRANT` raises for it, and the delete still runs
@@ -1634,6 +1706,8 @@ impl Session {
                         });
                     }
                     registry.revoke_db(user, host, &database, mask);
+                    let (user, host) = (user.to_owned(), host.to_owned());
+                    self.mirror_db_privs(&user, &host, &database, mask, false)?;
                 }
             }
             tidb_ast::GrantLevel::Table { database, table } => {
@@ -1679,6 +1753,9 @@ impl Session {
                     for (column, column_mask) in &columns {
                         registry.revoke_column(user, host, &database, table, column, *column_mask);
                     }
+                    let (user, host) = (user.to_owned(), host.to_owned());
+                    self.mirror_table_privs(&user, &host, &database, table, &privs, false, false)?;
+                    self.mirror_column_privs(&user, &host, &database, table, &columns, false)?;
                 }
             }
         }

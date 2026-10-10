@@ -171,6 +171,51 @@ impl PrivilegeRegistry {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// The key of the account's `mysql.db` row for `database`. Go's `DB`
+    /// column is `utf8mb4_general_ci`, so a statement spelling the schema
+    /// differently reaches the row an earlier GRANT created and keeps its
+    /// spelling; a new row takes the statement's.
+    fn db_row_key(
+        rows: &HashMap<DbPrivKey, u64>,
+        user: &str,
+        host: &str,
+        database: &str,
+    ) -> DbPrivKey {
+        rows.keys()
+            .find(|(row_user, row_host, row_database)| {
+                row_user == user && row_host == host && row_database.eq_ignore_ascii_case(database)
+            })
+            .cloned()
+            .unwrap_or_else(|| (user.to_owned(), host.to_owned(), database.to_owned()))
+    }
+
+    /// [`Self::db_row_key`] for `mysql.tables_priv`, whose `DB` and
+    /// `Table_name` are both `utf8mb4_general_ci`.
+    fn table_row_key(
+        rows: &HashMap<TablePrivKey, u64>,
+        user: &str,
+        host: &str,
+        database: &str,
+        table: &str,
+    ) -> TablePrivKey {
+        rows.keys()
+            .find(|(row_user, row_host, row_database, row_table)| {
+                row_user == user
+                    && row_host == host
+                    && row_database.eq_ignore_ascii_case(database)
+                    && row_table.eq_ignore_ascii_case(table)
+            })
+            .cloned()
+            .unwrap_or_else(|| {
+                (
+                    user.to_owned(),
+                    host.to_owned(),
+                    database.to_owned(),
+                    table.to_owned(),
+                )
+            })
+    }
+
     fn lock_dynamic(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), DynamicPrivs>> {
         self.dynamic_privs
             .lock()
@@ -1310,30 +1355,38 @@ impl PrivilegeRegistry {
     /// inserting a fresh `mysql.DB` row before `grantDBLevel` sets bits on
     /// it).
     pub fn grant_db(&self, user: &str, host: &str, database: &str, mask: u64) {
-        *self
-            .lock_db()
-            .entry((user.to_owned(), host.to_owned(), database.to_owned()))
-            .or_insert(0) |= mask;
+        let mut rows = self.lock_db();
+        let key = Self::db_row_key(&rows, user, host, database);
+        *rows.entry(key).or_insert(0) |= mask;
     }
 
     /// Go's `dbUserExists`: whether this account has a `mysql.DB` row for
     /// `database` at all (any privilege, even zero after later revokes).
     #[must_use]
     pub fn db_grant_row_exists(&self, user: &str, host: &str, database: &str) -> bool {
-        self.lock_db()
-            .contains_key(&(user.to_owned(), host.to_owned(), database.to_owned()))
+        let rows = self.lock_db();
+        rows.contains_key(&Self::db_row_key(&rows, user, host, database))
     }
 
     /// Clears every bit in `mask` on the account's `(database)` row. Go's
     /// `revokeOneUser` requires the row to already exist (checked by the
     /// caller via [`Self::db_grant_row_exists`]); clearing a bit the row
-    /// never had is a silent no-op, matching global-scope `revoke`.
+    /// never had is a silent no-op, matching global-scope `revoke`. Go's
+    /// `revokeDBPriv` then deletes the row once every privilege and the
+    /// grant option are `'N'`, so a later REVOKE finds no grant. `USAGE`
+    /// (an empty mask) changes nothing: Go's `revokePriv` returns before
+    /// `revokeDBPriv` for it, leaving even an empty row in place.
     pub fn revoke_db(&self, user: &str, host: &str, database: &str, mask: u64) {
-        if let Some(privs) =
-            self.lock_db()
-                .get_mut(&(user.to_owned(), host.to_owned(), database.to_owned()))
-        {
+        if mask == 0 {
+            return;
+        }
+        let mut rows = self.lock_db();
+        let key = Self::db_row_key(&rows, user, host, database);
+        if let Some(privs) = rows.get_mut(&key) {
             *privs &= !mask;
+            if *privs == 0 {
+                rows.remove(&key);
+            }
         }
     }
 
@@ -1341,15 +1394,9 @@ impl PrivilegeRegistry {
     /// creating the row if this is its first TABLE-scope grant (Go's
     /// `checkAndInitTablePriv`).
     pub fn grant_table(&self, user: &str, host: &str, database: &str, table: &str, mask: u64) {
-        *self
-            .lock_table()
-            .entry((
-                user.to_owned(),
-                host.to_owned(),
-                database.to_owned(),
-                table.to_owned(),
-            ))
-            .or_insert(0) |= mask;
+        let mut rows = self.lock_table();
+        let key = Self::table_row_key(&rows, user, host, database, table);
+        *rows.entry(key).or_insert(0) |= mask;
     }
 
     /// Go's `tableUserExists`: whether this account has a
@@ -1362,12 +1409,8 @@ impl PrivilegeRegistry {
         database: &str,
         table: &str,
     ) -> bool {
-        self.lock_table().contains_key(&(
-            user.to_owned(),
-            host.to_owned(),
-            database.to_owned(),
-            table.to_owned(),
-        ))
+        let rows = self.lock_table();
+        rows.contains_key(&Self::table_row_key(&rows, user, host, database, table))
     }
 
     /// Go `MySQLPrivilege.RequestVerification` for a statement that names one
@@ -1756,13 +1799,16 @@ impl PrivilegeRegistry {
     /// See [`Self::revoke_db`] for the never-granted-bit no-op rule, which
     /// applies identically here.
     pub fn revoke_table(&self, user: &str, host: &str, database: &str, table: &str, mask: u64) {
-        if let Some(privs) = self.lock_table().get_mut(&(
-            user.to_owned(),
-            host.to_owned(),
-            database.to_owned(),
-            table.to_owned(),
-        )) {
+        let mut rows = self.lock_table();
+        let key = Self::table_row_key(&rows, user, host, database, table);
+        if let Some(privs) = rows.get_mut(&key) {
             *privs &= !mask;
+            // Go `revokeTablePriv` -- which a TABLE-level privilege reaches,
+            // never a column list -- deletes the row once `Table_priv` is
+            // empty.
+            if mask != 0 && *privs == 0 {
+                rows.remove(&key);
+            }
         }
     }
 
@@ -1793,9 +1839,9 @@ impl PrivilegeRegistry {
         if let Some(row) = rows.iter_mut().find(|row| {
             row.user == user
                 && row.host == host
-                && row.database == database
-                && row.table == table
-                && row.column == column
+                && row.database.eq_ignore_ascii_case(database)
+                && row.table.eq_ignore_ascii_case(table)
+                && row.column.eq_ignore_ascii_case(column)
         }) {
             row.privs |= mask;
             return;
@@ -1832,9 +1878,9 @@ impl PrivilegeRegistry {
         rows.retain_mut(|row| {
             let matches = row.user == user
                 && row.host == host
-                && row.database == database
-                && row.table == table
-                && row.column == column;
+                && row.database.eq_ignore_ascii_case(database)
+                && row.table.eq_ignore_ascii_case(table)
+                && row.column.eq_ignore_ascii_case(column);
             if !matches {
                 return true;
             }

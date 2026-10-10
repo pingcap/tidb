@@ -412,15 +412,19 @@ impl Session {
                     drop_secondary,
                 );
             }
-            // Go REPLACES the whole `mysql.global_priv` PRIV JSON when the
-            // statement carries any `REQUIRE` clause, and leaves the row
-            // untouched when it carries none -- so `ALTER USER ... REQUIRE
-            // NONE` clears an earlier `REQUIRE SSL` (captured:
-            // `{"ssl_type":1}` becomes `{}`) while a password-only ALTER
-            // keeps it.
-            if !alter.tls_options.is_empty() {
-                registry.set_tls_policy(&user, &host, &tls_policy);
-            }
+            // Go `executeAlterUser` REPLACES the whole `mysql.global_priv`
+            // PRIV JSON on every ALTER USER: `tlsOption2GlobalPriv` answers
+            // `{}` for a statement without REQUIRE, so a password-only ALTER
+            // clears an earlier `REQUIRE SSL` too (captured on this branch:
+            // `SHOW CREATE USER` then prints `REQUIRE NONE`), through
+            // `INSERT ... ON DUPLICATE KEY UPDATE Priv = values(Priv)`.
+            registry.set_tls_policy(&user, &host, &tls_policy);
+            self.mirror_global_priv(
+                &user,
+                &host,
+                &tls_policy,
+                crate::user_table::GlobalPrivWrite::AlterUser,
+            )?;
             if !mirror_fields.is_empty() && self.user_table_present() {
                 let sql = format!(
                     "UPDATE mysql.user SET {} WHERE Host={} and User={}",

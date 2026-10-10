@@ -368,7 +368,16 @@ fn db_scope_grant_revoke_and_show_grants_round_trip() {
     );
 
     session.run("REVOKE ALL ON db1.* FROM 'u1'@'%'").unwrap();
-    session.run("REVOKE SELECT ON db1.* FROM 'u1'@'%'").unwrap();
+    // REVOKE ALL left every DB privilege 'N', so Go `revokeDBPriv` deleted
+    // the row and a further REVOKE finds no grant (captured).
+    let error = session
+        .run("REVOKE SELECT ON db1.* FROM 'u1'@'%'")
+        .expect_err("the db1 row is gone")
+        .to_mysql_error();
+    assert_eq!(
+        error.message,
+        "There is no such grant defined for user 'u1' on host '%' on database db1"
+    );
     // A row stripped of every privilege prints NO line at all -- Go emits
     // a DB-scope line only when the privilege list is non-empty, or (the
     // USAGE special case) when `GRANT OPTION` is the only bit left.

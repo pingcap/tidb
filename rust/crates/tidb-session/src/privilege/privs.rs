@@ -323,6 +323,39 @@ impl GlobalPriv {
         }
     }
 
+    /// Go `mysql.Priv2SetStr`: the member this privilege is stored as in the
+    /// `Table_priv`/`Column_priv` SET columns of `mysql.tables_priv` and
+    /// `mysql.columns_priv`.
+    #[must_use]
+    pub fn set_name(self) -> &'static str {
+        match self {
+            Self::Create => "Create",
+            Self::Select => "Select",
+            Self::Insert => "Insert",
+            Self::Update => "Update",
+            Self::Delete => "Delete",
+            Self::Drop => "Drop",
+            Self::GrantOption => "Grant",
+            Self::References => "References",
+            Self::LockTables => "Lock Tables",
+            Self::CreateTemporaryTables => "Create Temporary Tables",
+            Self::Event => "Event",
+            Self::CreateRoutine => "Create Routine",
+            Self::AlterRoutine => "Alter Routine",
+            Self::Alter => "Alter",
+            Self::Execute => "Execute",
+            Self::Index => "Index",
+            Self::CreateView => "Create View",
+            Self::ShowView => "Show View",
+            Self::OperateView => "Operate View",
+            Self::CreateRole => "Create Role",
+            Self::DropRole => "Drop Role",
+            Self::Shutdown => "Shutdown Role",
+            Self::Trigger => "Trigger",
+            _ => self.check_fail_name(),
+        }
+    }
+
     /// Go `mysql.Priv2UserCol`: the `mysql.user` column this global
     /// privilege is stored in, spelled as that map spells it (the column
     /// resolves case-insensitively against `CreateUserTable`'s own casing,

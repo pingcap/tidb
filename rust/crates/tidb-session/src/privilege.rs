@@ -491,9 +491,10 @@ mod tests {
             )
         );
         registry.revoke_db("u", "%", "db1", GlobalPriv::Select.bit());
-        // The row still exists (Go never deletes it), but with no privilege
-        // left it prints no line at all.
-        assert!(registry.db_grant_row_exists("u", "%", "db1"));
+        // Go `revokeDBPriv` deletes the row once every privilege is 'N'
+        // (captured: `mysql.db` holds no row and a second REVOKE reports
+        // "There is no such grant defined"), so nothing prints for it.
+        assert!(!registry.db_grant_row_exists("u", "%", "db1"));
         assert_eq!(
             registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some("GRANT USAGE ON *.* TO 'u'@'%'")
