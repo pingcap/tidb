@@ -483,7 +483,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx BuildContext, args []Expres
 	}
 
 	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
-	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETJson || argTp == types.ETString {
+	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETString {
 		argTp = types.ETReal
 	}
 
@@ -518,6 +518,9 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx BuildContext, args []Expres
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
 			}
+		case types.ETJson:
+			ctx.GetEvalCtx().AppendWarning(errJSONInBooleanContext)
+			sig = &builtinJSONIsTrueSig{bf, c.keepNull}
 		case types.ETVectorFloat32:
 			sig = &builtinVectorFloat32IsTrueSig{bf, c.keepNull}
 			// if c.keepNull {
@@ -551,6 +554,9 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx BuildContext, args []Expres
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
 			}
+		case types.ETJson:
+			ctx.GetEvalCtx().AppendWarning(errJSONInBooleanContext)
+			sig = &builtinJSONIsFalseSig{bf}
 		case types.ETVectorFloat32:
 			sig = &builtinVectorFloat32IsFalseSig{bf, c.keepNull}
 			// if c.keepNull {
@@ -647,6 +653,35 @@ func (b *builtinIntIsTrueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 		return 0, true, nil
 	}
 	if isNull || input == 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+type builtinJSONIsTrueSig struct {
+	baseBuiltinFunc
+	keepNull bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinJSONIsTrueSig) Clone() builtinFunc {
+	newSig := &builtinJSONIsTrueSig{keepNull: b.keepNull}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONIsTrueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalJSON(ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	if b.keepNull && isNull {
+		return 0, true, nil
+	}
+	if isNull || input.IsZero() {
 		return 0, false, nil
 	}
 	return 1, false, nil
@@ -759,6 +794,31 @@ func (b *builtinIntIsFalseSig) evalInt(ctx EvalContext, row chunk.Row) (int64, b
 		return 0, true, nil
 	}
 	if isNull || input != 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+type builtinJSONIsFalseSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinJSONIsFalseSig) Clone() builtinFunc {
+	newSig := &builtinJSONIsFalseSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONIsFalseSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalJSON(ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	if isNull || !input.IsZero() {
 		return 0, false, nil
 	}
 	return 1, false, nil
