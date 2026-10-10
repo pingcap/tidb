@@ -224,6 +224,33 @@ func TestDistributeTable(t *testing.T) {
 		"[planner:1210]Incorrect arguments to rule must be leader-scatter, peer-scatter or learner-scatter")
 }
 
+func TestDistributeTableWithFinishedJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int)")
+
+	cli := &MockDistributePDCli{}
+	recoverCli := infosync.SetPDHttpCliForTest(cli)
+	defer recoverCli()
+	cli.On("GetSchedulerConfig", mock.Anything, schedulerName).Return(nil, nil)
+	cli.On("CreateSchedulerWithInput", mock.Anything, schedulerName, mock.Anything).Return(nil)
+
+	// Pre-populate a finished job with a high job-id. Since the finished job is
+	// no longer filtered out, it should be picked up as the matching job.
+	cli.jobs = []map[string]any{
+		{
+			"job-id": float64(100),
+			"alias":  "test.t1.",
+			"engine": "tikv",
+			"rule":   "leader-scatter",
+			"status": "finished",
+		},
+	}
+
+	tk.MustQuery("distribute table t1 rule='leader-scatter' engine='tikv'").Check(testkit.Rows("100"))
+}
+
 func TestShowTableDistributions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

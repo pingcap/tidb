@@ -129,7 +129,7 @@ func (e *DistributeTableExec) getSchedulerJob(ctx context.Context) (bool, float6
 	for _, job := range jobs {
 		// PD will ensure all the alias of uncompleted job are different.
 		// PD return err if the some job alredy exist in the scheduler.
-		if job["alias"] == alias && job["engine"] == e.engine && job["rule"] == e.rule && job["status"] != "finished" {
+		if job["alias"] == alias && job["engine"] == e.engine && job["rule"] == e.rule {
 			id := job["job-id"].(float64)
 			if id > jobID {
 				jobID = id
