@@ -190,9 +190,10 @@ pub use traffic::{
 };
 pub use transaction::{BeginStmt, CompletionType};
 pub use user::{
-    AlterUserDualPassword, AlterUserPasswordExpire, AlterUserResourceKind, AlterUserResourceOption,
-    AlterUserStmt, AlterUserTlsOption, CreateUserAuth, CreateUserCommentOrAttribute,
-    CreateUserCredential, CreateUserPasswordOption, CreateUserSpec, UserSpec,
+    create_user_secure_text, AlterUserDualPassword, AlterUserPasswordExpire, AlterUserResourceKind,
+    AlterUserResourceOption, AlterUserStmt, AlterUserTlsOption, CreateUserAuth,
+    CreateUserCommentOrAttribute, CreateUserCredential, CreateUserPasswordOption, CreateUserSpec,
+    UserSpec,
 };
 pub use user_variable::{SetUserVarStmt, UserVariableAssignment};
 pub use util::{back_quote, push_name_path, redact_url};

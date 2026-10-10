@@ -629,6 +629,7 @@ version = "0.0.0"
 dependencies = [
  "difftest",
  "tidb-ast",
+ "tidb-config",
  "tidb-datatype",
  "tidb-executor",
  "tidb-expr",

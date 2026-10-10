@@ -119,43 +119,13 @@ fn a_failed_use_leaves_the_session_on_its_previous_schema() {
     );
 }
 
-/// The whole point of the object being EMPTY: naming a bootstrap table
-/// REFUSES. Every one of them is absent, and no absent table can answer
-/// emptily -- which is what serving a fabricated zero-row `mysql.user` would
-/// have done to every privilege query in the corpus.
-///
-/// Go serves all of these for real (captured: `select count(*) from
-/// mysql.user` answers 1, `mysql.tidb` answers 6), so this is a refusal, not
-/// parity.
-///
-/// The errno is where it gets interesting, and the two arms below disagree
-/// on purpose:
-///
-/// * `ADMIN CHECK TABLE` refuses with Go's own **1146**
-///   `Table 'mysql.user' doesn't exist`, because `admin_check_arm` resolves
-///   through `SchemaErrorKind::UnknownTable`. That is the arm the classified
-///   `executor/admin` divergence ran through, which is why selecting the
-///   schema is enough to close it.
-/// * `SELECT` refuses with **1146** too, as Go does. It answered a generic
-///   1105 until the planner's table lookup
-///   (`tidb_executor::driver::from` and the DML paths beside it) was moved
-///   onto `SchemaErrorKind::UnknownTable`; that divergence was pinned here
-///   rather than approved, and is now closed.
-///
-/// FLIPS TO SUPPORT when the `mysql.*` bootstrap tables are ported into this
-/// tier: each name below then has to return rows, and this test is the list
-/// of what to convert.
+/// The bootstrap tables answer by name, as Go's do on a fresh cluster
+/// (captured: `select count(*) from mysql.user` answers 1, the bootstrap root
+/// row, and `mysql.db`, `mysql.tables_priv`, `mysql.global_priv` answer 0).
 #[test]
-fn the_bootstrap_tables_are_refused_by_name() {
+fn the_bootstrap_tables_answer_by_name() {
     let mut session = Session::new();
     session.run("USE mysql").unwrap();
-
-    // FLIPPED TO SUPPORT: `mysql.user` is a real bootstrapped table now
-    // (`crate::bootstrap` runs Go `metadef.CreateUserTable` plus
-    // `doDMLWorks`' root row, and `crate::user_table` keeps it written by
-    // the account statements). Go's captured `select count(*) from
-    // mysql.user` answers 1 on a fresh cluster -- the bootstrap root row --
-    // and so does this tier.
     assert_eq!(
         row_text(session.run("SELECT count(*) FROM mysql.user")),
         [["1"]]
@@ -164,35 +134,13 @@ fn the_bootstrap_tables_are_refused_by_name() {
         row_text(session.run("SELECT Host, User, plugin FROM user")),
         [["%", "root", "mysql_native_password"]]
     );
-
-    // A sample across the families Go's `show tables` in `mysql` lists:
-    // privileges, TiDB's own metadata, and statistics.
     for table in ["db", "tables_priv", "global_priv"] {
-        let error = session
-            .run(&format!("ADMIN CHECK TABLE {table}"))
-            .unwrap_err()
-            .to_mysql_error();
-        assert_eq!(
-            error.code, 1146,
-            "unqualified `{table}` in the mysql schema should be 1146"
-        );
-        assert_eq!(
-            error.message,
-            format!("Table 'mysql.{table}' doesn't exist")
-        );
-
-        // Both spellings of the name reach the same lookup, and both now
-        // report Go's own ErrTableNotExists.
+        session.run(&format!("ADMIN CHECK TABLE {table}")).unwrap();
         for sql in [
-            format!("SELECT * FROM {table}"),
-            format!("SELECT * FROM mysql.{table}"),
+            format!("SELECT count(*) FROM {table}"),
+            format!("SELECT count(*) FROM mysql.{table}"),
         ] {
-            let error = session.run(&sql).unwrap_err().to_mysql_error();
-            assert_eq!(error.code, 1146, "`{sql}` should refuse");
-            assert_eq!(
-                error.message,
-                format!("Table 'mysql.{table}' doesn't exist")
-            );
+            assert_eq!(row_text(session.run(&sql)), [["0"]], "{sql}");
         }
     }
 }
@@ -241,43 +189,85 @@ fn the_system_schema_is_listed_among_the_databases() {
     );
 }
 
-/// DIVERGENCE, pinned: enumerating `mysql` under-reports.
-///
-/// Captured from Go, `use mysql; show tables;` returns 61 names --
-/// `advisory_locks` through `user`. This tier returns the seven it stores,
-/// bootstrapped by `crate::bootstrap`. Under-reporting an enumeration is the
-/// price of refusing every absent name in it (see
-/// [`the_bootstrap_tables_are_refused_by_name_with_1146`]); the alternative,
-/// fabricating empty tables so the count looks right, would turn a loud 1146
-/// into a silent zero-row answer.
-///
-/// FLIPS TO SUPPORT as the bootstrap tables land: this count rises toward 61.
-/// It has risen with the shared owners -- `bind_info` for GLOBAL bindings, the two
-/// blacklist tables `ADMIN RELOAD` reads (`crate::blacklist`), and now the
-/// statistics pair `stats_meta` + `stats_table_locked` that `ANALYZE` and
-/// `SHOW STATS_*` require -- and each arrival is a feature that needed the
-/// table. Account history now also owns `password_history`.
+/// Enumerating `mysql` lists the tables Go's bootstrap creates. Captured from
+/// Go, `show tables in mysql` returns 61 names: these 60 tables and the
+/// `tidb_mdl_view` view, which this tier does not bootstrap yet (it needs
+/// `tidb_decode_sql_digests`).
 #[test]
-fn enumerating_the_system_schema_under_reports() {
+fn enumerating_the_system_schema_lists_the_bootstrap_tables() {
     let mut session = Session::new();
     session.run("USE mysql").unwrap();
-    let stored = [
-        ["bind_info"],
-        ["expr_pushdown_blacklist"],
-        ["opt_rule_blacklist"],
-        ["password_history"],
-        ["stats_meta"],
-        ["stats_table_locked"],
-        ["user"],
-    ];
+    let stored: Vec<Vec<String>> = [
+        "advisory_locks",
+        "analyze_jobs",
+        "analyze_options",
+        "bind_info",
+        "capture_plan_baselines_blacklist",
+        "column_stats_usage",
+        "columns_priv",
+        "db",
+        "default_roles",
+        "dist_framework_meta",
+        "expr_pushdown_blacklist",
+        "gc_delete_range",
+        "gc_delete_range_done",
+        "global_grants",
+        "global_priv",
+        "global_variables",
+        "help_topic",
+        "index_advisor_results",
+        "opt_rule_blacklist",
+        "password_history",
+        "plan_replayer_status",
+        "plan_replayer_task",
+        "request_unit_by_group",
+        "role_edges",
+        "stats_buckets",
+        "stats_extended",
+        "stats_feedback",
+        "stats_fm_sketch",
+        "stats_histograms",
+        "stats_history",
+        "stats_meta",
+        "stats_meta_history",
+        "stats_table_locked",
+        "stats_top_n",
+        "table_cache_meta",
+        "tables_priv",
+        "tidb",
+        "tidb_background_subtask",
+        "tidb_background_subtask_history",
+        "tidb_ddl_history",
+        "tidb_ddl_job",
+        "tidb_ddl_notifier",
+        "tidb_ddl_reorg",
+        "tidb_global_task",
+        "tidb_global_task_history",
+        "tidb_import_jobs",
+        "tidb_kernel_options",
+        "tidb_masking_policy",
+        "tidb_mdl_info",
+        "tidb_pitr_id_map",
+        "tidb_restore_registry",
+        "tidb_runaway_queries",
+        "tidb_runaway_watch",
+        "tidb_runaway_watch_done",
+        "tidb_timers",
+        "tidb_ttl_job_history",
+        "tidb_ttl_table_status",
+        "tidb_ttl_task",
+        "tidb_workload_values",
+        "user",
+    ]
+    .into_iter()
+    .map(|name| vec![name.to_owned()])
+    .collect();
     assert_eq!(row_text(session.run("SHOW TABLES")), stored);
-
     assert_eq!(
-        row_text(
-            session.run(
-                "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = 'mysql'"
-            )
-        ),
+        row_text(session.run(
+            "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = 'mysql' \
+             ORDER BY TABLE_NAME"
+        )),
         stored
     );
 }

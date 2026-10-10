@@ -126,6 +126,35 @@ pub struct CreateUserSpec {
 }
 
 impl CreateUserSpec {
+    /// Go `UserSpec.SecurityString`: the account, with `password = ***` in
+    /// place of any authentication string or hash.
+    #[must_use]
+    pub fn security_string(&self) -> String {
+        let with_password = match &self.auth {
+            Some(CreateUserAuth::By(password)) => !password.is_empty(),
+            Some(CreateUserAuth::With {
+                credential:
+                    Some(CreateUserCredential::By(secret) | CreateUserCredential::As(secret)),
+                ..
+            }) => !secret.is_empty(),
+            _ => false,
+        };
+        let dual = match self.dual_password {
+            Some(AlterUserDualPassword::RetainCurrent) => " RETAIN CURRENT PASSWORD",
+            Some(AlterUserDualPassword::DiscardOld) => " DISCARD OLD PASSWORD",
+            None => "",
+        };
+        // Go `UserIdentity.String()`: unquoted `user@host`.
+        let user = format!("{}@{}", self.user.user, self.user.host);
+        if with_password {
+            format!("{{{user} password = ***{dual}}}")
+        } else if !dual.is_empty() {
+            format!("{{{user}{dual}}}")
+        } else {
+            user
+        }
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
         self.user.restore_into(out);
         if let Some(auth) = &self.auth {
@@ -351,6 +380,31 @@ pub struct AlterUserStmt {
     pub comment_or_attribute: Option<CreateUserCommentOrAttribute>,
     /// Optional resource-group assignment.
     pub resource_group: Option<String>,
+}
+
+/// Go `CreateUserStmt.SecureText`.
+#[must_use]
+pub fn create_user_secure_text(users: &[CreateUserSpec]) -> String {
+    let mut out = String::from("create user");
+    for user in users {
+        out.push(' ');
+        out.push_str(&user.security_string());
+    }
+    out
+}
+
+impl AlterUserStmt {
+    /// Go `AlterUserStmt.SecureText`: the named accounts only, as Go keeps
+    /// the `USER()` form's credential outside `Specs`.
+    #[must_use]
+    pub fn secure_text(&self) -> String {
+        let mut out = String::from("alter user");
+        for user in &self.users {
+            out.push(' ');
+            out.push_str(&user.security_string());
+        }
+        out
+    }
 }
 
 impl AlterUserStmt {

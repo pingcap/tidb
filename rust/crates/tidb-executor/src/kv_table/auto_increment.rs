@@ -375,6 +375,9 @@ impl KvTable {
         let current = match row.get(offset) {
             Some(Datum::Int(value)) => *value as u64,
             Some(Datum::UInt(value)) => *value,
+            // Go `getAutoRecordID`: a FLOAT/DOUBLE value inserted into the
+            // column is its id rounded half away from zero.
+            Some(Datum::Real(value) | Datum::Float32(value)) => value.round() as i64 as u64,
             _ => 0,
         };
         if current != 0 {
@@ -399,11 +402,22 @@ impl KvTable {
         };
         self.check_auto_increment_fits(offset, id)?;
         // The allocated id skips the per-column cast the written values went
-        // through, so it is placed in the column's own domain here.
-        row[offset] = if self.auto_id.unsigned {
-            Datum::UInt(id)
+        // through, so it is placed in the column's own domain here: Go
+        // `setDatumAutoIDAndCast` casts it to a FLOAT/DOUBLE column's type.
+        let integer = if self.auto_id.unsigned {
+            id as f64
         } else {
-            Datum::Int(id as i64)
+            id as i64 as f64
+        };
+        row[offset] = match self
+            .columns
+            .get(offset)
+            .map(|column| column.field_type.code())
+        {
+            Some(FieldTypeCode::Float) => Datum::Float32(f64::from(integer as f32)),
+            Some(FieldTypeCode::Double) => Datum::Real(integer),
+            _ if self.auto_id.unsigned => Datum::UInt(id),
+            _ => Datum::Int(id as i64),
         };
         Ok(if reused {
             AutoIncrement::Reused(id as i64)

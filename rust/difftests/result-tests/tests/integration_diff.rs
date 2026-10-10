@@ -605,6 +605,21 @@ fn rewrite_load_stats_path(sql: &str) -> Option<String> {
     Some(format!("load stats '{}'", dir.join(path).display()))
 }
 
+/// Loads `tests/integrationtest/config.toml` into the process config once:
+/// `run-tests.sh` starts the recording tidb-server with it, and recorded
+/// answers depend on its settings (`allow-expression-index`).
+fn ensure_integration_config(dir: &std::path::Path) {
+    static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    ONCE.get_or_init(|| {
+        let path = dir.join("config.toml");
+        let text = fs::read_to_string(&path).expect("read the integration config");
+        let mut config = tidb_config::config_tree::config::new_config();
+        // An undecoded key is Go's non-fatal ErrConfigValidationFailed.
+        let _ = config.load_str(&path.display().to_string(), &text);
+        tidb_config::config_tree::config::store_global_config(config);
+    });
+}
+
 /// Unpacks `tests/integrationtest/s.zip` into `s/` once, the way
 /// `run-tests.sh` does before starting mysql-tester.
 ///
@@ -833,6 +848,7 @@ fn run_topic(topic: &str) -> Result<TopicReport, String> {
 
 fn run_topic_on_this_stack(topic: &str) -> Result<TopicReport, String> {
     let dir = integrationtest_dir();
+    ensure_integration_config(&dir);
     let script = fs::read_to_string(dir.join(format!("t/{topic}.test")))
         .map_err(|e| format!("read t/{topic}.test: {e}"))?;
     let recorded_path = recording_path(&dir, topic);

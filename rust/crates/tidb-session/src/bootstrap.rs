@@ -94,35 +94,56 @@ impl Session {
     }
 
     fn run_bootstrap_statements(&mut self) -> Result<(), DriverError> {
+        /// Go master's `systemTablesOfMaterializedViewNextGenVersion`, which
+        /// `tidb_metadef::BOOTSTRAP_TABLES` carries for the cluster tier.
+        const MATERIALIZED_VIEW_TABLES: [&str; 5] = [
+            "tidb_mview_refresh_info",
+            "tidb_mlog_purge_info",
+            "tidb_mview_refresh_hist",
+            "tidb_mview_refresh_alert",
+            "tidb_mlog_purge_hist",
+        ];
         let settings = tidb_executor::CreateTableSettings {
             sql_mode: self.scanner_sql_mode(),
             foreign_key_checks: self.foreign_key_checks(),
             enable_check_constraint: false,
             clustered_index_mode: self.clustered_index_mode(),
         };
-        let ddl_ctx = self.statement_context(false);
-        for create in [
-            // Go creates `mysql.user` FIRST (`tableList` in `doDDLWorks`
-            // starts with `CreateUserTable`); kept first here so a failure
-            // names the account table rather than a bystander.
-            tidb_metadef::system_tables_def::CREATE_USER_TABLE,
-            tidb_metadef::system_tables_def::CREATE_PASSWORD_HISTORY_TABLE,
-            tidb_metadef::system_tables_def::CREATE_BIND_INFO_TABLE,
-            tidb_metadef::system_tables_def::CREATE_STATS_META_TABLE,
-            tidb_metadef::system_tables_def::CREATE_STATS_TABLE_LOCKED_TABLE,
-            // Go bootstraps these two empty (`doDDLWorks`); only an upgrade
-            // from a pre-v4 cluster seeds `expr_pushdown_blacklist` rows
-            // (`writeDefaultExprPushDownBlacklist`), and a fresh cluster --
-            // which is what every session here is -- starts with neither
-            // table holding anything.
-            tidb_metadef::system_tables_def::CREATE_EXPR_PUSHDOWN_BLACKLIST_TABLE,
-            tidb_metadef::system_tables_def::CREATE_OPT_RULE_BLACKLIST_TABLE,
-        ] {
-            self.with_catalog_mut(|catalog| {
-                tidb_executor::run_create_table_in(create, catalog, "mysql", settings, &ddl_ctx)
-                    .map(|_| ())
-            })?;
-        }
+        // Go's bootstrap session never loads the global variables
+        // (`loadCommonGlobalVariablesIfNeeded` returns early while Initing),
+        // so its DDL runs with the zero, non-strict SQL mode: a TEXT column's
+        // '' default (`mysql.global_priv.Priv`) is a warning, not an error.
+        let ddl_ctx = self
+            .statement_context(false)
+            .with_strict(false)
+            .with_ddl_sql_mode(0);
+        // Go `doDDLWorks`: the DDL tables (`InitDDLTables`, every version a
+        // fresh store lacks), then this branch's `versionedBootstrapSchemas`
+        // -- `systemTablesOfBaseNextGenVersion` and
+        // `systemTablesOfMaskingPolicyNextGenVersion`, `mysql.user` first --
+        // each under its reserved metadef ID. Master's materialized-view
+        // version is not bootstrapped by this branch.
+        let tables = tidb_metadef::DDL_TABLE_VERSION_TABLES
+            .iter()
+            .flat_map(|version| version.tables.iter())
+            .chain(
+                tidb_metadef::BOOTSTRAP_TABLES
+                    .iter()
+                    .filter(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.name)),
+            );
+        self.with_catalog_mut(|catalog| {
+            for table in tables {
+                tidb_executor::run_create_system_table_in(
+                    table.create_sql,
+                    catalog,
+                    "mysql",
+                    settings,
+                    &ddl_ctx,
+                    table.id,
+                )?;
+            }
+            Ok(())
+        })?;
 
         // Go `insertBuiltinBindInfoRow`, minus the `HIGH_PRIORITY` word (a
         // scheduler hint this tier has no scheduler for). The zero timestamps

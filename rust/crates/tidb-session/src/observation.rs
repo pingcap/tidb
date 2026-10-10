@@ -24,6 +24,9 @@ use tidb_util::topsql_stmtstats::{ExecFinishInfo, StatementObserver};
 
 pub(crate) struct StatementObservation {
     sql: String,
+    /// Go `SensitiveStmtNode.SecureText`, which every consumer of a
+    /// password-bearing statement's text reads instead of the text.
+    secure_text: Option<String>,
     normalized: String,
     digest: tidb_parser::Digest,
     started: std::time::Instant,
@@ -221,6 +224,7 @@ impl Session {
             .map_or(Duration::ZERO, |(_, duration)| duration);
         self.statement_observation = Some(StatementObservation {
             sql: sql.to_owned(),
+            secure_text: None,
             normalized,
             digest,
             started: std::time::Instant::now(),
@@ -306,6 +310,12 @@ impl Session {
             observation.label = stmt.label().to_owned();
             observation.prepared |= prepared;
             observation.routed = !matches!(stmt, Stmt::Dml(_) | Stmt::Query(_));
+            // Go `getSQLForProcessInfo`: the process list shows a sensitive
+            // statement's secure text once its node is known.
+            observation.secure_text = statement_secure_text(stmt, &observation.sql);
+            if let (Some(text), Some(process)) = (&observation.secure_text, &self.process) {
+                process.registry().redact_statement_info(process.id(), text);
+            }
         }
     }
 
@@ -448,8 +458,14 @@ impl Session {
             String::new()
         };
         let prev_sql_digest = attributed_prev_digest.unwrap_or_default();
+        // Go `getLazyStmtText` / `updatePrevStmt`: a sensitive statement is
+        // summarized by its secure text.
+        let summary_sql = observation
+            .secure_text
+            .clone()
+            .unwrap_or_else(|| observation.sql.clone());
         self.previous_summary_statement =
-            Some((observation.sql.clone(), observation.digest.to_string()));
+            Some((summary_sql.clone(), observation.digest.to_string()));
         let plan = self
             .process_plan_info
             .lock()
@@ -511,7 +527,7 @@ impl Session {
             cpu_usages: Default::default(),
             plan_cache_unqualified: String::new(),
             lazy_info: Arc::new(LazyStatement {
-                sql: observation.sql,
+                sql: summary_sql,
                 encoded_plan: if observation.routed {
                     String::new()
                 } else {
@@ -529,5 +545,46 @@ impl Session {
                 },
             }),
         });
+    }
+}
+
+/// Go `ast.SensitiveStmtNode.SecureText` for the statements that implement
+/// it; `None` for every other statement, whose text is safe to show.
+fn statement_secure_text(stmt: &Stmt, sql: &str) -> Option<String> {
+    // Go `GrantStmt.SecureText` / `GrantRoleStmt.SecureText`: the statement
+    // text cut before its first `identified`.
+    let cut_identified = || {
+        let index = sql.to_lowercase().find("identified");
+        match index {
+            Some(index) if index > 0 => sql[..index].to_owned(),
+            _ => sql.to_owned(),
+        }
+    };
+    match stmt {
+        Stmt::Ddl(ddl) => match ddl.as_ref() {
+            tidb_ast::DdlStmt::CreateUser { users, .. } => {
+                Some(tidb_ast::create_user_secure_text(users))
+            }
+            tidb_ast::DdlStmt::AlterUser(alter) => Some(alter.secure_text()),
+            _ => None,
+        },
+        Stmt::Session(session) => match session.as_ref() {
+            tidb_ast::SessionStmt::SetPassword(set_password) => Some(set_password.secure_text()),
+            tidb_ast::SessionStmt::Set(set) => Some(set.secure_text()),
+            _ => None,
+        },
+        Stmt::Admin(admin) => match admin.as_ref() {
+            tidb_ast::AdminStmt::Grant(_) | tidb_ast::AdminStmt::GrantRole(_) => {
+                Some(cut_identified())
+            }
+            tidb_ast::AdminStmt::Brie(brie) => Some(brie.secure_text()),
+            tidb_ast::AdminStmt::Traffic(traffic) => Some(traffic.secure_text()),
+            _ => None,
+        },
+        Stmt::Dml(dml) => match dml.as_ref() {
+            tidb_ast::DmlStmt::ImportInto(import) => Some(import.secure_text()),
+            _ => None,
+        },
+        Stmt::Query(_) => None,
     }
 }

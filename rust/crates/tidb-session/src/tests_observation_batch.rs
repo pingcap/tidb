@@ -931,3 +931,37 @@ fn kv_exec_counter_batch_admission_and_request_enable_windows() {
         assert_eq!(total, expected);
     }
 }
+
+/// Go `ast.SensitiveStmtNode.SecureText` (infoschema/tables): a password
+/// never reaches the statement summary; the account statements are
+/// summarized by their secure text.
+#[test]
+fn sensitive_statements_reach_the_summary_redacted() {
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut session = tests_support::bootstrap_session(&registry);
+    session.set_user("root@%".into(), "root@localhost".into());
+    session
+        .run("create user user_sensitive_b69 identified by '123456789'")
+        .unwrap();
+    session
+        .run("alter user 'user_sensitive_b69'@'%' identified by 'abcdefg'")
+        .unwrap();
+    session
+        .run("set password for 'user_sensitive_b69'@'%' = 'xyzuvw'")
+        .unwrap();
+    let (_, rows) = tests_support::query_text(
+        &mut session,
+        "select query_sample_text from information_schema.statements_summary \
+         where query_sample_text like '%user_sensitive_b69%' and \
+         (query_sample_text like 'set password%' or query_sample_text like 'create user%' \
+         or query_sample_text like 'alter user%') order by query_sample_text",
+    );
+    assert_eq!(
+        rows,
+        [
+            ["alter user {user_sensitive_b69@% password = ***}"],
+            ["create user {user_sensitive_b69@% password = ***}"],
+            ["set password for user user_sensitive_b69@%"],
+        ]
+    );
+}

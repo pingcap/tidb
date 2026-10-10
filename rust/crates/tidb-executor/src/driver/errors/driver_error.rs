@@ -890,7 +890,9 @@ pub enum DriverError {
     },
     /// Go `ErrWrongAutoKey` (1075): more than one auto column.
     WrongAutoKey,
-    /// Go `ErrWrongFieldSpec` (1063): AUTO_INCREMENT on a non-integer column.
+    /// Go preprocess `checkAutoIncrement`'s "Incorrect column specifier"
+    /// (a plain error, 1105): AUTO_INCREMENT on a column that is neither an
+    /// integer nor FLOAT/DOUBLE.
     WrongColumnSpecifier(String),
     /// Go `dbterror.ErrInvalidOnUpdate` (1294).
     InvalidOnUpdate(String),

@@ -1607,3 +1607,24 @@ fn view_bodies_resolve_their_ctes_like_go() {
         .to_mysql_error();
     assert_eq!(error.code, 1353);
 }
+
+/// Go `addAliasName` for the view's schema SELECT (issue 29326,
+/// ddl/db_integration): an anonymous field repeating an earlier name is
+/// renamed `Name_exp_<name>`, then `Name_exp_<n>_<name>`, instead of failing
+/// the view on a duplicate column.
+#[test]
+fn view_renames_duplicated_anonymous_columns_like_go() {
+    let mut session = view_session();
+    session.run("create view dup_v1 as select 1,1").unwrap();
+    assert_eq!(
+        query_text(&mut session, "select * from dup_v1").0,
+        ["1", "Name_exp_1"]
+    );
+    session
+        .run("create view dup_v2 as select 't', 't', 1 as t")
+        .unwrap();
+    assert_eq!(
+        query_text(&mut session, "select * from dup_v2").0,
+        ["Name_exp_t", "Name_exp_1_t", "t"]
+    );
+}

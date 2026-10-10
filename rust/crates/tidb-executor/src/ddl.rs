@@ -1114,6 +1114,31 @@ pub fn run_create_table_in(
     // statement into `BuildTableInfo` for the same reason.
     ctx: &crate::StmtContext,
 ) -> Result<bool, DriverError> {
+    create_table_in(sql, catalog, current_db, settings, ctx, None)
+}
+
+/// [`run_create_table_in`] for a bootstrap system table, which Go creates
+/// under its reserved metadef ID (`TableBasicInfo.ID`) rather than one from
+/// the global allocator.
+pub fn run_create_system_table_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+    settings: CreateTableSettings,
+    ctx: &crate::StmtContext,
+    table_id: i64,
+) -> Result<bool, DriverError> {
+    create_table_in(sql, catalog, current_db, settings, ctx, Some(table_id))
+}
+
+fn create_table_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+    settings: CreateTableSettings,
+    ctx: &crate::StmtContext,
+    reserved_table_id: Option<i64>,
+) -> Result<bool, DriverError> {
     let CreateTableSettings {
         sql_mode,
         foreign_key_checks,
@@ -1448,9 +1473,10 @@ pub fn run_create_table_in(
         }
     }
 
-    // Go rejects a second auto column with ErrWrongAutoKey (1075) and a
-    // non-integer one with "Incorrect column specifier"; captured from real
-    // TiDB, which -- unlike MySQL -- does NOT require the column to be a key.
+    // Go preprocess `checkAutoIncrement` rejects a second auto column with
+    // ErrWrongAutoKey (1075) and one that is neither an integer nor
+    // FLOAT/DOUBLE with "Incorrect column specifier"; unlike MySQL it does
+    // NOT require the column to be a key.
     let mut auto_increment_offset = None;
     for (i, def) in create.columns.iter().enumerate() {
         if !def
@@ -1463,7 +1489,12 @@ pub fn run_create_table_in(
         if auto_increment_offset.is_some() {
             return Err(DriverError::WrongAutoKey);
         }
-        if !is_int_column(&columns[i]) {
+        if !is_int_column(&columns[i])
+            && !matches!(
+                columns[i].field_type.code(),
+                FieldTypeCode::Float | FieldTypeCode::Double
+            )
+        {
             return Err(DriverError::WrongColumnSpecifier(def.name.clone()));
         }
         auto_increment_offset = Some(i);
@@ -1659,6 +1690,8 @@ pub fn run_create_table_in(
 
     let table_id = if temporary == tidb_model::TempTableType::LOCAL {
         0 // Local temporary DDL assigns a real ID in register_created_table.
+    } else if let Some(table_id) = reserved_table_id {
+        table_id
     } else {
         catalog.allocate_table_id()
     };
@@ -2244,10 +2277,15 @@ pub fn run_create_table_in(
     // is still in-flight, so validate against `table` before registration and
     // leave the catalog untouched on failure.
     // Local creation never submits a durable parent or repairs orphan FKs.
-    if temporary != tidb_model::TempTableType::LOCAL && tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
-        for (child_database, child_name) in catalog.table_paths() {
-            let Some(crate::TableEntry::Kv(child)) = catalog.get_in(&child_database, &child_name)
-            else {
+    // Go reads the referring children from its infoschema's referred-FK
+    // index; a catalog no foreign key was ever declared in has none, and the
+    // scan reads the entries in place instead of re-resolving each name.
+    if temporary != tidb_model::TempTableType::LOCAL
+        && tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst)
+        && catalog.has_foreign_keys()
+    {
+        for (_, _, entry) in catalog.table_entries() {
+            let crate::TableEntry::Kv(child) = entry else {
                 continue;
             };
             if child.foreign_keys().is_empty() {

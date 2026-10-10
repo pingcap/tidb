@@ -357,7 +357,7 @@ fn canonical_view_query(
     catalog: &Catalog,
     current_db: &str,
 ) -> Result<String, DriverError> {
-    let canonical = canonical_query(query, catalog, current_db, &mut Vec::new())?;
+    let canonical = canonical_query_with(query, catalog, current_db, &mut Vec::new(), true)?;
     Ok(Stmt::Query(tidb_ast::NodeBox::new(canonical)).restore())
 }
 
@@ -379,15 +379,33 @@ fn canonical_query(
     current_db: &str,
     ctes: &mut Vec<BodyCte>,
 ) -> Result<QueryStmt, DriverError> {
+    canonical_query_with(query, catalog, current_db, ctes, false)
+}
+
+/// [`canonical_query`]; `as_view_schema` marks the query whose first SELECT
+/// is Go's `findStmtAsViewSchema`, the one that names the view's columns.
+fn canonical_query_with(
+    query: &QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctes: &mut Vec<BodyCte>,
+    as_view_schema: bool,
+) -> Result<QueryStmt, DriverError> {
     Ok(match query {
         QueryStmt::Select(select) => QueryStmt::Select(Box::new(canonical_select(
-            select, catalog, current_db, ctes,
+            select,
+            catalog,
+            current_db,
+            ctes,
+            as_view_schema,
         )?)),
         QueryStmt::SetOpr(set_opr) => {
             let mut set_opr = set_opr.clone();
             let depth = ctes.len();
-            let terms = canonical_with(set_opr.with.as_mut(), catalog, current_db, ctes)
-                .and_then(|()| canonical_set_opr_terms(&mut set_opr, catalog, current_db, ctes));
+            let terms =
+                canonical_with(set_opr.with.as_mut(), catalog, current_db, ctes).and_then(|()| {
+                    canonical_set_opr_terms(&mut set_opr, catalog, current_db, ctes, as_view_schema)
+                });
             ctes.truncate(depth);
             terms?;
             QueryStmt::SetOpr(set_opr)
@@ -400,25 +418,29 @@ fn canonical_set_opr_terms(
     catalog: &Catalog,
     current_db: &str,
     ctes: &mut Vec<BodyCte>,
+    as_view_schema: bool,
 ) -> Result<(), DriverError> {
-    for term in &mut set_opr.terms {
-        term.body = match &term.body {
-            SetOprTermBody::Select(select) => SetOprTermBody::Select(Box::new(canonical_select(
-                select, catalog, current_db, ctes,
-            )?)),
-            SetOprTermBody::Nested(nested) => {
-                let QueryStmt::SetOpr(nested) = canonical_query(
-                    &QueryStmt::SetOpr(nested.clone()),
-                    catalog,
-                    current_db,
-                    ctes,
-                )?
-                else {
-                    unreachable!("a set operation canonicalizes to a set operation");
-                };
-                SetOprTermBody::Nested(nested)
-            }
-        };
+    for (index, term) in set_opr.terms.iter_mut().enumerate() {
+        let as_view_schema = as_view_schema && index == 0;
+        term.body =
+            match &term.body {
+                SetOprTermBody::Select(select) => SetOprTermBody::Select(Box::new(
+                    canonical_select(select, catalog, current_db, ctes, as_view_schema)?,
+                )),
+                SetOprTermBody::Nested(nested) => {
+                    let QueryStmt::SetOpr(nested) = canonical_query_with(
+                        &QueryStmt::SetOpr(nested.clone()),
+                        catalog,
+                        current_db,
+                        ctes,
+                        as_view_schema,
+                    )?
+                    else {
+                        unreachable!("a set operation canonicalizes to a set operation");
+                    };
+                    SetOprTermBody::Nested(nested)
+                }
+            };
     }
     Ok(())
 }
@@ -481,7 +503,7 @@ fn canonical_seed(
     match query {
         QueryStmt::SetOpr(set_opr) => match set_opr.terms.first().map(|term| &term.body) {
             Some(SetOprTermBody::Select(select)) => Ok(QueryStmt::Select(Box::new(
-                canonical_select(select, catalog, current_db, ctes)?,
+                canonical_select(select, catalog, current_db, ctes, false)?,
             ))),
             Some(SetOprTermBody::Nested(nested)) => canonical_seed(
                 &QueryStmt::SetOpr(nested.clone()),
@@ -531,10 +553,11 @@ fn canonical_select(
     catalog: &Catalog,
     current_db: &str,
     ctes: &mut Vec<BodyCte>,
+    as_view_schema: bool,
 ) -> Result<SelectStmt, DriverError> {
     let mut select = select.clone();
     let depth = ctes.len();
-    let result = canonical_select_in_scope(&mut select, catalog, current_db, ctes);
+    let result = canonical_select_in_scope(&mut select, catalog, current_db, ctes, as_view_schema);
     ctes.truncate(depth);
     result.map(|()| select)
 }
@@ -544,6 +567,7 @@ fn canonical_select_in_scope(
     catalog: &Catalog,
     current_db: &str,
     ctes: &mut Vec<BodyCte>,
+    as_view_schema: bool,
 ) -> Result<(), DriverError> {
     canonical_with(select.with.as_mut(), catalog, current_db, ctes)?;
     let mut tables = Vec::new();
@@ -556,6 +580,9 @@ fn canonical_select_in_scope(
     }
 
     let mut fields = Vec::new();
+    // Go `addAliasName`'s anonymous fields: neither a column reference nor
+    // aliased by the user.
+    let mut anonymous = Vec::new();
     for (index, field) in select.fields.fields().iter().enumerate() {
         match field {
             SelectField::Wildcard(path) => {
@@ -579,6 +606,7 @@ fn canonical_select_in_scope(
                             expr: Expr::Column(path),
                             alias: Some(column.clone()),
                         });
+                        anonymous.push(false);
                     }
                 }
                 if !matched {
@@ -588,6 +616,7 @@ fn canonical_select_in_scope(
                 }
             }
             SelectField::Expr { expr, alias } => {
+                anonymous.push(alias.is_none() && !matches!(expr, Expr::Column(_)));
                 let alias = alias.clone().unwrap_or_else(|| {
                     // Go names the column as the body's plan does
                     // (`buildProjectionFieldNameFromExpressions`): a string
@@ -605,6 +634,9 @@ fn canonical_select_in_scope(
             }
         }
     }
+    if as_view_schema {
+        rename_duplicated_anonymous_fields(&mut fields, &anonymous);
+    }
     select.fields = SelectFieldList::from(fields);
     // Go builds every subquery of the body with the same AST expansion.
     for field in select.fields.fields_mut() {
@@ -615,6 +647,47 @@ fn canonical_select_in_scope(
     canonical_expr_subqueries(select.where_clause.as_mut(), catalog, current_db, ctes)?;
     canonical_expr_subqueries(select.having.as_mut(), catalog, current_db, ctes)?;
     Ok(())
+}
+
+/// Go `addAliasName` for the view's schema SELECT (`AsViewSchema`, issue
+/// 29326): an anonymous field whose name an earlier field already took is
+/// renamed `Name_exp_<name>`, then `Name_exp_<n>_<name>`.
+fn rename_duplicated_anonymous_fields(fields: &mut [SelectField], anonymous: &[bool]) {
+    let name_of = |field: &SelectField| match field {
+        SelectField::Expr {
+            alias: Some(alias), ..
+        } => alias.clone(),
+        _ => String::new(),
+    };
+    let mut dedup: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (field, anonymous) in fields.iter().zip(anonymous) {
+        if !anonymous {
+            dedup.insert(name_of(field).to_lowercase(), 0);
+        }
+    }
+    for (field, anonymous) in fields.iter_mut().zip(anonymous) {
+        if !anonymous {
+            continue;
+        }
+        let old = name_of(field);
+        let key = old.to_lowercase();
+        match dedup.get(&key).copied() {
+            Some(dup) => {
+                let renamed = if dup == 0 {
+                    format!("Name_exp_{old}")
+                } else {
+                    format!("Name_exp_{dup}_{old}")
+                };
+                if let SelectField::Expr { alias, .. } = field {
+                    *alias = Some(renamed);
+                }
+                dedup.insert(key, dup + 1);
+            }
+            None => {
+                dedup.insert(key, 0);
+            }
+        }
+    }
 }
 
 /// Canonicalizes the subqueries inside one expression of a view body, with

@@ -1140,3 +1140,39 @@ fn a_shared_counter_runs_out_one_row_before_a_clustered_one() {
     );
     assert_eq!(one(&mut session, "SELECT count(*) FROM nc"), "1");
 }
+
+/// Go preprocess `checkAutoIncrement` admits FLOAT/DOUBLE auto columns and
+/// refuses every other non-integer type with a plain 1105. The allocated id
+/// is cast to the column type (`setDatumAutoIDAndCast`), and an inserted
+/// FLOAT value rebases the allocator by its rounded value
+/// (`getAutoRecordID`). Captured from Go TiDB.
+#[test]
+fn float_and_double_auto_increment_follow_go() {
+    let mut session = Session::new();
+    let error = session
+        .run("create table a1(id varchar(10) auto_increment key)")
+        .expect_err("varchar auto column")
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1105, "Incorrect column specifier for column 'id'")
+    );
+    session
+        .run("create table a2(id float primary key clustered auto_increment, c int)")
+        .unwrap();
+    session.run("insert into a2(c) values (1),(2)").unwrap();
+    session.run("insert into a2 values (7.6, 3)").unwrap();
+    session.run("insert into a2(c) values (4)").unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run("select * from a2")),
+        [["1", "1"], ["2", "2"], ["7.6", "3"], ["9", "4"]]
+    );
+    session
+        .run("create table a7(id double primary key nonclustered auto_increment, c int)")
+        .unwrap();
+    session.run("insert into a7(c) values (5),(6)").unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run("select * from a7")),
+        [["1", "5"], ["2", "6"]]
+    );
+}

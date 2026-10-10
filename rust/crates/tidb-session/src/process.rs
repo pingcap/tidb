@@ -238,6 +238,12 @@ impl ProcessEntry {
         }
     }
 
+    fn redact_statement_info(&mut self, text: &str) {
+        if self.info.is_some() {
+            self.info = Some(text.to_owned());
+        }
+    }
+
     fn statement_finished(&mut self, db: &str, state: &str) {
         if self.statement_holds > 0 {
             return;
@@ -596,6 +602,12 @@ impl ProcessRegistry {
     /// Records that a connection finished its statement: `Info` becomes NULL,
     /// and `db` and `State` are refreshed, since `USE` may have just changed
     /// the schema and the statement may have opened or closed a transaction.
+    /// Replaces a running statement's `INFO` with its secure text (Go
+    /// `getSQLForProcessInfo`).
+    pub fn redact_statement_info(&self, id: u64, text: &str) {
+        self.with_entry(id, |entry| entry.redact_statement_info(text));
+    }
+
     pub fn statement_finished(&self, id: u64, db: &str, state: &str) {
         self.with_entry(id, |entry| entry.statement_finished(db, state));
     }

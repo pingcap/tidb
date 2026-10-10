@@ -507,7 +507,12 @@ impl AdmissibilityScan {
         if let Some(error) = self.other {
             return Err(error);
         }
-        if self.not_ga_func {
+        // Go: `!config.GetGlobalConfig().Experimental.AllowsExpressionIndex`.
+        if self.not_ga_func
+            && !tidb_config::config_tree::config::get_global_config()
+                .experimental
+                .allows_expression_index
+        {
             return Err(DriverError::UnsafeFunctionInExpressionIndex);
         }
         Ok(())

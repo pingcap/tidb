@@ -352,9 +352,10 @@ impl DriverError {
             1075,
             "Incorrect table definition; there can be only one auto column and it must be defined as a key".to_owned(),
         ),
-        // Go: "Incorrect column specifier for column '%-.192s'".
+        // Go preprocess's plain `errors.Errorf`, which reaches the wire as
+        // 1105, not `ErrWrongFieldSpec`'s 1063.
         DriverError::WrongColumnSpecifier(name) => MysqlError::new(
-            1063,
+            1105,
             format!("Incorrect column specifier for column '{name}'"),
         ),
         DriverError::InvalidOnUpdate(name) => MysqlError::new(
