@@ -949,7 +949,7 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(ctx Context, str String, fsp int, isFloat bool) (Time, error) {
+func parseDatetime(ctx Context, str String, tp byte, fsp int, isFloat bool) (Time, error) {
 	var (
 		year, month, day, hour, minute, second, deltaHour, deltaMinute int
 		fracStr                                                        string
@@ -1173,9 +1173,21 @@ func parseDatetime(ctx Context, str String, fsp int, isFloat bool) (Time, error)
 	if hhmmss {
 		// If input string is "20170118.999", without hhmmss, fsp is meaningless.
 		// TODO: this case is not only meaningless, but erroneous, please confirm.
-		microsecond, overflow, err = ParseFrac(fracStr, fsp)
+		parseFsp := fsp
+		if tp != mysql.TypeDate && len(fracStr) > MaxFsp && fsp < MaxFsp {
+			// MySQL parses sub-microsecond digits before rounding to the target precision.
+			parseFsp = MaxFsp
+		}
+		microsecond, overflow, err = ParseFrac(fracStr, parseFsp)
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
+		}
+		if parseFsp != fsp && !overflow {
+			unit := int(math.Pow10(MaxFsp - fsp))
+			microsecond = (microsecond + unit/2) / unit * unit
+			if microsecond >= 1000000 {
+				microsecond, overflow = 0, true
+			}
 		}
 	}
 
@@ -2015,7 +2027,7 @@ func parseTime(ctx Context, str String, tp byte, fsp int, isFloat bool) (Time, e
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 
-	t, err := parseDatetime(ctx, str, fsp, isFloat)
+	t, err := parseDatetime(ctx, str, tp, fsp, isFloat)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}

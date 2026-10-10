@@ -4789,3 +4789,21 @@ func enableNonStarterDeployModeForEmbeddingTest(t *testing.T) {
 		require.NoError(t, deploymode.Set(originalMode))
 	})
 }
+
+func TestDateTimeFractionRounding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table fraction_source(s varchar(32))")
+	tk.MustExec("insert into fraction_source values ('2024-06-15 12:00:00.4999999')")
+	tk.MustExec("create table fraction_target(d datetime)")
+	for _, vectorized := range []string{"0", "1"} {
+		tk.MustExec("set tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select cast(s as datetime(0)), cast(s as datetime(0)) = cast(cast(s as datetime(6)) as datetime(0)) from fraction_source").Check(testkit.Rows("2024-06-15 12:00:01 1"))
+		tk.MustQuery("select cast('2024-06-15 23:59:59.4999999' as date)").Check(testkit.Rows("2024-06-15"))
+		tk.MustExec("delete from fraction_target")
+		tk.MustExec("insert into fraction_target values ('2024-06-15 12:00:00.4999999')")
+		tk.MustExec("insert into fraction_target select s from fraction_source")
+		tk.MustQuery("select d from fraction_target").Check(testkit.Rows("2024-06-15 12:00:01", "2024-06-15 12:00:01"))
+	}
+}
