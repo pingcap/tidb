@@ -26,6 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -358,10 +359,12 @@ func (s *Syncer) SyncLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		}
-		s.refreshMDLCheckTableInfo(ctx)
-		select {
-		case s.mdlCheckCh <- struct{}{}:
-		default:
+		if !diagnosticmode.Enabled() {
+			s.refreshMDLCheckTableInfo(ctx)
+			select {
+			case s.mdlCheckCh <- struct{}{}:
+			default:
+			}
 		}
 	}
 }
