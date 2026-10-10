@@ -1,0 +1,11 @@
+drop table if exists variance_input;
+create table variance_input(sh bigint unsigned);
+insert into variance_input values (18446744073709551614), (18446744073709551613), (18446744073709551612), (18446744073709551611), (18446744073709551610), (18446744073709551609), (18446744073709551608), (18446744073709551607);
+select stddev_pop(sh), stddev_samp(sh), var_pop(sh), var_samp(sh) from variance_input;
+select stddev_pop(sh), stddev_samp(sh), var_pop(sh), var_samp(sh) from (select sh from variance_input where mod(sh,4)=0 union all select sh from variance_input where mod(sh,4)=1 union all select sh from variance_input where mod(sh,4)=2 union all select sh from variance_input where mod(sh,4)=3) x;
+select stddev_pop(sh), stddev_samp(sh), var_pop(sh), var_samp(sh) from (select sh from variance_input where mod(sh,3)=0 union all select sh from variance_input where mod(sh,3)=1 union all select sh from variance_input where mod(sh,3)=2) x;
+select stddev_pop(sh), stddev_samp(sh), var_pop(sh), var_samp(sh) from (select sh from variance_input where mod(sh,2)=0 union all select sh from variance_input where mod(sh,2)=1) x;
+truncate table variance_input;
+insert into variance_input values (1), (2), (3), (4), (null);
+select round(stddev_pop(sh),6), round(stddev_samp(sh),6), round(var_pop(sh),6), round(var_samp(sh),6) from (select sh from variance_input where sh <= 2 union all select sh from variance_input where sh > 2 union all select sh from variance_input where sh is null) x;
+drop table variance_input;
