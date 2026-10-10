@@ -495,6 +495,20 @@ impl Session {
                     return Err(error);
                 }
             }
+            DdlStatement::ExchangePartition {
+                schema,
+                table,
+                standalone_schema,
+                standalone_table,
+                ..
+            } => {
+                Self::exchange_local_temporary_refusal(
+                    &catalog,
+                    (schema, table),
+                    self.local_temporary_table_name(standalone_schema, standalone_table)
+                        .as_deref(),
+                )?;
+            }
             _ => {}
         }
         Ok(())
@@ -527,6 +541,40 @@ impl Session {
             _ => return false,
         };
         self.is_local_temporary_table(database, table)
+    }
+
+    /// The stored name of the session's LOCAL temporary table `table`, if
+    /// it has one.
+    pub(crate) fn local_temporary_table_name(&self, database: &str, table: &str) -> Option<String> {
+        let database = tidb_util::stringutil::go_to_lower(database);
+        let table = tidb_util::stringutil::go_to_lower(table);
+        self.local_temporary_tables
+            .iter()
+            .find(|(db, name, _)| {
+                tidb_util::stringutil::go_to_lower(db) == database
+                    && tidb_util::stringutil::go_to_lower(name) == table
+            })
+            .map(|(_, _, stored)| stored.name.clone())
+    }
+
+    /// Go `ExchangeTablePartition` resolves the table exchanged in against
+    /// the session's infoschema before the shared one, because only the
+    /// session holds a LOCAL temporary table: 1733, once the partitioned
+    /// table has resolved.
+    pub(crate) fn exchange_local_temporary_refusal(
+        catalog: &tidb_executor::Catalog,
+        partitioned: (&str, &str),
+        local_temporary: Option<&str>,
+    ) -> Result<(), DriverError> {
+        match local_temporary {
+            Some(name) if catalog.table_in(partitioned.0, partitioned.1).is_some() => {
+                Err(DriverError::DdlCoded {
+                    errno: 1733,
+                    message: format!("Table to exchange with partition is temporary: '{name}'"),
+                })
+            }
+            _ => Ok(()),
+        }
     }
 
     pub(crate) fn is_local_temporary_table(&self, database: &str, table: &str) -> bool {

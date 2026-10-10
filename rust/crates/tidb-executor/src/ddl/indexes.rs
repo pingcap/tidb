@@ -577,11 +577,69 @@ fn build_index_definition(
             prefix_lengths,
             visible,
             global,
-            global_index_version: 0,
+            global_index_version: global_index_version(
+                global,
+                table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty(),
+                unique,
+                &part_types,
+            ),
             clustered_primary: false,
         },
         hidden: pending,
     }))
+}
+
+/// Go `checkInvisibleIndexOnPK` over `indexes`, the table's indexes as the
+/// DDL leaves them: the primary key Go's `GetPrimaryKey` finds -- the
+/// explicit one, else the first unique key over visible NOT NULL columns --
+/// cannot be invisible. A PK-is-handle table has none to check.
+pub(crate) fn check_invisible_index_on_pk(
+    table: &crate::KvTable,
+    indexes: &[&KvIndex],
+) -> Result<(), DriverError> {
+    if table.pk_handle_offset().is_some() {
+        return Ok(());
+    }
+    let explicit = indexes
+        .iter()
+        .find(|index| index.clustered_primary || index.name.eq_ignore_ascii_case("PRIMARY"));
+    let primary = explicit.or_else(|| {
+        indexes.iter().find(|index| {
+            index.unique
+                && !index.column_offsets.is_empty()
+                && index.column_offsets.iter().all(|offset| {
+                    !table.is_hidden(*offset)
+                        && table.columns()[*offset]
+                            .field_type
+                            .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                })
+        })
+    });
+    if primary.is_some_and(|index| !index.visible) {
+        return Err(pk_index_cant_be_invisible());
+    }
+    Ok(())
+}
+
+/// Go `ErrPKIndexCantBeInvisible` (3522).
+pub(crate) fn pk_index_cant_be_invisible() -> DriverError {
+    DriverError::PrimaryKeyCantBeInvisible
+}
+
+/// Go `setGlobalIndexVersion`: a global index on a table without a clustered
+/// index keys its entries by partition too (V1) when it is not unique or
+/// covers a nullable column, because two partitions may hold the same
+/// `_tidb_rowid`.
+pub(crate) fn global_index_version(
+    global: bool,
+    clustered: bool,
+    unique: bool,
+    part_types: &[tidb_datatype::FieldType],
+) -> u8 {
+    let nullable = part_types
+        .iter()
+        .any(|field_type| !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL));
+    u8::from(global && !clustered && (!unique || nullable))
 }
 
 pub(super) fn prepare_add_index(
@@ -634,6 +692,11 @@ pub(crate) fn add_index_to_table(
             return Ok(());
         }
     };
+    // Go `onCreateIndex` checks the table with the new index appended.
+    check_invisible_index_on_pk(
+        table,
+        &table.indexes().iter().chain([&built]).collect::<Vec<_>>(),
+    )?;
     // Go `createIndex` submits its job once the index is built.
     if let Some(bdr) = bdr {
         bdr.admit(&[super::bdr::SubmittedJob::add_index(
@@ -796,6 +859,16 @@ pub(super) fn prepare_drop_index(
         return Ok(IndexAdmission::Note(missing));
     };
     crate::foreign_key::check_index_needed(catalog, database, table_name, index_name)?;
+    // Go `checkDropIndex` -> `checkInvisibleIndexesOnPK`: the remaining
+    // indexes may promote an invisible unique key to the primary key.
+    check_invisible_index_on_pk(
+        table,
+        &table
+            .indexes()
+            .iter()
+            .filter(|other| other.id != index.id)
+            .collect::<Vec<_>>(),
+    )?;
     Ok(IndexAdmission::Change(index.id))
 }
 

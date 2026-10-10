@@ -654,12 +654,35 @@ fn run_alter_table_in_inner(
                 count,
                 ..
             }) => coalesce_partition_action(catalog, &database, &name, *count, ctx)?,
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Exchange {
+                partition,
+                table,
+                with_validation,
+            }) => super::exchange_partition::exchange_partition_action(
+                catalog,
+                &database,
+                &name,
+                partition,
+                table,
+                *with_validation,
+                current_db,
+                ctx,
+            )?,
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE action is not supported yet",
                 ))
             }
         }
+    }
+    // Go `updateVersionAndTableInfoWithCheck` runs `checkTableInfoValid` on
+    // the table each job leaves: a MODIFY that makes an invisible unique key
+    // NOT NULL promotes it to an invisible primary key.
+    if let Some(crate::TableEntry::Kv(table)) = catalog.table_in(&database, &name) {
+        super::indexes::check_invisible_index_on_pk(
+            table,
+            &table.indexes().iter().collect::<Vec<_>>(),
+        )?;
     }
     Ok(())
 }
@@ -2578,6 +2601,76 @@ fn check_type_change_supported(origin: &FieldType, to: &FieldType) -> Result<(),
     Ok(())
 }
 
+/// Go `checkAutoRandom`, after `ProcessModifyColumnOptions` and
+/// `checkModifyTypes`: the table's AUTO_RANDOM bits count only for its
+/// clustered primary key column; adding them needs an AUTO_INCREMENT
+/// handle, and an AUTO_RANDOM column keeps its BIGINT type and takes neither
+/// AUTO_INCREMENT nor a default.
+fn check_auto_random(
+    table: &crate::KvTable,
+    offset: usize,
+    field_type: &FieldType,
+    new: Option<crate::kv_table::AutoRandomSpec>,
+    wants_auto_increment: bool,
+    has_default: bool,
+) -> Result<(), DriverError> {
+    let invalid = |message: &str| DriverError::InvalidAutoRandom(message.to_owned());
+    // Go `isClusteredPKColumn`: the PK-is-handle column or any column of a
+    // clustered composite key; converting needs the PK handle itself.
+    let handle = table.pk_handle_offset() == Some(offset);
+    let clustered = handle || table.common_handle_offsets().contains(&offset);
+    let old = table.auto_random().filter(|_| clustered);
+    let (old_bits, new_bits) = (
+        old.map_or(0, |spec| spec.shard_bits),
+        new.map_or(0, |spec| spec.shard_bits),
+    );
+    match old_bits.cmp(&new_bits) {
+        std::cmp::Ordering::Equal => {}
+        std::cmp::Ordering::Less => {
+            if old_bits == 0 && !(handle && table.auto_increment_offset() == Some(offset)) {
+                return Err(invalid(
+                    "auto_random can only be converted from auto_increment clustered primary key",
+                ));
+            }
+        }
+        std::cmp::Ordering::Greater => {
+            return Err(invalid(if new_bits == 0 {
+                "adding/dropping/modifying auto_random is not supported"
+            } else {
+                "decreasing auto_random shard bits is not supported"
+            }));
+        }
+    }
+    if old_bits > 0 || new_bits > 0 {
+        let origin = &table.columns()[offset].field_type;
+        if origin.code() != field_type.code() {
+            return Err(invalid(
+                "modifying the auto_random column type is not supported",
+            ));
+        }
+        if origin.code() != FieldTypeCode::LongLong {
+            return Err(DriverError::InvalidAutoRandom(format!(
+                "auto_random option must be defined on `bigint` column, but not on `{}` column",
+                tidb_datatype::type_str(origin.code())
+            )));
+        }
+        if wants_auto_increment {
+            return Err(invalid("auto_random is incompatible with auto_increment"));
+        }
+        if has_default {
+            return Err(invalid("auto_random is incompatible with default"));
+        }
+    }
+    let range_bits =
+        |spec: Option<crate::kv_table::AutoRandomSpec>| spec.map_or(64, |spec| spec.range_bits);
+    if range_bits(old) != range_bits(new) {
+        return Err(invalid(
+            "alter the range bits of auto_random column is not supported",
+        ));
+    }
+    Ok(())
+}
+
 /// Go `types.CheckModifyTypeCompatible`'s `canReorg` result for a supported
 /// type pair. `checkModifyTypes` uses this bit to distinguish an unsupported
 /// metadata-only charset change from a charset change that the row rewrite
@@ -3118,9 +3211,6 @@ pub(super) fn prepare_modify_column(
     // below never runs when there are zero rows, so without this table-level
     // check every one of Go's five outright refusals would be silently
     // accepted on an empty table.
-    let had_auto_random = table
-        .auto_random()
-        .is_some_and(|spec| spec.offset == offset);
     check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
     let can_reorganize =
         modify_type_needs_reorganization(&table.columns[offset].field_type, &field_type);
@@ -3144,32 +3234,6 @@ pub(super) fn prepare_modify_column(
         return Err(super::indexes::partial_index_column_dependency(
             old_name,
             &index_name,
-        ));
-    }
-    // Go's `checkModifyTypes` runs before `checkAutoRandom`: changing the
-    // AUTO_RANDOM column away from BIGINT is the generic 8200 unsupported
-    // MODIFY error, not the later 8216 auto-random type diagnostic.
-    if had_auto_random && field_type.code() != FieldTypeCode::LongLong {
-        return Err(DriverError::UnsupportedModifyColumn(
-            "Unsupported modify column",
-        ));
-    }
-    if (had_auto_random || auto_random_option.is_some())
-        && field_type.code() != FieldTypeCode::LongLong
-    {
-        return Err(DriverError::InvalidAutoRandom(format!(
-            "auto_random option must be defined on `bigint` column, but not on `{}` column",
-            field_type.compact_str(false)
-        )));
-    }
-    if auto_random_option.is_some() && wants_auto_increment {
-        return Err(DriverError::InvalidAutoRandom(
-            "auto_random is incompatible with auto_increment".to_owned(),
-        ));
-    }
-    if auto_random_option.is_some() && default_value.is_some() {
-        return Err(DriverError::InvalidAutoRandom(
-            "auto_random is incompatible with default".to_owned(),
         ));
     }
     let new_auto_random = auto_random_option
@@ -3223,6 +3287,14 @@ pub(super) fn prepare_modify_column(
             "can't remove auto_increment without @@tidb_allow_remove_auto_inc enabled",
         ));
     }
+    check_auto_random(
+        table,
+        offset,
+        &field_type,
+        new_auto_random,
+        wants_auto_increment,
+        default_value.is_some(),
+    )?;
     if was_auto_increment && wants_auto_increment {
         // Nothing in this tier READS this flag -- the observable
         // AUTO_INCREMENT comes from the table-level offset above, which is

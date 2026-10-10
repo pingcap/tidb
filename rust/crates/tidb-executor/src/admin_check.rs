@@ -210,16 +210,16 @@ fn index_entries(
 fn partial_index_rows<'a>(
     table: &KvTable,
     index: &KvIndex,
-    rows: &'a [(TableHandle, Vec<Datum>)],
+    rows: &'a [(i64, TableHandle, Vec<Datum>)],
     context: &RowDecodeContext,
-) -> Result<Vec<(&'a TableHandle, &'a Vec<Datum>)>, AdminCheckError> {
+) -> Result<Vec<(i64, &'a TableHandle, &'a Vec<Datum>)>, AdminCheckError> {
     let mut matching = Vec::new();
-    for (handle, row) in rows {
+    for (physical_id, handle, row) in rows {
         let holds = table
             .index_condition_holds(index, row, context.zone())
             .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
         if holds {
-            matching.push((handle, row));
+            matching.push((*physical_id, handle, row));
         }
     }
     Ok(matching)
@@ -274,8 +274,11 @@ pub fn check_table(
     if !fast_check && selected.iter().any(|index| table.index_has_condition(index.id)) {
         return Err(AdminCheckError::PartialIndexWithoutFastCheck);
     }
+    // Go checks a partitioned table partition by partition: once a
+    // partition has been exchanged two partitions may hold the same
+    // `_tidb_rowid`, so a row is its physical table and its handle.
     let rows = table
-        .scan_rows_with_handles_recomputed(context)
+        .scan_physical_rows_with_handles(context)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
     // Go `admin.CheckIndicesCount` runs first and, for `ADMIN CHECK INDEX`,
     // is the error the client sees.
@@ -312,24 +315,25 @@ pub fn check_table(
         }
         let expected_count = matching_rows.len() as i64;
         if expected_count > stored.len() as i64 {
-            let mut expected: BTreeMap<Vec<u8>, (TableHandle, &Vec<Datum>)> = BTreeMap::new();
-            for (handle, row) in matching_rows {
+            let mut expected: BTreeMap<Vec<u8>, (i64, TableHandle, &Vec<Datum>)> = BTreeMap::new();
+            for (physical_id, handle, row) in matching_rows {
                 for (key, _) in table
-                    .index_keys_for_check(index, row, handle, context.zone())
+                    .index_keys_for_check(index, row, handle, physical_id, context.zone())
                     .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?
                 {
-                    expected.insert(key, (handle.clone(), row));
+                    expected.insert(key, (physical_id, handle.clone(), row));
                 }
             }
-            let stored_keys: BTreeMap<Vec<u8>, TableHandle> = stored
+            let stored_keys: BTreeMap<Vec<u8>, (i64, TableHandle)> = stored
                 .iter()
-                .map(|entry| (entry.key.clone(), entry.handle.clone()))
+                .map(|entry| (entry.key.clone(), (entry.physical_id, entry.handle.clone())))
                 .collect();
-            for (key, (handle, row)) in &expected {
+            for (key, (physical_id, handle, row)) in &expected {
                 let indexed = table.index_values_for_check(index, row);
                 match stored_keys.get(key) {
-                    Some(stored_handle) if stored_handle == handle => {}
-                    Some(stored_handle) => {
+                    Some((stored_id, stored_handle))
+                        if stored_id == physical_id && stored_handle == handle => {}
+                    Some((_, stored_handle)) => {
                         return Err(AdminCheckError::Inconsistent {
                             table: table_name.clone(),
                             index: index.name.clone(),
@@ -352,13 +356,13 @@ pub fn check_table(
         } else {
             let rows_by_handle: BTreeMap<_, _> = rows
                 .iter()
-                .map(|(handle, row)| (handle.clone(), row))
+                .map(|(physical_id, handle, row)| ((*physical_id, handle.clone()), row))
                 .collect();
             for entry in &stored {
                 let key = &entry.key;
                 let value = &entry.value;
                 let handle = &entry.handle;
-                let Some(row) = rows_by_handle.get(handle) else {
+                let Some(row) = rows_by_handle.get(&(entry.physical_id, handle.clone())) else {
                     let indexed = table
                         .index_entry_values_for_check(index, key, value, context.zone())
                         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
@@ -427,23 +431,25 @@ fn check_mv_index(
     table: &mut KvTable,
     index: &KvIndex,
     stored: &[crate::kv_table::IndexEntryForCheck],
-    matching_rows: Vec<(&TableHandle, &Vec<Datum>)>,
+    matching_rows: Vec<(i64, &TableHandle, &Vec<Datum>)>,
     context: &RowDecodeContext,
 ) -> Result<(), AdminCheckError> {
     let decode = |error| AdminCheckError::Decode(format!("{error:?}"));
-    let mut expected: BTreeMap<Vec<u8>, (TableHandle, &Vec<Datum>)> = BTreeMap::new();
-    for (handle, row) in matching_rows {
+    let mut expected: BTreeMap<Vec<u8>, (i64, TableHandle, &Vec<Datum>)> = BTreeMap::new();
+    for (physical_id, handle, row) in matching_rows {
         for (key, _) in table
-            .index_keys_for_check(index, row, handle, context.zone())
+            .index_keys_for_check(index, row, handle, physical_id, context.zone())
             .map_err(decode)?
         {
-            expected.insert(key, (handle.clone(), row));
+            expected.insert(key, (physical_id, handle.clone(), row));
         }
     }
     for entry in stored {
         if expected
             .get(&entry.key)
-            .is_some_and(|(handle, _)| *handle == entry.handle)
+            .is_some_and(|(physical_id, handle, _)| {
+                *physical_id == entry.physical_id && *handle == entry.handle
+            })
         {
             continue;
         }
@@ -458,14 +464,16 @@ fn check_mv_index(
             record_values: String::new(),
         });
     }
-    let stored_keys: BTreeMap<&[u8], &TableHandle> = stored
+    let stored_keys: BTreeMap<&[u8], (i64, &TableHandle)> = stored
         .iter()
-        .map(|entry| (entry.key.as_slice(), &entry.handle))
+        .map(|entry| (entry.key.as_slice(), (entry.physical_id, &entry.handle)))
         .collect();
-    for (key, (handle, row)) in &expected {
+    for (key, (physical_id, handle, row)) in &expected {
         if stored_keys
             .get(key.as_slice())
-            .is_some_and(|stored_handle| *stored_handle == handle)
+            .is_some_and(|(stored_id, stored_handle)| {
+                stored_id == physical_id && *stored_handle == handle
+            })
         {
             continue;
         }
@@ -522,12 +530,12 @@ pub fn check_index_ranges(
     columns.push("extra_handle".to_owned());
 
     let rows = table
-        .scan_rows_with_handles_recomputed(context)
+        .scan_physical_rows_with_handles(context)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
     let mut by_handle: BTreeMap<Vec<u8>, (TableHandle, Vec<Datum>)> = BTreeMap::new();
-    for (handle, row) in &rows {
+    for (physical_id, handle, row) in &rows {
         for (key, _) in table
-            .index_keys_for_check(&index, row, handle, context.zone())
+            .index_keys_for_check(&index, row, handle, *physical_id, context.zone())
             .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?
         {
             by_handle.insert(key, (handle.clone(), row.clone()));

@@ -7380,7 +7380,7 @@ fn check_exchange_tables(
         return Err(exchange_refusal(
             1732,
             format!(
-                "Table '{}' is partitioned. It cannot be used in EXCHANGE PARTITION",
+                "Table to exchange with partition is partitioned: '{}'",
                 standalone.name
             ),
         ));
@@ -7395,7 +7395,7 @@ fn check_exchange_tables(
         return Err(exchange_refusal(
             1740,
             format!(
-                "Table '{}' has foreign key constraint. It cannot be used in EXCHANGE PARTITION",
+                "Table to exchange with partition has foreign key references: '{}'",
                 standalone.name
             ),
         ));

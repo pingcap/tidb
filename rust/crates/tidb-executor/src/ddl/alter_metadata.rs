@@ -158,9 +158,7 @@ pub(super) fn prepare_rename_column(
 /// never called PRIMARY: MySQL's IMPLICIT primary key is the first UNIQUE
 /// index all of whose columns are NOT NULL, which is why
 /// `create table t1(a int NOT NULL, unique(a))` cannot hide `a`
-/// (`ddl/db_integration.result`). A table whose handle IS its primary key
-/// (Go's `PKIsHandle`, and the clustered common handle with it) has no such
-/// index to hide, so the check does not apply.
+/// (`ddl/db_integration.result`).
 pub(crate) fn alter_index_visibility_action(
     catalog: &mut Catalog,
     database: &str,
@@ -169,8 +167,19 @@ pub(crate) fn alter_index_visibility_action(
     visible: bool,
 ) -> Result<(), DriverError> {
     let table = table_of(catalog, database, table_name)?;
-    if !visible && primary_key_index(table).is_some_and(|pk| pk.eq_ignore_ascii_case(index_name)) {
-        return Err(DriverError::PrimaryKeyCantBeInvisible);
+    if !visible {
+        let hidden = table
+            .indexes()
+            .iter()
+            .map(|index| {
+                let mut index = index.clone();
+                if index.name.eq_ignore_ascii_case(index_name) {
+                    index.visible = false;
+                }
+                index
+            })
+            .collect::<Vec<_>>();
+        super::indexes::check_invisible_index_on_pk(table, &hidden.iter().collect::<Vec<_>>())?;
     }
     let Some(index) = table.index_mut_by_name(index_name) else {
         return Err(DriverError::KeyNotExists {
@@ -180,36 +189,6 @@ pub(crate) fn alter_index_visibility_action(
     };
     index.visible = visible;
     Ok(())
-}
-
-/// Go `TableInfo.GetPrimaryKey`: the index that acts as the table's primary
-/// key, which is the one named `PRIMARY` if there is one and otherwise the
-/// FIRST unique index whose every column is NOT NULL.
-///
-/// `None` when the row handle already is the primary key -- Go returns early
-/// on `PKIsHandle` because such a table keeps no PRIMARY index at all, and a
-/// clustered common handle is the same situation with several columns.
-fn primary_key_index(table: &crate::kv_table::KvTable) -> Option<&str> {
-    if table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty() {
-        return None;
-    }
-    let mut implicit = None;
-    for index in table.indexes() {
-        if index.name.eq_ignore_ascii_case("PRIMARY") {
-            return Some(&index.name);
-        }
-        if implicit.is_none()
-            && index.unique
-            && !index.column_offsets.is_empty()
-            && index
-                .column_offsets
-                .iter()
-                .all(|offset| table.columns[*offset].field_type.flags() & super::NOT_NULL_FLAG != 0)
-        {
-            implicit = Some(index.name.as_str());
-        }
-    }
-    implicit
 }
 
 /// `ALTER TABLE ... ALTER [COLUMN] name SET DEFAULT value`.

@@ -4356,7 +4356,7 @@ fn exchange_partition_validation_default_and_admission_errors_match_go() {
     assert_eq!(code, 1732);
     assert_eq!(
         message,
-        "Table 'other_pt' is partitioned. It cannot be used in EXCHANGE PARTITION"
+        "Table to exchange with partition is partitioned: 'other_pt'"
     );
 
     let (code, message) = admission(

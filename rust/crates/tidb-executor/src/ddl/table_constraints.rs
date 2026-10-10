@@ -329,7 +329,12 @@ pub(crate) fn table_indexes(
             prefix_lengths,
             visible: is_visible(&index.options),
             global: index.options.global,
-            global_index_version: 0,
+            global_index_version: crate::ddl::indexes::global_index_version(
+                index.options.global,
+                clustered,
+                unique,
+                &part_types,
+            ),
             clustered_primary: common_handle
                 && index.kind == tidb_ast::IndexConstraintKind::PrimaryKey,
         });

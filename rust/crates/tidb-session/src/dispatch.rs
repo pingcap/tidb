@@ -3153,7 +3153,27 @@ impl Session {
                     let current_db = self.current_db.clone();
                     // `ADD INDEX` backfills, so the same write level applies.
                     let ctx = self.statement_context(true).with_ddl_query(sql);
+                    let exchanged_local_temporary = alter.actions.iter().find_map(|action| {
+                        let tidb_ast::AlterTableAction::Partition(
+                            tidb_ast::AlterPartitionAction::Exchange { table, .. },
+                        ) = action
+                        else {
+                            return None;
+                        };
+                        let (database, name) =
+                            tidb_executor::driver::split_table_path_pub(table, &current_db).ok()?;
+                        self.local_temporary_table_name(database, name)
+                    });
                     let result = self.with_persistent_catalog_mut(|catalog| {
+                        if let Ok((database, name)) =
+                            tidb_executor::driver::split_table_path_pub(&alter.name, &current_db)
+                        {
+                            Self::exchange_local_temporary_refusal(
+                                catalog,
+                                (database, name),
+                                exchanged_local_temporary.as_deref(),
+                            )?;
+                        }
                         tidb_executor::run_alter_table_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
                     });

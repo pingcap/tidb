@@ -3616,7 +3616,6 @@ fn unserved_partition_management_is_refused_not_ignored() {
     for sql in [
         "ALTER TABLE pm REORGANIZE PARTITION p0, p1 INTO (PARTITION q0 VALUES LESS THAN(20))",
         "ALTER TABLE pm ADD COLUMN b INT, REORGANIZE PARTITION p0, p1 INTO (PARTITION q0 VALUES LESS THAN(20))",
-        "ALTER TABLE pm EXCHANGE PARTITION p0 WITH TABLE plain",
         "ALTER TABLE plain PARTITION BY HASH(a) PARTITIONS 2",
     ] {
         assert!(session.run(sql).is_err(), "unsupported action accepted: {sql}");

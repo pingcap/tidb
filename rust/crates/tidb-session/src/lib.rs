@@ -2968,6 +2968,8 @@ mod tests_outer_join_elimination;
 #[cfg(test)]
 mod tests_partition;
 #[cfg(test)]
+mod tests_partition_exchange;
+#[cfg(test)]
 mod tests_partition_processor;
 #[cfg(test)]
 mod tests_partition_projection;

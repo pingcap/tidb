@@ -104,7 +104,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
     let mut wrong_row = row.clone();
     wrong_row[index.column_offsets[0]] = tidb_datatype::Datum::Int(5);
     let (wrong_key, _) = table
-        .index_keys_for_check(&index, &wrong_row, handle, context.zone())
+        .index_keys_for_check(&index, &wrong_row, handle, table.table_id, context.zone())
         .expect("the wrong-value key encodes")
         .remove(0);
     table

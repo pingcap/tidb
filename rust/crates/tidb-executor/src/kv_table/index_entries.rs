@@ -27,7 +27,6 @@
 //! `TIMESTAMP` key part to UTC before encoding it, so the entry a Shanghai
 //! session files is the entry a UTC session seeks.
 
-use tidb_codec::decode_table_id;
 use tidb_codec::table_key::encode_index_seek_key;
 use tidb_codec::Encoder;
 use tidb_datatype::{is_bin_collation, Datum, SessionTimeZone};
@@ -47,6 +46,9 @@ pub(crate) struct IndexEntryForCheck {
     pub(crate) key: Vec<u8>,
     pub(crate) value: Vec<u8>,
     pub(crate) handle: TableHandle,
+    /// The physical table the entry's row is stored under: the partition a
+    /// local entry's key names, or the one a global entry's value records.
+    pub(crate) physical_id: i64,
 }
 
 /// One entry key a row files under one index (see
@@ -195,7 +197,21 @@ impl KvTable {
                 let key = iterator.key().as_bytes().to_vec();
                 let value = iterator.value().to_vec();
                 let handle = index_entry_handle(&index, &key, &value, common)?;
-                entries.push(IndexEntryForCheck { key, value, handle });
+                let row_physical_id = if index.global {
+                    tidb_tablecodec::decode_index_handle(&key, &value, index.column_offsets.len())
+                        .map_err(|e| KvTableError::Decode(format!("{e:?}")))?
+                        .as_ref()
+                        .and_then(global_partition_id)
+                        .unwrap_or(physical_id)
+                } else {
+                    physical_id
+                };
+                entries.push(IndexEntryForCheck {
+                    key,
+                    value,
+                    handle,
+                    physical_id: row_physical_id,
+                });
                 iterator.next().map_err(KvTableError::from)?;
             }
             iterator.close();
@@ -1034,15 +1050,6 @@ impl KvTable {
             })
             .collect()
     }
-
-    pub(in crate::kv_table) fn stored_physical_id(
-        &mut self,
-        handle: &TableHandle,
-    ) -> Result<Option<i64>, KvTableError> {
-        Ok(self
-            .stored_record_key(handle)?
-            .map(|key| decode_table_id(key.as_bytes())))
-    }
 }
 
 /// Go `types.NewDatum(BinaryJSON.GetValue())`: the datum a multi-valued
@@ -1125,13 +1132,18 @@ pub(in crate::kv_table) fn index_entry_handle(
     if common {
         return Ok(TableHandle::Common(rest.to_vec()));
     }
-    let (_, handle) =
-        tidb_codec::decode_one(rest).map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-    match handle {
-        Datum::Int(value) => Ok(TableHandle::Int(value)),
-        Datum::UInt(value) => Ok(TableHandle::Int(value as i64)),
-        other => Err(KvTableError::Decode(format!(
-            "an index key ended with {other:?} rather than a handle"
+    // Go `decodeHandleInIndexKey`: a version-1 global index puts the
+    // partition id ahead of the handle; the value carries it as well, which
+    // is where the reader takes the row's partition from.
+    let mut handle = tidb_tablecodec::decode_handle_in_index_key(rest)
+        .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+    while let tidb_txnkv::Handle::Partition(partition) = handle {
+        handle = partition.inner().clone();
+    }
+    match handle.int_value() {
+        Some(value) => Ok(TableHandle::Int(value)),
+        None => Err(KvTableError::Decode(format!(
+            "an index key ended with {handle:?} rather than an integer handle"
         ))),
     }
 }

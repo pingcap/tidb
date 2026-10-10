@@ -323,6 +323,7 @@ mod column_changes;
 pub mod column_field_type;
 mod column_types;
 mod constraint_changes;
+mod exchange_partition;
 mod generated_modify;
 mod index_changes;
 pub mod index_prefix;
@@ -1899,6 +1900,24 @@ pub fn run_create_table_in(
         let clustered_primary = index.clustered_primary;
         table.add_index(index, clustered_primary);
     }
+    // Go `buildTableInfo`: a clustered primary key cannot be invisible; then
+    // `checkTableInfoValid` refuses an invisible explicit or implicit one.
+    if clustered
+        && create.table_constraints.iter().any(|constraint| {
+            matches!(
+                constraint,
+                tidb_ast::TableConstraint::Index(index)
+                    if index.kind == tidb_ast::IndexConstraintKind::PrimaryKey
+                        && !crate::ddl::indexes::is_visible(&index.options)
+            )
+        })
+    {
+        return Err(crate::ddl::indexes::pk_index_cant_be_invisible());
+    }
+    crate::ddl::indexes::check_invisible_index_on_pk(
+        &table,
+        &table.indexes().iter().collect::<Vec<_>>(),
+    )?;
     for (index_id, index_name, condition) in &partial_conditions {
         crate::ddl::indexes::validate_partial_index_condition(table.columns(), condition)?;
         table

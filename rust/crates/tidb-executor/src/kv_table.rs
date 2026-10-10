@@ -2807,12 +2807,12 @@ impl KvTable {
         // column is therefore recomputed under the DDL statement context
         // before an index entry is persisted, including STORED columns whose
         // old bytes may predate this backfill.
-        let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
-        for (handle, row) in &rows {
+        let rows = self.scan_physical_rows_with_handles(decode_context)?;
+        for (physical_id, handle, row) in &rows {
+            let physical_id = *physical_id;
             if !self.index_condition_holds(&index, row, &zone)? {
                 continue;
             }
-            let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
             let duplicate_value = duplicate_value_text(&self.index_values(&index, row));
             for entry in self.index_entry_keys(&index, row, handle, physical_id, &zone)? {
                 let key = Key::from_bytes(entry.key);
@@ -3950,9 +3950,9 @@ impl KvTable {
         index: &KvIndex,
         row: &[Datum],
         handle: &TableHandle,
+        physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<Vec<(Vec<u8>, bool)>, KvTableError> {
-        let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
         Ok(self
             .index_entry_keys(index, row, handle, physical_id, zone)?
             .into_iter()

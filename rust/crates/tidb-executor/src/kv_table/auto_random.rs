@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::auto_id::{
-    increment_and_offset, AutoIdAllocator, AutoIdError, AutoIdStoreError, PreparedAutoIdRebase,
-};
+use super::auto_id::{AutoIdAllocator, AutoIdError, AutoIdStoreError, PreparedAutoIdRebase};
 use super::{KvTable, TableAutoId};
 use tidb_datatype::Datum;
 
@@ -125,6 +123,9 @@ impl PreparedAutoRandomChange {
             target
                 .rebase(current)
                 .map_err(|error| AutoRandomError::AutoId(AutoIdError::Store(error)))?;
+            // Go's schema reload builds the AUTO_RANDOM allocator afresh, so
+            // its first draw reserves the default step from the new base.
+            target.forget_reservation();
         }
         Ok(())
     }
@@ -213,7 +214,9 @@ impl KvTable {
         next: Option<AutoRandomSpec>,
         column_offset: usize,
     ) -> Result<(), AutoRandomError> {
-        let previous = self.auto_random;
+        // Go `checkAutoRandom` reads the table's bits only for its clustered
+        // primary key column, which is the AUTO_RANDOM column.
+        let previous = self.auto_random.filter(|spec| spec.offset == column_offset);
         let Some(next) = next else {
             return if previous.is_some_and(|spec| spec.offset == column_offset) {
                 Err(AutoRandomError::InvalidDefinition(
@@ -329,7 +332,10 @@ impl KvTable {
             return Ok(AutoRandom::Given(current));
         }
 
-        let (increment, offset) = increment_and_offset(step.0, step.1);
+        // Go `allocAutoRandomID` passes the session's increment and offset
+        // as they are: only AUTO_INCREMENT's `getIncrementAndOffset` ignores
+        // an offset larger than the increment.
+        let (increment, offset) = step;
         let incremental = self
             .auto_random_id
             .alloc(increment, offset)

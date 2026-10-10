@@ -347,4 +347,192 @@ impl KvTable {
         ctx.staged_writes().mark_dirty(self.table_id);
         Ok(())
     }
+
+    /// Go `checkExchangePartitionRecordValidation`'s partition condition for
+    /// one row of the table being exchanged in: whether the row does NOT
+    /// belong to the partition at `ordinal`.
+    ///
+    /// HASH is Go's literal `mod(expr, num) != index`, which refuses a
+    /// negative value that routing would place by its absolute value, and a
+    /// NULL anywhere but the first partition. The other methods compare the
+    /// row's route, and a row no partition accepts does not match.
+    pub(crate) fn exchange_row_mismatches(
+        &self,
+        ordinal: usize,
+        row: &[Datum],
+        ctx: &crate::StmtContext,
+    ) -> Result<bool, KvTableError> {
+        let partition = self.partition.as_ref().expect("validated by DDL");
+        if let PartitionKind::Hash = partition.kind {
+            let num = partition.num();
+            if num == 1 {
+                return Ok(false);
+            }
+            let value = crate::generated_column::eval_over_dependencies(
+                &partition.expr,
+                &partition.dependencies,
+                &*self.columns,
+                row,
+                ctx,
+            )
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+            let remainder = match value {
+                Datum::Null => return Ok(ordinal != 0),
+                Datum::UInt(value) => (value % num) as i64,
+                Datum::Int(value) => value % num as i64,
+                other => {
+                    let index = crate::partition_routing::hash_partition_index(&other, num)
+                        .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+                    index as i64
+                }
+            };
+            return Ok(remainder != ordinal as i64);
+        }
+        match self.record_physical_id(row, ctx) {
+            Ok(physical_id) => Ok(physical_id != partition.definitions[ordinal].id),
+            Err(KvTableError::NoPartitionForValue(_)) => Ok(true),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Go `onExchangeTablePartition`'s counters: each of the row id, the
+    /// separate auto-increment and the auto-random counter moves to the
+    /// larger of the two tables', as Go puts `max(ptAutoIDs, ntAutoIDs)`
+    /// under both ids.
+    pub(crate) fn exchange_auto_ids(&self, other: &KvTable) -> Result<(), AutoIdStoreError> {
+        let groups = [
+            (self.row_id_allocator(), other.row_id_allocator()),
+            (&self.auto_random_id, &other.auto_random_id),
+        ];
+        let increment = (self.row_id.is_some() || other.row_id.is_some())
+            .then_some((&self.auto_id, &other.auto_id));
+        for (left, right) in groups.into_iter().chain(increment) {
+            let next = (left.next_global()? as i64).max(right.next_global()? as i64);
+            for allocator in [left, right] {
+                allocator.rebase_to_next(next as u64)?;
+                allocator.forget_reservation();
+            }
+        }
+        Ok(())
+    }
+
+    /// The rows stored under one of this table's physical ids.
+    pub(crate) fn physical_rows(
+        &mut self,
+        physical_id: i64,
+        ctx: &crate::StmtContext,
+    ) -> Result<Vec<Vec<Datum>>, KvTableError> {
+        Ok(self
+            .rows_of_physical_table(physical_id, &RowDecodeContext::for_write(ctx))?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect())
+    }
+
+    /// The rows of each physical table, with their handles and the physical
+    /// id they are stored under: Go's per-partition reorg and check workers.
+    /// Two partitions may hold the same `_tidb_rowid` once a partition has
+    /// been exchanged, so a handle alone does not name a row.
+    pub(crate) fn scan_physical_rows_with_handles(
+        &mut self,
+        decode_context: &RowDecodeContext,
+    ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError> {
+        let mut rows = Vec::new();
+        for physical_id in self.record_physical_ids() {
+            rows.extend(
+                self.rows_of_physical_table(physical_id, decode_context)?
+                    .into_iter()
+                    .map(|(handle, row)| (physical_id, handle, row)),
+            );
+        }
+        Ok(rows)
+    }
+
+    fn rows_of_physical_table(
+        &mut self,
+        physical_id: i64,
+        decode_context: &RowDecodeContext,
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
+        let previous_read_partitions = self
+            .partition
+            .is_some()
+            .then(|| self.read_partitions.replace(vec![physical_id]));
+        let rows = self.scan_rows_with_handles_recomputed(decode_context);
+        if let Some(previous) = previous_read_partitions {
+            self.read_partitions = previous;
+        }
+        rows
+    }
+
+    /// Go `onExchangeTablePartition`'s swap: the partition at `ordinal` and
+    /// `standalone` trade physical ids, so every record and index key stays
+    /// as written and only changes hands. Global indexes are refused before
+    /// this runs, so each table keeps every key it holds under its physical
+    /// id.
+    pub(crate) fn exchange_partition(
+        &mut self,
+        ordinal: usize,
+        standalone: &mut KvTable,
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
+        let partition_id = self
+            .partition
+            .as_ref()
+            .expect("validated by DDL")
+            .definitions[ordinal]
+            .id;
+        let standalone_id = standalone.table_id;
+        let leaving = take_physical_keys(&mut *self.store, partition_id)?;
+        let arriving = take_physical_keys(&mut *standalone.store, standalone_id)?;
+        for (key, value) in arriving {
+            self.store.set(key, value).map_err(KvTableError::from)?;
+        }
+        for (key, value) in leaving {
+            standalone
+                .store
+                .set(key, value)
+                .map_err(KvTableError::from)?;
+        }
+        self.partition
+            .as_mut()
+            .expect("validated by DDL")
+            .definitions[ordinal]
+            .id = standalone_id;
+        standalone.table_id = partition_id;
+        if let Some(replica) = self.tiflash_replica.as_mut() {
+            for id in replica.available_partition_ids.iter_mut() {
+                if *id == partition_id {
+                    *id = standalone_id;
+                    break;
+                }
+            }
+        }
+        ctx.staged_writes().mark_dirty(self.table_id);
+        ctx.staged_writes().mark_dirty(standalone_id);
+        ctx.staged_writes().mark_dirty(partition_id);
+        Ok(())
+    }
+}
+
+/// Removes and returns every key `store` holds under `physical_id`: its
+/// records and its local index entries.
+fn take_physical_keys(
+    store: &mut dyn TableStorage,
+    physical_id: i64,
+) -> Result<Vec<(Key, Vec<u8>)>, KvTableError> {
+    let low = tidb_codec::table_key::encode_table_prefix(physical_id);
+    let high = tidb_codec::table_key::encode_table_prefix(physical_id + 1);
+    let mut iterator = store
+        .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))
+        .map_err(KvTableError::from)?;
+    let mut entries = Vec::new();
+    while iterator.valid() {
+        entries.push((iterator.key().clone(), iterator.value().to_vec()));
+        iterator.next().map_err(KvTableError::from)?;
+    }
+    iterator.close();
+    for (key, _) in &entries {
+        store.delete(key.clone()).map_err(KvTableError::from)?;
+    }
+    Ok(entries)
 }
