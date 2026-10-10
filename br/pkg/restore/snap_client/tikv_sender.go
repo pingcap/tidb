@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -102,12 +103,14 @@ func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File) [
 // So set a threshold to avoid it.
 const MergedRangeCountThreshold = 1536
 
-// SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
+// SortAndValidateFileRanges sorts, merges and validates file batches and their split boundaries.
+// A nonzero restoreID assigns Classic Restore task identities before checkpoint filtering.
 func SortAndValidateFileRanges(
 	createdTables []*restoreutils.CreatedTable,
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
+	restoreID uuid.UUID,
 ) ([][]byte, []restore.BatchBackupFileSet, error) {
 	sortedPhysicalTables := getSortedPhysicalTables(createdTables)
 	// sort, merge, and validate files in each tables, and generate split keys by the way
@@ -127,6 +130,21 @@ func SortAndValidateFileRanges(
 		totalWriteCFFile   int = 0
 		totalDefaultCFFile int = 0
 	)
+
+	appendFilesGroup := func() error {
+		if len(lastFilesGroup) == 0 {
+			return nil
+		}
+		group, err := prepareRestoreBatch(lastFilesGroup, checkpointSetWithTableID, restoreID)
+		if err != nil {
+			return err
+		}
+		if len(group) > 0 {
+			tableIDWithFilesGroup = append(tableIDWithFilesGroup, group)
+		}
+		lastFilesGroup = nil
+		return nil
+	}
 
 	log.Info("start to merge ranges", zap.Uint64("kv size threshold", splitSizeBytes), zap.Uint64("kv count threshold", splitKeyCount))
 	for _, table := range sortedPhysicalTables {
@@ -157,11 +175,6 @@ func SortAndValidateFileRanges(
 			zap.Int("Merged(regions)", stat.MergedRegions),
 			zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
 			zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
-
-		// skip some ranges if recorded by checkpoint
-		// Notice that skip ranges after select split keys in order to make the split keys
-		// always the same.
-		checkpointSet := checkpointSetWithTableID[table.NewPhysicalID]
 
 		// Generate the split keys, and notice that the way to generate split keys must be deterministic
 		// and regardless of the current cluster region distribution. Therefore, when restore fails, the
@@ -196,9 +209,9 @@ func SortAndValidateFileRanges(
 				}
 				// then generate a new files group
 				if lastFilesGroup != nil {
-					tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
-					// reset the lastFiltesGroup immediately because it is not always updated in each loop cycle.
-					lastFilesGroup = nil
+					if err := appendFilesGroup(); err != nil {
+						return nil, nil, err
+					}
 				}
 			} else {
 				groupSize, groupCount = afterMergedGroupSize, afterMergedGroupCount
@@ -208,12 +221,8 @@ func SortAndValidateFileRanges(
 			// mergedRangeCount increment by the number of files before filtered by checkpoint in order to make split keys
 			// always the same as that from before execution.
 			mergedRangeCount += len(rg.Files)
-			// checkpoint filter out the import done files in the previous restore executions.
-			// Notice that skip ranges after select split keys in order to make the split keys
-			// always the same.
-			newFiles := filterOutFiles(checkpointSet, rg.Files)
-			// append the new files into the group
-			if len(newFiles) > 0 {
+			// Keep the original files until the batch identity has been computed.
+			if len(rg.Files) > 0 {
 				if len(lastFilesGroup) == 0 || lastFilesGroup[len(lastFilesGroup)-1].TableID != table.NewPhysicalID {
 					lastFilesGroup = append(lastFilesGroup, restore.BackupFileSet{
 						TableID:      table.NewPhysicalID,
@@ -221,7 +230,7 @@ func SortAndValidateFileRanges(
 						RewriteRules: table.RewriteRules,
 					})
 				}
-				lastFilesGroup[len(lastFilesGroup)-1].SSTFiles = append(lastFilesGroup[len(lastFilesGroup)-1].SSTFiles, newFiles...)
+				lastFilesGroup[len(lastFilesGroup)-1].SSTFiles = append(lastFilesGroup[len(lastFilesGroup)-1].SSTFiles, rg.Files...)
 			}
 		}
 
@@ -237,8 +246,9 @@ func SortAndValidateFileRanges(
 			// is already a table split key.
 			lastKey = nil
 			if lastFilesGroup != nil {
-				tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
-				lastFilesGroup = nil
+				if err := appendFilesGroup(); err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 	}
@@ -252,7 +262,9 @@ func SortAndValidateFileRanges(
 			zap.Uint64("merged kv size", groupSize),
 			zap.Uint64("merged kv count", groupCount),
 			zap.Int("merged range count", mergedRangeCount))
-		tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
+		if err := appendFilesGroup(); err != nil {
+			return nil, nil, err
+		}
 	}
 	summary.CollectInt("default CF files", totalDefaultCFFile)
 	summary.CollectInt("write CF files", totalWriteCFFile)
@@ -294,8 +306,15 @@ func (rc *SnapClient) RestoreTables(ctx context.Context, rtCtx RestoreTablesCont
 	}()
 
 	start := time.Now()
+	taskRestoreID := uuid.Nil
+	if rc.restoreRegion {
+		taskRestoreID = rc.restoreUUID
+		if taskRestoreID == uuid.Nil {
+			return errors.New("RestoreRegion requires a restore UUID before planning")
+		}
+	}
 	sortedSplitKeys, tableIDWithFilesGroup, err :=
-		SortAndValidateFileRanges(rtCtx.CreatedTables, rtCtx.CheckpointSetWithTableID, rtCtx.SplitSizeBytes, rtCtx.SplitKeyCount, rtCtx.SplitOnTable)
+		SortAndValidateFileRanges(rtCtx.CreatedTables, rtCtx.CheckpointSetWithTableID, rtCtx.SplitSizeBytes, rtCtx.SplitKeyCount, rtCtx.SplitOnTable, taskRestoreID)
 	if err != nil {
 		return errors.Trace(err)
 	}
