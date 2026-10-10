@@ -1181,8 +1181,6 @@ func (re *builtinRegexpReplaceFuncSig) evalString(ctx EvalContext, row chunk.Row
 	pat, isNull, err := re.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
-	} else if len(pat) == 0 {
-		return "", true, ErrRegexp.GenWithStackByArgs(emptyPatternErr)
 	}
 
 	repl, isNull, err := re.args[2].EvalString(ctx, row)
