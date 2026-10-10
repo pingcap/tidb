@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -49,12 +50,25 @@ func newTCPConnPair(t *testing.T) (client, server net.Conn) {
 	return client, server
 }
 
+// requireRawSocketProbeSupport skips the caller on platforms that have no
+// raw-socket liveness probe. The supported set mirrors the build tag on
+// conn_alive_unix.go. Keying the skip on the platform rather than on IsAlive's
+// return value keeps a broken probe a hard test failure instead of silently
+// skipping the assertions.
+func requireRawSocketProbeSupport(t *testing.T) {
+	t.Helper()
+	switch runtime.GOOS {
+	case "linux", "darwin", "freebsd":
+		return
+	default:
+		t.Skipf("raw socket liveness probe is not supported on %s", runtime.GOOS)
+	}
+}
+
 func TestBufferedReadConnIsAlive(t *testing.T) {
+	requireRawSocketProbeSupport(t)
 	client, server := newTCPConnPair(t)
 	c := NewBufferedReadConn(server)
-	if c.IsAlive() != 1 {
-		t.Skip("raw socket liveness probe is not supported on this platform")
-	}
 	require.Equal(t, 1, c.IsAlive(), "an idle but connected peer must be alive")
 
 	// Pending data must be reported as alive and must NOT be consumed by the
@@ -161,12 +175,10 @@ func TestUnwrapSyscallConn(t *testing.T) {
 // proxy-protocol connections: the liveness probe must reach the syscall.Conn
 // hidden behind a wrapper that only embeds net.Conn.
 func TestBufferedReadConnIsAliveThroughEmbeddedWrapper(t *testing.T) {
+	requireRawSocketProbeSupport(t)
 	client, server := newTCPConnPair(t)
 	c := NewBufferedReadConn(&embeddedConnWrapper{Conn: server})
 
-	if c.IsAlive() != 1 {
-		t.Skip("raw socket liveness probe is not supported on this platform")
-	}
 	require.Equal(t, 1, c.IsAlive(),
 		"a live peer behind an embedded net.Conn wrapper must be alive")
 
