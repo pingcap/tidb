@@ -345,6 +345,8 @@ PARTITION p0 VALUES LESS THAN (6)
 	// only has p0 stats
 	require.NotNil(t, jsTable.Partitions["p0"])
 	require.Nil(t, jsTable.Partitions[util.TiDBGlobalStats])
+	require.NotZero(t, jsTable.Partitions["p0"].Version)
+	require.Equal(t, jsTable.Partitions["p0"].Version, jsTable.Version)
 
 	// change static to dynamic then assert
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
@@ -367,6 +369,9 @@ PARTITION p0 VALUES LESS THAN (6)
 	// has both global and p0 stats
 	require.NotNil(t, jsTable.Partitions["p0"])
 	require.NotNil(t, jsTable.Partitions[util.TiDBGlobalStats])
+	version := max(jsTable.Partitions["p0"].Version,
+		jsTable.Partitions[util.TiDBGlobalStats].Version)
+	require.Equal(t, version, jsTable.Version)
 }
 
 func TestDumpHistoricalStatsFallback(t *testing.T) {
@@ -397,6 +402,25 @@ PARTITION p0 VALUES LESS THAN (6)
 	require.NoError(t, err)
 	require.NotNil(t, jt)
 	require.False(t, jt.IsHistoricalStats)
+	var version uint64
+	for _, part := range jt.Partitions {
+		if part != nil {
+			version = max(version, part.Version)
+		}
+	}
+	require.NotZero(t, version)
+	require.Equal(t, version, jt.Version)
+
+	tk.MustExec("create table no_stats (a int) " +
+		"partition by hash(a) partitions 2")
+	emptyTbl, err := dom.InfoSchema().TableByName(context.Background(),
+		ast.NewCIStr("test"), ast.NewCIStr("no_stats"))
+	require.NoError(t, err)
+	jt, _, err = h.DumpHistoricalStatsBySnapshot("test", emptyTbl.Meta(),
+		oracle.GoTimeToTS(time.Now()))
+	require.NoError(t, err)
+	require.NotNil(t, jt)
+	require.Zero(t, jt.Version)
 }
 
 func TestDumpHistoricalStatsMetaForMultiTables(t *testing.T) {
