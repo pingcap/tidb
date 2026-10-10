@@ -639,7 +639,7 @@ pub(crate) fn unistore_cluster_session_stack(
         users.global_vars(),
         Arc::clone(&stats),
         Arc::new(crate::cluster_auto_id_seam::ClusterTableAutoIds::new(
-            opener,
+            opener.clone(),
             IN_PROCESS_TIMEOUT,
         )),
     )
@@ -671,6 +671,7 @@ pub(crate) fn unistore_cluster_session_stack(
     };
     let factory = factory.with_bindings(bindings);
     factory.attach_login_storage(&users);
+    factory.install_bdr_role_store(Arc::new(opener), IN_PROCESS_TIMEOUT);
 
     let stats_maintenance =
         crate::cluster_session_node::stats_maintenance::StatsMaintenanceWorker::start(

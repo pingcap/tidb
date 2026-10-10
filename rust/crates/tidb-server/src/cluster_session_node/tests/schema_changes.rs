@@ -26,7 +26,11 @@ struct ReportDdl {
 }
 
 impl ClusterDdl for ReportDdl {
-    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
+    fn execute(
+        &self,
+        statement: &DdlStatement,
+        _cdc_write_source: u64,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
         match (statement, &self.statement) {
             (
                 DdlStatement::DropTables { names, if_exists },
@@ -154,7 +158,7 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
 struct UndeterminedDdl(SqlQueryError);
 
 impl ClusterDdl for UndeterminedDdl {
-    fn execute(&self, _: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
+    fn execute(&self, _: &DdlStatement, _: u64) -> Result<ClusterDdlReport, SqlQueryError> {
         Err(self.0.clone())
     }
 }

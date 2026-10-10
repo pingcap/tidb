@@ -776,7 +776,10 @@ impl Session {
                     tidb_ast::AdminStmt::SetBdrRole(tidb_ast::BdrRole::Secondary) => "secondary",
                     tidb_ast::AdminStmt::UnsetBdrRole => "",
                     _ => {
-                        let role = self.with_catalog_mut(|catalog| Ok(catalog.bdr_role()))?;
+                        let role = match self.bdr_role_store.clone() {
+                            Some(store) => store.get().map_err(DriverError::unsupported)?,
+                            None => self.with_catalog_mut(|catalog| Ok(catalog.bdr_role()))?,
+                        };
                         let mut field_type =
                             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::String);
                         field_type.set_flen(1);
@@ -786,10 +789,13 @@ impl Session {
                         }));
                     }
                 };
-                self.with_catalog_mut(|catalog| {
-                    catalog.set_bdr_role(role);
-                    Ok(())
-                })?;
+                match self.bdr_role_store.clone() {
+                    Some(store) => store.set(role).map_err(DriverError::unsupported)?,
+                    None => self.with_catalog_mut(|catalog| {
+                        catalog.set_bdr_role(role);
+                        Ok(())
+                    })?,
+                }
                 Ok(Some(StmtOutput::Done(true)))
             }
             tidb_ast::AdminStmt::FlushPlanCache(scope) => {

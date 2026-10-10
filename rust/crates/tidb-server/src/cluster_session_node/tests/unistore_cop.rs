@@ -10991,3 +10991,68 @@ fn index_lifecycle_backfill_uses_the_submitting_time_zone() {
         [["8"]]
     );
 }
+
+/// Go keeps the BDR role in the meta key `BDRRole`, and refuses a DDL its
+/// role denies: the submitter (`SubmitBatch`'s `IsDenied`) and the ADD /
+/// MODIFY COLUMN builders. A cluster node reads and writes the key in TiKV
+/// meta, and its planner admits each change it publishes the same way.
+#[test]
+fn cluster_bdr_role_lives_in_meta_and_refuses_denied_ddl() {
+    fn run(
+        session: &mut ClusterServerSession,
+        sql: &str,
+    ) -> Result<(), crate::sql_node::SqlQueryError> {
+        if session.execute_write(sql)?.is_some() {
+            return Ok(());
+        }
+        use crate::resultset_source::ResultSetSource;
+        let mut result = session.execute(sql)?;
+        let source = result.source();
+        while !source.next_batch(8).expect("batch").is_empty() {}
+        source.finish().expect("finish");
+        source.close().expect("close");
+        Ok(())
+    }
+    const DENIED: &str =
+        "The operation is not allowed while the bdr role of this cluster is set to primary.";
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(931)).unwrap();
+    run(&mut session, "create table test.bdr_t(a int)").unwrap();
+    run(&mut session, "admin set bdr role primary").unwrap();
+    // A second connection reads the role from meta, not from the first
+    // connection's catalog.
+    let mut other = stack.factory.open_session(session_context(932)).unwrap();
+    assert_eq!(
+        displayed(rows(&mut other, "admin show bdr role")),
+        [["primary"]]
+    );
+    run(&mut session, "alter table test.bdr_t add column b int").unwrap();
+    for sql in [
+        "alter table test.bdr_t drop column b",
+        "alter table test.bdr_t add column c int not null",
+        "alter table test.bdr_t modify column a bigint",
+        "create unique index u on test.bdr_t(a)",
+        "truncate table test.bdr_t",
+    ] {
+        let error = run(&mut session, sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (8263, DENIED),
+            "{sql}"
+        );
+    }
+    run(&mut session, "create index i on test.bdr_t(a)").unwrap();
+    run(
+        &mut session,
+        "alter table test.bdr_t modify column a int default 1",
+    )
+    .unwrap();
+    // TiCDC's own DDL skips the submitter's admission.
+    run(&mut session, "set @@tidb_cdc_write_source = 1").unwrap();
+    run(&mut session, "alter table test.bdr_t drop column b").unwrap();
+    run(&mut session, "set @@tidb_cdc_write_source = 0").unwrap();
+    run(&mut session, "admin unset bdr role").unwrap();
+    assert_eq!(displayed(rows(&mut other, "admin show bdr role")), [[""]]);
+    run(&mut session, "truncate table test.bdr_t").unwrap();
+    run(&mut session, "drop table test.bdr_t").unwrap();
+}

@@ -667,7 +667,8 @@ pub trait DdlSchemaSync {
 
 #[derive(Clone, Copy)]
 enum DdlPhase<'statement> {
-    Initial(&'statement DdlStatement),
+    /// A direct change, and the issuing session's `tidb_cdc_write_source`.
+    Initial(&'statement DdlStatement, u64),
     Persisted {
         ddl_job_id: i64,
         check_owner: &'statement dyn Fn() -> Result<(), String>,
@@ -785,6 +786,9 @@ pub fn commit_cluster_ddl_with_backfill<
     check_constraint_validator: &dyn CheckConstraintValidator,
     schema_sync: &dyn DdlSchemaSync,
     auto_ids: Option<&Arc<crate::auto_id_client::AutoIdClient>>,
+    // The issuing session's `tidb_cdc_write_source`, which exempts a change
+    // TiCDC replicates from the BDR submit admission.
+    cdc_write_source: u64,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
     if matches!(
         statement,
@@ -797,7 +801,7 @@ pub fn commit_cluster_ddl_with_backfill<
 
     match commit_cluster_ddl_phase_with_retry(
         opener,
-        DdlPhase::Initial(statement),
+        DdlPhase::Initial(statement, cdc_write_source),
         timeout,
         notifier,
         backfiller,
@@ -1330,14 +1334,17 @@ fn commit_cluster_ddl_with_backfill_once<
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
         match phase {
-            DdlPhase::Initial(statement) => crate::cluster_ddl::plan_ddl_with_auto_ids(
-                &mut snapshot,
-                statement,
-                start_ts,
-                tidb_datatype::new_collation_enabled(),
-                auto_ids,
-            )
-            .map(|plan| (plan, false, None)),
+            DdlPhase::Initial(statement, cdc_write_source) => {
+                crate::cluster_ddl::plan_ddl_with_auto_ids(
+                    &mut snapshot,
+                    statement,
+                    start_ts,
+                    tidb_datatype::new_collation_enabled(),
+                    auto_ids,
+                    cdc_write_source,
+                )
+                .map(|plan| (plan, false, None))
+            }
             DdlPhase::Persisted {
                 ddl_job_id,
                 schema_state,
@@ -1435,13 +1442,13 @@ fn commit_cluster_ddl_with_backfill_once<
         };
         let staged = match phase {
             DdlPhase::Persisted { ddl_job_id, .. } => recover_ddl_action(ddl_job_id, stage_action),
-            DdlPhase::Initial(_) => Ok(stage_action()),
+            DdlPhase::Initial(..) => Ok(stage_action()),
         };
         let failure = match staged {
             Ok(Ok(())) => None,
             Err(()) => Some(PersistedDdlJobFailure::Panic),
             Ok(Err(error)) => {
-                if matches!(phase, DdlPhase::Initial(_)) {
+                if matches!(phase, DdlPhase::Initial(..)) {
                     let _ = transaction.rollback();
                     return Err(error);
                 }
@@ -1543,7 +1550,7 @@ fn commit_cluster_ddl_with_backfill_once<
     match transaction.commit_with(&buffer, write.mutations) {
         Ok(_) => {
             match phase {
-                DdlPhase::Initial(_) => notify_schema_version(notifier, planned_version),
+                DdlPhase::Initial(..) => notify_schema_version(notifier, planned_version),
                 DdlPhase::Persisted { schema_state, .. } if planned_version != 0 => {
                     if schema_state.mdl_enabled {
                         if let Some(notifier) = notifier {

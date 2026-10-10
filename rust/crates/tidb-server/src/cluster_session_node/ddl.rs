@@ -69,8 +69,15 @@ pub trait ClusterDdl: Send + Sync {
     ///
     /// The two halves are one method because a caller that published without
     /// refreshing would answer the next statement from a catalog it knows to
-    /// be stale.
-    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError>;
+    /// be stale. `cdc_write_source` is the issuing session's
+    /// `tidb_cdc_write_source` (0 for the node's own changes), which Go copies
+    /// into the job and which exempts a change TiCDC replicates from the BDR
+    /// submit admission.
+    fn execute(
+        &self,
+        statement: &DdlStatement,
+        cdc_write_source: u64,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
 
     /// Go `do.DDL().OwnerManager().IsOwner()`: whether this node owns the DDL
     /// job queue right now.
@@ -2174,7 +2181,11 @@ where
         self.owner.is_owner()
     }
 
-    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
+    fn execute(
+        &self,
+        statement: &DdlStatement,
+        cdc_write_source: u64,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
         let drop_list = match statement {
             DdlStatement::DropTables { names, if_exists } => Some((names, *if_exists, false)),
             DdlStatement::DropView { names, if_exists } if names.len() != 1 => {
@@ -2201,7 +2212,7 @@ where
                         if_exists: false,
                     }
                 };
-                match self.execute(&target) {
+                match self.execute(&target, cdc_write_source) {
                     Ok(report) => {
                         last = report;
                         Ok(true)
@@ -2262,6 +2273,7 @@ where
             &KvTableIndexBackfiller,
             self.schema_sync.as_ref(),
             self.auto_ids.as_ref(),
+            cdc_write_source,
         )
         .map_err(cluster_ddl_error)?;
         self.refresh_catalog();
@@ -2280,10 +2292,13 @@ where
     }
 
     fn update_replica_status(&self, table_id: i64, available: bool) -> Result<(), String> {
-        self.execute(&DdlStatement::UpdateTiFlashReplicaStatus {
-            table_id,
-            available,
-        })
+        self.execute(
+            &DdlStatement::UpdateTiFlashReplicaStatus {
+                table_id,
+                available,
+            },
+            0,
+        )
         .map(|_| ())
         .map_err(|error| error.message)
     }

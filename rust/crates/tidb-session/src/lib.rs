@@ -305,6 +305,16 @@ pub struct TableStorageStatistics {
     pub partitions: Vec<(i64, (u64, u64, u64, u64))>,
 }
 
+/// The cluster's BDR role, Go's meta key `BDRRole`, where a front end keeps
+/// it in a shared store rather than in its own catalog.
+pub trait BdrRoleStore: Send + Sync {
+    /// Go `AdminShowBDRRoleExec`: `meta.Mutator.GetBDRRole` in a new
+    /// transaction; "" when unset.
+    fn get(&self) -> Result<String, String>;
+    /// Go `meta.Mutator.SetBDRRole`, or `ClearBDRRole` for "".
+    fn set(&self, role: &str) -> Result<(), String>;
+}
+
 /// Fresh restricted-storage boundary used by Go's information-schema
 /// `TableSizeStats` reader.
 pub trait TableStorageStatsProvider: Send + Sync {
@@ -701,6 +711,9 @@ pub struct Session {
     analyze_status: Option<std::sync::Arc<dyn AnalyzeStatusProvider>>,
     /// Pinned Go's fresh information-schema table-size reader.
     table_storage_stats: Option<std::sync::Arc<dyn TableStorageStatsProvider>>,
+    /// Where the BDR role lives when it is not this catalog's (a cluster
+    /// node's TiKV meta).
+    bdr_role_store: Option<std::sync::Arc<dyn BdrRoleStore>>,
     /// Go's session-local `SessionStatsItem`, swept into the statistics
     /// handle independently of statement execution.
     stats_collector: Option<std::sync::Arc<tidb_stats_handle_usage::SessionStatsItem>>,
@@ -975,6 +988,7 @@ impl Session {
             column_stats_usage: None,
             analyze_status: None,
             table_storage_stats: None,
+            bdr_role_store: None,
             stats_collector: None,
             transaction_table_delta: std::sync::Arc::new(
                 tidb_stats_handle_usage::TableDeltaMap::new(),
@@ -1521,6 +1535,17 @@ impl Session {
         provider: std::sync::Arc<dyn TableStorageStatsProvider>,
     ) {
         self.table_storage_stats = Some(provider);
+    }
+
+    /// Installs the store that holds the cluster's BDR role.
+    pub fn set_bdr_role_store(&mut self, store: std::sync::Arc<dyn BdrRoleStore>) {
+        self.bdr_role_store = Some(store);
+    }
+
+    /// Whether the BDR role lives in an installed store.
+    #[must_use]
+    pub fn has_bdr_role_store(&self) -> bool {
+        self.bdr_role_store.is_some()
     }
 
     /// Go `ShowDDLExec.Next` (`executor/show_ddl.go`): one row describing the

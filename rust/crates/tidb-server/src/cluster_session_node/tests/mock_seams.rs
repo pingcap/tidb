@@ -91,7 +91,11 @@ fn mock_rename_table(
 }
 
 impl ClusterDdl for MockDdl {
-    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
+    fn execute(
+        &self,
+        statement: &DdlStatement,
+        _cdc_write_source: u64,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
         let current = self.catalog.load();
         let mut next = ClusterCatalog {
             schema_version: current.schema_version + 1,

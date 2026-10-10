@@ -651,7 +651,7 @@ impl Session {
 
     /// `tidb_cdc_write_source`, which Go copies into each DDL job
     /// (`job.CDCWriteSource`): a DDL replicated by TiCDC skips BDR admission.
-    pub(crate) fn ddl_cdc_write_source(&self) -> u64 {
+    pub fn ddl_cdc_write_source(&self) -> u64 {
         self.vars
             .get_system(tidb_vardef::tidb_vars::TIDB_CDC_WRITE_SOURCE)
             .ok()

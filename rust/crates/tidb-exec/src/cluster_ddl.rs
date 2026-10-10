@@ -7527,7 +7527,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     start_ts: u64,
     use_new_collation: bool,
 ) -> Result<DdlPlan, DdlPlanError> {
-    plan_ddl_with_auto_ids(snapshot, statement, start_ts, use_new_collation, None)
+    plan_ddl_with_auto_ids(snapshot, statement, start_ts, use_new_collation, None, 0)
 }
 
 /// DDL uses the same process AutoID authority as SQL table writes.
@@ -7537,8 +7537,13 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
     start_ts: u64,
     use_new_collation: bool,
     auto_ids: Option<&std::sync::Arc<crate::auto_id_client::AutoIdClient>>,
+    // The issuing session's `tidb_cdc_write_source`: a change TiCDC
+    // replicates skips the BDR submit admission.
+    cdc_write_source: u64,
 ) -> Result<DdlPlan, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
+    // Go `meta.Mutator.GetBDRRole`, at the plan's own snapshot.
+    let bdr_role = snapshot.get(&key::bdr_role_kv_key())?.unwrap_or_default();
     // Filled by the arms that change what PD must know about an object's
     // placement; empty for every other statement, and an empty list is never
     // sent.
@@ -9260,6 +9265,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 }
                 AlterColumnOutcome::Applied => {}
             }
+            crate::cluster_bdr::admit_add_column(&bdr_role, schema, &column.options)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -9373,6 +9379,14 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             let prepared = prepare_modify_column(stored, table, column, requested_position, context, rename_from.as_deref())?;
             let mut info = stored.clone_like_go();
             apply_prepared_column(&mut info, prepared, requested_position, false)?;
+            admit_modified_column_bdr(
+                &bdr_role,
+                schema,
+                stored,
+                &info,
+                column,
+                rename_from.as_deref(),
+            )?;
             let new_name = column.name.go_to_lower();
             info.update_ts = start_ts;
             let table_id = info.id;
@@ -9437,6 +9451,32 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                             .expect("every active column job was prepared");
                         let name = column.name.clone();
                         apply_prepared_column(&mut info, column, &position, add)?;
+                        match action {
+                            AlterColumnAction::Add {
+                                column: definition, ..
+                            } => {
+                                crate::cluster_bdr::admit_add_column(
+                                    &bdr_role,
+                                    schema,
+                                    &definition.options,
+                                )?;
+                            }
+                            AlterColumnAction::Modify {
+                                column: definition,
+                                rename_from,
+                                ..
+                            } => {
+                                admit_modified_column_bdr(
+                                    &bdr_role,
+                                    schema,
+                                    stored,
+                                    &info,
+                                    definition,
+                                    rename_from.as_deref(),
+                                )?;
+                            }
+                            _ => {}
+                        }
                         if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                             let changed = tidb_model::column::find_column_info(&info.columns, name.original())
                                 .expect("applied column is present").read().clone_like_go();
@@ -10706,6 +10746,19 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         }
     }
 
+    // Go's submitter admits the job before it runs.
+    let job_schema = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == diff.schema_id)
+        .map(|database| database.info.name.original().to_owned())
+        .or_else(|| match statement {
+            DdlStatement::CreateDatabase { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    crate::cluster_bdr::admit_submit(&bdr_role, cdc_write_source, &job_schema, statement, &diff)?;
+
     // The version bump comes last so the write set always ends with the two
     // keys that make the change observable — and the version key is what a
     // concurrent DDL collides with.
@@ -10736,6 +10789,29 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         placement_bundles,
         placement_rollback_bundles,
     })))
+}
+
+/// Go `IsModifyColumnDenied` over a MODIFY / CHANGE COLUMN this plan built:
+/// the stored column's type against the built one's.
+fn admit_modified_column_bdr(
+    bdr_role: &[u8],
+    schema: &str,
+    stored: &TableInfo,
+    built: &TableInfo,
+    column: &tidb_ast::ColumnDef,
+    rename_from: Option<&str>,
+) -> Result<(), DdlPlanError> {
+    let field_type_of = |info: &TableInfo, name: &str| {
+        tidb_model::column::find_column_info(&info.columns, name)
+            .map(|column| column.read().field_type.clone())
+    };
+    let (Some(old), Some(new)) = (
+        field_type_of(stored, rename_from.unwrap_or(&column.name)),
+        field_type_of(built, &column.name),
+    ) else {
+        return Ok(());
+    };
+    crate::cluster_bdr::admit_modify_column(bdr_role, schema, &new, &old, &column.options)
 }
 
 /// Go `types.needReorgToChange` (`field_type.go:1535`): `None` when the new

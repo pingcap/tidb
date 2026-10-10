@@ -294,6 +294,7 @@ fn auto_id_owner_ddl_rebase_uses_service_instead_of_stale_metadata() {
             100,
             true,
             Some(&client),
+            0,
         )
         .unwrap();
         assert_eq!(state.values.lock().unwrap()[&(112, 200)], expected);
@@ -328,7 +329,8 @@ fn auto_id_owner_ddl_rebase_uses_service_instead_of_stale_metadata() {
             },
             100,
             true,
-            Some(&client)
+            Some(&client),
+            0
         ),
         Err(tidb_exec::cluster_ddl::DdlPlanError::AutoIdReadFailed)
     ));

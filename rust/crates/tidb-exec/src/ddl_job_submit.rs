@@ -588,7 +588,7 @@ pub fn prepare_spec_for_submit(
     Ok(())
 }
 
-fn submit_error(error: JobSubmitError) -> DdlPlanError {
+pub(crate) fn submit_error(error: JobSubmitError) -> DdlPlanError {
     DdlPlanError::Admission(DdlAdmissionError::with_code(
         error.code(),
         error.to_string(),

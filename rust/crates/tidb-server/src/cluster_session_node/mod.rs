@@ -358,6 +358,7 @@ fn jitter_below(upper: u32) -> u32 {
     })
 }
 
+mod bdr_role_store;
 mod binding_maintenance;
 mod boot;
 mod ddl;
@@ -1102,6 +1103,9 @@ pub struct ClusterSessionFactory {
     analyze_jobs_cleanup_worker: std::sync::OnceLock<AnalyzeJobsCleanupWorker>,
     /// Go `Domain.requestUnitsWriterLoop`.
     ru_stats_writer: std::sync::OnceLock<ru_stats_writer::RuStatsWriterWorker>,
+    /// The cluster's BDR role in TiKV meta, which every session's ADMIN
+    /// BDR ROLE statements read and write.
+    bdr_role_store: std::sync::OnceLock<Arc<dyn tidb_session::BdrRoleStore>>,
     /// Go `autoAnalyzeWorker`, installed after stable `Arc` ownership.
     auto_analyze_worker: std::sync::OnceLock<AutoAnalyzeWorker>,
     /// Go Domain's capacity-16 historical-statistics mailbox.
@@ -1233,6 +1237,7 @@ impl ClusterSessionFactory {
             ddl_notifier: std::sync::OnceLock::new(),
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             ru_stats_writer: std::sync::OnceLock::new(),
+            bdr_role_store: std::sync::OnceLock::new(),
             auto_analyze_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
@@ -1585,6 +1590,25 @@ impl ClusterSessionFactory {
         let _ = self
             .ru_stats_writer
             .set(ru_stats_writer::RuStatsWriterWorker::start(self, deps));
+    }
+
+    /// Installs the TiKV meta store that holds the cluster's BDR role, so
+    /// sessions opened from now on answer ADMIN SET / UNSET / SHOW BDR ROLE
+    /// from it.
+    pub(crate) fn install_bdr_role_store<C, L, P>(
+        &self,
+        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>>,
+        timeout: Duration,
+    ) where
+        C: tidb_txnkv::transaction::StoreWriteClient + 'static,
+        L: tidb_txnkv::transaction::StoreWriteLoader + 'static,
+        P: tidb_txnkv::transaction::StorePdCapability + 'static,
+    {
+        let _ = self
+            .bdr_role_store
+            .set(Arc::new(bdr_role_store::ClusterBdrRoleStore::new(
+                opener, timeout,
+            )));
     }
 
     /// Starts pinned Go `autoAnalyzeWorker`. Like Go, only a positive stats
@@ -3572,6 +3596,9 @@ impl ClusterSessionFactory {
             catalog: Arc::clone(&self.catalog),
             row_stats_cache: StatsTableRowCache::new(),
         }));
+        if let Some(store) = self.bdr_role_store.get() {
+            session.set_bdr_role_store(Arc::clone(store));
+        }
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
             Arc::clone(&self.transactions),
         )));
@@ -6373,11 +6400,15 @@ impl ClusterServerSession {
                     )),
                 }
             }
-            // The role lives in the cluster's meta key, which this node does
-            // not read or write yet; answering from its own catalog would
-            // report or set a role no other node sees.
+            // The role lives in the cluster's meta key; the session answers
+            // from the store this node installed. Without one, answering from
+            // the node's own catalog would report or set a role no other node
+            // sees.
+            StoredStateChange::BdrRole if self.session.has_bdr_role_store() => {
+                Ok(StatementRoute::Ordinary)
+            }
             StoredStateChange::BdrRole => Err(SqlQueryError::unknown(
-                "ADMIN SET/UNSET/SHOW BDR ROLE is not supported on a cluster node yet",
+                "ADMIN SET/UNSET/SHOW BDR ROLE needs this node's TiKV meta store",
             )),
             StoredStateChange::StatsLock => {
                 match prepare_cluster_stats_lock_parsed(stmt, self.session.current_database()) {
@@ -7262,7 +7293,9 @@ impl ClusterServerSession {
         self.session
             .validate_persistent_ddl_references(statement)
             .map_err(map_error)?;
-        let report = self.ddl.execute(statement)?;
+        let report = self
+            .ddl
+            .execute(statement, self.session.ddl_cdc_write_source())?;
         // Go raises `job.Warning` on the session's own statement context, so
         // `SHOW WARNINGS` reports what the change did differently from what
         // was written. `toTError` gives a plain `fmt.Errorf` the generic

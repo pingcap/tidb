@@ -559,6 +559,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // Go `Domain.Start` runs `requestUnitsWriterLoop` beside the other domain
     // loops (`pkg/domain/domain.go:830`). This node serves the null keyspace,
     // which the ResourceManager request names as Go's `NullKeyspaceID`.
+    factory.install_bdr_role_store(
+        Arc::new(authority.transaction_opener()),
+        TRANSACTION_RPC_TIMEOUT,
+    );
     if let Some(pd) = authority.pd_client() {
         factory.start_ru_stats_writer(
             pd,
