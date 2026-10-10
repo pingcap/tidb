@@ -1022,7 +1022,17 @@ func (b *builtinCastStringAsDurationSig) vecEvalDuration(ctx EvalContext, input 
 		if result.IsNull(i) {
 			continue
 		}
-		dur, isNull, err := types.ParseDuration(tc, buf.GetString(i), b.tp.GetDecimal())
+		s := buf.GetString(i)
+		if len(s) == 0 {
+			// Unlike storing '' into a TIME column, CAST(... AS TIME) never treats
+			// an empty string as a zero duration: MySQL always warns and returns NULL.
+			if err := tc.HandleTruncate(types.ErrTruncatedWrongVal.FastGenByArgs("time", s)); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		dur, isNull, err := types.ParseDuration(tc, s, b.tp.GetDecimal())
 		if err != nil {
 			if types.ErrTruncatedWrongVal.Equal(err) {
 				err = tc.HandleTruncate(err)

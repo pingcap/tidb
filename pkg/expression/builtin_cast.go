@@ -1951,6 +1951,13 @@ func (b *builtinCastStringAsDurationSig) evalDuration(ctx EvalContext, row chunk
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	if len(val) == 0 {
+		// Unlike storing '' into a TIME column, CAST(... AS TIME) never treats
+		// an empty string as a zero duration: MySQL always warns and returns NULL.
+		ec := errCtx(ctx)
+		err = ec.HandleError(types.ErrTruncatedWrongVal.FastGenByArgs("time", val))
+		return res, true, err
+	}
 	res, isNull, err = types.ParseDuration(typeCtx(ctx), val, b.tp.GetDecimal())
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		ec := errCtx(ctx)
