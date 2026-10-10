@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -33,16 +34,23 @@ import (
 // recordWriter wraps an objectio.Writer and can inject a custom close error.
 //
 // The delegated Close always executes so the underlying writer's resources
-// are released; the injected error is returned instead if set.
+// are released; the injected error is returned alongside the delegated error.
+// The context received by Close is recorded (with a snapshot of its Err taken
+// at Close time, since chunkWorker.Close cancels its fallback context on
+// return) so tests can deterministically observe which context was forwarded.
 type recordWriter struct {
 	objectio.Writer
-	injectErr error
+	injectErr    error
+	closedCtx    context.Context
+	closedCtxErr error
 }
 
 func (w *recordWriter) Close(ctx context.Context) error {
+	w.closedCtx = ctx
+	w.closedCtxErr = ctx.Err()
 	err := w.Writer.Close(ctx)
 	if w.injectErr != nil {
-		return w.injectErr
+		return errors.Join(err, w.injectErr)
 	}
 	return err
 }
@@ -52,6 +60,7 @@ func (w *recordWriter) Close(ctx context.Context) error {
 type recordStorage struct {
 	storeapi.Storage
 	injectErr error
+	writers   []*recordWriter
 }
 
 func (s *recordStorage) Create(ctx context.Context, name string, option *storeapi.WriterOption) (objectio.Writer, error) {
@@ -59,7 +68,30 @@ func (s *recordStorage) Create(ctx context.Context, name string, option *storeap
 	if err != nil {
 		return nil, err
 	}
-	return &recordWriter{Writer: writer, injectErr: s.injectErr}, nil
+	rw := &recordWriter{Writer: writer, injectErr: s.injectErr}
+	s.writers = append(s.writers, rw)
+	return rw, nil
+}
+
+// closedContexts returns (context, ctx.Err() snapshot at Close time) pairs for
+// all created writers' Close calls.
+func (s *recordStorage) closedContexts() []struct {
+	ctx context.Context
+	err error
+} {
+	out := make([]struct {
+		ctx context.Context
+		err error
+	}, 0, len(s.writers))
+	for _, w := range s.writers {
+		if w.closedCtx != nil {
+			out = append(out, struct {
+				ctx context.Context
+				err error
+			}{w.closedCtx, w.closedCtxErr})
+		}
+	}
+	return out
 }
 
 func newTestDataWriter(ctx context.Context, t *testing.T, store storeapi.Storage, closeCb func(*simplesst.WriterSummary)) *simplesst.EngineWriter {
@@ -208,20 +240,36 @@ func TestChunkWorkerCloseBothNil(t *testing.T) {
 
 // Context canceled — Close falls back to a new context; both writers close.
 //
-// The fallback path is proven by the successful Close: if the canceled context
-// were forwarded, the underlying SST writer would fail. A successful Close
-// means the fallback context (context.Background + 30s timeout) was used.
+// The fallback path is observed deterministically: every underlying writer
+// records the context it received, and the test asserts that context is
+// fresh (not the canceled one) and carries a timeout near maxWaitDuration.
 func TestChunkWorkerCloseContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
+	dataStore := &recordStorage{Storage: objstore.NewMemStorage()}
+	indexStore := &recordStorage{Storage: objstore.NewMemStorage()}
+
 	var dataCloseCount, indexCloseCount int32
-	dataWriter := newTestDataWriter(context.Background(), t, objstore.NewMemStorage(), func(*simplesst.WriterSummary) { dataCloseCount++ })
-	indexWriter := newTestIndexWriter(context.Background(), t, objstore.NewMemStorage(), func(*simplesst.WriterSummary) { indexCloseCount++ })
+	dataWriter := newTestDataWriter(context.Background(), t, dataStore, func(*simplesst.WriterSummary) { dataCloseCount++ })
+	indexWriter := newTestIndexWriter(context.Background(), t, indexStore, func(*simplesst.WriterSummary) { indexCloseCount++ })
 
 	worker := newTestWorker(ctx, dataWriter, indexWriter)
 	err := worker.Close()
 	require.NoError(t, err)
 	require.Equal(t, int32(1), dataCloseCount, "data writer must close even with canceled context")
 	require.Equal(t, int32(1), indexCloseCount, "index writer must close even with canceled context")
+
+	for i, store := range []*recordStorage{dataStore, indexStore} {
+		closedCtxs := store.closedContexts()
+		require.NotEmpty(t, closedCtxs, "store %d: writers must be created and closed through the wrapped storage", i)
+		for _, rec := range closedCtxs {
+			require.NoError(t, rec.err, "Close must not forward the canceled context to writers")
+			deadline, ok := rec.ctx.Deadline()
+			require.True(t, ok, "fallback context must carry a timeout near maxWaitDuration")
+			remaining := time.Until(deadline)
+			require.Greater(t, remaining, time.Duration(0), "fallback context must not be expired")
+			require.LessOrEqual(t, remaining, maxWaitDuration, "fallback context timeout must be near maxWaitDuration")
+		}
+	}
 }
