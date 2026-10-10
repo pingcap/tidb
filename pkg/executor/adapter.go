@@ -2451,6 +2451,16 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	stmtExecInfo.MemArbitration = stmtCtx.MemTracker.MemArbitration().Seconds()
 
 	stmtsummaryv2.Add(stmtExecInfo)
+
+	// The summary reads PrevSQL/PrevSQLDigest/LazyInfo only while Add runs
+	// (e.g. NewStmtRecord copies them when the digest group is first seen), and
+	// this per-session cache is then the sole remaining owner. Drop the
+	// references so an idle connection does not pin up to
+	// tidb_query_log_max_len bytes of previous statement text plus the
+	// ExecStmt until it executes another statement.
+	stmtExecInfo.PrevSQL = ""
+	stmtExecInfo.PrevSQLDigest = ""
+	stmtExecInfo.LazyInfo = nil
 }
 
 // GetOriginalSQL implements StmtExecLazyInfo interface.
