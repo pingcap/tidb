@@ -228,6 +228,8 @@ pub(crate) fn table_indexes(
                 },
             },
         };
+        // Go `BuildIndexInfo` checks the name's length first.
+        crate::ddl::check_too_long_identifier(&name)?;
         let built = crate::expression_index::build_hidden_columns_with_like_default_escape(
             &name,
             &index.parts,
@@ -311,10 +313,16 @@ pub(crate) fn table_indexes(
         if let Some(condition) = index.options.condition.clone() {
             partial_conditions.push((id, name.clone(), condition));
         }
+        let comment = crate::ddl::validate_comment_length(
+            index.options.comment.as_deref().unwrap_or(""),
+            &name,
+            crate::ddl::CommentOwner::Index,
+            ctx,
+        )?;
         indexes.push(KvIndex {
             id,
             name,
-            comment: index.options.comment.clone().unwrap_or_default(),
+            comment,
             unique,
             column_offsets: offsets,
             prefix_lengths,

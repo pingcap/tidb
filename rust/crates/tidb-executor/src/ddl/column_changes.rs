@@ -74,6 +74,45 @@ pub(super) fn is_column_change(action: &AlterTableAction) -> bool {
     )
 }
 
+/// Go `ModifyColumn`'s check of a qualified column name (`db.t.c`): its
+/// schema and table must be the altered table's.
+fn check_column_qualifier(
+    qualifier: &[String],
+    database: &str,
+    table: &str,
+) -> Result<(), DriverError> {
+    check_column_qualifier_part(qualifier, 2, database, true)?;
+    check_column_qualifier_part(qualifier, 1, table, false)
+}
+
+/// One part of a column qualifier: the schema (`from_end == 2`, written as
+/// `db.t.c`) or the table (`from_end == 1`), compared case-insensitively
+/// with the altered table's, `ErrWrongDBName` / `ErrWrongTableName` when it
+/// names another.
+fn check_column_qualifier_part(
+    qualifier: &[String],
+    from_end: usize,
+    expected: &str,
+    schema: bool,
+) -> Result<(), DriverError> {
+    let written = match (qualifier, from_end) {
+        ([schema, _], 2) => schema.as_str(),
+        ([table], 1) | ([_, table], 1) => table.as_str(),
+        _ => return Ok(()),
+    };
+    if written.is_empty() || written.to_lowercase() == expected.to_lowercase() {
+        return Ok(());
+    }
+    Err(if schema {
+        DriverError::DdlCoded {
+            errno: tidb_error::mysql::errcode::ErrWrongDBName,
+            message: format!("Incorrect database name '{written}'"),
+        }
+    } else {
+        DriverError::Schema(crate::SchemaErrorKind::WrongTableName(written.to_owned()))
+    })
+}
+
 pub(super) fn prepare(
     action: &AlterTableAction,
     catalog: &mut Catalog,
@@ -110,39 +149,51 @@ pub(super) fn prepare(
             if_exists,
             column,
             position,
-        } => alter_table::prepare_modify_column(
-            catalog,
-            &ModifyColumnRequest {
-                database,
-                table_name: name,
-                old_name: &column.name,
-                def: column,
-                position,
-                if_exists: *if_exists,
-                allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
-            },
-            ctx,
-        ),
+        } => {
+            check_column_qualifier(&column.qualifier, database, name)?;
+            alter_table::prepare_modify_column(
+                catalog,
+                &ModifyColumnRequest {
+                    database,
+                    table_name: name,
+                    old_name: &column.name,
+                    def: column,
+                    position,
+                    if_exists: *if_exists,
+                    allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
+                },
+                ctx,
+            )
+        }
         AlterTableAction::ChangeColumn {
             if_exists,
             old_name,
             column,
             position,
-        } => alter_table::prepare_modify_column(
-            catalog,
-            &ModifyColumnRequest {
-                database,
-                table_name: name,
-                old_name: old_name
-                    .last()
-                    .ok_or_else(|| DriverError::unsupported("empty CHANGE COLUMN name"))?,
-                def: column,
-                position,
-                if_exists: *if_exists,
-                allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
-            },
-            ctx,
-        ),
+        } => {
+            // Go `ChangeColumn` checks the new name's schema, then the old
+            // name's, then the new name's table, then the old name's.
+            let old_qualifier = &old_name[..old_name.len().saturating_sub(1)];
+            check_column_qualifier_part(&column.qualifier, 2, database, true)?;
+            check_column_qualifier_part(old_qualifier, 2, database, true)?;
+            check_column_qualifier_part(&column.qualifier, 1, name, false)?;
+            check_column_qualifier_part(old_qualifier, 1, name, false)?;
+            alter_table::prepare_modify_column(
+                catalog,
+                &ModifyColumnRequest {
+                    database,
+                    table_name: name,
+                    old_name: old_name
+                        .last()
+                        .ok_or_else(|| DriverError::unsupported("empty CHANGE COLUMN name"))?,
+                    def: column,
+                    position,
+                    if_exists: *if_exists,
+                    allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
+                },
+                ctx,
+            )
+        }
         AlterTableAction::RenameColumn(rename) => super::alter_metadata::prepare_rename_column(
             catalog,
             database,

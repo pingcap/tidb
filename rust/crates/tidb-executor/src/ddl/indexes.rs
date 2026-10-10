@@ -433,6 +433,11 @@ fn build_index_definition(
         }
         return Err(duplicate);
     }
+    // Go `createIndex` checks the name's length once it is known to be new
+    // (`checkTooLongIndex`), and the job refuses a table that would pass the
+    // index limit (`checkTooManyIndexes`).
+    super::check_too_long_identifier(index_name)?;
+    super::check_too_many_indexes(table.indexes().len() + 1)?;
     // A hidden column is built against the VISIBLE columns, so an expression
     // can never name an earlier index's hidden column.
     let names: Vec<String> = table
@@ -560,11 +565,13 @@ fn build_index_definition(
             }
         }
     }
+    let comment =
+        super::validate_comment_length(comment, index_name, super::CommentOwner::Index, ctx)?;
     Ok(IndexAdmission::Change(BuiltIndex {
         index: KvIndex {
             id: 0,
             name: index_name.to_owned(),
-            comment: comment.to_owned(),
+            comment,
             unique,
             column_offsets: offsets,
             prefix_lengths,

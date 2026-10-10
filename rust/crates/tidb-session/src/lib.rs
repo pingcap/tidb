@@ -2837,6 +2837,8 @@ mod tests_core;
 #[cfg(test)]
 mod tests_datetime_year_compare;
 #[cfg(test)]
+mod tests_ddl_preprocess;
+#[cfg(test)]
 mod tests_deadlock_history;
 #[cfg(test)]
 mod tests_decorrelate_count_having;

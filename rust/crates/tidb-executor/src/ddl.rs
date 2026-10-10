@@ -329,6 +329,7 @@ pub mod index_prefix;
 mod indexes;
 pub mod mview_schedule_expr;
 pub mod placement_policy;
+pub mod preprocess;
 mod table_cache;
 mod table_constraints;
 mod table_lifecycle;
@@ -537,16 +538,57 @@ fn auto_random_base_option(options: &[tidb_ast::TableOption]) -> Result<Option<i
 const MAX_TABLE_COMMENT_BYTES: usize = 2048;
 
 /// The final `COMMENT=` option a CREATE or ALTER TABLE applies.
-/// The `COMMENT` a column definition names, if it names one.
+/// The `COMMENT` a column definition names, if it names one; Go's
+/// `setColumnComment` runs per option, so the last one wins.
 ///
 /// `None` and `Some("")` are different answers: Go's MODIFY overlays only the
 /// options that are present, so an absent COMMENT keeps the column's existing
 /// one while `COMMENT ''` clears it.
 pub(crate) fn column_comment_option(options: &[tidb_ast::ColumnOption]) -> Option<String> {
-    options.iter().find_map(|option| match option {
+    options.iter().rev().find_map(|option| match option {
         tidb_ast::ColumnOption::Comment(text) => Some(text.clone()),
         _ => None,
     })
+}
+
+/// What a comment is attached to, for Go `validateCommentLength`'s error.
+#[derive(Clone, Copy)]
+pub(crate) enum CommentOwner {
+    /// A column: `ErrTooLongFieldComment` (1629).
+    Field,
+    /// An index: `ErrTooLongIndexComment` (1688).
+    Index,
+}
+
+/// Go `validateCommentLength` for a column or index comment, which holds at
+/// most 1024 bytes: strict mode refuses a longer one, otherwise it warns and
+/// keeps the first 1024 bytes.
+pub(crate) fn validate_comment_length(
+    comment: &str,
+    name: &str,
+    owner: CommentOwner,
+    ctx: &crate::StmtContext,
+) -> Result<String, DriverError> {
+    const MAX_COMMENT_LENGTH: usize = 1024;
+    if comment.len() <= MAX_COMMENT_LENGTH {
+        return Ok(comment.to_owned());
+    }
+    // `%-.64s`: the name as Go prints it.
+    let shown: String = name.chars().take(64).collect();
+    let (errno, owner) = match owner {
+        CommentOwner::Field => (tidb_error::mysql::errcode::ErrTooLongFieldComment, "field"),
+        CommentOwner::Index => (tidb_error::mysql::errcode::ErrTooLongIndexComment, "index"),
+    };
+    let message = format!("Comment for {owner} '{shown}' is too long (max = {MAX_COMMENT_LENGTH})");
+    if ctx.strict() {
+        return Err(DriverError::DdlCoded { errno, message });
+    }
+    ctx.append_warning_parts(errno, &message);
+    let mut end = MAX_COMMENT_LENGTH;
+    while !comment.is_char_boundary(end) {
+        end -= 1;
+    }
+    Ok(comment[..end].to_owned())
 }
 
 /// The final `COMPRESSION=` option a CREATE TABLE applies, stored
@@ -1205,6 +1247,12 @@ pub fn run_create_table_in(
             copy.set_ttl_info(None);
         }
         copy.set_temp_table_type(temporary);
+        check_table_info_valid_extra(
+            catalog,
+            name,
+            copy.columns().iter().map(|column| column.name.as_str()),
+            copy.indexes().len(),
+        )?;
         register_created_table(catalog, &database, name, copy, temporary, ctx)?;
         return Ok(true);
     }
@@ -1237,6 +1285,10 @@ pub fn run_create_table_in(
             .find(|name| name.eq_ignore_ascii_case(&def.name))
         {
             return Err(DriverError::DuplicateColumnName((*previous).to_owned()));
+        }
+        // Go `buildColumnAndConstraint`: the reserved handle name.
+        if def.name.eq_ignore_ascii_case("_tidb_rowid") {
+            return Err(DriverError::WrongColumnName(def.name.to_lowercase()));
         }
         seen_columns.push(&def.name);
     }
@@ -1292,7 +1344,12 @@ pub fn run_create_table_in(
             i64::try_from(i).expect("a parsed table cannot exceed the model column-offset domain");
         // Go `columnDefToCol` copies the definition's COMMENT onto the
         // ColumnInfo, which is what every metadata reader then reports.
-        col.comment = column_comment_option(&def.options).unwrap_or_default();
+        col.comment = validate_comment_length(
+            &column_comment_option(&def.options).unwrap_or_default(),
+            &def.name,
+            CommentOwner::Field,
+            ctx,
+        )?;
         columns.push(col);
     }
 
@@ -2025,6 +2082,12 @@ pub fn run_create_table_in(
             }
         }
     }
+    check_table_info_valid_extra(
+        catalog,
+        name,
+        table.columns().iter().map(|column| column.name.as_str()),
+        table.indexes().len(),
+    )?;
     // Go `CreateTableWithInfo` resolves the table's `PLACEMENT POLICY = name`
     // against the policies in the infoschema and refuses an unknown one with
     // `ErrPlacementPolicyNotExists` (8239). Accepting the option and dropping
@@ -2063,6 +2126,63 @@ pub fn run_create_table_in(
     }
     register_created_table(catalog, &database, name, table, temporary, ctx)?;
     Ok(true)
+}
+
+/// `mysql.MaxTableNameLength`, `MaxColumnNameLength`, `MaxDatabaseNameLength`
+/// and `MaxIndexIdentifierLen`: identifiers are at most 64 characters.
+pub(crate) const MAX_IDENTIFIER_LENGTH: usize = 64;
+
+/// Go `checkTooLongTable` / `checkTooLongColumn` / `checkTooLongSchema` /
+/// `checkTooLongIndex`: `ErrTooLongIdent` (1059) for a name longer than 64
+/// characters.
+pub fn check_too_long_identifier(name: &str) -> Result<(), DriverError> {
+    if name.chars().count() > MAX_IDENTIFIER_LENGTH {
+        return Err(DriverError::TooLongIdent(name.to_owned()));
+    }
+    Ok(())
+}
+
+/// Go `checkTableInfoValidExtra`'s name, duplicate-column and count checks
+/// over a table or view about to be created, after the existence check
+/// (`createTableWithInfoJob`).
+pub(crate) fn check_table_info_valid_extra<'a>(
+    catalog: &Catalog,
+    table_name: &str,
+    columns: impl Iterator<Item = &'a str> + Clone,
+    index_count: usize,
+) -> Result<(), DriverError> {
+    check_too_long_identifier(table_name)?;
+    let mut seen: Vec<String> = Vec::new();
+    for column in columns.clone() {
+        let folded = column.go_to_lower();
+        if seen.contains(&folded) {
+            return Err(DriverError::DuplicateColumnName(column.to_owned()));
+        }
+        seen.push(folded);
+    }
+    for column in columns {
+        check_too_long_identifier(column)?;
+    }
+    if seen.len() > catalog.table_column_count_limit() {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            message: tidb_error::mysql::errname::ErrTooManyFields.raw.to_owned(),
+        });
+    }
+    check_too_many_indexes(index_count)
+}
+
+/// Go `checkTooManyIndexes`: `ErrTooManyKeys` (1069) above the configured
+/// `index-limit`.
+pub(crate) fn check_too_many_indexes(index_count: usize) -> Result<(), DriverError> {
+    let limit = tidb_config::config_tree::config::get_global_config().index_limit;
+    if i64::try_from(index_count).unwrap_or(i64::MAX) > limit {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::mysql::errcode::ErrTooManyKeys,
+            message: format!("Too many keys specified; max {limit} keys allowed"),
+        });
+    }
+    Ok(())
 }
 
 /// Files a freshly built table where its kind belongs.

@@ -446,9 +446,11 @@ impl Session {
                     let charset = tidb_executor::resolve_database_charset(options)?;
                     let cdc_write_source = self.ddl_cdc_write_source();
                     let created = self.with_catalog_mut(|catalog| {
-                        // Go `CreateSchemaWithInfo` submits ActionCreateSchema
-                        // unless the schema exists.
+                        // Go `CreateSchemaWithInfo` checks the name's length
+                        // and submits ActionCreateSchema unless the schema
+                        // exists.
                         if !catalog.has_database(name) {
+                            tidb_executor::ddl::check_too_long_identifier(name)?;
                             tidb_executor::ddl::admit_bdr_job(
                                 catalog,
                                 cdc_write_source,

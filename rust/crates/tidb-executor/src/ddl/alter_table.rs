@@ -2982,6 +2982,11 @@ pub(super) fn prepare_modify_column(
         ctx.append_suppressed(&missing);
         return Ok(None);
     };
+    // Go `GetModifiableColumnJob`: the new name may not be the reserved
+    // handle name.
+    if def.name.eq_ignore_ascii_case("_tidb_rowid") {
+        return Err(DriverError::WrongColumnName(def.name.to_lowercase()));
+    }
     let partition_column = table.partition().is_some_and(|partition| {
         partition
             .dependencies
@@ -3422,7 +3427,12 @@ pub(super) fn prepare_modify_column(
         // `ProcessModifyColumnOptions` overlay only what the spec names, so
         // a MODIFY that does not repeat COMMENT keeps the existing one.
         comment: match super::column_comment_option(&def.options) {
-            Some(comment) => comment,
+            Some(comment) => super::validate_comment_length(
+                &comment,
+                &def.name,
+                super::CommentOwner::Field,
+                ctx,
+            )?,
             None => table.columns[offset].comment.clone(),
         },
         generated,
@@ -3436,6 +3446,41 @@ pub(super) fn prepare_modify_column(
         new_auto_random,
         drop_auto_increment,
     }))
+}
+
+/// Go `checkUnsupportedColumnConstraint`: the column options ADD COLUMN
+/// refuses, checked over every option before anything else is built.
+fn check_unsupported_column_constraint(
+    def: &ColumnDef,
+    database: &str,
+    table_name: &str,
+) -> Result<(), DriverError> {
+    for option in &def.options {
+        let constraint = match option {
+            tidb_ast::ColumnOption::AutoIncrement => "AUTO_INCREMENT",
+            tidb_ast::ColumnOption::InlineKey(key) => match key.kind {
+                tidb_ast::InlineKeyKind::Primary { .. } => "PRIMARY KEY",
+                tidb_ast::InlineKeyKind::Unique => "UNIQUE KEY",
+            },
+            tidb_ast::ColumnOption::AutoRandom(_) => {
+                return Err(DriverError::InvalidAutoRandom(format!(
+                    "unsupported add column '{}' constraint AUTO_RANDOM when altering '{}.{}'",
+                    def.name, database, table_name
+                )));
+            }
+            _ => continue,
+        };
+        // `dbterror.ErrUnsupportedAddColumn.GenWithStack(...)`: 8200 with
+        // the formatted text.
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            message: format!(
+                "unsupported add column '{}' constraint {constraint} when altering '{database}.{table_name}'",
+                def.name
+            ),
+        });
+    }
+    Ok(())
 }
 
 pub(super) fn prepare_add_column(
@@ -3454,6 +3499,7 @@ pub(super) fn prepare_add_column(
             message: tidb_error::mysql::errname::ErrTooManyFields.raw.to_owned(),
         });
     }
+    check_unsupported_column_constraint(def, database, table_name)?;
     let zone = &ctx.session_zone();
     let mut field_type = field_type_of(
         def,
@@ -3509,15 +3555,6 @@ pub(super) fn prepare_add_column(
                 ))
             }
             tidb_ast::ColumnOption::Generated { stored: false, .. } => {}
-            tidb_ast::ColumnOption::AutoRandom(_) => {
-                // Go's `checkAddColumn` reports the dedicated auto-random
-                // error instead of the generic unsupported-column-option
-                // refusal used by the other unsupported ADD options.
-                return Err(DriverError::InvalidAutoRandom(format!(
-                    "unsupported add column '{}' constraint AUTO_RANDOM when altering '{}.{}'",
-                    def.name, database, table_name
-                )));
-            }
             tidb_ast::ColumnOption::Check(_) => {
                 // Pinned Go `buildColumnAndConstraint` emits this warning
                 // while disabled, then `CreateNewColumn` discards the
@@ -3526,11 +3563,21 @@ pub(super) fn prepare_add_column(
                     ctx.append_warning_parts(1105, "tidb_enable_check_constraint is off");
                 }
             }
-            _ => {
-                return Err(DriverError::unsupported(
-                    "this column option is not supported in ALTER TABLE ADD COLUMN",
-                ))
-            }
+            // Go `columnDefToCol`: COMMENT is read below, COLLATE was applied
+            // by the type build, and the storage-layout options are accepted
+            // and dropped. AUTO_INCREMENT, PRIMARY/UNIQUE and AUTO_RANDOM were
+            // refused before this loop.
+            tidb_ast::ColumnOption::Comment(_)
+            | tidb_ast::ColumnOption::Collate(_)
+            | tidb_ast::ColumnOption::ColumnFormat(_)
+            | tidb_ast::ColumnOption::Storage(_)
+            | tidb_ast::ColumnOption::SecondaryEngineAttribute(_)
+            | tidb_ast::ColumnOption::Reference(_)
+            | tidb_ast::ColumnOption::MariaDbRowStart
+            | tidb_ast::ColumnOption::MariaDbRowEnd
+            | tidb_ast::ColumnOption::AutoIncrement
+            | tidb_ast::ColumnOption::InlineKey(_)
+            | tidb_ast::ColumnOption::AutoRandom(_) => {}
         }
     }
     let generated_expression = def.options.iter().find_map(|option| match option {
@@ -3557,6 +3604,12 @@ pub(super) fn prepare_add_column(
             return Ok(None);
         }
         return Err(duplicate);
+    }
+    // Go `checkAndCreateNewColumn`: the name's length, once it is new; then
+    // `buildColumnAndConstraint` refuses the reserved handle name.
+    super::check_too_long_identifier(&def.name)?;
+    if def.name.eq_ignore_ascii_case("_tidb_rowid") {
+        return Err(DriverError::WrongColumnName(def.name.to_lowercase()));
     }
     let index = column_changes::position(table, position, None, table_name)?
         .unwrap_or(table.visible_column_count());
@@ -3648,7 +3701,12 @@ pub(super) fn prepare_add_column(
         field_type,
         column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
         // A column being ADDED has no prior comment to keep.
-        comment: super::column_comment_option(&def.options).unwrap_or_default(),
+        comment: super::validate_comment_length(
+            &super::column_comment_option(&def.options).unwrap_or_default(),
+            &def.name,
+            super::CommentOwner::Field,
+            ctx,
+        )?,
         generated,
         default_value: prepared_default.default,
         // Rows written before this column existed read back the default.

@@ -402,6 +402,12 @@ impl Session {
 
     /// Preprocessor errors precede both grant checking and implicit commits.
     pub fn validate_ddl_preprocess(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
+        // Go's preprocessor grammar checks over the statement's own names
+        // and declarations, before anything reads the catalog.
+        tidb_executor::ddl::preprocess::check_ddl_grammar(
+            stmt,
+            self.vars.sql_mode().has_strict_mode(),
+        )?;
         // Go checkCreateTableGrammar resolves LIKE through the session
         // infoschema and rejects temporary sources before privilege checking.
         // A cluster lowerer must never clone the permanent table hidden by a
@@ -414,17 +420,6 @@ impl Session {
                     .is_some_and(|name| self.is_local_temporary_table_path(name))
                 {
                     return Err(DriverError::OptOnTemporaryTable("create table like"));
-                }
-            }
-        }
-        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
-            // Go checkAlterTableGrammar rejects these options before grants
-            // and the DDL implicit commit, using the CREATE option owner.
-            if let tidb_ast::DdlStmt::AlterTable(alter) = ddl.as_ref() {
-                for action in &alter.actions {
-                    if let tidb_ast::AlterTableAction::SetTableOptions { options } = action {
-                        tidb_executor::ddl::validate_table_options(options)?;
-                    }
                 }
             }
         }

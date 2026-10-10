@@ -50,6 +50,14 @@ pub fn run_create_view_in(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let (database, name, view) = resolve_view_definition(create, catalog, current_db, ctx)?;
+    // Go `CreateView` builds the view as a table of its column names, which
+    // `createTableWithInfoJob` checks like any other table.
+    crate::ddl::check_table_info_valid_extra(
+        catalog,
+        &name,
+        view.columns.iter().map(|(column, _)| column.as_str()),
+        0,
+    )?;
     crate::ddl::bdr::admit(
         catalog,
         ctx.ddl_cdc_write_source(),
@@ -196,7 +204,19 @@ pub fn resolve_view_definition(
     let body_columns =
         crate::driver::plan_select_meta_in(&select_sql, resolving, current_db, &definition_ctx)?;
     let columns = match create.columns.len() {
-        0 => body_columns,
+        // Go `adjustOverlongViewColname`: an unnamed output column whose name
+        // is longer than 64 bytes is named `name_exp_<offset>`.
+        0 => body_columns
+            .into_iter()
+            .enumerate()
+            .map(|(offset, (name, field_type))| {
+                if name.to_lowercase().len() > crate::ddl::MAX_IDENTIFIER_LENGTH {
+                    (format!("name_exp_{}", offset + 1), field_type)
+                } else {
+                    (name, field_type)
+                }
+            })
+            .collect(),
         n if n == body_columns.len() => create
             .columns
             .iter()
