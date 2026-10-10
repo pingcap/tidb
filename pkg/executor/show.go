@@ -2580,15 +2580,15 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 	if runInfo != nil {
 		// running import job
 		result.AppendUint64(8, uint64(runInfo.ImportRows))
-	} else if info.IsSuccess() {
+	} else if info.IsSuccess() && info.Summary != nil {
 		// successful import job
 		result.AppendUint64(8, uint64(info.Summary.ImportedRows))
 	} else {
-		// failed import job
+		// No imported row count is available.
 		result.AppendNull(8)
 	}
 
-	if info.IsSuccess() {
+	if info.IsSuccess() && info.Summary != nil {
 		msgItems := make([]string, 0, 1)
 		if info.Summary.ConflictRowCnt > 0 {
 			msgItems = append(msgItems, fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictRowCnt))
