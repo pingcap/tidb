@@ -91,6 +91,16 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 	limitTIDB2 := &physicalop.PhysicalLimit{}
 	limitTIDB2.SetChildren(join)
 	require.True(t, needReportExecutionSummary(limitTIDB2, 10, false))
+
+	// HashJoin with MPP TableReader as probe, but WITHOUT Limit above.
+	// This matches the production case (empty build + canSkipProbe early close):
+	// ReportMPPTaskStatus is NOT enabled today, so summary relies on the trailing
+	// MPP packet which can be dropped when HashJoin closes after the first probe Next().
+	hashJoinOnly := &physicalop.PhysicalHashJoin{}
+	hashJoinOnly.SetChildren(tableReader2, tableReader)
+	require.False(t, needReportExecutionSummary(hashJoinOnly, 10, false),
+		"HashJoin without Limit should not enable ReportMPPTaskStatus today; "+
+			"empty-build early close can therefore lose MPP execution summaries")
 }
 
 func mockTaskZoneInfoHelper(isRoot bool, taskZone string, tidbZone string, storeZoneMpp map[string]string, exchangeZoneInfo map[string][]string) taskZoneInfoHelper {
