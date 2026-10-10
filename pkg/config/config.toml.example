@@ -49,6 +49,11 @@ compatible-kill-query = false
 # The health check will fail immediately but the server will not start shutting down until the time has elapsed.
 graceful-wait-before-shutdown = 0
 
+# During shutdown, a connection that is not in a transaction keeps reading for N milliseconds after its last
+# statement, and replies ER_SERVER_SHUTDOWN (1053) to any command it receives instead of executing it.
+# This lets clients that reuse the connection right away retry safely. 0 closes the connection right away.
+graceful-close-connections-linger-ms = 0
+
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 
