@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -649,13 +650,67 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
 }
 
-type mockEncoder struct{}
+type mockEncoder struct {
+	close func()
+}
 
 func (mockEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
 	return &kv.Pairs{}, nil
 }
 
-func (mockEncoder) Close() {}
+func (e mockEncoder) Close() {
+	if e.close != nil {
+		e.close()
+	}
+}
+
+func (s *chunkRestoreSuite) TestRestoreCancelWaitsForDelivery() {
+	t := s.T()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	controller := gomock.NewController(t)
+	builder := mock.NewMockEncodingBuilder(controller)
+	writer := mock.NewMockEngineWriter(controller)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	closed := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	builder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(mockEncoder{close: func() { close(closed) }}, nil)
+	builder.EXPECT().MakeEmptyRows().DoAndReturn(func() encode.Rows {
+		return kv.MakeRowsFromKvPairs(nil)
+	}).Times(2)
+	writer.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, []string, encode.Rows) error {
+		close(entered)
+		<-release
+		return ctx.Err()
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- s.cr.process(ctx, s.tr, 0, writer, writer, &Controller{
+			cfg: s.cfg, pauser: DeliverPauser, encBuilder: builder,
+		})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("delivery did not start")
+	}
+	cancel()
+	select {
+	case <-closed:
+		t.Error("encoder closed while delivery still uses its rows")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unblock()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("process did not finish after delivery returned")
+	}
+}
 
 func (s *chunkRestoreSuite) TestRestore() {
 	ctx := context.Background()

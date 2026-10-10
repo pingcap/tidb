@@ -238,6 +238,9 @@ func (cr *chunkProcessor) process(
 		}
 	case <-ctx.Done():
 		deliverErr = ctx.Err()
+		// Delivery may still use rows backed by the encoder's memory.
+		// Wait for it before the deferred encoder close frees that memory.
+		<-deliverCompleteCh
 	}
 	return errors.Trace(firstErr(encodeErr, deliverErr))
 }
