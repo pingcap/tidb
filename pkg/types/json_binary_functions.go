@@ -16,12 +16,14 @@ package types
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math"
 	"slices"
 	"sort"
+	"strconv"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -1414,4 +1416,107 @@ func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...JSONPathExp
 		}
 	}
 	return nil
+}
+
+// FlattenPathValues flattens bj into one "<path>=<value>" entry per scalar leaf,
+// for example `$.cells.c1.state="error"` and `$.cells.c1.errorCode=7`.
+//
+// The value is JSON-encoded so that the string "7" and the number 7 produce
+// different entries. Array positions are dropped, so an element is reported
+// under the path of its enclosing array; together with that, the entries of a
+// candidate document are a subset of the entries of any document that
+// JSON_CONTAINS it. Integral floats are written as integers so that 7 and 7.0
+// share an entry, as they compare equal. Empty objects and arrays produce no
+// entries. Duplicate entries are removed, and order follows the document.
+//
+// If maxLen > 0, an entry longer than maxLen characters is shortened to exactly
+// maxLen characters; see shortenFlattenEntry. maxLen must then be at least
+// FlattenMinMaxLen.
+func (bj BinaryJSON) FlattenPathValues(maxLen int) ([]string, error) {
+	var (
+		entries []string
+		seen    = make(map[string]struct{})
+		path    = make([]byte, 0, 64)
+		entry   []byte
+	)
+	path = append(path, '$')
+	var walk func(path []byte, bj BinaryJSON) error
+	walk = func(path []byte, bj BinaryJSON) error {
+		switch bj.TypeCode {
+		case JSONTypeCodeObject:
+			for i := range bj.GetElemCount() {
+				childPath := append(path, '.')
+				childPath = append(childPath, quoteJSONString(string(bj.objectGetKey(i)))...)
+				if err := walk(childPath, bj.objectGetVal(i)); err != nil {
+					return err
+				}
+			}
+			return nil
+		case JSONTypeCodeArray:
+			for i := range bj.GetElemCount() {
+				if err := walk(path, bj.ArrayGetElem(i)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		entry = append(entry[:0], path...)
+		entry = append(entry, '=')
+		var err error
+		if entry, err = bj.appendFlattenValue(entry); err != nil {
+			return err
+		}
+		if maxLen > 0 && utf8.RuneCount(entry) > maxLen {
+			entry = shortenFlattenEntry(entry, maxLen)
+		}
+		if _, ok := seen[string(entry)]; !ok {
+			s := string(entry)
+			seen[s] = struct{}{}
+			entries = append(entries, s)
+		}
+		return nil
+	}
+	if err := walk(path, bj); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+// FlattenMinMaxLen is the smallest length limit FlattenPathValues accepts, so a
+// shortened entry keeps a readable prefix before its hash.
+const FlattenMinMaxLen = 64
+
+// flattenHashLen is the number of hex characters of the SHA-256 kept in a shortened entry.
+const flattenHashLen = 32
+
+// shortenFlattenEntry replaces entry by its first maxLen-33 characters, then '#'
+// and 32 hex characters of the SHA-256 of the whole entry, so the result is
+// exactly maxLen characters. The same entry always shortens to the same string,
+// so a candidate document flattened with the same limit still matches. A
+// shortened entry can't equal an entry that wasn't shortened: those end with a
+// JSON value (a closing quote, a digit, true, false or null), never with '#'
+// and hex digits.
+func shortenFlattenEntry(entry []byte, maxLen int) []byte {
+	sum := sha256.Sum256(entry)
+	prefixLen := maxLen - 1 - flattenHashLen
+	cut := 0
+	for range prefixLen {
+		_, size := utf8.DecodeRune(entry[cut:])
+		cut += size
+	}
+	out := make([]byte, 0, cut+1+flattenHashLen)
+	out = append(out, entry[:cut]...)
+	out = append(out, '#')
+	return hex.AppendEncode(out, sum[:flattenHashLen/2])
+}
+
+// appendFlattenValue appends the JSON encoding of a scalar for FlattenPathValues.
+func (bj BinaryJSON) appendFlattenValue(buf []byte) ([]byte, error) {
+	if bj.TypeCode == JSONTypeCodeFloat64 {
+		f := bj.GetFloat64()
+		if f == math.Trunc(f) && f >= math.MinInt64 && f < math.MaxInt64 {
+			return strconv.AppendInt(buf, int64(f), 10), nil
+		}
+	}
+	return bj.marshalTo(buf)
 }
