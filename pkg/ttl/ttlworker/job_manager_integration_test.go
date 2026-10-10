@@ -471,6 +471,15 @@ func TestTriggerTTLJobWithIndexScan(t *testing.T) {
 	tk.MustExec("insert into t values(3, ?)", expireDateStr)
 	tk.MustExec("insert into t values(4, ?)", nowDateStr)
 
+	// TriggerNewTTLJob does not keep the job's tasks alive until it returns.
+	// Hold the finish transaction before commit so this session can still read
+	// the persisted scan index before the task rows are removed.
+	finishCtx, allowFinish := context.WithCancel(context.Background())
+	defer allowFinish()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ttl/ttlworker/ttl-finish", func(_ *error) {
+		<-finishCtx.Done()
+	})
+
 	cli := do.TTLJobManager().GetCommandCli()
 	res, err := client.TriggerNewTTLJob(ctx, cli, "test", "t")
 	require.NoError(t, err)
@@ -486,6 +495,7 @@ func TestTriggerTTLJobWithIndexScan(t *testing.T) {
 	tk.MustQuery("select scan_index_id from mysql.tidb_ttl_task where job_id = ?", tableResult.JobID).
 		Check(testkit.Rows(strconv.FormatInt(idx.ID, 10)))
 
+	allowFinish()
 	waitTTLJobFinished(t, tk, tblID, timerCli)
 	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
 }
