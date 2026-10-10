@@ -278,6 +278,15 @@ impl Parser {
             "SECONDARY_ENGINE_ATTRIBUTE" => {
                 string_option!(TableOption::SecondaryEngineAttribute)
             }
+            // Go: `STORAGE_CLASS EqOpt StringName`, upper-cased as upstream's
+            // `strings.ToUpper($3)`.
+            "STORAGE_CLASS" => {
+                self.bump();
+                self.accept_optional_equals();
+                Some(TableOption::StorageClass(tidb_hack::go_to_upper(
+                    self.parse_table_option_word()?,
+                )))
+            }
             "ENGINE_ATTRIBUTE" => {
                 self.bump();
                 self.accept_optional_equals();

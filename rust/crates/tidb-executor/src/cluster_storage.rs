@@ -1655,6 +1655,7 @@ mod tests {
                     in_values: vec![],
                     comment: String::new(),
                     placement_policy: None,
+                    storage_class: Default::default(),
                 })
                 .collect(),
             overlapping_dropping_partition_indices: vec![],

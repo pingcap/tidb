@@ -52,13 +52,33 @@ impl_go_json_deserialize!(EngineAttribute);
 /// Go `ParseEngineAttributeFromString`: parses an `EngineAttribute` from a
 /// JSON string. An empty string yields the default (no storage class);
 /// invalid JSON is an error.
-pub fn parse_engine_attribute_from_string(
-    input: &str,
-) -> Result<EngineAttribute, serde_json::Error> {
+///
+/// The error is the text Go's `json.Unmarshal` returns, which TiDB forwards
+/// inside `ErrEngineAttributeInvalidFormat`: a `SyntaxError` from
+/// `checkValid`, or the `UnmarshalTypeError` of a top-level value that is
+/// not an object (a top-level `null` leaves the struct untouched).
+pub fn parse_engine_attribute_from_string(input: &str) -> Result<EngineAttribute, String> {
     if input.is_empty() {
         return Ok(EngineAttribute::default());
     }
-    serde_json::from_str(input)
+    crate::go_json_scanner::check_valid(input.as_bytes())?;
+    let kind = match input
+        .trim_start_matches([' ', '\t', '\r', '\n'])
+        .as_bytes()
+        .first()
+    {
+        Some(b'[') => Some("array"),
+        Some(b'"') => Some("string"),
+        Some(b't' | b'f') => Some("bool"),
+        Some(b'{' | b'n') => None,
+        _ => Some("number"),
+    };
+    if let Some(kind) = kind {
+        return Err(format!(
+            "json: cannot unmarshal {kind} into Go value of type model.EngineAttribute"
+        ));
+    }
+    serde_json::from_str(input).map_err(|error| error.to_string())
 }
 
 /// The `STANDARD` storage-class tier name.
@@ -183,11 +203,9 @@ impl StorageClassTransitRule {
 /// Go `buildStorageClassString`: the JSON string describing a tier and its
 /// transitions (just the tier name when there are none).
 ///
-/// Package-private in Go; used by `PartitionDefinition::storage_class_string`.
-pub(crate) fn build_storage_class_string(
-    tier: &str,
-    transitions: &[StorageClassTransitRule],
-) -> String {
+/// Package-private in Go, where `TableInfo` and `PartitionDefinition` expose
+/// it as `StorageClassString`; public here for holders of the same two fields.
+pub fn build_storage_class_string(tier: &str, transitions: &[StorageClassTransitRule]) -> String {
     if transitions.is_empty() {
         return tier.to_owned();
     }

@@ -528,7 +528,7 @@ pub(crate) use impl_go_json_deserialize;
 ///
 /// `encoding/json` prefers exact matches and then accepts Unicode SimpleFold
 /// field names. The model's persisted tags are ASCII and unique under folding.
-pub(crate) fn go_json_field_matches(incoming: &str, tag: &str) -> bool {
+pub fn go_json_field_matches(incoming: &str, tag: &str) -> bool {
     if incoming == tag {
         return true;
     }

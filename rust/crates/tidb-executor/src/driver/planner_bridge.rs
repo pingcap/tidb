@@ -726,6 +726,7 @@ mod list_columns_pruning_tests {
                     in_values: Vec::new(),
                     comment: String::new(),
                     placement_policy: None,
+                    storage_class: Default::default(),
                 })
                 .collect(),
         }

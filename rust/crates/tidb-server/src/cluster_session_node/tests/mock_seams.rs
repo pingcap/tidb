@@ -475,6 +475,7 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::AlterPlacementPolicy { .. }
             | DdlStatement::DropPlacementPolicy { .. }
             | DdlStatement::ModifyTableComment { .. }
+            | DdlStatement::ModifyEngineAttribute { .. }
             | DdlStatement::RebaseAutoIncrementId { .. }
             | DdlStatement::IgnoredTableOption { .. }
             | DdlStatement::OrderByColumns { .. }

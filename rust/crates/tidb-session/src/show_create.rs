@@ -454,14 +454,28 @@ pub(super) fn show_create_table_text(
     // when no default collation was found for the charset, or the collation
     // is `binary` (MySQL-5.7 compatibility, upstream #15633), the COLLATE
     // part is omitted entirely.
+    out.push_str("\n) ENGINE=InnoDB");
+    // Go prints the attribute between ENGINE and the charset, as the
+    // `STORAGE_CLASS` sugar when that loses nothing.
+    if !table.engine_attribute().is_empty() {
+        match tidb_executor::ddl::storage_class::simple_table_storage_class_for_show_create(
+            table.engine_attribute(),
+        )? {
+            Some(tier) => out.push_str(&format!(" STORAGE_CLASS='{tier}'")),
+            None => out.push_str(&format!(
+                " ENGINE_ATTRIBUTE='{}'",
+                tidb_util::format::output_format(table.engine_attribute())
+            )),
+        }
+    }
     if table_charset.collation.name() == "binary" {
         out.push_str(&format!(
-            "\n) ENGINE=InnoDB DEFAULT CHARSET={}",
+            " DEFAULT CHARSET={}",
             table_charset.charset.name(),
         ));
     } else {
         out.push_str(&format!(
-            "\n) ENGINE=InnoDB DEFAULT CHARSET={} COLLATE={}",
+            " DEFAULT CHARSET={} COLLATE={}",
             table_charset.charset.name(),
             table_charset.collation.name()
         ));
@@ -548,6 +562,11 @@ pub(super) fn show_create_table_text(
         out.push_str(" /* CACHED ON */");
     }
     out.push_str(&ttl_clause_text(table));
+    // Go prints the affinity level after the TTL block and before the
+    // partition clause.
+    if let Some(affinity) = table.affinity() {
+        out.push_str(&format!(" /*T![affinity] AFFINITY='{}' */", affinity.level));
+    }
     out.push_str(&partition_clause_text(table, ansi_quotes));
     Ok(out)
 }

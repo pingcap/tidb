@@ -640,6 +640,11 @@ fn compare_output(
     // directory, resolved here so the engine below can take it literally.
     let resolved_load_stats = rewrite_load_stats_path(&stmt.sql);
     let stmt_sql: &str = resolved_load_stats.as_deref().unwrap_or(&stmt.sql);
+    // mysql-tester sends the statement WITHOUT its `;` delimiter, which the
+    // server can observe: a syntax error's `near "..."` text runs to the end
+    // of the source (`create invalid` reports near "invalid", not
+    // "invalid;").
+    let stmt_sql = stmt_sql.trim_end().strip_suffix(';').unwrap_or(stmt_sql);
     if let Some(reason) = stmt.blocker {
         // The recorder rewrote this statement's output, so nothing about it is
         // comparable -- but mysql-tester still RAN it, and what it did is what

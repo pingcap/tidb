@@ -423,7 +423,12 @@ const SHOW_COLLATION_ROWS: &[tidb_datatype::Collation] = &[
 /// be spelled, and it carried a doc claim -- that
 /// [`tidb_datatype::Charset::default_collation`] returns the `_bin`
 /// collations for those charsets -- that was already untrue when read.
-fn is_default_show_collation(collation: tidb_datatype::Collation) -> bool {
+fn is_default_show_collation(collation: tidb_datatype::Collation, utf8mb4_default: &str) -> bool {
+    // Go `isUTF8MB4AndDefaultCollation`: utf8mb4's default is the session's
+    // `default_collation_for_utf8mb4`.
+    if collation.charset() == tidb_datatype::Charset::Utf8Mb4 {
+        return collation.name() == utf8mb4_default;
+    }
     collation.charset().default_collation() == collation
 }
 
@@ -1342,6 +1347,12 @@ impl Session {
                 // here rather than a table copied out of it is what keeps the
                 // `gbk`/`gb18030` default from having a second spelling.
                 let mut rows = Vec::new();
+                // Go reads utf8mb4's default from the session's
+                // `default_collation_for_utf8mb4`.
+                let utf8mb4_default = self
+                    .vars
+                    .get_system("default_collation_for_utf8mb4")
+                    .unwrap_or_else(|_| "utf8mb4_bin".to_owned());
                 for info in tidb_datatype::get_supported_charsets() {
                     if let Some(pattern) = &pattern {
                         if !tidb_executor::like_match_with_collation(
@@ -1353,10 +1364,15 @@ impl Session {
                             continue;
                         }
                     }
+                    let default_collation = if info.name == "utf8mb4" {
+                        utf8mb4_default.clone()
+                    } else {
+                        info.default_collation
+                    };
                     let row = vec![
                         Datum::Bytes(info.name.into_bytes()),
                         Datum::Bytes(info.description.into_bytes()),
-                        Datum::Bytes(info.default_collation.into_bytes()),
+                        Datum::Bytes(default_collation.into_bytes()),
                         Datum::Int(info.maxlen as i64),
                     ];
                     if let Some(predicate) = predicate {
@@ -1477,6 +1493,10 @@ impl Session {
                 let number =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
                 let mut rows = Vec::new();
+                let utf8mb4_default = self
+                    .vars
+                    .get_system("default_collation_for_utf8mb4")
+                    .unwrap_or_else(|_| "utf8mb4_bin".to_owned());
                 for &collation in SHOW_COLLATION_ROWS {
                     let name = collation.name();
                     if let Some(pattern) = &pattern {
@@ -1501,7 +1521,7 @@ impl Session {
                         Datum::Bytes(name.as_bytes().to_vec()),
                         Datum::Bytes(collation.charset().name().as_bytes().to_vec()),
                         Datum::Int(i64::from(collation.id())),
-                        Datum::Bytes(if is_default_show_collation(collation) {
+                        Datum::Bytes(if is_default_show_collation(collation, &utf8mb4_default) {
                             b"Yes".to_vec()
                         } else {
                             Vec::new()

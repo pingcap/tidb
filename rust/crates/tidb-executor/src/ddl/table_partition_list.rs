@@ -183,7 +183,10 @@ pub(super) fn fold_range_column_value(
     convert_column_value(value, field_type, ctx)
 }
 
-fn eval_column_value(expr: &Expr, ctx: &crate::StmtContext) -> Result<Datum, DriverError> {
+pub(super) fn eval_column_value(
+    expr: &Expr,
+    ctx: &crate::StmtContext,
+) -> Result<Datum, DriverError> {
     let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
         expr,
         &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(

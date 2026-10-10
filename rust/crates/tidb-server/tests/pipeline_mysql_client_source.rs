@@ -907,7 +907,9 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         1
     );
     let created = run_query(&mut client, &mut reader, "SHOW CREATE TABLE t");
-    assert!(created[0][1].starts_with("CREATE TABLE `t`"), "{created:?}");
+    // The session is still under the ANSI_QUOTES set above, and Go escapes
+    // SHOW CREATE identifiers by it (`stringutil.Escape`).
+    assert!(created[0][1].starts_with("CREATE TABLE \"t\""), "{created:?}");
     let columns = run_query(&mut client, &mut reader, "SHOW COLUMNS FROM t");
     assert_eq!(columns.len(), 2, "{columns:?}");
     let index = run_query(&mut client, &mut reader, "SHOW INDEX FROM gen");
@@ -937,10 +939,13 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         ]]
     );
     let created_view = run_query(&mut client, &mut reader, "SHOW CREATE VIEW vwire");
+    // Go `fetchShowCreateTable4View` escapes the definer, the view name and
+    // its columns by the session's ANSI_QUOTES; the SELECT is the stored
+    // restored text.
     assert_eq!(
         created_view[0][1],
-        "CREATE ALGORITHM=UNDEFINED DEFINER=`alice`@`%` SQL SECURITY DEFINER VIEW `vwire` \
-         (`a`, `b`) AS SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t` WHERE `a`>=2",
+        "CREATE ALGORITHM=UNDEFINED DEFINER=\"alice\"@\"%\" SQL SECURITY DEFINER VIEW \"vwire\" \
+         (\"a\", \"b\") AS SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t` WHERE `a`>=2",
         "{created_view:?}"
     );
     assert!(

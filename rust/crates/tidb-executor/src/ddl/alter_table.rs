@@ -522,6 +522,12 @@ fn run_alter_table_in_inner(
     let mut actions = resolve_grouped_actions(&alter.actions).into_owned();
     // Go getValidAlterTableSpecs filters LOCK before counting specifications.
     actions.retain(|action| !matches!(action, tidb_ast::AlterTableAction::Lock(_)));
+    super::storage_class::check_storage_class_conflict_in_alter_specs(actions.iter().flat_map(
+        |action| match action {
+            tidb_ast::AlterTableAction::SetTableOptions { options } => options.as_slice(),
+            _ => &[],
+        },
+    ))?;
     let mut next_fk_id = column_changes::table_of(catalog, &database, &name)?.max_foreign_key_id();
     for action in &mut actions {
         if let tidb_ast::AlterTableAction::AddForeignKey(definition) = action {
@@ -727,6 +733,10 @@ fn submitted_jobs(
                     }
                     PreparedMetadataChange::Ttl(_) => A::ACTION_ALTER_TTLINFO,
                     PreparedMetadataChange::Placement(_) => A::ACTION_ALTER_TABLE_PLACEMENT,
+                    PreparedMetadataChange::Affinity(_) => A::ACTION_ALTER_TABLE_AFFINITY,
+                    PreparedMetadataChange::EngineAttribute { .. } => {
+                        A::ACTION_MODIFY_ENGINE_ATTRIBUTE
+                    }
                     PreparedMetadataChange::Rename { .. } => A::ACTION_RENAME_TABLE,
                 })
             })
@@ -889,6 +899,20 @@ fn truncate_partition_action(
         .map_err(|error| crate::driver::kv_read_error("truncate partition", error))
 }
 
+/// Go's partition-management refusal of a table with AFFINITY
+/// (`ErrGeneralUnsupportedDDL`, 8200).
+fn refuse_affinity(table: &crate::KvTable, operation: &str) -> Result<(), DriverError> {
+    if table.has_affinity() {
+        return Err(DriverError::DdlCoded {
+            errno: 8200,
+            message: format!(
+                "Unsupported DDL operation: {operation} of a table with AFFINITY option"
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// What a HASH/KEY reorganization asks for (Go `hashPartitionManagement`).
 enum HashManagement<'a> {
     /// `ADD PARTITION PARTITIONS n` or `ADD PARTITION (definitions)`.
@@ -930,18 +954,13 @@ fn hash_partition_management(
             crate::partition_routing::PartitionKind::Hash
                 | crate::partition_routing::PartitionKind::Key
         );
-        if table.has_affinity() {
-            return Err(DriverError::DdlCoded {
-                errno: 8200,
-                message: format!(
-                    "Unsupported DDL operation: {} of a table with AFFINITY option",
-                    match change {
-                        HashManagement::Add { .. } => "ADD PARTITION",
-                        HashManagement::Coalesce(_) => "REORGANIZE PARTITION",
-                    }
-                ),
-            });
-        }
+        refuse_affinity(
+            table,
+            match change {
+                HashManagement::Add { .. } => "ADD PARTITION",
+                HashManagement::Coalesce(_) => "COALESCE PARTITION",
+            },
+        )?;
         let existing = &partition.definitions;
         let (count, written) = match change {
             HashManagement::Add { count, definitions } => {
@@ -1020,22 +1039,31 @@ fn hash_partition_management(
                 reference.id = found.id;
             }
         }
-        built
+        let mut definitions = built
+            .into_iter()
+            .map(
+                |(name, comment, placement_policy)| crate::partition_routing::PartitionDef {
+                    id: 0,
+                    name,
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment,
+                    placement_policy,
+                    storage_class: Default::default(),
+                },
+            )
+            .collect::<Vec<_>>();
+        // Go `buildPartitionDefinitionsInfo` ->
+        // `rebuildStorageClassForPartitionDefinitions` over the reorganized
+        // list.
+        assign_partition_storage_classes(table, &partition.kind, &[], &mut definitions, ctx)?;
+        definitions
     };
     // Every partition gets a fresh physical id, as Go's reorganize does.
-    let definitions = built
-        .into_iter()
-        .map(
-            |(name, comment, placement_policy)| crate::partition_routing::PartitionDef {
-                id: catalog.allocate_table_id(),
-                name,
-                less_than: Vec::new(),
-                in_values: Vec::new(),
-                comment,
-                placement_policy,
-            },
-        )
-        .collect::<Vec<_>>();
+    let mut definitions = built;
+    for definition in &mut definitions {
+        definition.id = catalog.allocate_table_id();
+    }
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };
@@ -1077,6 +1105,7 @@ fn drop_partition_action(
         ) {
             return Err(DriverError::PartitionOnlyRangeList("DROP"));
         }
+        refuse_affinity(table, "DROP PARTITION")?;
         if partition.definitions.len() <= names.len() {
             return Err(DriverError::PartitionDropLast);
         }
@@ -1118,6 +1147,13 @@ fn add_partition_action(
     spec: &tidb_ast::AddPartitionSpec,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    // Go `AddTablePartitions` refuses a table with AFFINITY once it is known
+    // to be partitioned.
+    if let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) {
+        if table.partition().is_some() {
+            refuse_affinity(table, "ADD PARTITION")?;
+        }
+    }
     // Go `AddTablePartitions`: on a HASH/KEY table an ADD is a reorganize
     // of every partition (`hashPartitionManagement`), whichever form it was
     // written in.
@@ -1469,7 +1505,9 @@ fn add_partition_action(
     let mut added_definitions = Vec::with_capacity(definitions.len());
     for (ordinal, definition) in definitions.iter().enumerate() {
         added_definitions.push(PartitionDef {
-            id: catalog.allocate_table_id(),
+            // Allocated once every check has passed, as Go's
+            // `assignPartitionIDs` runs last.
+            id: 0,
             name: definition.name.clone(),
             less_than: range_bound_text(ordinal),
             in_values: super::table_partition::stored_in_values(
@@ -1481,12 +1519,66 @@ fn add_partition_action(
             // Per-partition OPTIONS are refused on this path, so an added
             // partition names no policy of its own.
             placement_policy: None,
+            storage_class: Default::default(),
         });
+    }
+    // Go `CheckAndUpdateAddedPartitionDefinitions`: the storage classes are
+    // resolved over the existing definitions followed by the added ones, and
+    // only the added ones take the result.
+    {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+            unreachable!("the table was resolved above")
+        };
+        let partition = table
+            .partition()
+            .expect("ADD PARTITION was admitted for a partitioned table");
+        let existing = partition.definitions.iter().collect::<Vec<_>>();
+        assign_partition_storage_classes(
+            table,
+            &partition.kind,
+            &existing,
+            &mut added_definitions,
+            ctx,
+        )?;
+    }
+    for definition in &mut added_definitions {
+        definition.id = catalog.allocate_table_id();
     }
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };
     std::sync::Arc::make_mut(table).append_partitions(added_definitions, added_kind, ctx);
+    Ok(())
+}
+
+/// Go `rebuildStorageClassForPartitions`: resolves the table's
+/// ENGINE_ATTRIBUTE over `preceding` followed by `definitions` and stores the
+/// result on `definitions`. A table whose attribute names no storage class
+/// leaves them unset.
+fn assign_partition_storage_classes(
+    table: &crate::KvTable,
+    kind: &PartitionKind,
+    preceding: &[&PartitionDef],
+    definitions: &mut [PartitionDef],
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let Some(settings) = super::storage_class::storage_class_settings_of(table.engine_attribute())?
+    else {
+        return Ok(());
+    };
+    let combined = preceding
+        .iter()
+        .copied()
+        .chain(definitions.iter())
+        .collect::<Vec<_>>();
+    let classes =
+        super::storage_class::build_storage_class_for_partitions(&settings, kind, &combined, ctx)?;
+    for (definition, class) in definitions
+        .iter_mut()
+        .zip(classes.into_iter().skip(preceding.len()))
+    {
+        definition.storage_class = class;
+    }
     Ok(())
 }
 
@@ -1564,6 +1656,14 @@ enum PreparedMetadataChange {
     AutoIdCache(u64),
     Ttl(Option<tidb_model::TTLInfo>),
     Placement(Option<tidb_model::PolicyRefInfo>),
+    Affinity(Option<tidb_model::TableAffinityInfo>),
+    /// Go `ActionModifyEngineAttribute`: the attribute, and the storage
+    /// classes it resolves to when it names one.
+    EngineAttribute {
+        attribute: String,
+        table_class: Option<super::storage_class::StorageClass>,
+        partition_classes: Option<Vec<super::storage_class::StorageClass>>,
+    },
     Rename {
         database: String,
         name: String,
@@ -1618,6 +1718,25 @@ impl PreparedMetadataChange {
                         .map_err(DriverError::unsupported)?,
                     Self::Ttl(info) => table.set_ttl_info(info),
                     Self::Placement(policy) => table.set_placement_policy(policy),
+                    Self::Affinity(affinity) => table.set_affinity(affinity),
+                    Self::EngineAttribute {
+                        attribute,
+                        table_class,
+                        partition_classes,
+                    } => {
+                        table.set_engine_attribute(attribute);
+                        if let Some(class) = table_class {
+                            table.set_storage_class(class);
+                        }
+                        if let (Some(classes), Some(partition)) =
+                            (partition_classes, table.partition_mut())
+                        {
+                            for (definition, class) in partition.definitions.iter_mut().zip(classes)
+                            {
+                                definition.storage_class = class;
+                            }
+                        }
+                    }
                     Self::Rebase(_) | Self::Rename { .. } => unreachable!("handled above"),
                 }
             }
@@ -1757,6 +1876,9 @@ fn prepare_table_options(
         errno: 8200,
         message: "This type of ALTER TABLE is currently unsupported".to_owned(),
     };
+    // Go's AlterTableOption arm validates ENGINE_ATTRIBUTE and STORAGE_CLASS
+    // before any other option.
+    let engine_attribute = super::storage_class::engine_attribute_from_table_options(options)?;
     if options.iter().any(|option| matches!(option, tidb_ast::TableOption::Compression(value) if !value.eq_ignore_ascii_case("none"))) {
         return Err(unsupported());
     }
@@ -1818,6 +1940,16 @@ fn prepare_table_options(
                     super::normalize_table_comment(comment, name, ctx)?,
                 ))
             }
+            // Go `AlterTableAffinity`.
+            tidb_ast::TableOption::Affinity(level) => {
+                let affinity = super::table_affinity(level)?;
+                super::validate_table_affinity(
+                    table.temp_table_type() != tidb_model::TempTableType::NONE,
+                    table.partition().is_some(),
+                    affinity.as_ref(),
+                )?;
+                changes.push(PreparedMetadataChange::Affinity(affinity));
+            }
             tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_) => {
                 if !*charset_handled {
                     let target = alter_table_charset_pair(options, table.charset())?;
@@ -1850,9 +1982,46 @@ fn prepare_table_options(
             tidb_ast::TableOption::PlacementPolicy(policy) => placement = Some(policy),
             tidb_ast::TableOption::Engine(_)
             | tidb_ast::TableOption::RowFormat(_)
-            | tidb_ast::TableOption::Compression(_) => {}
+            | tidb_ast::TableOption::Compression(_)
+            | tidb_ast::TableOption::EngineAttribute(_)
+            | tidb_ast::TableOption::StorageClass(_) => {}
             _ => return Err(unsupported()),
         }
+    }
+    // Go `AlterTableEngineAttribute`, after the option loop; its job
+    // (`onModifyTableEngineAttribute`) re-resolves the table's and every
+    // partition's storage class when the attribute names one.
+    if let Some(attribute) = engine_attribute {
+        let (table_class, partition_classes) =
+            match super::storage_class::storage_class_settings_of(&attribute)? {
+                None => (None, None),
+                Some(settings) => {
+                    let partition_classes = table
+                        .partition()
+                        .filter(|partition| !partition.definitions.is_empty())
+                        .map(|partition| {
+                            let definitions = partition.definitions.iter().collect::<Vec<_>>();
+                            super::storage_class::build_storage_class_for_partitions(
+                                &settings,
+                                &partition.kind,
+                                &definitions,
+                                ctx,
+                            )
+                        })
+                        .transpose()?;
+                    (
+                        Some(super::storage_class::build_storage_class_for_table(
+                            &settings,
+                        )),
+                        partition_classes,
+                    )
+                }
+            };
+        changes.push(PreparedMetadataChange::EngineAttribute {
+            attribute,
+            table_class,
+            partition_classes,
+        });
     }
     if let Some(policy) = placement {
         let reference = if policy.eq_ignore_ascii_case("default") {

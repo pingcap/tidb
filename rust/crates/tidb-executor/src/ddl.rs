@@ -331,6 +331,7 @@ mod indexes;
 pub mod mview_schedule_expr;
 pub mod placement_policy;
 pub mod preprocess;
+pub mod storage_class;
 mod table_cache;
 mod table_constraints;
 mod table_lifecycle;
@@ -600,6 +601,48 @@ pub(crate) fn table_compression_option(options: &[tidb_ast::TableOption]) -> Opt
         tidb_ast::TableOption::Compression(value) => Some(value.clone()),
         _ => None,
     })
+}
+
+/// Go `model.NewTableAffinityInfoWithLevel` with `ErrInvalidTableAffinity`
+/// (8266) for a level it does not know.
+pub(crate) fn table_affinity(
+    level: &str,
+) -> Result<Option<tidb_model::TableAffinityInfo>, DriverError> {
+    tidb_model::new_table_affinity_info_with_level(level).map_err(|_| DriverError::DdlCoded {
+        errno: tidb_error::tidb::errcode::ErrInvalidAffinityOption,
+        message: format!("Invalid AFFINITY '{level}'"),
+    })
+}
+
+/// Go `validateTableAffinity`: no affinity on a temporary table, `table`
+/// level only on an unpartitioned one and `partition` level only on a
+/// partitioned one (`ErrCannotSetAffinityOnTable`, 8266).
+pub(crate) fn validate_table_affinity(
+    temporary: bool,
+    partitioned: bool,
+    affinity: Option<&tidb_model::TableAffinityInfo>,
+) -> Result<(), DriverError> {
+    let Some(affinity) = affinity else {
+        return Ok(());
+    };
+    let refuse = |what: String, kind: &str| DriverError::DdlCoded {
+        errno: tidb_error::tidb::errcode::ErrInvalidAffinityOption,
+        message: format!("Can not set {what} on a {kind}."),
+    };
+    if temporary {
+        return Err(refuse("AFFINITY".to_owned(), "temporary table"));
+    }
+    match affinity.level.as_str() {
+        "table" if partitioned => Err(refuse(
+            format!("AFFINITY='{}'", affinity.level),
+            "partition table",
+        )),
+        "partition" if !partitioned => Err(refuse(
+            format!("AFFINITY='{}'", affinity.level),
+            "non-partition table",
+        )),
+        _ => Ok(()),
+    }
 }
 
 pub(crate) fn table_comment_option(
@@ -1246,6 +1289,7 @@ pub fn run_create_table_in(
         // TTL is not something this statement asked for.
         if temporary != tidb_model::TempTableType::NONE {
             copy.set_ttl_info(None);
+            copy.set_affinity(None);
         }
         copy.set_temp_table_type(temporary);
         check_table_info_valid_extra(
@@ -1671,8 +1715,31 @@ pub fn run_create_table_in(
     table.set_temp_table_type(temporary);
     table.set_name(name);
     table.set_charset(table_charset);
+    // Go `handleTableOptions` validates ENGINE_ATTRIBUTE and its
+    // STORAGE_CLASS sugar before it looks at any other option.
+    let engine_attribute =
+        storage_class::engine_attribute_from_table_options(&create.table_options)?;
     if let Some(comment) = table_comment_option(&create.table_options, name, ctx)? {
         table.set_comment(comment);
+    }
+    // Go `handleTableOptions`: `AFFINITY = level`, the last one winning.
+    if let Some(level) = create
+        .table_options
+        .iter()
+        .rev()
+        .find_map(|option| match option {
+            tidb_ast::TableOption::Affinity(level) => Some(level),
+            _ => None,
+        })
+    {
+        table.set_affinity(table_affinity(level)?);
+    }
+    // Go `handleEngineAttributeForCreateTable`, last in `handleTableOptions`.
+    if let Some(engine_attribute) = engine_attribute {
+        if let Some(settings) = storage_class::storage_class_settings_of(&engine_attribute)? {
+            table.set_storage_class(storage_class::build_storage_class_for_table(&settings));
+        }
+        table.set_engine_attribute(engine_attribute);
     }
     // Go `handleTableOptions` (`create_table.go:964-965`): the COMPRESSION
     // string is stored verbatim, no validation, last one wins (later options
@@ -2068,7 +2135,7 @@ pub fn run_create_table_in(
     // from the same counter the table's own id came from -- as ONE ascending
     // block right after it, which is what lets a scan cover the whole
     // relation with a single key range.
-    if let Some(partition) = table_partition::build_table_partitioning(
+    let partitioning = table_partition::build_table_partitioning(
         create,
         &column_names,
         &column_types,
@@ -2076,7 +2143,24 @@ pub fn run_create_table_in(
         handle.offsets(),
         &mut || catalog.allocate_table_id(),
         ctx,
-    )? {
+    )?;
+    // Go `buildPartitionDefinitionsInfo` resolves each partition's storage
+    // class inside `buildTablePartitionInfo`.
+    let mut partitioning = partitioning;
+    if let Some(partition) = partitioning.as_mut() {
+        storage_class::rebuild_storage_class_for_partitions(
+            table.engine_attribute(),
+            partition,
+            ctx,
+        )?;
+    }
+    // Go `validateTableAffinity`, right after `buildTablePartitionInfo`.
+    validate_table_affinity(
+        temporary != tidb_model::TempTableType::NONE,
+        partitioning.is_some(),
+        table.affinity(),
+    )?;
+    if let Some(partition) = partitioning {
         // Go `checkAddPartitionOnTemporaryMode` (`pkg/ddl/partition.go:4657`),
         // reached from `checkTableInfoValidWithStmt`: a partition is a
         // distinct PHYSICAL table, and a temporary table has no physical

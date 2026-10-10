@@ -1308,6 +1308,7 @@ mod tests {
                     in_values: Vec::new(),
                     comment: String::new(),
                     placement_policy: None,
+                    storage_class: Default::default(),
                 },
                 PartitionDef {
                     id: 102,
@@ -1316,6 +1317,7 @@ mod tests {
                     in_values: Vec::new(),
                     comment: String::new(),
                     placement_policy: None,
+                    storage_class: Default::default(),
                 },
                 PartitionDef {
                     id: 103,
@@ -1324,6 +1326,7 @@ mod tests {
                     in_values: Vec::new(),
                     comment: String::new(),
                     placement_policy: None,
+                    storage_class: Default::default(),
                 },
             ],
         }
@@ -1351,6 +1354,7 @@ mod tests {
                     in_values: Vec::new(),
                     comment: String::new(),
                     placement_policy: None,
+                    storage_class: Default::default(),
                 })
                 .collect(),
         }
@@ -1382,6 +1386,7 @@ mod tests {
                     in_values: Vec::new(),
                     comment: String::new(),
                     placement_policy: None,
+                    storage_class: Default::default(),
                 },
                 PartitionDef {
                     id: 202,
@@ -1390,6 +1395,7 @@ mod tests {
                     in_values: Vec::new(),
                     comment: String::new(),
                     placement_policy: None,
+                    storage_class: Default::default(),
                 },
                 PartitionDef {
                     id: 203,
@@ -1398,6 +1404,7 @@ mod tests {
                     in_values: Vec::new(),
                     comment: String::new(),
                     placement_policy: None,
+                    storage_class: Default::default(),
                 },
             ],
         }
@@ -1435,6 +1442,7 @@ mod tests {
                     in_values: Vec::new(),
                     comment: String::new(),
                     placement_policy: None,
+                    storage_class: Default::default(),
                 })
                 .collect(),
         }

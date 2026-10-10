@@ -892,7 +892,17 @@ pub(crate) fn cluster_table(
         kv_table.set_common_handle_offsets(handles);
         kv_table.set_common_handle_version(table.common_handle_version);
     }
-    kv_table.set_has_affinity(table.affinity.is_some());
+    kv_table.set_affinity(
+        table
+            .affinity
+            .as_ref()
+            .map(|affinity| affinity.read().clone()),
+    );
+    kv_table.set_engine_attribute(table.engine_attribute.clone());
+    kv_table.set_storage_class((
+        table.storage_class_tier.clone(),
+        table.storage_class_transitions.snapshot(),
+    ));
     if table.contains_auto_random_bits() {
         let offset = if table.pk_is_handle {
             kv_table
@@ -1022,6 +1032,10 @@ fn partition_spec_for(
                 .placement_policy_ref
                 .as_ref()
                 .map(|reference| reference.read().clone()),
+            storage_class: (
+                definition.storage_class_tier.clone(),
+                definition.storage_class_transitions.snapshot(),
+            ),
         })
         .collect();
     let columns: Vec<String> = partition
@@ -1522,10 +1536,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
-            2,
-            "current Go's updateStatsCacheIfNeed self-prunes on the retained \
-             columns (infoschema_reader.go:646-661): a TABLE_NAME-only \
-             PARTITIONS projection retains no size column, so no refresh runs"
+            3,
+            "Go's LogicalMemTable.PruneColumns does not list PARTITIONS, so \
+             the scan keeps its size columns and updateStatsCacheIfNeed \
+             (infoschema_reader.go:646-661) refreshes even for a \
+             TABLE_NAME-only projection"
         );
         fail_storage_stats.store(true, std::sync::atomic::Ordering::Release);
         let StmtResult::Rows(rows) = session

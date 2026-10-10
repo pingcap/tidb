@@ -425,6 +425,7 @@ mod tests {
                 in_values: Vec::new(),
                 comment: String::new(),
                 placement_policy: None,
+                storage_class: Default::default(),
             }
         });
         assert_eq!(

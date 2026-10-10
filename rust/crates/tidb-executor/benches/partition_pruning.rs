@@ -61,6 +61,7 @@ fn benchmark_spec(parts: usize) -> PartitionSpec {
                 in_values: Vec::new(),
                 comment: String::new(),
                 placement_policy: None,
+                storage_class: Default::default(),
             })
             .collect(),
     }

@@ -922,6 +922,9 @@ fn build_hash_partition_definitions(
             in_values: Vec::new(),
             comment,
             placement_policy,
+            // Resolved from the table's ENGINE_ATTRIBUTE once the table is
+            // built (`rebuildStorageClassForPartitions`).
+            storage_class: Default::default(),
         });
     }
     Ok(definitions)
@@ -1357,7 +1360,7 @@ pub fn stored_range_bound_text(bound: RangeBound, unsigned: bool) -> String {
 ///
 /// The guard is Go's own: a string shorter than two characters, or one that
 /// is not quoted at BOTH ends, is returned untouched.
-fn unwrap_from_single_quotes(value: &str) -> String {
+pub(super) fn unwrap_from_single_quotes(value: &str) -> String {
     let bytes = value.as_bytes();
     if bytes.len() < 2 || bytes[0] != b'\'' || bytes[bytes.len() - 1] != b'\'' {
         return value.to_owned();
@@ -1559,6 +1562,9 @@ fn definition_tail<'a>(
             in_values: Vec::new(),
             comment,
             placement_policy: partition_definition_placement(definition),
+            // Resolved from the table's ENGINE_ATTRIBUTE once the table is
+            // built (`rebuildStorageClassForPartitions`).
+            storage_class: Default::default(),
         });
         Ok(())
     }
@@ -1749,6 +1755,9 @@ pub struct StoredPartitionDefinition {
     pub comment: String,
     /// Go `PartitionDefinition.PlacementPolicyRef`: id AND name.
     pub placement_policy: Option<tidb_model::PolicyRefInfo>,
+    /// Go `PartitionDefinition.StorageClassTier` and
+    /// `StorageClassTransitions`.
+    pub storage_class: super::storage_class::StorageClass,
 }
 
 /// Rebuild the AST value clause a stored definition was written from, so the
@@ -1875,6 +1884,7 @@ pub fn partition_spec_from_metadata(
             in_values: definition.in_values.clone(),
             comment: definition.comment.clone(),
             placement_policy: definition.placement_policy.clone(),
+            storage_class: definition.storage_class.clone(),
         })
         .collect::<Vec<_>>();
     // The COLUMNS forms name their inputs directly. The builders take the
@@ -2219,6 +2229,7 @@ fn stored_definitions_for(
             in_values: Vec::new(),
             comment: definition.comment.clone(),
             placement_policy: definition.placement_policy.clone(),
+            storage_class: definition.storage_class.clone(),
         };
         match &spec.kind {
             // HASH, KEY and NONE definitions carry a name and nothing else.
@@ -2267,7 +2278,7 @@ fn stored_definitions_for(
 
 /// Go's `partitionMaxValue`, stored as that literal word and matched back
 /// with `strings.EqualFold`.
-const PARTITION_MAX_VALUE: &str = "MAXVALUE";
+pub(super) const PARTITION_MAX_VALUE: &str = "MAXVALUE";
 
 /// One folded value in the text form Go stores it as, which is Go
 /// `generatePartValuesWithTp`.
@@ -2843,6 +2854,7 @@ mod load_permissiveness_tests {
                 .collect(),
             comment: String::new(),
             placement_policy: None,
+            storage_class: Default::default(),
         }
     }
 

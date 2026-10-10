@@ -856,6 +856,12 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
             continue;
         };
         let catalog_value = || Datum::Bytes(b"def".to_vec());
+        // Go reports the table's AFFINITY level on every row it emits.
+        let affinity = || {
+            table.affinity().map_or(Datum::Null, |affinity| {
+                Datum::Bytes(affinity.level.clone().into_bytes())
+            })
+        };
         let Some(partition) = table.partition() else {
             let (row_count, average_row_length, data_length, index_length) =
                 table.storage_statistics();
@@ -888,7 +894,7 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 Datum::Null,
                 Datum::Null,
                 Datum::Null,
-                Datum::Null,
+                affinity(),
                 Datum::Null,
             ]);
             continue;
@@ -970,8 +976,8 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 Datum::Null,
                 Datum::Int(definition.id),
                 policy,
-                Datum::Null,
-                Datum::Null,
+                affinity(),
+                Datum::Bytes(definition.storage_class_string().into_bytes()),
             ]);
         }
     }
@@ -2104,10 +2110,14 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             Datum::Int(table.table_id),
             text(&sharding_info(table)),
             text(&pk_type(table)),
-            Datum::Null,
+            table
+                .placement_policy()
+                .map_or(Datum::Null, |policy| text(policy.name.original())),
             text("Normal"),
-            Datum::Null,
-            text(""),
+            table
+                .affinity()
+                .map_or(Datum::Null, |affinity| text(&affinity.level)),
+            text(&table.storage_class_string()),
         ]);
     }
     // go lists information_schema's own tables after the user schemas.

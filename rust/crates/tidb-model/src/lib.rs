@@ -28,6 +28,7 @@ pub mod flags;
 pub mod generated_expr;
 pub mod go_any;
 pub mod go_duration;
+pub mod go_json_scanner;
 pub mod go_runtime;
 pub mod history;
 pub mod index;
@@ -64,8 +65,8 @@ pub use column::{
 };
 pub use db::{less_db_info, DBInfo};
 pub use engine_attribute::{
-    parse_engine_attribute_from_string, EngineAttribute, StorageClassDef, StorageClassSettings,
-    StorageClassTransitRule,
+    build_storage_class_string, parse_engine_attribute_from_string, EngineAttribute,
+    StorageClassDef, StorageClassSettings, StorageClassTransitRule,
 };
 pub use go_any::{
     ColumnDefaultValue, GoAny, GoAnyArray, GoAnyBytes, GoAnyJsonError, GoAnyJsonErrorKind,

@@ -575,7 +575,12 @@ pub struct KvTable {
     /// value verbatim.
     cache_status: tidb_model::TableCacheStatusType,
     /// Whether Go `TableInfo.Affinity` is non-nil.
-    has_affinity: bool,
+    affinity: Option<tidb_model::TableAffinityInfo>,
+    /// Go `TableInfo.EngineAttribute`: the written JSON, kept verbatim for
+    /// `SHOW CREATE TABLE`.
+    engine_attribute: String,
+    /// Go `TableInfo.StorageClassTier` and `StorageClassTransitions`.
+    storage_class: crate::ddl::storage_class::StorageClass,
     /// Go `TableInfo.TiFlashReplica`.
     tiflash_replica: Option<tidb_model::TiFlashReplicaInfo>,
     /// Go `TableInfo.TempTableType` (`setTemporaryType`, `create_table.go`):
@@ -1234,7 +1239,9 @@ impl KvTable {
             charset: TableCharset::default(),
             comment: String::new(),
             cache_status: tidb_model::TableCacheStatusType::DISABLE,
-            has_affinity: false,
+            affinity: None,
+            engine_attribute: String::new(),
+            storage_class: Default::default(),
             tiflash_replica: None,
             temp_table_type: tidb_model::TempTableType::NONE,
             use_new_collation,
@@ -1394,7 +1401,11 @@ impl KvTable {
         copy.common_handle_offsets = self.common_handle_offsets.clone();
         copy.common_handle_prefix_lengths = self.common_handle_prefix_lengths.clone();
         copy.common_handle_version = self.common_handle_version;
-        copy.has_affinity = self.has_affinity;
+        copy.affinity = self.affinity.clone();
+        // Go `BuildTableInfoWithLike` clones these with the table, for a
+        // temporary copy too.
+        copy.engine_attribute = self.engine_attribute.clone();
+        copy.storage_class = self.storage_class.clone();
         copy.tiflash_replica = self.tiflash_replica.clone().map(|mut replica| {
             replica.available = false;
             replica.available_partition_ids = Default::default();
@@ -2262,15 +2273,49 @@ impl KvTable {
         self.common_handle_version
     }
 
-    /// Records whether Go `TableInfo.Affinity` is non-nil.
-    pub fn set_has_affinity(&mut self, has_affinity: bool) {
-        self.has_affinity = has_affinity;
+    /// Records Go `TableInfo.Affinity`.
+    pub fn set_affinity(&mut self, affinity: Option<tidb_model::TableAffinityInfo>) {
+        self.affinity = affinity;
+    }
+
+    /// Go `TableInfo.Affinity`.
+    #[must_use]
+    pub const fn affinity(&self) -> Option<&tidb_model::TableAffinityInfo> {
+        self.affinity.as_ref()
     }
 
     /// Whether Go `TableInfo.Affinity` is non-nil.
     #[must_use]
     pub const fn has_affinity(&self) -> bool {
-        self.has_affinity
+        self.affinity.is_some()
+    }
+
+    /// Records Go `TableInfo.EngineAttribute`.
+    pub fn set_engine_attribute(&mut self, engine_attribute: String) {
+        self.engine_attribute = engine_attribute;
+    }
+
+    /// Go `TableInfo.EngineAttribute`.
+    #[must_use]
+    pub fn engine_attribute(&self) -> &str {
+        &self.engine_attribute
+    }
+
+    /// Records Go `TableInfo.StorageClassTier` and `StorageClassTransitions`.
+    pub fn set_storage_class(&mut self, storage_class: crate::ddl::storage_class::StorageClass) {
+        self.storage_class = storage_class;
+    }
+
+    /// Go `TableInfo.StorageClassTier` and `StorageClassTransitions`.
+    #[must_use]
+    pub const fn storage_class(&self) -> &crate::ddl::storage_class::StorageClass {
+        &self.storage_class
+    }
+
+    /// Go `TableInfo.StorageClassString`.
+    #[must_use]
+    pub fn storage_class_string(&self) -> String {
+        tidb_model::build_storage_class_string(&self.storage_class.0, &self.storage_class.1)
     }
 
     /// Installs Go `TableInfo.TiFlashReplica` metadata.

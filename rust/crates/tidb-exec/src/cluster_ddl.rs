@@ -639,6 +639,17 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// Whether a missing index is a no-op rather than an error.
         if_exists: bool,
     },
+    /// `ALTER TABLE ... ENGINE_ATTRIBUTE = '...'` or its `STORAGE_CLASS`
+    /// sugar, Go's `ActionModifyEngineAttribute`. Metadata only.
+    ModifyEngineAttribute {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The validated attribute JSON
+        /// (`GetEngineAttributeFromStorageClassTableOptions`).
+        engine_attribute: String,
+    },
     /// `ALTER TABLE ... COMMENT = '...'`, Go's
     /// `ActionModifyTableComment`. Metadata only.
     ModifyTableComment {
@@ -855,9 +866,10 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         if_exists: bool,
     },
     /// A table option Go's `ALTER TABLE` switch accepts and does nothing
-    /// with: `ENGINE`, `ENGINE_ATTRIBUTE`, `STORAGE_CLASS`, `ROW_FORMAT`.
-    /// Their cases in `executor.go` are empty, so the statement succeeds and
-    /// spends no schema version. Refusing them instead would reject the
+    /// with: `ENGINE`, `ROW_FORMAT`. Their cases in `executor.go` are empty,
+    /// so the statement succeeds and spends no schema version.
+    /// (`ENGINE_ATTRIBUTE` and `STORAGE_CLASS` also have empty cases, but Go
+    /// publishes [`Self::ModifyEngineAttribute`] for them after the loop.) Refusing them instead would reject the
     /// `ENGINE=InnoDB` that every mysqldump emits.
     IgnoredTableOption {
         /// The resolved database name.
@@ -1581,10 +1593,26 @@ fn lower_alter_table_catalog(
                     overwrite_columns: false,
                 }));
             }
+            if let tidb_ast::TableOption::EngineAttribute(_)
+            | tidb_ast::TableOption::StorageClass(_) = option
+            {
+                let engine_attribute =
+                    tidb_executor::ddl::storage_class::engine_attribute_from_table_options(options)
+                        .map_err(|error| {
+                            let error = error.to_mysql_error();
+                            DdlAdmissionError::with_code(error.code, error.message)
+                        })?
+                        .expect("the one option is a storage-class option");
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                return Ok(Some(DdlStatement::ModifyEngineAttribute {
+                    schema,
+                    table,
+                    engine_attribute,
+                }));
+            }
             let ignored = match option {
                 tidb_ast::TableOption::Engine(_) => Some("ENGINE"),
                 tidb_ast::TableOption::RowFormat(_) => Some("ROW_FORMAT"),
-                tidb_ast::TableOption::StorageClass(_) => Some("STORAGE_CLASS"),
                 _ => None,
             };
             if let Some(option) = ignored {
@@ -7202,14 +7230,12 @@ pub fn plan_ddl<S: MetaSnapshot>(
     plan_ddl_with_collation(snapshot, statement, start_ts, new_collation_enabled())
 }
 
-fn apply_partition_change(
+/// The routing spec of a stored partitioned table, as this node's loader
+/// builds it from Go's `PartitionInfo`.
+fn stored_partition_spec(
     stored: &TableInfo,
-    schema: &str,
-    table: &str,
-    sql: &str,
 ) -> Result<tidb_executor::partition_routing::PartitionSpec, DdlPlanError> {
     use tidb_executor::ddl::StoredPartitionDefinition;
-    use tidb_executor::{Catalog, KvColumn, KvTable, TableEntry};
 
     let partition = stored.partition.as_ref().ok_or_else(|| {
         DdlPlanError::Admission(DdlAdmissionError::with_code(
@@ -7247,6 +7273,10 @@ fn apply_partition_change(
                 .placement_policy_ref
                 .as_ref()
                 .map(|reference| reference.read().clone()),
+            storage_class: (
+                definition.storage_class_tier.clone(),
+                definition.storage_class_transitions.snapshot(),
+            ),
         })
         .collect::<Vec<_>>();
     let columns = partition
@@ -7260,7 +7290,7 @@ fn apply_partition_change(
             usize::try_from(partition.get_overlapping_dropping_partition_idx(index as isize)).ok()
         })
         .collect::<Vec<_>>();
-    let spec = tidb_executor::ddl::partition_spec_from_metadata(
+    tidb_executor::ddl::partition_spec_from_metadata(
         partition.partition_type,
         &partition.expr,
         &columns,
@@ -7273,7 +7303,18 @@ fn apply_partition_change(
     .map_err(|error| {
         let error = error.to_mysql_error();
         DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
-    })?;
+    })
+}
+
+fn apply_partition_change(
+    stored: &TableInfo,
+    schema: &str,
+    table: &str,
+    sql: &str,
+) -> Result<tidb_executor::partition_routing::PartitionSpec, DdlPlanError> {
+    use tidb_executor::{Catalog, KvColumn, KvTable, TableEntry};
+
+    let spec = stored_partition_spec(stored)?;
 
     let kv_columns = stored
         .columns
@@ -7296,6 +7337,9 @@ fn apply_partition_change(
     kv_table.set_max_column_id(stored.max_column_id);
     kv_table.set_max_index_id(stored.max_index_id);
     kv_table.name = table.to_owned();
+    // An added partition resolves its storage class from the table's
+    // ENGINE_ATTRIBUTE (`CheckAndUpdateAddedPartitionDefinitions`).
+    kv_table.set_engine_attribute(stored.engine_attribute.clone());
     kv_table.set_tiflash_replica(
         stored
             .tiflash_replica
@@ -8741,6 +8785,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         name: CiString::new(definition.name),
                         comment: definition.comment,
                         placement_policy_ref: definition.placement_policy.map(GoShared::new),
+                        storage_class_tier: definition.storage_class.0,
+                        storage_class_transitions: definition.storage_class.1.into(),
                         ..tidb_model::partition::PartitionDefinition::default()
                     };
                     converted.less_than = definition.less_than.into();
@@ -9124,6 +9170,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         name: CiString::new(definition.name),
                         comment: definition.comment,
                         placement_policy_ref: definition.placement_policy.map(GoShared::new),
+                        storage_class_tier: definition.storage_class.0,
+                        storage_class_transitions: definition.storage_class.1.into(),
                         ..tidb_model::partition::PartitionDefinition::default()
                     };
                     converted.less_than = definition.less_than.into();
@@ -10089,6 +10137,66 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     ),
                 ));
             }
+        }
+        DdlStatement::ModifyEngineAttribute {
+            schema,
+            table,
+            engine_attribute,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let admission = |error: tidb_executor::DriverError| {
+                let error = error.to_mysql_error();
+                DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+            };
+            let mut info = stored.clone_like_go();
+            // Go `onModifyTableEngineAttribute` keeps the written string for
+            // SHOW CREATE TABLE, then `onAlterTableStorageClassSettings`
+            // re-resolves the table's and every partition's class when the
+            // attribute names one.
+            info.engine_attribute = engine_attribute.clone();
+            if let Some(settings) =
+                tidb_executor::ddl::storage_class::storage_class_settings_of(engine_attribute)
+                    .map_err(admission)?
+            {
+                let (tier, transitions) =
+                    tidb_executor::ddl::storage_class::build_storage_class_for_table(&settings);
+                info.storage_class_tier = tier;
+                info.storage_class_transitions = transitions.into();
+                let has_definitions = info
+                    .partition
+                    .as_ref()
+                    .is_some_and(|partition| !partition.read().definitions.is_empty());
+                if has_definitions {
+                    let spec = stored_partition_spec(stored)?;
+                    let definitions = spec.definitions.iter().collect::<Vec<_>>();
+                    let classes =
+                        tidb_executor::ddl::storage_class::build_storage_class_for_partitions(
+                            &settings,
+                            &spec.kind,
+                            &definitions,
+                            &tidb_executor::StmtContext::for_query(),
+                        )
+                        .map_err(admission)?;
+                    let partition = info.partition.as_ref().expect("checked above").read();
+                    for (ordinal, (tier, transitions)) in classes.into_iter().enumerate() {
+                        partition.definitions.update(ordinal, |definition| {
+                            definition.storage_class_tier = tier;
+                            definition.storage_class_transitions = transitions.into();
+                        });
+                    }
+                }
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
         }
         DdlStatement::ModifyTableComment {
             schema,

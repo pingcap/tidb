@@ -198,6 +198,18 @@ pub struct PartitionDef {
     /// policy ID (`PolicyGetter::get_policy`), so a reference that remembers
     /// only the name cannot build one.
     pub placement_policy: Option<tidb_model::PolicyRefInfo>,
+    /// Go `PartitionDefinition.StorageClassTier` and
+    /// `StorageClassTransitions`, resolved from the table's
+    /// `ENGINE_ATTRIBUTE` when the definition was built.
+    pub storage_class: crate::ddl::storage_class::StorageClass,
+}
+
+impl PartitionDef {
+    /// Go `PartitionDefinition.StorageClassString`.
+    #[must_use]
+    pub fn storage_class_string(&self) -> String {
+        tidb_model::build_storage_class_string(&self.storage_class.0, &self.storage_class.1)
+    }
 }
 
 /// A table's partitioning: Go `model.PartitionInfo` plus the built expression

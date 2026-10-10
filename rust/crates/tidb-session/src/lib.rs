@@ -2832,6 +2832,8 @@ pub mod metrics;
 #[cfg(test)]
 mod tests_admin_check;
 #[cfg(test)]
+mod tests_affinity_storage_class;
+#[cfg(test)]
 mod tests_alter_column;
 #[cfg(test)]
 mod tests_analyze;

@@ -127,6 +127,7 @@ static FUNCTION_CLASSES: &[(&str, usize, Option<usize>)] = &[
     ("dayofweek", 1, Some(1)),
     ("dayofyear", 1, Some(1)),
     ("decode", 2, Some(2)),
+    ("default_func", 1, Some(1)),
     ("degrees", 1, Some(1)),
     ("div", 2, Some(2)),
     ("elt", 2, None),
@@ -574,10 +575,9 @@ mod tests {
         assert!(FUNCTION_CLASSES
             .windows(2)
             .all(|pair| pair[0].0 < pair[1].0));
-        // 308: go's funcs map has no `default_func` key -- `DEFAULT(col)` is a
-        // planner rewrite and a bare `default_func()` call answers 1305
-        // FUNCTION-not-exist through GetFunctionClass's registry miss.
-        assert_eq!(FUNCTION_CLASSES.len(), 308, "Go funcs map has 309 entries");
+        // Go's `funcs` map literal (`builtin.go`), `default_func` included:
+        // its class answers 1305 FUNCTION DEFAULT does not exist when built.
+        assert_eq!(FUNCTION_CLASSES.len(), 309, "Go funcs map has 309 entries");
     }
 
     /// Spot-checks arities transcribed from Go's `funcs` map literal,

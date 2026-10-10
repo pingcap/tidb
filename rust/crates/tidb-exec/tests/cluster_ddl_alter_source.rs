@@ -115,10 +115,61 @@ fn rebase_auto_increment_moves_the_counter_and_floors_without_force() {
     assert_eq!(counter(&store), Some(9));
 }
 
-/// Go's `ALTER TABLE` option switch has EMPTY cases for `ENGINE`,
-/// `ENGINE_ATTRIBUTE`, `STORAGE_CLASS` and `ROW_FORMAT`: the statement
-/// succeeds and no job is published. Refusing them instead would reject the
-/// `ENGINE=InnoDB` every mysqldump emits.
+/// Go `AlterTableEngineAttribute` -> `onModifyTableEngineAttribute`: the
+/// written attribute (or the JSON its `STORAGE_CLASS` sugar stands for) is
+/// stored verbatim, and the table's and every partition's storage class are
+/// resolved again from it. CREATE TABLE resolves them the same way.
+#[test]
+fn engine_attribute_resolves_table_and_partition_storage_classes() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT) STORAGE_CLASS = 'ia' PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (100), PARTITION p1 VALUES LESS THAN (200))",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    let classes = |stored: &serde_json::Value| {
+        stored["partition"]["definitions"]
+            .as_array()
+            .expect("partition definitions")
+            .iter()
+            .map(|definition| definition["storage_class_tier"].clone())
+            .collect::<Vec<_>>()
+    };
+    let stored = stored_table(&write, table_id);
+    assert_eq!(
+        stored["engine_attribute"],
+        serde_json::json!(r#"{"storage_class":"IA"}"#)
+    );
+    assert_eq!(stored["storage_class_tier"], serde_json::json!("IA"));
+    assert_eq!(classes(&stored), vec![serde_json::json!("IA"); 2]);
+
+    let write = plan(
+        &mut store,
+        r#"ALTER TABLE u6.t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "names_in":["P1"]}}'"#,
+        200,
+    );
+    apply(&mut store, &write);
+    let stored = stored_table(&write, table_id);
+    assert_eq!(stored["storage_class_tier"], serde_json::json!("STANDARD"));
+    assert_eq!(
+        classes(&stored),
+        vec![serde_json::json!("STANDARD"), serde_json::json!("IA")]
+    );
+
+    let parsed = tidb_parser::parse("ALTER TABLE u6.t STORAGE_CLASS = 'AI'").expect("parses");
+    let error = lower_ddl(&parsed, "u6").expect_err("an unknown tier is refused");
+    assert_eq!(error.code, 8271, "{error:?}");
+    assert!(
+        error.reason.contains("invalid storage class tier: AI"),
+        "{error:?}"
+    );
+}
+
+/// Go's `ALTER TABLE` option switch has EMPTY cases for `ENGINE` and
+/// `ROW_FORMAT`: the statement succeeds and no job is published. Refusing
+/// them instead would reject the `ENGINE=InnoDB` every mysqldump emits.
 ///
 /// `OrderByColumns` is the same shape with one addition: Go warns when the
 /// table has a user-defined primary key column, because the ordering it asks

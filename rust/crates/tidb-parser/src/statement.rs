@@ -768,6 +768,16 @@ impl Parser {
                     self.attach_with_to_query(with)?,
                 )))
             }
+        } else if self.is_kw("CREATE") {
+            // Go `parseCreateStmt`: an unrecognized CREATE target is the
+            // syntax error, reported at that token rather than at CREATE.
+            let target = self.peek_n(1);
+            Err(crate::ParseError {
+                message: "unsupported statement in this phase".to_owned(),
+                offset: target.end_offset,
+                near_offset: target.offset,
+                errno: None,
+            })
         } else {
             Err(self.err_here("unsupported statement in this phase"))
         }

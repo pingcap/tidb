@@ -335,6 +335,12 @@ pub fn build_table_info_in_schema(
         return Err(DdlAdmissionError::with_code(error.code, error.message));
     }
 
+    // Go `handleTableOptions` validates ENGINE_ATTRIBUTE and its
+    // STORAGE_CLASS sugar before it looks at any other option.
+    let engine_attribute = tidb_executor::ddl::storage_class::engine_attribute_from_table_options(
+        &create.table_options,
+    )
+    .map_err(default_admission_error)?;
     // Go `GetCharsetAndCollateInTableOption`: the LAST declared pair wins, and
     // whatever it leaves unset the database supplies.
     let mut declared_charset = None;
@@ -389,6 +395,9 @@ pub fn build_table_info_in_schema(
             // nothing here rather than refusing an option the statement can
             // in fact honour.
             TableOption::PlacementPolicy(_) => {}
+            // Validated above and applied once the table is built
+            // (`handleEngineAttributeForCreateTable`).
+            TableOption::EngineAttribute(_) | TableOption::StorageClass(_) => {}
             other => {
                 return Err(DdlAdmissionError::with_code(
                     GENERIC_ERROR_CODE,
@@ -576,6 +585,18 @@ pub fn build_table_info_in_schema(
         table.auto_random_range_bits = spec.range_bits;
     }
     table.comment = comment;
+    if let Some(engine_attribute) = engine_attribute {
+        if let Some(settings) =
+            tidb_executor::ddl::storage_class::storage_class_settings_of(&engine_attribute)
+                .map_err(default_admission_error)?
+        {
+            let (tier, transitions) =
+                tidb_executor::ddl::storage_class::build_storage_class_for_table(&settings);
+            table.storage_class_tier = tier;
+            table.storage_class_transitions = transitions.into();
+        }
+        table.engine_attribute = engine_attribute;
+    }
     table.auto_inc_id = auto_inc_id;
     table.auto_id_cache = auto_id_cache;
     table.auto_rand_id = auto_rand_id;
@@ -638,7 +659,7 @@ pub fn build_table_info_in_schema(
         // above: it is no entry in `indices` -- its encoding IS the row key
         // -- which is why Go reports the unique-key rule against
         // `CLUSTERED INDEX` rather than against an index name.
-        if let Some((metadata, _)) = tidb_executor::ddl::build_partition_metadata(
+        if let Some((mut metadata, spec)) = tidb_executor::ddl::build_partition_metadata(
             create,
             &names,
             &fields,
@@ -649,6 +670,19 @@ pub fn build_table_info_in_schema(
         )
         .map_err(partition_refusal)?
         {
+            // Go `buildPartitionDefinitionsInfo` ->
+            // `rebuildStorageClassForPartitions`.
+            if let Some(classes) = tidb_executor::ddl::storage_class::partition_storage_classes(
+                &table.engine_attribute,
+                &spec,
+                context,
+            )
+            .map_err(default_admission_error)?
+            {
+                for (definition, class) in metadata.definitions.iter_mut().zip(classes) {
+                    definition.storage_class = class;
+                }
+            }
             table.partition = Some(GoShared::new(partition_info(&metadata)));
         }
     }
@@ -768,6 +802,8 @@ fn partition_info(
                 .placement_policy
                 .as_ref()
                 .map(|reference| tidb_model::GoShared::new(reference.clone()));
+            stored.storage_class_tier = definition.storage_class.0.clone();
+            stored.storage_class_transitions = definition.storage_class.1.clone().into();
             stored
         })
         .collect::<Vec<_>>()
