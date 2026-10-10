@@ -1829,7 +1829,12 @@ func GetFormatBytes(bytes float64) string {
 	}
 
 	if divisor == 1 {
-		return strconv.FormatFloat(bytes, 'f', 0, 64) + " " + unit
+		bytes = math.Trunc(bytes)
+		if bytes == 0 {
+			// Avoid formatting negative zero as "-0 bytes".
+			bytes = 0
+		}
+		return fmt.Sprintf("%4.0f %s", bytes, unit)
 	}
 	value := bytes / divisor
 	if math.Abs(value) >= 100000.0 {
