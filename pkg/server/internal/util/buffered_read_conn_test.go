@@ -132,3 +132,46 @@ func TestBufferedReadConnConcurrentReadAndIsAlive(t *testing.T) {
 	wg.Wait()
 	require.Greater(t, probes, 0)
 }
+
+// embeddedConnWrapper mirrors third-party net.Conn wrappers (for example the
+// PROXY-protocol conn used when proxy-protocol is enabled) that embed a
+// net.Conn without promoting SyscallConn or NetConn. Its method set is only
+// net.Conn's, so the fd is reachable only by unwrapping the embedded field.
+type embeddedConnWrapper struct {
+	net.Conn
+}
+
+func TestUnwrapSyscallConn(t *testing.T) {
+	_, server := newTCPConnPair(t)
+
+	require.NotNil(t, unwrapSyscallConn(server),
+		"a raw syscall.Conn must unwrap to itself")
+	require.NotNil(t, unwrapSyscallConn(NewBufferedReadConn(server)),
+		"a BufferedReadConn must unwrap to its embedded conn")
+	require.NotNil(t, unwrapSyscallConn(&embeddedConnWrapper{Conn: server}),
+		"a wrapper embedding a net.Conn must unwrap to the syscall.Conn")
+
+	// A wrapped conn that is not a syscall.Conn and does not expose NetConn or
+	// an embedded net.Conn must be reported as unwrappable.
+	require.Nil(t, unwrapSyscallConn(&embeddedConnWrapper{}),
+		"a wrapper with only a nil embedded conn exposes no syscall.Conn")
+}
+
+// TestBufferedReadConnIsAliveThroughEmbeddedWrapper is the regression test for
+// proxy-protocol connections: the liveness probe must reach the syscall.Conn
+// hidden behind a wrapper that only embeds net.Conn.
+func TestBufferedReadConnIsAliveThroughEmbeddedWrapper(t *testing.T) {
+	client, server := newTCPConnPair(t)
+	c := NewBufferedReadConn(&embeddedConnWrapper{Conn: server})
+
+	if c.IsAlive() != 1 {
+		t.Skip("raw socket liveness probe is not supported on this platform")
+	}
+	require.Equal(t, 1, c.IsAlive(),
+		"a live peer behind an embedded net.Conn wrapper must be alive")
+
+	require.NoError(t, client.Close())
+	require.Eventually(t, func() bool { return c.IsAlive() == 0 },
+		2*time.Second, 10*time.Millisecond,
+		"a closed peer behind an embedded wrapper must be reported as dead")
+}
