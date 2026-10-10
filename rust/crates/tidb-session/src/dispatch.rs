@@ -820,6 +820,10 @@ impl Session {
             } else if table_name.eq_ignore_ascii_case("TIDB_SERVERS_INFO") {
                 self.tidb_servers_info_table_rows()?
             } else if table_name.eq_ignore_ascii_case("CLUSTER_INFO") {
+                // Go `memtableRetriever.retrieve`: CLUSTER_INFO needs PROCESS.
+                if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Process) {
+                    return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+                }
                 self.cluster_info_table_rows()?
             } else {
                 let visibility = self.schema_visibility();

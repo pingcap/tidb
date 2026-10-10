@@ -1932,8 +1932,12 @@ impl Session {
                 "SHOW GRANTS requires a server front end with a privilege registry",
             ));
         };
+        // Go `fetchShowGrants` merges the session's active roles only for a
+        // bare SHOW GRANTS or FOR CURRENT_USER(); naming the account -- even
+        // one's own -- shows its own grants.
+        let names_current_user = show.user.as_ref().is_none_or(|spec| spec.current_user);
         let roles = if show.roles.is_empty() {
-            if is_own {
+            if names_current_user {
                 self.active_roles.to_vec()
             } else {
                 Vec::new()
@@ -1953,14 +1957,34 @@ impl Session {
                 })
                 .collect()
         };
+        // Go `fetchShowGrants`: every role the output merges -- the USING
+        // list, or the session's active roles -- must be granted to the
+        // account (`FindEdge`).
+        let account = (user.clone(), host.clone());
+        for role in &roles {
+            if !registry.has_role(&account, role) {
+                return Err(DriverError::RoleNotGranted {
+                    role: role.0.clone(),
+                    role_host: role.1.clone(),
+                    user,
+                    host,
+                });
+            }
+        }
         let Some(lines) = registry.show_grants(&user, &host, &roles, self.vars.sql_mode()) else {
             return Err(DriverError::NonexistingGrant { user, host });
         };
         // Go: `fmt.Sprintf("Grants for %s", s.User)` -- `s.User.String()` is
-        // unquoted `user@host`. One row per GLOBAL/DB/TABLE-scope line, in
-        // that order (`registry.show_grants`'s captured ordering).
+        // unquoted `user@host` -- or "Grants for User" when no FOR names the
+        // account. One row per GLOBAL/DB/TABLE-scope line, in that order
+        // (`registry.show_grants`'s captured ordering).
+        let header = if show.user.is_some() {
+            format!("Grants for {user}@{host}")
+        } else {
+            "Grants for User".to_owned()
+        };
         Ok(string_column_output(
-            &format!("Grants for {user}@{host}"),
+            &header,
             lines.split('\n').map(str::to_owned).collect(),
         ))
     }

@@ -351,6 +351,19 @@ impl Session {
                 Ok(Some(()))
             }
             SessionStmt::SetResourceGroup(resource_group) => {
+                // Go `buildSimple`: under `tidb_resource_control_strict_mode`
+                // the statement needs SUPER, RESOURCE_GROUP_ADMIN or
+                // RESOURCE_GROUP_USER.
+                if tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    && !["RESOURCE_GROUP_ADMIN", "RESOURCE_GROUP_USER"]
+                        .iter()
+                        .any(|name| self.has_dynamic_privilege(name, false))
+                {
+                    return Err(DriverError::SpecificAccessDenied(
+                        "SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER".to_owned(),
+                    ));
+                }
                 self.resource_group = if resource_group.name.is_empty() {
                     "default".to_owned()
                 } else {

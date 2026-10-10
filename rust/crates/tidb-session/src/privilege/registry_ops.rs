@@ -1865,7 +1865,9 @@ impl PrivilegeRegistry {
             String::from_utf8(tidb_util::stringutil::escape(value.as_bytes(), sql_mode))
                 .expect("quoting UTF-8 preserves UTF-8")
         };
-        let account = format!("{}@{}", quote(user), quote(host));
+        // Go prints the account and each role raw between single quotes
+        // (`'%s'@'%s'`); only schema and table names are escaped.
+        let account = format!("'{user}'@'{host}'");
         let identities = self.identities_for_check(user, host, active_roles);
         let owns = |row_user: &str, row_host: &str| {
             identities
@@ -2024,7 +2026,7 @@ impl PrivilegeRegistry {
         let mut role_names: Vec<String> = self
             .granted_roles(&(user.to_owned(), host.to_owned()))
             .into_iter()
-            .map(|(role, role_host)| format!("{}@{}", quote(&role), quote(&role_host)))
+            .map(|(role, role_host)| format!("'{role}'@'{role_host}'"))
             .collect();
         role_names.sort_unstable();
         let role_line = (!role_names.is_empty())

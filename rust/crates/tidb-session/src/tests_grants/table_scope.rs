@@ -493,10 +493,9 @@ fn a_prepared_statement_keeps_the_database_current_at_prepare() {
         "EXECUTE reads test.t, the table current at PREPARE"
     );
 
-    bob.run("PREPARE u FROM 'SELECT b FROM t WHERE a = ?'")
-        .unwrap();
+    // Go `checkPreparedPriv`: PREPARE itself is refused.
     assert_eq!(
-        denied(&mut bob, "EXECUTE u USING @a"),
+        denied(&mut bob, "PREPARE u FROM 'SELECT b FROM t WHERE a = ?'"),
         table_denied("SELECT", "t"),
         "a statement prepared under `other` names other.t, which bob may not read"
     );

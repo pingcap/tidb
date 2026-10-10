@@ -2945,6 +2945,8 @@ mod tests_prepared_plan_cache;
 #[cfg(test)]
 mod tests_prepared_statements;
 #[cfg(test)]
+mod tests_privilege_checks;
+#[cfg(test)]
 mod tests_pushdown_blacklist;
 #[cfg(test)]
 mod tests_read_cast;

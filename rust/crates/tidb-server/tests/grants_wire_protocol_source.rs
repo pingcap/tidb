@@ -715,8 +715,8 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     assert_eq!(
         grants,
         vec![
-            vec!["GRANT USAGE ON *.* TO `bob`@`%`".to_owned()],
-            vec!["GRANT SELECT ON `test`.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT USAGE ON *.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
         ],
         "bob's own scoped grant, over the real wire: {grants:?}"
     );
@@ -808,9 +808,9 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     assert_eq!(
         run_query(&mut bob, &mut bob_reader, "SHOW GRANTS"),
         vec![
-            vec!["GRANT PROCESS ON *.* TO `bob`@`%`".to_owned()],
-            vec!["GRANT SELECT ON `test`.* TO `bob`@`%`".to_owned()],
-            vec!["GRANT `watcher`@`%` TO `bob`@`%`".to_owned()],
+            vec!["GRANT PROCESS ON *.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT 'watcher'@'%' TO 'bob'@'%'".to_owned()],
         ]
     );
     assert_eq!(run_write(&mut bob, &mut bob_reader, "SET ROLE NONE"), 0);
@@ -851,9 +851,9 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     assert_eq!(
         run_query(&mut bob, &mut bob_reader, "SHOW GRANTS"),
         vec![
-            vec!["GRANT USAGE ON *.* TO `bob`@`%`".to_owned()],
-            vec!["GRANT SELECT ON `test`.* TO `bob`@`%`".to_owned()],
-            vec!["GRANT CONNECTION_ADMIN ON *.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT USAGE ON *.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'".to_owned()],
         ]
     );
     assert_eq!(
@@ -946,7 +946,7 @@ fn a_runtime_created_account_can_log_in_over_tcp_until_it_is_dropped() {
         let grants = run_query(&mut carol, &mut carol_reader, "SHOW GRANTS");
         assert_eq!(
             grants,
-            vec![vec!["GRANT USAGE ON *.* TO `carol`@`%`".to_owned()]],
+            vec![vec!["GRANT USAGE ON *.* TO 'carol'@'%'".to_owned()]],
             "carol's own row, over the real wire: {grants:?}"
         );
         write_packet(&mut carol, 0, &[0x01]);
@@ -1085,7 +1085,7 @@ fn a_caching_sha2_password_account_creates_and_then_logs_in() {
     let grants = run_query(&mut root, &mut root_reader, "SHOW GRANTS FOR 'dana'@'%'");
     assert_eq!(
         grants,
-        vec![vec!["GRANT USAGE ON *.* TO `dana`@`%`".to_owned()]],
+        vec![vec!["GRANT USAGE ON *.* TO 'dana'@'%'".to_owned()]],
         "a caching_sha2_password account is a real account: {grants:?}"
     );
 

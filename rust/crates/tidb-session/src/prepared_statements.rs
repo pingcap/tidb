@@ -242,6 +242,9 @@ impl Session {
             text
         };
         let privilege_requests = self.collect_table_privileges(&statement, true)?;
+        // Go `GeneratePlanCacheStmtWithAST` ends with `checkPreparedPriv`:
+        // PREPARE itself is refused without the statement's privileges.
+        self.check_table_privilege_requests(&privilege_requests)?;
         let id = self.allocate_prepared_statement_id();
         self.prepared_statements.insert(
             name.to_owned(),

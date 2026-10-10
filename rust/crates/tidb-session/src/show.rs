@@ -752,6 +752,16 @@ impl Session {
         &mut self,
         admin: &tidb_ast::AdminStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
+        // Go `buildAdmin` appends a SUPER visit for every ADMIN statement it
+        // plans past its early returns, and `CheckPrivilege` reports a denial
+        // as `ErrPrivilegeCheckFail`.
+        if admin_needs_super(admin)
+            && !self.has_scoped_privilege("", "", privilege::GlobalPriv::Super)
+        {
+            return Err(DriverError::PrivilegeCheckFail(
+                privilege::GlobalPriv::Super.check_fail_name().to_owned(),
+            ));
+        }
         match admin {
             // `EXPLAIN <select>`: plan the statement and report the plan,
             // running nothing. Go's EXPLAIN plans without executing (an
@@ -763,14 +773,10 @@ impl Session {
             // this tier's plan text diverges from Go's and why.
             tidb_ast::AdminStmt::Explain(explain) => self.explain_stmt(explain),
             // Go `executeAdminSetBDRRole` / `executeAdminUnsetBDRRole` write
-            // the meta key `BDRRole`; `AdminShowBDRRoleExec` reads it. Every
-            // ADMIN statement needs SUPER (`buildAdmin`).
+            // the meta key `BDRRole`; `AdminShowBDRRoleExec` reads it.
             tidb_ast::AdminStmt::SetBdrRole(_)
             | tidb_ast::AdminStmt::UnsetBdrRole
             | tidb_ast::AdminStmt::ShowBdrRole => {
-                if !self.has_scoped_privilege("", "", privilege::GlobalPriv::Super) {
-                    return Err(DriverError::SpecificAccessDenied("SUPER".to_owned()));
-                }
                 let role = match admin {
                     tidb_ast::AdminStmt::SetBdrRole(tidb_ast::BdrRole::Primary) => "primary",
                     tidb_ast::AdminStmt::SetBdrRole(tidb_ast::BdrRole::Secondary) => "secondary",
@@ -836,9 +842,6 @@ impl Session {
             tidb_ast::AdminStmt::LockStats(lock) => self.stats_lock_stmt(lock, true),
             tidb_ast::AdminStmt::UnlockStats(unlock) => self.stats_lock_stmt(unlock, false),
             tidb_ast::AdminStmt::CreateWorkloadSnapshot => {
-                if !self.has_scoped_privilege("", "", privilege::GlobalPriv::Super) {
-                    return Err(DriverError::SpecificAccessDenied("SUPER".to_owned()));
-                }
                 let worker = self.workload_repository.as_ref().ok_or_else(|| {
                     DriverError::NotSupportedYet("Workload repository is not enabled".into())
                 })?;
@@ -2094,4 +2097,28 @@ mod column_description_source_tests {
             ]
         );
     }
+}
+
+/// Go `buildAdmin`'s statements that reach its trailing SUPER visit: every
+/// ADMIN statement but the reloads, plugins, binding operations and
+/// FLUSH PLAN CACHE it returns before that line.
+fn admin_needs_super(admin: &tidb_ast::AdminStmt) -> bool {
+    matches!(
+        admin,
+        tidb_ast::AdminStmt::AdminCheck(_)
+            | tidb_ast::AdminStmt::AdminChecksum(_)
+            | tidb_ast::AdminStmt::AdminRecoverIndex(_)
+            | tidb_ast::AdminStmt::AdminCleanupIndex(_)
+            | tidb_ast::AdminStmt::ShowNextRowId(_)
+            | tidb_ast::AdminStmt::ShowDdl
+            | tidb_ast::AdminStmt::ShowDdlJobs(_)
+            | tidb_ast::AdminStmt::ShowDdlJobQueries(_)
+            | tidb_ast::AdminStmt::DdlJobControl(_)
+            | tidb_ast::AdminStmt::AlterDdlJobs(_)
+            | tidb_ast::AdminStmt::ShowSlow(_)
+            | tidb_ast::AdminStmt::SetBdrRole(_)
+            | tidb_ast::AdminStmt::UnsetBdrRole
+            | tidb_ast::AdminStmt::ShowBdrRole
+            | tidb_ast::AdminStmt::CreateWorkloadSnapshot
+    )
 }

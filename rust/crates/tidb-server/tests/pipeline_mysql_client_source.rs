@@ -1014,7 +1014,7 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     let grants = run_query(&mut client, &mut reader, "SHOW GRANTS");
     assert_eq!(
         grants[0][0],
-        r#"GRANT ALL PRIVILEGES ON *.* TO "alice"@"%" WITH GRANT OPTION"#,
+        "GRANT ALL PRIVILEGES ON *.* TO 'alice'@'%' WITH GRANT OPTION",
         "{grants:?}"
     );
     // A fresh account reports USAGE, as Go's mysql.user does -- and reading
@@ -1027,7 +1027,7 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     let other = run_query(&mut client, &mut reader, "SHOW GRANTS FOR 'wireusage'@'%'");
     assert_eq!(
         other[0][0],
-        r#"GRANT USAGE ON *.* TO "wireusage"@"%""#,
+        "GRANT USAGE ON *.* TO 'wireusage'@'%'",
         "{other:?}"
     );
 

@@ -1323,24 +1323,21 @@ fn session_migration_rejects_malformed_state_before_restoring_handlers() {
 }
 
 #[test]
-fn session_migration_batch_grant_quotes_follow_live_sql_mode() {
+fn session_migration_batch_grant_accounts_print_raw_in_single_quotes() {
+    // Go `showGrants` prints the account as `'%s'@'%s'` whatever the SQL
+    // mode; only schema and table names follow it.
     let mut session = Session::new();
     session.attach_privileges(privilege::PrivilegeRegistry::default());
     session.run("CREATE USER 'quote`\"user'@'%'").unwrap();
-    session.run("SET sql_mode=''").unwrap();
-    assert_eq!(
-        session.run("SHOW GRANTS FOR 'quote`\"user'@'%'").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Bytes(
-            b"GRANT USAGE ON *.* TO `quote``\"user`@`%`".to_vec()
-        )]])
-    );
-    session.run("SET sql_mode='ANSI_QUOTES'").unwrap();
-    assert_eq!(
-        session.run("SHOW GRANTS FOR 'quote`\"user'@'%'").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Bytes(
-            b"GRANT USAGE ON *.* TO \"quote`\"\"user\"@\"%\"".to_vec()
-        )]])
-    );
+    for sql_mode in ["''", "'ANSI_QUOTES'"] {
+        session.run(&format!("SET sql_mode={sql_mode}")).unwrap();
+        assert_eq!(
+            session.run("SHOW GRANTS FOR 'quote`\"user'@'%'").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Bytes(
+                b"GRANT USAGE ON *.* TO 'quote`\"user'@'%'".to_vec()
+            )]])
+        );
+    }
 }
 
 #[test]

@@ -442,7 +442,7 @@ fn cluster_account_history_rejects_reuse_without_changing_credentials() {
     );
     assert_eq!(
         displayed(rows(&mut session, "SHOW GRANTS FOR 'history_other'@'%'")),
-        [["GRANT ALL PRIVILEGES ON *.* TO `history_other`@`%`"]]
+        [["GRANT ALL PRIVILEGES ON *.* TO 'history_other'@'%'"]]
     );
     assert_eq!(
         displayed(rows(

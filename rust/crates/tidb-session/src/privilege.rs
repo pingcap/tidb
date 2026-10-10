@@ -320,7 +320,7 @@ mod tests {
         assert!(registry.has_global_priv("root", "%", GlobalPriv::OperateView));
         assert_eq!(
             registry.show_grants("root", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
-            Some("GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION")
+            Some("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
         );
     }
 
@@ -330,7 +330,7 @@ mod tests {
         assert!(registry.create_user("u1", "%", ""));
         assert_eq!(
             registry.show_grants("u1", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
-            Some("GRANT USAGE ON *.* TO `u1`@`%`")
+            Some("GRANT USAGE ON *.* TO 'u1'@'%'")
         );
         // Creating it again is refused, not silently accepted.
         assert!(!registry.create_user("u1", "%", ""));
@@ -350,12 +350,12 @@ mod tests {
         // Captured from Go: SELECT,INSERT,UPDATE,PROCESS,SUPER.
         assert_eq!(
             registry.show_grants("u1", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
-            Some("GRANT SELECT,INSERT,UPDATE,PROCESS,SUPER ON *.* TO `u1`@`%`")
+            Some("GRANT SELECT,INSERT,UPDATE,PROCESS,SUPER ON *.* TO 'u1'@'%'")
         );
         registry.revoke("u1", "%", GlobalPriv::Super.bit());
         assert_eq!(
             registry.show_grants("u1", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
-            Some("GRANT SELECT,INSERT,UPDATE,PROCESS ON *.* TO `u1`@`%`")
+            Some("GRANT SELECT,INSERT,UPDATE,PROCESS ON *.* TO 'u1'@'%'")
         );
     }
 
@@ -375,7 +375,7 @@ mod tests {
         registry.grant("u1", "%", all_privs_mask());
         assert_eq!(
             registry.show_grants("u1", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
-            Some("GRANT ALL PRIVILEGES ON *.* TO `u1`@`%`")
+            Some("GRANT ALL PRIVILEGES ON *.* TO 'u1'@'%'")
         );
     }
 
@@ -424,10 +424,10 @@ mod tests {
         assert_eq!(
             registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some(
-                "GRANT SELECT ON *.* TO `u`@`%`\n\
-                 GRANT SELECT ON `aaadb`.* TO `u`@`%`\n\
-                 GRANT SELECT ON `db1`.* TO `u`@`%`\n\
-                 GRANT SELECT,INSERT ON `db1`.`t1` TO `u`@`%`"
+                "GRANT SELECT ON *.* TO 'u'@'%'\n\
+                 GRANT SELECT ON `aaadb`.* TO 'u'@'%'\n\
+                 GRANT SELECT ON `db1`.* TO 'u'@'%'\n\
+                 GRANT SELECT,INSERT ON `db1`.`t1` TO 'u'@'%'"
             )
         );
     }
@@ -440,8 +440,8 @@ mod tests {
         assert_eq!(
             registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some(
-                "GRANT USAGE ON *.* TO `u`@`%`\n\
-                 GRANT ALL PRIVILEGES ON `db1`.* TO `u`@`%`"
+                "GRANT USAGE ON *.* TO 'u'@'%'\n\
+                 GRANT ALL PRIVILEGES ON `db1`.* TO 'u'@'%'"
             )
         );
     }
@@ -468,8 +468,8 @@ mod tests {
         assert_eq!(
             registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some(
-                "GRANT USAGE ON *.* TO `u`@`%`\n\
-                 GRANT ALL PRIVILEGES ON `db1`.`t1` TO `u`@`%`"
+                "GRANT USAGE ON *.* TO 'u'@'%'\n\
+                 GRANT ALL PRIVILEGES ON `db1`.`t1` TO 'u'@'%'"
             )
         );
     }
@@ -486,8 +486,8 @@ mod tests {
         assert_eq!(
             registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some(
-                "GRANT USAGE ON *.* TO `u`@`%`\n\
-                 GRANT SELECT ON `db1`.* TO `u`@`%`"
+                "GRANT USAGE ON *.* TO 'u'@'%'\n\
+                 GRANT SELECT ON `db1`.* TO 'u'@'%'"
             )
         );
         registry.revoke_db("u", "%", "db1", GlobalPriv::Select.bit());
@@ -496,7 +496,7 @@ mod tests {
         assert!(registry.db_grant_row_exists("u", "%", "db1"));
         assert_eq!(
             registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
-            Some("GRANT USAGE ON *.* TO `u`@`%`")
+            Some("GRANT USAGE ON *.* TO 'u'@'%'")
         );
     }
 

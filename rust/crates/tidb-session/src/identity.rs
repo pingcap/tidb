@@ -466,24 +466,40 @@ impl Session {
             // single grant, so `SELECT ... FROM information_schema.*` needs
             // nothing and a write there is refused whatever is granted.
             use crate::table_privilege::TemporaryPrivilege;
-            let granted = match request.temporary_privilege {
-                TemporaryPrivilege::Skip => true,
-                TemporaryPrivilege::SkipLocal
-                    if self.is_local_temporary_table(&request.database, &request.table) =>
-                {
-                    true
-                }
-                TemporaryPrivilege::CreateLocal => self.has_scoped_privilege(
-                    &request.database,
-                    "",
-                    privilege::GlobalPriv::CreateTemporaryTables,
-                ),
-                _ => {
-                    self.has_scoped_privilege(&request.database, &request.table, request.privilege)
+            let granted = if !request.dynamic_privileges.is_empty() {
+                request
+                    .dynamic_privileges
+                    .iter()
+                    .any(|name| self.has_dynamic_privilege(name, false))
+            } else {
+                match request.temporary_privilege {
+                    TemporaryPrivilege::Skip => true,
+                    TemporaryPrivilege::SkipLocal
+                        if self.is_local_temporary_table(&request.database, &request.table) =>
+                    {
+                        true
+                    }
+                    TemporaryPrivilege::CreateLocal => self.has_scoped_privilege(
+                        &request.database,
+                        "",
+                        privilege::GlobalPriv::CreateTemporaryTables,
+                    ),
+                    _ => {
+                        self.has_scoped_privilege(
+                            &request.database,
+                            &request.table,
+                            request.privilege,
+                        ) || request.also_granted_by.iter().any(|privilege| {
+                            self.has_scoped_privilege(&request.database, &request.table, *privilege)
+                        })
+                    }
                 }
             };
             if granted {
                 continue;
+            }
+            if let Some(denial) = request.specific_denial {
+                return Err(DriverError::SpecificAccessDenied(denial.to_owned()));
             }
             return Err(if request.database_named_in_error {
                 DriverError::DbAccessDenied {

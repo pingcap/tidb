@@ -55,6 +55,16 @@ pub(crate) struct TablePrivilegeRequest {
     pub(crate) temporary_privilege: TemporaryPrivilege,
     /// Go authErr can name a different command/table than the checked visit.
     pub(crate) table_error_override: Option<(&'static str, String)>,
+    /// Go `appendDynamicVisitInfo`: dynamic privileges any one of which
+    /// grants the visit (SUPER standing in for each); empty for an ordinary
+    /// static-privilege visit.
+    pub(crate) dynamic_privileges: &'static [&'static str],
+    /// Go's `ErrSpecificAccessDenied` authErr (1227), naming what the
+    /// statement needs.
+    pub(crate) specific_denial: Option<&'static str>,
+    /// Further static privileges that grant the visit as well: Go checks a
+    /// combined mask (`RequestVerification` asks `priv & mask > 0`).
+    pub(crate) also_granted_by: &'static [GlobalPriv],
 }
 
 impl TablePrivilegeRequest {
@@ -67,6 +77,30 @@ impl TablePrivilegeRequest {
             database_named_in_error: false,
             table_error_override: None,
             temporary_privilege: TemporaryPrivilege::Check,
+            dynamic_privileges: &[],
+            specific_denial: None,
+            also_granted_by: &[],
+        }
+    }
+
+    /// Go `appendDynamicVisitInfo(privileges, false,
+    /// ErrSpecificAccessDenied(denial))`.
+    fn dynamic(privileges: &'static [&'static str], denial: &'static str) -> Self {
+        Self {
+            table_named_in_error: false,
+            dynamic_privileges: privileges,
+            specific_denial: Some(denial),
+            ..Self::new("", "", GlobalPriv::Super)
+        }
+    }
+
+    /// A global visit whose denial Go reports as
+    /// `ErrSpecificAccessDenied(denial)`.
+    fn specific(privilege: GlobalPriv, denial: &'static str) -> Self {
+        Self {
+            table_named_in_error: false,
+            specific_denial: Some(denial),
+            ..Self::new("", "", privilege)
         }
     }
 
@@ -207,6 +241,43 @@ fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The tables a locking read locks: its `FOR UPDATE OF` list, or Go
+/// `ExtractTableList(sel.From)` -- every table its FROM clause names,
+/// through joins and derived tables, CTE names excepted.
+fn locking_read_tables(
+    select: &tidb_ast::SelectStmt,
+    lock: &tidb_ast::SelectLock,
+    current_db: &str,
+) -> Vec<(String, String)> {
+    if !lock.of.is_empty() {
+        return lock
+            .of
+            .iter()
+            .filter_map(|path| split_path(path, current_db))
+            .collect();
+    }
+    let Some(from) = &select.from else {
+        return Vec::new();
+    };
+    // The statement's own FROM clause alone, under its WITH clause so the
+    // CTE scope still hides CTE names.
+    let mut from_only = select.clone();
+    from_only.fields = tidb_ast::SelectFieldList::default();
+    from_only.from = Some(from.clone());
+    from_only.where_clause = None;
+    from_only.group_by.clear();
+    from_only.having = None;
+    from_only.windows.clear();
+    from_only.order_by.clear();
+    from_only.lock = None;
+    read_tables(
+        &Stmt::Query(tidb_ast::NodeBox::new(tidb_ast::QueryStmt::Select(
+            Box::new(from_only),
+        ))),
+        current_db,
+    )
+}
+
 /// Go's `visitInfo` for one statement, in the order its builder appends it.
 ///
 /// An empty list means the statement demands no TABLE-scope privilege here:
@@ -224,13 +295,33 @@ pub(crate) fn required_table_privileges(
     match stmt {
         // `buildDataSource` (`logical_plan_builder.go` around line 4972)
         // appends `SelectPriv` for every table the query reads.
-        Stmt::Query(_) => {
+        Stmt::Query(query) => {
             for (schema, table) in read_tables(stmt, current_db) {
                 requests.push(TablePrivilegeRequest::new(
                     &schema,
                     &table,
                     GlobalPriv::Select,
                 ));
+            }
+            // Go `buildSelect`: a locking read also needs DELETE, UPDATE or
+            // LOCK TABLES on each table it locks -- the `OF` list, or every
+            // table of its FROM clause.
+            if let tidb_ast::QueryStmt::Select(select) = &**query {
+                if let Some(lock) = &select.lock {
+                    for (schema, table) in locking_read_tables(select, lock, current_db) {
+                        let mut request =
+                            TablePrivilegeRequest::new(&schema, &table, GlobalPriv::Delete);
+                        request.also_granted_by = &[GlobalPriv::Update, GlobalPriv::LockTables];
+                        request.table_error_override =
+                            Some(("SELECT with locking clause", table.clone()));
+                        requests.push(request);
+                    }
+                }
+            }
+            // Go `buildSelectInto` appends FILE after planning the query.
+            if matches!(&**query, tidb_ast::QueryStmt::Select(select) if select.into_outfile.is_some())
+            {
+                requests.push(TablePrivilegeRequest::specific(GlobalPriv::File, "FILE"));
             }
         }
         Stmt::Dml(dml) => match &**dml {
@@ -320,6 +411,22 @@ pub(crate) fn required_table_privileges(
             _ => {}
         },
         Stmt::Ddl(ddl) => {
+            // Go `buildDDL`'s dynamic-privilege visits.
+            match ddl.as_ref() {
+                DdlStmt::CreatePlacementPolicy(_)
+                | DdlStmt::AlterPlacementPolicy(_)
+                | DdlStmt::DropPlacementPolicy(_) => requests.push(TablePrivilegeRequest::dynamic(
+                    &["PLACEMENT_ADMIN"],
+                    "SUPER or PLACEMENT_ADMIN",
+                )),
+                DdlStmt::CreateResourceGroup(_)
+                | DdlStmt::AlterResourceGroup(_)
+                | DdlStmt::DropResourceGroup(_) => requests.push(TablePrivilegeRequest::dynamic(
+                    &["RESOURCE_GROUP_ADMIN"],
+                    "SUPER or RESOURCE_GROUP_ADMIN",
+                )),
+                _ => {}
+            }
             if let DdlStmt::CreateView(_) = ddl.as_ref() {
                 // Go builds the query before appending CREATE VIEW and DROP
                 // visits. Reuse scoped read collection, including subqueries.

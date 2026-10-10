@@ -672,8 +672,8 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
     assert_eq!(
         row_text(bob.run("SHOW GRANTS FOR 'bob'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO `bob`@`%`"],
-            ["GRANT CONNECTION_ADMIN ON *.* TO `bob`@`%`"],
+            ["GRANT USAGE ON *.* TO 'bob'@'%'"],
+            ["GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'"],
         ]
     );
 
