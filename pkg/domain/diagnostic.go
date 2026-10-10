@@ -27,8 +27,7 @@ import (
 )
 
 // StartDiagnostic starts query services without DDL execution or system-table
-// maintenance. The independent server-ID lease stays active, while server-info
-// and topology registration are suppressed by their syncers.
+// maintenance. The independent server-ID lease stays active.
 func (do *Domain) StartDiagnostic() error {
 	cfg := config.GetGlobalConfig()
 	if cfg.EnableGlobalKill && do.etcdClient != nil {
@@ -44,11 +43,6 @@ func (do *Domain) StartDiagnostic() error {
 		do.isSyncer.SyncLoop(do.ctx)
 	}, "loadSchemaInLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
-	if kv.IsUserKS(do.store) {
-		if err := do.loadSysKSInfoSchema(); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
