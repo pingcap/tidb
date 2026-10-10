@@ -169,8 +169,24 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			// we should not fold the extension function, because it may have a side effect.
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, expr) {
-			return function(ctx, x)
+		if function := specialFoldHandler[x.FuncName.L]; function != nil {
+			canFold := true
+			if x.FuncName.L == ast.Case {
+				// A mutable result arm does not affect which CASE branch is selected.
+				// Only mutable WHEN conditions make branch elimination unsafe for plan cache.
+				args := x.GetArgs()
+				for i := 0; i < len(args)-1; i += 2 {
+					if MaybeOverOptimized4PlanCache(ctx, args[i]) {
+						canFold = false
+						break
+					}
+				}
+			} else {
+				canFold = !MaybeOverOptimized4PlanCache(ctx, expr)
+			}
+			if canFold {
+				return function(ctx, x)
+			}
 		}
 
 		args := x.GetArgs()
