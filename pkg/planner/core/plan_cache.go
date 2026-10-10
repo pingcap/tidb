@@ -256,12 +256,11 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
 		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
-		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
 		if hit && instancePlanCacheEnabled(ctx) {
 			plan, hit = clonePlanForInstancePlanCache(ctx, sctx, stmt, plan)
 		}
 		if hit {
-			if plan, ok, err := adjustCachedPlan(ctx, sctx, plan, stmtHints, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
+			if plan, ok, err := adjustCachedPlan(ctx, sctx, plan, stmtHints, isNonPrepared, binding, is, stmt); err != nil || ok {
 				return plan, outputCols, err
 			}
 		}
@@ -328,15 +327,13 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 }
 
 func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
-	plan base.Plan, stmtHints *hint.StmtHints, isNonPrepared, skipPrivCheck bool,
+	plan base.Plan, stmtHints *hint.StmtHints, isNonPrepared bool,
 	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (
 	base.Plan, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
-	if !skipPrivCheck { // keep the prior behavior
-		if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
-			return nil, false, err
-		}
+	if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
+		return nil, false, err
 	}
 	if !RebuildPlan4CachedPlan(plan) {
 		return nil, false, nil
