@@ -897,25 +897,24 @@ impl PreparedSelectPlan {
             ctx?;
         }
         let parameters: Arc<[Datum]> = Arc::from(values);
-        let (cached_plan, generation, cache_hit) = match cached {
+        let rebound = match cached {
             Some(plan) => {
                 let generation = plan.lock().ok()?.bind(values, ctx);
                 match generation {
-                    Ok(generation) => (plan, generation, true),
+                    Ok(generation) => Some((plan, generation)),
+                    // Every hit rebuilds each range from its access
+                    // conditions, so a partially rebuilt entry is safe to
+                    // keep, as Go keeps it.
+                    Err(failure) if failure.replan(ctx) => None,
                     // A context-free lookup leaves the entry for the bind
                     // that carries the statement.
-                    Err(super::planner_bridge::CachedPlanBindFailure::NeedsStatement) => {
-                        return None;
-                    }
-                    Err(super::planner_bridge::CachedPlanBindFailure::Rejected) => {
-                        // Go rejects a cache entry whose in-place range rebuild
-                        // fails and generates a fresh plan. Do not leave a
-                        // partially rebuilt tree available to the next execute.
-                        cache.delete(&cache_key);
-                        return None;
-                    }
+                    Err(_) => return None,
                 }
             }
+            None => None,
+        };
+        let (cached_plan, generation, cache_hit) = match rebound {
+            Some((plan, generation)) => (plan, generation, true),
             None => {
                 let ctx = ctx?.clone().with_prepared_params(Arc::clone(&parameters));
                 let statement = crate::bind_prepared_statement(statement, values).ok()?;

@@ -804,12 +804,9 @@ impl Session {
                 .unwrap_or_else(|_| "utf8mb4_bin".to_owned()),
             allow_write_row_id: on(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID),
             sysdate_is_now: on(tidb_vardef::tidb_vars::TIDB_SYSDATE_IS_NOW),
-            timestamp: self
-                .vars
-                .get_system("timestamp")
-                .ok()
-                .filter(|value| value != "0")
-                .and_then(|value| value.parse::<f64>().ok()),
+            // Only an explicit override: this snapshot outlives the statement,
+            // and the hook's live answer would pin `NOW()` to its first read.
+            timestamp: self.vars.timestamp_override(),
             allow_auto_random_explicit_insert: on(
                 tidb_vardef::tidb_vars::TIDB_ALLOW_AUTO_RAND_EXPLICIT_INSERT,
             ),

@@ -939,7 +939,10 @@ fn build_table_scan(
             "the physical table scan cannot preserve its order",
         ));
     }
-    if !scan.ranges.is_empty() {
+    // A scan built from access conditions always plans a non-empty range; it
+    // is empty only after a cached plan rebuilt it for parameters that admit
+    // no handle (`c1 > 9223372036854775807`), and Go then reads nothing.
+    if !scan.ranges.is_empty() || scan.range_rebuild.is_some() {
         let ranges = executor_ranges(&scan.ranges);
         if !source.accept_handle_ranges(&ranges) {
             return Err(DriverError::unsupported(

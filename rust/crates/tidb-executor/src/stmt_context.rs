@@ -4454,6 +4454,12 @@ impl Columns for StmtContext {
         }) && !self.skip_plan_cache()
     }
 
+    fn set_skip_plan_cache(&self, reason: &str) {
+        if self.use_plan_cache() {
+            Self::set_skip_plan_cache(self, reason);
+        }
+    }
+
     fn skip_plan_cache_for_comparison(
         &self,
         constant: &tidb_expr::constant::Constant,

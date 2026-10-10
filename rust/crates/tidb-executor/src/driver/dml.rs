@@ -2306,18 +2306,21 @@ impl CachedDmlPlan {
         ctx: Option<&crate::StmtContext>,
     ) -> Result<u64, super::planner_bridge::CachedPlanBindFailure> {
         use super::planner_bridge::CachedPlanBindFailure;
-        super::bind_prepared_statement_in_place(&mut self.statement, values)
-            .map_err(|_| CachedPlanBindFailure::Rejected)?;
+        super::bind_prepared_statement_in_place(&mut self.statement, values).map_err(|_| {
+            CachedPlanBindFailure::Rejected {
+                rebuild_error: None,
+            }
+        })?;
         let needs_statement = std::sync::atomic::AtomicBool::new(false);
         let statement = super::planner_bridge::deferred_rebuild_context(ctx, values);
-        let evaluator = |expression: &tidb_expr::expression::Expression| match &statement {
-            Some(statement) => tidb_expr::eval_expression_once(expression, statement),
-            None => {
-                needs_statement.store(true, std::sync::atomic::Ordering::Relaxed);
-                Err(tidb_expr::EvalError::Unsupported(
-                    "a deferred expression needs the executing statement",
-                ))
-            }
+        let parameters = tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values);
+        let evaluator = |expression: &tidb_expr::expression::Expression| {
+            super::planner_bridge::rebuild_evaluate(
+                expression,
+                statement.as_ref(),
+                &parameters,
+                &needs_statement,
+            )
         };
         let rebuilt = self.physical.rebuild_plan_for_cache_in_place(
             &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values)
@@ -2326,7 +2329,7 @@ impl CachedDmlPlan {
         if needs_statement.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(CachedPlanBindFailure::NeedsStatement);
         }
-        rebuilt.map_err(|_| CachedPlanBindFailure::Rejected)?;
+        rebuilt.map_err(CachedPlanBindFailure::rebuild_failed)?;
         self.generation = self.generation.wrapping_add(1);
         Ok(self.generation)
     }
@@ -2515,25 +2518,24 @@ impl PreparedDmlPlan {
             ctx?;
         }
         let parameters: Arc<[Datum]> = Arc::from(params);
-        let (cached_plan, generation, cache_hit) = match cached {
+        let rebound = match cached {
             Some(plan) => {
                 let generation = {
                     let mut cached = plan.lock().ok()?;
                     cached.bind(params, ctx)
                 };
                 match generation {
-                    Ok(generation) => (plan, generation, true),
+                    Ok(generation) => Some((plan, generation)),
                     // A context-free lookup leaves the entry for the bind
                     // that carries the statement.
-                    Err(super::planner_bridge::CachedPlanBindFailure::NeedsStatement) => {
-                        return None;
-                    }
-                    Err(super::planner_bridge::CachedPlanBindFailure::Rejected) => {
-                        cache.delete(&cache_key);
-                        return None;
-                    }
+                    Err(failure) if failure.replan(ctx) => None,
+                    Err(_) => return None,
                 }
             }
+            None => None,
+        };
+        let (cached_plan, generation, cache_hit) = match rebound {
+            Some((plan, generation)) => (plan, generation, true),
             None => {
                 let ctx = ctx?.clone().with_prepared_params(Arc::clone(&parameters));
                 let bound = super::bind_prepared_statement(statement, params).ok()?;

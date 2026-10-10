@@ -551,6 +551,10 @@ pub trait Columns {
     fn skip_plan_cache_for_comparison(&self, _constant: &crate::constant::Constant, _target: &str) {
     }
 
+    /// Go `BuildContext.SetSkipPlanCache` from expression construction; the
+    /// statement owner ignores it unless the statement uses the plan cache.
+    fn set_skip_plan_cache(&self, _reason: &str) {}
+
     /// Whether executor expression batches use Go's vectorized path.
     fn enable_vectorized_expression(&self) -> bool {
         true

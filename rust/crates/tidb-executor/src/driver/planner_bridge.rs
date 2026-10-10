@@ -2621,6 +2621,12 @@ pub(crate) fn physical_plan_for_logical(
         .with_partial_ordered_index_for_topn(ctx.partial_ordered_index_for_topn())
         .with_opt_prefix_index_single_scan(ctx.opt_prefix_index_single_scan())
         .with_mpp_warning_sink(ctx)
+        .with_plan_cache(
+            tidb_expr::Columns::use_plan_cache(ctx),
+            ctx,
+            ctx.optimizer_fix_control()
+                .get_bool_with_default(tidb_planner::fix_control::FIX_44830, false),
+        )
         .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
         .with_selectivity_factor(ctx.selectivity_factor())
         .with_ordering_index_selectivity_ratio(ctx.ordering_index_selectivity_ratio())
@@ -3516,20 +3522,23 @@ impl CachedSelectPlan {
         values: &[tidb_datatype::Datum],
         ctx: Option<&crate::StmtContext>,
     ) -> Result<u64, CachedPlanBindFailure> {
-        super::bind_prepared_statement_in_place(&mut self.statement, values)
-            .map_err(|_| CachedPlanBindFailure::Rejected)?;
+        super::bind_prepared_statement_in_place(&mut self.statement, values).map_err(|_| {
+            CachedPlanBindFailure::Rejected {
+                rebuild_error: None,
+            }
+        })?;
         // Rebuild through the current execute parameters, never the datum
         // cached when the marker-bearing expression was first planned.
         let needs_statement = std::sync::atomic::AtomicBool::new(false);
         let statement = deferred_rebuild_context(ctx, values);
-        let evaluator = |expression: &tidb_expr::expression::Expression| match &statement {
-            Some(statement) => tidb_expr::eval_expression_once(expression, statement),
-            None => {
-                needs_statement.store(true, std::sync::atomic::Ordering::Relaxed);
-                Err(tidb_expr::EvalError::Unsupported(
-                    "a deferred expression needs the executing statement",
-                ))
-            }
+        let parameters = tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values);
+        let evaluator = |expression: &tidb_expr::expression::Expression| {
+            rebuild_evaluate(
+                expression,
+                statement.as_ref(),
+                &parameters,
+                &needs_statement,
+            )
         };
         let rebuilt = self.physical.rebuild_plan_for_cache_in_place(
             &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values)
@@ -3538,7 +3547,7 @@ impl CachedSelectPlan {
         if needs_statement.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(CachedPlanBindFailure::NeedsStatement);
         }
-        rebuilt.map_err(|_| CachedPlanBindFailure::Rejected)?;
+        rebuilt.map_err(CachedPlanBindFailure::rebuild_failed)?;
         self.generation = self.generation.wrapping_add(1);
         Ok(self.generation)
     }
@@ -3552,14 +3561,78 @@ impl CachedSelectPlan {
 }
 
 /// Why a cached plan could not be rebuilt for an execute.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CachedPlanBindFailure {
     /// The rebuild reached a deferred expression (`NOW()`) and was given no
     /// statement to evaluate it in: the entry stays, and a bind with the
     /// executing statement rebuilds it.
     NeedsStatement,
     /// Go rejects an entry whose in-place rebuild fails.
-    Rejected,
+    Rejected {
+        /// Go `RebuildPlan4CachedPlan`'s `rebuildRange` error, which it
+        /// reports as "skip plan-cache: plan rebuild failed, %s".
+        rebuild_error: Option<String>,
+    },
+}
+
+impl CachedPlanBindFailure {
+    pub(crate) fn rebuild_failed(
+        error: tidb_planner::physical_plan_cache::PlanCacheRebuildError,
+    ) -> Self {
+        Self::Rejected {
+            rebuild_error: Some(error.to_string()),
+        }
+    }
+
+    /// Go `RebuildPlan4CachedPlan` warns and `generateNewPlan` replans. The
+    /// entry stays: a cacheable new plan replaces it under the same key, an
+    /// uncacheable one leaves it for the next execute. A context-free probe
+    /// answers `false`, so the bind that carries the statement replans.
+    pub(crate) fn replan(&self, ctx: Option<&crate::StmtContext>) -> bool {
+        let (Self::Rejected { rebuild_error }, Some(ctx)) = (self, ctx) else {
+            return false;
+        };
+        if let Some(error) = rebuild_error {
+            ctx.append_warning_parts(
+                1105,
+                &format!("skip plan-cache: plan rebuild failed, {error}"),
+            );
+        }
+        true
+    }
+}
+
+/// One evaluation during a cached plan's rebuild. Bound parameters and plain
+/// constants evaluate without a statement, so a context-free probe rebuilds
+/// the same ranges the statement would; only a deferred expression (`NOW()`)
+/// needs the executing statement, and the probe then reports
+/// `NeedsStatement` instead of building from a failed evaluation.
+pub(super) fn rebuild_evaluate(
+    expression: &tidb_expr::expression::Expression,
+    statement: Option<&crate::StmtContext>,
+    parameters: &tidb_planner::physical_plan_cache::CachedPlanRebuildContext<'_>,
+    needs_statement: &std::sync::atomic::AtomicBool,
+) -> Result<tidb_datatype::Datum, tidb_expr::EvalError> {
+    if let Some(statement) = statement {
+        return tidb_expr::eval_expression_once(expression, statement);
+    }
+    if contains_deferred_constant(expression) {
+        needs_statement.store(true, std::sync::atomic::Ordering::Relaxed);
+        return Err(tidb_expr::EvalError::Unsupported(
+            "a deferred expression needs the executing statement",
+        ));
+    }
+    tidb_expr::eval_expression_once(expression, parameters)
+}
+
+fn contains_deferred_constant(expression: &tidb_expr::expression::Expression) -> bool {
+    match expression {
+        tidb_expr::expression::Expression::Constant(constant) => constant.deferred_expr.is_some(),
+        tidb_expr::expression::Expression::ScalarFunction(function) => {
+            function.args.iter().any(contains_deferred_constant)
+        }
+        _ => false,
+    }
 }
 
 /// The context a cached plan's rebuild evaluates a deferred expression in:

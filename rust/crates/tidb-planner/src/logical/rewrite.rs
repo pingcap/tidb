@@ -2060,6 +2060,16 @@ fn join_key_estimate(
     }
 }
 
+impl DeriveStatsFold<'_> {
+    /// Go `sctx.SetSkipPlanCache` for the ranger, gated on `UseCache` as
+    /// Go's tracker is.
+    fn plan_cache_marker(&self) -> Option<&dyn super::rule::PlanCacheMarker> {
+        self.rule_context
+            .and_then(|context| context.plan_cache_marker)
+            .filter(|_| self.use_plan_cache)
+    }
+}
+
 impl OwnedRewrite for DeriveStatsFold<'_> {
     /// Go's `cumColGroups`, one copy per child.
     type Down = Vec<Vec<tidb_expr::column::Column>>;
@@ -2197,6 +2207,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             range_max_size: self.range_max_size,
                             range_fallback_handler: self.range_fallback_handler,
                             expression_evaluator: &evaluate,
+                            plan_cache_marker: self.plan_cache_marker(),
                         };
                         let filled_paths = op.derive_stats_filled_paths();
                         let range_selectivity = analyzed_filter_selectivity_in(
@@ -2547,6 +2558,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                         range_max_size: self.range_max_size,
                         range_fallback_handler: self.range_fallback_handler,
                         expression_evaluator: &evaluate,
+                        plan_cache_marker: self.plan_cache_marker(),
                     };
                     match crate::access_path::derive_access_paths(
                         source,

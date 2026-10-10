@@ -574,6 +574,19 @@ pub struct EqAndInExtraction<'a> {
     pub column_values: Vec<Option<ValueInfo>>,
     /// Go's trailing bool: an EMPTY merged range was proven.
     pub empty_range: bool,
+    /// Go's `SetSkipPlanCache("some parameters may be overwritten")`: the
+    /// extraction merged several conditions on one column (`a=? and a=?`,
+    /// `a>? and a<?`) while some condition holds a mutable constant, so the
+    /// merged result is only valid for the current parameter values.
+    pub parameters_overwritten: bool,
+}
+
+/// Go `MaybeOverOptimized4PlanCache`'s mutable-constant half over the
+/// extraction's input; the caller applies the `UseCache` half.
+fn contains_mutable_const<C: std::borrow::Borrow<Expression>>(conditions: &[C]) -> bool {
+    conditions.iter().any(|cond| {
+        tidb_expr::expr_util::predicates::contain_mutable_const(std::slice::from_ref(cond.borrow()))
+    })
 }
 
 /// Go `ExtractEqAndInCondition` (`detacher.go:732`).
@@ -646,14 +659,17 @@ pub fn extract_eq_and_in_condition_in<'a, C: std::borrow::Borrow<Expression>>(
             Err(_) => return EqAndInExtraction::default(),
         };
         if points[offset].is_empty() {
-            // A provably false conjunction: the whole range is empty.
+            // A provably false conjunction: the whole range is empty
+            // (`a>@x and a<@y` is invalid only while @x >= @y).
             return EqAndInExtraction {
                 empty_range: true,
+                parameters_overwritten: contains_mutable_const(conditions),
                 ..EqAndInExtraction::default()
             };
         }
     }
     let mut filters = Vec::new();
+    let mut parameters_overwritten = false;
     for i in 0..cols.len() {
         if !merged[i] {
             // Taken rather than cloned: the two arms that reject the access
@@ -689,6 +705,7 @@ pub fn extract_eq_and_in_condition_in<'a, C: std::borrow::Borrow<Expression>>(
             Some(single) if single.is_empty() => {
                 return EqAndInExtraction {
                     empty_range: true,
+                    parameters_overwritten: contains_mutable_const(conditions),
                     ..EqAndInExtraction::default()
                 };
             }
@@ -709,6 +726,8 @@ pub fn extract_eq_and_in_condition_in<'a, C: std::borrow::Borrow<Expression>>(
                     }
                 }
                 accesses[i] = Some(rebuilt);
+                // `a=@x and a=@y` collapses to `a=@x` only while @x == @y.
+                parameters_overwritten |= contains_mutable_const(conditions);
             }
         }
     }
@@ -747,6 +766,7 @@ pub fn extract_eq_and_in_condition_in<'a, C: std::borrow::Borrow<Expression>>(
         new_conditions,
         column_values,
         empty_range: false,
+        parameters_overwritten,
     }
 }
 
@@ -769,6 +789,9 @@ pub struct DetachRangeResult {
     pub is_dnf_cond: bool,
     /// Go `MinAccessCondsForDNFCond`.
     pub min_access_conds_for_dnf_cond: i64,
+    /// What Go's detacher passed to `sctx.SetSkipPlanCache` during this
+    /// detach; the caller forwards it to the statement's plan-cache tracker.
+    pub skip_plan_cache_reason: Option<String>,
 }
 
 /// Go `rangeDetacher`: one detach run's inputs.
@@ -955,6 +978,10 @@ impl RangeDetacher<'_> {
             self.regard_null_as_point,
             self.eval_expression,
         );
+        if extraction.parameters_overwritten {
+            self.skip_plan_cache_reason
+                .get_or_insert_with(|| "some parameters may be overwritten".to_owned());
+        }
         if extraction.empty_range {
             return Ok(res);
         }
@@ -1899,7 +1926,9 @@ fn detach_cond_and_build_range(
         fix_44389: false,
         fix_54337: false,
     };
-    detacher.detach_cond_and_build_range_for_cols(conditions)
+    let mut res = detacher.detach_cond_and_build_range_for_cols(conditions)?;
+    res.skip_plan_cache_reason = detacher.skip_plan_cache_reason;
+    Ok(res)
 }
 
 /// Go `MergeDNFItems4Col` (`detacher.go:1191`): group single-column DNF

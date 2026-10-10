@@ -3131,6 +3131,17 @@ impl SessionVars {
         self.system_value(name).map(Cow::into_owned)
     }
 
+    /// An explicit `SET timestamp = x` override, which pins every statement's
+    /// clock. Reading `@@timestamp` itself (Go's `GetSession` hook) answers
+    /// the CURRENT statement's time when no override is set, so a value read
+    /// through [`Self::get_system`] must never be kept past one statement.
+    pub(crate) fn timestamp_override(&self) -> Option<f64> {
+        self.systems
+            .get("timestamp")
+            .filter(|value| !value.is_empty() && value.as_str() != "0")
+            .and_then(|value| value.parse::<f64>().ok())
+    }
+
     /// Returns the value that Go's `GetSessionStatesSystemVar` would encode
     /// while migrating this session, together with whether the entry should
     /// be kept in the session-state image.

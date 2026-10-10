@@ -5705,7 +5705,6 @@ impl IndexJoinLookupExec {
                         }
                     })
                     .collect::<Option<Vec<_>>>()
-                    .and_then(|probe| self.probe_in_key_domain(probe))
             };
             let Some(key) = key else {
                 // A probe that fails its own key conversion reads nothing,
@@ -5733,7 +5732,7 @@ impl IndexJoinLookupExec {
     }
 
     /// Converts one probe's evaluated bound datums into the compared key
-    /// column's domain -- the same conversion `probe_in_key_domain` applies to
+    /// column's domain -- the same conversion the join applies to its
     /// equality probes. A NULL or unconvertible value yields `None`: Go's
     /// ranger answers such comparisons with an empty range, i.e. no rows.
     fn bound_values_in_key_domain(&self, values: &[Datum]) -> Option<Vec<Datum>> {
@@ -5890,52 +5889,6 @@ impl IndexJoinLookupExec {
     /// not open ranges (batched complete-handle lookups) never carry bounds.
     fn next_probe(&mut self) -> Option<Vec<Datum>> {
         Some(self.next_probe_with_bounds()?.0)
-    }
-
-    /// Go `innerWorker.constructDatumLookupKey`
-    /// (`executor/join/index_lookup_join.go`): the outer value is converted to
-    /// the INNER key column's type, and the lookup happens with the converted
-    /// value -- `dLookupKey = append(dLookupKey, innerValue)`.
-    ///
-    /// Both of Go's refusals are kept, because each one is a row that must NOT
-    /// match rather than an optimization: a conversion that overflows the
-    /// inner type means no inner row can hold the value, and a converted value
-    /// that no longer compares equal to the original means the conversion was
-    /// lossy (`if cmp != 0 { return nil, nil, nil }`). A NULL outer key never
-    /// probes at all under a plain `=`.
-    ///
-    /// Probing with the RAW outer value was a wrong-answer bug, not a slower
-    /// path: an index key is encoded from the value, so
-    /// `t(c1 decimal(4,1))` holding `0.0` never found `t1(c1 decimal(4,2))`
-    /// holding `0.00`, and `select /*+ INL_JOIN(t1) */ * from t left join t1
-    /// on t1.c1 = t.c1` null-extended a row TiDB matches. The hash join is
-    /// unaffected because it compares numerically instead of by encoded key,
-    /// so the same statement answered differently with and without the hint.
-    fn probe_in_key_domain(&self, probe: Vec<Datum>) -> Option<Vec<Datum>> {
-        let Some(types) = self.probe_key_types() else {
-            return Some(probe);
-        };
-        let mut probe = probe
-            .into_iter()
-            .enumerate()
-            .map(|(at, value)| match types.get(at) {
-                Some(column) => crate::driver::point_get_key::point_get_value(column, &value),
-                // A probe wider than the key it opens is left alone; the
-                // cursor below refuses it on its own terms.
-                None => Some(value),
-            })
-            .collect::<Option<Vec<_>>>()?;
-        for (at, value) in probe.iter_mut().enumerate() {
-            let length = self
-                .probe_key_prefix_lengths
-                .get(at)
-                .copied()
-                .unwrap_or(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
-            if let Some(field_type) = types.get(at) {
-                crate::index_prefix_cut::cut_datum_by_prefix_len(value, length, field_type);
-            }
-        }
-        Some(probe)
     }
 
     /// The field types of the object-key columns a probe is encoded against,

@@ -2062,12 +2062,26 @@ fn rewrite_leaf_compound(
                 .static_type()
                 .is_some_and(|field| field.code() == FieldTypeCode::Bit)
             {
+                // Dropping a mutable member freezes this parameter's value.
+                let ctx = resolver.comparison_context().unwrap_or(&crate::NoColumns);
+                let over_optimized = crate::expr_util::maybe_over_optimized_4_plan_cache(
+                    ctx.use_plan_cache(),
+                    &args,
+                );
                 let mut position = 0;
                 args.retain(|argument| {
                     position += 1;
-                    position == 1
-                        || !matches!(argument, Expression::Constant(constant)
-                            if matches!(constant.value, Datum::Int(value) if value < 0))
+                    let negative = match argument {
+                        Expression::Constant(constant) if position > 1 => match constant.value {
+                            Datum::Int(value) if value < 0 => Some(value),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let (Some(value), true) = (negative, over_optimized) {
+                        ctx.set_skip_plan_cache(&format!("Bit Column in ({value})"));
+                    }
+                    negative.is_none()
                 });
                 if args.len() < 2 {
                     return Err(EvalError::WrongParameterCount("in"));

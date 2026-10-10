@@ -2257,3 +2257,164 @@ fn explain_format_plan_cache_plans_through_the_cache() {
         ]]
     );
 }
+
+/// Runs `EXECUTE stmt USING <vars>` and returns its rows and the cache flag.
+fn execute_and_flag(session: &mut Session, vars: &str) -> (Vec<Vec<String>>, String) {
+    let rows = row_text(session.run(&format!("EXECUTE stmt USING {vars}")));
+    (rows, cache_flag(session))
+}
+
+/// Go `ExtractEqAndInCondition` merges `c2>=? and c2<=?` into `c2=?` when the
+/// two parameters are equal and calls `SetSkipPlanCache("some parameters may
+/// be overwritten")`: the merged point is only right for those values. A
+/// cached point built from `'9999','9999'` answered `'0000','9999'` with no
+/// row (`planner/core/tests/prepare/prepare`).
+#[test]
+fn merged_parameter_ranges_are_not_cached() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session
+        .run("create table t1(c1 varchar(20), c2 varchar(20), c3 bigint(20), primary key(c1, c2))")
+        .unwrap();
+    session
+        .run("insert into t1 values('0000','7777',1)")
+        .unwrap();
+    session
+        .run("prepare stmt from 'select * from t1 where c1=? and c2>=? and c2<=?'")
+        .unwrap();
+    session.run("set @a1='0000', @b1='9999'").unwrap();
+    assert_eq!(
+        execute_and_flag(&mut session, "@a1, @b1, @b1"),
+        (Vec::<Vec<String>>::new(), "0".to_owned())
+    );
+    assert_eq!(
+        execute_and_flag(&mut session, "@a1, @a1, @b1"),
+        (
+            vec![vec!["0000".into(), "7777".into(), "1".into()]],
+            "0".to_owned()
+        )
+    );
+}
+
+/// Go `rebuildRange` re-detaches every IndexMerge partial path on a hit, and
+/// `isSafeRange` refuses an index partial that rebuilt to no range. A partial
+/// that kept its first ranges answered `c1 >= 3 and c1 <= 1` with a row. An
+/// integer handle checks its OLD ranges (`buildRangeForTableScan`), so the
+/// empty rebuild is served from the cache and the execute after it replans
+/// (`planner/core/tests/prepare/prepare`).
+#[test]
+fn index_merge_partials_rebuild_their_ranges() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    let row = vec![vec!["2".to_owned(), "1".to_owned(), "1".to_owned()]];
+    let none = Vec::<Vec<String>>::new();
+    for (table, expected) in [
+        (
+            "create table t(c1 int, c2 int, c3 int, unique key(c1), key(c2))",
+            ["0", "0", "0", "1"],
+        ),
+        (
+            "create table t(c1 int primary key, c2 int, c3 int, key(c2))",
+            ["0", "0", "1", "0"],
+        ),
+    ] {
+        session.run("drop table if exists t").unwrap();
+        session.run(table).unwrap();
+        session.run("insert into t values(2,1,1)").unwrap();
+        let prepare = "prepare stmt from 'select /*+ use_index_merge(t) */ * from t where (c1 >= ? and c1 <= ?) or c2 > 1'";
+        session.run(prepare).unwrap();
+        session.run("set @a=1, @b=3").unwrap();
+        assert_eq!(
+            execute_and_flag(&mut session, "@a, @a"),
+            (none.clone(), expected[0].into())
+        );
+        assert_eq!(
+            execute_and_flag(&mut session, "@a, @b"),
+            (row.clone(), expected[1].into())
+        );
+        session.run(prepare).unwrap();
+        assert_eq!(
+            execute_and_flag(&mut session, "@b, @a"),
+            (none.clone(), expected[2].into())
+        );
+        assert_eq!(
+            execute_and_flag(&mut session, "@a, @b"),
+            (row.clone(), expected[3].into())
+        );
+    }
+}
+
+/// Go `inFunctionClass.verifyArgs` drops a negative member of a BIT column's
+/// IN list and calls `SetSkipPlanCache("Bit Column in (-21188)")`. The cached
+/// plan otherwise kept the dropped parameter's position and read one row
+/// twice for the next values (`planner/core/tests/prepare/issue`).
+#[test]
+fn bit_column_in_drops_a_negative_parameter_without_caching() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session
+        .run("CREATE TABLE t (COL1 char(20), COL2 bit(16), COL3 date, KEY U_M_COL5 (COL3, COL2))")
+        .unwrap();
+    session
+        .run("insert into t values ('','>d','9901-06-17')")
+        .unwrap();
+    session
+        .run("prepare stmt from 'select col3 from t where col1 is not null and col2 not in (?, ?, ?) and col3 in (?, ?, ?)'")
+        .unwrap();
+    session
+        .run(r#"set @a=-21188, @b=26824, @c=31855, @d="5597-1-4", @e="5755-12-6", @f="1253-7-12""#)
+        .unwrap();
+    session.run("EXECUTE stmt USING @a,@b,@c,@d,@e,@f").unwrap();
+    assert_eq!(
+        warnings(&mut session),
+        [[
+            "Warning",
+            "1105",
+            "skip prepared plan-cache: Bit Column in (-21188)"
+        ]]
+    );
+    session
+        .run(r#"set @a=-5360, @b=-11715, @c=9399, @d="9213-09-13", @e="4705-12-24", @f="9901-06-17""#)
+        .unwrap();
+    assert_eq!(
+        execute_and_flag(&mut session, "@a,@b,@c,@d,@e,@f"),
+        (vec![vec!["9901-06-17".into()]], "0".to_owned())
+    );
+}
+
+/// A cached integer-handle scan whose parameters admit no handle keeps the
+/// plan with an empty range, as Go's `buildRangeForTableScan` does, and reads
+/// nothing. The empty range had lowered to a full scan and answered
+/// `min(col1)` with the smallest stored key (`planner/core/tests/prepare/issue`).
+#[test]
+fn an_empty_rebuilt_handle_range_reads_nothing() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session
+        .run("CREATE TABLE t (COL1 bigint(45) NOT NULL, COL2 varchar(20), PRIMARY KEY (COL1))")
+        .unwrap();
+    session
+        .run("insert into t(col1) values (-9223372036854775808), (9223372036854775807)")
+        .unwrap();
+    session.run("set @a=9223372036854775807, @b=1").unwrap();
+    session
+        .run("prepare stmt from 'select min(col1) from t where col1 > ?'")
+        .unwrap();
+    assert_eq!(execute_and_flag(&mut session, "@a").0, [["NULL"]]);
+    assert_eq!(
+        execute_and_flag(&mut session, "@b"),
+        (vec![vec!["9223372036854775807".into()]], "0".to_owned())
+    );
+    assert_eq!(
+        execute_and_flag(&mut session, "@a"),
+        (vec![vec!["NULL".into()]], "1".to_owned())
+    );
+}

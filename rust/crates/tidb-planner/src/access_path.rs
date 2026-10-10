@@ -56,6 +56,9 @@ pub(crate) struct AccessPathDerivationContext<'a> {
     pub range_max_size: i64,
     pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
     pub expression_evaluator: &'a crate::ranger::points::ExpressionEvaluator<'a>,
+    /// Go `sctx.SetSkipPlanCache` from the ranger; `None` unless the
+    /// statement uses the plan cache (Go's tracker ignores it otherwise).
+    pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
 }
 
 impl AccessPathDerivationContext<'_> {
@@ -66,7 +69,7 @@ impl AccessPathDerivationContext<'_> {
         lengths: &[i64],
     ) -> Result<crate::ranger::detacher::DetachRangeResult, crate::ranger::points::PointBuilderError>
     {
-        match self.range_fallback_handler {
+        let detached = match self.range_fallback_handler {
             Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler_in(
                 conditions,
                 columns,
@@ -82,7 +85,14 @@ impl AccessPathDerivationContext<'_> {
                 self.range_max_size,
                 self.expression_evaluator,
             ),
+        }?;
+        if let (Some(marker), Some(reason)) = (
+            self.plan_cache_marker,
+            detached.skip_plan_cache_reason.as_deref(),
+        ) {
+            marker.set_skip_plan_cache(reason);
         }
+        Ok(detached)
     }
 }
 

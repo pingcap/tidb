@@ -199,3 +199,27 @@ fn a_str_to_date_failure_fails_a_strict_write() {
         )]
     );
 }
+
+/// Go reads `@@timestamp` through its `GetSession` hook, which answers the
+/// CURRENT statement's time unless `SET timestamp` overrides it, so `NOW()`
+/// moves from statement to statement. Caching the hook's first answer pinned
+/// every later `NOW()` of the session -- and made `AS OF TIMESTAMP @a` read a
+/// snapshot from before `@a` was set.
+#[test]
+fn now_advances_per_statement_unless_timestamp_is_set() {
+    let mut session = Session::new();
+    let first = cell(&mut session, "select now(6)");
+    session.run("select sleep(0.05)").unwrap();
+    session.run("set @a = now(6)").unwrap();
+    let assigned = cell(&mut session, "select @a");
+    let second = cell(&mut session, "select now(6)");
+    assert!(
+        first < assigned && assigned < second,
+        "{first} {assigned} {second}"
+    );
+    session.run("set timestamp = 1700000000.654321").unwrap();
+    let pinned = cell(&mut session, "select unix_timestamp(now(6))");
+    session.run("select sleep(0.05)").unwrap();
+    assert_eq!(cell(&mut session, "select unix_timestamp(now(6))"), pinned);
+    assert_eq!(pinned, "1700000000.654320");
+}

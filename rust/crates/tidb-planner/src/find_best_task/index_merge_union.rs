@@ -462,7 +462,7 @@ pub(super) fn build_converged_union_index_merge_task(
                         keep_order: matched.matched(),
                         desc,
                         ranges: ranges.clone(),
-                        range_rebuild: None,
+                        range_rebuild: partial_table_range_rebuild(ds, filled),
                         table_scan_penalty: ds.table_scan_penalty,
                         tikv_pushdown: None,
                         resolved_descriptor: Some(
@@ -618,6 +618,48 @@ pub(super) fn build_converged_union_index_merge_task(
     }))
 }
 
+/// Go `PhysicalIndexScan.AccessCondition` / `IdxCols` / `IdxColLens` of a
+/// merge partial, which `rebuildRange` re-detaches on a plan-cache hit.
+pub(crate) fn partial_index_range_rebuild(
+    filled: &crate::access_path::ordinary::FilledIndexPath,
+) -> Option<crate::physical_plan_cache::IndexRangeRebuild> {
+    if filled.detached.access_conds.is_empty() {
+        return None;
+    }
+    let (columns, lengths) = filled.columns.iter().cloned().unzip();
+    Some(crate::physical_plan_cache::IndexRangeRebuild::new(
+        filled.detached.access_conds.clone(),
+        columns,
+        lengths,
+    ))
+}
+
+/// Go `PhysicalTableScan.AccessCondition` of a merge partial over the
+/// handle, which `buildRangeForTableScan` re-detaches on a plan-cache hit.
+fn partial_table_range_rebuild(
+    ds: &DataSource,
+    filled: &crate::access_path::ordinary::FilledTablePath,
+) -> Option<crate::physical_plan_cache::TableRangeRebuild> {
+    let access_conds = &filled.detached.access_conds;
+    if access_conds.is_empty() {
+        return None;
+    }
+    Some(if ds.common_handle_cols.is_empty() {
+        crate::physical_plan_cache::TableRangeRebuild::int_handle(
+            access_conds.clone(),
+            filled.handle_type.clone(),
+            ds.pk_is_handle && filled.handle_type.is_unsigned(),
+        )
+    } else {
+        let (columns, lengths) = filled.common_columns.iter().cloned().unzip();
+        crate::physical_plan_cache::TableRangeRebuild::common_handle(
+            access_conds.clone(),
+            columns,
+            lengths,
+        )
+    })
+}
+
 /// One index partial of a union: its IndexRangeScan, under a Selection for
 /// its index filters or a global index's partition filter.
 #[allow(clippy::too_many_arguments)]
@@ -657,7 +699,7 @@ fn push_index_partial(
         keep_order: matched,
         desc,
         ranges: ranges.clone(),
-        range_rebuild: None,
+        range_rebuild: partial_index_range_rebuild(filled),
         covering_ranges: Vec::new(),
         tikv_pushdown: None,
     }));
@@ -939,6 +981,7 @@ mod tests {
             range_max_size: 64 * 1024 * 1024,
             range_fallback_handler: None,
             expression_evaluator: &crate::ranger::points::evaluate_static,
+            plan_cache_marker: None,
         };
         let plan_id_before = allocator.current();
         // Go `buildIntoAccessPath`: a union reading through one index is no

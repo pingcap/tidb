@@ -158,6 +158,82 @@ fn physical_plan_cacheable(
     Ok(())
 }
 
+/// Go `isSafePointGetPath4PlanCache` (`plan_cache_utils.go`): whether a
+/// Batch/PointGet built from `access_conds` stays correct for any later
+/// parameters. A PointGet may rest on an over-optimized assumption, like
+/// `a>=? and a<=?` collapsing to `a=1`, that new parameters break.
+///
+/// `range_width` is the first range's width (`Range.Width`) and
+/// `range_count` the number of ranges. Scenarios 2-4 are behind fix control
+/// 44830, off by default.
+#[must_use]
+pub fn is_safe_point_get_path_4_plan_cache(
+    access_conds: &[Expression],
+    range_width: usize,
+    range_count: usize,
+    fix_44830: bool,
+) -> bool {
+    fn function_name(expression: &Expression) -> Option<&str> {
+        match expression {
+            Expression::ScalarFunction(function) => Some(function.func_name.lowercase()),
+            _ => None,
+        }
+    }
+    // Scenario 1: each column corresponds to a single EQ.
+    if range_count > 0
+        && range_width == access_conds.len()
+        && access_conds
+            .iter()
+            .all(|condition| function_name(condition) == Some("eq"))
+    {
+        return true;
+    }
+    if !fix_44830 || range_count == 0 {
+        return false;
+    }
+    // Scenario 2: a single IN predicate without duplicated values.
+    if let [Expression::ScalarFunction(function)] = access_conds {
+        if function.func_name.lowercase() == "in" {
+            return range_count == function.args.len().saturating_sub(1);
+        }
+        // Scenario 3: a simple DNF like `key=? or key=?`.
+        if function.func_name.lowercase() == "or" {
+            let dnf = tidb_expr::expr_util::normal_form::flatten_dnf_conditions(function);
+            if range_count != dnf.len() {
+                return false;
+            }
+            return dnf.iter().all(|item| match item {
+                Expression::ScalarFunction(item) => match item.func_name.lowercase() {
+                    "eq" => true,
+                    "and" => {
+                        let cnf = tidb_expr::expr_util::normal_form::flatten_cnf_conditions(item);
+                        range_width == cnf.len()
+                            && cnf.iter().all(|leaf| function_name(leaf) == Some("eq"))
+                    }
+                    _ => false,
+                },
+                _ => false,
+            });
+        }
+    }
+    // Scenario 4: EQs on every key column but one, which has a single IN.
+    if access_conds.len() < 2 || range_width != access_conds.len() {
+        return false;
+    }
+    let mut in_arguments = None;
+    for condition in access_conds {
+        let Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        match function.func_name.lowercase() {
+            "eq" => {}
+            "in" if in_arguments.is_none() => in_arguments = Some(function.args.len()),
+            _ => return false,
+        }
+    }
+    in_arguments.is_some_and(|arguments| range_count == arguments.saturating_sub(1))
+}
+
 /// Go `isPlanCacheable` over the physical operators represented by this
 /// planner. Every represented refusal is checked
 /// recursively, including reader-owned subplans.
@@ -368,9 +444,8 @@ impl fmt::Display for PlanCacheRebuildError {
                 write!(formatter, "deferred expression evaluation failed: {error}")
             }
             Self::RangeBuild(error) => write!(formatter, "range build failed: {error}"),
-            Self::UnsafeRange { plan_id } => {
-                write!(formatter, "plan {plan_id} rebuilt an unsafe range")
-            }
+            // Go `buildRangeForTableScan` / `buildRangeForIndexScan`.
+            Self::UnsafeRange { .. } => formatter.write_str("rebuild to get an unsafe range"),
             Self::InvalidMetadata { plan_id, detail } => {
                 write!(
                     formatter,
@@ -628,13 +703,18 @@ fn rebuild_table_scan(
             &|expr| context.evaluate(expr),
         )
         .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+        // Go `buildRangeForTableScan` hands `isSafeRange` the scan's OLD
+        // ranges as the rebuilt result here, so an integer handle only
+        // refuses when the previous execution's ranges were empty: `c1>=3
+        // and c1<=1` still reuses the plan with no range, and the execution
+        // after it rebuilds again.
         if !range_is_safe(
             &original,
-            &result.ranges,
+            &original,
             rebuild.access_conditions.len(),
             result.access_conds.len(),
             result.remained_conds.len(),
-            rebuild.unsigned_int_handle,
+            true,
         ) {
             return Err(PlanCacheRebuildError::UnsafeRange {
                 plan_id: scan.base.base.id(),

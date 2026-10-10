@@ -55,6 +55,9 @@ pub(crate) struct IndexJoinRangeEnv<'a> {
     pub opt_prefix_index_single_scan: bool,
     /// The statement's constant evaluator.
     pub evaluate: &'a ExpressionEvaluator<'a>,
+    /// Go `sctx.SetSkipPlanCache` from the ranger, when the statement uses
+    /// the plan cache.
+    pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
 }
 
 impl IndexJoinRangeEnv<'_> {
@@ -138,6 +141,9 @@ pub(crate) fn index_join_path_build(
         true,
         env.evaluate,
     );
+    if let (true, Some(marker)) = (extraction.parameters_overwritten, env.plan_cache_marker) {
+        marker.set_skip_plan_cache("some parameters may be overwritten");
+    }
     if extraction.empty_range {
         return Ok(IndexJoinPathOutcome::EmptyRange);
     }
@@ -724,6 +730,7 @@ impl IndexJoinPathRebuild {
             fallback_handler: None,
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
             evaluate,
+            plan_cache_marker: None,
         };
         Ok(match index_join_path_build(info, &self.idx_cols, &self.idx_col_lens, env)? {
             IndexJoinPathOutcome::Built(core) if !core.ranges.is_empty() => Some(core.ranges),
@@ -917,6 +924,7 @@ mod tests {
             fallback_handler: handler,
             opt_prefix_index_single_scan: true,
             evaluate: &crate::ranger::points::evaluate_static,
+            plan_cache_marker: None,
         };
         let outcome = index_join_path_build(
             info,

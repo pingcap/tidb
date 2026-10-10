@@ -190,6 +190,13 @@ pub struct DispatchContext<'a> {
     pub opt_prefix_index_single_scan: bool,
     /// Statement-context sink for Go's enforced-MPP refusal warnings.
     pub mpp_warning_sink: Option<&'a dyn MppWarningSink>,
+    /// Go `StmtCtx.SetSkipPlanCache` for decisions physical optimization
+    /// makes; `None` drops them.
+    pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
+    /// Go `ExprCtx.IsUseCache()`: the statement is planned for the plan cache.
+    pub use_plan_cache: bool,
+    /// Go fix control 44830: the wider safe Batch/PointGet shapes.
+    pub fix_44830: bool,
     /// Go `SessionVars.GetAllowPreferRangeScan()` (`tidb_opt_prefer_range_scan`,
     /// default ON): under unreliable statistics a range-scan path carrying an
     /// `=`/`IN` prefix wins over a full table scan even when its estimated
@@ -261,6 +268,9 @@ impl<'a> DispatchContext<'a> {
             partial_ordered_index_for_topn: false,
             opt_prefix_index_single_scan: true,
             mpp_warning_sink: None,
+            plan_cache_marker: None,
+            use_plan_cache: false,
+            fix_44830: false,
             // Go `tidb_opt_prefer_range_scan` defaults ON.
             prefer_range_scan: true,
             task_map: HashMap::new(),
@@ -358,6 +368,7 @@ impl<'a> DispatchContext<'a> {
             range_max_size: self.range_max_size,
             range_fallback_handler: self.range_fallback_handler,
             expression_evaluator: self.expression_evaluator,
+            plan_cache_marker: self.plan_cache_marker.filter(|_| self.use_plan_cache),
         }
     }
 
@@ -545,6 +556,45 @@ impl<'a> DispatchContext<'a> {
     pub const fn with_mpp_warning_sink(mut self, sink: &'a dyn MppWarningSink) -> Self {
         self.mpp_warning_sink = Some(sink);
         self
+    }
+
+    /// The statement's plan-cache state: whether it is planned for the cache,
+    /// where a skip reason goes, and fix control 44830.
+    #[must_use]
+    pub const fn with_plan_cache(
+        mut self,
+        use_plan_cache: bool,
+        marker: &'a dyn crate::logical::rule::PlanCacheMarker,
+        fix_44830: bool,
+    ) -> Self {
+        self.use_plan_cache = use_plan_cache;
+        self.plan_cache_marker = Some(marker);
+        self.fix_44830 = fix_44830;
+        self
+    }
+
+    /// Go `findBestTask4DS`: "Batch/PointGet plans may be over-optimized, like
+    /// `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1). For safety, prevent
+    /// these plans from the plan cache here."
+    fn skip_over_optimized_point_get(
+        &self,
+        access_conds: &[tidb_expr::expression::Expression],
+        range_width: usize,
+        range_count: usize,
+    ) {
+        if tidb_expr::expr_util::predicates::maybe_over_optimized_4_plan_cache(
+            self.use_plan_cache,
+            access_conds,
+        ) && !crate::physical_plan_cache::is_safe_point_get_path_4_plan_cache(
+            access_conds,
+            range_width,
+            range_count,
+            self.fix_44830,
+        ) {
+            if let Some(marker) = self.plan_cache_marker {
+                marker.set_skip_plan_cache("Batch/PointGet plans may be over-optimized");
+            }
+        }
     }
 
     /// Go `SessionVars.GetAllowPreferRangeScan()`.
@@ -1842,6 +1892,7 @@ fn index_join_range_env<'a>(
         fallback_handler: ctx.range_fallback_handler,
         opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan,
         evaluate: ctx.expression_evaluator,
+        plan_cache_marker: ctx.plan_cache_marker.filter(|_| ctx.use_plan_cache),
     }
 }
 
@@ -3103,6 +3154,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             })
                             .or(stats),
                     );
+                    ctx.skip_over_optimized_point_get(
+                        &table_access_conds,
+                        ranges.first().map_or(0, |range| range.low_val.len()),
+                        ranges.len(),
+                    );
                     let mut point = if ranges.len() == 1 {
                         PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {
                             base: point_base,
@@ -3695,6 +3751,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .as_ref()
                             .or_else(|| ds.base.base.stats_info())
                             .map(|stats| stats.scale_by_expect_cnt(access_rows, ctx.skew_ratio)),
+                    );
+                    ctx.skip_over_optimized_point_get(
+                        detach
+                            .as_ref()
+                            .map_or(&[][..], |result| result.access_conds.as_slice()),
+                        ranges.first().map_or(0, |range| range.low_val.len()),
+                        ranges.len(),
                     );
                     let mut point = if ranges.len() == 1 {
                         PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {

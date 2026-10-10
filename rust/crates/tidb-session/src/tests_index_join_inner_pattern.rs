@@ -858,3 +858,25 @@ fn an_integer_handle_probe_scan_pays_no_full_scan_penalty() {
     );
     assert!(!explain.contains("idx(a)"), "{explain}");
 }
+
+/// Go converts an outer key to the inner column's type once
+/// (`constructDatumLookupKey`) and then cuts it to the index prefix
+/// (`constructLookupContent`). Converting the cut key to `binary(20)` a
+/// second time padded it back to twenty bytes, the padded value no longer
+/// compared equal to the cut one, and every probe was dropped
+/// (`planner/core/tests/prepare/issue`).
+#[test]
+fn an_index_join_probes_a_binary_prefix_index_with_the_cut_key() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE u (COL1 binary(20), COL2 tinyint(16), COL3 time, UNIQUE KEY U_M_COL (COL1(10),COL2,COL3))")
+        .unwrap();
+    session
+        .run("insert into u values(0x340C604874B52E8D30440E8DC2BB170621D8A088, 126, '-105:17:32'), (0x28EC2EDBAC7DF99045BDD0FCEAADAFBAC2ACF76F, 126, '102:54:04'), (0x11C38221B3B1E463C94EC39F0D481303A58A50DC, 118, '599:13:47')")
+        .unwrap();
+    let rows = row_text(session.run(
+        "SELECT /*+ INL_JOIN(t1, t2) */ t2.COL2 FROM u t1 JOIN u t2 ON t1.col1 = t2.col1 \
+         WHERE t1.col2 BETWEEN 126 AND 126 AND t2.col2 BETWEEN -125 AND 707",
+    ));
+    assert_eq!(rows, [["126"], ["126"]]);
+}
