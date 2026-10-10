@@ -601,17 +601,18 @@
         "SQL": "SELECT * FROM (SELECT a, b FROM t1 WHERE a <= 3) x JOIN (SELECT a, b FROM t2 WHERE a <= 2) y ON x.a = y.a JOIN t3 ON y.a = t3.a ORDER BY x.a",
         "Plan": [
           "Sort root  test.t1.a",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "  ├─HashJoin(Build) root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  │ ├─TableReader(Build) root  data:Selection",
-          "  │ │ └─Selection cop[tikv]  le(test.t2.a, 2), le(test.t2.a, 3), not(isnull(test.t2.a))",
-          "  │ │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "  │ └─TableReader(Probe) root  data:Selection",
-          "  │   └─Selection cop[tikv]  le(test.t1.a, 2), le(test.t1.a, 3), not(isnull(test.t1.a))",
-          "  │     └─TableFullScan cop[tikv] table:t1 keep order:false",
-          "  └─TableReader(Probe) root  data:Selection",
-          "    └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "      └─TableFullScan cop[tikv] table:t3 keep order:false"
+          "└─Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "  └─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "    ├─HashJoin(Build) root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "    │ ├─TableReader(Build) root  data:Selection",
+          "    │ │ └─Selection cop[tikv]  le(test.t3.a, 2), le(test.t3.a, 3), not(isnull(test.t3.a))",
+          "    │ │   └─TableFullScan cop[tikv] table:t3 keep order:false",
+          "    │ └─TableReader(Probe) root  data:Selection",
+          "    │   └─Selection cop[tikv]  le(test.t2.a, 2), le(test.t2.a, 3), not(isnull(test.t2.a))",
+          "    │     └─TableFullScan cop[tikv] table:t2 keep order:false",
+          "    └─TableReader(Probe) root  data:Selection",
+          "      └─Selection cop[tikv]  le(test.t1.a, 2), le(test.t1.a, 3), not(isnull(test.t1.a))",
+          "        └─TableFullScan cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
           "1 10 1 100 1 1000"
