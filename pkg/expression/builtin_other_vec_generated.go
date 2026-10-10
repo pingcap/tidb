@@ -63,12 +63,14 @@ func (b *builtinInIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 				continue
 			}
 			arg0 := args0[i]
-			if isUnsigned, ok := b.hashSet[arg0]; ok {
-				if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
+			if seen, ok := b.hashSet[arg0]; ok {
+				if arg0 >= 0 && (seen.signed || seen.unsigned) {
 					r64s[i] = 1
 					result.SetNull(i, false)
-				}
-				if arg0 >= 0 {
+				} else if isUnsigned0 && seen.unsigned {
+					r64s[i] = 1
+					result.SetNull(i, false)
+				} else if !isUnsigned0 && seen.signed {
 					r64s[i] = 1
 					result.SetNull(i, false)
 				}
