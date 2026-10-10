@@ -1408,6 +1408,15 @@ impl KvTable {
         copy.charset = self.charset;
         copy.comment = self.comment.clone();
         copy.compression = self.compression.clone();
+        // Go's shallow copy keeps these table options; the caller strips
+        // the TTL from a temporary copy.
+        if let Ok(cache @ 1..) = u64::try_from(self.auto_id_cache) {
+            copy.init_auto_id_cache(cache);
+        }
+        copy.ttl_info = self.ttl_info.clone();
+        copy.shard_row_id_bits = self.shard_row_id_bits;
+        copy.pre_split_regions = self.pre_split_regions;
+        copy.placement_policy = self.placement_policy.clone();
         let mut renamed = self.check_constraint_infos.as_ref().clone();
         let mut names = std::collections::HashMap::with_capacity(renamed.len());
         for (offset, info) in renamed.iter_mut().enumerate() {
@@ -2089,18 +2098,19 @@ impl KvTable {
     /// again.
     #[must_use]
     pub fn new_temporary_txn_data(&self) -> TemporaryTableTxnData {
-        let mut auto_id = AutoIdAllocator::new();
-        auto_id.set_unsigned(self.auto_id.unsigned);
-        if self.auto_inc_id > 1 {
-            // `inMemoryAllocator.Rebase` cannot fail.
-            let _ = auto_id.rebase_to_next(self.auto_inc_id as u64);
-            auto_id.forget_reservation();
-        }
         TemporaryTableTxnData {
             store: Box::new(MemTableStorage::new()),
-            auto_id,
+            auto_id: AutoIdAllocator::temporary(self.auto_id.unsigned, self.auto_inc_id),
             row_id: None,
         }
+    }
+
+    /// Gives a LOCAL temporary table the allocator Go's
+    /// `temptable.CreateLocalTemporaryTable` builds for it from its
+    /// `TableInfo`: in-memory and session-owned, one id at a time.
+    pub fn use_local_temporary_auto_id(&mut self) {
+        self.auto_id = AutoIdAllocator::temporary(self.auto_id.unsigned, self.auto_inc_id);
+        self.row_id = None;
     }
 
     /// Exchanges this table's rows and allocators for a session's

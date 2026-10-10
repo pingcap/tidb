@@ -555,10 +555,10 @@ fn modify_column() {
         [["xx"]]
     );
 
-    // Captured: a clustered handle cannot change to another integer type when
-    // the row-key width changes. Go's `checkModifyTypes` reports 8200 before
-    // touching the table; a NONCLUSTERED primary key is the control that may
-    // change type through an ordinary metadata update.
+    // Go's `checkModifyTypes` reports 8200 before touching the table for any
+    // primary key column whose change needs reorganization, clustered or not
+    // (`reorg_partition.result` records the NONCLUSTERED refusal); widening
+    // an integer is metadata-only.
     assert!(matches!(
         session.run("ALTER TABLE t MODIFY COLUMN a VARCHAR(10)"),
         Err(DriverError::UnsupportedModifyColumn(
@@ -572,10 +572,16 @@ fn modify_column() {
         ))
     ));
     session
-        .run("CREATE TABLE nonclustered_handle (a BIGINT PRIMARY KEY NONCLUSTERED)")
+        .run("CREATE TABLE nonclustered_handle (a INT PRIMARY KEY NONCLUSTERED)")
         .unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE nonclustered_handle MODIFY COLUMN a VARCHAR(20)"),
+        Err(DriverError::UnsupportedModifyColumn(
+            "this column has primary key flag"
+        ))
+    ));
     session
-        .run("ALTER TABLE nonclustered_handle MODIFY COLUMN a INT")
+        .run("ALTER TABLE nonclustered_handle MODIFY COLUMN a BIGINT")
         .unwrap();
 
     // Captured: an index cannot cover a full BLOB/TEXT column (1170).

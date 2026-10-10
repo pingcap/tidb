@@ -522,10 +522,70 @@ pub trait AutoIdService: fmt::Debug + Send + Sync {
     fn base(&self) -> u64;
 }
 
+/// Go `inMemoryAllocator` (`pkg/meta/autoid/memid.go`), a temporary table's
+/// allocator. It lives with the table's rows: in the session for a local
+/// temporary table, in the transaction for a global one. It reserves no
+/// window and hands out exactly the ids asked for, so `NextGlobalAutoID` is
+/// the last id plus one.
+#[derive(Debug, Default)]
+struct InMemoryAutoId {
+    /// Go `inMemoryAllocator.base`: the id last handed out, as a pattern.
+    base: Mutex<u64>,
+}
+
+impl InMemoryAutoId {
+    fn lock(&self) -> std::sync::MutexGuard<'_, u64> {
+        self.base.lock().expect("in-memory auto id poisoned")
+    }
+
+    /// Go `alloc4Signed` / `alloc4Unsigned`.
+    fn alloc(
+        &self,
+        n: u64,
+        increment: u64,
+        offset: u64,
+        unsigned: bool,
+    ) -> Result<(u64, u64), AutoIdError> {
+        if n == 0 {
+            return Ok((0, 0));
+        }
+        let mut base = self.lock();
+        let offset_base = offset.wrapping_sub(1);
+        if exceeds(offset_base, *base, unsigned) {
+            *base = offset_base;
+        }
+        let needed = calc_needed_batch_size(*base, n, increment, offset, unsigned);
+        if headroom(*base, unsigned) <= u128::from(needed) {
+            return Err(AutoIdError::Exhausted);
+        }
+        let minimum = *base;
+        *base = base.wrapping_add(needed);
+        Ok((minimum, *base))
+    }
+
+    /// Go `inMemoryAllocator.Rebase`, which never reserves.
+    fn rebase(&self, required: u64, unsigned: bool) {
+        let mut base = self.lock();
+        if exceeds(required, *base, unsigned) {
+            *base = required;
+        }
+    }
+
+    /// Go `inMemoryAllocator.ForceRebase`.
+    fn force_rebase(&self, required: u64) {
+        *self.lock() = required;
+    }
+
+    fn next(&self) -> u64 {
+        self.lock().wrapping_add(1)
+    }
+}
+
 #[derive(Clone, Debug)]
 enum AllocatorBackend {
     Cached(CachedAutoIdAllocator),
     Service(Arc<dyn AutoIdService>),
+    InMemory(Arc<InMemoryAutoId>),
 }
 
 #[derive(Clone, Debug)]
@@ -549,6 +609,19 @@ impl AutoIdAllocator {
             unsigned: false,
         }
     }
+    /// Go `NewAllocatorFromTempTblInfo`: a temporary table's allocator,
+    /// rebased past `auto_inc_id - 1` when the table was created with
+    /// `AUTO_INCREMENT = auto_inc_id` above 1.
+    pub(crate) fn temporary(unsigned: bool, auto_inc_id: i64) -> Self {
+        let memory = InMemoryAutoId::default();
+        if auto_inc_id > 1 {
+            memory.rebase((auto_inc_id - 1) as u64, unsigned);
+        }
+        Self {
+            backend: AllocatorBackend::InMemory(Arc::new(memory)),
+            unsigned,
+        }
+    }
     pub(crate) fn set_unsigned(&mut self, unsigned: bool) {
         self.unsigned = unsigned;
         if let AllocatorBackend::Cached(c) = &mut self.backend {
@@ -559,6 +632,7 @@ impl AutoIdAllocator {
         match (&self.backend, &other.backend) {
             (AllocatorBackend::Cached(a), AllocatorBackend::Cached(b)) => a.shares_cache_with(b),
             (AllocatorBackend::Service(a), AllocatorBackend::Service(b)) => Arc::ptr_eq(a, b),
+            (AllocatorBackend::InMemory(a), AllocatorBackend::InMemory(b)) => Arc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -568,13 +642,14 @@ impl AutoIdAllocator {
                 backend: AllocatorBackend::Cached(c.with_step(step)),
                 unsigned: self.unsigned,
             },
-            AllocatorBackend::Service(_) => self.clone(),
+            AllocatorBackend::Service(_) | AllocatorBackend::InMemory(_) => self.clone(),
         }
     }
     pub(crate) fn is_single_point(&self) -> bool {
         match &self.backend {
             AllocatorBackend::Cached(c) => c.is_single_point(),
             AllocatorBackend::Service(_) => true,
+            AllocatorBackend::InMemory(_) => false,
         }
     }
     pub(crate) fn alloc(&self, increment: u64, offset: u64) -> Result<u64, AutoIdError> {
@@ -609,18 +684,21 @@ impl AutoIdAllocator {
             AllocatorBackend::Service(s) => s
                 .alloc(call, n, increment, offset)
                 .map_err(AutoIdError::Store),
+            AllocatorBackend::InMemory(m) => m.alloc(n, increment, offset, self.unsigned),
         }
     }
     pub(crate) fn next(&self) -> u64 {
         match &self.backend {
             AllocatorBackend::Cached(c) => c.next(),
             AllocatorBackend::Service(s) => s.base().wrapping_add(1),
+            AllocatorBackend::InMemory(m) => m.next(),
         }
     }
     pub(crate) fn allocated_next(&self) -> u64 {
         match &self.backend {
             AllocatorBackend::Cached(c) => c.allocated_next(),
             AllocatorBackend::Service(s) => s.base().wrapping_add(1),
+            AllocatorBackend::InMemory(m) => m.next(),
         }
     }
     /// Go `NextGlobalAutoID`, which `SHOW CREATE TABLE` prints: the first id
@@ -646,12 +724,13 @@ impl AutoIdAllocator {
             AllocatorBackend::Service(s) => s
                 .alloc(&AutoIdCall::background(), 0, 1, 1)
                 .map(|(_, max)| max.wrapping_add(1)),
+            AllocatorBackend::InMemory(m) => Ok(m.next()),
         }
     }
     pub(crate) fn advance_global_one(&self) -> Result<u64, AutoIdError> {
         match &self.backend {
             AllocatorBackend::Cached(c) => c.advance_global_one(),
-            AllocatorBackend::Service(_) => self.alloc(1, 1),
+            AllocatorBackend::Service(_) | AllocatorBackend::InMemory(_) => self.alloc(1, 1),
         }
     }
     pub(crate) fn rebase_allocating(&self, value: u64) -> Result<(), AutoIdStoreError> {
@@ -665,6 +744,10 @@ impl AutoIdAllocator {
         match &self.backend {
             AllocatorBackend::Cached(c) => c.rebase_allocating(value),
             AllocatorBackend::Service(s) => s.rebase(call, value, false),
+            AllocatorBackend::InMemory(m) => {
+                m.rebase(value, self.unsigned);
+                Ok(())
+            }
         }
     }
     pub(crate) fn rebase(&self, value: u64) -> Result<(), AutoIdStoreError> {
@@ -675,6 +758,10 @@ impl AutoIdAllocator {
                 value,
                 false,
             ),
+            AllocatorBackend::InMemory(m) => {
+                m.rebase(value, self.unsigned);
+                Ok(())
+            }
         }
     }
     pub(crate) fn rebase_to_next(&self, next: u64) -> Result<(), AutoIdStoreError> {
@@ -737,6 +824,10 @@ impl AutoIdAllocator {
                     true,
                 )
                 .map_err(AutoIdError::Store),
+            AllocatorBackend::InMemory(m) => {
+                m.force_rebase(base);
+                Ok(())
+            }
         }
     }
     pub(crate) fn forget_reservation(&self) {
@@ -749,6 +840,10 @@ impl AutoIdAllocator {
             AllocatorBackend::Cached(c) => c.reset(),
             AllocatorBackend::Service(s) => {
                 s.rebase(&AutoIdCall::with_timeout(Duration::from_secs(30)), 0, true)
+            }
+            AllocatorBackend::InMemory(m) => {
+                m.force_rebase(0);
+                Ok(())
             }
         }
     }

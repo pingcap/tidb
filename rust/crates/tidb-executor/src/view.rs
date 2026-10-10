@@ -474,9 +474,16 @@ fn canonical_select(
                 }
             }
             SelectField::Expr { expr, alias } => {
-                let alias = alias
-                    .clone()
-                    .unwrap_or_else(|| default_field_name(expr, select_text(&select, index)));
+                let alias = alias.clone().unwrap_or_else(|| {
+                    // Go names the column as the body's plan does
+                    // (`buildProjectionFieldNameFromExpressions`): a string
+                    // literal by its content, anything else by its text.
+                    tidb_planner::plan_builder::field_name::default_field_display_name(
+                        &select.fields,
+                        index,
+                        expr,
+                    )
+                });
                 fields.push(SelectField::Expr {
                     expr: expr.clone(),
                     alias: Some(alias),
@@ -486,25 +493,6 @@ fn canonical_select(
     }
     select.fields = SelectFieldList::from(fields);
     Ok(select)
-}
-
-/// The name a field takes when no `AS` was written: a column reference keeps
-/// its column name, anything else keeps the text it was WRITTEN with, which
-/// is Go's `SelectField.Text` -- `count(*)` names the column `count(*)` even
-/// though the expression restores as `COUNT(1)`.
-fn default_field_name(expr: &Expr, written: Option<&str>) -> String {
-    match expr {
-        Expr::Column(path) => path.last().cloned().unwrap_or_default(),
-        other => written.map_or_else(|| other.restore(), str::to_owned),
-    }
-}
-
-/// The source text field `index` was written with, when the parser kept it.
-fn select_text(select: &SelectStmt, index: usize) -> Option<&str> {
-    select
-        .fields
-        .text(index)
-        .and_then(|bytes| std::str::from_utf8(bytes).ok())
 }
 
 /// Schema-qualifies every table reference of a `FROM` tree, collecting each

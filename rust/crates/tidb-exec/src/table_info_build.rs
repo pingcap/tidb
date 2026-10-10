@@ -80,7 +80,7 @@ use tidb_datatype::{
 // `CREATE TABLE` builder; see `column_field_type`'s module doc for why.
 use tidb_executor::ddl::column_field_type::{
     build_field_type as build_shared_field_type, column_type_code as shared_column_type_code,
-    process_column_flags, ColumnTypeError,
+    process_column_flags, try_auto_convert_too_big_varchar, ColumnTypeError,
 };
 use tidb_executor::kv_table::KvIndex;
 use tidb_model::column::{
@@ -1278,6 +1278,11 @@ fn build_column(
     // `build_field_type` is what actually stamps `binary`/`binary` on a type
     // that carries no charset, so the resolved pair above is only an input.
     let mut field_type = build_field_type(name, &column.ty, &charset, &collate)?;
+    if let Some(warning) =
+        try_auto_convert_too_big_varchar(&mut field_type, name, context.strict())?
+    {
+        context.append_warning_parts(tidb_error::mysql::errcode::ErrAutoConvert, &warning);
+    }
     // go deprecates an EXPLICIT integer display width
     // (`ErrIntegerDisplayWidthDeprecated`, 1681), warned even when the width
     // equals the type's default (`int(11)`); the `tinyint(1)` boolean

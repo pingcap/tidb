@@ -281,6 +281,23 @@ impl PreparedColumnChange {
             )));
         };
         let table = std::sync::Arc::make_mut(table);
+        // Go `updateTTLInfoWhenModifyColumn`: the TTL config follows a
+        // renamed column.
+        let renamed = match &self {
+            Self::Modify {
+                old_name, column, ..
+            } => Some((old_name.as_str(), column.name.as_str())),
+            Self::Rename { from, to, .. } => Some((from.as_str(), to.as_str())),
+            _ => None,
+        };
+        if let Some((old, new)) = renamed.filter(|(old, new)| !old.eq_ignore_ascii_case(new)) {
+            if let Some(mut info) = table.ttl_info().cloned() {
+                if info.column_name.original().eq_ignore_ascii_case(old) {
+                    info.column_name = tidb_ast::CiString::new(new.to_owned());
+                    table.set_ttl_info(Some(info));
+                }
+            }
+        }
         let offset_of = |table: &crate::KvTable, id: i64, name: &str| {
             table
                 .columns()

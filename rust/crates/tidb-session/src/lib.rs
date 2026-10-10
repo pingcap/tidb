@@ -2870,6 +2870,8 @@ mod tests_core;
 #[cfg(test)]
 mod tests_datetime_year_compare;
 #[cfg(test)]
+mod tests_ddl_go_checks;
+#[cfg(test)]
 mod tests_ddl_preprocess;
 #[cfg(test)]
 mod tests_deadlock_history;

@@ -211,6 +211,13 @@ pub(crate) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
         _ => return Err(EvalError::Unsupported("bad function arity")),
     }
 
+    // A temporal argument reaches Go's `GoTime` uncast, and a zero date
+    // fails it: the answer is 0.
+    if let Datum::Time(time) = &vals[0] {
+        if time.is_zero() {
+            return Ok(unix_result(0, time.fsp() as usize));
+        }
+    }
     let Some(text) = coerce_str(&vals[0])? else {
         return Ok(Datum::Null);
     };
@@ -243,10 +250,19 @@ pub(crate) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
     // Go's IgnoreZeroInDate mode lets month/day-zero values through parsing,
     // but `GoTime` cannot represent them and the unix conversion returns the
     // out-of-range zero sentinel rather than attempting calendar arithmetic.
-    // An all-zero date is the separate invalid-date case: Go's `EvalTime`
-    // reports it as NULL, which is distinct from a partially zero date such
-    // as `2017-00-02` returning the numeric zero sentinel.
+    // An all-zero date is the separate invalid-date case: under
+    // `NO_ZERO_DATE` Go's cast to DATETIME refuses it (a warning and NULL),
+    // which is distinct from a partially zero date such as `2017-00-02`
+    // returning the numeric zero sentinel. Without the mode the zero date
+    // casts and fails `GoTime` like any other.
     if core.year() == 0 && core.month() == 0 && core.day() == 0 {
+        if !cols.date_modes().no_zero_date {
+            return Ok(unix_result(0, fsp));
+        }
+        cols.append_warning(
+            1292,
+            &format!("Incorrect datetime value: '{}'", parsed.time),
+        );
         return Ok(Datum::Null);
     }
     if core.month() == 0 || core.day() == 0 {

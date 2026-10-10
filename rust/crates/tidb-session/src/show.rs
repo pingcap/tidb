@@ -1849,7 +1849,9 @@ impl Session {
                     _ => return Err(DriverError::unsupported("empty table name")),
                 };
                 let ids = self.with_catalog_mut(|catalog| {
-                    let Some(entry) = catalog.table_in(&database, &table_name) else {
+                    // Go `ShowNextRowIDExec` reads the domain's infoschema,
+                    // which holds no local temporary table.
+                    let Some(entry) = catalog.persistent_table_in(&database, &table_name) else {
                         return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
                             "{database}.{table_name}"
                         ))));

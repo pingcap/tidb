@@ -35,6 +35,7 @@ use super::{
 };
 use crate::expression_index::HiddenIndexColumn;
 use tidb_datatype::FieldTypeCode;
+use tidb_hack::GoToLower;
 
 /// Go `mysql.AutoIncrementFlag`.
 pub(crate) const AUTO_INCREMENT_FLAG: u32 = 1 << 9;
@@ -345,6 +346,12 @@ pub(crate) fn table_indexes(
                     // `SHOW CREATE TABLE` body cannot be re-executed.
                     tidb_ast::InlineKeyKind::Unique => {
                         let offset = offset_of(&def.name)?;
+                        let prefix_length = check_inline_key_part(
+                            &column_types[offset],
+                            &def.name,
+                            strict,
+                            max_index_length,
+                        )?;
                         let name = anonymous_index_name(&indexes, &reserved, &def.name);
                         indexes.push(KvIndex {
                             id: (indexes.len() + 1) as i64,
@@ -352,7 +359,7 @@ pub(crate) fn table_indexes(
                             comment: String::new(),
                             unique: true,
                             column_offsets: vec![offset],
-                            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                            prefix_lengths: vec![prefix_length],
                             visible: true,
                             global: false,
                             global_index_version: 0,
@@ -415,6 +422,7 @@ pub(crate) fn table_foreign_keys(
     // The generated-ness of each column, read off the written definitions;
     // the `ColumnInfo` vector carries the resolved names and is in the same
     // order, so the two zip.
+    let bases = stored_generated_bases_of_defs(&create.columns);
     let fk_columns: Vec<FkColumn> = columns
         .iter()
         .zip(&create.columns)
@@ -425,6 +433,7 @@ pub(crate) fn table_foreign_keys(
                 _ => None,
             }),
             field_type: info.field_type.clone(),
+            stored_generated_base: bases.contains(&info.name.original().go_to_lower()),
         })
         .collect();
     let mut keys = Vec::new();
@@ -473,6 +482,54 @@ pub(crate) struct FkColumn {
     /// The resolved type and flags used by CREATE-time FK compatibility
     /// checks (Go `ColumnInfo.GetType`/`GetFlag`/charset/collation).
     pub(crate) field_type: tidb_datatype::FieldType,
+    /// Whether a STORED generated column of the table reads this column
+    /// (Go `buildFKInfo`'s `baseCols`).
+    pub(crate) stored_generated_base: bool,
+}
+
+/// Go `buildFKInfo`'s `baseCols`, over a table's built columns: the folded
+/// names every STORED generated column reads.
+pub(crate) fn stored_generated_bases(
+    columns: &[crate::kv_table::KvColumn],
+) -> std::collections::HashSet<String> {
+    columns
+        .iter()
+        .filter_map(|column| {
+            column
+                .generated
+                .as_ref()
+                .filter(|generated| generated.stored)
+        })
+        .flat_map(|generated| generated.dependencies.iter().map(|name| name.go_to_lower()))
+        .collect()
+}
+
+/// [`stored_generated_bases`] over CREATE TABLE's written definitions.
+fn stored_generated_bases_of_defs(
+    defs: &[tidb_ast::ColumnDef],
+) -> std::collections::HashSet<String> {
+    let mut bases = std::collections::HashSet::new();
+    for def in defs {
+        for option in &def.options {
+            let tidb_ast::ColumnOption::Generated {
+                expression,
+                stored: true,
+                ..
+            } = option
+            else {
+                continue;
+            };
+            tidb_planner::plan_builder::aggregation::walk_exprs(expression, &mut |node| {
+                if let tidb_ast::Expr::Column(path) = node {
+                    if let Some(name) = path.last() {
+                        bases.insert(name.go_to_lower());
+                    }
+                }
+                false
+            });
+        }
+    }
+    bases
 }
 
 /// Validates a resolved foreign key against a parent table.
@@ -488,6 +545,10 @@ pub(crate) fn validate_foreign_key_parent(
     child_partitioned: bool,
     parent: &crate::kv_table::KvTable,
 ) -> Result<(), DriverError> {
+    // Go `checkTableForeignKey`: a TTL table cannot be referred to.
+    if parent.ttl_info().is_some() {
+        return Err(DriverError::TtlReferencedByForeignKey);
+    }
     if child_partitioned || parent.partition().is_some() {
         return Err(DriverError::ForeignKeyOnPartitioned);
     }
@@ -677,6 +738,10 @@ pub(crate) fn build_foreign_key(
             });
         }
         let validate_parent = |parent: &crate::kv_table::KvTable| -> Result<(), DriverError> {
+            // Go `checkTableForeignKey`: a TTL table cannot be referred to.
+            if parent.ttl_info().is_some() {
+                return Err(DriverError::TtlReferencedByForeignKey);
+            }
             if child_partitioned || parent.partition().is_some() {
                 return Err(DriverError::ForeignKeyOnPartitioned);
             }
@@ -833,6 +898,32 @@ fn child_generated_column_rules(
             continue;
         };
         let Some(stored) = column.generated_stored else {
+            // Go: a base column of a STORED generated column may not be
+            // written by the constraint's actions either -- 1215.
+            if column.stored_generated_base {
+                let on_update_writes = matches!(
+                    definition.reference.on_update,
+                    Some(
+                        tidb_ast::ReferentialAction::Cascade
+                            | tidb_ast::ReferentialAction::SetNull
+                            | tidb_ast::ReferentialAction::SetDefault
+                    )
+                );
+                let on_delete_writes = matches!(
+                    definition.reference.on_delete,
+                    Some(
+                        tidb_ast::ReferentialAction::Cascade
+                            | tidb_ast::ReferentialAction::SetNull
+                            | tidb_ast::ReferentialAction::SetDefault
+                    )
+                );
+                if on_update_writes || on_delete_writes {
+                    return Err(DriverError::DdlCoded {
+                        errno: 1215,
+                        message: "Cannot add foreign key constraint".to_owned(),
+                    });
+                }
+            }
             continue;
         };
         if !stored {
@@ -884,6 +975,33 @@ fn fk_action(action: Option<tidb_ast::ReferentialAction>) -> FkAction {
     }
 }
 
+/// Go `checkIndexColumn` and `buildIndexColumns` over the key part an
+/// inline `PRIMARY KEY` or `UNIQUE` names: the whole column. Such a key is
+/// unique, which Go never truncates, so the length is returned as checked.
+fn check_inline_key_part(
+    field_type: &tidb_datatype::FieldType,
+    name: &str,
+    strict: bool,
+    max_index_length: i64,
+) -> Result<i64, DriverError> {
+    let length = crate::ddl::index_prefix::key_part_length_with_max(
+        field_type,
+        crate::ddl::index_prefix::IndexedColumn::Named(name),
+        None,
+        strict,
+        max_index_length,
+    )?;
+    crate::ddl::index_prefix::check_index_key_length_with_max(
+        [(field_type, length)],
+        1,
+        true,
+        strict,
+        max_index_length,
+    )
+    .map_err(crate::ddl::index_prefix::driver_error)?;
+    Ok(length)
+}
+
 /// Go `isIntCol`: whether the column's type can carry a handle.
 pub(crate) fn is_int_column(column: &ColumnInfo) -> bool {
     matches!(
@@ -926,9 +1044,18 @@ pub(crate) fn primary_key_column(
                         if found.is_some() {
                             return Err(DriverError::MultiplePrimaryKey);
                         }
+                        let field_type = columns
+                            .iter()
+                            .find(|column| column.name.original().eq_ignore_ascii_case(&def.name))
+                            .map(|column| &column.field_type)
+                            .ok_or(DriverError::unsupported(
+                                "the primary key names a column the table does not define",
+                            ))?;
+                        let prefix_length =
+                            check_inline_key_part(field_type, &def.name, true, max_index_length)?;
                         found = Some(PrimaryKeyDecl {
                             columns: vec![def.name.clone()],
-                            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                            prefix_lengths: vec![prefix_length],
                             storage,
                         });
                     }

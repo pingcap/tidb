@@ -3813,17 +3813,6 @@ impl StmtContext {
         self.date_modes
     }
 
-    /// Go `StatementContext.TypeFlags` in the part conversion reads: a
-    /// non-strict statement tolerates truncation instead of failing.
-    #[must_use]
-    pub fn conversion_flags(&self) -> tidb_datatype::ConversionFlags {
-        if self.strict {
-            tidb_datatype::STRICT_FLAGS
-        } else {
-            tidb_datatype::DEFAULT_STATEMENT_FLAGS
-        }
-    }
-
     /// Go `util.GetTypeFlagsForInsert` -- the flags a COLUMN WRITE converts
     /// under, which are NOT the ones an expression converts under.
     ///
@@ -3839,10 +3828,14 @@ impl StmtContext {
     ///
     /// Date-mode flags and the statement's truncation level reach the datatype
     /// conversion itself, preserving its value/error precedence and warnings.
+    ///
+    /// The base is Go's `DefaultStmtFlags` in every SQL mode, so
+    /// `FlagIgnoreZeroDateErr` stays set: a zero date written as `0` reaches
+    /// `handleZeroDatetime`, which decides from `NO_ZERO_DATE` alone.
     #[must_use]
     pub fn write_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
         crate::zero_date::write_date_flags(
-            self.conversion_flags()
+            tidb_datatype::DEFAULT_STATEMENT_FLAGS
                 .with_allow_negative_to_unsigned(false)
                 .with_ignore_truncate_err(self.truncate == ErrorLevel::Ignore)
                 .with_truncate_as_warning(self.truncate == ErrorLevel::Warn),

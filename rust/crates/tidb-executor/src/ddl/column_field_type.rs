@@ -391,6 +391,38 @@ pub fn process_column_flags(field_type: &mut FieldType) {
     }
 }
 
+/// Go `checkTooBigFieldLengthAndTryAutoConvert` (issue #30328): outside
+/// strict mode a VARCHAR longer than its charset allows becomes the BLOB or
+/// TEXT that holds it. Returns the 1246 warning naming the conversion.
+pub fn try_auto_convert_too_big_varchar(
+    field_type: &mut FieldType,
+    name: &str,
+    strict: bool,
+) -> Result<Option<String>, ColumnTypeError> {
+    const MAX_FIELD_VARCHAR_LENGTH: i64 = 65535;
+    if strict || field_type.code() != FieldTypeCode::Varchar {
+        return Ok(None);
+    }
+    let charset = field_type.charset_name().to_owned();
+    let info = get_charset_info(&charset)
+        .map_err(|error| ColumnTypeError::new(format!("charset {charset}: {error}")))?;
+    let maximum = MAX_FIELD_VARCHAR_LENGTH / i64::try_from(info.maxlen).unwrap_or(1);
+    let flen = field_type.flen();
+    if flen == UNSPECIFIED_LENGTH || flen <= maximum {
+        return Ok(None);
+    }
+    field_type.set_code(FieldTypeCode::Blob);
+    adjust_blob_flen(field_type, FieldTypeCode::Blob, flen, &charset)?;
+    let (from, to) = if charset.eq_ignore_ascii_case(BINARY_CHARSET) {
+        ("VARBINARY", "BLOB")
+    } else {
+        ("VARCHAR", "TEXT")
+    };
+    Ok(Some(format!(
+        "Converting column '{name}' from {from} to {to}"
+    )))
+}
+
 /// Go `adjustBlobTypesFlen`: a declared `BLOB(n)`/`TEXT(n)` becomes whichever
 /// member of the family actually holds `n` characters of this charset.
 fn adjust_blob_flen(

@@ -156,7 +156,7 @@ pub(super) fn build(
                 errno: 3109,
                 message: format!(
                     "Generated column '{}' cannot refer to auto-increment column.",
-                    def.name
+                    tidb_hack::go_to_lower(&def.name)
                 ),
             });
         }

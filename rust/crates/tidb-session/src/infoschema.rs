@@ -2234,6 +2234,14 @@ fn view_tables_row(schema: &str, table_name: &str) -> Vec<Datum> {
 ///
 /// DIVERGENCE (documented): `IS_UPDATABLE` is always `NO`, which is what Go
 /// reports for every view this tier can create -- no view here is updatable.
+fn non_empty_or<'a>(value: &'a str, default: &'a str) -> &'a str {
+    if value.is_empty() {
+        default
+    } else {
+        value
+    }
+}
+
 fn views_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
@@ -2249,8 +2257,10 @@ fn views_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum
             text("NO"),
             text(&format!("{}@{}", view.definer_user, view.definer_host)),
             text(&view.security),
-            text(CHARSET),
-            text(COLLATION),
+            // Go reads the view's own charset and collation (the session's
+            // connection ones at CREATE VIEW), falling back to the defaults.
+            text(non_empty_or(&view.character_set_client, CHARSET)),
+            text(non_empty_or(&view.collation_connection, COLLATION)),
         ]);
     }
     rows

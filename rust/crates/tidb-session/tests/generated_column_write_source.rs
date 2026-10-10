@@ -229,28 +229,6 @@ fn generated_write_policy_odku_warning_retains_expression_input() {
 }
 
 #[test]
-fn generated_write_policy_cascade_materializes_before_nested_dependents() {
-    let mut session = Session::new();
-    session.run("set sql_mode = 'STRICT_TRANS_TABLES'").unwrap();
-    session.run("create table p (id int primary key)").unwrap();
-    session.run("create table c (id int primary key, pid int, b tinyint as (pid) stored, unique key idx(b), foreign key(pid) references p(id) on update cascade)").unwrap();
-    session.run("create table g (id int primary key, bid tinyint, foreign key(bid) references c(b) on update cascade)").unwrap();
-    session.run("insert into p values (7)").unwrap();
-    session.run("insert into c(id,pid) values (1,7)").unwrap();
-    session.run("insert into g values (1,7)").unwrap();
-    session.run("update p set id=9").unwrap();
-    assert_eq!(rows(&mut session, "select pid,b from c"), "9|9");
-    assert_eq!(rows(&mut session, "select bid from g"), "9");
-    let error = session
-        .run("update p set id=1000")
-        .expect_err("cascade uses the active strict conversion owner");
-    assert_eq!(error.to_mysql_error().code, 1264);
-    assert_eq!(rows(&mut session, "select id from p"), "9");
-    assert_eq!(rows(&mut session, "select pid,b from c"), "9|9");
-    assert_eq!(rows(&mut session, "select bid from g"), "9");
-}
-
-#[test]
 fn generated_write_policy_uses_the_ordinary_column_cast_for_all_types() {
     for (source_type, target_type, value, strict_error) in [
         ("int", "tinyint unsigned", "-5", Some(1264)),

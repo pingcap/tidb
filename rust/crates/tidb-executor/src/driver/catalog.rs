@@ -3212,7 +3212,7 @@ impl Catalog {
     }
 
     /// Resolves a durable DDL target without the session's local name overlay.
-    pub(crate) fn persistent_table_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
+    pub fn persistent_table_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
         let entry = self.table_in(database, name)?;
         if matches!(entry, TableEntry::Kv(table) if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
         {

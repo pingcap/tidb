@@ -1332,7 +1332,8 @@ pub fn run_create_table_in(
     let table_charset = table_charset_of(&create.table_options, database_charset)?;
     let mut columns = Vec::with_capacity(create.columns.len());
     for (i, def) in create.columns.iter().enumerate() {
-        let field_type = field_type_of(def, table_charset, catalog.enable_enum_length_limit())?;
+        let field_type =
+            field_type_of(def, table_charset, catalog.enable_enum_length_limit(), ctx)?;
         let column_id = i64::try_from(
             i.checked_add(1)
                 .expect("a parsed table cannot contain usize::MAX columns"),
@@ -1731,14 +1732,57 @@ pub fn run_create_table_in(
     // Go `checkTTLInfoValid` (`pkg/ddl/ttl.go:97`): the TTL job deletes
     // expired rows from TiKV, and a temporary table has no rows there.
     let ttl_info = ttl_info_from_options(&create.table_options)?;
-    if ttl_info.is_some() && temporary != tidb_model::TempTableType::NONE {
-        return Err(DriverError::TempTableNotAllowedWithTTL);
+    // Go `handleTableOptions`: TTL_ENABLE and TTL_JOB_INTERVAL need a TTL.
+    if ttl_info.is_none() {
+        if let Some(option) = create.table_options.iter().find_map(|option| match option {
+            tidb_ast::TableOption::TtlEnable(_) => Some("TTL_ENABLE"),
+            _ => None,
+        }) {
+            return Err(DriverError::SetTtlOptionForNonTtlTable(option.to_owned()));
+        }
+        if create
+            .table_options
+            .iter()
+            .any(|option| matches!(option, tidb_ast::TableOption::TtlJobInterval(_)))
+        {
+            return Err(DriverError::SetTtlOptionForNonTtlTable(
+                "TTL_JOB_INTERVAL".to_owned(),
+            ));
+        }
     }
-    // Go `checkTTLInfoValid` -> `checkTTLInfoColumnType` (`pkg/ddl/ttl.go
-    // :141-149`): the TTL column must EXIST (missing names fail `ErrBadField`
-    // with "TTL config" as the clause) and be a time type -- DATE, DATETIME
-    // or TIMESTAMP (`ErrUnsupportedColumnInTTLConfig`, 8148).
     if let Some(info) = ttl_info.as_ref() {
+        // Go `checkTTLInfoValid` (`pkg/ddl/ttl.go:97`), in its order: a
+        // temporary table has no TiKV rows to expire, ...
+        if temporary != tidb_model::TempTableType::NONE {
+            return Err(DriverError::TempTableNotAllowedWithTTL);
+        }
+        // ... a CLUSTERED primary key holding a FLOAT or DOUBLE column is
+        // refused (`checkPrimaryKeyForTTLTable`, 8153): TTL deletes expired
+        // rows with SQL predicates, and a float handle loses precision ...
+        if clustered {
+            let pk_offsets: &[usize] = match &handle {
+                HandleKind::CommonHandle { offsets, .. } => offsets,
+                HandleKind::IntHandle(offset) => std::slice::from_ref(offset),
+                HandleKind::RowId => &[],
+            };
+            if pk_offsets.iter().any(|offset| {
+                matches!(
+                    columns[*offset].field_type.code(),
+                    FieldTypeCode::Float | FieldTypeCode::Double
+                )
+            }) {
+                return Err(DriverError::UnsupportedPrimaryKeyTypeWithTtl);
+            }
+        }
+        // ... a table another table's foreign key refers to cannot take a
+        // TTL config (8152) -- at CREATE only an FK-containing sibling can
+        // refer to it by name already ...
+        if crate::foreign_key::is_table_referred(catalog, &database, &name) {
+            return Err(DriverError::TtlReferencedByForeignKey);
+        }
+        // ... and the TTL column must EXIST (`ErrBadField` with "TTL config"
+        // as the clause) and be DATE, DATETIME or TIMESTAMP
+        // (`checkTTLInfoColumnType`, 8148).
         let named = info.column_name.original();
         match table
             .columns
@@ -1753,32 +1797,6 @@ pub fn run_create_table_in(
             }
             Some(_) => {}
         }
-    }
-    // Go `checkPrimaryKeyForTTLTable` (`pkg/ddl/ttl.go:155-168`): a TTL table
-    // whose CLUSTERED primary key contains a FLOAT or DOUBLE column is refused
-    // (8153) -- TTL deletes expired rows with SQL predicates, and comparing a
-    // float handle loses precision.
-    if ttl_info.is_some() && clustered {
-        let pk_offsets: &[usize] = match &handle {
-            HandleKind::CommonHandle { offsets, .. } => offsets,
-            HandleKind::IntHandle(offset) => std::slice::from_ref(offset),
-            HandleKind::RowId => &[],
-        };
-        if pk_offsets.iter().any(|offset| {
-            matches!(
-                columns[*offset].field_type.code(),
-                FieldTypeCode::Float | FieldTypeCode::Double
-            )
-        }) {
-            return Err(DriverError::UnsupportedPrimaryKeyTypeWithTtl);
-        }
-    }
-    // Go `checkTTLInfoValid` with `foreignKeyCheckIs` (`pkg/ddl/ttl.go
-    // :104-107`): a table another table's foreign key refers to cannot take
-    // a TTL config (8152). At CREATE the table is brand new, so only an
-    // FK-containing sibling can refer to it by name already.
-    if ttl_info.is_some() && crate::foreign_key::is_table_referred(catalog, &database, &name) {
-        return Err(DriverError::TtlReferencedByForeignKey);
     }
     table.set_ttl_info(ttl_info);
     // Go `handleTableOptions`: `SHARD_ROW_ID_BITS = n` is recorded on the
@@ -2069,6 +2087,7 @@ pub fn run_create_table_in(
             if child.foreign_keys().is_empty() {
                 continue;
             }
+            let bases = table_constraints::stored_generated_bases(&child.columns);
             let child_columns: Vec<table_constraints::FkColumn> = child
                 .columns
                 .iter()
@@ -2076,6 +2095,7 @@ pub fn run_create_table_in(
                     name: column.name.clone(),
                     generated_stored: column.generated.as_ref().map(|generated| generated.stored),
                     field_type: column.field_type.clone(),
+                    stored_generated_base: bases.contains(&column.name.go_to_lower()),
                 })
                 .collect();
             for foreign_key in child.foreign_keys() {
@@ -2214,6 +2234,7 @@ fn register_created_table(
 ) -> Result<(), DriverError> {
     if temporary == tidb_model::TempTableType::LOCAL {
         table.table_id = catalog.allocate_local_temporary_table_id()?;
+        table.use_local_temporary_auto_id();
         catalog.register_local_temporary_in(database, name, table)
     } else {
         // The job Go submits for the built table.

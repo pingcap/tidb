@@ -149,6 +149,7 @@ pub(crate) fn field_type_of(
     def: &ColumnDef,
     table: TableCharset,
     enable_enum_length_limit: bool,
+    ctx: &crate::StmtContext,
 ) -> Result<FieldType, DriverError> {
     let written_charset = def.ty.charset.as_deref().map(charset_named).transpose()?;
     let written_collation = def
@@ -176,6 +177,15 @@ pub(crate) fn field_type_of(
         resolved.collation.name(),
     )
     .map_err(|error| DriverError::unsupported(error.reason))?;
+    if let Some(warning) = column_field_type::try_auto_convert_too_big_varchar(
+        &mut field_type,
+        &def.name,
+        ctx.strict(),
+    )
+    .map_err(|error| DriverError::unsupported(error.reason))?
+    {
+        ctx.append_warning_parts(tidb_error::mysql::errcode::ErrAutoConvert, &warning);
+    }
     // Go `processColumnFlags`, the SAME function `tidb_exec::table_info_build`
     // calls -- the flags a column takes from its TYPE rather than from what
     // was written. Without it a real `YEAR` or `BIT` column carried no

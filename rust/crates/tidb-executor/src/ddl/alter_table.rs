@@ -2887,6 +2887,7 @@ pub(super) fn prepare_modify_column(
         def,
         existing_table_charset(catalog, database, table_name),
         enum_length_limit,
+        ctx,
     )?;
     let mut default_value = None;
     let mut nullability = None;
@@ -3123,6 +3124,17 @@ pub(super) fn prepare_modify_column(
     check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
     let can_reorganize =
         modify_type_needs_reorganization(&table.columns[offset].field_type, &field_type);
+    // Go `checkModifyTypes`: a change that needs reorganization is refused
+    // for any primary key column.
+    if can_reorganize
+        && table.columns[offset]
+            .field_type
+            .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
+    {
+        return Err(DriverError::UnsupportedModifyColumn(
+            "this column has primary key flag",
+        ));
+    }
     check_modify_charset_and_collation(
         &table.columns[offset].field_type,
         &field_type,
@@ -3260,31 +3272,6 @@ pub(super) fn prepare_modify_column(
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
         unreachable!("the table was found above");
     };
-    let integer_type = |code| {
-        matches!(
-            code,
-            tidb_datatype::FieldTypeCode::Tiny
-                | tidb_datatype::FieldTypeCode::Short
-                | tidb_datatype::FieldTypeCode::Int24
-                | tidb_datatype::FieldTypeCode::Long
-                | tidb_datatype::FieldTypeCode::LongLong
-        )
-    };
-    // Go refuses a clustered-handle type change whenever
-    // CheckModifyTypeCompatible says that reorganization is required,
-    // because the handle IS the row key.  Integer display-width changes with
-    // the same signedness are the one exception: Go normalizes their default
-    // widths and treats those as metadata-only.
-    let is_handle = table.pk_handle_offset() == Some(offset);
-    let origin_code = table.columns[offset].field_type.code();
-    let origin_unsigned = table.columns[offset].field_type.is_unsigned();
-    let reorg_type_change =
-        origin_code != field_type.code() || origin_unsigned != field_type.is_unsigned();
-    if is_handle && (!integer_type(field_type.code()) || reorg_type_change) {
-        return Err(DriverError::UnsupportedModifyColumn(
-            "this column has primary key flag",
-        ));
-    }
     // Go `checkIndexInModifiableColumns` (`pkg/ddl/modify_column.go`): every
     // key part over this column is re-validated against the NEW type, under
     // the length that key part will survive with -- which is Go's
@@ -3374,6 +3361,14 @@ pub(super) fn prepare_modify_column(
         return Err(DriverError::UnsupportedOnGeneratedColumn(
             super::column_dependent_error_text(dependent, old_name),
         ));
+    }
+    // Go `GetModifiableColumnJob`: the column a TTL config reads must stay a
+    // time type.
+    if table.ttl_info().is_some_and(|info| {
+        info.column_name.original().eq_ignore_ascii_case(old_name)
+            && !field_type.code().is_type_time()
+    }) {
+        return Err(DriverError::UnsupportedColumnInTtlConfig(def.name.clone()));
     }
     let prepared_default = match default_value {
         Some(default @ crate::column_default::ColumnDefault::Computed(_))
@@ -3505,6 +3500,7 @@ pub(super) fn prepare_add_column(
         def,
         existing_table_charset(catalog, database, table_name),
         catalog.enable_enum_length_limit(),
+        ctx,
     )?;
     let mut default_value = None;
     let mut not_null = false;
@@ -3673,6 +3669,29 @@ pub(super) fn prepare_add_column(
                     ctx.like_default_escape(),
                 )
                 .map_err(crate::ddl::generated_column_error)?;
+            // Go `checkAutoIncrementRef` (`add_column.go:233`), named by the
+            // column's lower-cased name.
+            if !ctx.auto_increment_in_generated() {
+                let auto_increment = table.columns.iter().find(|column| {
+                    column
+                        .field_type
+                        .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT)
+                });
+                if auto_increment.is_some_and(|auto_increment| {
+                    generated
+                        .dependencies
+                        .iter()
+                        .any(|dependency| dependency.eq_ignore_ascii_case(&auto_increment.name))
+                }) {
+                    return Err(DriverError::DdlCoded {
+                        errno: 3109,
+                        message: format!(
+                            "Generated column '{}' cannot refer to auto-increment column.",
+                            def.name.go_to_lower()
+                        ),
+                    });
+                }
+            }
             for dependency in &generated.dependencies {
                 let Some(dependency_offset) = table
                     .columns
@@ -3746,8 +3765,10 @@ pub(super) fn prepare_drop_column(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
+    // Go `checkIsDroppableColumn` looks in `VisibleCols()`: a hidden
+    // expression-index column cannot be named.
     let Some(offset) = table
-        .columns
+        .visible_columns()
         .iter()
         .position(|column| column.name.eq_ignore_ascii_case(column_name))
     else {
@@ -3853,13 +3874,6 @@ fn prepare_ttl_info_or_enable(
     name: &str,
     options: &[tidb_ast::TableOption],
 ) -> Result<Option<tidb_model::TTLInfo>, DriverError> {
-    // Resolve referrals and column names from the original statement image.
-    let wants_full_definition = options
-        .iter()
-        .any(|option| matches!(option, tidb_ast::TableOption::Ttl { .. }));
-    if wants_full_definition && crate::foreign_key::is_table_referred(catalog, database, name) {
-        return Err(DriverError::TtlReferencedByForeignKey);
-    }
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -3879,7 +3893,23 @@ fn prepare_ttl_info_or_enable(
     }
 
     if let Some(mut built) = info {
-        // Go runs `checkTTLInfoValid` on the NEW config before the job.
+        // Go runs `checkTTLInfoValid` on the NEW config before the job, in
+        // its order: temporary table, clustered FLOAT/DOUBLE primary key,
+        // foreign-key referral, then the column.
+        if table.temp_table_type() != tidb_model::TempTableType::NONE {
+            return Err(DriverError::TempTableNotAllowedWithTTL);
+        }
+        if table.common_handle_offsets().iter().any(|offset| {
+            matches!(
+                table.columns[*offset].field_type.code(),
+                tidb_datatype::FieldTypeCode::Float | tidb_datatype::FieldTypeCode::Double
+            )
+        }) {
+            return Err(DriverError::UnsupportedPrimaryKeyTypeWithTtl);
+        }
+        if crate::foreign_key::is_table_referred(catalog, database, name) {
+            return Err(DriverError::TtlReferencedByForeignKey);
+        }
         validate_ttl_column(table, built.column_name.original())?;
         // The merge rules: an explicit enable/interval wins; otherwise the
         // existing config's survives a re-definition.

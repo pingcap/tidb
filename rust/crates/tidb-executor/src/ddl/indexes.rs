@@ -590,12 +590,15 @@ pub(super) fn prepare_add_index(
     ctx: &crate::StmtContext,
     max_index_length: i64,
 ) -> Result<IndexAdmission<()>, DriverError> {
-    Ok(
-        match build_index_definition(table, index, ctx, max_index_length)? {
-            IndexAdmission::Change(_) => IndexAdmission::Change(()),
-            IndexAdmission::Note(note) => IndexAdmission::Note(note),
-        },
-    )
+    // A dry run: `add_index_to_table` builds the index again and raises
+    // its warnings (a truncated comment), so Go raises each once.
+    let bookmark = ctx.warning_count();
+    let built = build_index_definition(table, index, ctx, max_index_length);
+    tidb_expr::Columns::truncate_warnings(ctx, bookmark);
+    Ok(match built? {
+        IndexAdmission::Change(_) => IndexAdmission::Change(()),
+        IndexAdmission::Note(note) => IndexAdmission::Note(note),
+    })
 }
 
 /// Adds one index to a table, shared by `CREATE INDEX` and

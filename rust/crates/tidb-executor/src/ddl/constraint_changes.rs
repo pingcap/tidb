@@ -18,6 +18,7 @@
 
 use super::{Catalog, DriverError};
 use crate::kv_table::KvForeignKey;
+use tidb_hack::GoToLower;
 
 pub(super) enum PreparedConstraintChange {
     AddForeignKey {
@@ -393,6 +394,7 @@ fn prepare_add_foreign_key(
     {
         return Err(DriverError::FkDupName(fk_name));
     }
+    let bases = super::table_constraints::stored_generated_bases(&table.columns);
     let columns: Vec<super::table_constraints::FkColumn> = table
         .columns
         .iter()
@@ -400,6 +402,7 @@ fn prepare_add_foreign_key(
             name: column.name.clone(),
             generated_stored: column.generated.as_ref().map(|generated| generated.stored),
             field_type: column.field_type.clone(),
+            stored_generated_base: bases.contains(&column.name.go_to_lower()),
         })
         .collect();
     let clustered: Vec<usize> = match table.pk_handle_offset() {

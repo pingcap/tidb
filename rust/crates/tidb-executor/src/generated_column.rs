@@ -686,7 +686,9 @@ pub fn build_generated_columns_with_like_default_escape(
             .iter()
             .find(|(_, dependencies)| dependencies.contains(&auto_increment))
         {
-            return Err(GeneratedDdlError::RefAutoInc(defs[*position].name.clone()));
+            return Err(GeneratedDdlError::RefAutoInc(tidb_hack::go_to_lower(
+                &defs[*position].name,
+            )));
         }
     }
     // ... and `verifyColumnGeneration`: a generated column may refer only to
