@@ -515,7 +515,11 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	})
 	if !errors.ErrorEqual(walkErr, expectedErr) {
 		if walkErr == nil {
+<<<<<<< HEAD
 			return common.ErrEmptySourceDir.GenWithStackByArgs(taskCfg.Mydumper.SourceDir)
+=======
+			return nil, nil, common.ErrEmptySourceDir.GenWithStackByArgs(objstore.RedactURL(taskCfg.Mydumper.SourceDir))
+>>>>>>> 03148cd4adf (objstore, dumpling, lightning: redact storage URLs in logs and errors (#71844))
 		}
 		return common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
 	}

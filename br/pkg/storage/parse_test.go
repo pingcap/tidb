@@ -10,13 +10,18 @@ import (
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+<<<<<<< HEAD:br/pkg/storage/parse_test.go
+=======
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+>>>>>>> 03148cd4adf (objstore, dumpling, lightning: redact storage URLs in logs and errors (#71844)):pkg/objstore/parse_test.go
 	"github.com/stretchr/testify/require"
 )
 
 func TestCreateStorage(t *testing.T) {
 	_, err := ParseBackend("1invalid:", nil)
 	require.Error(t, err)
-	require.Regexp(t, "parse (.*)1invalid:(.*): first path segment in URL cannot contain colon", err.Error())
+	require.Regexp(t, "parse storage URL failed: invalid format", err.Error())
 
 	_, err = ParseBackend("net:storage", nil)
 	require.Error(t, err)
@@ -416,3 +421,99 @@ func TestParseBackend(t *testing.T) {
 		}, *retBackend3.AzureBlobStorage)
 	}
 }
+<<<<<<< HEAD:br/pkg/storage/parse_test.go
+=======
+
+func TestS3DefaultForceStylePath(t *testing.T) {
+	s, err := ParseBackend(`s3://bucket3/prefix/path?endpoint=http://xxx.amazonaws.com`, nil)
+	require.NoError(t, err)
+	require.False(t, s.GetS3().ForcePathStyle)
+	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=false`, nil)
+	require.NoError(t, err)
+	require.False(t, s.GetS3().ForcePathStyle)
+	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=true`, nil)
+	require.NoError(t, err)
+	require.True(t, s.GetS3().ForcePathStyle)
+}
+
+func TestBackendOptionsRedacted(t *testing.T) {
+	opts := BackendOptions{}
+	opts.S3.AccessKey = "AKID"
+	opts.S3.SecretAccessKey = "SKEY"
+	opts.S3.SessionToken = "TOKEN"
+	opts.S3.Region = "us-east-1"
+	opts.Azblob.AccountKey = "AZKEY"
+	opts.Azblob.SASToken = "SAS"
+	opts.Azblob.EncryptionKey = "ENC"
+	opts.Azblob.AccountName = "account"
+	opts.Azblob.Endpoint = "https://account.blob.core.windows.net/?sig=SAS"
+	opts.S3.Endpoint = "https://AKID:SKEY@s3.example.com"
+
+	redacted := opts.Redacted()
+	require.Equal(t, ast.RedactedValue, redacted.S3.AccessKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SecretAccessKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SessionToken)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.AccountKey)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.SASToken)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.EncryptionKey)
+	require.Equal(t, "us-east-1", redacted.S3.Region)
+	require.Equal(t, "account", redacted.Azblob.AccountName)
+	require.Equal(t, "https://account.blob.core.windows.net/", redacted.Azblob.Endpoint)
+	require.Equal(t, "https://s3.example.com", redacted.S3.Endpoint)
+	require.Equal(t, "AKID", opts.S3.AccessKey)
+	require.Equal(t, BackendOptions{}.Redacted(), BackendOptions{})
+}
+
+func TestRedactURL(t *testing.T) {
+	cases := []struct {
+		raw      string
+		expected string
+	}{
+		{"/local/path", "/local/path"},
+		{"/data/my files/100%off", "/data/my files/100%off"},
+		{"s3://bucket/prefix", "s3://bucket/prefix"},
+		{"s3://bucket/prefix?access-key=AKID&secret-access-key=SKEY&region=us", "s3://bucket/prefix?access-key=xxxxxx&region=us&secret-access-key=xxxxxx"},
+		{"azure://bucket/prefix?sas-token=SAS", "azure://bucket/prefix?sas-token=xxxxxx"},
+		{"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
+		{"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
+		{"s3a://bucket/prefix?access-key=AKID&secret-access-key=SKEY", "s3a://bucket/prefix"},
+		{"s3://AKID:SKEY@bucket/prefix?access-key=AKID", "s3://bucket/prefix?access-key=xxxxxx"},
+		{"s3a://AKID:SKEY@bucket/prefix", "s3a://bucket/prefix"},
+		{"https://account.blob.core.windows.net/?sv=2022&sig=SAS", "https://account.blob.core.windows.net/"},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.expected, RedactURL(c.raw), c.raw)
+	}
+}
+
+func TestParseRawURLErrorDoesNotLeakURL(t *testing.T) {
+	for _, raw := range []string{
+		"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY",
+		"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY",
+		"s3://AKID:SKEY/bucket/prefix",
+	} {
+		_, err := ParseRawURL(raw)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+
+		_, err = ParseBackend(raw, nil)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+	}
+}
+
+func TestParseBackendMissingBucketDoesNotLeakUserinfo(t *testing.T) {
+	for _, raw := range []string{
+		"s3://AKID:SKEY@/prefix",
+		"gcs://AKID:SKEY@/prefix",
+		"azblob://AKID:SKEY@/prefix",
+	} {
+		_, err := ParseBackend(raw, nil)
+		require.ErrorContains(t, err, "please specify the bucket")
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+	}
+}
+>>>>>>> 03148cd4adf (objstore, dumpling, lightning: redact storage URLs in logs and errors (#71844)):pkg/objstore/parse_test.go
