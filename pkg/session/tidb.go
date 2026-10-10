@@ -177,6 +177,11 @@ func SetStatsLease(lease time.Duration) {
 	atomic.StoreInt64(&statsLease, int64(lease))
 }
 
+// GetStatsLease returns the stats lease time for loading stats info.
+func GetStatsLease() time.Duration {
+	return time.Duration(atomic.LoadInt64(&statsLease))
+}
+
 // SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
 func SetPlanReplayerGCLease(lease time.Duration) {
 	atomic.StoreInt64(&planReplayerGCLease, int64(lease))
