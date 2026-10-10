@@ -660,6 +660,7 @@
       "pkg/ingestor/ingestctrl/": "more than 50",
       "br/pkg/restore/": "more than 50",
       "br/pkg/storage/": "more than 50",
+      "br/pkg/stream/": "more than 50",
       "pkg/ddl/tests/partition/": "more than 50"
     },
     "only_files": {
