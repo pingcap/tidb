@@ -43,7 +43,11 @@ go_test(
     ],
     embed = [":ossstore"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 14,
+=======
+    shard_count = 17,
+>>>>>>> 788ad51619d (objstore: retry transient OSS credential fetch failures and make them retryable in IMPORT INTO (#71843))
     deps = [
         "//dumpling/context",
         "//pkg/objstore/ossstore/mock",

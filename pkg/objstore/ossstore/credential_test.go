@@ -16,6 +16,7 @@ package ossstore
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 	"testing/synctest"
@@ -28,6 +29,101 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
+
+func TestFetchCredentials(t *testing.T) {
+	transient := fmt.Errorf(
+		"unable to get credentials from any of the providers in the chain: " +
+			`Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/tidbcloud-abc?": i/o timeout`)
+	// rawTransient is what DefaultCredentialsProvider returns after the first
+	// call: the cached provider's error, without the chain prefix.
+	rawTransient := fmt.Errorf(
+		`get role name failed: Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": ` +
+			"dial tcp 100.100.100.200:80: i/o timeout")
+	permanent := fmt.Errorf(
+		"unable to get credentials from any of the providers in the chain: " +
+			"open /home/pingcap/.aliyun/config.json: no such file or directory")
+	logger := zap.NewNop()
+
+	t.Run("RetryTransientThenSucceed", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			provider := mock.NewMockCredentialsProvider(ctrl)
+			gomock.InOrder(
+				provider.EXPECT().GetCredentials().Return(nil, transient),
+				provider.EXPECT().GetCredentials().Return(nil, transient),
+				provider.EXPECT().GetCredentials().Return(&providers.Credentials{
+					AccessKeyId:     "ak",
+					AccessKeySecret: "sk",
+				}, nil),
+			)
+			cred, err := fetchCredentials(context.Background(), provider, logger)
+			require.NoError(t, err)
+			require.Equal(t, "ak", cred.AccessKeyId)
+		})
+	})
+
+	t.Run("RetryRawTimeoutFromCachedProvider", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			provider := mock.NewMockCredentialsProvider(ctrl)
+			gomock.InOrder(
+				provider.EXPECT().GetCredentials().Return(nil, transient),
+				provider.EXPECT().GetCredentials().Return(nil, rawTransient),
+				provider.EXPECT().GetCredentials().Return(nil, rawTransient),
+				provider.EXPECT().GetCredentials().Return(&providers.Credentials{
+					AccessKeyId:     "ak",
+					AccessKeySecret: "sk",
+				}, nil),
+			)
+			cred, err := fetchCredentials(context.Background(), provider, logger)
+			require.NoError(t, err)
+			require.Equal(t, "ak", cred.AccessKeyId)
+		})
+	})
+
+	t.Run("DoNotRetryPermanentError", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		provider := mock.NewMockCredentialsProvider(ctrl)
+		provider.EXPECT().GetCredentials().Return(nil, permanent)
+		_, err := fetchCredentials(context.Background(), provider, logger)
+		require.ErrorContains(t, err, "no such file or directory")
+	})
+
+	t.Run("GiveUpAfterMaxAttempts", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			provider := mock.NewMockCredentialsProvider(ctrl)
+			attempts := 0
+			provider.EXPECT().GetCredentials().DoAndReturn(func() (*providers.Credentials, error) {
+				attempts++
+				return nil, transient
+			}).AnyTimes()
+			_, err := fetchCredentials(context.Background(), provider, logger)
+			require.ErrorContains(t, err, "i/o timeout")
+			// maxAttempts in fetchCredentials.
+			require.Equal(t, 30, attempts)
+		})
+	})
+
+	t.Run("StopOnContextDone", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			provider := mock.NewMockCredentialsProvider(ctrl)
+			provider.EXPECT().GetCredentials().Return(nil, transient)
+			_, err := fetchCredentials(ctx, provider, logger)
+			// on cancellation the caller must see ctx.Err() rather than the
+			// transient provider error.
+			require.ErrorIs(t, err, context.Canceled)
+		})
+	})
+}
 
 func TestCredentialRefresher(t *testing.T) {
 	ctrl := gomock.NewController(t)
