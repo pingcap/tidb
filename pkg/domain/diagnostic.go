@@ -34,11 +34,6 @@ func (do *Domain) StartDiagnostic() error {
 		do.wg.Add(1)
 		go do.serverIDKeeper()
 	}
-	if !cfg.SkipRegisterToDashboard {
-		do.wg.Run(func() {
-			do.info.ServerInfoSyncer().TopologySyncLoop(do.exit)
-		}, "topologySyncerKeeper")
-	}
 	do.wg.Run(func() {
 		do.isSyncer.SyncLoop(do.ctx)
 	}, "loadSchemaInLoop")
