@@ -23,6 +23,7 @@ go_test(
         "//pkg/parser/auth",
         "//pkg/sessiontxn",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/plannererrors",
