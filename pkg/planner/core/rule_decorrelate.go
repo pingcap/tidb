@@ -189,6 +189,11 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 		for {
 			child := finalResult.Children()[0]
 			nextApply, ok := child.(*logicalop.LogicalApply)
+			if ok && nextApply.JoinType != base.LeftOuterJoin && nextApply.JoinType != base.LeftOuterSemiJoin {
+				// Every removed Apply must preserve outer rows. A nested semi/anti
+				// join still filters rows even when the top selection is true.
+				return nil, false
+			}
 			if ok && nextApply.IsLateral {
 				// The IsLateral guard above only covers the topmost Apply, but this loop drops
 				// every Apply it walks through. A LATERAL Apply nested below a prunable one may
