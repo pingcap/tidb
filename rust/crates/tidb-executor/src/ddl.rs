@@ -338,6 +338,7 @@ pub mod storage_class;
 mod table_cache;
 mod table_constraints;
 mod table_lifecycle;
+pub mod table_lock;
 mod table_partition;
 pub mod table_partition_list;
 pub mod table_partition_range;

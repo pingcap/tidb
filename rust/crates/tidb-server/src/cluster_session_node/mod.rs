@@ -4863,6 +4863,26 @@ impl Drop for ClusterServerSession {
         // Go session.Close rolls back before releasing session/process state.
         // The same path retires history, native locks, schema pins and buffers.
         let _ = self.discard_explicit();
+        // Go `session.Close` then releases the session's table locks
+        // through the DDL (`UnlockTables`), logging a failure. The release
+        // runs through the cluster job, never the in-process catalog the
+        // driver session would otherwise edit when it drops.
+        if tidb_config::config_tree::config::table_lock_enabled() {
+            if let Some(statement) = self.session.cluster_unlock_tables_statement() {
+                if let Err(error) = self
+                    .ddl
+                    .execute(&statement, self.session.ddl_cdc_write_source())
+                {
+                    eprintln!(
+                        "{{\"event\":\"release_table_lock_failed\",\"conn\":{},\"error\":{}}}",
+                        self.session.connection_id(),
+                        serde_json::to_string(&format!("{error:?}"))
+                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                    );
+                }
+                self.session.finish_cluster_lock_job(&statement);
+            }
+        }
     }
 }
 
@@ -6423,6 +6443,27 @@ impl ClusterServerSession {
             }
             StoredStateChange::Schema => {
                 self.session.validate_ddl_preprocess(stmt).map_err(map_error)?;
+                // Go `DDLExec.executeCleanupTableLock` after the planner's
+                // SUPER check: the `IsCleanup` unlock job, none when no named
+                // table is locked.
+                if let Stmt::Admin(admin) = stmt {
+                    if let tidb_ast::AdminStmt::CleanupTableLock(cleanup) = admin.as_ref() {
+                        self.session
+                            .require_statement_table_privileges(stmt)
+                            .map_err(map_error)?;
+                        let statement = self
+                            .session
+                            .cluster_cleanup_table_lock_statement(&cleanup.tables)
+                            .map_err(map_error)?;
+                        return Ok(StatementRoute::Ddl(statement.unwrap_or(
+                            DdlStatement::AcceptedNoOp {
+                                schema: String::new(),
+                                table: String::new(),
+                                warning: None,
+                            },
+                        )));
+                    }
+                }
                 if self.session.is_local_temporary_ddl_parsed(stmt) {
                     return Ok(StatementRoute::LocalTemporaryDdl);
                 }
@@ -6449,6 +6490,38 @@ impl ClusterServerSession {
                 // collapsing into the generic route refusal.
                 if let Some((code, message)) = schema_shape_refusal(stmt) {
                     return Err(SqlQueryError::new(code, *b"HY000", message));
+                }
+                // Go `DDLExec.executeLockTables`/`executeUnlockTables` with
+                // `enable-table-lock` on: the planner's privilege check, then
+                // `executor.LockTables`' checks against this node's catalog
+                // build the lock job; UNLOCK with nothing held submits none.
+                if tidb_config::config_tree::config::table_lock_enabled() {
+                    if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+                        match &**ddl {
+                            tidb_ast::DdlStmt::LockTables(locks) => {
+                                self.session
+                                    .require_statement_table_privileges(stmt)
+                                    .map_err(map_error)?;
+                                return self
+                                    .session
+                                    .cluster_lock_tables_statement(locks)
+                                    .map(StatementRoute::Ddl)
+                                    .map_err(map_error);
+                            }
+                            tidb_ast::DdlStmt::UnlockTables => {
+                                return Ok(StatementRoute::Ddl(
+                                    self.session.cluster_unlock_tables_statement().unwrap_or(
+                                        DdlStatement::AcceptedNoOp {
+                                            schema: String::new(),
+                                            table: String::new(),
+                                            warning: None,
+                                        },
+                                    ),
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 // go `SimpleExec.executeLockTables`/`executeUnlockTables`:
                 // with the experimental table lock disabled
@@ -7293,9 +7366,18 @@ impl ClusterServerSession {
         self.session
             .validate_persistent_ddl_references(statement)
             .map_err(map_error)?;
+        let lock_effect = self.session.cluster_ddl_lock_effect(statement);
+        self.session.begin_cluster_lock_job(statement);
         let report = self
             .ddl
             .execute(statement, self.session.ddl_cdc_write_source())?;
+        self.session.finish_cluster_lock_job(statement);
+        let created_id = match &report {
+            ClusterDdlReport::Applied { created_id, .. } => *created_id,
+            ClusterDdlReport::AlreadySatisfied { .. } => None,
+        };
+        self.session
+            .finish_cluster_ddl_lock_effect(lock_effect, created_id);
         // Go raises `job.Warning` on the session's own statement context, so
         // `SHOW WARNINGS` reports what the change did differently from what
         // was written. `toTError` gives a plain `fmt.Errorf` the generic

@@ -1254,6 +1254,7 @@ mod resource_group;
 pub mod session_vars;
 mod stmt_ctx;
 mod table_lock;
+pub use table_lock::ClusterDdlLockEffect;
 mod table_privilege;
 mod txn;
 pub use txn::{HistoricalRead, HistoricalReadProvider, SnapshotSchemaProvider};

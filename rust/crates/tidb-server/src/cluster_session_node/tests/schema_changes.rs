@@ -777,3 +777,67 @@ fn commit_survives_a_schema_move_under_the_transaction() {
         outcome.err()
     );
 }
+
+/// With `enable-table-lock` on, LOCK TABLES is a cluster lock job: the lock
+/// is stored on the table (`onLockTables`), another connection meets it as
+/// `ErrTableLocked` (8020), UNLOCK releases it, and a closing connection
+/// releases what it holds through the same job (`session.Close`).
+#[test]
+fn lock_tables_run_as_a_cluster_lock_job() {
+    let previous = tidb_config::config_tree::config::get_global_config();
+    tidb_config::config_tree::config::update_global(|config| config.enable_table_lock = true);
+    let stored_lock = |node: &MockNode| {
+        node.catalog
+            .load()
+            .find_table("app", "t")
+            .and_then(|(_, table)| table.lock.as_ref().map(|lock| lock.read().clone()))
+    };
+    let (mut first, node) = open_session();
+    let mut second = open_session_on_with_context(&node, session_context(2));
+    first.execute_write("LOCK TABLES t WRITE").expect("lock");
+    let lock = stored_lock(&node).expect("the lock is stored on the table");
+    assert_eq!(lock.tp, tidb_ast::TableLockType::WRITE);
+    assert_eq!(lock.state, tidb_model::TableLockState::PUBLIC);
+    assert_eq!(
+        lock.sessions
+            .iter()
+            .map(|session| session.session_id)
+            .collect::<Vec<_>>(),
+        [1]
+    );
+    let Err(error) = second.execute("SELECT id FROM app.t") else {
+        panic!("another connection must meet the WRITE lock");
+    };
+    assert_eq!(error.code, 8020, "{}", error.message);
+    // The holder still writes its own table.
+    first
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("the lock holder writes");
+
+    first.execute_write("UNLOCK TABLES").expect("unlock");
+    assert!(stored_lock(&node).is_none());
+    rows(&mut second, "SELECT id FROM app.t");
+
+    // Go `CleanupTableLock`: the IsCleanup job drops every holder's lock.
+    first
+        .execute_write("LOCK TABLES t WRITE")
+        .expect("lock to clean");
+    second
+        .execute_write("ADMIN CLEANUP TABLE LOCK app.t")
+        .expect("cleanup");
+    assert!(stored_lock(&node).is_none());
+    first
+        .execute_write("UNLOCK TABLES")
+        .expect("unlock after cleanup");
+
+    first
+        .execute_write("LOCK TABLES t READ")
+        .expect("lock again");
+    assert!(stored_lock(&node).is_some());
+    drop(first);
+    assert!(
+        stored_lock(&node).is_none(),
+        "a closing connection releases its locks through the cluster job"
+    );
+    tidb_config::config_tree::config::store_global_config((*previous).clone());
+}

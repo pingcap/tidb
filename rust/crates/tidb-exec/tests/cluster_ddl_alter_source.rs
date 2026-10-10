@@ -1048,3 +1048,133 @@ fn rename_owner_batch_cross_schema_diff_retires_original_entries() {
         assert!(peer.find_table("destination", name).is_some());
     }
 }
+
+/// Go `onLockTables` / `onUnlockTables` (`ddl/table_lock.go`) over the
+/// stored tables: the lock lands public with the job's start TS and the
+/// holder's `SessionInfo`; re-locking releases the session's earlier lock in
+/// the same job, which names the first table and lists the other as an
+/// affected option; unlocking clears it, and an unlock with nothing held
+/// publishes nothing.
+#[test]
+fn lock_and_unlock_tables_edit_the_stored_lock() {
+    use tidb_exec::cluster_ddl::DdlStatement;
+    use tidb_model::{SessionInfo, TableLockTpInfo};
+    let mut store = bootstrapped();
+    let mut created = Vec::new();
+    for (sql, ts) in [
+        ("CREATE TABLE u6.t1 (id BIGINT PRIMARY KEY)", 100),
+        ("CREATE TABLE u6.t2 (id BIGINT PRIMARY KEY)", 110),
+    ] {
+        let write = plan(&mut store, sql, ts);
+        apply(&mut store, &write);
+        created.push(write.created_id.expect("CREATE TABLE allocates an id"));
+    }
+    let session = SessionInfo {
+        server_id: "node-1".to_owned(),
+        session_id: 7,
+    };
+    let lock = |table_id: i64, tp| TableLockTpInfo {
+        schema_id: 112,
+        table_id,
+        tp,
+    };
+    let write_of = |plan: DdlPlan| match plan {
+        DdlPlan::Write(write) => *write,
+        DdlPlan::AlreadySatisfied { detail, .. } => panic!("expected a write: {detail}"),
+    };
+    let t1_write = lock(created[0], tidb_ast::TableLockType::WRITE);
+    let write = write_of(
+        plan_ddl(
+            &mut store,
+            &DdlStatement::LockTables {
+                lock_tables: vec![t1_write],
+                unlock_tables: Vec::new(),
+                session: session.clone(),
+            },
+            200,
+        )
+        .expect("the lock plans"),
+    );
+    apply(&mut store, &write);
+    assert_eq!(
+        write.diff.action_type,
+        tidb_model::ActionType::ACTION_LOCK_TABLE
+    );
+    assert_eq!(
+        stored_table(&write, created[0])["Lock"],
+        serde_json::json!({
+            "Tp": 4,
+            "Sessions": [{"ServerID": "node-1", "SessionID": 7}],
+            "State": 2,
+            "TS": 200,
+        })
+    );
+
+    let t2_read = lock(created[1], tidb_ast::TableLockType::READ);
+    let write = write_of(
+        plan_ddl(
+            &mut store,
+            &DdlStatement::LockTables {
+                lock_tables: vec![t2_read],
+                unlock_tables: vec![t1_write],
+                session: session.clone(),
+            },
+            300,
+        )
+        .expect("the re-lock plans"),
+    );
+    apply(&mut store, &write);
+    assert_eq!(
+        stored_table(&write, created[0])["Lock"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        stored_table(&write, created[1])["Lock"]["Tp"],
+        serde_json::json!(1)
+    );
+    assert_eq!(write.diff.table_id, created[1]);
+    assert_eq!(
+        write
+            .diff
+            .affected_options
+            .iter_deref()
+            .map(|option| option.read().table_id)
+            .collect::<Vec<_>>(),
+        [created[0]]
+    );
+
+    let write = write_of(
+        plan_ddl(
+            &mut store,
+            &DdlStatement::UnlockTables {
+                unlock_tables: vec![t2_read],
+                session: session.clone(),
+                is_cleanup: false,
+            },
+            400,
+        )
+        .expect("the unlock plans"),
+    );
+    apply(&mut store, &write);
+    assert_eq!(
+        write.diff.action_type,
+        tidb_model::ActionType::ACTION_UNLOCK_TABLE
+    );
+    assert_eq!(
+        stored_table(&write, created[1])["Lock"],
+        serde_json::Value::Null
+    );
+    assert!(matches!(
+        plan_ddl(
+            &mut store,
+            &DdlStatement::UnlockTables {
+                unlock_tables: vec![t2_read],
+                session,
+                is_cleanup: false,
+            },
+            500,
+        )
+        .expect("the empty unlock plans"),
+        DdlPlan::AlreadySatisfied { .. }
+    ));
+}

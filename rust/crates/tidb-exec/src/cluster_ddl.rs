@@ -650,6 +650,27 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// (`GetEngineAttributeFromStorageClassTableOptions`).
         engine_attribute: String,
     },
+    /// `LOCK TABLES`, Go's `ActionLockTable` (`onLockTables`): the
+    /// session's earlier locks released, then each named table locked.
+    LockTables {
+        /// Go `LockTablesArgs.LockTables`.
+        lock_tables: Vec<tidb_model::TableLockTpInfo>,
+        /// Go `LockTablesArgs.UnlockTables`: the session's current locks.
+        unlock_tables: Vec<tidb_model::TableLockTpInfo>,
+        /// Go `LockTablesArgs.SessionInfo`.
+        session: tidb_model::SessionInfo,
+    },
+    /// `UNLOCK TABLES` and a closing session's release, Go's
+    /// `ActionUnlockTable` (`onUnlockTables`).
+    UnlockTables {
+        /// Go `LockTablesArgs.UnlockTables`.
+        unlock_tables: Vec<tidb_model::TableLockTpInfo>,
+        /// Go `LockTablesArgs.SessionInfo`.
+        session: tidb_model::SessionInfo,
+        /// Go `LockTablesArgs.IsCleanup`: `ADMIN CLEANUP TABLE LOCK` drops
+        /// every holder's lock.
+        is_cleanup: bool,
+    },
     /// `ALTER TABLE ... COMMENT = '...'`, Go's
     /// `ActionModifyTableComment`. Metadata only.
     ModifyTableComment {
@@ -9748,6 +9769,9 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             }) as i64;
             let ids = global_ids.allocate(1 + partition_count)?;
             let new_table_id = ids[0];
+            // The new table ID, which a session holding a lock on the old
+            // one moves its lock to (Go `HandleLockTablesOnSuccessSubmit`).
+            created_id = Some(new_table_id);
             let mut info = stored.clone_like_go();
             info.id = new_table_id;
             if let Some(replica) = &info.tiflash_replica {
@@ -10197,6 +10221,77 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+        }
+        DdlStatement::LockTables {
+            lock_tables,
+            unlock_tables,
+            session,
+        } => {
+            let mut changed = Vec::new();
+            // `onLockTables`: the session's earlier locks are released first.
+            plan_unlock_tables(&catalog, unlock_tables, session, false, &mut changed);
+            // Checked once more at the job's first step.
+            for lock in lock_tables {
+                let info = lock_table_target(&catalog, &mut changed, lock)?;
+                let name = info.name.lowercase().to_owned();
+                let current = info.lock.as_ref().map(|lock| lock.read().clone());
+                tidb_executor::ddl::table_lock::check_table_locked(
+                    &name,
+                    current.as_ref(),
+                    lock.tp,
+                    session,
+                )
+                .map_err(lock_plan_error)?;
+            }
+            for lock in lock_tables {
+                let info = lock_table_target(&catalog, &mut changed, lock)?;
+                let name = info.name.lowercase().to_owned();
+                let current = info.lock.as_ref().map(|lock| lock.read().clone());
+                let next = tidb_executor::ddl::table_lock::lock_table(
+                    &name,
+                    current.as_ref(),
+                    lock.tp,
+                    session,
+                    start_ts,
+                )
+                .map_err(lock_plan_error)?;
+                info.lock = Some(tidb_model::GoShared::new(next));
+            }
+            let first = lock_tables.first().ok_or_else(|| {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    "LOCK TABLES names no table".to_owned(),
+                ))
+            })?;
+            write_lock_table_infos(
+                &mut writes,
+                &mut diff,
+                changed,
+                start_ts,
+                ActionType::ACTION_LOCK_TABLE,
+                (first.schema_id, first.table_id),
+            )?;
+        }
+        DdlStatement::UnlockTables {
+            unlock_tables,
+            session,
+            is_cleanup,
+        } => {
+            let mut changed = Vec::new();
+            plan_unlock_tables(&catalog, unlock_tables, session, *is_cleanup, &mut changed);
+            // Go `unlockTable` answers "no update" for every table: the job
+            // finishes without a schema version.
+            let Some(first) = changed.first().map(|(db_id, info)| (*db_id, info.id)) else {
+                return Ok(already("UNLOCK TABLES held no lock to release".to_owned()));
+            };
+            write_lock_table_infos(
+                &mut writes,
+                &mut diff,
+                changed,
+                start_ts,
+                ActionType::ACTION_UNLOCK_TABLE,
+                first,
+            )?;
         }
         DdlStatement::ModifyTableComment {
             schema,
@@ -11123,6 +11218,112 @@ fn is_column_with_index(name: &str, table: &TableInfo) -> bool {
             .iter_deref()
             .any(|column| column.read().name.lowercase() == wanted)
     })
+}
+
+/// A lock job's refusal as the planner reports it.
+fn lock_plan_error(error: tidb_executor::DriverError) -> DdlPlanError {
+    let error = error.to_mysql_error();
+    DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+}
+
+/// The stored table a lock job edits, by Go's `(SchemaID, TableID)`: the
+/// copy this job already changed, or a fresh one (Go
+/// `GetTableInfoAndCancelFaultJob`).
+fn lock_table_target<'a>(
+    catalog: &ClusterCatalog,
+    changed: &'a mut Vec<(i64, TableInfo)>,
+    lock: &tidb_model::TableLockTpInfo,
+) -> Result<&'a mut TableInfo, DdlPlanError> {
+    if let Some(index) = changed
+        .iter()
+        .position(|(db_id, info)| *db_id == lock.schema_id && info.id == lock.table_id)
+    {
+        return Ok(&mut changed[index].1);
+    }
+    let stored = stored_table_by_ids(catalog, lock.schema_id, lock.table_id).ok_or_else(|| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            1146,
+            format!(
+                "Table '(Schema ID {}).(Table ID {})' doesn't exist",
+                lock.schema_id, lock.table_id
+            ),
+        ))
+    })?;
+    changed.push((lock.schema_id, stored.clone_like_go()));
+    Ok(&mut changed.last_mut().expect("just pushed").1)
+}
+
+fn stored_table_by_ids(
+    catalog: &ClusterCatalog,
+    schema_id: i64,
+    table_id: i64,
+) -> Option<&TableInfo> {
+    catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == schema_id)?
+        .tables
+        .iter()
+        .find(|table| table.id == table_id)
+}
+
+/// Go `ddl.unlockTables`: each table the session holds lets go of it, a
+/// table dropped since it was locked skipped.
+fn plan_unlock_tables(
+    catalog: &ClusterCatalog,
+    unlock_tables: &[tidb_model::TableLockTpInfo],
+    session: &tidb_model::SessionInfo,
+    is_cleanup: bool,
+    changed: &mut Vec<(i64, TableInfo)>,
+) {
+    for unlock in unlock_tables {
+        let Some(stored) = stored_table_by_ids(catalog, unlock.schema_id, unlock.table_id) else {
+            continue;
+        };
+        let current = stored.lock.as_ref().map(|lock| lock.read().clone());
+        let Some(next) =
+            tidb_executor::ddl::table_lock::unlock_table(current.as_ref(), session, is_cleanup)
+        else {
+            continue;
+        };
+        let mut info = stored.clone_like_go();
+        info.lock = next.map(tidb_model::GoShared::new);
+        changed.push((unlock.schema_id, info));
+    }
+}
+
+/// Writes every table a lock job changed (Go's `updateVersionAndTableInfo`
+/// per table), and one diff for the job naming `first` and listing the
+/// others as affected options, which `applyDefaultAction` reloads.
+fn write_lock_table_infos(
+    writes: &mut Vec<BufferMutation>,
+    diff: &mut SchemaDiff,
+    changed: Vec<(i64, TableInfo)>,
+    start_ts: u64,
+    action: ActionType,
+    first: (i64, i64),
+) -> Result<(), DdlPlanError> {
+    diff.action_type = action;
+    diff.schema_id = first.0;
+    diff.table_id = first.1;
+    for (db_id, mut info) in changed {
+        info.update_ts = start_ts;
+        let encoded = value::serialize_table_info(&info)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        writes.push(BufferMutation::set(
+            key::table_kv_key(db_id, info.id),
+            encoded,
+        )?);
+        if (db_id, info.id) != first {
+            diff.affected_options.push_go(tidb_model::AffectedOption {
+                schema_id: db_id,
+                table_id: info.id,
+                old_table_id: info.id,
+                old_schema_id: db_id,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn already(detail: String) -> DdlPlan {

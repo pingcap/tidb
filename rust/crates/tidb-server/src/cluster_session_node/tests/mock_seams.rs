@@ -447,6 +447,48 @@ impl ClusterDdl for MockDdl {
             // exercised where the rows are real -- `plan_ddl`'s own tests for
             // the write set, and `run-sysbench-ladder.sh`'s `ADMIN CHECK
             // TABLE` against a Go server for the entries.
+            // Go `onLockTables`/`onUnlockTables` over the mock's stored
+            // tables, through the planner's shared lock edits.
+            DdlStatement::LockTables {
+                lock_tables,
+                unlock_tables,
+                session,
+            } => {
+                mock_unlock_tables(&mut next.databases, unlock_tables, session, false);
+                for check in [true, false] {
+                    for lock in lock_tables {
+                        let info =
+                            mock_table_by_ids(&mut next.databases, lock.schema_id, lock.table_id)
+                                .ok_or_else(|| SqlQueryError::unknown("locked table not found"))?;
+                        let name = info.name.lowercase().to_owned();
+                        let current = info.lock.as_ref().map(|lock| lock.read().clone());
+                        if check {
+                            tidb_executor::ddl::table_lock::check_table_locked(
+                                &name,
+                                current.as_ref(),
+                                lock.tp,
+                                session,
+                            )
+                            .map_err(map_error)?;
+                        } else {
+                            let locked = tidb_executor::ddl::table_lock::lock_table(
+                                &name,
+                                current.as_ref(),
+                                lock.tp,
+                                session,
+                                0,
+                            )
+                            .map_err(map_error)?;
+                            info.lock = Some(tidb_model::GoShared::new(locked));
+                        }
+                    }
+                }
+            }
+            DdlStatement::UnlockTables {
+                unlock_tables,
+                session,
+                is_cleanup,
+            } => mock_unlock_tables(&mut next.databases, unlock_tables, session, *is_cleanup),
             DdlStatement::CreateIndex { .. } | DdlStatement::DropIndex { .. } => {
                 return Err(SqlQueryError::unknown(
                     "the mock catalog writer holds no rows, so it cannot model an index \
@@ -520,6 +562,38 @@ impl ClusterDdl for MockDdl {
             created_id,
             warnings: Vec::new(),
         })
+    }
+}
+
+fn mock_table_by_ids(
+    databases: &mut [LoadedDatabase],
+    schema_id: i64,
+    table_id: i64,
+) -> Option<&mut tidb_model::TableInfo> {
+    databases
+        .iter_mut()
+        .find(|database| database.info.id == schema_id)?
+        .tables
+        .iter_mut()
+        .find(|table| table.id == table_id)
+}
+
+fn mock_unlock_tables(
+    databases: &mut [LoadedDatabase],
+    unlock_tables: &[tidb_model::TableLockTpInfo],
+    session: &tidb_model::SessionInfo,
+    is_cleanup: bool,
+) {
+    for unlock in unlock_tables {
+        let Some(info) = mock_table_by_ids(databases, unlock.schema_id, unlock.table_id) else {
+            continue;
+        };
+        let current = info.lock.as_ref().map(|lock| lock.read().clone());
+        if let Some(next) =
+            tidb_executor::ddl::table_lock::unlock_table(current.as_ref(), session, is_cleanup)
+        {
+            info.lock = next.map(tidb_model::GoShared::new);
+        }
     }
 }
 

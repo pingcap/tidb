@@ -441,6 +441,10 @@ pub(crate) fn required_table_privileges(
             }
             requests.extend(ddl_table_privileges(ddl, current_db));
         }
+        // `planbuilder.go` around line 5622: "only by administrator".
+        Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::CleanupTableLock(_)) => {
+            requests.push(TablePrivilegeRequest::unnamed("", "", GlobalPriv::Super));
+        }
         Stmt::Admin(_) | Stmt::Session(_) => {}
     }
     // Preserve original table visits for observation, but retain Go's

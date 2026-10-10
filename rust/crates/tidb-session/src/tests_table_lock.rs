@@ -93,7 +93,16 @@ fn lock_tables_follow_go() {
         "{message}"
     );
 
+    // Go `CleanupTableLock` drops every holder's lock, and only the cleaning
+    // session's own map loses the table.
+    run(&mut s1, "unlock tables");
+    run(&mut s1, "lock table t2 write");
+    run(&mut s2, "admin cleanup table lock t2");
+    run(&mut s2, "select * from t2");
+    run(&mut s1, "unlock tables");
+
     // Go's session.Close releases the session's locks.
+    run(&mut s1, "lock table t2 read");
     drop(s1);
     run(&mut s2, "delete from t1 where id = 2");
     run(&mut s2, "drop table t2");

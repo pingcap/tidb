@@ -3616,10 +3616,16 @@ impl Session {
                     variant_name(other)
                 ))),
             },
-            Stmt::Admin(admin) => Err(DriverError::unsupported(format!(
-                "this statement kind (ADMIN {}) is not supported yet",
-                variant_name(&**admin)
-            ))),
+            Stmt::Admin(admin) => match &**admin {
+                tidb_ast::AdminStmt::CleanupTableLock(cleanup) => {
+                    let tables = cleanup.tables.clone();
+                    self.execute_cleanup_table_lock(&tables)
+                }
+                other => Err(DriverError::unsupported(format!(
+                    "this statement kind (ADMIN {}) is not supported yet",
+                    variant_name(other)
+                ))),
+            },
             Stmt::Session(session) => Err(DriverError::unsupported(format!(
                 "this statement kind ({}) is not supported yet",
                 variant_name(&**session)

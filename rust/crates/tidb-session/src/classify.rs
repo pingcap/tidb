@@ -641,6 +641,12 @@ impl Session {
                 StoredStateChange::None
             }
             Stmt::Ddl(_) => StoredStateChange::Schema,
+            // `ADMIN CLEANUP TABLE LOCK` is a DDL job (`ActionUnlockTable`).
+            Stmt::Admin(admin)
+                if matches!(admin.as_ref(), tidb_ast::AdminStmt::CleanupTableLock(_)) =>
+            {
+                StoredStateChange::Schema
+            }
             // The privilege/role statements: everything under `Admin` that
             // writes `mysql.user`, `mysql.db`, or the role edges. `SHOW
             // GRANTS` and the other inspections read and are left alone.
