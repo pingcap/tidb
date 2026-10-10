@@ -16,15 +16,30 @@ package clusteredindextest
 
 import (
 	"flag"
+	"fmt"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/resourcemanager"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
+)
+
+var (
+	clusteredIndexStore  kv.Storage
+	clusteredIndexDomain *domain.Domain
 )
 
 func TestMain(m *testing.M) {
@@ -40,6 +55,12 @@ func TestMain(m *testing.M) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	tikv.EnableFailpoints()
+
+	if err := setupClusteredIndexStore(); err != nil {
+		fmt.Fprintf(os.Stderr, "setup clustered index store: %v\n", err)
+		os.Exit(1)
+	}
+
 	opts := []goleak.Option{
 		// TODO: figure the reason and shorten this list
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -58,9 +79,44 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 	callback := func(i int) int {
+		if clusteredIndexDomain != nil {
+			clusteredIndexDomain.Close()
+		}
+		if clusteredIndexStore != nil {
+			if err := clusteredIndexStore.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "close clustered index store: %v\n", err)
+				i = 1
+			}
+		}
+		view.Stop()
+		resourcemanager.InstanceResourceManager.Reset()
+		gctuner.GlobalMemoryLimitTuner.Stop()
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
 		time.Sleep(time.Second)
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func setupClusteredIndexStore() error {
+	store, err := mockstore.NewMockStore()
+	if err != nil {
+		return err
+	}
+	vardef.SetSchemaLease(500 * time.Millisecond)
+	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	domain.DisableDumpHistoricalStats4Test()
+	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
+	dom.SetStatsUpdating(true)
+	sm := testkit.MockSessionManager{}
+	dom.InfoSyncer().SetSessionManager(&sm)
+
+	clusteredIndexStore = store
+	clusteredIndexDomain = dom
+	return nil
 }
