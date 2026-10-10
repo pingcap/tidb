@@ -341,7 +341,8 @@ const (
 	// produce an equivalent same-order index join candidate.
 	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
 
-	// TiDBEnableLocalMatchAgainst enables local no-score MATCH ... AGAINST evaluation.
+	// TiDBEnableLocalMatchAgainst enables row-wise no-score MATCH ... AGAINST
+	// evaluation in TiDB and permits the equivalent scalar expression to run in TiFlash.
 	TiDBEnableLocalMatchAgainst = "tidb_enable_local_match_against"
 	// TiDBEnableFTSLikeFallback enables the ILIKE alternative for MATCH predicates.
 	TiDBEnableFTSLikeFallback = "tidb_enable_fts_like_fallback"

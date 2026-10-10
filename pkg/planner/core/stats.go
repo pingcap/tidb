@@ -158,7 +158,6 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 	if err := generateIndexMergePath(ds); err != nil {
 		return nil, err
 	}
-
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugTraceAccessPaths(ds.SCtx(), ds.PossibleAccessPaths)
 	}

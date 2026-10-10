@@ -20,6 +20,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ast "github.com/pingcap/tidb/pkg/parser/types"
@@ -265,6 +266,20 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 
 	// Check whether all of its parameters can be pushed.
+	tiFlashLocalMatchInfo, hasTiFlashLocalMatchInfo := GetLocalMatchAgainstTiFlashEvalInfo(expr)
+	_, hasLocalMatchInfo := GetLocalMatchAgainstEvalInfo(expr)
+	if hasLocalMatchInfo && !hasTiFlashLocalMatchInfo {
+		// A TiDB-only local evaluator has no storage representation. When both
+		// metadata sets are present, the scalar is eligible for TiFlash and also
+		// remains evaluable by TiDB if the physical plan does not push it down.
+		return nil
+	}
+	if hasTiFlashLocalMatchInfo != (pbCode == tipb.ScalarFuncSig_LocalMatchAgainstBoolean) {
+		// Fail closed: the dedicated Boolean protocol requires its versioned
+		// query payload, while legacy signatures must not be reinterpreted as
+		// Boolean matching by an older or incomplete planner path.
+		return nil
+	}
 	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
 	for _, arg := range expr.GetArgs() {
 		pbArg := pc.ExprToPB(arg)
@@ -273,9 +288,32 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		}
 		children = append(children, pbArg)
 	}
+	if hasTiFlashLocalMatchInfo {
+		if tiFlashLocalMatchInfo.BooleanQuery == nil ||
+			tiFlashLocalMatchInfo.BooleanQuery.GetVersion() != fulltext.LocalMatchAgainstProtocolVersion {
+			return nil
+		}
+	}
 
+	functionMetadata := expr.Function.metadata()
+	if hasTiFlashLocalMatchInfo && functionMetadata != nil {
+		// Expr.val is the generic scalar-function metadata slot. Do not silently
+		// overwrite another function's metadata with Local MATCH metadata.
+		logutil.BgLogger().Error("Local MATCH expression has unexpected function metadata", zap.Any("metadata", functionMetadata))
+		return nil
+	}
+	var metadata proto.Message
+	if hasTiFlashLocalMatchInfo {
+		// LocalMatchAgainstBooleanQuery.Version is the semantic protocol version
+		// negotiated by deployment order: TiFlash must support it before TiDB
+		// emits it. Keep it in Expr.val with the query; do not add a synthetic SQL
+		// argument or reinterpret unknown versions as the current one.
+		metadata = proto.Clone(tiFlashLocalMatchInfo.BooleanQuery).(*tipb.LocalMatchAgainstBooleanQuery)
+	} else {
+		metadata = functionMetadata
+	}
 	var encoded []byte
-	if metadata := expr.Function.metadata(); metadata != nil {
+	if metadata != nil {
 		var err error
 		encoded, err = proto.Marshal(metadata)
 		if err != nil {
@@ -290,15 +328,22 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		_, str1 := expr.CharsetAndCollation()
 		tp.SetCollate(str1)
 	}
+	if hasTiFlashLocalMatchInfo && len(expr.GetArgs()) > 1 {
+		// The MATCH return value is numeric, but matching uses the collation of
+		// the first MATCH column. TiFlash's scalar function reads it from the
+		// scalar expression result FieldType, just as it does for scan FTS.
+		tp.SetCollate(expr.GetArgs()[1].GetType(pc.ctx).GetCollate())
+	}
 
 	// Construct expression ProtoBuf.
-	return &tipb.Expr{
+	pbExpr := &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
 		Val:       encoded,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(&tp),
 	}
+	return pbExpr
 }
 
 // GroupByItemToPB converts group by items to pb.

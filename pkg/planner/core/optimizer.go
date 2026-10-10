@@ -1036,6 +1036,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}()
 	}
 	var err error
+	// Keep Boolean MATCH as an ordinary scalar predicate so TiFlash evaluates
+	// it row by row through the scalar expression protocol.
 	var againRuleList []base.LogicalOptRule
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.

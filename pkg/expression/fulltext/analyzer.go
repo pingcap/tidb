@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 // Token is the analyzed fulltext token.
@@ -38,7 +39,13 @@ type Token struct {
 // AnalyzerConfig is the fulltext analyzer configuration used for local
 // MATCH ... AGAINST evaluation.
 type AnalyzerConfig struct {
-	ParserType             model.FullTextParserType
+	ParserType model.FullTextParserType
+	// Collation is the collation of the MATCH column and is used when matching
+	// query tokens to document tokens.
+	Collation string
+	// StopwordCollation is collation_server, which MySQL uses for stopword
+	// lookups. It is deliberately independent of the MATCH column collation.
+	StopwordCollation      string
 	InnodbFtMinTokenSize   int
 	InnodbFtMaxTokenSize   int
 	InnodbFtEnableStopword bool
@@ -51,6 +58,8 @@ type AnalyzerConfig struct {
 // order-sensitive comparison also catches malformed or non-canonical metadata.
 func (c AnalyzerConfig) Equal(other AnalyzerConfig) bool {
 	return c.ParserType == other.ParserType &&
+		c.Collation == other.Collation &&
+		c.StopwordCollation == other.StopwordCollation &&
 		c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&
 		c.InnodbFtMaxTokenSize == other.InnodbFtMaxTokenSize &&
 		c.InnodbFtEnableStopword == other.InnodbFtEnableStopword &&
@@ -118,9 +127,18 @@ func AnalyzerConfigFromSessionVars(sessVars *variable.SessionVars, parserType mo
 	if err != nil {
 		return AnalyzerConfig{}, err
 	}
+	stopwordCollation, err := getFulltextSysVar(sessVars, variable.CollationServer)
+	if err != nil {
+		return AnalyzerConfig{}, err
+	}
 
 	return AnalyzerConfig{
-		ParserType:             parserType,
+		ParserType: parserType,
+		// Use the server collation as a sensible default for standalone
+		// analyzer calls. The planner replaces Collation with the MATCH
+		// column's collation while preserving StopwordCollation.
+		Collation:              stopwordCollation,
+		StopwordCollation:      stopwordCollation,
 		InnodbFtMinTokenSize:   minTokenSize,
 		InnodbFtMaxTokenSize:   maxTokenSize,
 		InnodbFtEnableStopword: variable.TiDBOptOn(enableStopword),
@@ -128,15 +146,15 @@ func AnalyzerConfigFromSessionVars(sessVars *variable.SessionVars, parserType mo
 	}, nil
 }
 
-// PreserveUnderscoreTokenize tokenizes text with TiCI's PreserveUnderscore
-// tokenizer semantics: Unicode alphanumeric characters and '_' form tokens;
-// every other character is a delimiter.
+// PreserveUnderscoreTokenize tokenizes STANDARD text: BMP Unicode letters,
+// numbers and '_' form tokens. Supplementary characters delimit words, as in
+// MySQL 8.0's utf8mb4 word scanner. NGRAM documents use a different scanner.
 func PreserveUnderscoreTokenize(text string) []Token {
 	tokens := make([]Token, 0)
 	tokenPos := 0
 	for i := 0; i < len(text); {
 		ch, next := runeAtByte(text, i)
-		if !isTokenChar(ch) {
+		if !isStandardTokenChar(ch) {
 			i = next
 			continue
 		}
@@ -145,7 +163,7 @@ func PreserveUnderscoreTokenize(text string) []Token {
 		j := next
 		for j < len(text) {
 			ch, next = runeAtByte(text, j)
-			if !isTokenChar(ch) {
+			if !isStandardTokenChar(ch) {
 				break
 			}
 			j = next
@@ -178,13 +196,15 @@ func AnalyzeStandardV1(sctx sessionctx.Context, text string) ([]Token, error) {
 func analyzeStandardV1(text string, parserInfo parserInfo) []Token {
 	tokens := PreserveUnderscoreTokenize(text)
 	tokens = lengthFilter(tokens, parserInfo.innodbFtMinTokenSize, parserInfo.innodbFtMaxTokenSize)
-	tokens = lowerFilter(tokens)
 	tokens = stopwordFilter(tokens, parserInfo)
+	if parserInfo.collator == nil {
+		tokens = lowerFilter(tokens)
+	}
 	return tokens
 }
 
-// AnalyzeNgramV1 runs the NGRAM_V1 analyzer:
-// PreserveUnderscore tokenizer, fixed-size ngram filter, and lower-case filter.
+// AnalyzeNgramV1 runs the NGRAM_V1 analyzer: MySQL ngram document tokenizer,
+// fixed-size ngram filter, lower-case filter, and optional stopword filter.
 func AnalyzeNgramV1(sctx sessionctx.Context, text string) ([]Token, error) {
 	config, err := AnalyzerConfigFromSessionContext(sctx, model.FullTextParserTypeNgramV1)
 	if err != nil {
@@ -198,9 +218,39 @@ func AnalyzeNgramV1(sctx sessionctx.Context, text string) ([]Token, error) {
 }
 
 func analyzeNgramV1(text string, parserInfo parserInfo) []Token {
-	tokens := PreserveUnderscoreTokenize(text)
+	tokens := tokenizeNgramDocument(text)
 	tokens = ngramFilter(tokens, parserInfo.ngramTokenSize, parserInfo.ngramTokenSize)
-	tokens = lowerFilter(tokens)
+	tokens = ngramStopwordFilter(tokens, parserInfo)
+	if parserInfo.collator == nil {
+		tokens = lowerFilter(tokens)
+	}
+	return tokens
+}
+
+// tokenizeNgramDocument follows MySQL's ngram plugin rather than STANDARD's
+// Unicode word tokenizer: valid multibyte characters (including punctuation
+// and symbols) stay in the stream; single-byte non-word characters split it.
+// Invalid UTF-8 ends the document, as in the plugin's ngram_parse.
+func tokenizeNgramDocument(text string) []Token {
+	tokens := make([]Token, 0)
+	start := 0
+	for i := 0; i < len(text); {
+		r, size := utf8.DecodeRuneInString(text[i:])
+		if r == utf8.RuneError && size == 1 {
+			text = text[:i]
+			break
+		}
+		if size == 1 && !isTokenChar(r) {
+			if start < i {
+				tokens = append(tokens, Token{Text: text[start:i], Position: len(tokens)})
+			}
+			start = i + size
+		}
+		i += size
+	}
+	if start < len(text) {
+		tokens = append(tokens, Token{Text: text[start:], Position: len(tokens)})
+	}
 	return tokens
 }
 
@@ -209,15 +259,41 @@ type parserInfo struct {
 	innodbFtMaxTokenSize int
 	ngramTokenSize       int
 	stopwords            map[string]struct{}
+	stopwordsByLength    map[int][]string
+	collator             collate.Collator // MATCH column collation
+	stopwordCollator     collate.Collator // collation_server
 }
 
 func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
+	var collator, stopwordCollator collate.Collator
+	if config.Collation != "" {
+		collator = collate.GetCollator(config.Collation)
+	}
+	if config.StopwordCollation != "" {
+		stopwordCollator = collate.GetCollator(config.StopwordCollation)
+	}
+	stopwords := stopwordSetFromConfig(config)
 	return parserInfo{
 		innodbFtMinTokenSize: config.InnodbFtMinTokenSize,
 		innodbFtMaxTokenSize: config.InnodbFtMaxTokenSize,
 		ngramTokenSize:       config.NgramTokenSize,
-		stopwords:            stopwordSetFromConfig(config),
+		stopwords:            stopwords,
+		stopwordsByLength:    stopwordsByLength(stopwords),
+		collator:             collator,
+		stopwordCollator:     stopwordCollator,
 	}
+}
+
+func stopwordsByLength(stopwords map[string]struct{}) map[int][]string {
+	if len(stopwords) == 0 {
+		return nil
+	}
+	byLength := make(map[int][]string)
+	for stopword := range stopwords {
+		length := charLen(stopword)
+		byLength[length] = append(byLength[length], stopword)
+	}
+	return byLength
 }
 
 // defaultInnodbStopwords mirrors INFORMATION_SCHEMA.INNODB_FT_DEFAULT_STOPWORD,
@@ -239,10 +315,11 @@ func stopwordSetFromConfig(config AnalyzerConfig) map[string]struct{} {
 	if !config.InnodbFtEnableStopword {
 		return nil
 	}
-	// An explicit list wins; otherwise the InnoDB default applies, which is
-	// what MySQL does when no stopword table is configured. Resolving
-	// innodb_ft_server_stopword_table and innodb_ft_user_stopword_table is
-	// separate work.
+	// An explicit list wins; otherwise the InnoDB default applies. Preserve
+	// custom spelling when collation_server is known so binary/case-sensitive
+	// collations can distinguish, for example, "The" from "the". The
+	// case-insensitive fallback is for standalone analyzer callers that do not
+	// provide a stopword collation.
 	if len(config.Stopwords) == 0 {
 		set := make(map[string]struct{}, len(defaultInnodbStopwords))
 		for _, word := range defaultInnodbStopwords {
@@ -252,7 +329,10 @@ func stopwordSetFromConfig(config AnalyzerConfig) map[string]struct{} {
 	}
 	set := make(map[string]struct{}, len(config.Stopwords))
 	for _, word := range config.Stopwords {
-		set[strings.ToLower(word)] = struct{}{}
+		if config.StopwordCollation == "" {
+			word = strings.ToLower(word)
+		}
+		set[word] = struct{}{}
 	}
 	return set
 }
@@ -286,7 +366,14 @@ func runeAtByte(text string, offset int) (rune, int) {
 }
 
 func isTokenChar(ch rune) bool {
+	// Protocol v1 requires Go Unicode 15.0.0; the full-character regression
+	// test fails on a different version or a changed classification. TiFlash
+	// uses a table generated from this same standard-library rule.
 	return unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_'
+}
+
+func isStandardTokenChar(ch rune) bool {
+	return ch <= 0xFFFF && isTokenChar(ch)
 }
 
 func lengthFilter(tokens []Token, minLen, maxLen int) []Token {
@@ -327,12 +414,79 @@ func stopwordFilter(tokens []Token, parserInfo parserInfo) []Token {
 
 	out := tokens[:0]
 	for _, token := range tokens {
-		if _, ok := parserInfo.stopwords[token.Text]; !ok {
+		if !parserInfo.isStopword(token.Text) {
 			out = append(out, token)
 		}
 	}
 	clear(tokens[len(out):])
 	return out
+}
+
+// ngramStopwordFilter drops NGRAM tokens containing an enabled stopword.
+// MySQL ignores stopwords longer than ngram_token_size for the NGRAM parser.
+// Positions are deliberately preserved so phrase offsets remain tied to the
+// original token stream.
+func ngramStopwordFilter(tokens []Token, parserInfo parserInfo) []Token {
+	if parserInfo.stopwords == nil || parserInfo.ngramTokenSize <= 0 {
+		return tokens
+	}
+
+	out := tokens[:0]
+	for _, token := range tokens {
+		if !parserInfo.containsNgramStopword(token.Text) {
+			out = append(out, token)
+		}
+	}
+	clear(tokens[len(out):])
+	return out
+}
+
+func (p parserInfo) containsNgramStopword(token string) bool {
+	for startByte := 0; startByte < len(token); {
+		for stopwordLen, stopwords := range p.stopwordsByLength {
+			if stopwordLen == 0 || stopwordLen > p.ngramTokenSize {
+				continue
+			}
+			endByte := startByte
+			matchedChars := 0
+			for matchedChars < stopwordLen && endByte < len(token) {
+				_, size := utf8.DecodeRuneInString(token[endByte:])
+				endByte += size
+				matchedChars++
+			}
+			if matchedChars != stopwordLen {
+				continue
+			}
+			candidate := token[startByte:endByte]
+			if p.stopwordCollator == nil {
+				if _, ok := p.stopwords[candidate]; ok {
+					return true
+				}
+				continue
+			}
+			for _, stopword := range stopwords {
+				if p.stopwordCollator.Compare(candidate, stopword) == 0 {
+					return true
+				}
+			}
+		}
+		_, size := utf8.DecodeRuneInString(token[startByte:])
+		startByte += size
+	}
+	return false
+}
+
+func (p parserInfo) isStopword(token string) bool {
+	if p.stopwordCollator == nil {
+		_, ok := p.stopwords[strings.ToLower(token)]
+		return ok
+	}
+	for stopword := range p.stopwords {
+		if p.stopwordCollator.Compare(token, stopword) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func stopwordSet(words ...string) map[string]struct{} {
@@ -351,11 +505,11 @@ func ngramFilter(tokens []Token, minGram, maxGram int) []Token {
 	out := make([]Token, 0)
 	nextPositionBase := 0
 	for _, token := range tokens {
-		basePosition := max(token.Position, nextPositionBase)
+		basePosition := nextPositionBase
 		spans := utf8CharSpans(token.Text)
 		charCount := len(spans)
 		if charCount < minGram {
-			nextPositionBase = max(nextPositionBase, token.Position+1)
+			// A short document run emits no grams and contributes no position.
 			continue
 		}
 

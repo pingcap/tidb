@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,8 +73,8 @@ func TestBuildDocument(t *testing.T) {
 	require.Equal(t, []Token{{Text: "foo", Position: 0}, {Text: "bar", Position: 1}}, doc.Columns[0].Tokens)
 	require.Empty(t, doc.Columns[1].Tokens)
 	require.Equal(t, []int{0}, doc.Columns[2].Positions["foo"])
-	require.Equal(t, 2, doc.TokenFreq["foo"])
-	require.True(t, doc.hasToken("baz"))
+	require.Equal(t, []int{0}, doc.Columns[0].Positions["foo"])
+	require.True(t, doc.hasToken("baz", nil))
 }
 
 func TestCompileBooleanQueryStandard(t *testing.T) {
@@ -153,9 +154,21 @@ func TestCompileBooleanQueryStandard(t *testing.T) {
 			expect: false,
 		},
 		{
-			name:   "phrase gap can match with an intervening token",
+			name:   "filtered phrase word must match the original word",
 			query:  `"foo a bar"`,
 			cols:   []ColumnInput{{Text: "foo xx bar"}},
+			expect: false,
+		},
+		{
+			name:   "filtered phrase word matches the same original word",
+			query:  `"foo a bar"`,
+			cols:   []ColumnInput{{Text: "foo a bar"}},
+			expect: true,
+		},
+		{
+			name:   "leading filtered phrase word is omitted by InnoDB",
+			query:  `"a foo bar"`,
+			cols:   []ColumnInput{{Text: "foo bar"}},
 			expect: true,
 		},
 	}
@@ -164,6 +177,41 @@ func TestCompileBooleanQueryStandard(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.expect, matchQueryForTest(t, standardConfigForTest(), tc.query, tc.cols))
 		})
+	}
+}
+
+func TestBooleanFilteredRequiredMySQLInnoDB(t *testing.T) {
+	config := standardConfigForTest()
+	config.InnodbFtMinTokenSize = 4
+	config.InnodbFtEnableStopword = true
+	for _, search := range []string{"+tidb +the", "+tidb +x", "+the tidb"} {
+		require.False(t, matchQueryForTest(t, config, search, []ColumnInput{{Text: "tidb the theory"}}), search)
+	}
+	require.True(t, matchQueryForTest(t, config, "+tidb +the*", []ColumnInput{{Text: "tidb theory"}}))
+	require.False(t, matchQueryForTest(t, config, "+tidb +the*", []ColumnInput{{Text: "tidb storage"}}))
+}
+
+func TestNgramPhraseVerification(t *testing.T) {
+	config := standardConfigForTest()
+	config.ParserType = model.FullTextParserTypeNgramV1
+	config.NgramTokenSize = 2
+	for _, stopwords := range []bool{false, true} {
+		config.InnodbFtEnableStopword = stopwords
+		for _, document := range []string{"foobar", "foo，bar", "foo🙃bar", "foo𞤀bar"} {
+			require.False(t, matchQueryForTest(t, config, `+"foo bar"`, []ColumnInput{{Text: document}}), document)
+		}
+		require.True(t, matchQueryForTest(t, config, `+"foo bar"`, []ColumnInput{{Text: "foo,bar"}}))
+		require.False(t, matchQueryForTest(t, config, `"quick x fox"`, []ColumnInput{{Text: "quick x fox"}}))
+	}
+	config.NgramTokenSize = 3
+	config.InnodbFtEnableStopword = true
+	for _, search := range []string{`"quick the fox"`, `"quick a fox"`} {
+		require.True(t, matchQueryForTest(t, config, search, []ColumnInput{{Text: "fox quick"}}), search)
+	}
+	require.False(t, matchQueryForTest(t, config, `"quick x fox"`, []ColumnInput{{Text: "quick x fox"}}))
+	require.False(t, matchQueryForTest(t, config, `"foo a zoo"`, []ColumnInput{{Text: "foo a zoo"}}))
+	for _, document := range []string{"foo zoo", "foo a zoo", "foo x zoo", "foo xx zoo"} {
+		require.True(t, matchQueryForTest(t, config, `"foo zoo"`, []ColumnInput{{Text: document}}), document)
 	}
 }
 
@@ -190,6 +238,27 @@ func TestCompileBooleanQueryStandardPrefix(t *testing.T) {
 	require.False(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz foo"}}))
 	require.False(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz barista"}}))
 	require.True(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz qux"}}))
+}
+
+func TestCompileBooleanQueryUsesColumnCollation(t *testing.T) {
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+
+	config := standardConfigForTest()
+	config.Collation = "utf8mb4_bin"
+	require.False(t, matchQueryForTest(t, config, "+quick", []ColumnInput{{Text: "QUICK runner"}}))
+	require.True(t, matchQueryForTest(t, config, "+quick", []ColumnInput{{Text: "quick runner"}}))
+	require.False(t, matchQueryForTest(t, config, "+cafe", []ColumnInput{{Text: "café"}}))
+
+	config.Collation = "utf8mb4_general_ci"
+	require.True(t, matchQueryForTest(t, config, "+quick", []ColumnInput{{Text: "QUICK runner"}}))
+	require.True(t, matchQueryForTest(t, config, "+cafe", []ColumnInput{{Text: "café"}}))
+	require.True(t, matchQueryForTest(t, config, `"QUICK runner"`, []ColumnInput{{Text: "quick runner"}}))
+	require.True(t, matchQueryForTest(t, config, "qui*", []ColumnInput{{Text: "QUICK runner"}}))
+
+	config.Collation = "utf8mb4_0900_ai_ci"
+	require.True(t, matchQueryForTest(t, config, "+cafe", []ColumnInput{{Text: "CAFÉ"}}))
 }
 
 func TestCompileBooleanQueryRepeatedTokenPhraseMiss(t *testing.T) {
@@ -232,42 +301,57 @@ func TestCompileBooleanQueryNgram(t *testing.T) {
 	require.False(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abx"}}))
 }
 
+func TestCompileBooleanQueryNgramStopwords(t *testing.T) {
+	config := ngramConfigForTest()
+	config.InnodbFtEnableStopword = true
+
+	// Stopwords longer than ngram_token_size are ignored by the NGRAM parser.
+	require.True(t, matchQueryForTest(t, config, "+the", []ColumnInput{{Text: "the"}}))
+	// At size 2, both grams of "caf" contain the built-in stopword "a".
+	require.False(t, matchQueryForTest(t, config, "+caf*", []ColumnInput{{Text: "cafe"}}))
+
+	// At size 3, the query gram "the" is filtered. A required term that
+	// disappears during analysis cannot match any document.
+	config.NgramTokenSize = 3
+	query, err := CompileBooleanQuery("+the", config)
+	require.NoError(t, err)
+	require.True(t, query.MatchesNothing())
+	require.False(t, matchQueryForTest(t, config, "+the", []ColumnInput{{Text: "the"}}))
+
+	// The same query and document become matchable when stopword filtering is
+	// explicitly disabled.
+	config.InnodbFtEnableStopword = false
+	query, err = CompileBooleanQuery("+the", config)
+	require.NoError(t, err)
+	require.False(t, query.MatchesNothing())
+	require.True(t, matchQueryForTest(t, config, "+the", []ColumnInput{{Text: "the"}}))
+}
+
 func TestCompileBooleanQueryNgramUnicodeNumber(t *testing.T) {
 	config := ngramConfigForTest()
 	config.NgramTokenSize = 1
 	require.True(t, matchQueryForTest(t, config, "²", []ColumnInput{{Text: "²"}}))
 }
 
-func TestCompiledQueryEstimationMetadata(t *testing.T) {
+func TestCompiledQueryMatchCost(t *testing.T) {
 	simple, err := CompileBooleanQuery("+tidb", standardConfigForTest())
 	require.NoError(t, err)
 	require.False(t, simple.MatchesNothing())
 	require.Zero(t, simple.DocumentMatchCost())
-	term, ok := simple.SelectivityTerm()
-	require.True(t, ok)
-	require.Equal(t, "tidb", term)
 
 	filtered, err := CompileBooleanQuery("+go", standardConfigForTest())
 	require.NoError(t, err)
 	require.True(t, filtered.MatchesNothing())
-	_, ok = filtered.SelectivityTerm()
-	require.False(t, ok)
 
 	phrase, err := CompileBooleanQuery(`"tidb database"`, standardConfigForTest())
 	require.NoError(t, err)
 	require.Greater(t, phrase.MatchCost(), simple.MatchCost())
 	require.Equal(t, float64(1), phrase.DocumentMatchCost())
-	_, ok = phrase.SelectivityTerm()
-	require.False(t, ok)
 
 	sparsePhrase, err := CompileBooleanQuery(`"tidb a database"`, standardConfigForTest())
 	require.NoError(t, err)
 	require.Greater(t, sparsePhrase.DocumentMatchCost(), phrase.DocumentMatchCost())
 
-	ngram, err := CompileBooleanQuery("tidb", ngramConfigForTest())
-	require.NoError(t, err)
-	_, ok = ngram.SelectivityTerm()
-	require.False(t, ok)
 }
 
 func matchQueryForTest(t *testing.T, config AnalyzerConfig, query string, columns []ColumnInput) bool {
@@ -339,7 +423,7 @@ func TestCompileBooleanQueryMultiTokenTerm(t *testing.T) {
 	require.False(t, matches("baz -foo.bar", "baz bar"))
 	require.True(t, matches("baz -foo.bar", "baz qux"))
 
-	// A term the analyzer removes entirely still constrains nothing.
+	// A required term removed by the analyzer cannot match, as in InnoDB.
 	stopConfig := config
 	stopConfig.InnodbFtMinTokenSize = 5
 	query, err := CompileBooleanQuery("+abc", stopConfig)
