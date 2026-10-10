@@ -375,13 +375,20 @@ func TestPessimisticLockDataLockWaitsFromStorageWaitTable(t *testing.T) {
 
 	tk2.MustExec("begin pessimistic")
 	conn2TxnID := tk2.Session().TxnInfo().StartTS
+	selectStartedCh := make(chan struct{})
 	go func() {
+		close(selectStartedCh)
 		_, err := tk2.Exec("select * from ordinary_lock_view where id=1 for update")
 		if err == nil {
 			_, err = tk2.Exec("commit")
 		}
 		selectDoneCh <- err
 	}()
+	select {
+	case <-selectStartedCh:
+	case <-time.After(30 * time.Second):
+		require.FailNow(t, "select for update goroutine did not start")
+	}
 
 	var (
 		selectErr            error
