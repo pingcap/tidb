@@ -26,13 +26,17 @@ import (
 
 func TestMatchPlanValidation(t *testing.T) {
 	for _, tc := range []struct {
-		name, plan       string
-		native, allowCop bool
-		wantErr          bool
+		name, plan             string
+		native, decodedSummary bool
+		wantErr                bool
 	}{
 		{"full_scan", "Selection_1 1 mpp[tiflash] match_against(\"+foo\",body)\n└─TableFullScan_2 10 mpp[tiflash]", true, false, false},
 		{"range_scan_with_root_filter", "Selection_1 1 root unrelated(body)\n└─Selection_2 1 mpp[tiflash] match_against(\"+foo\",body)\n  └─TableRangeScan_3 10 mpp[tiflash] range:[-1,10)", true, false, false},
-		{"executed_cop_range", "Selection_1\tcop[tiflash]\t1\tmatch_against(\"+foo\",body)\n└─TableRangeScan_2\tcop[tiflash]\t10\trange:[-1,10)", true, true, false},
+		{"executed_cop_range_without_mpp", "Selection_1\tcop[tiflash]\t1\tmatch_against(\"+foo\",body)\n└─TableRangeScan_2\tcop[tiflash]\t10\trange:[-1,10)", true, true, true},
+		{"decoded_mpp_range", "TableReader_1\troot\t1\tMppVersion: 2, data:ExchangeSender_2\n└─ExchangeSender_2\tcop[tiflash]\t1\tExchangeType: PassThrough\n  └─Selection_3\tcop[tiflash]\t1\tmatch_against(\"+foo\",body)\n    └─TableRangeScan_4\tcop[tiflash]\t10\trange:[-1,10)", true, true, false},
+		{"summary_missing_sender", "TableReader_1 root 1 MppVersion: 2, data:ExchangeSender_2\n└─Selection_3 cop[tiflash] 1 match_against(\"+foo\",body)\n  └─TableRangeScan_4 cop[tiflash] 10 range:[-1,10)", true, true, true},
+		{"summary_missing_reader", "ExchangeSender_2 cop[tiflash] 1 ExchangeType: PassThrough\n└─Selection_3 cop[tiflash] 1 match_against(\"+foo\",body)\n  └─TableRangeScan_4 cop[tiflash] 10 range:[-1,10)", true, true, true},
+		{"batch_cop_rejected", "Selection_1 1 batchCop[tiflash] match_against(\"+foo\",body)\n└─TableFullScan_2 10 batchCop[tiflash]", true, false, true},
 		{"cop_not_allowed", "Selection_1 1 cop[tiflash] match_against(\"+foo\",body)\n└─TableRangeScan_2 10 cop[tiflash]", true, false, true},
 		{"no_match", "Selection_1 1 mpp[tiflash] gt(id,0)\n└─TableFullScan_2 10 mpp[tiflash]", true, false, true},
 		{"root_match", "Selection_1 1 root match_against(\"+foo\",body)\n└─Selection_2 1 mpp[tiflash] gt(id,0)\n  └─TableRangeScan_3 10 mpp[tiflash]", true, false, true},
@@ -47,7 +51,7 @@ func TestMatchPlanValidation(t *testing.T) {
 		{"task_word_in_search", "Selection_1 1 root match_against(\"+mpp[tiflash] selection\",body)\n└─TableFullScan_2 10 mpp[tiflash]", true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := validateMatchPlan(tc.plan, tc.native, tc.allowCop); (err != nil) != tc.wantErr {
+			if err := validateMatchPlan(tc.plan, tc.native, tc.decodedSummary); (err != nil) != tc.wantErr {
 				t.Fatalf("want error=%v, got %v for:\n%s", tc.wantErr, err, tc.plan)
 			}
 		})

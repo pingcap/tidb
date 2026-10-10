@@ -161,12 +161,12 @@ func TestLocalMatchSnapshotTiFlashE2E(t *testing.T) {
 	var snapshot string
 	must(t, f.native.QueryRowContext(context.Background(), "SELECT @@tidb_current_ts").Scan(&snapshot))
 	latestNative, latestLocal := f.connect(), f.connect()
+	assertDefaultMPPSettings(t, latestNative)
 	for _, path := range []struct {
 		conn   *sql.Conn
 		engine string
 	}{{latestNative, "tiflash"}, {latestLocal, "tikv"}} {
 		f.exec(path.conn, "SET SESSION tidb_enable_local_match_against=ON")
-		f.exec(path.conn, "SET SESSION tidb_allow_tiflash_cop=ON")
 		f.exec(path.conn, "SET SESSION tidb_isolation_read_engines='"+path.engine+"'")
 	}
 	// Both read transactions stay open while a different connection commits
@@ -344,15 +344,25 @@ func newFixture(t *testing.T, dsn string) *fixture {
 	f.admin = f.connect()
 	f.native = f.connect()
 	f.local = f.connect()
+	assertDefaultMPPSettings(t, f.native)
 	// The native path is preferred even when local fallback is enabled. Keeping
 	// it enabled also makes unsupported index shapes report the matching-index
 	// error instead of the fallback-disabled error.
 	f.exec(f.native, "SET SESSION tidb_enable_local_match_against=ON")
-	f.exec(f.native, "SET SESSION tidb_allow_tiflash_cop=ON")
 	f.exec(f.native, "SET SESSION tidb_isolation_read_engines='tiflash'")
 	f.exec(f.local, "SET SESSION tidb_enable_local_match_against=ON")
 	f.exec(f.local, "SET SESSION tidb_isolation_read_engines='tikv'")
 	return f
+}
+
+func assertDefaultMPPSettings(t *testing.T, conn *sql.Conn) {
+	t.Helper()
+	var allow, cop, enforce int
+	must(t, conn.QueryRowContext(context.Background(), "SELECT @@tidb_allow_mpp,@@tidb_allow_tiflash_cop,@@tidb_enforce_mpp").Scan(&allow, &cop, &enforce))
+	if allow != 1 || cop != 0 || enforce != 0 {
+		t.Fatalf("expected default MPP settings (allow=1,cop=0,enforce=0), got (%d,%d,%d)", allow, cop, enforce)
+	}
+	t.Log("MPP settings: tidb_allow_mpp=ON, tidb_allow_tiflash_cop=OFF, tidb_enforce_mpp=OFF (unchanged defaults)")
 }
 
 func (f *fixture) connect() *sql.Conn {
@@ -445,9 +455,9 @@ func assertPlan(t *testing.T, conn *sql.Conn, query string, native bool, args ..
 	assertPlanText(t, query, text, native, false)
 }
 
-func assertPlanText(t *testing.T, query, text string, native, allowCop bool) {
+func assertPlanText(t *testing.T, query, text string, native, decodedSummary bool) {
 	t.Helper()
-	if err := validateMatchPlan(text, native, allowCop); err != nil {
+	if err := validateMatchPlan(text, native, decodedSummary); err != nil {
 		t.Fatalf("%s for %s:\n%s", err, query, text)
 	}
 }
@@ -462,7 +472,7 @@ func matchPlanOperator(line string) (operator, task string) {
 	}
 	operator = strings.TrimLeft(fields[0], "│├└─")
 	for _, field := range fields[1:min(len(fields), 4)] {
-		if field == "root" || strings.HasPrefix(field, "cop[") || strings.HasPrefix(field, "mpp[") {
+		if field == "root" || strings.HasPrefix(field, "cop[") || strings.HasPrefix(field, "batchcop[") || strings.HasPrefix(field, "mpp[") {
 			task = field
 			break
 		}
@@ -470,15 +480,32 @@ func matchPlanOperator(line string) (operator, task string) {
 	return operator, task
 }
 
-func validateMatchPlan(text string, native, allowCop bool) error {
+func validateMatchPlan(text string, native, decodedSummary bool) error {
 	text = strings.ToLower(text)
+	// The legacy statement-summary codec records only root/store type and
+	// decodes MPP tasks as cop[tiflash]. Require the MPP TableReader/ExchangeSender
+	// envelope before accepting these labels; ordinary EXPLAIN remains MPP-only.
+	summaryMPP := false
+	if decodedSummary {
+		reader, sender := false, false
+		for _, line := range strings.Split(text, "\n") {
+			operator, task := matchPlanOperator(line)
+			if strings.HasPrefix(operator, "tablereader") && task == "root" && strings.Contains(line, "mppversion:") && strings.Contains(line, "data:exchangesender") {
+				reader = true
+			}
+			if strings.HasPrefix(operator, "exchangesender") && task == "cop[tiflash]" {
+				sender = true
+			}
+		}
+		summaryMPP = reader && sender
+	}
 	isTiFlash := func(task string) bool {
-		return task == "mpp[tiflash]" || (allowCop && task == "cop[tiflash]")
+		return task == "mpp[tiflash]" || (summaryMPP && task == "cop[tiflash]")
 	}
 	scan, match := false, false
 	for _, line := range strings.Split(text, "\n") {
 		operator, task := matchPlanOperator(line)
-		if task == "cop[tici]" {
+		if task == "cop[tici]" || task == "batchcop[tici]" || task == "mpp[tici]" {
 			return fmt.Errorf("unexpected TiCI plan")
 		}
 		if isTiFlash(task) && (strings.HasPrefix(operator, "tablefullscan") || strings.HasPrefix(operator, "tablerangescan")) {
