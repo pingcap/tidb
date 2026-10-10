@@ -931,8 +931,9 @@ func (m *MydumperRuntime) adjust() error {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(m.SourceDir, rule.Path)
 			if err != nil {
-				return common.ErrInvalidConfig.Wrap(err).
-					GenWithStack("cannot find relative path for file route path %s", rule.Path)
+				// err embeds the source dir, which may carry credentials.
+				return common.ErrInvalidConfig.
+					GenWithStack("cannot find relative path for file route path %s in source dir %s", rule.Path, objstore.RedactURL(m.SourceDir))
 			}
 			// ".." means that this path is not in source dir, so we should return an error
 			if strings.HasPrefix(relPath, "..") {

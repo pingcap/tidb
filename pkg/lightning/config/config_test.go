@@ -1482,6 +1482,18 @@ func TestRedactConfig(t *testing.T) {
 	}
 }
 
+func TestAdjustFileRouterRedactsSourceDir(t *testing.T) {
+	cfg := NewConfig()
+	cfg.Mydumper.SourceDir = "s3://bucket/data?access-key=AKID&secret-access-key=SKEY"
+	cfg.Mydumper.FileRouters = []*FileRouteRule{{
+		Pattern: `(.*)\.csv`, Path: "/abs/dir/file.csv", Schema: "db", Table: "t", Type: "csv",
+	}}
+	err := cfg.Mydumper.adjust()
+	require.ErrorContains(t, err, "cannot find relative path for file route path /abs/dir/file.csv")
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "SKEY")
+}
+
 func TestAdjustFilePathRedactsSourceDir(t *testing.T) {
 	for _, dir := range []string{
 		"s3://bucket:port/data?access-key=AKID&secret-access-key=SKEY",
