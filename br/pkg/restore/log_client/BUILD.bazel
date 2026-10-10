@@ -117,6 +117,7 @@ go_test(
         "//br/pkg/utiltest",
         "//pkg/domain",
         "//pkg/kv",
+        "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/core/resolve",
