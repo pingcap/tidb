@@ -751,7 +751,7 @@ func verifyCheckpoint(cfg *config.Config, taskCp *checkpoints.TaskCheckpoint) er
 		if cfg.Mydumper.SourceDir != taskCp.SourceDir {
 			cfgDir, cpDir := objstore.RedactURL(cfg.Mydumper.SourceDir), objstore.RedactURL(taskCp.SourceDir)
 			if cfgDir == cpDir {
-				cpDir += " (only the credentials differ)"
+				cpDir += " (only the redacted parameters differ)"
 			}
 			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "mydumper.data-source-dir", cfgDir, cpDir)
 		}
