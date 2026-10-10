@@ -432,6 +432,9 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
 			switch v.TableSample.SampleMethod {
 			case ast.SampleMethodTypeTiDBRegion:
+				if v.TableSample.Expr != nil || v.TableSample.RepeatableSeed != nil {
+					p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("REGIONS sampling does not support sample size or REPEATABLE")
+				}
 			default:
 				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
 			}
