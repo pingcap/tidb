@@ -131,7 +131,7 @@ pub use reorg::{
 pub use resource_group::{
     ResourceGroupBackgroundSettings, ResourceGroupInfo, ResourceGroupRunawayAction,
     ResourceGroupRunawaySettings, ResourceGroupRunawayWatch, ResourceGroupSettings,
-    ResourceGroupShared,
+    ResourceGroupShared, DEFAULT_RESOURCE_GROUP_NAME,
 };
 pub use schema_diff::{AffectedOption, SchemaDiff};
 pub use schema_state::SchemaState;

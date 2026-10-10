@@ -230,6 +230,9 @@ pub struct Catalog {
     /// policy to live here rather than being copied into each user.
     policies: HashMap<String, tidb_model::PolicyInfo>,
     next_policy_id: i64,
+    /// Go `infoschema`'s resource groups by lowercase name, `default`
+    /// always among them.
+    resource_groups: HashMap<String, tidb_model::ResourceGroupInfo>,
     next_database_id: i64,
     next_table_id: i64,
     /// Sticky indication that a table with a foreign key has existed in
@@ -530,6 +533,9 @@ struct CatalogSnapshot {
     table_column_count_limit: usize,
     policies: HashMap<String, tidb_model::PolicyInfo>,
     next_policy_id: i64,
+    /// Go `infoschema`'s resource groups by lowercase name, `default`
+    /// always among them.
+    resource_groups: HashMap<String, tidb_model::ResourceGroupInfo>,
     next_database_id: i64,
     next_table_id: i64,
     foreign_keys_present: bool,
@@ -552,6 +558,7 @@ impl CatalogSnapshot {
             enable_enum_length_limit: catalog.enable_enum_length_limit,
             table_column_count_limit: catalog.table_column_count_limit,
             policies: catalog.policies.clone(),
+            resource_groups: catalog.resource_groups.clone(),
             next_policy_id: catalog.next_policy_id,
             next_database_id: catalog.next_database_id,
             next_table_id: catalog.next_table_id,
@@ -581,6 +588,7 @@ impl CatalogSnapshot {
             enable_enum_length_limit: self.enable_enum_length_limit,
             table_column_count_limit: self.table_column_count_limit,
             policies: self.policies.clone(),
+            resource_groups: self.resource_groups.clone(),
             next_policy_id: self.next_policy_id,
             next_database_id: self.next_database_id,
             next_table_id: self.next_table_id,
@@ -743,6 +751,10 @@ impl Default for Catalog {
             table_column_count_limit: 1017,
             policies: HashMap::new(),
             next_policy_id: 0,
+            resource_groups: HashMap::from([(
+                tidb_model::DEFAULT_RESOURCE_GROUP_NAME.to_owned(),
+                tidb_model::ResourceGroupInfo::default_group(),
+            )]),
             next_database_id: 6,
             next_table_id: 0,
             version: 0,
@@ -1250,6 +1262,41 @@ impl Catalog {
     #[must_use]
     pub fn policies(&self) -> impl Iterator<Item = &tidb_model::PolicyInfo> {
         self.policies.values()
+    }
+
+    /// Go `infoschema.ResourceGroupByName`, folded.
+    #[must_use]
+    pub fn resource_group(&self, name: &str) -> Option<&tidb_model::ResourceGroupInfo> {
+        self.resource_groups.get(&name.to_lowercase())
+    }
+
+    /// Every resource group, for `information_schema.RESOURCE_GROUPS`.
+    pub fn resource_groups(&self) -> impl Iterator<Item = &tidb_model::ResourceGroupInfo> {
+        self.resource_groups.values()
+    }
+
+    /// Go `onCreateResourceGroup`/`onAlterResourceGroup`'s meta write: a
+    /// new group takes a global ID (`GenGlobalID`), an altered one keeps
+    /// its own.
+    pub fn put_resource_group(&mut self, mut group: tidb_model::ResourceGroupInfo) {
+        self.bump_metadata_version();
+        if group.id == 0 {
+            group.id = self.allocate_table_id();
+        }
+        group.state = tidb_model::SchemaState::PUBLIC;
+        self.resource_groups
+            .insert(group.name.lowercase().to_owned(), group);
+        self.bump_version();
+    }
+
+    /// Go `onDropResourceGroup`'s meta delete.
+    pub fn drop_resource_group(&mut self, name: &str) -> bool {
+        self.bump_metadata_version();
+        let dropped = self.resource_groups.remove(&name.to_lowercase()).is_some();
+        if dropped {
+            self.bump_version();
+        }
+        dropped
     }
 
     /// Go `CreatePlacementPolicyWithInfo`: stores a new policy.

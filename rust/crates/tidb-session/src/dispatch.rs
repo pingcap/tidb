@@ -3599,6 +3599,18 @@ impl Session {
                     self.execute_lock_tables(&locks)
                 }
                 DdlStmt::UnlockTables => self.execute_unlock_tables(),
+                DdlStmt::CreateResourceGroup(create) => {
+                    let create = (**create).clone();
+                    self.execute_create_resource_group(&create)
+                }
+                DdlStmt::AlterResourceGroup(alter) => {
+                    let alter = (**alter).clone();
+                    self.execute_alter_resource_group(&alter)
+                }
+                DdlStmt::DropResourceGroup(drop) => {
+                    let drop = (**drop).clone();
+                    self.execute_drop_resource_group(&drop)
+                }
                 other => Err(DriverError::unsupported(format!(
                     "this DDL statement kind ({}) is not supported yet",
                     variant_name(other)

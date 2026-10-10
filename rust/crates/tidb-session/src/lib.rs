@@ -1250,6 +1250,7 @@ mod record_set;
 mod session_plan_cache;
 use record_set::StatementCompletion;
 pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, StatementRecordSet};
+mod resource_group;
 pub mod session_vars;
 mod stmt_ctx;
 mod table_lock;

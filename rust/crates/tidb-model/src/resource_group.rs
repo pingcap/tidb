@@ -428,6 +428,28 @@ pub struct ResourceGroupInfo {
     pub state: SchemaState,
 }
 
+/// Go `resourcegroup.DefaultResourceGroupName`.
+pub const DEFAULT_RESOURCE_GROUP_NAME: &str = "default";
+
+impl ResourceGroupInfo {
+    /// Go meta's `defaultRGroupMeta`: the `default` group every store has,
+    /// ID 1 (`defaultGroupID`), unlimited and burstable at medium priority.
+    #[must_use]
+    pub fn default_group() -> Self {
+        Self {
+            settings: Some(Box::new(ResourceGroupSettings {
+                ru_rate: UNLIMITED_RU_RATE,
+                burst_limit: -1,
+                priority: MEDIUM_PRIORITY_VALUE,
+                ..ResourceGroupSettings::default()
+            })),
+            id: 1,
+            name: CiString::new(DEFAULT_RESOURCE_GROUP_NAME),
+            state: SchemaState::PUBLIC,
+        }
+    }
+}
+
 impl Clone for ResourceGroupInfo {
     fn clone(&self) -> Self {
         let settings = self

@@ -524,6 +524,13 @@ fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRe
         DdlStmt::CreateDatabase { name, .. } => {
             vec![TablePrivilegeRequest::database(name, GlobalPriv::Create)]
         }
+        // Around line 5631.
+        DdlStmt::CreateResourceGroup(_)
+        | DdlStmt::AlterResourceGroup(_)
+        | DdlStmt::DropResourceGroup(_) => vec![TablePrivilegeRequest::dynamic(
+            &["RESOURCE_GROUP_ADMIN"],
+            "SUPER or RESOURCE_GROUP_ADMIN",
+        )],
         // Around line 5611: LOCK TABLES on the table, denied as the schema
         // (1044), then SELECT on it.
         DdlStmt::LockTables(locks) => locks
