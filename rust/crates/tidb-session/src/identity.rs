@@ -666,9 +666,31 @@ impl Session {
         // one place that can do it -- the front end installs the identity
         // first and the registry second.
         if !self.privilege_bypassed {
-            if let Some((user, host)) = self.current_identity() {
+            if let Some((user, host)) = self
+                .current_identity()
+                .map(|(user, host)| (user.to_owned(), host.to_owned()))
+            {
+                let (user, host) = (user.as_str(), host.as_str());
                 self.active_roles =
                     Arc::new(registry.default_roles(&(user.to_owned(), host.to_owned())));
+                // Go `Auth`: with resource control on, the account's
+                // `User_attributes->$.resource_group` (the privilege
+                // cache's `ResourceGroup`) becomes the session's group.
+                if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst) {
+                    let group = registry
+                        .user_attributes(user, host)
+                        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                        .and_then(|attributes| {
+                            attributes
+                                .get("resource_group")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                        })
+                        .filter(|group| !group.is_empty());
+                    if let Some(group) = group {
+                        self.resource_group = group;
+                    }
+                }
             }
         }
         self.privileges = Some(registry);

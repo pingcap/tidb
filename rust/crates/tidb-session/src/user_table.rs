@@ -142,7 +142,7 @@ fn delete_from_set(set: &mut Vec<String>, value: &str) {
 }
 
 /// A privilege-table cell as text (Go `Row.GetString`, "" for NULL).
-fn datum_text(value: &Datum) -> String {
+pub(crate) fn datum_text(value: &Datum) -> String {
     if value.is_null() {
         return String::new();
     }
@@ -288,6 +288,7 @@ impl Session {
         account_locked: bool,
         password_expired: bool,
         password_lifetime: Option<i64>,
+        max_user_connections: i64,
     ) -> Result<(), DriverError> {
         if !self.user_table_present() {
             return Ok(());
@@ -303,7 +304,7 @@ impl Session {
              user_attributes, Account_locked, Token_issuer, Password_expired, \
              Password_lifetime, Max_user_connections, Password_reuse_time, \
              Password_reuse_history) VALUES ({host}, {user}, {auth}, {plugin}, {attrs}, \
-             {locked}, '', {expired}, {lifetime}, 0, null, null)",
+             {locked}, '', {expired}, {lifetime}, {max_user_connections}, null, null)",
             // Go lowercases the stored Host (`hostName :=
             // strings.ToLower(spec.User.Hostname)`).
             host = sql_str(&go_to_lower(host)),
@@ -421,7 +422,7 @@ impl Session {
     /// Rows of one internal read of the `mysql` schema, as Go's privilege
     /// executors read their tables through the system session (inside the
     /// statement's own writes).
-    fn user_table_rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
+    pub(crate) fn user_table_rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
         let ctx = self.statement_context(false);
         self.with_staged_catalog(|catalog| {
             tidb_executor::run_select_meta_in(sql, catalog, "mysql", &ctx).map(|(_, rows)| rows)

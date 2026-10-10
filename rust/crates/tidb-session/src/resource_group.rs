@@ -20,12 +20,17 @@
 //! manager to register it with.
 
 use tidb_ast::{
-    AlterResourceGroupStmt, CreateResourceGroupStmt, DropResourceGroupStmt, ResourceGroupBurstable,
-    ResourceGroupOption, ResourceGroupPriority, ResourceGroupRate,
+    AlterResourceGroupStmt, CreateResourceGroupStmt, DropResourceGroupStmt,
+    ResourceGroupBackgroundOption, ResourceGroupBurstable, ResourceGroupOption,
+    ResourceGroupPriority, ResourceGroupRate, ResourceGroupRunawayAction as AstRunawayAction,
+    ResourceGroupRunawayOption, ResourceGroupRunawayRule,
 };
+use tidb_config::configtypes::parse_go_duration;
 use tidb_executor::{DriverError, MysqlError};
 use tidb_model::{
-    ActionType, ResourceGroupInfo, ResourceGroupSettings, DEFAULT_RESOURCE_GROUP_NAME,
+    ActionType, ResourceGroupBackgroundSettings, ResourceGroupInfo,
+    ResourceGroupRunawayAction as RunawayAction, ResourceGroupRunawaySettings,
+    ResourceGroupSettings, ResourceGroupShared, DEFAULT_RESOURCE_GROUP_NAME,
 };
 
 use crate::{Session, StmtOutput};
@@ -50,7 +55,7 @@ fn resource_group_exists(name: &str) -> DriverError {
 }
 
 /// Go `infoschema.ErrResourceGroupNotExists` (8249).
-fn resource_group_not_exists(name: &str) -> DriverError {
+pub(crate) fn resource_group_not_exists(name: &str) -> DriverError {
     DriverError::Mysql(MysqlError::new(
         tidb_error::tidb::errcode::ErrResourceGroupNotExists,
         format!("Unknown resource group '{name}'"),
@@ -101,24 +106,123 @@ fn build_resource_group(
                     ResourceGroupBurstable::Off => 0,
                 };
             }
-            ResourceGroupOption::QueryLimit(_) => return Err(DriverError::unsupported(
-                "resource group QUERY_LIMIT (SetDirectResourceGroupRunawayOption) is not ported",
-            )),
-            ResourceGroupOption::Background(_) => {
+            ResourceGroupOption::QueryLimit(options) => {
+                settings.runaway = if options.is_empty() {
+                    None
+                } else {
+                    let mut runaway = ResourceGroupRunawaySettings::default();
+                    for option in options {
+                        set_direct_resource_group_runaway_option(&mut runaway, option)?;
+                    }
+                    Some(ResourceGroupShared::new(runaway))
+                };
+            }
+            ResourceGroupOption::Background(options) => {
                 if group.name.lowercase() != DEFAULT_RESOURCE_GROUP_NAME {
                     return Err(plain_error(
                         "unsupported operation. Currently, only the default resource group \
                          support change background settings",
                     ));
                 }
-                return Err(DriverError::unsupported(
-                    "resource group BACKGROUND (SetDirectResourceGroupBackgroundOption) is not ported",
-                ));
+                // Go sets Background to nil for an empty list and then to a
+                // fresh object regardless.
+                let mut background = ResourceGroupBackgroundSettings::default();
+                for option in options {
+                    set_direct_resource_group_background_option(&mut background, option)?;
+                }
+                settings.background = Some(ResourceGroupShared::new(background));
             }
         }
     }
     settings.adjust();
     Ok(group)
+}
+
+/// Go `SetDirectResourceGroupRunawayOption`.
+fn set_direct_resource_group_runaway_option(
+    settings: &mut ResourceGroupRunawaySettings,
+    option: &ResourceGroupRunawayOption,
+) -> Result<(), DriverError> {
+    match option {
+        ResourceGroupRunawayOption::Rule(ResourceGroupRunawayRule::ExecElapsed(text)) => {
+            let nanos = parse_go_duration(text).map_err(|error| plain_error(&error))?;
+            // Go `uint64(dur.Milliseconds())`.
+            settings.exec_elapsed_time_ms = (nanos / 1_000_000) as u64;
+        }
+        ResourceGroupRunawayOption::Rule(ResourceGroupRunawayRule::ProcessedKeys(keys)) => {
+            settings.processed_keys = *keys;
+        }
+        ResourceGroupRunawayOption::Rule(ResourceGroupRunawayRule::RequestUnit(units)) => {
+            settings.request_unit = *units;
+        }
+        ResourceGroupRunawayOption::Action(action) => {
+            let (action, switch_group) = match action {
+                AstRunawayAction::DryRun => (RunawayAction::DRY_RUN, String::new()),
+                AstRunawayAction::Cooldown => (RunawayAction::COOLDOWN, String::new()),
+                AstRunawayAction::Kill => (RunawayAction::KILL, String::new()),
+                AstRunawayAction::SwitchGroup(name) => (RunawayAction::SWITCH_GROUP, name.clone()),
+            };
+            settings.action = action;
+            settings.switch_group_name = switch_group;
+        }
+        ResourceGroupRunawayOption::Watch(watch) => {
+            settings.watch_type = watch.watch_type.into();
+            settings.watch_duration_ms = match watch.duration.as_deref() {
+                Some(text) if !text.is_empty() => {
+                    parse_go_duration(text).map_err(|error| plain_error(&error))? / 1_000_000
+                }
+                _ => 0,
+            };
+        }
+    }
+    Ok(())
+}
+
+/// Go `kvutil.ExplicitTypeList`.
+const EXPLICIT_TYPE_LIST: [&str; 8] = [
+    "",
+    "lightning",
+    "br",
+    "dumpling",
+    "background",
+    "ddl",
+    "stats",
+    "import",
+];
+
+/// Go `SetDirectResourceGroupBackgroundOption` with `parseBackgroundJobTypes`.
+fn set_direct_resource_group_background_option(
+    settings: &mut ResourceGroupBackgroundSettings,
+    option: &ResourceGroupBackgroundOption,
+) -> Result<(), DriverError> {
+    match option {
+        ResourceGroupBackgroundOption::TaskTypes(text) => {
+            let mut job_types = Vec::new();
+            for segment in text.split(',').filter(|_| !text.is_empty()) {
+                let job_type = segment.trim().to_lowercase();
+                if job_type.is_empty() {
+                    continue;
+                }
+                if !EXPLICIT_TYPE_LIST.contains(&job_type.as_str()) {
+                    return Err(DriverError::Mysql(MysqlError::new(
+                        tidb_error::tidb::errcode::ErrResourceGroupInvalidBackgroundTaskName,
+                        format!("Unknown background task name '{job_type}'"),
+                    )));
+                }
+                job_types.push(job_type);
+            }
+            settings.job_types = Some(job_types);
+        }
+        ResourceGroupBackgroundOption::UtilizationLimit(limit) => {
+            if *limit == 0 || *limit > 100 {
+                return Err(plain_error(
+                    "invalid background resource utilization limit, the valid range is (0, 100]",
+                ));
+            }
+            settings.resource_util_limit = *limit;
+        }
+    }
+    Ok(())
 }
 
 /// Go `checkResourceGroupValidation`: `resourcegroup.NewGroupFromOptions`'
@@ -129,6 +233,25 @@ fn check_resource_group_validation(group: &ResourceGroupInfo) -> Result<(), Driv
     };
     if group.name.lowercase().len() > MAX_GROUP_NAME_LENGTH {
         return Err(plain_error("resource group name too long"));
+    }
+    if let Some(runaway) = &settings.runaway {
+        let runaway = runaway.read();
+        if runaway.exec_elapsed_time_ms == 0
+            && runaway.processed_keys == 0
+            && runaway.request_unit == 0
+        {
+            return Err(plain_error(
+                "please set at least one field(exec_elapsed_time_ms, processed_keys, ru)",
+            ));
+        }
+        if runaway.action == RunawayAction::NONE {
+            return Err(plain_error("unknown resource group runaway action"));
+        }
+        if runaway.action == RunawayAction::SWITCH_GROUP && runaway.switch_group_name.is_empty() {
+            return Err(plain_error(
+                "unknown resource group runaway switch group name",
+            ));
+        }
     }
     if settings.ru_rate > 0 {
         if !settings.cpu_limiter.is_empty()
@@ -145,6 +268,57 @@ fn check_resource_group_validation(group: &ResourceGroupInfo) -> Result<(), Driv
 }
 
 impl Session {
+    /// The bootstrap's `ALTER RESOURCE GROUP default BACKGROUND=
+    /// (TASK_TYPES='stats')`. Go runs it as internal SQL, which the
+    /// resource-control switch does not gate (`InRestrictedSQL`).
+    pub(crate) fn bootstrap_default_resource_group_background(
+        &mut self,
+    ) -> Result<(), DriverError> {
+        let default = self
+            .lock_catalog()?
+            .resource_group(DEFAULT_RESOURCE_GROUP_NAME)
+            .cloned()
+            .expect("the catalog always holds the default group");
+        let group = build_resource_group(
+            &default,
+            &[ResourceGroupOption::Background(vec![
+                ResourceGroupBackgroundOption::TaskTypes("stats".to_owned()),
+            ])],
+        )?;
+        check_resource_group_validation(&group)?;
+        self.with_catalog_mut(|catalog| {
+            catalog.put_resource_group(group);
+            Ok(())
+        })
+    }
+
+    /// Go `executeCreateUser`/`executeAlterUser`'s RESOURCE GROUP arm: the
+    /// lowercase name the account's `user_attributes` records under
+    /// `resource_group`, after the feature gate, the role refusal
+    /// (`ErrResourceGroupInvalidForRole`, 8257) and the existence check
+    /// (`default` and the empty name always pass).
+    pub(crate) fn user_resource_group_attribute(
+        &self,
+        name: &str,
+        is_role: bool,
+    ) -> Result<String, DriverError> {
+        check_resource_control_enabled()?;
+        if is_role {
+            return Err(DriverError::Mysql(MysqlError::new(
+                tidb_error::tidb::errcode::ErrResourceGroupInvalidForRole,
+                tidb_error::tidb::errname::ErrResourceGroupInvalidForRole.raw,
+            )));
+        }
+        let lower = name.to_lowercase();
+        if lower != DEFAULT_RESOURCE_GROUP_NAME
+            && !lower.is_empty()
+            && self.lock_catalog()?.resource_group(&lower).is_none()
+        {
+            return Err(resource_group_not_exists(&lower));
+        }
+        Ok(lower)
+    }
+
     /// Go `DDLExec.executeCreateResourceGroup` and `executor.AddResourceGroup`.
     pub(crate) fn execute_create_resource_group(
         &mut self,
@@ -208,8 +382,24 @@ impl Session {
             }
             return Err(error);
         };
-        // Go's MatchUserResourceGroupName refusal needs an account bound to
-        // the group, which this tier's ALTER USER cannot make yet.
+        // Go `MatchUserResourceGroupName`: an account bound to the group
+        // keeps it.
+        if self.user_table_present() {
+            let rows = self.user_table_rows(&format!(
+                "SELECT user FROM mysql.user WHERE json_extract(user_attributes, \
+                 '$.resource_group') = {} LIMIT 1",
+                crate::user_table::sql_str(&stmt.name)
+            ))?;
+            if let Some(row) = rows.first() {
+                let user = row
+                    .first()
+                    .map(crate::user_table::datum_text)
+                    .unwrap_or_default();
+                return Err(plain_error(&format!(
+                    "user [{user}] depends on the resource group to drop"
+                )));
+            }
+        }
         self.submit_resource_group_job(ActionType::ACTION_DROP_RESOURCE_GROUP, existing)
     }
 

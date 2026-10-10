@@ -98,6 +98,7 @@ impl ClusterDdl for MockDdl {
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         let current = self.catalog.load();
         let mut next = ClusterCatalog {
+            resource_groups: current.resource_groups.clone(),
             schema_version: current.schema_version + 1,
             databases: current.databases.clone(),
         };

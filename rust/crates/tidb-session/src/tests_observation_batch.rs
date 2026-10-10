@@ -284,6 +284,9 @@ fn observation_batch_sql_execute_uses_retained_statement_digest() {
 fn observation_batch_persistent_instance_getters_read_live_config() {
     use tidb_config::config_tree::config::{get_global_config, store_global_config, update_global};
     let previous = get_global_config();
+    // The store comes up first: with persistence on, Go's startup sets up
+    // GlobalStmtSummary before the domain's sysvar-cache hooks reach it.
+    let session = Session::new();
     update_global(|config| {
         config.instance.stmt_summary_enable_persistent = true;
         config.instance.stmt_summary_filename = "observation-instance.log".into();
@@ -291,7 +294,6 @@ fn observation_batch_persistent_instance_getters_read_live_config() {
         config.instance.stmt_summary_file_max_size = 8;
         config.instance.stmt_summary_file_max_backups = 9;
     });
-    let session = Session::new();
     let values: Vec<_> = [
         "tidb_stmt_summary_enable_persistent",
         "tidb_stmt_summary_filename",

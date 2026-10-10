@@ -90,6 +90,7 @@ mod tests {
     #[test]
     fn a_cluster_with_no_global_variables_table_loads_as_no_overrides() {
         let catalog = ClusterCatalog {
+            resource_groups: Vec::new(),
             schema_version: 0,
             databases: Vec::new(),
         };

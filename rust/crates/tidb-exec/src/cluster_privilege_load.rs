@@ -727,6 +727,7 @@ mod tests {
         // would make a node either re-seed a live cluster or start with a
         // table nobody can log in to.
         let catalog = ClusterCatalog {
+            resource_groups: Vec::new(),
             schema_version: 0,
             databases: Vec::new(),
         };

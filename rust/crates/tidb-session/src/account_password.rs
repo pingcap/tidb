@@ -36,17 +36,13 @@ impl Session {
     /// `mysql.user.authentication_string` (and `plugin`), the MySQL 8.0
     /// dual-password clauses maintain `User_attributes ->
     /// '$.additional_password'`, and a COMMENT/ATTRIBUTE clause merges into
-    /// `$.metadata`. Resource limits, RESOURCE GROUP, and the `PASSWORD
-    /// HISTORY`/`REUSE`/`REQUIRE CURRENT` policies remain unsupported.
+    /// `$.metadata`, and RESOURCE GROUP records `$.resource_group`. Resource
+    /// limits and the `PASSWORD HISTORY`/`REUSE`/`REQUIRE CURRENT` policies
+    /// remain unsupported.
     pub(crate) fn alter_user_stmt(
         &mut self,
         alter: &tidb_ast::AlterUserStmt,
     ) -> Result<StmtOutput, DriverError> {
-        // go accepts resource limits and a RESOURCE GROUP (`executeAlterUser`
-        // writes them into the user row's extensions); the statement answer
-        // is a plain OK either way, so they parse through as accepted
-        // no-ops here.
-        let _ = (&alter.resource_options, &alter.resource_group);
         let options = PasswordOrLockOptions::load(&alter.password_options)?;
         let tls_policy = tls_policy_of(&alter.tls_options)?;
         let Some(registry) = self.privileges.clone() else {
@@ -270,6 +266,16 @@ impl Session {
             // The `mysql.user` UPDATE Go composes as `fields`; rendered SQL
             // fragments in Go's own order.
             let mut mirror_fields: Vec<String> = Vec::new();
+            // Go: MAX_USER_CONNECTIONS needs CREATE USER even on one's own
+            // account.
+            if let Some(count) =
+                crate::account::max_user_connections_option(&alter.resource_options)
+            {
+                if !self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser) {
+                    return Err(DriverError::SpecificAccessDenied("CREATE USER".to_owned()));
+                }
+                mirror_fields.push(format!("max_user_connections={count}"));
+            }
             let mut plugin_changed = false;
             if let Some(auth) = spec.auth.as_ref() {
                 mirror_fields.push("password_last_changed=current_timestamp()".to_owned());
@@ -390,6 +396,14 @@ impl Session {
                         new_attributes.push(format!("\"metadata\": {json}"));
                     }
                 }
+            }
+            if let Some(name) = &alter.resource_group {
+                let name =
+                    self.user_resource_group_attribute(name, registry.is_role(&user, &host))?;
+                new_attributes.push(format!(
+                    "\"resource_group\": {}",
+                    crate::user_table::json_string_literal(&name)
+                ));
             }
             if spec_retain {
                 // Go `buildAdditionalPasswordEntry`: the pre-change primary

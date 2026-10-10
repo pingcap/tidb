@@ -392,9 +392,19 @@ impl Session {
                         "SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER".to_owned(),
                     ));
                 }
+                // Go `executeSetResourceGroupName`: a named group must exist.
                 self.resource_group = if resource_group.name.is_empty() {
                     "default".to_owned()
                 } else {
+                    if self
+                        .lock_catalog()?
+                        .resource_group(&resource_group.name)
+                        .is_none()
+                    {
+                        return Err(crate::resource_group::resource_group_not_exists(
+                            &resource_group.name,
+                        ));
+                    }
                     resource_group.name.to_ascii_lowercase()
                 };
                 Ok(Some(()))
@@ -494,7 +504,16 @@ impl Session {
             None => {}
         }
 
-        self.active_resource_group = stmt_hints.resource_group.to_ascii_lowercase();
+        let hinted = stmt_hints.resource_group.to_ascii_lowercase();
+        // Go `ExecuteStmt`: a hinted group that does not exist falls back
+        // to the session's own group (Go only logs it).
+        let exists = hinted == self.resource_group
+            || self
+                .lock_catalog()
+                .is_ok_and(|catalog| catalog.resource_group(&hinted).is_some());
+        if exists {
+            self.active_resource_group = hinted;
+        }
     }
 
     /// Parses one text-protocol statement and resolves its statement-scoped

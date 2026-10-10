@@ -53,7 +53,8 @@ impl ResourceGroupRunawayAction {
     /// Go `ast.RunawayActionSwitchGroup`.
     pub const SWITCH_GROUP: Self = Self(4);
 
-    fn sql(self) -> &'static str {
+    /// Go's `String()` spelling.
+    pub fn sql(self) -> &'static str {
         match self {
             Self::DRY_RUN => "DRYRUN",
             Self::COOLDOWN => "COOLDOWN",
@@ -92,7 +93,8 @@ impl ResourceGroupRunawayWatch {
     /// Go `ast.WatchPlan`.
     pub const PLAN: Self = Self(3);
 
-    fn sql(self) -> &'static str {
+    /// Go's `String()` spelling.
+    pub fn sql(self) -> &'static str {
         match self {
             Self::EXACT => "EXACT",
             Self::SIMILAR => "SIMILAR",

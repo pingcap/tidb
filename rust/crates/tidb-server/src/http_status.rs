@@ -650,6 +650,7 @@ mod schema_route_tests {
 
     fn catalog_with(databases: Vec<tidb_exec::cluster_catalog::LoadedDatabase>) -> SchemaSource {
         let catalog = tidb_exec::cluster_catalog::ClusterCatalog {
+            resource_groups: Vec::new(),
             schema_version: 7,
             databases,
         };

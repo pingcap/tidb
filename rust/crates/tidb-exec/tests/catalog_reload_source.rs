@@ -1051,13 +1051,12 @@ fn a_modify_schema_charset_diff_copies_the_fresh_fields_onto_the_loaded_database
     assert_eq!(next.databases[0].tables.len(), 1);
 }
 
-/// Placement-policy, resource-group and masking-policy diffs touch maps this
-/// catalog does not keep; they advance the version without a full load.
+/// Placement-policy and masking-policy diffs touch maps this catalog does
+/// not keep; they advance the version without a full load.
 #[test]
-fn policy_and_resource_group_diffs_change_nothing_and_stay_incremental() {
+fn policy_diffs_change_nothing_and_stay_incremental() {
     for action in [
         ActionType::ACTION_CREATE_PLACEMENT_POLICY,
-        ActionType::ACTION_DROP_RESOURCE_GROUP,
         ActionType::ACTION_ALTER_MASKING_POLICY,
     ] {
         let (mut snapshot, catalog) = started_cluster();
@@ -1383,4 +1382,69 @@ fn a_diff_naming_an_unknown_database_takes_the_full_load() {
         reason,
         FullReloadReason::MissingObject { version: 101, .. }
     ));
+}
+
+/// Go `applyCreateOrAlterResourceGroup` re-reads the group a create or
+/// alter diff names from meta and replaces the one of that name;
+/// `applyDropResourceGroup` drops the group with the diff's ID.
+#[test]
+fn resource_group_diffs_follow_the_stored_group() {
+    let (mut snapshot, catalog) = started_cluster();
+    assert_eq!(
+        catalog
+            .resource_groups
+            .iter()
+            .map(|group| group.name.original())
+            .collect::<Vec<_>>(),
+        ["default"]
+    );
+    let stored = |ru: u64| {
+        tidb_meta::value::attach_magic_byte(
+            format!(
+                r#"{{"ru_per_sec":{ru},"priority":8,"cpu_limit":"","io_read_bandwidth":"","io_write_bandwidth":"","burst_limit":0,"runaway":null,"background":null,"id":90,"name":{{"O":"rg1","L":"rg1"}},"state":5}}"#
+            )
+            .as_bytes(),
+        )
+    };
+    snapshot.put(key::resource_group_kv_key(90), stored(100));
+    snapshot.commit_diff(
+        101,
+        &diff_json(101, ActionType::ACTION_CREATE_RESOURCE_GROUP, 90, 0),
+    );
+    let created = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "create resource group",
+    );
+    let rg1 = |catalog: &ClusterCatalog| {
+        catalog
+            .resource_groups
+            .iter()
+            .find(|group| group.name.lowercase() == "rg1")
+            .map(|group| group.settings.as_ref().expect("settings").ru_rate)
+    };
+    assert_eq!(rg1(&created), Some(100));
+
+    snapshot.put(key::resource_group_kv_key(90), stored(200));
+    snapshot.commit_diff(
+        102,
+        &diff_json(102, ActionType::ACTION_ALTER_RESOURCE_GROUP, 90, 0),
+    );
+    let altered = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &created).expect("reload runs"),
+        "alter resource group",
+    );
+    assert_eq!(rg1(&altered), Some(200));
+    assert_eq!(altered.resource_groups.len(), 2);
+
+    snapshot.remove(&key::resource_group_kv_key(90));
+    snapshot.commit_diff(
+        103,
+        &diff_json(103, ActionType::ACTION_DROP_RESOURCE_GROUP, 90, 0),
+    );
+    let dropped = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &altered).expect("reload runs"),
+        "drop resource group",
+    );
+    assert_eq!(rg1(&dropped), None);
+    assert_eq!(dropped.resource_groups.len(), 1);
 }

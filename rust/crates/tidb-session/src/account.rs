@@ -588,11 +588,9 @@ impl Session {
         comment_or_attribute: &Option<tidb_ast::CreateUserCommentOrAttribute>,
         resource_group: &Option<String>,
     ) -> Result<StmtOutput, DriverError> {
-        if !resource_options.is_empty() || resource_group.is_some() {
-            return Err(DriverError::unsupported(
-                "CREATE USER options beyond the account list are not supported yet",
-            ));
-        }
+        // Go `loadResourceOptions`: only MAX_USER_CONNECTIONS reaches the
+        // stored row, capped at `math.MaxInt16`.
+        let max_user_connections = max_user_connections_option(resource_options).unwrap_or(0);
         let tls_policy = tls_policy_of(tls_options)?;
         // Go `executeCreateUser`'s `userAttributes`: a COMMENT clause is
         // wrapped as `{"metadata": {"comment": "<text>"}}`, an ATTRIBUTE
@@ -607,6 +605,17 @@ impl Session {
             }
             Some(tidb_ast::CreateUserCommentOrAttribute::Attribute(json)) => {
                 serde_json::json!({"metadata": serde_json::from_str::<serde_json::Value>(json).map_err(|error| DriverError::unsupported(error.to_string()))?}).to_string()
+            }
+        };
+        // Go then appends `"resource_group": "<name>"`.
+        let user_attributes_json = match resource_group {
+            None => user_attributes_json,
+            Some(name) => {
+                let name = self.user_resource_group_attribute(name, false)?;
+                let mut attributes: serde_json::Map<String, serde_json::Value> =
+                    serde_json::from_str(&user_attributes_json).expect("composed above");
+                attributes.insert("resource_group".to_owned(), serde_json::Value::String(name));
+                serde_json::Value::Object(attributes).to_string()
             }
         };
         // Go validates every statement-level option BEFORE writing any row,
@@ -729,6 +738,7 @@ impl Session {
                     matches!(options.locked, Some(true)),
                     password_expired,
                     password_lifetime,
+                    max_user_connections,
                 )?;
                 self.mirror_account_policy_and_history(&registry, &user, &host)?;
                 // Go `executeCreateUser`: `INSERT IGNORE INTO
@@ -809,6 +819,7 @@ impl Session {
                     true,
                     true,
                     None,
+                    0,
                 )?;
                 self.mirror_account_policy_and_history(&registry, &role, &host)?;
                 // Go `executeCreateUser` with `IsCreateRole` writes the
@@ -2133,4 +2144,16 @@ impl Session {
             lines.split('\n').map(str::to_owned).collect(),
         ))
     }
+}
+
+/// Go `resourceOptionsInfo.loadResourceOptions`' MAX_USER_CONNECTIONS: the
+/// last one written, capped at `math.MaxInt16`; `None` when absent.
+pub(crate) fn max_user_connections_option(
+    options: &[tidb_ast::AlterUserResourceOption],
+) -> Option<i64> {
+    options
+        .iter()
+        .rev()
+        .find(|option| option.kind == tidb_ast::AlterUserResourceKind::MaxUserConnections)
+        .map(|option| option.count.min(i64::from(i16::MAX)))
 }

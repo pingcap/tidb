@@ -370,7 +370,7 @@ pub fn table_rows(
         return Some(tiflash_segments_rows());
     }
     if name.eq_ignore_ascii_case("RESOURCE_GROUPS") {
-        return Some(resource_groups_rows());
+        return Some(resource_groups_rows(catalog));
     }
     if name.eq_ignore_ascii_case("COLLATIONS") {
         return Some(collations_rows());
@@ -3063,17 +3063,119 @@ fn tiflash_segments_rows() -> Vec<Vec<Datum>> {
     Vec::new()
 }
 
-/// go `SetResourceGroups`: the single `default` resource group row this tier
-/// serves (RU_PER_SEC/QUERY_LIMIT render as the UNLIMITED spellings).
-fn resource_groups_rows() -> Vec<Vec<Datum>> {
-    vec![vec![
-        text("default"),
-        text("UNLIMITED"),
-        text("MEDIUM"),
-        text("UNLIMITED"),
-        Datum::Null,
-        Datum::Null,
-    ]]
+/// Go `memtableRetriever.setDataFromResourceGroups` over the groups the
+/// resource manager holds -- for this tier, the catalog's, as `onCreate`/
+/// `onAlterResourceGroup` register them (`NewGroupFromOptions`' shape).
+fn resource_groups_rows(catalog: &tidb_executor::Catalog) -> Vec<Vec<Datum>> {
+    let mut groups: Vec<_> = catalog.resource_groups().collect();
+    groups.sort_by(|left, right| left.name.lowercase().cmp(right.name.lowercase()));
+    groups.into_iter().map(resource_group_row).collect()
+}
+
+fn resource_group_row(group: &tidb_model::ResourceGroupInfo) -> Vec<Datum> {
+    let name = text(group.name.original());
+    let Some(settings) = group
+        .settings
+        .as_deref()
+        .filter(|settings| settings.ru_rate > 0)
+    else {
+        // Not RU mode.
+        return vec![
+            name,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+        ];
+    };
+    let duration = |ms: i64| tidb_config::configtypes::format_go_duration(ms * 1_000_000);
+    let mut query_limit = String::new();
+    if let Some(runaway) = &settings.runaway {
+        let runaway = runaway.read();
+        let mut rules = Vec::new();
+        if runaway.exec_elapsed_time_ms > 0 {
+            rules.push(format!(
+                "EXEC_ELAPSED='{}'",
+                duration(runaway.exec_elapsed_time_ms as i64)
+            ));
+        }
+        if runaway.processed_keys > 0 {
+            rules.push(format!("PROCESSED_KEYS={}", runaway.processed_keys));
+        }
+        if runaway.request_unit > 0 {
+            rules.push(format!("RU={}", runaway.request_unit));
+        }
+        query_limit = rules.join(", ");
+        use tidb_model::ResourceGroupRunawayAction as Action;
+        match runaway.action {
+            Action::DRY_RUN | Action::COOLDOWN | Action::KILL => {
+                query_limit.push_str(&format!(", ACTION={}", runaway.action.sql()));
+            }
+            Action::SWITCH_GROUP => query_limit.push_str(&format!(
+                ", ACTION={}({})",
+                runaway.action.sql(),
+                runaway.switch_group_name
+            )),
+            _ => {}
+        }
+        // `NewGroupFromOptions` keeps a watch only for a watch type.
+        if runaway.watch_type != tidb_model::ResourceGroupRunawayWatch::NONE {
+            if runaway.watch_duration_ms > 0 {
+                query_limit.push_str(&format!(
+                    ", WATCH={} DURATION='{}'",
+                    runaway.watch_type.sql(),
+                    duration(runaway.watch_duration_ms)
+                ));
+            } else {
+                query_limit.push_str(&format!(
+                    ", WATCH={} DURATION=UNLIMITED",
+                    runaway.watch_type.sql()
+                ));
+            }
+        }
+    }
+    let mut background = Vec::new();
+    if let Some(settings) = &settings.background {
+        let settings = settings.read();
+        if let Some(job_types) = settings
+            .job_types
+            .as_ref()
+            .filter(|types| !types.is_empty())
+        {
+            background.push(format!("TASK_TYPES='{}'", job_types.join(",")));
+        }
+        if settings.resource_util_limit > 0 {
+            background.push(format!(
+                "UTILIZATION_LIMIT={}",
+                settings.resource_util_limit
+            ));
+        }
+    }
+    let background = background.join(", ");
+    let optional = |value: String| {
+        if value.is_empty() {
+            Datum::Null
+        } else {
+            text(&value)
+        }
+    };
+    vec![
+        name,
+        text(&if settings.ru_rate == i64::from(i32::MAX) as u64 {
+            "UNLIMITED".to_owned()
+        } else {
+            settings.ru_rate.to_string()
+        }),
+        text(tidb_ast::priority_value_to_name(settings.priority)),
+        text(match settings.burst_limit {
+            -1 => "UNLIMITED",
+            -2 => "MODERATED",
+            _ => "OFF",
+        }),
+        optional(query_limit),
+        optional(background),
+    ]
 }
 
 /// Go `setDataFromCollations` (`infoschema_reader.go:1815`): IS_COMPILED is

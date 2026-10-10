@@ -461,6 +461,11 @@ mod tests {
         session
             .run("set global tidb_enable_resource_control='on'")
             .unwrap();
+        // As ddl/resource_group does: a hint naming a group that does not
+        // exist falls back to the session's group.
+        session
+            .run("create resource group rg1 ru_per_sec=1000")
+            .unwrap();
         assert_eq!(
             run_command(
                 &mut session,

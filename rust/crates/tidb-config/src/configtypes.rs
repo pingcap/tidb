@@ -252,7 +252,7 @@ impl<'de> Deserialize<'de> for ByteSize {
 pub struct Duration(pub i64);
 
 /// Go `time.Duration.String()`.
-fn format_go_duration(d: i64) -> String {
+pub fn format_go_duration(d: i64) -> String {
     if d == 0 {
         return "0s".to_string();
     }

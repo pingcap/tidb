@@ -2042,6 +2042,17 @@ impl GlobalSysvars {
         *self.values.lock().expect("global sysvar lock poisoned") =
             std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
         self.refresh_resolved();
+        self.rebuild_sys_var_cache_set_globals();
+    }
+
+    /// Go `Domain.rebuildSysVarCache`'s loop that calls each GLOBAL sysvar's
+    /// `SetGlobal` hook with the cached value (the stored row, or the
+    /// default when there is none), which is how a process switch such as
+    /// `tidb_enable_resource_control` starts ON in Go. A cluster image
+    /// replacement runs it, and so does an in-process store's bootstrap
+    /// ([`crate::Session::bootstrap_fresh_store`]), where Go's domain init
+    /// rebuilds the cache right after `BootstrapSession`.
+    pub fn rebuild_sys_var_cache_set_globals(&self) {
         self.publish_require_secure_transport();
         self.publish_ttl_job_enable();
         self.publish_enable_foreign_key();

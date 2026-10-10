@@ -1187,7 +1187,7 @@ impl Default for Session {
         // Go bootstraps the system tables the first time a store comes up
         // (`pkg/session/bootstrap.go`); this catalog is born here, so its
         // bootstrap runs here. See `crate::bootstrap`.
-        session.bootstrap_system_tables();
+        session.bootstrap_fresh_store();
         session
     }
 }
@@ -3086,6 +3086,8 @@ mod tests_read_cast;
 mod tests_recursive_cte;
 #[cfg(test)]
 mod tests_region_split;
+#[cfg(test)]
+mod tests_resource_group;
 #[cfg(test)]
 mod tests_savepoint;
 #[cfg(test)]

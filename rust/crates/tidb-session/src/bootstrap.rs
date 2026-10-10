@@ -58,6 +58,11 @@ impl Session {
     /// carries `IF NOT EXISTS`.
     pub fn bootstrap_fresh_store(&mut self) {
         self.bootstrap_system_tables();
+        // Go's domain init then rebuilds the sysvar cache, calling each
+        // GLOBAL sysvar's SetGlobal hook.
+        self.vars
+            .global_sysvars()
+            .rebuild_sys_var_cache_set_globals();
     }
 
     /// Creates the system tables a fresh catalog is born with.
@@ -168,6 +173,9 @@ impl Session {
         self.with_staged_catalog(|catalog| {
             tidb_executor::run_insert_in(&insert, catalog, "mysql", &insert_ctx).map(|_| ())
         })?;
+        // Go `doDDLWorks` ends with `ALTER RESOURCE GROUP default
+        // BACKGROUND=(TASK_TYPES='stats')` (`kv.InternalTxnStats`).
+        self.bootstrap_default_resource_group_background()?;
 
         // Go `doDMLWorks`' bootstrap `root`@`%` row, minus the
         // `HIGH_PRIORITY` scheduler hint: every static privilege column `Y`

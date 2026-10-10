@@ -159,6 +159,9 @@ pub struct ClusterCatalog {
     pub schema_version: i64,
     /// Every database, in stored key order.
     pub databases: Vec<LoadedDatabase>,
+    /// Go `Mutator.ListResourceGroups`: the stored resource groups, with
+    /// meta's default group when none is stored under that name.
+    pub resource_groups: Vec<tidb_model::ResourceGroupInfo>,
 }
 
 impl ClusterCatalog {
@@ -200,6 +203,23 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<ClusterCatalog, ClusterCatalogError> {
     let schema_version = read_schema_version(snapshot)?;
+
+    let mut resource_groups = Vec::new();
+    for (_, stored) in snapshot.scan_prefix(&key::resource_groups_kv_prefix())? {
+        let encoded = value::detach_magic_byte(&stored)
+            .map_err(|error| ClusterCatalogError::Decode(format!("ResourceGroupInfo: {error}")))?;
+        resource_groups.push(
+            serde_json::from_slice::<tidb_model::ResourceGroupInfo>(encoded).map_err(|error| {
+                ClusterCatalogError::Decode(format!("ResourceGroupInfo: {error}"))
+            })?,
+        );
+    }
+    if !resource_groups
+        .iter()
+        .any(|group| group.name.lowercase() == tidb_model::DEFAULT_RESOURCE_GROUP_NAME)
+    {
+        resource_groups.push(tidb_model::ResourceGroupInfo::default_group());
+    }
 
     let mut databases = Vec::new();
     for (raw_key, stored) in snapshot.scan_prefix(&key::databases_kv_prefix())? {
@@ -332,6 +352,7 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
     }
 
     Ok(ClusterCatalog {
+        resource_groups,
         schema_version,
         databases,
     })

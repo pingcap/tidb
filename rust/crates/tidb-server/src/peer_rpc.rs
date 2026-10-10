@@ -1900,6 +1900,10 @@ mod tests {
         use tidb_stmtsummary::v2::stmtsummary::{
             global_stmt_summary, set_global_stmt_summary, StmtSummary,
         };
+        // The store comes up first: its bootstrap's sysvar-cache rebuild
+        // publishes tidb_stmt_summary_max_stmt_count's default into the
+        // process-global summary, as a new Go domain does.
+        let mut session = Session::new();
         let config = tidb_config::config_tree::config::get_global_config();
         let previous = global_stmt_summary();
         let summary = StmtSummary::new_for_test(1);
@@ -1920,7 +1924,6 @@ mod tests {
             }
         }
         let _restore = Restore(config, previous, summary.clone());
-        let mut session = Session::new();
         session.set_user("summary_v2@%".into(), "summary_v2@localhost".into());
         session.set_process_privilege(true);
         session.run("SELECT 12 + 19").unwrap();

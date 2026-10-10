@@ -785,6 +785,7 @@ mod tests {
     fn manager(ddl: Arc<Ddl>, calls: Arc<AtomicUsize>) -> TiFlashReplicaManager {
         let catalog = Arc::new(crate::catalog_watch::SharedCatalog::new(
             crate::cluster_catalog::ClusterCatalog {
+                resource_groups: Vec::new(),
                 schema_version: 1,
                 databases: vec![],
             },
@@ -1223,6 +1224,7 @@ mod tests {
     fn replica_catalog(tables: &[(i64, bool)]) -> Arc<crate::catalog_watch::SharedCatalog> {
         Arc::new(crate::catalog_watch::SharedCatalog::new(
             crate::cluster_catalog::ClusterCatalog {
+                resource_groups: Vec::new(),
                 schema_version: 1,
                 databases: vec![crate::cluster_catalog::LoadedDatabase {
                     info: tidb_model::db::DBInfo::default(),

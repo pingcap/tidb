@@ -693,6 +693,7 @@ mod tests {
 
     fn catalog_at(version: i64) -> ClusterCatalog {
         ClusterCatalog {
+            resource_groups: Vec::new(),
             schema_version: version,
             databases: Vec::new(),
         }

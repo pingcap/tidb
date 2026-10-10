@@ -410,6 +410,7 @@ mod tests {
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         );
         ClusterCatalog {
+            resource_groups: Vec::new(),
             schema_version: table_id,
             databases: vec![LoadedDatabase {
                 info: DBInfo::default(),

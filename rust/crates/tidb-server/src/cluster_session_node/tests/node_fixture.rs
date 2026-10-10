@@ -225,6 +225,16 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
         ..TableInfo::default()
     };
     ClusterCatalog {
+        // A group another TiDB created, as meta's ResourceGroups hash holds it.
+        resource_groups: vec![tidb_model::ResourceGroupInfo {
+            settings: Some(Box::new(tidb_model::ResourceGroupSettings {
+                ru_rate: 100,
+                ..tidb_model::ResourceGroupSettings::new()
+            })),
+            id: 90,
+            name: CiString::new("batch"),
+            state: tidb_model::SchemaState::PUBLIC,
+        }],
         schema_version: 11,
         databases: vec![LoadedDatabase {
             info: DBInfo {

@@ -376,17 +376,44 @@ fn apply_schema_diff<S: MetaSnapshot>(
                 loaded.placement_policy_ref = fresh.placement_policy_ref;
             },
         ),
+        // Go `applyCreateOrAlterResourceGroup` (`builder_misc.go:74-86`):
+        // the group the diff names, read back from meta, replaces the one of
+        // that name.
+        ActionType::ACTION_CREATE_RESOURCE_GROUP | ActionType::ACTION_ALTER_RESOURCE_GROUP => {
+            let Some(stored) = snapshot.get(&key::resource_group_kv_key(diff.schema_id))? else {
+                return Err(ClusterCatalogError::Decode(format!(
+                    "resource group (Group ID {}) does not exist",
+                    diff.schema_id
+                )));
+            };
+            let encoded = value::detach_magic_byte(&stored).map_err(|error| {
+                ClusterCatalogError::Decode(format!("ResourceGroupInfo: {error}"))
+            })?;
+            let group: tidb_model::ResourceGroupInfo =
+                serde_json::from_slice(encoded).map_err(|error| {
+                    ClusterCatalogError::Decode(format!("ResourceGroupInfo: {error}"))
+                })?;
+            catalog
+                .resource_groups
+                .retain(|existing| existing.name.lowercase() != group.name.lowercase());
+            catalog.resource_groups.push(group);
+            Ok(Ok(Vec::new()))
+        }
+        // Go `applyDropResourceGroup` (`:88-95`): the group with the diff's
+        // ID leaves the map.
+        ActionType::ACTION_DROP_RESOURCE_GROUP => {
+            catalog
+                .resource_groups
+                .retain(|existing| existing.id != diff.schema_id);
+            Ok(Ok(Vec::new()))
+        }
         // Go `applyCreatePolicy` / `applyAlterPolicy` / `applyDropPolicy`
-        // (`builder_misc.go:25-72`), `applyCreateOrAlterResourceGroup` /
-        // `applyDropResourceGroup` (`:74-95`) and `applyMaskingPolicyChange`
-        // (`builder.go:412-415`) touch only the policy, resource-group and
-        // masking-policy maps, none of which this catalog holds.
+        // (`builder_misc.go:25-72`) and `applyMaskingPolicyChange`
+        // (`builder.go:412-415`) touch only the policy and masking-policy
+        // maps, which this catalog does not hold.
         ActionType::ACTION_CREATE_PLACEMENT_POLICY
         | ActionType::ACTION_ALTER_PLACEMENT_POLICY
         | ActionType::ACTION_DROP_PLACEMENT_POLICY
-        | ActionType::ACTION_CREATE_RESOURCE_GROUP
-        | ActionType::ACTION_ALTER_RESOURCE_GROUP
-        | ActionType::ACTION_DROP_RESOURCE_GROUP
         | ActionType::ACTION_CREATE_MASKING_POLICY
         | ActionType::ACTION_ALTER_MASKING_POLICY
         | ActionType::ACTION_DROP_MASKING_POLICY => Ok(Ok(Vec::new())),

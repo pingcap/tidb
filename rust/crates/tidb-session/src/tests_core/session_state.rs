@@ -9,6 +9,26 @@ use crate::*;
 fn resource_group_is_session_scoped_and_statement_hint_overrides_once() {
     let mut session = Session::new();
     assert_eq!(session.current_resource_group(), "default");
+    // Go `executeSetResourceGroupName`: an unknown group is 8249.
+    assert_eq!(
+        session
+            .apply_set("SET RESOURCE GROUP analytics")
+            .unwrap_err()
+            .to_mysql_error()
+            .message,
+        "Unknown resource group 'analytics'"
+    );
+    for name in ["analytics", "burst"] {
+        session
+            .catalog
+            .lock()
+            .unwrap()
+            .put_resource_group(tidb_model::ResourceGroupInfo {
+                settings: Some(Box::new(tidb_model::ResourceGroupSettings::new())),
+                name: tidb_ast::CiString::new(name),
+                ..tidb_model::ResourceGroupInfo::default()
+            });
+    }
 
     assert_eq!(
         session.apply_set("SET RESOURCE GROUP analytics").unwrap(),
@@ -27,6 +47,14 @@ fn resource_group_is_session_scoped_and_statement_hint_overrides_once() {
         session.statement_context(false).resource_group_name(),
         "burst"
     );
+
+    // Go `ExecuteStmt`: a hinted group that does not exist falls back to
+    // the session's group.
+    let unknown = session
+        .parse_statement("SELECT /*+ RESOURCE_GROUP(nosuch) */ 1")
+        .unwrap();
+    session.activate_statement_resource_group(&unknown);
+    assert_eq!(session.active_resource_group(), "analytics");
 
     let ordinary = session.parse_statement("SELECT 1").unwrap();
     assert_eq!(session.statement_resource_group(&ordinary), "analytics");

@@ -915,6 +915,7 @@ mod tiflash_cluster_http_tests {
         );
         let catalog = Arc::new(tidb_exec::catalog_watch::SharedCatalog::new(
             tidb_exec::cluster_catalog::ClusterCatalog {
+                resource_groups: Vec::new(),
                 schema_version: 1,
                 databases: vec![],
             },
