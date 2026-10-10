@@ -12,11 +12,14 @@ import (
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gc"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/operation"
 	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -35,6 +38,14 @@ func (f fakeValue) Set(string) error {
 
 func (f fakeValue) Type() string {
 	panic("implement me")
+}
+
+type fakeRestoreFileClient struct {
+	dbs []*metautil.Database
+}
+
+func (c fakeRestoreFileClient) GetDatabases() []*metautil.Database {
+	return c.dbs
 }
 
 func TestUrlNoQuery(t *testing.T) {
@@ -117,6 +128,63 @@ func TestParseStreamRestoreFlagsPiTRAddIndexSQLStorage(t *testing.T) {
 	cfg := RestoreConfig{}
 	require.NoError(t, cfg.ParseStreamRestoreFlags(command.Flags()))
 	require.Equal(t, "local:///tmp/pitr-add-index", cfg.PiTRAddIndexSQLStorage)
+}
+
+func TestFilterRestoreFilesSkipsMaterializedObjects(t *testing.T) {
+	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
+	baseTable := &metautil.Table{
+		DB: dbInfo,
+		Info: &model.TableInfo{
+			ID:   11,
+			Name: ast.NewCIStr("base_table"),
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{
+				MLogID:   12,
+				MViewIDs: []int64{13},
+			},
+		},
+		FilesOfPhysicals: map[int64][]*backup.File{
+			11: {{Name: "base_table_write.sst"}},
+		},
+	}
+	database := &metautil.Database{
+		Info: dbInfo,
+		Tables: []*metautil.Table{
+			baseTable,
+			{
+				DB:   dbInfo,
+				Info: &model.TableInfo{ID: 12, Name: ast.NewCIStr("$mlog$base_table"), MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 11}},
+				FilesOfPhysicals: map[int64][]*backup.File{
+					12: {{Name: "mlog_write.sst"}},
+				},
+			},
+			{
+				DB:   dbInfo,
+				Info: &model.TableInfo{ID: 13, Name: ast.NewCIStr("mv_table"), MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{11}}},
+				FilesOfPhysicals: map[int64][]*backup.File{
+					13: {{Name: "mv_write.sst"}},
+				},
+			},
+		},
+	}
+	cfg := &RestoreConfig{
+		Config: Config{
+			TableFilter: filter.CaseInsensitive(must(filter.Parse([]string{"*.*"}))),
+		},
+	}
+
+	tableMap, dbMap, err := filterRestoreFiles(fakeRestoreFileClient{dbs: []*metautil.Database{database}}, cfg, false)
+
+	require.NoError(t, err)
+	require.Len(t, dbMap, 1)
+	require.Same(t, database, dbMap[1])
+	require.Len(t, tableMap, 1)
+	require.Same(t, baseTable, tableMap[11])
+	require.NotContains(t, tableMap, int64(12))
+	require.NotContains(t, tableMap, int64(13))
+	require.Nil(t, baseTable.Info.MaterializedViewBase)
+	require.Equal(t, map[int64][]*backup.File{
+		11: {{Name: "base_table_write.sst"}},
+	}, tableMap[11].FilesOfPhysicals)
 }
 
 func TestTiDBConfigUnchanged(t *testing.T) {
