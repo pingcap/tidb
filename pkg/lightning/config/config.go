@@ -931,7 +931,6 @@ func (m *MydumperRuntime) adjust() error {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(m.SourceDir, rule.Path)
 			if err != nil {
-				// err embeds the source dir, which may carry credentials.
 				return common.ErrInvalidConfig.
 					GenWithStack("cannot find relative path for file route path %s in source dir %s", rule.Path, objstore.RedactURL(m.SourceDir))
 			}
@@ -1001,7 +1000,6 @@ func (m *MydumperRuntime) adjustFilePath() error {
 		var err error
 		u, err = url.Parse(m.SourceDir)
 		if err != nil {
-			// err embeds the whole URL, so only report the redacted one.
 			return common.ErrInvalidConfig.GenWithStack("cannot parse `mydumper.data-source-dir` %s", objstore.RedactURL(m.SourceDir))
 		}
 	} else {
