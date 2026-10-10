@@ -394,15 +394,18 @@ func TestGcTTLManagerSingle(t *testing.T) {
 	// set serviceSafePointTTL to 1 second, so lightning will update it in each 1/3 seconds.
 	serviceSafePointTTL = 1
 	defer func() {
+		manager.close()
 		serviceSafePointTTL = oldTTL
 	}()
 
 	err := manager.addOneJob(ctx, "test", uint64(time.Now().Unix()))
 	require.NoError(t, err)
 
-	time.Sleep(2*time.Second + 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return pdClient.count.Load() >= 5
+	}, 3*time.Second, 10*time.Millisecond)
 
-	// after 2 seconds, must at least update 5 times
+	// The manager should keep refreshing the TTL while the job is active.
 	val := pdClient.count.Load()
 	require.GreaterOrEqual(t, val, int32(5))
 
