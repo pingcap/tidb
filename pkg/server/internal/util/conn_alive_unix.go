@@ -56,9 +56,16 @@ func peekConnAlive(fd int) int {
 		// The receive was interrupted by a signal before any data was
 		// available, which says nothing about the peer, so liveness is unknown.
 		return -1
-	case err != nil:
-		// The peer reset the connection or the socket hit a fatal error.
+	case err == unix.ECONNRESET || err == unix.EPIPE ||
+		err == unix.ENOTCONN || err == unix.ETIMEDOUT:
+		// These errors prove the connection is gone: the peer reset it, the
+		// socket was disconnected, or the connection timed out.
 		return 0
+	case err != nil:
+		// Any other error, such as a transient ENOMEM/ENOBUFS while the host is
+		// under memory pressure, does not prove the peer is gone. Report
+		// unknown so callers never kill a query on a healthy connection.
+		return -1
 	case n == 0:
 		// recv reports EOF: the peer performed an orderly shutdown (FIN).
 		return 0
