@@ -82,7 +82,7 @@ func optimizeByShuffle4Window(pp *physicalop.PhysicalWindow, ctx base.PlanContex
 	if ndv <= 1 {
 		return nil
 	}
-	concurrency = min(concurrency, int(ndv))
+	concurrency = int(math.Min(float64(concurrency), ndv))
 
 	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
 	for _, item := range pp.PartitionBy {
@@ -123,7 +123,7 @@ func optimizeByShuffle4StreamAgg(pp *physicalop.PhysicalStreamAgg, ctx base.Plan
 	if ndv <= 1 {
 		return nil
 	}
-	concurrency = min(concurrency, int(ndv))
+	concurrency = int(math.Min(float64(concurrency), ndv))
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := physicalop.PhysicalShuffle{
