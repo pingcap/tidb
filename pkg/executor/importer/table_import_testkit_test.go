@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -50,32 +52,40 @@ func checkImportDirEmpty(t *testing.T) {
 
 func TestStartDiskQuotaCheck(t *testing.T) {
 	ctx := context.Background()
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	tidbCfg := tidb.GetGlobalConfig()
 	tidbCfg.TempDir = t.TempDir()
 
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	do, err := session.GetDomain(store)
-	require.NoError(t, err)
-	dbInfo, ok := do.InfoSchema().SchemaByName(ast.NewCIStr("test"))
-	require.True(t, ok)
-	table, err := do.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
-		Table: &resolve.TableNameW{
-			TableName: &ast.TableName{
-				Name: ast.NewCIStr("t"),
-			},
-			DBInfo: &model.DBInfo{
-				Name: ast.NewCIStr("test"),
-				ID:   dbInfo.ID,
+	tableInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLong),
 			},
 		},
-		SelectPlan: &physicalop.PhysicalSelection{},
-	}.Init(tk.Session().GetPlanCtx()), table)
-	require.NoError(t, err)
+	}
+	table := tables.MockTableFromMeta(tableInfo)
+	require.NotNil(t, table)
+	plan := &importer.Plan{
+		DBName:           "test",
+		DBID:             1,
+		TableInfo:        tableInfo,
+		DesiredTableInfo: tableInfo,
+		Format:           importer.DataFormatCSV,
+		InImportInto:     true,
+		DataSourceType:   importer.DataSourceTypeQuery,
+		ThreadCnt:        1,
+	}
 	controller, err := importer.NewLoadDataController(plan, table, &importer.ASTArgs{})
 	require.NoError(t, err)
 	ti, err := importer.NewTableImporterForTest(ctx, controller, "test-disk-quota", store)
