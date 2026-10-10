@@ -1299,8 +1299,6 @@ func setSystemTimeZoneVariable() {
 // CheckOldRunningTxn implements SessionManager interface.
 func (s *Server) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	s.rwlock.RLock()
-	defer s.rwlock.RUnlock()
-
 	printLog := false
 	if time.Since(s.printMDLLogTime) > 10*time.Second {
 		printLog = true
@@ -1309,6 +1307,22 @@ func (s *Server) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	for _, client := range s.clients {
 		se := client.ctx.Session
 		if se != nil {
+			variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, printLog)
+		}
+	}
+	s.rwlock.RUnlock()
+
+	// Internal writers, such as TTL delete workers, use sessions from the
+	// internal session pools instead of client connections. They must join the
+	// same MDL census, otherwise a DDL can advance past a transaction that still
+	// uses an older schema.
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	for internalSession := range s.internalSessions {
+		se, ok := internalSession.(interface {
+			GetSessionVars() *variable.SessionVars
+		})
+		if ok {
 			variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, printLog)
 		}
 	}
