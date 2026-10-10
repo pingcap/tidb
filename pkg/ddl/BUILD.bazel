@@ -267,6 +267,7 @@ go_test(
         "owner_mgr_test.go",
         "partition_test.go",
         "pkdb_db_table_test.go",
+        "pkdb_modify_column_varchar_to_blob_test.go",
         "pkdb_procedure_test.go",
         "placement_policy_ddl_test.go",
         "placement_policy_test.go",

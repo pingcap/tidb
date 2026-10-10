@@ -335,7 +335,6 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	tk.MustExecToErr("alter table mc modify column c1 short")
 	tk.MustExec("alter table mc modify column c1 bigint")
 
-	tk.MustExecToErr("alter table mc modify column c2 blob")
 	tk.MustExec("alter table mc modify column c2 varchar(8)")
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
 	tk.MustExec("alter table mc modify column c2 text(13)")

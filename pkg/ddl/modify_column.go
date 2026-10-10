@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -1806,6 +1807,20 @@ func GetModifiableColumnJob(
 // noReorgDataStrict is a strong check to decide whether we need to change the column data.
 // If it returns true, it means we don't need the reorg no matter what the data is.
 func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
+	if oldCol.GetType() == mysql.TypeVarchar && oldCol.GetCharset() != charset.CharsetBin &&
+		types.IsTypeBlob(newCol.GetType()) && newCol.GetCharset() == charset.CharsetBin &&
+		newCol.FieldType.GetSubType() == mysql.SubTypeUnspecified {
+		// XML shares TypeLongBlob and binary charset, but requires value validation.
+		// VARCHAR limits characters, BLOB limits bytes. TiDB latin1 stores UTF-8,
+		// and utf8 may contain four-byte characters written with checks disabled.
+		if oldCol.GetFlen() < 0 || oldCol.GetFlen() > newCol.GetFlen()/utf8.UTFMax ||
+			isColumnWithIndex(oldCol.Name.L, tblInfo.Indices) {
+			return false
+		}
+		// Other charsets require the normal string-to-binary conversion.
+		return oldCol.GetCharset() == charset.CharsetUTF8 ||
+			oldCol.GetCharset() == charset.CharsetUTF8MB4 || oldCol.GetCharset() == charset.CharsetLatin1
+	}
 	if isUTF8MB4ToUTF8ColumnChange(oldCol, newCol) {
 		return false
 	}
@@ -2046,6 +2061,17 @@ func checkModifyTypes(tbInfo *model.TableInfo, from, to *model.ColumnInfo, needR
 		}
 	}
 	toCharset, origCharset := toFt.GetCharset(), fromFt.GetCharset()
+
+	if fromFt.GetType() == mysql.TypeVarchar && fromFt.GetCharset() != charset.CharsetBin &&
+		types.IsTypeBlob(toFt.GetType()) && toFt.GetCharset() == charset.CharsetBin &&
+		toFt.GetSubType() == mysql.SubTypeUnspecified {
+		// A queued partial index may reference the source name before CHANGE renames it.
+		if err := checkColumnReferencedByPartialCondition(tbInfo, from.Name); err != nil {
+			return err
+		}
+		// noReorgDataStrict decides whether encoding, capacity or indexes require reorg.
+		return isGeneratedRelatedColumn(tbInfo, to, from)
+	}
 
 	err = checkModifyCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate(), fromFt.GetCharset(), fromFt.GetCollate(), needRewriteCollationData)
 
