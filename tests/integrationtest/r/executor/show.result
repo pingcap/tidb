@@ -1070,9 +1070,15 @@ utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 utf8_general_ci	utf8	33		Yes	1	PAD SPACE
 utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
 utf8mb4_0900_ai_ci	utf8mb4	255		Yes	0	NO PAD
+utf8mb4_0900_as_cs	utf8mb4	278		Yes	1	NO PAD
 utf8mb4_0900_bin	utf8mb4	309		Yes	1	NO PAD
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
+utf8mb4_da_0900_as_ci_kn	utf8mb4	2049		Yes	1	NO PAD
+utf8mb4_de_0900_as_ci_kn	utf8mb4	2050		Yes	1	NO PAD
+utf8mb4_es_0900_as_ci_kn	utf8mb4	2051		Yes	1	NO PAD
+utf8mb4_fr_0900_as_ci_kn	utf8mb4	2052		Yes	1	NO PAD
 utf8mb4_general_ci	utf8mb4	45		Yes	1	PAD SPACE
+utf8mb4_sv_0900_as_ci_kn	utf8mb4	2053		Yes	1	NO PAD
 utf8mb4_unicode_ci	utf8mb4	224		Yes	8	PAD SPACE
 select * from information_schema.COLLATIONS;
 COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
@@ -1087,9 +1093,15 @@ utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 utf8_general_ci	utf8	33		Yes	1	PAD SPACE
 utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
 utf8mb4_0900_ai_ci	utf8mb4	255		Yes	0	NO PAD
+utf8mb4_0900_as_cs	utf8mb4	278		Yes	1	NO PAD
 utf8mb4_0900_bin	utf8mb4	309		Yes	1	NO PAD
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
+utf8mb4_da_0900_as_ci_kn	utf8mb4	2049		Yes	1	NO PAD
+utf8mb4_de_0900_as_ci_kn	utf8mb4	2050		Yes	1	NO PAD
+utf8mb4_es_0900_as_ci_kn	utf8mb4	2051		Yes	1	NO PAD
+utf8mb4_fr_0900_as_ci_kn	utf8mb4	2052		Yes	1	NO PAD
 utf8mb4_general_ci	utf8mb4	45		Yes	1	PAD SPACE
+utf8mb4_sv_0900_as_ci_kn	utf8mb4	2053		Yes	1	NO PAD
 utf8mb4_unicode_ci	utf8mb4	224		Yes	8	PAD SPACE
 show character set like '%utf8mb4%';
 Charset	Description	Default collation	Maxlen
@@ -1114,9 +1126,15 @@ utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 utf8_general_ci	utf8	33		Yes	1	PAD SPACE
 utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
 utf8mb4_0900_ai_ci	utf8mb4	255	Yes	Yes	0	NO PAD
+utf8mb4_0900_as_cs	utf8mb4	278		Yes	1	NO PAD
 utf8mb4_0900_bin	utf8mb4	309		Yes	1	NO PAD
 utf8mb4_bin	utf8mb4	46		Yes	1	PAD SPACE
+utf8mb4_da_0900_as_ci_kn	utf8mb4	2049		Yes	1	NO PAD
+utf8mb4_de_0900_as_ci_kn	utf8mb4	2050		Yes	1	NO PAD
+utf8mb4_es_0900_as_ci_kn	utf8mb4	2051		Yes	1	NO PAD
+utf8mb4_fr_0900_as_ci_kn	utf8mb4	2052		Yes	1	NO PAD
 utf8mb4_general_ci	utf8mb4	45		Yes	1	PAD SPACE
+utf8mb4_sv_0900_as_ci_kn	utf8mb4	2053		Yes	1	NO PAD
 utf8mb4_unicode_ci	utf8mb4	224		Yes	8	PAD SPACE
 select * from information_schema.COLLATIONS;
 COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
@@ -1131,9 +1149,15 @@ utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 utf8_general_ci	utf8	33		Yes	1	PAD SPACE
 utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
 utf8mb4_0900_ai_ci	utf8mb4	255		Yes	0	NO PAD
+utf8mb4_0900_as_cs	utf8mb4	278		Yes	1	NO PAD
 utf8mb4_0900_bin	utf8mb4	309		Yes	1	NO PAD
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
+utf8mb4_da_0900_as_ci_kn	utf8mb4	2049		Yes	1	NO PAD
+utf8mb4_de_0900_as_ci_kn	utf8mb4	2050		Yes	1	NO PAD
+utf8mb4_es_0900_as_ci_kn	utf8mb4	2051		Yes	1	NO PAD
+utf8mb4_fr_0900_as_ci_kn	utf8mb4	2052		Yes	1	NO PAD
 utf8mb4_general_ci	utf8mb4	45		Yes	1	PAD SPACE
+utf8mb4_sv_0900_as_ci_kn	utf8mb4	2053		Yes	1	NO PAD
 utf8mb4_unicode_ci	utf8mb4	224		Yes	8	PAD SPACE
 show character set like '%utf8mb4%';
 Charset	Description	Default collation	Maxlen
