@@ -406,6 +406,9 @@ func ResetMockAutoRandIDRetryCount(failTimes int64) {
 // Commit overrides the Transaction interface.
 func (txn *LazyTxn) Commit(ctx context.Context) error {
 	defer txn.reset()
+	// Commit and its deferred cleanup may release MemDB memory after the session
+	// tracker has been killed. Match Rollback's protection for that terminal phase.
+	txn.SetMemoryFootprintChangeHook(func(uint64) {})
 
 	txn.mu.Lock()
 	txn.updateState(txninfo.TxnCommitting)
