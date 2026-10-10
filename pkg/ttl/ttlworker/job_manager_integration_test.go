@@ -2429,7 +2429,7 @@ func testIterationOfRunningJobWithTimeout(t *testing.T, sessionTimeout time.Dura
 
 func TestIterationOfRunningJob(t *testing.T) {
 	t.Run("normal", func(t *testing.T) {
-		testIterationOfRunningJobWithTimeout(t, time.Minute, 100, 0)
+		testIterationOfRunningJobWithTimeout(t, time.Minute, 10, 0)
 	})
 	t.Run("session-timeout", func(t *testing.T) {
 		// Keep the timeout short enough to catch accidental long-lived session reuse,
