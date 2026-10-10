@@ -29,35 +29,22 @@ import (
 	"go.uber.org/zap"
 )
 
-// GetTableAffinityGroupID returns the classic affinity group ID for a table.
-// Format: "_tidb_t_{tableID}".
-func GetTableAffinityGroupID(tableID int64) string {
-	return fmt.Sprintf("_tidb_t_%d", tableID)
-}
-
-// GetTableAffinityGroupIDWithCodec returns the affinity group ID for a table,
-// including the keyspace ID when the table uses a NextGen keyspace codec.
-func GetTableAffinityGroupIDWithCodec(codec tikv.Codec, tableID int64) string {
+// GetTableAffinityGroupID returns the affinity group ID for a table, including
+// the keyspace ID when the table uses a NextGen keyspace codec.
+func GetTableAffinityGroupID(codec tikv.Codec, tableID int64) string {
 	if label.UseKeyspaceAwareRules(codec) {
 		return fmt.Sprintf("_tidb_t_%d_%d", codec.GetKeyspaceID(), tableID)
 	}
-	return GetTableAffinityGroupID(tableID)
+	return fmt.Sprintf("_tidb_t_%d", tableID)
 }
 
-// GetPartitionAffinityGroupID returns the classic affinity group ID for a partition.
-// Format: "_tidb_pt_{tableID}_p{partitionID}".
-func GetPartitionAffinityGroupID(tableID, partitionID int64) string {
-	return fmt.Sprintf("_tidb_pt_%d_p%d", tableID, partitionID)
-}
-
-// GetPartitionAffinityGroupIDWithCodec returns the affinity group ID for a
-// partition, including the keyspace ID when the partition uses a NextGen
-// keyspace codec.
-func GetPartitionAffinityGroupIDWithCodec(codec tikv.Codec, tableID, partitionID int64) string {
+// GetPartitionAffinityGroupID returns the affinity group ID for a partition,
+// including the keyspace ID when the partition uses a NextGen keyspace codec.
+func GetPartitionAffinityGroupID(codec tikv.Codec, tableID, partitionID int64) string {
 	if label.UseKeyspaceAwareRules(codec) {
 		return fmt.Sprintf("_tidb_pt_%d_%d_p%d", codec.GetKeyspaceID(), tableID, partitionID)
 	}
-	return GetPartitionAffinityGroupID(tableID, partitionID)
+	return fmt.Sprintf("_tidb_pt_%d_p%d", tableID, partitionID)
 }
 
 func buildAffinityGroupKeyRange(codec tikv.Codec, physicalID int64) pdhttp.AffinityGroupKeyRange {
@@ -83,7 +70,7 @@ func buildAffinityGroupDefinitions(codec tikv.Codec, tblInfo *model.TableInfo, p
 
 	switch tblInfo.Affinity.Level {
 	case ast.TableAffinityLevelTable:
-		groupID := GetTableAffinityGroupIDWithCodec(codec, tblInfo.ID)
+		groupID := GetTableAffinityGroupID(codec, tblInfo.ID)
 		return map[string][]pdhttp.AffinityGroupKeyRange{
 			groupID: {buildAffinityGroupKeyRange(codec, tblInfo.ID)},
 		}, nil
@@ -98,7 +85,7 @@ func buildAffinityGroupDefinitions(codec tikv.Codec, tblInfo *model.TableInfo, p
 
 		groups := make(map[string][]pdhttp.AffinityGroupKeyRange, len(definitions))
 		for _, def := range definitions {
-			groupID := GetPartitionAffinityGroupIDWithCodec(codec, tblInfo.ID, def.ID)
+			groupID := GetPartitionAffinityGroupID(codec, tblInfo.ID, def.ID)
 			groups[groupID] = []pdhttp.AffinityGroupKeyRange{buildAffinityGroupKeyRange(codec, def.ID)}
 		}
 		return groups, nil
