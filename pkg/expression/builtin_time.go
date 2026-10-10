@@ -6585,9 +6585,9 @@ func (b *builtinTimestampAddSig) Clone() builtinFunc {
 }
 
 var (
-	minDatetimeInGoTime, _ = types.MinDatetime.GoTime(time.Local)
+	minDatetimeInGoTime, _ = types.MinDatetime.GoTime(time.UTC)
 	minDatetimeNanos       = float64(minDatetimeInGoTime.Unix())*1e9 + float64(minDatetimeInGoTime.Nanosecond())
-	maxDatetimeInGoTime, _ = types.MaxDatetime.GoTime(time.Local)
+	maxDatetimeInGoTime, _ = types.MaxDatetime.GoTime(time.UTC)
 	maxDatetimeNanos       = float64(maxDatetimeInGoTime.Unix())*1e9 + float64(maxDatetimeInGoTime.Nanosecond())
 	minDatetimeMonths      = float64(types.MinDatetime.Year()*12 + types.MinDatetime.Month() - 1) // 0001-01-01 00:00:00
 	maxDatetimeMonths      = float64(types.MaxDatetime.Year()*12 + types.MaxDatetime.Month() - 1) // 9999-12-31 00:00:00
@@ -6680,7 +6680,9 @@ func (b *builtinTimestampAddSig) evalString(ctx EvalContext, row chunk.Row) (str
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	tm1, err := arg.GoTime(time.Local)
+	// TIMESTAMPADD performs calendar arithmetic on local date/time fields, not instants.
+	// Use UTC as a DST-free carrier so the server's local zone cannot alter the result.
+	tm1, err := arg.GoTime(time.UTC)
 	if err != nil {
 		tc := typeCtx(ctx)
 		tc.AppendWarning(err)
@@ -6710,13 +6712,13 @@ func (b *builtinTimestampAddSig) resolveType(typ uint8, unit string) uint8 {
 	// The field type for the result of an Item_date function is defined as
 	// follows:
 	//
-	//- If first arg is a MYSQL_TYPE_DATETIME result is MYSQL_TYPE_DATETIME
+	//- If first arg is MYSQL_TYPE_DATETIME or MYSQL_TYPE_TIMESTAMP, result is MYSQL_TYPE_DATETIME
 	//- If first arg is a MYSQL_TYPE_DATE and the interval type uses hours,
 	//	minutes, seconds or microsecond then type is MYSQL_TYPE_DATETIME.
 	//- Otherwise the result is MYSQL_TYPE_STRING
 	//	(This is because you can't know if the string contains a DATE, MYSQL_TIME
 	//	or DATETIME argument)
-	if typ == mysql.TypeDate && (unit == "HOUR" || unit == "MINUTE" || unit == "SECOND" || unit == "MICROSECOND") {
+	if typ == mysql.TypeTimestamp || (typ == mysql.TypeDate && (unit == "HOUR" || unit == "MINUTE" || unit == "SECOND" || unit == "MICROSECOND")) {
 		return mysql.TypeDatetime
 	}
 	return typ
