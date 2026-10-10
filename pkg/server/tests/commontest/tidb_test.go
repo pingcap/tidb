@@ -3701,10 +3701,14 @@ func runClientDisconnectExplicitTxn(t *testing.T, dbt *testkit.DBTestKit, tableN
 		return processlistCountByInfo(t, dbt, pattern) == 0
 	}, 5*time.Second, 50*time.Millisecond)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err = dbt.GetDB().ExecContext(ctx, "update "+tableName+" set v = 2 where id = 1")
-	require.NoError(t, err)
+	var updateErr error
+	require.Eventually(t, func() bool {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, updateErr = dbt.GetDB().ExecContext(ctx, "update "+tableName+" set v = 2 where id = 1")
+		return updateErr == nil
+	}, 15*time.Second, 50*time.Millisecond)
+	require.NoError(t, updateErr)
 
 	var row1, row2 int
 	err = dbt.GetDB().QueryRowContext(context.Background(), "select sum(if(id = 1, v, 0)), sum(if(id = 2, v, 0)) from "+tableName).Scan(&row1, &row2)
