@@ -131,29 +131,41 @@ func TestRewriteKeyRangesUsesStorageCodec(t *testing.T) {
 	require.Nil(t, rewriteKeyRanges(v2Codec, [2]int64{}))
 }
 
-func TestCheckSnapshotRestoreModeRejectsRawBackup(t *testing.T) {
-	ctx := context.Background()
-	store, err := objstore.NewLocalStorage(t.TempDir())
-	require.NoError(t, err)
+func TestCheckSnapshotRestoreMode(t *testing.T) {
+	testCheck := func(t *testing.T, meta *backuppb.BackupMeta, rename []string) error {
+		ctx := context.Background()
+		store, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
 
-	meta := &backuppb.BackupMeta{
-		IsRawKv:             true,
-		BackupSchemaVersion: backuppb.BackupSchemaVersion,
-	}
-	data, err := proto.Marshal(meta)
-	require.NoError(t, err)
-	require.NoError(t, store.WriteFile(ctx, metautil.MetaFile, data))
+		meta.BackupSchemaVersion = backuppb.BackupSchemaVersion
+		data, err := proto.Marshal(meta)
+		require.NoError(t, err)
+		require.NoError(t, store.WriteFile(ctx, metautil.MetaFile, data))
 
-	cfg := &RestoreConfig{
-		Config: Config{
-			Storage: "local://" + store.URI(),
-			CipherInfo: backuppb.CipherInfo{
-				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+		cfg := &RestoreConfig{
+			Config: Config{
+				Storage: "local://" + store.URI(),
+				CipherInfo: backuppb.CipherInfo{
+					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+				},
 			},
-		},
+			Rename: rename,
+		}
+		return checkSnapshotRestoreMode(ctx, cfg)
 	}
 
-	err = checkSnapshotRestoreMode(ctx, cfg)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "restore mode mismatch")
+	t.Run("reject raw backup", func(t *testing.T) {
+		err := testCheck(t, &backuppb.BackupMeta{IsRawKv: true}, nil)
+		require.ErrorContains(t, err, "restore mode mismatch")
+	})
+
+	t.Run("allow full snapshot rename", func(t *testing.T) {
+		err := testCheck(t, &backuppb.BackupMeta{StartVersion: 0, EndVersion: 2}, []string{"source:target"})
+		require.NoError(t, err)
+	})
+
+	t.Run("reject incremental snapshot rename", func(t *testing.T) {
+		err := testCheck(t, &backuppb.BackupMeta{StartVersion: 1, EndVersion: 2}, []string{"source:target"})
+		require.ErrorContains(t, err, "--rename is not supported for incremental snapshot restore")
+	})
 }
