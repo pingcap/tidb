@@ -839,6 +839,9 @@ pub(crate) fn cluster_table(
             .unwrap_or(tidb_executor::TableCharset::default().collation),
     });
     kv_table.set_cache_status(table.table_cache_status_type);
+    // Go `TableInfo.Lock`: a lock another TiDB took through its own lock job
+    // is what this node's `CheckTableLock` must honor too.
+    kv_table.set_lock(table.lock.as_ref().map(|lock| lock.read().clone()));
     kv_table.set_tiflash_replica(
         table
             .tiflash_replica
@@ -1869,6 +1872,38 @@ mod tests {
         let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("the cached table is otherwise ordinary");
         assert!(loaded.is_cached());
+    }
+
+    /// A lock another TiDB's lock job persisted reaches the loaded table,
+    /// so this node's `CheckTableLock` sees it.
+    #[test]
+    fn a_cluster_table_restores_its_persisted_table_lock() {
+        let table = TableInfo {
+            id: 303,
+            name: CiString::new("locked"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            lock: Some(tidb_model::GoShared::new(tidb_model::TableLockInfo {
+                tp: tidb_ast::TableLockType::WRITE,
+                sessions: vec![tidb_model::SessionInfo {
+                    server_id: "peer".to_owned(),
+                    session_id: 7,
+                }]
+                .into(),
+                state: tidb_model::TableLockState::PUBLIC,
+                ts: 0,
+            })),
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+            .expect("the locked table is otherwise ordinary");
+        assert!(loaded.is_locked());
+        assert_eq!(
+            loaded.lock().map(|lock| lock.tp),
+            Some(tidb_ast::TableLockType::WRITE)
+        );
     }
 
     #[test]

@@ -549,6 +549,17 @@ fn cascade_at_depth(
         if withdrawn.is_empty() {
             continue;
         }
+        // Go `FKCascadeExec.buildFKCascadePlan` builds the child `DELETE`
+        // or `UPDATE` once the parent withdrew a key, and
+        // `OptimizeForForeignKeyCascade` checks its table locks.
+        if let Some(check) = ctx.fk_cascade_table_lock() {
+            check(
+                catalog,
+                child_db,
+                child_table,
+                deleting && action == FkAction::Cascade,
+            )?;
+        }
         let child = &node.child_offsets;
         let mut child_rows = Vec::new();
         let mut child_handles = Vec::new();

@@ -321,6 +321,41 @@ impl DriverError {
             tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
             "ALTER table cache for tables in system database is currently unsupported",
         ),
+        DriverError::TableLocked {
+            table,
+            lock_type,
+            holder,
+        } => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrTableLocked,
+            format!("Table '{table}' was locked in {} by {holder}", lock_type.sql()),
+        ),
+        DriverError::TableNotLockedForWrite(table) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrTableNotLockedForWrite,
+            format!("Table '{table}' was locked with a READ lock and can't be updated"),
+        ),
+        DriverError::TableNotLocked(table) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrTableNotLocked,
+            format!("Table '{table}' was not locked with LOCK TABLES"),
+        ),
+        DriverError::LockOrActiveTransaction => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrLockOrActiveTransaction,
+            tidb_error::tidb::errname::ErrLockOrActiveTransaction.raw,
+        ),
+        DriverError::UnsupportedOp => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrUnsupportedOp,
+            tidb_error::tidb::errname::ErrUnsupportedOp.raw,
+        ),
+        DriverError::NonuniqTable(table) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrNonuniqTable,
+            format!("Not unique table/alias: '{table}'"),
+        ),
+        DriverError::FuncNotEnabled(statement, switch) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrNotSupportedYet,
+            format!(
+                "{statement} is not supported. To enable this experimental feature, set \
+                 '{switch}' in the configuration file."
+            ),
+        ),
         // Every execution and evaluation failure, one arm each, in `exec`.
         DriverError::Exec(error) => exec::to_mysql_error(error),
         DriverError::Txn(crate::TxnErrorKind::WriteConflict) => {

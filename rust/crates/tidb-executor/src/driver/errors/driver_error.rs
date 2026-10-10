@@ -145,6 +145,27 @@ pub enum DriverError {
     UnsupportedLocalTempTableDDL(&'static str),
     /// Go `dbterror.ErrUnsupportedAlterCacheForSysTable` (8200).
     UnsupportedAlterCacheForSystemTable,
+    /// Go `infoschema.ErrTableLocked` (8020): another session's lock
+    /// conflicts -- the table (lowercase), its lock type and the first
+    /// holder as Go's `SessionInfo.String` prints it.
+    TableLocked {
+        table: String,
+        lock_type: tidb_ast::TableLockType,
+        holder: String,
+    },
+    /// Go `infoschema.ErrTableNotLockedForWrite` (1099).
+    TableNotLockedForWrite(String),
+    /// Go `infoschema.ErrTableNotLocked` (1100).
+    TableNotLocked(String),
+    /// Go `table.ErrLockOrActiveTransaction` (1192).
+    LockOrActiveTransaction,
+    /// Go `table.ErrUnsupportedOp`.
+    UnsupportedOp,
+    /// Go `infoschema.ErrNonuniqTable` (1066).
+    NonuniqTable(String),
+    /// Go `exeerrors.ErrFuncNotEnabled` (1235): an experimental statement
+    /// whose config switch is off -- the statement and the switch.
+    FuncNotEnabled(&'static str, &'static str),
     /// Rewriting an expression or executing failed.
     Exec(ExecError),
     /// The shared catalog is unusable because a statement panicked while

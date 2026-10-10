@@ -32,6 +32,26 @@ impl KvTable {
         self.cache_status != tidb_model::TableCacheStatusType::DISABLE
     }
 
+    /// Go `TableInfo.Lock`.
+    #[must_use]
+    pub fn lock(&self) -> Option<&tidb_model::TableLockInfo> {
+        self.lock.as_ref()
+    }
+
+    /// Go `TableInfo.IsLocked`: a lock some session still holds.
+    #[must_use]
+    pub fn is_locked(&self) -> bool {
+        self.lock
+            .as_ref()
+            .is_some_and(|lock| !lock.sessions.is_empty())
+    }
+
+    /// Replaces Go `TableInfo.Lock`, as a lock job or the catalog loader
+    /// writes it.
+    pub fn set_lock(&mut self, lock: Option<tidb_model::TableLockInfo>) {
+        self.lock = lock;
+    }
+
     /// Restores Go's persisted table-cache state while loading `TableInfo`.
     pub fn set_cache_status(&mut self, status: tidb_model::TableCacheStatusType) {
         self.cache_status = status;

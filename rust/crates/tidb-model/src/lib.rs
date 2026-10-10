@@ -140,10 +140,10 @@ pub use table::{
     new_table_affinity_info_with_level, time_unit_type_from_keyword, time_unit_type_keyword,
     MViewInitBuildState, MaterializedViewBaseInfo, MaterializedViewInfo, MaterializedViewLogInfo,
     SessionInfo, StatsLoadItem, TTLInfo, TableAffinityInfo, TableCacheStatusType, TableItemID,
-    TableLockState, TableNameInfo, TempTableType, TiFlashReplicaInfo, ViewInfo,
-    DEFAULT_TTL_JOB_INTERVAL, MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME,
-    MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME, MATERIALIZED_VIEW_LOG_TABLE_NAME_PREFIX,
-    OLD_DEFAULT_TTL_JOB_INTERVAL,
+    TableLockInfo, TableLockState, TableLockTpInfo, TableNameInfo, TempTableType,
+    TiFlashReplicaInfo, ViewInfo, DEFAULT_TTL_JOB_INTERVAL,
+    MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME, MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME,
+    MATERIALIZED_VIEW_LOG_TABLE_NAME_PREFIX, OLD_DEFAULT_TTL_JOB_INTERVAL,
 };
 pub use table_info::{TableInfo, TABLE_INFO_VERSION5};
 pub use table_mode::{AlterTableModeTarget, TableMode};

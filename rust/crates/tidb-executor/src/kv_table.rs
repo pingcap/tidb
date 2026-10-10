@@ -579,6 +579,8 @@ pub struct KvTable {
     /// disabled here; cluster-loaded metadata may still carry the source
     /// value verbatim.
     cache_status: tidb_model::TableCacheStatusType,
+    /// Go `TableInfo.Lock`: the lock `LOCK TABLES` holds on the table.
+    lock: Option<tidb_model::TableLockInfo>,
     /// Whether Go `TableInfo.Affinity` is non-nil.
     affinity: Option<tidb_model::TableAffinityInfo>,
     /// Go `TableInfo.TableSplitPolicy`.
@@ -1281,6 +1283,7 @@ impl KvTable {
             charset: TableCharset::default(),
             comment: String::new(),
             cache_status: tidb_model::TableCacheStatusType::DISABLE,
+            lock: None,
             affinity: None,
             table_split_policy: None,
             index_split_policies: std::collections::BTreeMap::new(),

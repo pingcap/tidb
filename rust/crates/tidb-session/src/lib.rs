@@ -630,6 +630,9 @@ pub struct Session {
     client_found_rows: bool,
     /// This connection's lock references over the domain/server lock service.
     advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession,
+    /// Go `session.lockedTables`: the tables this session holds a
+    /// `LOCK TABLES` lock on, by table ID ([`crate::table_lock`]).
+    locked_tables: std::collections::BTreeMap<i64, tidb_model::TableLockTpInfo>,
     selected_lock_keys: Option<tidb_executor::select_lock::SelectedLockKeys>,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
     /// which only a statement that ALLOCATED an auto value updates.
@@ -989,6 +992,7 @@ impl Session {
             connection_id: None,
             client_found_rows: false,
             advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
+            locked_tables: std::collections::BTreeMap::new(),
             selected_lock_keys: None,
             last_insert_id: 0,
             statement_insert_id: 0,
@@ -1190,6 +1194,8 @@ impl Default for Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        // Go `session.Close` releases the table locks first.
+        self.release_table_locks_on_close();
         self.statement_stats.set_finished();
         if let Some(collector) = &self.session_index_usage_collector {
             collector
@@ -1246,6 +1252,7 @@ use record_set::StatementCompletion;
 pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, StatementRecordSet};
 pub mod session_vars;
 mod stmt_ctx;
+mod table_lock;
 mod table_privilege;
 mod txn;
 pub use txn::{HistoricalRead, HistoricalReadProvider, SnapshotSchemaProvider};
@@ -3112,6 +3119,8 @@ mod tests_support;
 mod tests_sysbench_access;
 #[cfg(test)]
 mod tests_system_schemas;
+#[cfg(test)]
+mod tests_table_lock;
 #[cfg(test)]
 mod tests_temporary_tables;
 #[cfg(test)]

@@ -543,10 +543,17 @@ impl Session {
                         }
                     }
                     let cdc_write_source = self.ddl_cdc_write_source();
+                    let mut schema_table_ids = Vec::new();
                     let dropped = self.with_catalog_mut(|catalog| {
                         // Go `DropSchema` submits ActionDropSchema for a
                         // schema that exists.
                         if catalog.has_database(name) {
+                            schema_table_ids = catalog
+                                .table_names(name)
+                                .unwrap_or_default()
+                                .iter()
+                                .filter_map(|table| catalog.stored_table_id(name, table))
+                                .collect();
                             tidb_executor::ddl::admit_bdr_job(
                                 catalog,
                                 cdc_write_source,
@@ -573,6 +580,11 @@ impl Session {
                     // unqualified statement.
                     if dropped && self.current_db.eq_ignore_ascii_case(name) {
                         self.current_db.clear();
+                    }
+                    // Go `DropSchema` then clears the session's table locks
+                    // on the schema's tables.
+                    if dropped {
+                        self.release_dropped_table_locks(&schema_table_ids);
                     }
                     Ok(Some(StmtOutput::Affected(0)))
                 }
@@ -3207,17 +3219,42 @@ impl Session {
                     let local = self.is_local_temporary_table_path(name);
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = !local && self.foreign_key_checks();
-                    self.with_catalog_scope(local, |catalog| {
-                        tidb_executor::run_truncate_table_in_with_foreign_key_checks(
-                            sql,
-                            catalog,
-                            &current_db,
-                            sql_mode,
-                            foreign_key_checks,
-                            cdc_write_source,
-                        )?;
-                        Ok(StmtOutput::Affected(0))
-                    })
+                    let target = match name.as_slice() {
+                        [table] => Some((current_db.clone(), table.clone())),
+                        [db, table] => Some((db.clone(), table.clone())),
+                        _ => None,
+                    };
+                    let (schema_id, old_id, new_id) =
+                        self.with_catalog_scope(local, |catalog| {
+                            let ids = |catalog: &tidb_executor::Catalog| {
+                                target.as_ref().and_then(|(db, table)| {
+                                    Some((
+                                        catalog.database_id(db)?,
+                                        catalog.stored_table_id(db, table)?,
+                                    ))
+                                })
+                            };
+                            let before = ids(catalog);
+                            tidb_executor::run_truncate_table_in_with_foreign_key_checks(
+                                sql,
+                                catalog,
+                                &current_db,
+                                sql_mode,
+                                foreign_key_checks,
+                                cdc_write_source,
+                            )?;
+                            Ok(before
+                                .zip(ids(catalog))
+                                .map(|((schema_id, old_id), (_, new_id))| {
+                                    (schema_id, old_id, new_id)
+                                })
+                                .unwrap_or_default())
+                        })?;
+                    // Go `HandleLockTablesOnSuccessSubmit`/`OnFinish`.
+                    if !local && old_id != new_id {
+                        self.move_truncated_table_lock(schema_id, old_id, new_id);
+                    }
+                    Ok(StmtOutput::Affected(0))
                 }
                 DdlStmt::CreateIndex(create) => {
                     let if_not_exists = create.if_not_exists;
@@ -3348,7 +3385,17 @@ impl Session {
                         })?
                     } else {
                         let (persistent, local) = self.split_local_temporary_drop(drop);
+                        let mut dropped_ids = Vec::new();
                         let missing = self.with_persistent_catalog_mut(|catalog| {
+                            dropped_ids = persistent
+                                .names
+                                .iter()
+                                .filter_map(|path| match path.as_slice() {
+                                    [table] => catalog.stored_table_id(&current_db, table),
+                                    [db, table] => catalog.stored_table_id(db, table),
+                                    _ => None,
+                                })
+                                .collect();
                             tidb_executor::run_drop_table_stmt_in(
                                 &persistent,
                                 catalog,
@@ -3357,6 +3404,9 @@ impl Session {
                                 cdc_write_source,
                             )
                         })?;
+                        // Go `dropTableObject` releases the session's lock on
+                        // each table it dropped.
+                        self.release_dropped_table_locks(&dropped_ids);
                         // Go completes the local leg only after every durable
                         // target succeeds, including missing-name aggregation.
                         self.drop_local_temporary_targets(local)?;
@@ -3544,6 +3594,11 @@ impl Session {
                     }
                     Ok(StmtOutput::Affected(0))
                 }
+                DdlStmt::LockTables(locks) => {
+                    let locks = (**locks).clone();
+                    self.execute_lock_tables(&locks)
+                }
+                DdlStmt::UnlockTables => self.execute_unlock_tables(),
                 other => Err(DriverError::unsupported(format!(
                     "this DDL statement kind ({}) is not supported yet",
                     variant_name(other)

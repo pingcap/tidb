@@ -1325,6 +1325,7 @@ impl Session {
             connection_collation,
             default_collation_for_utf8mb4,
             sequence_privilege: self.sequence_privilege_check(),
+            fk_cascade_table_lock: self.fk_cascade_table_lock_check(),
             ddl_sql_mode: sql_mode.0,
         };
         if !is_dml {

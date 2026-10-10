@@ -22,6 +22,7 @@
 use tidb_ast::{AlterPartitionAction, AlterTableAction, DdlStmt, DmlStmt, Stmt, TableConstraint};
 
 use crate::privilege::GlobalPriv;
+use tidb_util::stringutil::go_to_lower;
 
 /// Go VisitInfo4PrivCheck keeps observation visits while adapting admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -523,6 +524,23 @@ fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRe
         DdlStmt::CreateDatabase { name, .. } => {
             vec![TablePrivilegeRequest::database(name, GlobalPriv::Create)]
         }
+        // Around line 5611: LOCK TABLES on the table, denied as the schema
+        // (1044), then SELECT on it.
+        DdlStmt::LockTables(locks) => locks
+            .iter()
+            .filter_map(|lock| split_path(&lock.table, current_db))
+            .flat_map(|(schema, table)| {
+                let (schema, table) = (go_to_lower(&schema), go_to_lower(&table));
+                [
+                    TablePrivilegeRequest {
+                        table_named_in_error: false,
+                        database_named_in_error: true,
+                        ..TablePrivilegeRequest::new(&schema, &table, GlobalPriv::LockTables)
+                    },
+                    TablePrivilegeRequest::new(&schema, &table, GlobalPriv::Select),
+                ]
+            })
+            .collect(),
         DdlStmt::DropDatabase { name, .. } => {
             vec![TablePrivilegeRequest::database(name, GlobalPriv::Drop)]
         }

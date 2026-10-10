@@ -373,7 +373,10 @@ impl Session {
         stmt: &tidb_ast::Stmt,
     ) -> Result<(), DriverError> {
         self.validate_ddl_preprocess(stmt)?;
-        if self.privilege_context().is_none() && self.statement_observation.is_none() {
+        if self.privilege_context().is_none()
+            && self.statement_observation.is_none()
+            && !self.table_lock_check_pending()?
+        {
             return Ok(());
         }
         let requests = self.collect_table_privileges(stmt, false)?;
@@ -470,10 +473,18 @@ impl Session {
         Ok(())
     }
 
-    /// Checks one statement's derived requests against the live grants.
-    /// Checks one list of table-privilege requests against the live grants
-    /// (Go `CheckPrivilege` over `visitInfo`s).
+    /// Checks one statement's `visitInfo`s as Go's optimizer does:
+    /// `CheckPrivilege` against the live grants, then `CheckTableLock`.
     pub(crate) fn check_table_privilege_requests(
+        &self,
+        requests: &[crate::table_privilege::TablePrivilegeRequest],
+    ) -> Result<(), DriverError> {
+        self.check_privilege(requests)?;
+        self.check_table_lock(requests)
+    }
+
+    /// Go `CheckPrivilege` over one list of table-privilege requests.
+    fn check_privilege(
         &self,
         requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<(), DriverError> {

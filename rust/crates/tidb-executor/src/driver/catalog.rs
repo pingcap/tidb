@@ -194,6 +194,9 @@ pub struct Catalog {
     /// BDR role, "" when unset. It is store-global meta rather than schema,
     /// so every snapshot and staged copy of this catalog shares it.
     bdr_role: Arc<std::sync::RwLock<String>>,
+    /// Go `ddl.uuid`, the identity this in-process domain's DDL records in a
+    /// table lock's `SessionInfo.ServerID`; set once, shared by snapshots.
+    ddl_uuid: Arc<std::sync::OnceLock<String>>,
     /// The store's region boundaries (`kv.SplittableStore`), store metadata
     /// every snapshot and staged copy of this catalog shares.
     ///
@@ -235,6 +238,10 @@ pub struct Catalog {
     /// intentionally monotonic: stale `true` only makes the uncommon full
     /// referring-table scan run, while stale `false` would be incorrect.
     foreign_keys_present: bool,
+    /// Sticky indication that some table of this catalog has carried a
+    /// `LOCK TABLES` lock, which every statement's `CheckTableLock` asks;
+    /// monotonic for the same reason as `foreign_keys_present`.
+    table_locks_present: bool,
     /// Bumped by every mutation that actually CHANGED something, so a
     /// transaction can detect that the shared catalog moved under it (Go
     /// detects the same at commit through TiKV's optimistic conflict check on
@@ -526,6 +533,7 @@ struct CatalogSnapshot {
     next_database_id: i64,
     next_table_id: i64,
     foreign_keys_present: bool,
+    table_locks_present: bool,
     version: u64,
     metadata_version: u64,
     statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<statistics::StatisticsSchema>>>>,
@@ -548,6 +556,7 @@ impl CatalogSnapshot {
             next_database_id: catalog.next_database_id,
             next_table_id: catalog.next_table_id,
             foreign_keys_present: catalog.foreign_keys_present,
+            table_locks_present: catalog.table_locks_present,
             version: catalog.version,
             metadata_version: catalog.metadata_version,
             statistics_schemas: Arc::clone(&catalog.statistics_schemas),
@@ -563,6 +572,7 @@ impl CatalogSnapshot {
         Catalog {
             plan_cache_epoch: Arc::clone(&owner.plan_cache_epoch),
             bdr_role: Arc::clone(&owner.bdr_role),
+            ddl_uuid: Arc::clone(&owner.ddl_uuid),
             regions: Arc::clone(&owner.regions),
             pd_helper_cache: Arc::clone(&owner.pd_helper_cache),
             local_temporary_ids: owner.local_temporary_ids.clone(),
@@ -575,6 +585,7 @@ impl CatalogSnapshot {
             next_database_id: self.next_database_id,
             next_table_id: self.next_table_id,
             foreign_keys_present: self.foreign_keys_present,
+            table_locks_present: self.table_locks_present,
             version: self.version,
             metadata_version: self.metadata_version,
             latest_index_schema: self.latest_index_schema.clone(),
@@ -738,6 +749,7 @@ impl Default for Catalog {
             metadata_version: next_metadata_version(),
             plan_cache_epoch: Arc::default(),
             bdr_role: Arc::default(),
+            ddl_uuid: Arc::default(),
             regions: Arc::default(),
             // Go `defaultPDHelper`'s capacity and TTL.
             pd_helper_cache: Arc::new(std::sync::Mutex::new(
@@ -760,6 +772,7 @@ impl Default for Catalog {
             commit_history: Arc::new(std::sync::Mutex::new(CommitHistory::default())),
             temporary_sweep: None,
             foreign_keys_present: false,
+            table_locks_present: false,
         };
         // Go's bootstrap builds the `information_schema` tables into the
         // infoschema itself, so they are ordinary objects to every name
@@ -1059,6 +1072,7 @@ impl Catalog {
         name: &str,
         mut table: TableEntry,
     ) -> Result<(), DriverError> {
+        let table_is_locked = matches!(&table, TableEntry::Kv(table) if table.lock().is_some());
         let table_has_foreign_keys = matches!(
             &table,
             TableEntry::Kv(table) if !table.foreign_keys().is_empty()
@@ -1077,6 +1091,7 @@ impl Catalog {
             .tables
             .insert(name.go_to_lower(), std::sync::Arc::new(table));
         self.foreign_keys_present |= table_has_foreign_keys;
+        self.table_locks_present |= table_is_locked;
         self.bump_version();
         Ok(())
     }
@@ -1617,6 +1632,59 @@ impl Catalog {
     /// flight.
     pub(crate) fn mark_has_foreign_keys(&mut self) {
         self.foreign_keys_present = true;
+    }
+
+    /// Whether any table of this catalog may carry a `LOCK TABLES` lock.
+    /// `false` lets Go's `CheckTableLock` answer without reading a table:
+    /// with no lock anywhere and none held by the session, every arm of
+    /// `lock.Checker` returns nil.
+    #[must_use]
+    pub fn has_table_locks(&self) -> bool {
+        self.table_locks_present
+    }
+
+    /// Marks this catalog as having seen a table lock. Monotonic, as
+    /// [`Self::mark_has_foreign_keys`].
+    pub fn mark_has_table_locks(&mut self) {
+        self.table_locks_present = true;
+    }
+
+    /// Go `ddl.uuid` of this domain, generated by `init` on first use.
+    pub fn ddl_uuid(&self, init: impl FnOnce() -> String) -> &str {
+        self.ddl_uuid.get_or_init(init)
+    }
+
+    /// Go `DBInfo.ID` of `database`.
+    #[must_use]
+    pub fn database_id(&self, database: &str) -> Option<i64> {
+        self.databases
+            .get(&database.go_to_lower())
+            .map(|schema| schema.id)
+    }
+
+    /// The `(schema, table)` names of the stored table whose Go
+    /// `TableInfo.ID` is `table_id`, as Go's `is.TableByID` finds it.
+    #[must_use]
+    pub fn table_names_by_id(&self, table_id: i64) -> Option<(String, String)> {
+        let key = self.table_id_names().get(&table_id)?;
+        let schema = self.databases.get(&key.database)?;
+        match schema.tables.get(&key.table)?.as_ref() {
+            TableEntry::Kv(table) if table.table_id == table_id => {
+                Some((schema.name.clone(), table.name.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Every table carrying a `TableInfo.Lock`, with its schema name -- Go
+    /// `ListTablesWithSpecialAttribute(TableLockAttribute)`.
+    pub fn locked_tables(&self) -> impl Iterator<Item = (&str, &crate::KvTable)> {
+        self.table_entries()
+            .filter(|_| self.table_locks_present)
+            .filter_map(|(schema, _, entry)| match entry {
+                TableEntry::Kv(table) if table.lock().is_some() => Some((schema, &**table)),
+                _ => None,
+            })
     }
 
     /// Materializes the narrow `infoschema` view consumed by the ported Go

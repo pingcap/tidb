@@ -432,6 +432,9 @@ pub struct StmtContextSessionState {
     /// The session's privilege answer for the sequence builtins; `None` is an
     /// unrestricted session.
     pub sequence_privilege: Option<SequencePrivilegeCheck>,
+    /// The session's `CheckTableLock` over a foreign-key cascade's child
+    /// table; `None` when no table lock can be involved.
+    pub fk_cascade_table_lock: Option<ForeignKeyCascadeLockCheck>,
     /// Complete typed SQL mode used by DDL.
     pub ddl_sql_mode: i64,
 }
@@ -460,6 +463,7 @@ impl Default for StmtContextSessionState {
             connection_collation: "utf8mb4_bin".to_owned(),
             default_collation_for_utf8mb4: "utf8mb4_bin".to_owned(),
             sequence_privilege: None,
+            fk_cascade_table_lock: None,
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .map_or(0, |mode| mode.0),
         }
@@ -470,6 +474,12 @@ impl Default for StmtContextSessionState {
 /// while evaluating: `(schema, sequence, insert)` answers whether the session
 /// holds INSERT (`insert`) or SELECT on the sequence.
 pub type SequencePrivilegeCheck = Arc<dyn Fn(&str, &str, bool) -> bool + Send + Sync>;
+
+/// Go `planner.OptimizeForForeignKeyCascade`'s `CheckTableLock` over the
+/// cascade sub-statement it builds: `(catalog, schema, table, delete)` checks
+/// the child table as the `DELETE` (`delete`) or `UPDATE` the cascade runs.
+pub type ForeignKeyCascadeLockCheck =
+    Arc<dyn Fn(&crate::Catalog, &str, &str, bool) -> Result<(), crate::DriverError> + Send + Sync>;
 
 /// Private configuration payload exposed only as the context's dereference
 /// target. Access and mutation remain on [`StmtContext`].
@@ -625,6 +635,8 @@ pub struct StmtContextData {
     default_collation_for_utf8mb4: String,
     /// See [`StmtContextSessionState::sequence_privilege`].
     sequence_privilege: Option<SequencePrivilegeCheck>,
+    /// See [`StmtContextSessionState::fk_cascade_table_lock`].
+    fk_cascade_table_lock: Option<ForeignKeyCascadeLockCheck>,
     /// Go expression BuildContext.NewCollationEnabled, captured for this task.
     new_collation_enabled: bool,
     /// Go `SessionVars.Rng`: the SESSION-scoped generator unseeded `RAND()`
@@ -2180,6 +2192,7 @@ impl StmtContext {
             connection_collation: session.connection_collation,
             default_collation_for_utf8mb4: session.default_collation_for_utf8mb4,
             sequence_privilege: session.sequence_privilege,
+            fk_cascade_table_lock: session.fk_cascade_table_lock,
             new_collation_enabled: tidb_datatype::new_collation_enabled(),
             rand_session: None,
             user_vars: None,
@@ -3087,6 +3100,11 @@ impl StmtContext {
     /// Go's sequence builtins ask `RequestVerification` after resolving the
     /// sequence (`builtin_info.go:1551/1624/1691`): INSERT for `NEXTVAL` and
     /// `SETVAL`, SELECT for `LASTVAL`.
+    /// See [`StmtContextSessionState::fk_cascade_table_lock`].
+    pub(crate) fn fk_cascade_table_lock(&self) -> Option<&ForeignKeyCascadeLockCheck> {
+        self.fk_cascade_table_lock.as_ref()
+    }
+
     fn check_sequence_privilege(
         &self,
         path: &[String],
