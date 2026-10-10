@@ -21,13 +21,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"go.uber.org/zap"
@@ -179,20 +179,18 @@ func (w *chunkWorker) Close() error {
 		closeCtx = newCtx
 		defer cancel()
 	}
+	var firstErr common.OnceError
 	if w.dataWriter != nil {
 		// Note: we cannot ignore close error as we're writing to S3 or GCS.
 		// ignore error might cause data loss. below too.
-		if _, err := w.dataWriter.Close(closeCtx); err != nil {
-			return errors.Trace(err)
-		}
+		_, err := w.dataWriter.Close(closeCtx)
+		firstErr.Set(err)
 	}
 	if w.indexWriter != nil {
-		if _, err := w.indexWriter.Close(closeCtx); err != nil {
-			return errors.Trace(err)
-		}
+		_, err := w.indexWriter.Close(closeCtx)
+		firstErr.Set(err)
 	}
-
-	return nil
+	return firstErr.Get()
 }
 
 func subtaskPrefix(taskID, subtaskID int64) string {
