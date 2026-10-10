@@ -51,6 +51,7 @@ go_test(
         ":staleread",
         "//pkg/config/kerneltype",
         "//pkg/domain",
+        "//pkg/errno",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser",

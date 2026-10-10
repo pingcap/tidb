@@ -2909,6 +2909,16 @@ var defaultSysVars = []*SysVar{
 			}
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBStaleReadAboveSafeTSReplicaRead, Value: "", Type: vardef.TypeEnum, PossibleValues: []string{"", "leader", "prefer-leader", "follower", "leader-and-follower", "closest-replicas", "closest-adaptive", "learner"},
+		SetSession: func(s *SessionVars, val string) error {
+			s.StaleReadAboveSafeTSReplicaRead = parseStaleReadReplicaReadPolicy(val)
+			return nil
+		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBStaleReadWithinSafeTSReplicaRead, Value: "", Type: vardef.TypeEnum, PossibleValues: []string{"", "leader", "prefer-leader", "follower", "leader-and-follower", "closest-replicas", "closest-adaptive", "learner"},
+		SetSession: func(s *SessionVars, val string) error {
+			s.StaleReadWithinSafeTSReplicaRead = parseStaleReadReplicaReadPolicy(val)
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAdaptiveClosestReadThreshold, Value: strconv.Itoa(vardef.DefAdaptiveClosestReadThreshold), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.ReplicaClosestReadThreshold = TidbOptInt64(val, vardef.DefAdaptiveClosestReadThreshold)
 		return nil

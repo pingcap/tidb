@@ -233,6 +233,18 @@ const (
 	// TiDBReplicaRead is used for reading data from replicas, followers for example.
 	TiDBReplicaRead = "tidb_replica_read"
 
+	// TiDBStaleReadAboveSafeTSReplicaRead is the replica read type used for a stale read whose read ts is above the
+	// minimal safe ts reported by TiKV stores (so followers would most likely reject it with DataIsNotReady). It only
+	// takes effect when `tidb_replica_read` is left at its default `leader` and the statement carries no replica read
+	// hint. Empty means disabled.
+	TiDBStaleReadAboveSafeTSReplicaRead = "tidb_stale_read_above_safe_ts_replica_read"
+
+	// TiDBStaleReadWithinSafeTSReplicaRead is the replica read type used for a stale read whose read ts is within
+	// (less than or equal to) the minimal safe ts reported by TiKV stores, so any replica can serve it. It only takes
+	// effect when `tidb_replica_read` is left at its default `leader` and the statement carries no replica read hint.
+	// Empty means disabled.
+	TiDBStaleReadWithinSafeTSReplicaRead = "tidb_stale_read_within_safe_ts_replica_read"
+
 	// TiDBAdaptiveClosestReadThreshold is for reading data from closest replicas(with same 'zone' label).
 	// TiKV client should send read request to the closest replica(leader/follower) if the estimated response
 	// size exceeds this threshold; otherwise, this request should be sent to leader.
