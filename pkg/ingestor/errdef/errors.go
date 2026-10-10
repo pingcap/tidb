@@ -32,6 +32,7 @@ var (
 	ErrKVDiskFull            = errors.Normalize("store disk full", errors.RFCCodeText("Ingest:StoreDiskFull"))
 	ErrKVIngestFailed        = errors.Normalize("ingest tikv failed", errors.RFCCodeText("Ingest:ErrKVIngestFailed"))
 	ErrKVRaftProposalDropped = errors.Normalize("raft proposal dropped", errors.RFCCodeText("Ingest:ErrKVRaftProposalDropped"))
+	ErrSetTSBeforeImport     = errors.Normalize("failed to set TS before importing engine %s after %d attempts: %s", errors.RFCCodeText("Ingest:SetTSBeforeImport"))
 	ErrTooManyDataFiles      = errors.Normalize("cannot merge %d data files with concurrency %d into at most %d target files", errors.RFCCodeText("GlobalSort:TooManyDataFiles"))
 )
 
