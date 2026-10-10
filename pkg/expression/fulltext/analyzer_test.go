@@ -36,17 +36,35 @@ func TestPreserveUnderscoreTokenize(t *testing.T) {
 }
 
 func TestPreserveUnderscoreTokenizeUnicodeProtocol(t *testing.T) {
-	require.Equal(t, "15.0.0", unicode.Version, "Local MATCH protocol v1 requires Unicode 15.0.0")
+	require.Equal(t, "15.0.0", unicode.Version, "Local MATCH requires Unicode 15.0.0")
 	tokens := PreserveUnderscoreTokenize("foo🙃bar foo👁bar foo𞤀bar foo𝟙bar foo\U0002EBF0bar foo\xffbar")
-	want := []string{"foo", "bar", "foo", "bar", "foo𞤀bar", "foo𝟙bar", "foo", "bar", "foo", "bar"}
+	want := []string{"foo", "bar", "foo", "bar", "foo", "bar", "foo", "bar", "foo", "bar", "foo", "bar"}
 	require.Len(t, tokens, len(want))
 	for i, text := range want {
 		require.Equal(t, Token{Text: text, Position: i}, tokens[i])
 	}
 }
 
+func TestNgramDocumentScanner(t *testing.T) {
+	for _, tc := range []struct {
+		text  string
+		words []string
+	}{
+		{"a,b a.b a\tb a\nb", []string{"a", "b", "a", "b", "a", "b", "a", "b"}},
+		{"a，b a🙃b a𞤀b a𝟙b a\U0002EBF0b", []string{"a，b", "a🙃b", "a𞤀b", "a𝟙b", "a\U0002EBF0b"}},
+		{"ab\xffcd ef", []string{"ab"}},
+		{"a\uFFFD b", []string{"a\uFFFD", "b"}},
+	} {
+		tokens := tokenizeNgramDocument(tc.text)
+		require.Len(t, tokens, len(tc.words), tc.text)
+		for i, word := range tc.words {
+			require.Equal(t, Token{Text: word, Position: i}, tokens[i], tc.text)
+		}
+	}
+}
+
 func TestLocalMatchTokenClassification(t *testing.T) {
-	require.Equal(t, "15.0.0", unicode.Version, "Local MATCH protocol v1 requires Unicode 15.0.0")
+	require.Equal(t, "15.0.0", unicode.Version, "Local MATCH requires Unicode 15.0.0")
 	fingerprint := uint64(14695981039346656037)
 	for r := rune(0); r <= unicode.MaxRune; r++ {
 		got := isTokenChar(r)
@@ -58,7 +76,7 @@ func TestLocalMatchTokenClassification(t *testing.T) {
 		}
 		fingerprint *= 1099511628211
 	}
-	require.Equal(t, uint64(0x71f51f3810b3b529), fingerprint, "protocol-v1 classification fingerprint: %016x", fingerprint)
+	require.Equal(t, uint64(0x71f51f3810b3b529), fingerprint, "Unicode 15.0.0 classification fingerprint: %016x", fingerprint)
 	for _, r := range []rune{-1, unicode.MaxRune + 1} {
 		require.False(t, isTokenChar(r))
 	}
@@ -199,16 +217,16 @@ func TestAnalyzeNgramV1(t *testing.T) {
 	}, tokens)
 }
 
-func TestAnalyzeNgramV1ShortTokenAdvancesPositionBase(t *testing.T) {
+func TestAnalyzeNgramV1ShortRunHasNoPosition(t *testing.T) {
 	sctx := newFulltextTestContext(t)
 
 	tokens, err := AnalyzeNgramV1(sctx, "abc x 好 y A_b 中z")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
 		{Text: "bc", Position: 1},
-		{Text: "A_", Position: 4},
-		{Text: "_b", Position: 5},
-		{Text: "中z", Position: 6},
+		{Text: "A_", Position: 2},
+		{Text: "_b", Position: 3},
+		{Text: "中z", Position: 4},
 	}, tokens)
 }
 

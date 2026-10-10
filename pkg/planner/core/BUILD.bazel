@@ -105,6 +105,7 @@ go_library(
         "//pkg/expression/exprctx",
         "//pkg/expression/expropt",
         "//pkg/expression/fulltext",
+        "//pkg/expression/matchagainst",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/kv",

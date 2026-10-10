@@ -56,8 +56,11 @@ func TestPublicFTSIndexOnColumns(t *testing.T) {
 	// Index lookup matches the FULLTEXT definition; parser support is checked
 	// separately when deciding whether TiFlash can evaluate the same analyzer.
 	require.Same(t, compositeIndex, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title, body}))
-	require.Nil(t, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{body, title}))
+	require.Same(t, compositeIndex, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{body, title}))
+	require.Nil(t, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title, title}))
 	require.Same(t, titleIndex, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title}))
 	require.Nil(t, publicFTSIndexOnColumns(tblInfo, []pmodel.CIStr{title, pmodel.NewCIStr("missing")}))
 	require.Nil(t, publicFTSIndexOnColumns(nil, []pmodel.CIStr{title, body}))
+	require.Nil(t, publicFTSIndexOnColumns(tblInfo, nil))
+	require.Nil(t, publicFTSIndexOnColumns(&model.TableInfo{Indices: []*model.IndexInfo{titleIndex, bodyIndex, nonPublicIndex}}, []pmodel.CIStr{body, title}))
 }

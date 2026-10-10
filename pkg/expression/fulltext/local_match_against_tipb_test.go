@@ -45,6 +45,46 @@ func TestBuildLocalMatchAgainstBooleanQuery(t *testing.T) {
 	require.Equal(t, "dog", query.GetNodes()[3].GetText())
 }
 
+func TestReuseParsedLocalMatchAgainstQuery(t *testing.T) {
+	for _, parser := range []model.FullTextParserType{model.FullTextParserTypeStandardV1, model.FullTextParserTypeNgramV1} {
+		config := AnalyzerConfig{ParserType: parser, NgramTokenSize: 3, InnodbFtMinTokenSize: 1,
+			InnodbFtMaxTokenSize: 84, Collation: "utf8mb4_bin", StopwordCollation: "utf8mb4_general_ci", InnodbFtEnableStopword: true}
+		for _, search := range []string{`+quick -slow "red fox" pre*`, "+the quick", "", "+数据库 -mysql"} {
+			group, err := ParseBooleanQuery(search, parser)
+			require.NoError(t, err)
+			before, err := BuildParsedLocalMatchAgainstBooleanQuery(group, config)
+			require.NoError(t, err)
+			compiled, err := CompileParsedBooleanQuery(group, config)
+			require.NoError(t, err)
+			after, err := BuildParsedLocalMatchAgainstBooleanQuery(group, config)
+			require.NoError(t, err)
+			require.Equal(t, before, after, "compilation must not mutate the shared AST")
+			fromText, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(search, config)
+			require.NoError(t, err)
+			require.Equal(t, before, fromText)
+			ordinary, err := CompileBooleanQuery(search, config)
+			require.NoError(t, err)
+			analyzer, err := GetAnalyzer(config)
+			require.NoError(t, err)
+			for _, text := range []string{"quick red fox prefix", "the quick slow", "数据库", "", "quick the fox"} {
+				doc, err := BuildDocument([]ColumnInput{{Text: text}, {IsNull: true}}, analyzer)
+				require.NoError(t, err)
+				require.Equal(t, ordinary.Match(doc), compiled.Match(doc))
+			}
+			require.Equal(t, ordinary.MatchesNothing(), compiled.MatchesNothing())
+		}
+		// TiDB-only syntax still compiles locally and must not acquire a payload.
+		if parser == model.FullTextParserTypeStandardV1 {
+			group, err := ParseBooleanQuery("+foo.bar*", parser)
+			require.NoError(t, err)
+			_, err = CompileParsedBooleanQuery(group, config)
+			require.NoError(t, err)
+			_, err = BuildParsedLocalMatchAgainstBooleanQuery(group, config)
+			require.Error(t, err)
+		}
+	}
+}
+
 func TestBuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(t *testing.T) {
 	query, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+cat -dog", AnalyzerConfig{
 		ParserType:             model.FullTextParserTypeStandardV1,
@@ -147,6 +187,7 @@ func TestAnalyzerConfigFromLocalMatchAgainstBooleanQuery(t *testing.T) {
 	}
 	for _, query := range []*tipb.LocalMatchAgainstBooleanQuery{
 		nil,
+		{Version: 1}, // Version 1 must not be silently reinterpreted as version 2.
 		{Version: LocalMatchAgainstProtocolVersion + 1},
 		{Version: LocalMatchAgainstProtocolVersion, Parser: tipb.LocalMatchAgainstParser(99)},
 		{Version: LocalMatchAgainstProtocolVersion, Parser: tipb.LocalMatchAgainstParser_LocalMatchAgainstParserStandard, StopwordMode: tipb.LocalMatchAgainstStopwordMode(99)},

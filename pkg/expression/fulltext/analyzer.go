@@ -146,15 +146,15 @@ func AnalyzerConfigFromSessionVars(sessVars *variable.SessionVars, parserType mo
 	}, nil
 }
 
-// PreserveUnderscoreTokenize tokenizes text with TiCI's PreserveUnderscore
-// tokenizer semantics: Unicode alphanumeric characters and '_' form tokens;
-// every other character is a delimiter.
+// PreserveUnderscoreTokenize tokenizes STANDARD text: BMP Unicode letters,
+// numbers and '_' form tokens. Supplementary characters delimit words, as in
+// MySQL 8.0's utf8mb4 word scanner. NGRAM documents use a different scanner.
 func PreserveUnderscoreTokenize(text string) []Token {
 	tokens := make([]Token, 0)
 	tokenPos := 0
 	for i := 0; i < len(text); {
 		ch, next := runeAtByte(text, i)
-		if !isTokenChar(ch) {
+		if !isStandardTokenChar(ch) {
 			i = next
 			continue
 		}
@@ -163,7 +163,7 @@ func PreserveUnderscoreTokenize(text string) []Token {
 		j := next
 		for j < len(text) {
 			ch, next = runeAtByte(text, j)
-			if !isTokenChar(ch) {
+			if !isStandardTokenChar(ch) {
 				break
 			}
 			j = next
@@ -203,7 +203,7 @@ func analyzeStandardV1(text string, parserInfo parserInfo) []Token {
 	return tokens
 }
 
-// AnalyzeNgramV1 runs the NGRAM_V1 analyzer: PreserveUnderscore tokenizer,
+// AnalyzeNgramV1 runs the NGRAM_V1 analyzer: MySQL ngram document tokenizer,
 // fixed-size ngram filter, lower-case filter, and optional stopword filter.
 func AnalyzeNgramV1(sctx sessionctx.Context, text string) ([]Token, error) {
 	config, err := AnalyzerConfigFromSessionContext(sctx, model.FullTextParserTypeNgramV1)
@@ -218,11 +218,38 @@ func AnalyzeNgramV1(sctx sessionctx.Context, text string) ([]Token, error) {
 }
 
 func analyzeNgramV1(text string, parserInfo parserInfo) []Token {
-	tokens := PreserveUnderscoreTokenize(text)
+	tokens := tokenizeNgramDocument(text)
 	tokens = ngramFilter(tokens, parserInfo.ngramTokenSize, parserInfo.ngramTokenSize)
 	tokens = ngramStopwordFilter(tokens, parserInfo)
 	if parserInfo.collator == nil {
 		tokens = lowerFilter(tokens)
+	}
+	return tokens
+}
+
+// tokenizeNgramDocument follows MySQL's ngram plugin rather than STANDARD's
+// Unicode word tokenizer: valid multibyte characters (including punctuation
+// and symbols) stay in the stream; single-byte non-word characters split it.
+// Invalid UTF-8 ends the document, as in the plugin's ngram_parse.
+func tokenizeNgramDocument(text string) []Token {
+	tokens := make([]Token, 0)
+	start := 0
+	for i := 0; i < len(text); {
+		r, size := utf8.DecodeRuneInString(text[i:])
+		if r == utf8.RuneError && size == 1 {
+			text = text[:i]
+			break
+		}
+		if size == 1 && !isTokenChar(r) {
+			if start < i {
+				tokens = append(tokens, Token{Text: text[start:i], Position: len(tokens)})
+			}
+			start = i + size
+		}
+		i += size
+	}
+	if start < len(text) {
+		tokens = append(tokens, Token{Text: text[start:], Position: len(tokens)})
 	}
 	return tokens
 }
@@ -343,6 +370,10 @@ func isTokenChar(ch rune) bool {
 	// test fails on a different version or a changed classification. TiFlash
 	// uses a table generated from this same standard-library rule.
 	return unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_'
+}
+
+func isStandardTokenChar(ch rune) bool {
+	return ch <= 0xFFFF && isTokenChar(ch)
 }
 
 func lengthFilter(tokens []Token, minLen, maxLen int) []Token {
@@ -474,11 +505,11 @@ func ngramFilter(tokens []Token, minGram, maxGram int) []Token {
 	out := make([]Token, 0)
 	nextPositionBase := 0
 	for _, token := range tokens {
-		basePosition := max(token.Position, nextPositionBase)
+		basePosition := nextPositionBase
 		spans := utf8CharSpans(token.Text)
 		charCount := len(spans)
 		if charCount < minGram {
-			nextPositionBase = max(nextPositionBase, token.Position+1)
+			// A short document run emits no grams and contributes no position.
 			continue
 		}
 

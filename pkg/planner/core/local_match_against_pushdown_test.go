@@ -23,6 +23,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -73,6 +74,11 @@ func TestMatchAgainstBooleanPushdownToTiFlash(t *testing.T) {
 			name:      "multi_column_match",
 			columnNum: 2,
 		},
+		{
+			sql:       "select id from articles where match(body, title) against('+tidb -mysql' in boolean mode)",
+			name:      "reordered_multi_column_match",
+			columnNum: 2,
+		},
 	}
 	for _, query := range queries {
 		t.Run(query.name, func(t *testing.T) {
@@ -106,6 +112,56 @@ func TestMatchAgainstBooleanPushdownToTiFlash(t *testing.T) {
 	}
 }
 
+func TestMatchAgainstMultiColumnCollation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_local_match_against=ON")
+	tk.MustExec("set tidb_allow_tiflash_cop=ON")
+	for _, parser := range []string{"", " WITH PARSER NGRAM"} {
+		tk.MustExec("drop table if exists mixed_match")
+		tk.MustExec(`create table mixed_match(id int primary key,
+			title text collate utf8mb4_bin, body text collate utf8mb4_general_ci,
+			fulltext ft(title,body)` + parser + `,
+			fulltext ft_title(title)` + parser + `, fulltext ft_body(body)` + parser + `)`)
+		tk.MustExec("insert into mixed_match values(1,'FOO','BAR')")
+		tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mixed_match"))
+		require.NoError(t, err)
+		for _, replicaAvailable := range []bool{false, true} {
+			tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: replicaAvailable}
+			for _, engine := range []string{"tikv", "tiflash"} {
+				if !replicaAvailable && engine == "tiflash" {
+					continue // No TiFlash access path is rejected before MATCH rewriting.
+				}
+				tk.MustExec("set tidb_isolation_read_engines='" + engine + "'")
+				for _, columns := range []string{"title,body", "body,title"} {
+					for _, search := range []string{"'+foo'", "NULL", "''"} {
+						sql := "select id from mixed_match where match(" + columns + ") against(" + search + " in boolean mode)"
+						err := tk.ExecToErr(sql)
+						require.ErrorContains(t, err, "different MATCH column collations", sql)
+					}
+				}
+			}
+		}
+		// Independent MATCH expressions may still use different collations.
+		tk.MustExec("set tidb_isolation_read_engines='tikv'")
+		tk.MustQuery("select id from mixed_match where match(title) against('+FOO' in boolean mode) or match(body) against('+bar' in boolean mode)").Check(testkit.Rows("1"))
+	}
+	for _, collation := range []string{"utf8mb4_bin", "utf8mb4_general_ci"} {
+		tk.MustExec("drop table if exists same_match")
+		tk.MustExec("create table same_match(id int primary key,title text collate " + collation + ",body text collate " + collation + ",fulltext ft(title,body))")
+		tk.MustExec("insert into same_match values(1,'FOO','BAR')")
+		for _, columns := range []string{"title,body", "body,title"} {
+			result := tk.MustQuery("select id from same_match where match(" + columns + ") against('+foo' in boolean mode)")
+			if collation == "utf8mb4_bin" {
+				result.Check(testkit.Rows())
+			} else {
+				result.Check(testkit.Rows("1"))
+			}
+		}
+	}
+}
+
 func TestMatchAgainstTiDBFallbackWhenTiFlashIsNotSelected(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -130,6 +186,148 @@ func TestMatchAgainstTiDBFallbackWhenTiFlashIsNotSelected(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows("1"))
 	plan := strings.ToLower(fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows()))
 	require.NotContains(t, plan, "mpp[tiflash]")
+}
+
+func TestMatchAgainstLocalPlanCacheDisabled(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_local_match_against=ON,tidb_enable_prepared_plan_cache=ON,tidb_isolation_read_engines='tikv'")
+	for _, parser := range []string{"", " WITH PARSER NGRAM"} {
+		tk.MustExec("drop table if exists cache_docs")
+		tk.MustExec("create table cache_docs(id int primary key, body text collate utf8mb4_bin, fulltext ft(body)" + parser + ")")
+		tk.MustExec("insert into cache_docs values(1,'the'),(2,'The'),(3,'foo'),(4,'aaa'),(5,'AAA')")
+		// Ordinary statements still use the enabled prepared plan cache.
+		tk.MustExec("prepare ordinary from 'select id from cache_docs where id=?'")
+		tk.MustExec("set @id=3")
+		for range 2 {
+			tk.MustQuery("execute ordinary using @id").Check(testkit.Rows("3"))
+		}
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("deallocate prepare ordinary")
+
+		check := func(sql string, rows ...string) {
+			t.Helper()
+			for range 2 {
+				tk.MustQuery(sql).Check(testkit.Rows(rows...))
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+			}
+		}
+		tk.MustExec("set innodb_ft_enable_stopword=OFF,collation_server='utf8mb4_bin'")
+		tk.MustExec("prepare p from 'select id from cache_docs where match(body) against(? in boolean mode) order by id'")
+		search, upperSearch, id, upperID := "+the", "+The", "1", "2"
+		if parser != "" {
+			search, upperSearch, id, upperID = "+aaa", "+AAA", "4", "5"
+		}
+		tk.MustExec("set @q='" + search + "'")
+		check("execute p using @q", id)
+		tk.MustExec("set innodb_ft_enable_stopword=ON")
+		check("execute p using @q")
+		tk.MustExec("set innodb_ft_enable_stopword=OFF")
+		check("execute p using @q", id)
+		tk.MustExec("set innodb_ft_enable_stopword=ON")
+		tk.MustExec("set @q='" + upperSearch + "'")
+		check("execute p using @q", upperID)
+		tk.MustExec("set collation_server='utf8mb4_general_ci'")
+		check("execute p using @q")
+		tk.MustExec("set collation_server='utf8mb4_bin'")
+		check("execute p using @q", upperID)
+		tk.MustExec("set @q=NULL")
+		check("execute p using @q")
+		tk.MustExec("set @q='+foo'")
+		check("execute p using @q", "3")
+		tk.MustExec("deallocate prepare p")
+
+		// A constant AGAINST still embeds analyzer configuration in the plan,
+		// even when the parameter belongs to another predicate.
+		tk.MustExec("set innodb_ft_enable_stopword=OFF")
+		tk.MustExec("prepare p from 'select id from cache_docs where id>? and match(body) against(\"" + search + "\" in boolean mode)'")
+		tk.MustExec("set @id=0")
+		check("execute p using @id", id)
+		tk.MustExec("set innodb_ft_enable_stopword=ON")
+		check("execute p using @id")
+		tk.MustExec("deallocate prepare p")
+
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=ON")
+		for _, stopword := range []string{"OFF", "ON", "OFF"} {
+			tk.MustExec("set innodb_ft_enable_stopword=" + stopword)
+			rows := []string{id}
+			if stopword == "ON" {
+				rows = nil
+			}
+			check("select id from cache_docs where match(body) against('"+search+"' in boolean mode)", rows...)
+		}
+		// Global-only token settings are also planning inputs. Changes here
+		// affect only this test's isolated mock store, not an external cluster.
+		tk.MustExec("set innodb_ft_enable_stopword=OFF")
+		setting, values, tokenSearch := "innodb_ft_min_token_size", []string{"3", "4", "3"}, "+foo"
+		if parser != "" {
+			setting, values, tokenSearch = "ngram_token_size", []string{"2", "3", "2"}, "+fo"
+		}
+		tk.MustExec("prepare p from 'select id from cache_docs where match(body) against(? in boolean mode)'")
+		tk.MustExec("set @q='" + tokenSearch + "'")
+		for i, value := range values {
+			tk.MustExec("set global " + setting + "=" + value)
+			rows := []string{"3"}
+			if i == 1 {
+				rows = nil
+			}
+			check("execute p using @q", rows...)
+		}
+		tk.MustExec("deallocate prepare p")
+
+		// The same rule applies before TiFlash placement is chosen. A fake
+		// replica lets us inspect fresh metadata without running a TiFlash peer.
+		tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("cache_docs"))
+		require.NoError(t, err)
+		tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+		tk.MustExec("set tidb_isolation_read_engines='tiflash',tidb_allow_tiflash_cop=ON")
+		tk.MustExec("prepare p from 'select id from cache_docs where id>? and match(body) against(\"+foo\" in boolean mode)'")
+		for _, stopword := range []string{"OFF", "ON", "OFF"} {
+			tk.MustExec("set innodb_ft_enable_stopword=" + stopword)
+			for range 2 {
+				plan := compilePhysicalPlan(t, tk, "execute p using @id").(*core.Execute).Plan
+				metadata := assertLocalMatchAgainstScalarSelection(t, tk, plan, 1)
+				mode := tipb.LocalMatchAgainstStopwordMode_LocalMatchAgainstStopwordModeDisabled
+				if stopword == "ON" {
+					mode = tipb.LocalMatchAgainstStopwordMode_LocalMatchAgainstStopwordModeBuiltin
+				}
+				require.Equal(t, mode, metadata.GetStopwordMode())
+				require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			}
+		}
+		tk.MustExec("deallocate prepare p")
+		tk.MustExec("set tidb_isolation_read_engines='tikv'")
+	}
+}
+
+func TestMatchAgainstForcePlanCacheDisabled(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cache_docs(id int primary key,body text,fulltext ft(body))")
+	tk.MustExec("insert into cache_docs values(1,'the')")
+	tk.MustExec("set tidb_enable_local_match_against=ON,tidb_enable_prepared_plan_cache=ON,tidb_isolation_read_engines='tikv',tidb_opt_fix_control='49736:ON',innodb_ft_enable_stopword=OFF")
+	tk.MustExec("prepare p from 'select id from cache_docs where match(body) against(? in boolean mode)'")
+	tk.MustExec("set @q='+the'")
+	for _, stopword := range []string{"OFF", "ON", "OFF"} {
+		tk.MustExec("set innodb_ft_enable_stopword=" + stopword)
+		for range 2 {
+			rows := testkit.Rows("1")
+			if stopword == "ON" {
+				rows = testkit.Rows()
+			}
+			tk.MustQuery("execute p using @q").Check(rows)
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		}
+	}
+	// Clearing the force flag is statement-local, not a session-wide change.
+	tk.MustExec("prepare ordinary from 'select id from cache_docs where id=?'")
+	tk.MustExec("set @id=1")
+	for range 2 {
+		tk.MustQuery("execute ordinary using @id").Check(testkit.Rows("1"))
+	}
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestMatchAgainstPreparedNumericSearchPushdown(t *testing.T) {
@@ -372,7 +570,7 @@ func assertLocalMatchAgainstScalarSelection(t *testing.T, tk *testkit.TestKit, p
 	require.Len(t, ftsExpr.GetChildren(), matchColumnCount+1)
 	metadata := &tipb.LocalMatchAgainstBooleanQuery{}
 	require.NoError(t, proto.Unmarshal(ftsExpr.GetVal(), metadata))
-	require.Equal(t, uint32(1), metadata.GetVersion())
+	require.Equal(t, fulltext.LocalMatchAgainstProtocolVersion, metadata.GetVersion())
 	return metadata
 }
 

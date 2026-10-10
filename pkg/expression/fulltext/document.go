@@ -28,33 +28,33 @@ type ColumnInput struct {
 
 // ColumnDocument is the analyzed token stream for one MATCH column.
 type ColumnDocument struct {
-	ColumnOrdinal int
-	Tokens        []Token
-	Positions     map[string][]int
+	// SourceText is retained without copying, only for verifying phrases whose
+	// indexed tokens were removed by stopword or length filtering.
+	SourceText string
+	Tokens     []Token
+	Positions  map[string][]int
 }
 
 // Document is the analyzed row document used by local no-score fulltext
 // matching.
 type Document struct {
-	Columns   []ColumnDocument
-	TokenSet  map[string]struct{}
-	TokenFreq map[string]int
+	Columns  []ColumnDocument
+	TokenSet map[string]struct{}
 }
 
 // BuildDocument analyzes MATCH column values with the selected analyzer.
 // NULL columns and empty strings contribute no tokens.
 func BuildDocument(columns []ColumnInput, analyzer Analyzer) (*Document, error) {
 	doc := &Document{
-		Columns:   make([]ColumnDocument, 0, len(columns)),
-		TokenSet:  make(map[string]struct{}),
-		TokenFreq: make(map[string]int),
+		Columns:  make([]ColumnDocument, 0, len(columns)),
+		TokenSet: make(map[string]struct{}),
 	}
-	for i, column := range columns {
+	for _, column := range columns {
 		colDoc := ColumnDocument{
-			ColumnOrdinal: i,
-			Positions:     make(map[string][]int),
+			Positions: make(map[string][]int),
 		}
 		if !column.IsNull && column.Text != "" {
+			colDoc.SourceText = column.Text
 			tokens, err := analyzer.Analyze(column.Text)
 			if err != nil {
 				return nil, err
@@ -62,7 +62,6 @@ func BuildDocument(columns []ColumnInput, analyzer Analyzer) (*Document, error) 
 			colDoc.Tokens = tokens
 			for _, token := range tokens {
 				doc.TokenSet[token.Text] = struct{}{}
-				doc.TokenFreq[token.Text]++
 				colDoc.Positions[token.Text] = append(colDoc.Positions[token.Text], token.Position)
 			}
 		}

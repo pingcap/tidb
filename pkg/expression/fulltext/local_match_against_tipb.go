@@ -26,7 +26,10 @@ import (
 // by the Tipb query, including the built-in stopword set. TiFlash must implement
 // and be deployed with a version before TiDB emits it. Never change the meaning
 // of an existing version; reject unknown versions and add a new version instead.
-const LocalMatchAgainstProtocolVersion uint32 = 1
+// Version 2 returns zero for NULL searches and gives NGRAM document scanning
+// its own multibyte-character rule; STANDARD and the NGRAM query lexer use
+// BMP word characters. Filtered phrases are verified against unfiltered text.
+const LocalMatchAgainstProtocolVersion uint32 = 2
 
 // BuildLocalMatchAgainstBooleanQuery parses a BOOLEAN MODE search string and
 // converts it to the protocol representation consumed by TiFlash. The parser
@@ -40,20 +43,16 @@ func BuildLocalMatchAgainstBooleanQuery(search string, parserType model.FullText
 // search string and attaches the analyzer configuration required by TiFlash.
 // A zero NGRAM token size tells TiFlash to use its configured default.
 func BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search string, parserType model.FullTextParserType, ngramTokenSize int) (*tipb.LocalMatchAgainstBooleanQuery, error) {
-	var (
-		group *matchagainst.BooleanGroup
-		err   error
-	)
-	switch parserType {
-	case model.FullTextParserTypeStandardV1:
-		group, err = matchagainst.ParseStandardBooleanMode(search)
-	case model.FullTextParserTypeNgramV1:
-		group, err = matchagainst.ParseNgramBooleanMode(search)
-	default:
-		return nil, fmt.Errorf("unsupported fulltext parser type for TiFlash BOOLEAN MODE pushdown: %s", parserType)
-	}
+	group, err := ParseBooleanQuery(search, parserType)
 	if err != nil {
 		return nil, err
+	}
+	return buildParsedLocalMatchAgainstBooleanQuery(group, parserType, ngramTokenSize)
+}
+
+func buildParsedLocalMatchAgainstBooleanQuery(group *matchagainst.BooleanGroup, parserType model.FullTextParserType, ngramTokenSize int) (*tipb.LocalMatchAgainstBooleanQuery, error) {
+	if group == nil {
+		return nil, fmt.Errorf("nil Local MATCH Boolean group")
 	}
 	if containsLocalMatchAgainstBooleanSubExpression(group) {
 		return nil, fmt.Errorf("nested BOOLEAN MODE groups are not supported by TiFlash Local MATCH pushdown")
@@ -79,6 +78,8 @@ func BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search string, parserT
 		query.Parser = tipb.LocalMatchAgainstParser_LocalMatchAgainstParserStandard
 	case model.FullTextParserTypeNgramV1:
 		query.Parser = tipb.LocalMatchAgainstParser_LocalMatchAgainstParserNgram
+	default:
+		return nil, fmt.Errorf("unsupported fulltext parser type: %s", parserType)
 	}
 	if parserType == model.FullTextParserTypeNgramV1 && ngramTokenSize > 0 {
 		query.NgramTokenSize = uint32(ngramTokenSize)
@@ -115,7 +116,7 @@ func AnalyzerConfigFromLocalMatchAgainstBooleanQuery(query *tipb.LocalMatchAgain
 	default:
 		return AnalyzerConfig{}, fmt.Errorf("unsupported Local MATCH stopword mode %d", query.GetStopwordMode())
 	}
-	// Version 1 defines these defaults for omitted analyzer fields, matching
+	// Version 2 retains these defaults for omitted analyzer fields, matching
 	// TiFlash. In particular, an explicit min=0 with max>0 is not a default.
 	if config.InnodbFtMinTokenSize == 0 && config.InnodbFtMaxTokenSize == 0 {
 		config.InnodbFtMinTokenSize, config.InnodbFtMaxTokenSize = 3, 84
@@ -130,7 +131,17 @@ func AnalyzerConfigFromLocalMatchAgainstBooleanQuery(query *tipb.LocalMatchAgain
 // used by TiDB's Local MATCH evaluator to TiFlash. This extends only execution
 // parity; it does not change BOOLEAN MODE query semantics.
 func BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(search string, config AnalyzerConfig) (*tipb.LocalMatchAgainstBooleanQuery, error) {
-	query, err := BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search, config.ParserType, config.NgramTokenSize)
+	group, err := ParseBooleanQuery(search, config.ParserType)
+	if err != nil {
+		return nil, err
+	}
+	return BuildParsedLocalMatchAgainstBooleanQuery(group, config)
+}
+
+// BuildParsedLocalMatchAgainstBooleanQuery serializes an already parsed AST.
+// It never modifies the AST: local compilation and capability checks may reuse it.
+func BuildParsedLocalMatchAgainstBooleanQuery(group *matchagainst.BooleanGroup, config AnalyzerConfig) (*tipb.LocalMatchAgainstBooleanQuery, error) {
+	query, err := buildParsedLocalMatchAgainstBooleanQuery(group, config.ParserType, config.NgramTokenSize)
 	if err != nil {
 		return nil, err
 	}

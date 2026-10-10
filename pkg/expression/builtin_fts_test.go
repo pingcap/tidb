@@ -334,10 +334,11 @@ func TestLocalMatchAgainstNullSearch(t *testing.T) {
 	require.NoError(t, err)
 	sf := fn.(*ScalarFunction)
 	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
 
 	v, isNull, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
 	require.NoError(t, err)
-	require.True(t, isNull)
+	require.False(t, isNull)
 	require.Equal(t, float64(0), v)
 }
 

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
+	"github.com/pingcap/tidb/pkg/expression/matchagainst"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2304,8 +2305,7 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	// the same Boolean query, TiFlash serialization metadata as well. Physical
 	// planning can then choose the storage placement by its normal cost model;
 	// if TiFlash pushdown is unavailable or not selected, TiDB evaluates it.
-	tiFlashInfo, _ := er.localMatchAgainstTiFlashRowWiseViable(v.Modifier, tableInfo, indexInfo, stackLen)
-	er.matchAgainstToLocalBuiltin(v, numCols, stackLen, indexInfo, tiFlashInfo)
+	er.matchAgainstToLocalBuiltin(v, numCols, stackLen, tableInfo, indexInfo)
 }
 
 // resolveLocalMatchAgainstConfigIndex reads parser/analyzer settings from the
@@ -2356,11 +2356,18 @@ func (er *expressionRewriter) resolveLocalMatchAgainstConfigIndex(numCols, stack
 	return tblInfo, indexInfo, nil
 }
 
-// publicFTSIndexOnColumns finds a public FULLTEXT index whose ordered columns
-// exactly match the MATCH column list. Separate single-column indexes are not
+// publicFTSIndexOnColumns finds a public FULLTEXT index whose complete column
+// set matches the MATCH column list, regardless of order. Separate single-column indexes are not
 // an equivalent substitute for one multi-column MATCH expression.
 func publicFTSIndexOnColumns(tblInfo *model.TableInfo, columnNames []pmodel.CIStr) *model.IndexInfo {
 	if tblInfo == nil || len(columnNames) == 0 {
+		return nil
+	}
+	columns := make(map[string]struct{}, len(columnNames))
+	for _, column := range columnNames {
+		columns[column.L] = struct{}{}
+	}
+	if len(columns) != len(columnNames) {
 		return nil
 	}
 	for _, index := range tblInfo.Indices {
@@ -2368,8 +2375,8 @@ func publicFTSIndexOnColumns(tblInfo *model.TableInfo, columnNames []pmodel.CISt
 			continue
 		}
 		matched := true
-		for i, column := range index.Columns {
-			if column.Name.L != columnNames[i].L {
+		for _, column := range index.Columns {
+			if _, ok := columns[column.Name.L]; !ok {
 				matched = false
 				break
 			}
@@ -2381,9 +2388,27 @@ func publicFTSIndexOnColumns(tblInfo *model.TableInfo, columnNames []pmodel.CISt
 	return nil
 }
 
-func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int, indexInfo *model.IndexInfo, tiFlashInfo *expression.LocalMatchAgainstTiFlashEvalInfo) {
+func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int, tableInfo *model.TableInfo, indexInfo *model.IndexInfo) {
+	// Both row-wise executors capture analyzer settings during planning. Do not
+	// reuse a plan after session/global settings change, even when AGAINST is
+	// a literal or TiFlash is unavailable. This does not disable the evaluator's
+	// per-signature compiled-query cache within the current execution.
+	// This is a correctness restriction, not a risky optimization that the
+	// statement's force-plan-cache fix control may override.
+	er.planCtx.builder.ctx.GetSessionVars().StmtCtx.SetForcePlanCache(false)
+	er.sctx.SetSkipPlanCache("Local MATCH ... AGAINST captures analyzer settings during planning")
 	against := er.ctxStack[stackLen-1]
 	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
+	// One Local MATCH scalar has one token collator. Require identical column
+	// collations before builtin construction so swapping MATCH columns cannot
+	// change its results, in either TiDB fallback or TiFlash pushdown.
+	columnCollation := cols[0].GetType(er.sctx.GetEvalCtx()).GetCollate()
+	for _, column := range cols[1:] {
+		if column.GetType(er.sctx.GetEvalCtx()).GetCollate() != columnCollation {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Local MATCH ... AGAINST with different MATCH column collations")
+			return
+		}
+	}
 	args := make([]expression.Expression, 0, numCols+1)
 	args = append(args, against)
 	args = append(args, cols...)
@@ -2409,26 +2434,33 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		er.err = err
 		return
 	}
-	// MATCH token equality follows the collation of the first MATCH column.
-	// Keep the collation in the local evaluator config so the no-TiFlash path
-	// uses the same comparison semantics as the TiFlash Local MATCH expression.
-	if len(cols) > 0 {
-		config.Collation = cols[0].GetType(er.sctx.GetEvalCtx()).GetCollate()
-	}
+	// Every MATCH column has this collation, regardless of column order.
+	config.Collation = columnCollation
 	info := &expression.LocalMatchAgainstEvalInfo{AnalyzerConfig: config}
+	var parsedQuery *matchagainst.BooleanGroup
 	if constExpr, isConst := against.(*expression.Constant); isConst &&
 		!expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {
-		_, err := expression.CompileLocalMatchAgainstQuery(er.sctx.GetEvalCtx(), sf, config)
+		search, isNull, err := constExpr.EvalString(er.sctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			er.err = err
 			return
+		}
+		if !isNull {
+			parsedQuery, err = fulltext.ParseBooleanQuery(search, config.ParserType)
+			if err == nil {
+				_, err = fulltext.CompileParsedBooleanQuery(parsedQuery, config)
+			}
+			if err != nil {
+				er.err = err
+				return
+			}
 		}
 	}
 	if err := expression.SetLocalMatchAgainstEvalInfo(sf, info); err != nil {
 		er.err = err
 		return
 	}
-	if tiFlashInfo != nil {
+	if tiFlashInfo, ok := er.localMatchAgainstTiFlashRowWiseViable(v.Modifier, tableInfo, against, config, parsedQuery); ok {
 		if err := expression.SetLocalMatchAgainstTiFlashEvalInfo(sf, tiFlashInfo); err != nil {
 			er.err = err
 			return
@@ -2448,12 +2480,11 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(
 	modifier ast.FulltextSearchModifier,
 	tblInfo *model.TableInfo,
-	indexInfo *model.IndexInfo,
-	stackLen int,
+	against expression.Expression,
+	analyzerConfig fulltext.AnalyzerConfig,
+	parsedQuery *matchagainst.BooleanGroup,
 ) (*expression.LocalMatchAgainstTiFlashEvalInfo, bool) {
-	if !matchAgainstAllowsTiFlashRowWise(modifier) || tblInfo == nil || indexInfo == nil ||
-		indexInfo.FullTextInfo == nil || er.planCtx == nil || er.planCtx.builder == nil ||
-		stackLen <= 0 || stackLen > len(er.ctxStack) {
+	if !matchAgainstAllowsTiFlashRowWise(modifier) || tblInfo == nil || er.planCtx == nil || er.planCtx.builder == nil {
 		return nil, false
 	}
 	if replica := tblInfo.TiFlashReplica; replica == nil || !replica.Available || replica.Count == 0 {
@@ -2465,29 +2496,29 @@ func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(
 	if !collate.NewCollationEnabled() {
 		return nil, false
 	}
-	sessVars := er.planCtx.builder.ctx.GetSessionVars()
-	analyzerConfig, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, indexInfo.FullTextInfo.ParserType)
-	if err != nil || !localMatchAgainstTiFlashAnalyzerConfigSupported(analyzerConfig) {
+	if !localMatchAgainstTiFlashAnalyzerConfigSupported(analyzerConfig) {
 		return nil, false
 	}
-	against := er.ctxStack[stackLen-1]
 	constant, ok := against.(*expression.Constant)
 	if !ok {
 		return nil, false
 	}
-	if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constant}) {
-		er.sctx.SetSkipPlanCache("TiFlash row-wise MATCH ... AGAINST serializes the Boolean query into the scalar expression")
-	}
 	// Parameter markers may hold numeric values. Use the same conversion as
 	// the evaluator rather than reading Datum's string storage directly.
-	queryText, isNull, err := constant.EvalString(er.sctx.GetEvalCtx(), chunk.Row{})
-	if err != nil {
-		return nil, false
+	if parsedQuery == nil {
+		queryText, isNull, err := constant.EvalString(er.sctx.GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return nil, false
+		}
+		if isNull {
+			queryText = ""
+		}
+		parsedQuery, err = fulltext.ParseBooleanQuery(queryText, analyzerConfig.ParserType)
+		if err != nil {
+			return nil, false
+		}
 	}
-	if isNull {
-		queryText = ""
-	}
-	booleanQuery, err := fulltext.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(queryText, analyzerConfig)
+	booleanQuery, err := fulltext.BuildParsedLocalMatchAgainstBooleanQuery(parsedQuery, analyzerConfig)
 	if err != nil {
 		return nil, false
 	}

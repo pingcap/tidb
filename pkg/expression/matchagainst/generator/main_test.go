@@ -38,7 +38,7 @@ func TestGenerateAndCheckHeader(t *testing.T) {
 	}
 	changed := bytes.Replace(header, []byte("{0xAA, 0xAA}"), []byte("{0xAB, 0xAB}"), 1)
 	if bytes.Equal(header, changed) {
-		t.Fatal("expected protocol-v1 range missing")
+		t.Fatal("expected Unicode 15.0.0 range missing")
 	}
 	if err := os.WriteFile(path, changed, 0644); err != nil {
 		t.Fatal(err)

@@ -173,23 +173,6 @@ func MatchAgainstModifierSupportedByLocalNoScore(modifier ast.FulltextSearchModi
 	return modifier.IsBooleanMode() && !modifier.WithQueryExpansion()
 }
 
-// CompileLocalMatchAgainstQuery compiles a stable search argument at
-// plan time, surfacing syntax errors even for empty inputs or short-circuits.
-func CompileLocalMatchAgainstQuery(ctx EvalContext, sf *ScalarFunction, config fulltext.AnalyzerConfig) (*fulltext.Query, error) {
-	sig, ok := sf.Function.(*builtinMysqlMatchAgainstSig)
-	if !ok {
-		return nil, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
-	}
-	if !MatchAgainstModifierSupportedByLocalNoScore(sig.modifier) {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("local MATCH ... AGAINST outside of IN BOOLEAN MODE")
-	}
-	search, isNull, err := sig.args[0].EvalString(ctx, chunk.Row{})
-	if err != nil || isNull {
-		return nil, err
-	}
-	return fulltext.CompileBooleanQuery(search, config)
-}
-
 func (c *mysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -239,8 +222,13 @@ func (b *builtinMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row) (
 	}
 
 	search, isNull, err := b.args[0].EvalString(ctx, row)
-	if err != nil || isNull {
-		return 0, isNull, err
+	if err != nil {
+		return 0, false, err
+	}
+	if isNull {
+		// InnoDB treats a NULL AGAINST argument as an empty search and
+		// returns zero, not SQL NULL (including under NOT and in prepared executions).
+		return 0, false, nil
 	}
 	plan, err := b.getOrBuildLocalNoScorePlan(search)
 	if err != nil {

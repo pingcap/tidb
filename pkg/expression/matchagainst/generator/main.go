@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // Generate TiFlash's Local MATCH character table from the Go standard library.
-// Protocol v1 requires Unicode 15.0.0; a different toolchain classification
-// must fail rather than regenerate a silently changed protocol-v1 table.
+// Local MATCH requires Unicode 15.0.0; a different toolchain classification
+// must fail rather than regenerate a silently changed Unicode 15.0.0 table.
 package main
 
 import (
@@ -50,7 +50,7 @@ func writeHeader(path string, check bool) error {
 			return err
 		}
 		if !bytes.Equal(existing, header) {
-			return fmt.Errorf("%s differs from the Unicode 15.0.0 protocol-v1 generated table", path)
+			return fmt.Errorf("%s differs from the Unicode 15.0.0 generated table", path)
 		}
 		return nil
 	}
@@ -59,7 +59,7 @@ func writeHeader(path string, check bool) error {
 
 func generateHeader() ([]byte, error) {
 	if unicode.Version != "15.0.0" {
-		return nil, fmt.Errorf("Local MATCH protocol v1 requires Unicode 15.0.0, got %s; deploy a new TiFlash semantic version before changing TiDB classification", unicode.Version)
+		return nil, fmt.Errorf("Local MATCH requires Unicode 15.0.0, got %s; deploy a new TiFlash semantic version before changing TiDB classification", unicode.Version)
 	}
 	var ranges [][2]rune
 	start := rune(-1)
@@ -84,9 +84,9 @@ func generateHeader() ([]byte, error) {
 		}
 	}
 	// Do not update this checksum just to make regeneration succeed: the
-	// corresponding TiDB tests and TiFlash gtest freeze protocol-v1 semantics.
+	// corresponding TiDB tests and TiFlash gtest freeze Unicode 15.0.0 semantics.
 	if fingerprint != 0x71f51f3810b3b529 {
-		return nil, fmt.Errorf("protocol-v1 classification changed: fingerprint=%016x", fingerprint)
+		return nil, fmt.Errorf("Unicode 15.0.0 classification changed: fingerprint=%016x", fingerprint)
 	}
 	var out bytes.Buffer
 	out.WriteString(headerPrefix)
@@ -122,7 +122,7 @@ const headerPrefix = `// Copyright 2026 PingCAP, Inc.
 namespace DB::LocalMatchAgainst
 {
 // Generated from Go's Unicode 15.0.0 categories L and N. TiDB uses its standard
-// library and strictly tests that Unicode version and the protocol-v1 checksum.
+// library and strictly tests that Unicode version and the Unicode 15.0.0 checksum.
 // Regenerate/check this header using the paired TiDB generator. Never change
 // an existing protocol version's classification; deploy TiFlash support for a
 // new version before TiDB emits it. ASCII and '_' use the fast path below.

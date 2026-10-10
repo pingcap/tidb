@@ -16,6 +16,7 @@ package fulltext
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression/matchagainst"
@@ -35,15 +36,21 @@ type Query struct {
 // CompileBooleanQuery parses and normalizes a BOOLEAN MODE query for local
 // no-score MATCH ... AGAINST evaluation.
 func CompileBooleanQuery(search string, config AnalyzerConfig) (*Query, error) {
+	group, err := ParseBooleanQuery(search, config.ParserType)
+	if err != nil {
+		return nil, err
+	}
+	return CompileParsedBooleanQuery(group, config)
+}
+
+// CompileParsedBooleanQuery normalizes a parsed query without mutating its AST.
+// Planning may reuse that AST for the TiFlash payload, independently of Tipb.
+func CompileParsedBooleanQuery(group *matchagainst.BooleanGroup, config AnalyzerConfig) (*Query, error) {
 	analyzer, err := GetAnalyzer(config)
 	if err != nil {
 		return nil, err
 	}
 
-	group, err := parseBooleanQuery(search, config.ParserType)
-	if err != nil {
-		return nil, err
-	}
 	root, err := normalizeBooleanGroup(group, config, analyzer)
 	if err != nil {
 		return nil, err
@@ -93,7 +100,8 @@ func (q *Query) MatchesNothing() bool {
 	return q == nil || q.matchesNothing
 }
 
-func parseBooleanQuery(search string, parserType model.FullTextParserType) (*matchagainst.BooleanGroup, error) {
+// ParseBooleanQuery selects the Boolean grammar for the configured parser.
+func ParseBooleanQuery(search string, parserType model.FullTextParserType) (*matchagainst.BooleanGroup, error) {
 	switch parserType {
 	case model.FullTextParserTypeStandardV1:
 		return matchagainst.ParseStandardBooleanMode(search)
@@ -134,6 +142,27 @@ type phraseNode struct {
 	tokens  []string
 	offsets []int
 	failure []int
+}
+
+// verifiedPhraseNode mirrors InnoDB's candidate lookup followed by verification
+// against the document, including words omitted from its fulltext index.
+type verifiedPhraseNode struct {
+	anchor   queryNode
+	phrase   queryNode
+	analyzer Analyzer
+}
+
+func (n verifiedPhraseNode) match(doc *Document, collator collate.Collator) bool {
+	if !n.anchor.match(doc, collator) {
+		return false
+	}
+	for _, column := range doc.Columns {
+		raw, err := BuildDocument([]ColumnInput{{Text: column.SourceText}}, n.analyzer)
+		if err == nil && n.phrase.match(raw, collator) {
+			return true
+		}
+	}
+	return false
 }
 
 func (n phraseNode) match(doc *Document, collator collate.Collator) bool {
@@ -327,6 +356,11 @@ func estimateQueryNodeWork(node queryNode) queryWorkEstimate {
 			}
 		}
 		return work
+	case verifiedPhraseNode:
+		work := estimateQueryNodeWork(n.anchor)
+		work.add(estimateQueryNodeWork(n.phrase))
+		work.perDocument++ // Unfiltered analysis only after an anchor match.
+		return work
 	default:
 		return queryWorkEstimate{fixed: 1}
 	}
@@ -338,6 +372,8 @@ func queryNodeMatchesNothing(node queryNode) bool {
 		return true
 	case termNode, prefixNode, phraseNode:
 		return false
+	case verifiedPhraseNode:
+		return queryNodeMatchesNothing(n.anchor)
 	case groupNode:
 		for _, child := range n.must {
 			if queryNodeMatchesNothing(child) {
@@ -460,8 +496,8 @@ func normalizeBooleanTerm(
 	case model.FullTextParserTypeStandardV1:
 		switch len(tokens) {
 		case 0:
-			// The analyzer removed the term entirely - a stop word, or outside
-			// the token-size bounds - so it constrains nothing.
+			// Optional/excluded filtered terms can be omitted. The caller turns
+			// a filtered required term into neverNode, matching MySQL InnoDB.
 			return nil, nil
 		case 1:
 			return termNode{token: tokens[0].Text}, nil
@@ -473,7 +509,7 @@ func normalizeBooleanTerm(
 			return combineBooleanTermNodes(children, modifier), nil
 		}
 	case model.FullTextParserTypeNgramV1:
-		return buildPhraseNode(tokens), nil
+		return normalizeAnalyzedPhrase(term.Text(), tokens, config)
 	default:
 		return nil, fmt.Errorf("unsupported fulltext parser type: %s", config.ParserType)
 	}
@@ -490,7 +526,55 @@ func normalizeBooleanPhrase(phrase *matchagainst.BooleanPhrase, config AnalyzerC
 	if err != nil {
 		return nil, err
 	}
-	return buildPhraseNode(tokens), nil
+	if config.ParserType == model.FullTextParserTypeNgramV1 {
+		info := parserInfoFromConfig(config)
+		seenIndexedWord := false
+		for _, word := range PreserveUnderscoreTokenize(phrase.Text()) {
+			// The Boolean plugin emits a short query word as a unigram. It
+			// cannot occur in a fixed-size document ngram index. Do not drop
+			// it and accidentally match the remaining phrase words.
+			if charLen(word.Text) < config.NgramTokenSize {
+				if seenIndexedWord || !info.containsNgramStopword(word.Text) {
+					return neverNode{}, nil
+				}
+			} else {
+				indexed, err := analyzer.Analyze(word.Text)
+				if err != nil {
+					return nil, err
+				}
+				seenIndexedWord = seenIndexedWord || len(indexed) > 0
+			}
+		}
+	}
+	return normalizeAnalyzedPhrase(phrase.Text(), tokens, config)
+}
+
+func normalizeAnalyzedPhrase(text string, tokens []Token, config AnalyzerConfig) (queryNode, error) {
+	anchor := buildPhraseNode(tokens)
+	if anchor == nil {
+		return nil, nil
+	}
+	rawConfig := config
+	rawConfig.InnodbFtEnableStopword = false
+	rawConfig.InnodbFtMinTokenSize = 0
+	rawConfig.InnodbFtMaxTokenSize = math.MaxInt
+	rawAnalyzer, err := GetAnalyzer(rawConfig)
+	if err != nil {
+		return nil, err
+	}
+	rawTokens, err := rawAnalyzer.Analyze(text)
+	if err != nil {
+		return nil, err
+	}
+	// InnoDB drops leading filtered tokens from its original phrase vector,
+	// but preserves all words after the first indexed token for verification.
+	for len(rawTokens) > 0 && rawTokens[0].Position < tokens[0].Position {
+		rawTokens = rawTokens[1:]
+	}
+	if len(rawTokens) == len(tokens) {
+		return anchor, nil
+	}
+	return verifiedPhraseNode{anchor: anchor, phrase: buildPhraseNode(rawTokens), analyzer: rawAnalyzer}, nil
 }
 
 func normalizePrefixTerm(
@@ -545,7 +629,7 @@ func normalizePrefixTerm(
 		if err != nil {
 			return nil, err
 		}
-		return buildPhraseNode(tokens), nil
+		return normalizeAnalyzedPhrase(text, tokens, config)
 	default:
 		return nil, fmt.Errorf("unsupported fulltext parser type: %s", config.ParserType)
 	}

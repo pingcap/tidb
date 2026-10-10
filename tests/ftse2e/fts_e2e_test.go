@@ -236,8 +236,8 @@ func TestLocalMatchLargeDocumentsTiFlashE2E(t *testing.T) {
 	for i, tc := range []struct {
 		search string
 		want   []int
-	}{{"+foo", []int{1, 5}}, {"+数据", []int{}}, {`+"foo bar"`, []int{1}}, {"+foo*", []int{1, 4, 5}},
-		{"foo.bar", []int{1, 2, 5}}, {"+foo -bar", []int{5}}, {"+foo" + strings.Repeat(" bar", 256), []int{1, 5}}} {
+	}{{"+foo", []int{1, 5}}, {"+数据", []int{}}, {`+"foo bar"`, []int{1, 5}}, {"+foo*", []int{1, 4, 5}},
+		{"foo.bar", []int{1, 2, 5}}, {"+foo -bar", []int{}}, {"+foo" + strings.Repeat(" bar", 256), []int{1, 5}}} {
 		t.Run(fmt.Sprintf("query_%d", i), func(t *testing.T) {
 			for _, path := range []struct {
 				conn   *sql.Conn
@@ -295,7 +295,7 @@ func TestLegacyCollationLocalMatchTiFlashE2E(t *testing.T) {
 	}
 }
 
-func newFixture(t *testing.T, dsn string) *fixture {
+func openLocalDB(t *testing.T, dsn string) *sql.DB {
 	t.Helper()
 	config, err := mysql.ParseDSN(dsn)
 	must(t, err)
@@ -316,6 +316,13 @@ func newFixture(t *testing.T, dsn string) *fixture {
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	must(t, db.PingContext(pingCtx))
+	return db
+}
+
+func newFixture(t *testing.T, dsn string) *fixture {
+	t.Helper()
+	db := openLocalDB(t, dsn)
+	ctx := context.Background()
 	var version string
 	must(t, db.QueryRowContext(ctx, "SELECT tidb_version()").Scan(&version))
 	t.Logf("TiDB: %s", version)
@@ -323,7 +330,7 @@ func newFixture(t *testing.T, dsn string) *fixture {
 	// Never operate on an existing schema. The generated name is used only by
 	// this test and is the only schema removed during cleanup.
 	schema := fmt.Sprintf("fts_e2e_%d", time.Now().UnixNano())
-	_, err = db.ExecContext(ctx, "CREATE DATABASE `"+schema+"`")
+	_, err := db.ExecContext(ctx, "CREATE DATABASE `"+schema+"`")
 	must(t, err)
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -440,32 +447,64 @@ func assertPlan(t *testing.T, conn *sql.Conn, query string, native bool, args ..
 
 func assertPlanText(t *testing.T, query, text string, native, allowCop bool) {
 	t.Helper()
-	if strings.Contains(text, "cop[tici]") {
-		t.Fatalf("unexpected TiCI plan for %s:\n%s", query, text)
+	if err := validateMatchPlan(text, native, allowCop); err != nil {
+		t.Fatalf("%s for %s:\n%s", err, query, text)
 	}
-	if native {
-		isTiFlash := func(text string) bool {
-			return strings.Contains(text, "mpp[tiflash]") || (allowCop && strings.Contains(text, "cop[tiflash]"))
-		}
-		if !isTiFlash(text) || !strings.Contains(text, "tablefullscan") {
-			t.Fatalf("expected TiFlash TableFullScan for %s:\n%s", query, text)
-		}
-		mppSelection := false
-		for _, line := range strings.Split(text, "\n") {
-			if !strings.Contains(line, "selection") {
-				continue
-			}
-			if !isTiFlash(line) {
-				t.Fatalf("MATCH remains in a TiDB-side Selection for %s:\n%s", query, text)
-			}
-			mppSelection = true
-		}
-		if !mppSelection {
-			t.Fatalf("expected MATCH to execute in a TiFlash Selection for %s:\n%s", query, text)
-		}
-	} else if strings.Contains(text, "mpp[tiflash]") || !strings.Contains(text, "match_against") {
-		t.Fatalf("expected TiDB local MATCH fallback for %s:\n%s", query, text)
+}
+
+// Both brief EXPLAIN and statement-summary plans put the operator and task
+// before the operator info. Read those columns rather than searching predicates
+// for words such as "root" or "selection". Unrelated residual filters are valid.
+func matchPlanOperator(line string) (operator, task string) {
+	fields := strings.Fields(strings.ToLower(line))
+	if len(fields) == 0 {
+		return "", ""
 	}
+	operator = strings.TrimLeft(fields[0], "│├└─")
+	for _, field := range fields[1:min(len(fields), 4)] {
+		if field == "root" || strings.HasPrefix(field, "cop[") || strings.HasPrefix(field, "mpp[") {
+			task = field
+			break
+		}
+	}
+	return operator, task
+}
+
+func validateMatchPlan(text string, native, allowCop bool) error {
+	text = strings.ToLower(text)
+	isTiFlash := func(task string) bool {
+		return task == "mpp[tiflash]" || (allowCop && task == "cop[tiflash]")
+	}
+	scan, match := false, false
+	for _, line := range strings.Split(text, "\n") {
+		operator, task := matchPlanOperator(line)
+		if task == "cop[tici]" {
+			return fmt.Errorf("unexpected TiCI plan")
+		}
+		if isTiFlash(task) && (strings.HasPrefix(operator, "tablefullscan") || strings.HasPrefix(operator, "tablerangescan")) {
+			scan = true
+		}
+		if !strings.Contains(line, "match_against(") {
+			continue
+		}
+		if !strings.HasPrefix(operator, "selection") {
+			return fmt.Errorf("expected MATCH in a Selection, got %s", operator)
+		}
+		if native && !isTiFlash(task) {
+			return fmt.Errorf("MATCH is not in a TiFlash Selection (task %s)", task)
+		}
+		if !native && task != "root" {
+			return fmt.Errorf("expected TiDB root MATCH fallback, got task %s", task)
+		}
+		match = true
+	}
+	if !match {
+		return fmt.Errorf("missing MATCH Selection")
+	}
+	if native && !scan {
+		return fmt.Errorf("expected TiFlash TableFullScan or TableRangeScan")
+	}
+	return nil
 }
 
 func explainPlan(t *testing.T, conn *sql.Conn, query string, args ...any) string {
@@ -657,15 +696,15 @@ func (f *fixture) testTokenSemantics(t *testing.T) {
 	f.makePair("token_standard", `CREATE TABLE %s (id INT PRIMARY KEY, body TEXT COLLATE utf8mb4_bin,
 		FULLTEXT INDEX ft_body(body))`, rows)
 	for _, tc := range []matchCase{
-		{"split_optional", "MATCH(body) AGAINST('foo.bar' IN BOOLEAN MODE)", []int{1, 2, 3, 4, 5, 7, 8, 13}},
-		{"split_required", "MATCH(body) AGAINST('+foo.bar' IN BOOLEAN MODE)", []int{3, 7, 8, 13}},
+		{"split_optional", "MATCH(body) AGAINST('foo.bar' IN BOOLEAN MODE)", []int{1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13}},
+		{"split_required", "MATCH(body) AGAINST('+foo.bar' IN BOOLEAN MODE)", []int{3, 7, 8, 9, 10, 13}},
 		{"split_excluded", "MATCH(body) AGAINST('baz -foo.bar' IN BOOLEAN MODE)", []int{6}},
-		{"emoji_delimiter", "MATCH(body) AGAINST('+foo' IN BOOLEAN MODE)", []int{1, 3, 4, 7, 8, 13}},
-		{"emoji_in_query", "MATCH(body) AGAINST('+foo🙃bar' IN BOOLEAN MODE)", []int{3, 7, 8, 13}},
-		{"phrase_delimiters", `MATCH(body) AGAINST('+"foo bar"' IN BOOLEAN MODE)`, []int{3, 7, 8, 13}},
-		{"unicode_letter", "MATCH(body) AGAINST('+𞤀bar' IN BOOLEAN MODE)", []int{11}},
-		{"unicode_number", "MATCH(body) AGAINST('+foo𝟙bar' IN BOOLEAN MODE)", []int{10}},
-		{"newer_unicode_is_delimiter", "MATCH(body) AGAINST('+foo\U0002EBF0bar' IN BOOLEAN MODE)", []int{3, 7, 8, 13}},
+		{"emoji_delimiter", "MATCH(body) AGAINST('+foo' IN BOOLEAN MODE)", []int{1, 3, 4, 7, 8, 9, 10, 13}},
+		{"emoji_in_query", "MATCH(body) AGAINST('+foo🙃bar' IN BOOLEAN MODE)", []int{3, 7, 8, 9, 10, 13}},
+		{"phrase_delimiters", `MATCH(body) AGAINST('+"foo bar"' IN BOOLEAN MODE)`, []int{3, 7, 8, 9, 10, 13}},
+		{"supplementary_letter_delimiter", "MATCH(body) AGAINST('+𞤀bar' IN BOOLEAN MODE)", []int{2, 3, 5, 7, 8, 9, 10, 11, 13}},
+		{"supplementary_number_delimiter", "MATCH(body) AGAINST('+foo𝟙bar' IN BOOLEAN MODE)", []int{3, 7, 8, 9, 10, 13}},
+		{"newer_unicode_is_delimiter", "MATCH(body) AGAINST('+foo\U0002EBF0bar' IN BOOLEAN MODE)", []int{3, 7, 8, 9, 10, 13}},
 	} {
 		f.check("token_standard", tc)
 	}
@@ -686,10 +725,10 @@ func (f *fixture) testTokenSemantics(t *testing.T) {
 		}
 	}()
 	for _, tc := range []matchCase{
-		{"ngram_unicode_letter", "MATCH(body) AGAINST('+𞤀bar' IN BOOLEAN MODE)", []int{9, 11}},
-		{"ngram_unicode_number", "MATCH(body) AGAINST('+foo𝟙bar' IN BOOLEAN MODE)", []int{10}},
+		{"ngram_supplementary_query_delimiter", "MATCH(body) AGAINST('+𞤀bar' IN BOOLEAN MODE)", []int{2, 3, 5, 7, 8, 9, 10, 11, 12, 13}},
+		{"ngram_supplementary_number_query_delimiter", "MATCH(body) AGAINST('+foo𝟙bar' IN BOOLEAN MODE)", []int{1, 3, 4, 7, 8, 9, 10, 12, 13}},
 		{"ngram_no_cross_delimiter", "MATCH(body) AGAINST('+foob' IN BOOLEAN MODE)", []int{12}},
-		{"ngram_phrase_delimiters", `MATCH(body) AGAINST('+"foo bar"' IN BOOLEAN MODE)`, []int{3, 7, 8, 13}},
+		{"ngram_phrase_boundaries", `MATCH(body) AGAINST('+"foo bar"' IN BOOLEAN MODE)`, []int{3}},
 	} {
 		f.check("token_ngram", tc)
 	}
@@ -712,6 +751,7 @@ func (f *fixture) testStandard(t *testing.T) {
 		{"prefix", "MATCH(body) AGAINST('+app*' IN BOOLEAN MODE)", []int{1, 2, 4, 6}},
 		{"nullable_body", "MATCH(body) AGAINST('+apple' IN BOOLEAN MODE)", []int{1, 2, 4, 6}},
 		{"composite_columns", "MATCH(title, body) AGAINST('+TiDB +apple' IN BOOLEAN MODE)", []int{2, 4}},
+		{"composite_reordered_columns", "MATCH(body, title) AGAINST('+TiDB +apple' IN BOOLEAN MODE)", []int{2, 4}},
 		{"cross_column_phrase", `MATCH(title, body) AGAINST('+"TiDB guide"' IN BOOLEAN MODE)`, []int{2}},
 	} {
 		f.check("docs", tc)
@@ -720,7 +760,7 @@ func (f *fixture) testStandard(t *testing.T) {
 		conn  *sql.Conn
 		table string
 	}{{f.native, "docs_native"}, {f.local, "docs_local"}} {
-		assertMySQLError(t, path.conn, "SELECT id FROM `"+path.table+"` WHERE MATCH(body, title) AGAINST('+apple' IN BOOLEAN MODE)", 1191)
+		assertMySQLError(t, path.conn, "SELECT id FROM `"+path.table+"` WHERE MATCH(title, title) AGAINST('+apple' IN BOOLEAN MODE)", 1191)
 	}
 
 	// QA function case 50 and mysql-test2/subexpr combine multiple MATCH
