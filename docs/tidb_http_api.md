@@ -1249,3 +1249,74 @@ Example response:
  ]
 }
 ```
+
+### Region cache status and refresh
+
+These APIs let an operator inspect and refresh TiDB's local region cache for one TiKV store after leader eviction, while the old TiKV is still online. They are registered on the status port for both classic and TiDB-X. `GET` reads local cache state and may drop unresolved failures whose original key range is fully covered by cached regions that have already left the store. `POST` is synchronous: it probes the old store with a one-shot Get, updates leaders from `NotLeader` responses, and is bounded by the request context and a 2-minute deadline for the whole HTTP call (all in-process stores/keyspaces). Concurrent `POST`s for the same store share one in-flight job. That deadline cancels RPCs and waiters; it does not interrupt mutex waits or the synchronous cache snapshot and range check after probes return, so it is not a strict "must return within two minutes" guarantee. If one in-process store/keyspace fails, later stores are still attempted until the deadline fires.
+
+`ready` is true only when no matching cache entries remain, no unresolved refresh failures remain, and no refresh is in progress. `GET` returns status counters without error details. `POST` may return diagnostic `errors`; callers must inspect `ready` to determine completion. Cache entries that expire or are deleted during a failed probe are not treated as successfully refreshed. Region-cache TTL expiry is also not refresh success: if the operator times out, stop waiting for `ready`, wait the original region-cache TTL, then restart. Do not treat a later `ready=true` caused only by expiry as a completed refresh.
+
+`observed_at` is a Unix timestamp. For multiple in-process stores it is the oldest store observation, not the last store in the loop. Each `stores[]` entry has its own `observed_at` when `detail=1`.
+
+Leftover failures from that fallback stay until the original range is fully covered off-store, or until the next rolling posts `reset=1`. `reset=1` drops unresolved failures and the idle task, then runs a new refresh. If a refresh is already running for that store, reset does not cancel it and the POST returns `store cache refresh is in progress` so the caller can retry. It is not a success signal. Do not pass `reset=1` while polling the same rolling.
+
+`GET` does not reload missing or expired regions. Repeat `POST` without `reset` to retry unresolved failures and recover missing range coverage. Each range-recovery walk visits at most 128 regions, so a long split chain may require multiple POSTs. This cap does not limit the total number of cached regions probed by a refresh.
+
+Usage:
+
+```shell
+curl "http://{TiDBIP}:10080/regions/cache/status?store_id={id}"
+curl -X POST "http://{TiDBIP}:10080/regions/cache/refresh?store_id={id}"
+curl -X POST "http://{TiDBIP}:10080/regions/cache/refresh?store_id={id}&reset=1"
+```
+
+Parameters:
+
+- `store_id`: required positive integer. Missing, zero, or non-integer values return HTTP 400.
+- `reset`: optional on `POST` only. `1` or `true` clears leftover failures from a previous rolling or TTL fallback, then refreshes. If a refresh is in progress, the store is left running and the response is not ready. Omit it during an in-progress rolling.
+- `detail`: optional on either route. `1` or `true` includes per-store entries in `stores`; otherwise `stores` is omitted.
+
+The status route accepts only `GET`. The refresh route accepts only `POST`. Other methods return HTTP 405.
+
+Example `GET` response with `detail=1`:
+
+```json
+{
+  "failed": 0,
+  "remaining": 9,
+  "ready": false,
+  "observed_at": 1720000000,
+  "stores": [
+    {
+      "cluster_id": 123,
+      "failed": 0,
+      "remaining": 9,
+      "ready": false,
+      "observed_at": 1720000000
+    }
+  ]
+}
+```
+
+`stores` is one entry per in-process TiKV store (each keyspace / PD cluster). Top-level counters are the sum of those entries and are not labeled with a single keyspace.
+
+Example `POST` response with `detail=1`:
+
+```json
+{
+  "failed": 0,
+  "remaining": 0,
+  "ready": true,
+  "observed_at": 1720000000,
+  "stores": [
+    {
+      "cluster_id": 123,
+      "failed": 0,
+      "remaining": 0,
+      "ready": true,
+      "observed_at": 1720000000
+    }
+  ]
+}
+```
+
