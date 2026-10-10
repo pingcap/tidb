@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -1748,78 +1749,153 @@ func (rc *LogClient) WrapLogFilesIterWithCheckpointFilter(
 	}), nil
 }
 
-// PreSplitRegions performs a full pre-scan over ALL DML files and issues region
-// splits based on the total cumulative data volume. This avoids the problem where
-// per-batch splitting (4096 files at a time) resets accumulated sizes at each batch
-// boundary, producing insufficient splits for workloads that spread data across many
-// regions (e.g., secondary index builds).
+// PreSplitRegions is a draft timing probe. It does not split or scatter regions.
+// The old pre-split loop mixed metadata iteration and btree merges into one timer.
+// This version runs those as separate steps and returns false so the caller keeps
+// the per-batch split path.
 //
-// Returns (true, nil) when splits were successfully issued; (false, nil) when
-// there are no DML files to split; (false, err) on any failure. Callers that
-// receive true should skip the fallback per-batch split to avoid redundant
-// split+scatter work.
+// Steps:
+//  1. load-iter: WalkDir metadata names and build the file iterator
+//  2. scan-files: download, parse, and record file spans; no Merge
+//  3. merge: Merge the recorded spans into per-table btrees
+//  4. tree-stats: count btree nodes
+//  5. skip-execute: do not call ExecuteRegions
 func (rc *LogClient) PreSplitRegions(
 	ctx context.Context,
 	rules map[int64]*restoreutils.RewriteRules,
 	splitSize uint64,
 	splitKeys int64,
 ) (bool, error) {
-	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	splitter := split.NewPipelineRegionsSplitter(client, splitSize, splitKeys)
-	strategy := split.NewBaseSplitStrategy(rules)
+	heapMB := func() uint64 {
+		var ms runtime.MemStats
+		runtime.ReadMemStats(&ms)
+		return ms.HeapAlloc / 1024 / 1024
+	}
+	totalStart := time.Now()
 
+	loadStart := time.Now()
 	logIter, err := rc.LoadDMLFiles(ctx)
 	if err != nil {
 		return false, errors.Annotate(err, "pre-split: load DML files")
 	}
+	log.Info("pre-split draft step",
+		zap.String("step", "load-iter"),
+		zap.Duration("took", time.Since(loadStart)),
+		zap.Uint64("heap-mb", heapMB()))
 
-	var fileCount int
-	startTime := time.Now()
+	type pendingFile struct {
+		tableID int64
+		start   []byte
+		end     []byte
+		size    uint64
+		number  int64
+	}
+	// Keys alias bytes inside the parsed metadata. Holding them keeps those
+	// buffers alive until merge finishes, which is the point of separating the
+	// scan from Merge.
+	files := make([]pendingFile, 0, 1024)
+	var scanned, metaSkipped, ruleSkipped int
+	scanStart := time.Now()
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		if r.Err != nil {
 			return false, errors.Annotate(r.Err, "pre-split: iterate DML files")
 		}
+		scanned++
 		file := r.Item
 		if file.IsMeta {
+			metaSkipped++
 			continue
 		}
 		if _, exist := rules[file.TableId]; !exist {
+			ruleSkipped++
 			continue
 		}
-		splitHelper, exist := strategy.TableSplitter[file.TableId]
+		files = append(files, pendingFile{
+			tableID: file.TableId,
+			start:   file.StartKey,
+			end:     file.EndKey,
+			size:    file.Length,
+			number:  file.NumberOfEntries,
+		})
+		if len(files)%1_000_000 == 0 {
+			log.Info("pre-split draft step progress",
+				zap.String("step", "scan-files"),
+				zap.Int("recorded", len(files)),
+				zap.Int("scanned", scanned),
+				zap.Duration("elapsed", time.Since(scanStart)))
+		}
+	}
+	log.Info("pre-split draft step",
+		zap.String("step", "scan-files"),
+		zap.Int("recorded", len(files)),
+		zap.Int("scanned", scanned),
+		zap.Int("meta-skipped", metaSkipped),
+		zap.Int("rule-skipped", ruleSkipped),
+		zap.Duration("took", time.Since(scanStart)),
+		zap.Uint64("heap-mb", heapMB()))
+
+	strategy := split.NewBaseSplitStrategy(rules)
+	mergeStart := time.Now()
+	for i, file := range files {
+		splitHelper, exist := strategy.TableSplitter[file.tableID]
 		if !exist {
 			splitHelper = split.NewSplitHelper()
-			strategy.TableSplitter[file.TableId] = splitHelper
+			strategy.TableSplitter[file.tableID] = splitHelper
 		}
 		splitHelper.Merge(split.Valued{
 			Key: split.Span{
-				StartKey: file.StartKey,
-				EndKey:   file.EndKey,
+				StartKey: file.start,
+				EndKey:   file.end,
 			},
 			Value: split.Value{
-				Size:   file.Length,
-				Number: file.NumberOfEntries,
+				Size:   file.size,
+				Number: file.number,
 			},
 		})
-		fileCount++
+		if (i+1)%1_000_000 == 0 {
+			log.Info("pre-split draft step progress",
+				zap.String("step", "merge"),
+				zap.Int("merged", i+1),
+				zap.Duration("elapsed", time.Since(mergeStart)))
+		}
 	}
-	log.Info("pre-split: merged all files",
-		zap.Int("file-count", fileCount),
-		zap.Duration("merge-took", time.Since(startTime)))
+	log.Info("pre-split draft step",
+		zap.String("step", "merge"),
+		zap.Int("file-count", len(files)),
+		zap.Int("table-count", len(strategy.TableSplitter)),
+		zap.Duration("took", time.Since(mergeStart)),
+		zap.Uint64("heap-mb", heapMB()))
 
-	if fileCount == 0 {
-		return false, nil
+	statsStart := time.Now()
+	var totalNodes, maxNodes int
+	var maxTable int64
+	for tableID, helper := range strategy.TableSplitter {
+		nodes := 0
+		helper.Traverse(func(split.Valued) bool {
+			nodes++
+			return true
+		})
+		totalNodes += nodes
+		if nodes > maxNodes {
+			maxNodes = nodes
+			maxTable = tableID
+		}
 	}
+	log.Info("pre-split draft step",
+		zap.String("step", "tree-stats"),
+		zap.Int("total-nodes", totalNodes),
+		zap.Int("max-nodes", maxNodes),
+		zap.Int64("max-table-id", maxTable),
+		zap.Duration("took", time.Since(statsStart)),
+		zap.Uint64("heap-mb", heapMB()))
 
-	splitStart := time.Now()
-	accumulations := strategy.GetAccumulations()
-	if err := splitter.ExecuteRegions(ctx, accumulations); err != nil {
-		return false, errors.Annotate(err, "pre-split: execute regions")
-	}
-	log.Info("pre-split: completed",
-		zap.Duration("split-took", time.Since(splitStart)),
-		zap.Duration("total-took", time.Since(startTime)))
-	return true, nil
+	log.Info("pre-split draft step",
+		zap.String("step", "skip-execute"),
+		zap.Uint64("split-size", splitSize),
+		zap.Int64("split-keys", splitKeys),
+		zap.Duration("total-took", time.Since(totalStart)),
+		zap.String("reason", "draft does not split or scatter; per-batch split still runs"))
+	return false, nil
 }
 
 func WrapLogFilesIterWithCheckpointFailpoint(
