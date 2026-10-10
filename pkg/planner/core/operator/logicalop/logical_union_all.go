@@ -206,7 +206,7 @@ func (p *LogicalUnionAll) ExtractFD() *fd.FDSet {
 		childFDs = append(childFDs, childFD)
 	}
 	// check the output columns' not-null property.
-	res := &fd.FDSet{}
+	res := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 	notNullCols := intset.NewFastIntSet()
 	for _, col := range p.Schema().Columns {
 		notNullCols.Insert(int(col.UniqueID))
