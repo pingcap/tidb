@@ -1640,6 +1640,7 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(ctx EvalContext, input *chun
 				ts[i] = *new(types.MyDecimal)
 				continue
 			}
+			t = adjustUnixTimestampForDSTOverlap(timeBuf.GetTime(i), t)
 			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.GetDecimal())
 			if err != nil {
 				return err
@@ -2351,6 +2352,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 				i64s[i] = 0
 				continue
 			}
+			t = adjustUnixTimestampForDSTOverlap(buf.GetTime(i), t)
 			dec, err := goTimeToMysqlUnixTimestamp(t, 1)
 			if err != nil {
 				return err
