@@ -27,6 +27,7 @@ go_library(
         "initialize.go",
         "logical_initialize.go",
         "logical_plan_builder.go",
+        "loose_index_scan.go",
         "memtable_infoschema_extractor.go",
         "memtable_predicate_extractor.go",
         "optimizer.go",

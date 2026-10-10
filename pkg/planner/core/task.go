@@ -1661,6 +1661,9 @@ func inheritStatsFromBottomTaskForIndexJoinInner(p base.PhysicalPlan, t base.Tas
 func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
 	p := pp.(*physicalop.PhysicalStreamAgg)
 	t := tasks[0].Copy()
+	if p.LooseScan {
+		return attach2Task4LooseScan(p, t)
+	}
 	if cop, ok := t.(*physicalop.CopTask); ok {
 		// We should not push agg down across
 		//  1. double read, since the data of second read is ordered by handle instead of index. The `extraHandleCol` is added
