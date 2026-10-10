@@ -3475,3 +3475,37 @@ GET_FORMAT(TIME, 'usa')	GET_FORMAT(TIME, 'USA')	GET_FORMAT(TIME, 'UsA')	GET_FORM
 SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
 GET_FORMAT(DATE, 'jis')	GET_FORMAT(DATETIME, 'iso')	GET_FORMAT(TIMESTAMP, 'eur')	GET_FORMAT(TIME, 'internal')
 %Y-%m-%d	%Y-%m-%d %H:%i:%s	%Y-%m-%d %H.%i.%s	%H%i%s
+create table decimal_scale (a decimal(20,0));
+insert into decimal_scale values (1), (-1), (199995), (null);
+set tidb_enable_vectorized_expression = on;
+select a, cast(a / 3 as char), cast(a / 100000 as char) from decimal_scale order by a;
+a	cast(a / 3 as char)	cast(a / 100000 as char)
+NULL	NULL	NULL
+-1	-0.3333	0.0000
+1	0.3333	0.0000
+199995	66665.0000	2.0000
+set tidb_enable_vectorized_expression = off;
+select a, cast(a / 3 as char), cast(a / 100000 as char) from decimal_scale order by a;
+a	cast(a / 3 as char)	cast(a / 100000 as char)
+NULL	NULL	NULL
+-1	-0.3333	0.0000
+1	0.3333	0.0000
+199995	66665.0000	2.0000
+set div_precision_increment = 6;
+select a, cast(a / 3 as char) from decimal_scale order by a;
+a	cast(a / 3 as char)
+NULL	NULL
+-1	-0.333333
+1	0.333333
+199995	66665.000000
+set div_precision_increment = default;
+set tidb_enable_vectorized_expression = on;
+create table decimal_join_l (c0 int);
+create table decimal_join_r (c0 int primary key);
+insert into decimal_join_l values (1), (-1800000000);
+insert into decimal_join_r values (1), (-1800000000);
+select * from decimal_join_l l inner join decimal_join_r r on l.c0 = r.c0 where instr((r.c0 is not null) / (l.c0 ^ -1146764518), true) and r.c0 is not null;
+c0	c0
+select * from decimal_join_l l left join decimal_join_r r on l.c0 = r.c0 where instr((r.c0 is not null) / (l.c0 ^ -1146764518), true) and r.c0 is not null;
+c0	c0
+drop table decimal_scale, decimal_join_l, decimal_join_r;

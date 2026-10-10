@@ -1673,3 +1673,21 @@ set sql_mode = default;
 # Issue 59420
 SELECT GET_FORMAT(TIME, 'usa'), GET_FORMAT(TIME, 'USA'), GET_FORMAT(TIME, 'UsA'), GET_FORMAT(time, 'UsA'), GET_FORMAT(TIme, 'UsA');
 SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
+# DECIMAL string conversions must honor the result scale in both evaluation modes.
+create table decimal_scale (a decimal(20,0));
+insert into decimal_scale values (1), (-1), (199995), (null);
+set tidb_enable_vectorized_expression = on;
+select a, cast(a / 3 as char), cast(a / 100000 as char) from decimal_scale order by a;
+set tidb_enable_vectorized_expression = off;
+select a, cast(a / 3 as char), cast(a / 100000 as char) from decimal_scale order by a;
+set div_precision_increment = 6;
+select a, cast(a / 3 as char) from decimal_scale order by a;
+set div_precision_increment = default;
+set tidb_enable_vectorized_expression = on;
+create table decimal_join_l (c0 int);
+create table decimal_join_r (c0 int primary key);
+insert into decimal_join_l values (1), (-1800000000);
+insert into decimal_join_r values (1), (-1800000000);
+select * from decimal_join_l l inner join decimal_join_r r on l.c0 = r.c0 where instr((r.c0 is not null) / (l.c0 ^ -1146764518), true) and r.c0 is not null;
+select * from decimal_join_l l left join decimal_join_r r on l.c0 = r.c0 where instr((r.c0 is not null) / (l.c0 ^ -1146764518), true) and r.c0 is not null;
+drop table decimal_scale, decimal_join_l, decimal_join_r;
