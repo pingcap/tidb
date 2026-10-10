@@ -254,6 +254,8 @@ func (s *Server) startHTTPServer() {
 
 	tikvHandlerTool := s.NewTikvHandlerTool()
 	router.Handle("/settings", tikvhandler.NewSettingsHandler(tikvHandlerTool)).Name("Settings")
+	router.Handle("/regions/cache/status", tikvhandler.NewRegionCacheHandler(tikvHandlerTool)).Methods("GET").Name("RegionCacheStatus")
+	router.Handle("/regions/cache/refresh", tikvhandler.NewRegionCacheHandler(tikvHandlerTool)).Methods("POST").Name("RegionCacheRefresh")
 
 	router.Handle("/schema", tikvhandler.NewSchemaHandler(tikvHandlerTool)).Name("Schema")
 	router.Handle("/schema/{db}", tikvhandler.NewSchemaHandler(tikvHandlerTool))
