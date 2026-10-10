@@ -17,6 +17,7 @@ go_library(
         "rule_partition_processor.go",
         "rule_predicate_simplification.go",
         "rule_prune_indexes.go",
+        "rule_semi_join_rewrite.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/rule",
     visibility = ["//visibility:public"],
