@@ -1,0 +1,40 @@
+create database regexp_extract;
+use regexp_extract;
+create table UPPERONLY(x int);
+create table MixedCaseTbl(x int);
+create table lc_tbl(x int);
+create table tbl_99(x int);
+select table_name from information_schema.tables where table_schema='regexp_extract' and table_name regexp '^[A-Z]+$';
+table_name
+UPPERONLY
+select table_name from information_schema.tables where table_schema='regexp_extract' and table_name regexp '^\\D+$';
+table_name
+MixedCaseTbl
+UPPERONLY
+lc_tbl
+select table_name from information_schema.tables where table_schema='regexp_extract' and table_name regexp '^[^A-Z]+$';
+table_name
+lc_tbl
+tbl_99
+select table_name from information_schema.tables where table_schema='regexp_extract' and regexp_like(table_name, '^[A-Z]+$', 'i');
+table_name
+MixedCaseTbl
+UPPERONLY
+select table_name from information_schema.tables where table_schema='regexp_extract' and regexp_like(table_name, '^[A-Z]+$', 'c');
+table_name
+UPPERONLY
+select table_name from information_schema.tables where table_schema='regexp_extract' and table_name regexp '^[A-Z]+$' and not(table_name regexp '^[A-Z]+$');
+table_name
+prepare stmt from 'select table_name from information_schema.tables where table_schema=''regexp_extract'' and table_name regexp ? order by table_name';
+set @p='^[A-Z]+$';
+execute stmt using @p;
+table_name
+UPPERONLY
+set @p='^[^A-Z]+$';
+execute stmt using @p;
+table_name
+lc_tbl
+tbl_99
+deallocate prepare stmt;
+use test;
+drop database regexp_extract;
