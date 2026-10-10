@@ -54,6 +54,4 @@ func TestStartDiagnostic(t *testing.T) {
 	require.NoError(t, dom.StartDiagnostic())
 	require.Nil(t, dom.ddl)
 	require.Nil(t, dom.minJobIDRefresher)
-	require.Nil(t, dom.info.ServerInfoSyncer().Done())
-	require.Nil(t, dom.info.ServerInfoSyncer().TopologyDone())
 }
