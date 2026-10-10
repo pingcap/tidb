@@ -22,6 +22,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -261,6 +262,7 @@ func (e *UpdateExec) exec(
 	dupKeyCheck table.DupKeyCheckMode,
 ) error {
 	defer trace.StartRegion(ctx, "UpdateExec").End()
+	failpoint.InjectCall("beforeUpdateRowForTest", e.Ctx())
 	bAssignFlag := make([]bool, len(e.assignFlag))
 	for i, flag := range e.assignFlag {
 		bAssignFlag[i] = flag >= 0
