@@ -16,7 +16,7 @@ go_library(
         "//pkg/config",
         "//pkg/lightning/common",
         "//pkg/lightning/log",
-        "//pkg/parser/ast",
+        "//pkg/objstore",
         "//pkg/parser/mysql",
         "//pkg/util",
         "//pkg/util/cpu",
@@ -46,6 +46,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//pkg/objstore",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
