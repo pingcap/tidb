@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -68,6 +69,10 @@ func TestMVSystemTablesAreUnrecoverable(t *testing.T) {
 // MockClient create a fake Client used to test.
 func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 	return &SnapClient{databases: dbs}
+}
+
+func MockClientWithBackupMeta(startVersion, endVersion uint64) *SnapClient {
+	return &SnapClient{backupMeta: &backuppb.BackupMeta{StartVersion: startVersion, EndVersion: endVersion}}
 }
 
 func (rc *SnapClient) SetDomain(dom *domain.Domain) {

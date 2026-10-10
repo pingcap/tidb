@@ -27,7 +27,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -122,14 +121,7 @@ func getStartedMockedCluster(t *testing.T) *mock.Cluster {
 }
 
 func TestNeedCheckTargetClusterFresh(t *testing.T) {
-	// cannot use shared `mc`, other parallel case may change it.
-	cluster := getStartedMockedCluster(t)
-	defer cluster.Stop()
-
-	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.InitConnections(g, cluster.Storage)
-	require.NoError(t, err)
+	client := snapclient.MockClientWithBackupMeta(0, 0)
 
 	// not set filter and first run with checkpoint
 	require.True(t, client.NeedCheckFreshCluster(false, false))
@@ -143,11 +135,8 @@ func TestNeedCheckTargetClusterFresh(t *testing.T) {
 	// skip check when has set --filter and has checkpoint
 	require.False(t, client.NeedCheckFreshCluster(true, false))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data", "return(false)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data"))
-	}()
 	// skip check when increment backup
+	client = snapclient.MockClientWithBackupMeta(1, 2)
 	require.False(t, client.NeedCheckFreshCluster(false, false))
 }
 
@@ -274,11 +263,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 }
 
 func TestInitFullClusterRestore(t *testing.T) {
-	cluster := mc
-	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.InitConnections(g, cluster.Storage)
-	require.NoError(t, err)
+	client := snapclient.MockClientWithBackupMeta(0, 0)
 
 	// explicit filter
 	client.InitFullClusterRestore(true, true, true)
@@ -290,10 +275,7 @@ func TestInitFullClusterRestore(t *testing.T) {
 	client.InitFullClusterRestore(false, true, false)
 	require.False(t, client.IsFullClusterRestore())
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data"))
-	}()
+	client = snapclient.MockClientWithBackupMeta(1, 2)
 	client.InitFullClusterRestore(false, true, true)
 	require.False(t, client.IsFullClusterRestore())
 }
