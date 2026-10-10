@@ -1,0 +1,30 @@
+drop table if exists t;
+create table t (a int, b int);
+delete from mysql.index_advisor_results where schema_name=database();
+select count(*) from mysql.index_advisor_results where schema_name=database();
+count(*)
+0
+recommend index return result for 'select a from t where a=1';
+database	table	index_name	index_columns	est_index_size	reason	top_impacted_query	create_index_statement
+planner__core__index_advisor	t	idx_a	a	0	Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` from `planner__core__index_advisor` . `t` where `a` = ?	[{"Query":"SELECT `a` FROM `planner__core__index_advisor`.`t` WHERE `a` = 1","Improvement":0.999552}]	CREATE INDEX idx_a ON t(a);
+select count(*) from mysql.index_advisor_results where schema_name=database();
+count(*)
+0
+recommend index run for 'select a from t where a=1';
+database	table	index_name	index_columns	est_index_size	reason	top_impacted_query	create_index_statement
+planner__core__index_advisor	t	idx_a	a	0	Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` from `planner__core__index_advisor` . `t` where `a` = ?	[{"Query":"SELECT `a` FROM `planner__core__index_advisor`.`t` WHERE `a` = 1","Improvement":0.999552}]	CREATE INDEX idx_a ON t(a);
+select count(*) from mysql.index_advisor_results where schema_name=database();
+count(*)
+1
+update mysql.index_advisor_results set updated_at='2000-01-01', index_details='{}' where schema_name=database();
+recommend index return result for 'select a from t where a=1';
+database	table	index_name	index_columns	est_index_size	reason	top_impacted_query	create_index_statement
+planner__core__index_advisor	t	idx_a	a	0	Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` from `planner__core__index_advisor` . `t` where `a` = ?	[{"Query":"SELECT `a` FROM `planner__core__index_advisor`.`t` WHERE `a` = 1","Improvement":0.999552}]	CREATE INDEX idx_a ON t(a);
+recommend index return result for 'select b from t where b=1' with max_num_index=1;
+database	table	index_name	index_columns	est_index_size	reason	top_impacted_query	create_index_statement
+planner__core__index_advisor	t	idx_b	b	0	Column [b] appear in Equal or Range Predicate clause(s) in query: select `b` from `planner__core__index_advisor` . `t` where `b` = ?	[{"Query":"SELECT `b` FROM `planner__core__index_advisor`.`t` WHERE `b` = 1","Improvement":0.999552}]	CREATE INDEX idx_b ON t(b);
+select index_columns, updated_at, index_details from mysql.index_advisor_results where schema_name=database();
+index_columns	updated_at	index_details
+a	2000-01-01 00:00:00	{}
+delete from mysql.index_advisor_results where schema_name=database();
+drop table t;

@@ -55,7 +55,7 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.showOptions(req)
 	}
 
-	if e.Action != "run" {
+	if e.Action != "run" && e.Action != "return" {
 		return fmt.Errorf("unsupported action: %s", e.Action)
 	}
 
@@ -72,7 +72,13 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return errors.New("empty SQLs")
 		}
 	}
-	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), sqls, e.Options)
+	var results []*indexadvisor.Recommendation
+	var err error
+	if e.Action == "return" {
+		results, err = indexadvisor.AdviseIndexesWithoutPersist(ctx, e.Ctx(), sqls, e.Options)
+	} else {
+		results, err = indexadvisor.AdviseIndexes(ctx, e.Ctx(), sqls, e.Options)
+	}
 
 	for _, r := range results {
 		req.AppendString(0, r.Database)

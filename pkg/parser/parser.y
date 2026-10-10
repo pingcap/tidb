@@ -627,8 +627,10 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	restart                    "RESTART"
 	restore                    "RESTORE"
 	restores                   "RESTORES"
+	result                     "RESULT"
 	resume                     "RESUME"
 	retain                     "RETAIN"
+	returnKwd                  "RETURN"
 	returning                  "RETURNING"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
@@ -8163,6 +8165,8 @@ UnReservedKeyword:
 |	"PERCENT"
 |	"PAUSE"
 |	"RESUME"
+|	"RESULT"
+|	"RETURN"
 |	"RETURNING"
 |	"OFF"
 |	"OPTIONAL"
@@ -15905,7 +15909,17 @@ SetBindingStmt:
 	}
 
 RecommendIndexStmt:
-	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
+	"RECOMMEND" "INDEX" "RETURN" "RESULT" "FOR" stringLit RecommendIndexOptionListOpt
+	{
+		x := &ast.RecommendIndexStmt{
+			Action:  "return",
+			SQL:     $6,
+			Options: $7.([]ast.RecommendIndexOption),
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
 			Action:  "run",
