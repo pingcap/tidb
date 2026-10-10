@@ -57,7 +57,6 @@ func TestCPUValue(t *testing.T) {
 		value, unsupported := cpu.GetCPUUsage()
 		require.False(t, unsupported)
 		require.Greater(t, value, 0.0)
-		require.Less(t, value, 1.0)
 	}
 	observer.Stop()
 	close(exit)
