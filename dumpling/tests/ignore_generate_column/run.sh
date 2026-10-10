@@ -102,7 +102,7 @@ echo "expected ${expected}, actual ${actual}"
 [ "$actual" = "$expected" ]
 
 echo "Test unsupported --include-generated-columns combinations."
-expect_dumpling_error "only supported with --filetype csv or parquet" --filetype sql --include-generated-columns=stored
+expect_dumpling_error "only supported with --filetype csv" --filetype sql --include-generated-columns=stored
 expect_dumpling_error "and --no-data at the same time" --filetype csv --no-data --include-generated-columns=stored
 expect_dumpling_error "and --where at the same time" --filetype csv --where "a > 0" --include-generated-columns=stored
 expect_dumpling_error "and --sql at the same time" --sql "select * from $STORED_DB_NAME.$TABLE_NAME" --include-generated-columns=stored
