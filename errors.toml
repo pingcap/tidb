@@ -351,6 +351,11 @@ error = '''
 Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.
 '''
 
+["Ingest:EngineNotFound"]
+error = '''
+engine %s not found in SetTSBeforeImportEngine
+'''
+
 ["Ingest:EpochNotMatch"]
 error = '''
 epoch not match
