@@ -168,4 +168,5 @@ pub const TOPICS: &[&str] = &[
     "executor/write",
     "expression/time",
     "ddl/bdr_mode",
+    "ddl/default_as_expression",
 ];

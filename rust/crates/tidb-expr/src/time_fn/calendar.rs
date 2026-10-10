@@ -1084,9 +1084,7 @@ pub(super) fn whole_interval_amount(
                     .trim_start_matches(|c: char| c.is_ascii_digit())
                     .len();
             if digits == 0 || digits < after_sign.len() {
-                cols.handle_truncate(&format!(
-                    "Truncated incorrect DECIMAL value: '{value}'"
-                ))?;
+                cols.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{value}'"))?;
             }
             n
         }
@@ -1674,28 +1672,61 @@ pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<D
         return Ok(Datum::Null);
     }
     let result = str_to_date_inner(vals, cols)?;
+    // Every failure goes through Go's `handleInvalidTimeError`: an error
+    // under a strict write's truncate level, a warning otherwise.
     match result {
-        // The DATE/DATETIME signatures' `NO_ZERO_DATE` rejection of a zero
-        // year, month or day: ErrWrongValueForType (1411) naming the INPUT
-        // text and the function (`builtin_time.go:2068`).
+        // The DATE signature's `NO_ZERO_DATE` rejection of a zero year,
+        // month or day: ErrWrongValueForType (1411) naming the INPUT text and
+        // the function (`builtin_time.go:2068`).
         Datum::Bytes(bytes) if bytes.is_empty() => {
             if let Ok(Some(input)) = coerce_str(&vals[0]) {
-                cols.append_warning(
+                handle_invalid_time(
+                    cols,
                     1411,
-                    &format!("Incorrect datetime value: '{input}' for function str_to_date"),
-                );
+                    format!("Incorrect datetime value: '{input}' for function str_to_date"),
+                )?;
             }
-            return Ok(Datum::Null);
+            Ok(Datum::Null)
+        }
+        // The DATETIME signature's own rejection names the parsed time
+        // (`ErrWrongValue`, `builtin_time.go:2105`).
+        Datum::Bytes(bytes) => {
+            handle_invalid_time(
+                cols,
+                1292,
+                format!(
+                    "Incorrect datetime value: '{}'",
+                    String::from_utf8_lossy(&bytes)
+                ),
+            )?;
+            Ok(Datum::Null)
         }
         // The token-parse failures (`str_to_date('a', '%d')`,
-        // `'2020-99-99'` with the month 99) land on the ZERO time, whose
-        // cast warns the zero-time text under 1292 (oracle-captured on
-        // m1-errors/g-tz).
+        // `'2020-99-99'` with the month 99) land on the ZERO time, which Go
+        // names (oracle-captured on m1-errors/g-tz).
         Datum::Null => {
-            cols.append_warning(1292, "Incorrect datetime value: '0000-00-00 00:00:00'");
-            return Ok(Datum::Null);
+            handle_invalid_time(
+                cols,
+                1292,
+                "Incorrect datetime value: '0000-00-00 00:00:00'".to_owned(),
+            )?;
+            Ok(Datum::Null)
         }
-        other => return Ok(other),
+        other => Ok(other),
+    }
+}
+
+/// Go `handleInvalidTimeError` for an error of the truncate group: the
+/// statement's truncate level decides whether it fails the statement, warns,
+/// or is ignored.
+fn handle_invalid_time(cols: &dyn Columns, code: u16, message: String) -> Result<(), EvalError> {
+    match cols.truncate_level() {
+        ErrorLevel::Ignore => Ok(()),
+        ErrorLevel::Warn => {
+            cols.append_warning(code, &message);
+            Ok(())
+        }
+        ErrorLevel::Error => Err(EvalError::WrongTemporalLiteral { code, message }),
     }
 }
 
@@ -1951,24 +1982,33 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
     if value.month > 12 || value.day > max_day {
         return Ok(Datum::Null);
     }
-    // The signatures' own `NO_ZERO_DATE` rejection, ErrWrongValueForType
-    // (1411) naming the input: the empty-bytes sentinel the wrapper reports.
-    if modes.no_zero_date && (value.year == 0 || value.month == 0 || value.day == 0) {
-        return Ok(Datum::Bytes(Vec::new()));
-    }
     let date = format!("{:04}-{:02}-{:02}", value.year, value.month, value.day);
-    if is_date && !is_duration {
-        return Ok(Datum::new_string(date));
-    }
     // DATETIME, with Go's `MaxFsp` when the format names `%f`.
-    Ok(Datum::new_string(if format_names_fraction(&format) {
+    let datetime = if format_names_fraction(&format) {
         format!(
             "{date} {:02}:{:02}:{:02}.{:06}",
             value.hour, value.minute, value.second, value.microsecond
         )
     } else {
-        format!("{date} {:02}:{:02}:{:02}", value.hour, value.minute, value.second)
-    }))
+        format!(
+            "{date} {:02}:{:02}:{:02}",
+            value.hour, value.minute, value.second
+        )
+    };
+    // The signatures' own `NO_ZERO_DATE` rejection, as sentinels the wrapper
+    // reports: empty bytes for the DATE signature (1411 naming the input),
+    // the parsed time for the DATETIME one (1292 naming it).
+    if modes.no_zero_date && (value.year == 0 || value.month == 0 || value.day == 0) {
+        return Ok(Datum::Bytes(if is_date && !is_duration {
+            Vec::new()
+        } else {
+            datetime.into_bytes()
+        }));
+    }
+    if is_date && !is_duration {
+        return Ok(Datum::new_string(date));
+    }
+    Ok(Datum::new_string(datetime))
 }
 
 /// Go `types.GetFormatType`: whether the format names time and date

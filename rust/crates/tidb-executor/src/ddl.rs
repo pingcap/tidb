@@ -1571,6 +1571,16 @@ pub fn run_create_table_in(
             continue;
         };
         if staged.has_default {
+            // Go `checkDefaultValue`: an expression default (`DefaultIsExpr`)
+            // on an AUTO_INCREMENT column is 1067.
+            if matches!(&staged.value, crate::column_default::ColumnDefault::Computed(computed)
+                if computed.is_expr())
+                && columns[offset].field_type.has_flag(AUTO_INCREMENT_FLAG)
+            {
+                return Err(DriverError::InvalidDefault(
+                    create.columns[offset].name.clone(),
+                ));
+            }
             if let crate::column_default::ColumnDefault::Value(stored) = &staged.value {
                 alter_table::validate_column_default(
                     stored,

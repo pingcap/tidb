@@ -213,3 +213,26 @@ fn a_column_or_index_comment_holds_1024_bytes() {
         )]
     );
 }
+
+/// Go `getColDefaultExprValue`: an expression default is cast into the
+/// column with `CastColumnValue`, so a value the column cannot hold fails a
+/// strict INSERT (an ENUM's bare `ErrTruncated`) and is stored with a warning
+/// otherwise; and `checkDefaultValue` refuses one on AUTO_INCREMENT.
+#[test]
+fn an_expression_default_is_cast_into_the_column() {
+    let mut session = Session::new();
+    session
+        .run("create table t2 (c int, c1 enum('y','n') default (date_format(now(),'%Y-%m-%d')))")
+        .unwrap();
+    assert_eq!(
+        error_of(&mut session, "insert into t2 values ()"),
+        "Data truncated for column '%s' at row %d"
+    );
+    assert_eq!(
+        error_of(
+            &mut session,
+            "create table t0 (c int, c1 int auto_increment default (str_to_date('1980-01-01','%Y-%m-%d')))"
+        ),
+        "Invalid default value for 'c1'"
+    );
+}

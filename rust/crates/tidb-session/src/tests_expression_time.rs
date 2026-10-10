@@ -95,7 +95,10 @@ fn a_garbage_interval_amount_fails_a_strict_insert() {
     session
         .run(r#"insert into t2 values('0', "1000-01-01 00:00:00" + INTERVAL "XXX" YEAR)"#)
         .unwrap();
-    assert_eq!(cell(&mut session, "select d from t2"), "1000-01-01 00:00:00");
+    assert_eq!(
+        cell(&mut session, "select d from t2"),
+        "1000-01-01 00:00:00"
+    );
     assert_eq!(
         cell(&mut session, r#"select "1000-01-01" + interval "1x" day"#),
         "1000-01-02"
@@ -119,12 +122,18 @@ fn an_overflowing_timestampadd_warns_1441() {
         assert_eq!(cell(&mut session, sql), "NULL", "{sql}");
         assert_eq!(
             warnings_of(&session),
-            vec![(1441, "Datetime function: datetime field overflow".to_owned())],
+            vec![(
+                1441,
+                "Datetime function: datetime field overflow".to_owned()
+            )],
             "{sql}"
         );
     }
     assert_eq!(
-        cell(&mut session, "select timestampadd(second, 1, '9999-12-31 23:59:58')"),
+        cell(
+            &mut session,
+            "select timestampadd(second, 1, '9999-12-31 23:59:58')"
+        ),
         "9999-12-31 23:59:59"
     );
 }
@@ -144,7 +153,49 @@ fn a_zero_date_literal_follows_the_session_sql_mode() {
         .unwrap();
     assert_eq!(cell(&mut session, "select date '0-0-0'"), "0000-00-00");
     assert_eq!(
-        cell(&mut session, "select addtime(date '0-0-0', '12:00:01.341300')"),
+        cell(
+            &mut session,
+            "select addtime(date '0-0-0', '12:00:01.341300')"
+        ),
         "NULL"
+    );
+}
+
+/// Go `handleInvalidTimeError`: a STR_TO_DATE failure warns in a SELECT
+/// and fails a strict write. The DATETIME signature names the parsed time;
+/// the DATE signature names the input (1411).
+#[test]
+fn a_str_to_date_failure_fails_a_strict_write() {
+    let mut session = Session::new();
+    assert_eq!(
+        cell(&mut session, "select str_to_date('1980-01-01', '%m-%d')"),
+        "NULL"
+    );
+    assert_eq!(
+        crate::tests_support::warnings_of(&session),
+        vec![(
+            1292,
+            "Incorrect datetime value: '0000-00-00 00:00:00'".to_owned()
+        )]
+    );
+    session
+        .run("create table t (c int, c1 varchar(32) default (str_to_date('1980-01-01','%m-%d')))")
+        .unwrap();
+    assert_eq!(
+        session
+            .run("insert into t(c) values (1)")
+            .unwrap_err()
+            .to_string(),
+        "Incorrect datetime value: '0000-00-00 00:00:00'"
+    );
+    assert_eq!(
+        session
+            .run("select str_to_date('01-01', '%Y-%m-%d %H:%i:%s') + 0")
+            .map(|_| crate::tests_support::warnings_of(&session))
+            .unwrap(),
+        vec![(
+            1292,
+            "Incorrect datetime value: '2001-01-00 00:00:00'".to_owned()
+        )]
     );
 }

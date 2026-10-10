@@ -220,6 +220,23 @@ pub(crate) fn materialize_column_default(
     }
 
     match &meta.default_value {
+        // Go `getColDefaultExprValue`: an expression default (`DefaultIsExpr`)
+        // is evaluated and then cast with `CastColumnValue` under the
+        // statement's own contexts, so a value the column cannot hold fails a
+        // strict INSERT and warns otherwise.
+        Some(crate::column_default::ColumnDefault::Computed(computed)) if computed.is_expr() => {
+            let value = computed
+                .expr
+                .eval(ctx, row)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            crate::driver::write_cast::cast_table_value(
+                value,
+                &meta.field_type,
+                &meta.name,
+                ctx,
+                false,
+            )
+        }
         // A COMPUTED default reads the statement's own clock here rather than
         // a value settled at DDL time, which is what makes every row of one
         // `INSERT` share one `CURRENT_TIMESTAMP` / `CURRENT_DATE` reading --
