@@ -454,7 +454,9 @@ func TestResourceGroupRunawayExceedTiDBSide(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
-	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=()")
+	tk.MustQuery("select /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
+	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
 
 	runawayQuery := "select /*+ resource_group(rg1) */ sleep(1) from t"
 	err := tk.QueryToErr(runawayQuery)
