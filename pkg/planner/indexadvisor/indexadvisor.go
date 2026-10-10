@@ -52,7 +52,7 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context, userSQLs []stri
 }
 
 // AdviseIndexesWithoutPersist analyzes the specified SQL statements and returns
-// recommendations without writing them to mysql.index_advisor_results.
+// recommendations without persisting recommendations, options, or column usage.
 func AdviseIndexesWithoutPersist(ctx context.Context, sctx sessionctx.Context, userSQLs []string,
 	userOptions []ast.RecommendIndexOption) (results []*Recommendation, err error) {
 	return adviseIndexesForSQLs(ctx, sctx, userSQLs, userOptions, false)
@@ -74,6 +74,15 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	option *Option, persist bool) (results []*Recommendation, err error) {
 	if ctx == nil || sctx == nil || option == nil {
 		return nil, errors.New("nil input")
+	}
+
+	if !persist {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		originalSkipColumnStatsUsage := stmtCtx.SkipColumnStatsUsage
+		stmtCtx.SkipColumnStatsUsage = true
+		defer func() {
+			stmtCtx.SkipColumnStatsUsage = originalSkipColumnStatsUsage
+		}()
 	}
 
 	advisorLogger().Info("index advisor option filled and start", zap.Any("option", option))
