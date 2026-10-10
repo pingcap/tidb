@@ -489,7 +489,12 @@ func TestSchemaSimpleTableInfos(t *testing.T) {
 		res = append(res, tbl.Name.L)
 	}
 	sort.Strings(res)
+	// TABLE_SCHEMA has a binary collation; use the stored spelling for equality.
+	tk.MustQuery("select lower(table_name) from information_schema.tables where table_schema = 'INFORMATION_SCHEMA'").
+		Sort().Check(testkit.Rows(res...))
 	tk.MustQuery("select lower(table_name) from information_schema.tables where table_schema = 'information_schema'").
+		Check(testkit.Rows())
+	tk.MustQuery("select lower(table_name) from information_schema.tables where table_schema = 'information_schema' collate utf8mb4_general_ci").
 		Sort().Check(testkit.Rows(res...))
 
 	// Cover normal schema
