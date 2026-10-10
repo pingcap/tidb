@@ -39,22 +39,26 @@ type BackendOptions struct {
 // Redacted returns a copy of the options with the credentials masked, so that
 // the options can be logged. The receiver is not modified.
 func (o BackendOptions) Redacted() BackendOptions {
-	mask := func(s *string) {
-		if *s != "" {
-			*s = ast.RedactedValue
-		}
-	}
-	mask(&o.S3.AccessKey)
-	mask(&o.S3.SecretAccessKey)
-	mask(&o.S3.SessionToken)
-	mask(&o.Azblob.AccountKey)
-	mask(&o.Azblob.SASToken)
-	mask(&o.Azblob.EncryptionKey)
+	o.S3.AccessKey = maskIfSet(o.S3.AccessKey)
+	o.S3.SecretAccessKey = maskIfSet(o.S3.SecretAccessKey)
+	o.S3.SessionToken = maskIfSet(o.S3.SessionToken)
+	o.Azblob.AccountKey = maskIfSet(o.Azblob.AccountKey)
+	o.Azblob.SASToken = maskIfSet(o.Azblob.SASToken)
+	o.Azblob.EncryptionKey = maskIfSet(o.Azblob.EncryptionKey)
 	// A SAS token or userinfo may be written into the endpoint.
 	o.S3.Endpoint = RedactURL(o.S3.Endpoint)
 	o.GCS.Endpoint = RedactURL(o.GCS.Endpoint)
 	o.Azblob.Endpoint = RedactURL(o.Azblob.Endpoint)
 	return o
+}
+
+// maskIfSet masks a credential, leaving an unset one empty so that the
+// redacted output does not suggest that it is configured.
+func maskIfSet(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	return ast.RedactedValue
 }
 
 // InvalidURLPlaceholder replaces a storage URL that cannot be parsed, because
