@@ -52,6 +52,10 @@ func peekConnAlive(fd int) int {
 	case err == unix.EAGAIN || err == unix.EWOULDBLOCK:
 		// The socket is open but no data is currently available.
 		return 1
+	case err == unix.EINTR:
+		// The receive was interrupted by a signal before any data was
+		// available, which says nothing about the peer, so liveness is unknown.
+		return -1
 	case err != nil:
 		// The peer reset the connection or the socket hit a fatal error.
 		return 0
