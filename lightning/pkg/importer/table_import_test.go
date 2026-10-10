@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -454,6 +455,67 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	// open engine failed after write rows failed, should return write rows error
 	_, err = s.tr.preprocessEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
 	require.Equal(s.T(), "mock write rows failed", err.Error())
+}
+
+func (s *tableRestoreSuite) TestCanceledPendingChunkCheckpoints() {
+	t := s.T()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctrl := gomock.NewController(t)
+	backendObj := mock.NewMockBackend(ctrl)
+	writer := mock.NewMockEngineWriter(ctrl)
+	flushStatus := mock.NewMockChunkFlushStatus(ctrl)
+	var closed atomic.Int32
+	flushStatus.EXPECT().Flushed().DoAndReturn(func() bool {
+		if closed.Load() < 64 {
+			return false
+		}
+		if ctx.Err() == nil {
+			cancel()
+			// Allow the canceled receiver to exit before publishing the backlog.
+			time.Sleep(100 * time.Millisecond)
+		}
+		return true
+	}).AnyTimes()
+	writer.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	writer.EXPECT().IsSynced().Return(false).AnyTimes()
+	writer.EXPECT().Close(gomock.Any()).DoAndReturn(func(context.Context) (common.ChunkFlushStatus, error) {
+		closed.Add(1)
+		return flushStatus, nil
+	}).AnyTimes()
+	backendObj.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	backendObj.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), gomock.Any()).Return(writer, nil).AnyTimes()
+	rc := &Controller{
+		cfg: s.cfg, pauser: DeliverPauser, store: s.store,
+		ioWorkers: worker.NewPool(ctx, 1, "io"), regionWorkers: worker.NewPool(ctx, 1, "region"),
+		engineMgr: backend.MakeEngineManager(backendObj), encBuilder: tidb.NewEncodingBuilder(),
+		saveCpCh: make(chan saveCp, 256),
+	}
+	cp := &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
+	for i := range 36 {
+		path := fmt.Sprintf("cancel-%d.sql", i)
+		require.NoError(t, s.store.WriteFile(ctx, path, []byte("INSERT INTO `table` VALUES (1, 2, 3);")))
+		cp.Chunks = append(cp.Chunks, &checkpoints.ChunkCheckpoint{
+			Key:      checkpoints.ChunkCheckpointKey{Path: path},
+			FileMeta: mydump.SourceFileMeta{Path: path, Type: mydump.SourceTypeSQL, FileSize: 37, RealSize: 37},
+			Chunk:    mydump.Chunk{EndOffset: 37, PrevRowIDMax: int64(i), RowIDMax: int64(i + 1)},
+		})
+	}
+	indexEngine, err := rc.engineMgr.OpenEngine(ctx, nil, s.tr.tableName, -1)
+	require.NoError(t, err)
+	_, err = s.tr.preprocessEngine(ctx, rc, indexEngine, 0, cp)
+	require.ErrorIs(t, err, context.Canceled)
+	// Each queued chunk saves both its auto-ID base and its position.
+	require.GreaterOrEqual(t, len(rc.saveCpCh), 64)
+	saved := make(map[string]bool)
+	for len(rc.saveCpCh) > 0 {
+		if merger, ok := (<-rc.saveCpCh).merger.(*checkpoints.ChunkCheckpointMerger); ok {
+			saved[merger.Key.Path] = true
+		}
+	}
+	for i := range 32 {
+		require.True(t, saved[fmt.Sprintf("cancel-%d.sql", i)])
+	}
 }
 
 func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
