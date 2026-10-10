@@ -253,6 +253,17 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         charset: String,
         /// The resolved collation persisted in `DBInfo`.
         collate: String,
+        /// The `PLACEMENT POLICY` written, resolved against the stored
+        /// policies when planned (Go `handleDatabasePlacement`).
+        placement_policy: Option<String>,
+    },
+    /// `ALTER DATABASE ... PLACEMENT POLICY`, Go's
+    /// `ActionModifySchemaDefaultPlacement`.
+    ModifySchemaDefaultPlacement {
+        /// The database name.
+        name: String,
+        /// The policy written (`default` removes the placement).
+        placement_policy: String,
     },
     /// `DROP DATABASE [IF EXISTS] name`.
     DropDatabase {
@@ -961,6 +972,8 @@ fn database_charset_collation(
         match option {
             DatabaseOption::CharacterSet(value) => charset = Some(value.as_str()),
             DatabaseOption::Collate(value) => collate = Some(value.as_str()),
+            // Resolved when the statement is planned.
+            DatabaseOption::PlacementPolicy(_) => {}
             other => {
                 return Err(DdlAdmissionError::with_code(
                     GENERIC_ERROR_CODE,
@@ -996,20 +1009,27 @@ pub fn lower_ddl_with_context(
             options,
         } => {
             let (charset, collate) = database_charset_collation(options)?;
+            let placement_policy = options.iter().rev().find_map(|option| match option {
+                DatabaseOption::PlacementPolicy(policy) => Some(policy.clone()),
+                _ => None,
+            });
             Ok(Some(DdlStatement::CreateDatabase {
                 name: name.clone(),
                 if_not_exists: *if_not_exists,
                 charset,
                 collate,
+                placement_policy,
             }))
         }
         DdlStmt::AlterDatabase { name, options } => {
             let mut charset = None;
             let mut collate = None;
+            let mut placement_policy = None;
             for option in options {
                 match option {
                     DatabaseOption::CharacterSet(value) => charset = Some(value.as_str()),
                     DatabaseOption::Collate(value) => collate = Some(value.as_str()),
+                    DatabaseOption::PlacementPolicy(value) => placement_policy = Some(value),
                     other => {
                         return Err(DdlAdmissionError::with_code(
                             GENERIC_ERROR_CODE,
@@ -1019,6 +1039,23 @@ pub fn lower_ddl_with_context(
                         ))
                     }
                 }
+            }
+            let name = name.clone().unwrap_or_else(|| default_schema.to_owned());
+            if let Some(policy) = placement_policy {
+                // Go submits the charset job and then the placement job; this
+                // node publishes one change per statement.
+                if charset.is_some() || collate.is_some() {
+                    return Err(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        "this node runs ALTER DATABASE charset and placement changes as \
+                         separate statements"
+                            .to_owned(),
+                    ));
+                }
+                return Ok(Some(DdlStatement::ModifySchemaDefaultPlacement {
+                    name,
+                    placement_policy: policy.clone(),
+                }));
             }
             // Go only publishes a job when a charset or collation was
             // written (`isAlterCharsetAndCollate`); an option list with
@@ -1035,7 +1072,7 @@ pub fn lower_ddl_with_context(
             Ok(Some(DdlStatement::ModifySchemaCharsetAndCollate {
                 // Go permits the name to be omitted, meaning the session's
                 // current database.
-                name: name.clone().unwrap_or_else(|| default_schema.to_owned()),
+                name,
                 charset,
                 collate,
             }))
@@ -1251,6 +1288,27 @@ fn load_policies<S: MetaSnapshot>(snapshot: &mut S) -> Result<SnapshotPolicies, 
 /// snapshot the rest of the statement plans against, so a policy created by
 /// a concurrent DDL is either visible to the whole statement or to none of
 /// it.
+/// Go `checkAndNormalizePlacementPolicy` against the stored policies:
+/// `default` removes the placement, any other name must be a policy.
+fn check_and_normalize_placement_policy<S: MetaSnapshot>(
+    snapshot: &mut S,
+    name: &str,
+) -> Result<Option<tidb_model::GoShared<tidb_model::PolicyRefInfo>>, DdlPlanError> {
+    if name.eq_ignore_ascii_case("default") {
+        return Ok(None);
+    }
+    let Some(policy) = find_policy(snapshot, name)? else {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            8239,
+            format!("Unknown placement policy '{name}'"),
+        )));
+    };
+    Ok(Some(tidb_model::GoShared::new(tidb_model::PolicyRefInfo {
+        id: policy.id,
+        name: CiString::new(name),
+    })))
+}
+
 fn find_policy<S: MetaSnapshot>(
     snapshot: &mut S,
     name: &str,
@@ -7751,6 +7809,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             if_not_exists,
             charset,
             collate,
+            placement_policy,
         } => {
             if let Some(existing) = find_database(&catalog, name) {
                 if *if_not_exists {
@@ -7768,6 +7827,11 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 }
                 return Err(DdlPlanError::DatabaseExists(name.clone()));
             }
+            // Go `handleDatabasePlacement`.
+            let placement_policy_ref = match placement_policy {
+                Some(policy) => check_and_normalize_placement_policy(snapshot, policy)?,
+                None => None,
+            };
             let db_id = global_ids.allocate(1)?[0];
             created_id = Some(db_id);
             let info = DBInfo {
@@ -7775,6 +7839,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 name: CiString::new(name.clone()),
                 charset: charset.clone(),
                 collate: collate.clone(),
+                placement_policy_ref,
                 state: SchemaState::PUBLIC,
                 ..DBInfo::default()
             };
@@ -8203,6 +8268,18 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         id: policy.id,
                         name: CiString::new(policy_name),
                     }));
+            }
+            // Go `BuildTableInfoWithStmt`: a non-temporary table with no
+            // placement of its own takes the schema's default.
+            if info.placement_policy_ref.is_none()
+                && info.temp_table_type == tidb_model::TempTableType::NONE
+            {
+                if let Some(reference) = find_database(&catalog, schema)
+                    .and_then(|database| database.info.placement_policy_ref.as_ref())
+                {
+                    info.placement_policy_ref =
+                        Some(tidb_model::GoShared::new(reference.read().clone()));
+                }
             }
             // Go builds the table's bundles once the ids are assigned and
             // sends them before the schema version is published
@@ -10562,6 +10639,36 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
+        DdlStatement::ModifySchemaDefaultPlacement {
+            name,
+            placement_policy,
+        } => {
+            let Some(database) = find_database(&catalog, name) else {
+                return Err(DdlPlanError::UnknownDatabase(name.clone()));
+            };
+            let reference = check_and_normalize_placement_policy(snapshot, placement_policy)?;
+            // Go `onModifySchemaDefaultPlacement`: the same reference
+            // finishes the job without touching the database.
+            let current = database
+                .info
+                .placement_policy_ref
+                .as_ref()
+                .map(|reference| reference.read().clone());
+            let wanted = reference.as_ref().map(|reference| reference.read().clone());
+            if wanted.is_some() && current == wanted {
+                return Ok(already(format!(
+                    "database `{name}` already has that placement policy"
+                )));
+            }
+            let mut info = database.info.clone();
+            info.placement_policy_ref = reference;
+            let db_id = info.id;
+            let encoded = value::serialize_db_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(key::database_kv_key(db_id), encoded)?);
+            diff.action_type = ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT;
+            diff.schema_id = db_id;
+        }
         DdlStatement::ModifySchemaCharsetAndCollate {
             name,
             charset,
@@ -10956,7 +11063,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         .find(|database| database.info.id == diff.schema_id)
         .map(|database| database.info.name.original().to_owned())
         .or_else(|| match statement {
-            DdlStatement::CreateDatabase { name, .. } => Some(name.clone()),
+            DdlStatement::CreateDatabase { name, .. }
+            | DdlStatement::ModifySchemaDefaultPlacement { name, .. } => Some(name.clone()),
             _ => None,
         })
         .unwrap_or_default();

@@ -118,6 +118,25 @@ impl AutoIncrement {
     }
 }
 
+/// Go `getAutoRecordID`: the id an AUTO_INCREMENT value rebases the
+/// allocator to, as its 64-bit pattern (`rebase4Unsigned` reads it back as
+/// `uint64` for an unsigned column). A FLOAT/DOUBLE value rounds half away
+/// from zero on INSERT and truncates on UPDATE (`int64(f)`).
+pub(crate) fn get_auto_record_id(value: &Datum, is_insert: bool) -> u64 {
+    match value {
+        Datum::Int(value) => *value as u64,
+        Datum::UInt(value) => *value,
+        Datum::Real(value) | Datum::Float32(value) => {
+            if is_insert {
+                value.round() as i64 as u64
+            } else {
+                *value as i64 as u64
+            }
+        }
+        _ => 0,
+    }
+}
+
 impl KvTable {
     /// Marks the AUTO_INCREMENT column.
     ///
@@ -372,14 +391,9 @@ impl KvTable {
         let Some(offset) = self.auto_increment_offset else {
             return Ok(AutoIncrement::Absent);
         };
-        let current = match row.get(offset) {
-            Some(Datum::Int(value)) => *value as u64,
-            Some(Datum::UInt(value)) => *value,
-            // Go `getAutoRecordID`: a FLOAT/DOUBLE value inserted into the
-            // column is its id rounded half away from zero.
-            Some(Datum::Real(value) | Datum::Float32(value)) => value.round() as i64 as u64,
-            _ => 0,
-        };
+        let current = row
+            .get(offset)
+            .map_or(0, |value| get_auto_record_id(value, true));
         if current != 0 {
             // Go rebases so the next allocation is past the explicit value,
             // and a value the counter is already past changes nothing. The

@@ -390,6 +390,11 @@ pub fn cluster_session_catalog_with_templates(
                 .unwrap_or(tidb_executor::TableCharset::default().collation),
         };
         catalog.register_database_with_id_and_charset(&schema, database.info.id, charset);
+        // Go `DBInfo.PlacementPolicyRef`: the schema default a table created
+        // without its own takes, and what SHOW CREATE DATABASE prints.
+        if let Some(reference) = &database.info.placement_policy_ref {
+            catalog.set_database_placement_policy(&schema, Some(reference.read().clone()));
+        }
         for table in &database.tables {
             if table.is_view() {
                 let name = table.name.original();

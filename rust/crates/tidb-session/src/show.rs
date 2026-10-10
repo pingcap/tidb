@@ -1888,14 +1888,22 @@ impl Session {
                     let [database] = name.as_slice() else {
                         return Err(DriverError::unsupported("empty database name"));
                     };
-                    let (reported, charset) = self.with_catalog_mut(|catalog| {
-                        catalog.database_definition(database).ok_or_else(|| {
-                            DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
-                        })
+                    let (reported, charset, placement) = self.with_catalog_mut(|catalog| {
+                        let (reported, charset) =
+                            catalog.database_definition(database).ok_or_else(|| {
+                                DriverError::Schema(SchemaErrorKind::UnknownDatabase(
+                                    database.clone(),
+                                ))
+                            })?;
+                        let placement = catalog
+                            .database_placement_policy(database)
+                            .map(|reference| reference.name.original().to_owned());
+                        Ok((reported, charset, placement))
                     })?;
                     return Ok(Some(crate::show_create_database::output(
                         reported,
                         charset,
+                        placement.as_deref(),
                         *if_not_exists,
                         self.vars.sql_mode().has_ansi_quotes_mode(),
                     )));

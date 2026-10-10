@@ -486,6 +486,7 @@ impl Session {
                             option,
                             tidb_ast::DatabaseOption::CharacterSet(_)
                                 | tidb_ast::DatabaseOption::Collate(_)
+                                | tidb_ast::DatabaseOption::PlacementPolicy(_)
                         )
                     }) {
                         return Err(DriverError::unsupported(
@@ -493,21 +494,40 @@ impl Session {
                         ));
                     }
                     let charset = tidb_executor::resolve_database_charset(options)?;
+                    let placement = options.iter().rev().find_map(|option| match option {
+                        tidb_ast::DatabaseOption::PlacementPolicy(name) => Some(name.clone()),
+                        _ => None,
+                    });
                     let cdc_write_source = self.ddl_cdc_write_source();
                     let created = self.with_catalog_mut(|catalog| {
                         // Go `CreateSchemaWithInfo` checks the name's length
                         // and submits ActionCreateSchema unless the schema
                         // exists.
-                        if !catalog.has_database(name) {
-                            tidb_executor::ddl::check_too_long_identifier(name)?;
-                            tidb_executor::ddl::admit_bdr_job(
-                                catalog,
-                                cdc_write_source,
-                                name,
-                                tidb_model::ActionType::ACTION_CREATE_SCHEMA,
-                            )?;
+                        if catalog.has_database(name) {
+                            return Ok(false);
                         }
-                        Ok(catalog.create_database_with_charset(name, charset))
+                        tidb_executor::ddl::check_too_long_identifier(name)?;
+                        // Go `handleDatabasePlacement`.
+                        let placement = placement
+                            .as_deref()
+                            .map(|policy| {
+                                crate::alter_schema::check_and_normalize_placement_policy(
+                                    catalog, policy,
+                                )
+                            })
+                            .transpose()?
+                            .flatten();
+                        tidb_executor::ddl::admit_bdr_job(
+                            catalog,
+                            cdc_write_source,
+                            name,
+                            tidb_model::ActionType::ACTION_CREATE_SCHEMA,
+                        )?;
+                        let created = catalog.create_database_with_charset(name, charset);
+                        if created && placement.is_some() {
+                            catalog.set_database_placement_policy(name, placement);
+                        }
+                        Ok(created)
                     })?;
                     // Go raises ErrDBCreateExists unless IF NOT EXISTS, and
                     // under IF NOT EXISTS files that same error as a note:
@@ -522,6 +542,9 @@ impl Session {
                         self.append_suppressed(existing);
                     }
                     Ok(Some(StmtOutput::Affected(0)))
+                }
+                tidb_ast::DdlStmt::AlterDatabase { name, options } => {
+                    Ok(Some(self.alter_schema_stmt(name.as_deref(), options)?))
                 }
                 tidb_ast::DdlStmt::DropDatabase { if_exists, name } => {
                     // Go protects the bootstrap `mysql` schema before the

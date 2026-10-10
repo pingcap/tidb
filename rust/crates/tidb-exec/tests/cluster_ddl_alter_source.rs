@@ -1178,3 +1178,54 @@ fn lock_and_unlock_tables_edit_the_stored_lock() {
         DdlPlan::AlreadySatisfied { .. }
     ));
 }
+
+/// Go `handleDatabasePlacement` and `onModifySchemaDefaultPlacement`: a
+/// schema's placement reference is stored on its `DBInfo`, a new table
+/// without its own takes it (`BuildTableInfoWithStmt`), and `default`
+/// removes it.
+#[test]
+fn schema_placement_is_stored_inherited_and_removed() {
+    let mut store = bootstrapped();
+    let write = plan(&mut store, "CREATE PLACEMENT POLICY p1 FOLLOWERS=4", 100);
+    apply(&mut store, &write);
+    let policy_id = write
+        .created_id
+        .expect("CREATE PLACEMENT POLICY allocates an id");
+    let write = plan(&mut store, "CREATE DATABASE d1 PLACEMENT POLICY p1", 110);
+    apply(&mut store, &write);
+    let db_id = write.created_id.expect("CREATE DATABASE allocates an id");
+    let stored_db = |write: &tidb_exec::cluster_ddl::DdlWrite| -> serde_json::Value {
+        serde_json::from_slice(stored_value(write, &key::database_kv_key(db_id)))
+            .expect("a stored DBInfo")
+    };
+    assert_eq!(
+        stored_db(&write)["policy_ref_info"],
+        serde_json::json!({"id": policy_id, "name": {"O": "p1", "L": "p1"}})
+    );
+
+    let write = plan(&mut store, "CREATE TABLE d1.t (id BIGINT PRIMARY KEY)", 120);
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    let table: serde_json::Value =
+        serde_json::from_slice(stored_value(&write, &key::table_kv_key(db_id, table_id)))
+            .expect("a stored TableInfo");
+    assert_eq!(
+        table["policy_ref_info"]["name"]["L"],
+        serde_json::json!("p1")
+    );
+
+    let write = plan(
+        &mut store,
+        "ALTER DATABASE d1 PLACEMENT POLICY = default",
+        130,
+    );
+    apply(&mut store, &write);
+    assert_eq!(
+        write.diff.action_type,
+        tidb_model::ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT
+    );
+    assert_eq!(
+        stored_db(&write)["policy_ref_info"],
+        serde_json::Value::Null
+    );
+}

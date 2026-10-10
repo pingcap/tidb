@@ -4320,11 +4320,9 @@ impl KvTable {
         // `getAutoRecordID` hands `Rebase` an `int64` that `rebase4Unsigned`
         // reads back as `uint64` for an unsigned column.
         if let Some(offset) = self.auto_increment_offset {
-            let assigned = match row.get(offset) {
-                Some(Datum::Int(value)) => *value as u64,
-                Some(Datum::UInt(value)) => *value,
-                _ => 0,
-            };
+            let assigned = row
+                .get(offset)
+                .map_or(0, |value| auto_increment::get_auto_record_id(value, false));
             // Same arm Go's insert arms use: the rebase reserves a window on
             // its one store crossing, matching `Rebase(..., true)`.
             self.auto_id

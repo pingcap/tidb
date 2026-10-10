@@ -662,11 +662,8 @@ fn ddl_visit_batch_database_alter_requires_schema_privilege() {
         );
     }
     boot.run("GRANT ALTER ON test.* TO 'bob'@'%'").unwrap();
-    // Admission succeeds; the separate ALTER DATABASE executor remains unsupported.
-    assert_eq!(
-        denied(&mut bob, "ALTER DATABASE CHARACTER SET utf8mb4").0,
-        1105
-    );
+    // Admission succeeds and Go's AlterSchema runs.
+    bob.run("ALTER DATABASE CHARACTER SET utf8mb4").unwrap();
 }
 
 #[test]

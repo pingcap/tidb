@@ -1222,6 +1222,7 @@ pub use tidb_executor::TxnErrorKind;
 mod account;
 mod account_password;
 mod admin_check_arm;
+mod alter_schema;
 mod analyze_arm;
 pub mod binding;
 mod binding_arm;
@@ -2913,6 +2914,8 @@ mod tests_admin_check;
 mod tests_affinity_storage_class;
 #[cfg(test)]
 mod tests_alter_column;
+#[cfg(test)]
+mod tests_alter_schema;
 #[cfg(test)]
 mod tests_analyze;
 #[cfg(test)]

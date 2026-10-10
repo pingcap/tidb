@@ -22,6 +22,7 @@ use crate::StmtOutput;
 pub(crate) fn output(
     database: String,
     charset: TableCharset,
+    placement_policy: Option<&str>,
     if_not_exists: bool,
     ansi_quotes: bool,
 ) -> StmtOutput {
@@ -37,6 +38,12 @@ pub(crate) fn output(
         text.push_str(charset.collation.name());
     }
     text.push_str(" */");
+    // Go appends the schema's placement reference.
+    if let Some(policy) = placement_policy {
+        text.push_str(" /*T![placement] PLACEMENT POLICY=");
+        text.push_str(&tidb_executor::escape_identifier(policy, ansi_quotes));
+        text.push_str(" */");
+    }
     let field_type = FieldType::new(FieldTypeCode::VarString);
     StmtOutput::Rows {
         columns: vec![

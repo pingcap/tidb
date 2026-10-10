@@ -814,9 +814,12 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
                 text(&name),
                 text(charset.charset.name()),
                 text(charset.collation.name()),
-                // Go reports SQL_PATH and the placement policy as NULL.
+                // Go reports SQL_PATH as NULL, and the placement policy's
+                // name when the schema has one.
                 Datum::Null,
-                Datum::Null,
+                catalog
+                    .database_placement_policy(&name)
+                    .map_or(Datum::Null, |reference| text(reference.name.original())),
             ]
         })
         .chain(synthesized)

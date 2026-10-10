@@ -145,6 +145,7 @@ impl ClusterDdl for MockDdl {
                 if_not_exists,
                 charset,
                 collate,
+                ..
             } => {
                 if find(&mut next.databases, name).is_some() {
                     if *if_not_exists {
@@ -525,6 +526,7 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::SetColumnDefault { .. }
             | DdlStatement::RenameIndex { .. }
             | DdlStatement::ModifySchemaCharsetAndCollate { .. }
+            | DdlStatement::ModifySchemaDefaultPlacement { .. }
             | DdlStatement::ModifyTableCharsetAndCollate { .. }
             | DdlStatement::CreateTableLike { .. }
             | DdlStatement::DropPrimaryKey { .. }

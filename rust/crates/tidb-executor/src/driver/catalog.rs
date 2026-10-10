@@ -118,6 +118,9 @@ struct Database {
     name: String,
     /// The defaults inherited by tables created without explicit options.
     charset: TableCharset,
+    /// Go `DBInfo.PlacementPolicyRef`: the schema's default placement,
+    /// which a table created without its own inherits.
+    placement_policy: Option<tidb_model::PolicyRefInfo>,
     tables: HashMap<String, std::sync::Arc<TableEntry>>,
 }
 
@@ -660,6 +663,7 @@ impl Default for Catalog {
                 id: 1,
                 name: DEFAULT_DATABASE.to_owned(),
                 charset: TableCharset::default(),
+                placement_policy: None,
                 tables: HashMap::new(),
             },
         );
@@ -669,6 +673,7 @@ impl Default for Catalog {
                 id: 2,
                 name: "INFORMATION_SCHEMA".to_owned(),
                 charset: TableCharset::default(),
+                placement_policy: None,
                 tables: HashMap::new(),
             },
         );
@@ -678,6 +683,7 @@ impl Default for Catalog {
                 id: 3,
                 name: SYSTEM_DATABASE.to_owned(),
                 charset: TableCharset::default(),
+                placement_policy: None,
                 tables: HashMap::new(),
             },
         );
@@ -731,6 +737,7 @@ impl Default for Catalog {
                     id,
                     name: display.to_owned(),
                     charset: TableCharset::default(),
+                    placement_policy: None,
                     tables,
                 },
             );
@@ -1198,6 +1205,43 @@ impl Catalog {
             .map(|database| database.charset)
     }
 
+    /// Go `DBInfo.PlacementPolicyRef` of `database`.
+    #[must_use]
+    pub fn database_placement_policy(&self, database: &str) -> Option<&tidb_model::PolicyRefInfo> {
+        self.databases
+            .get(&database.go_to_lower())?
+            .placement_policy
+            .as_ref()
+    }
+
+    /// Go `onModifySchemaCharsetAndCollate`'s `DBInfo` edit; `false` for a
+    /// database that does not exist.
+    pub fn set_database_charset(&mut self, database: &str, charset: TableCharset) -> bool {
+        self.bump_metadata_version();
+        let Some(schema) = self.database_mut(&database.go_to_lower()) else {
+            return false;
+        };
+        schema.charset = charset;
+        self.bump_version();
+        true
+    }
+
+    /// Go `onModifySchemaDefaultPlacement`'s `DBInfo` edit (or the loader
+    /// restoring a stored one); `false` for a database that does not exist.
+    pub fn set_database_placement_policy(
+        &mut self,
+        database: &str,
+        policy: Option<tidb_model::PolicyRefInfo>,
+    ) -> bool {
+        self.bump_metadata_version();
+        let Some(schema) = self.database_mut(&database.go_to_lower()) else {
+            return false;
+        };
+        schema.placement_policy = policy;
+        self.bump_version();
+        true
+    }
+
     /// The stored name and defaults needed by `SHOW CREATE DATABASE`.
     #[must_use]
     pub fn database_definition(&self, database: &str) -> Option<(String, TableCharset)> {
@@ -1354,25 +1398,31 @@ impl Catalog {
     pub fn policy_in_use(&self, name: &str) -> bool {
         let folded = tidb_ast::CiString::new(name).lowercase().to_owned();
         self.databases.values().any(|database| {
-            database.tables.values().any(|entry| {
-                let crate::TableEntry::Kv(table) = &**entry else {
-                    return false;
-                };
-                if table
-                    .placement_policy()
-                    .is_some_and(|reference| reference.name.lowercase() == folded)
-                {
-                    return true;
-                }
-                table.partition().is_some_and(|partition| {
-                    partition.definitions.iter().any(|definition| {
-                        definition
-                            .placement_policy
-                            .as_ref()
-                            .is_some_and(|reference| reference.name.lowercase() == folded)
+            // Go `checkPlacementPolicyNotInUseFromInfoSchema` checks each
+            // schema's default before its tables.
+            database
+                .placement_policy
+                .as_ref()
+                .is_some_and(|reference| reference.name.lowercase() == folded)
+                || database.tables.values().any(|entry| {
+                    let crate::TableEntry::Kv(table) = &**entry else {
+                        return false;
+                    };
+                    if table
+                        .placement_policy()
+                        .is_some_and(|reference| reference.name.lowercase() == folded)
+                    {
+                        return true;
+                    }
+                    table.partition().is_some_and(|partition| {
+                        partition.definitions.iter().any(|definition| {
+                            definition
+                                .placement_policy
+                                .as_ref()
+                                .is_some_and(|reference| reference.name.lowercase() == folded)
+                        })
                     })
                 })
-            })
         })
     }
 
@@ -1395,6 +1445,7 @@ impl Catalog {
                 id: self.next_database_id,
                 name: database.to_owned(),
                 charset,
+                placement_policy: None,
                 tables: HashMap::new(),
             }),
         );
@@ -1444,6 +1495,7 @@ impl Catalog {
                 id,
                 name: database.to_owned(),
                 charset,
+                placement_policy: None,
                 tables: HashMap::new(),
             }),
         );
@@ -3094,6 +3146,7 @@ impl Catalog {
                     id: self.next_database_id,
                     name: database.to_owned(),
                     charset: TableCharset::default(),
+                    placement_policy: None,
                     tables: HashMap::new(),
                 }),
             );
