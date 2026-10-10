@@ -290,21 +290,47 @@ func (w *worker) verifyAndAddInlineCheckConstraints(
 			continue
 		}
 
+		// The default values must be read from the job args column: the table info
+		// read from meta at this state does not carry them, while args.Col is the
+		// authoritative column definition submitted with the job. Existing rows are
+		// backfilled with the column's origin default, so the CHECK must be verified
+		// against that exact value.
+		argsCol := args.Col
 		var defaultLiteral string
-		if columnInfo.DefaultIsExpr {
-			defaultExpr, ok := columnInfo.GetDefaultValue().(string)
+		if argsCol.DefaultIsExpr {
+			defaultExpr, ok := argsCol.GetDefaultValue().(string)
 			if !ok || defaultExpr == "" {
 				return dbterror.ErrCheckConstraintIsViolated.GenWithStackByArgs(c.Name.L)
 			}
 			defaultLiteral = defaultExpr
 		} else {
-			defaultValue := columnInfo.GetDefaultValue()
+			defaultValue := argsCol.GetOriginDefaultValue()
 			if defaultValue == nil {
-				// No default — existing rows get NULL. NULL passes every CHECK, skip check.
-				verified = append(verified, c)
-				continue
+				if !mysql.HasNotNullFlag(argsCol.GetFlag()) {
+					// No origin default — existing rows get NULL. NULL passes every
+					// CHECK, skip check.
+					verified = append(verified, c)
+					continue
+				}
+				// NOT NULL without an explicit default: the backfill materializes the
+				// type's zero value into existing rows, see generateOriginDefaultValue.
+				originDefault, err := generateOriginDefaultValue(argsCol, nil, true)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				defaultValue = originDefault
 			}
 			defaultLiteral = sqlescape.MustEscapeSQL("%?", defaultValue)
+			ft := argsCol.FieldType
+			if field_types.IsTypeChar(ft.GetType()) || field_types.IsTypeBlob(ft.GetType()) {
+				// Bind the literal to the column's charset and collation: an untyped
+				// literal is evaluated under the internal session collation, which can
+				// differ from the column's (e.g. a case-insensitive VARCHAR compares
+				// 'A' = 'a' differently), so the verification would disagree with the
+				// real typed evaluation of existing rows.
+				defaultLiteral = "_" + ft.GetCharset() + " " + defaultLiteral +
+					" COLLATE " + sqlescape.MustEscapeSQL("%n", ft.GetCollate())
+			}
 		}
 
 		checkExpr := strings.ReplaceAll(c.ExprString, colIdent, "("+defaultLiteral+")")

@@ -729,6 +729,34 @@ alter table t add column b timestamp default current_timestamp check (b > '2020-
 show create table t;
 drop table t;
 
+# Test inline CHECK with a NOT NULL column without explicit default - Issue #69651
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+-- error 3819
+alter table t add column b int not null check (b > 0);
+drop table t;
+create table t(a int);
+insert into t values(1);
+alter table t add column b int not null default 1 check (b > 0);
+show create table t;
+-- error 3819
+insert into t values(2, 0);
+drop table t;
+
+# Test inline CHECK evaluates the default value with the column charset and collation - Issue #69651
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+-- error 3819
+alter table t add column b varchar(10) charset utf8mb4 collate utf8mb4_bin default 'A' check (b = 'a');
+drop table t;
+create table t(a int);
+insert into t values(1);
+alter table t add column b varchar(10) charset utf8mb4 collate utf8mb4_general_ci default 'A' check (b = 'a');
+show create table t;
+drop table t;
+
 # Clean up
 set @@global.tidb_enable_check_constraint = 1;
 drop table if exists t1;
