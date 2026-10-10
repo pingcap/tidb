@@ -2034,8 +2034,9 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		t.Cleanup(func() { stmt.Ctx.GetSessionVars().SQLKiller.Reset() })
 		rs := &recordSet{stmt: stmt}
 
-		require.Error(t, rs.Next(context.Background(), nil))
-		require.Empty(t, rs.lastErrs, "the RU-only abort must not change legacy terminal errors")
+		err := rs.Next(context.Background(), nil)
+		require.Error(t, err)
+		require.Equal(t, []error{err}, rs.lastErrs)
 		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, owner.calculationSetup)
 	})
