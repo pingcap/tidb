@@ -773,6 +773,12 @@ pub struct Session {
     /// promoted at the statement boundary, since the reading `SELECT` is
     /// itself never cacheable and would otherwise always answer 0.
     prev_found_in_plan_cache: bool,
+    /// Go `StmtCtx.useChunkAlloc` for the running statement: its result was
+    /// produced through a valid reusable chunk allocator.
+    pub(crate) use_chunk_alloc: bool,
+    /// Go `SessionVars.preUseChunkAlloc`, promoted from the previous
+    /// statement by `ExchangeChunkStatus`; `@@last_sql_use_alloc` reads it.
+    pub(crate) pre_use_chunk_alloc: bool,
     /// Go `SessionVars.userVars`: this session's user variables, keyed
     /// lowercased, with independent runtime values and declared SQL types.
     /// Planning may publish a type before any value exists.
@@ -1010,6 +1016,8 @@ impl Session {
             plan_cache_invalidation,
             found_in_plan_cache: false,
             prev_found_in_plan_cache: false,
+            use_chunk_alloc: false,
+            pre_use_chunk_alloc: tidb_vardef::defaults::DEF_TIDB_USE_ALLOC,
             user_vars: tidb_expr::user_vars::UserVars::new(),
             sequence_last_values: Arc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
@@ -2506,6 +2514,8 @@ impl Session {
         // fields above -- which is why `select @@last_plan_from_cache`
         // reports the PRECEDING statement rather than itself.
         self.prev_found_in_plan_cache = std::mem::take(&mut self.found_in_plan_cache);
+        // Go `ExchangeChunkStatus`, at the same `ResetContextOfStmt` boundary.
+        self.pre_use_chunk_alloc = std::mem::take(&mut self.use_chunk_alloc);
         // Go promotes `FoundInBinding` at the same boundary, which is why
         // `select @@last_plan_from_binding` reports the statement BEFORE it
         // rather than itself (that SELECT matches no binding of its own).
@@ -3003,6 +3013,8 @@ mod tests_pushdown_blacklist;
 mod tests_read_cast;
 #[cfg(test)]
 mod tests_recursive_cte;
+#[cfg(test)]
+mod tests_region_split;
 #[cfg(test)]
 mod tests_savepoint;
 #[cfg(test)]

@@ -635,6 +635,7 @@ dependencies = [
  "tidb-parser",
  "tidb-protocol",
  "tidb-session",
+ "tidb-util",
 ]
 
 [[package]]

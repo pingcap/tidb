@@ -5176,6 +5176,7 @@ fn eliminate_projection_preserving_shuffle(
     projection.base.children_mut().remove(0)
 }
 
+pub mod chunk_reuse;
 pub mod expand;
 pub mod inject_extra_projection;
 

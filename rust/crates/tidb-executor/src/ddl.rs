@@ -333,6 +333,7 @@ mod partition_interval;
 mod partition_reorg;
 pub mod placement_policy;
 pub mod preprocess;
+mod region_split;
 pub mod storage_class;
 mod table_cache;
 mod table_constraints;
@@ -2220,6 +2221,22 @@ pub fn run_create_table_in(
                     virtual_generated || *prefix != index_prefix::UNSPECIFIED_LENGTH
                 }),
         );
+    }
+    // Go `CreateTable`: the region split policies, after
+    // `checkTableInfoValidWithStmt` and before the foreign-key checks.
+    for split in &create.splits {
+        let target = match &split.target {
+            tidb_ast::CreateTableSplitTarget::Table => region_split::SplitPolicyTarget::Table,
+            tidb_ast::CreateTableSplitTarget::PrimaryKey => {
+                region_split::SplitPolicyTarget::PrimaryKey
+            }
+            tidb_ast::CreateTableSplitTarget::Index(name) => {
+                region_split::SplitPolicyTarget::Index(name)
+            }
+        };
+        let (index_name, policy) =
+            region_split::normalize_split_policy(target, &split.option, &table)?;
+        region_split::set_split_policy(&mut table, &index_name, policy);
     }
     // Go's `checkTableForeignKeyValid` re-checks children that were created
     // earlier with `foreign_key_checks=0` when their referenced parent lands.

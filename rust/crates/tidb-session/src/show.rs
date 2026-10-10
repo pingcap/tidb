@@ -897,6 +897,7 @@ impl Session {
             tidb_ast::AdminStmt::DdlJobControl(control) => {
                 Ok(Some(self.ddl_job_control_stmt(control)?))
             }
+            tidb_ast::AdminStmt::SplitRegion(split) => Ok(Some(self.split_region_stmt(split)?)),
             // go `ChecksumTableExec` (`pkg/executor/checksum.go`).
             tidb_ast::AdminStmt::AdminChecksum(checksum) => {
                 Ok(Some(self.admin_checksum_stmt(&checksum.tables)?))

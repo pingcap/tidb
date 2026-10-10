@@ -547,7 +547,16 @@ mod tests {
 /// server, so the server's `SYSTEM` zone -- what `SET time_zone = default`
 /// falls back to -- is Shanghai there. The engine reads `$TZ` once, so it is
 /// set before the first session of the process exists.
+///
+/// The recording host also had less than the 120 GiB that opens
+/// `disableReuseChunkIfNeeded`'s relaxed path (`executor/chunk_reuse`
+/// records a point get over a VARCHAR(1001) clearing the allocator), so the
+/// replay reports a 64 GiB host as Go's tests can by replacing
+/// `memory.MemTotal`.
 fn recording_server_time_zone() {
     static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| std::env::set_var("TZ", "Asia/Shanghai"));
+    ONCE.call_once(|| {
+        std::env::set_var("TZ", "Asia/Shanghai");
+        tidb_util::memory::override_mem_total(Some(64 << 30));
+    });
 }

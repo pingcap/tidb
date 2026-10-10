@@ -577,6 +577,11 @@ pub struct KvTable {
     cache_status: tidb_model::TableCacheStatusType,
     /// Whether Go `TableInfo.Affinity` is non-nil.
     affinity: Option<tidb_model::TableAffinityInfo>,
+    /// Go `TableInfo.TableSplitPolicy`.
+    table_split_policy: Option<tidb_model::RegionSplitPolicy>,
+    /// Go `IndexInfo.RegionSplitPolicy`, keyed by index id: a dropped
+    /// index's entry is never read again, and a recreated index gets a new id.
+    index_split_policies: std::collections::BTreeMap<i64, tidb_model::RegionSplitPolicy>,
     /// Go `TableInfo.EngineAttribute`: the written JSON, kept verbatim for
     /// `SHOW CREATE TABLE`.
     engine_attribute: String,
@@ -1241,6 +1246,8 @@ impl KvTable {
             comment: String::new(),
             cache_status: tidb_model::TableCacheStatusType::DISABLE,
             affinity: None,
+            table_split_policy: None,
+            index_split_policies: std::collections::BTreeMap::new(),
             engine_attribute: String::new(),
             storage_class: Default::default(),
             tiflash_replica: None,
@@ -1403,6 +1410,10 @@ impl KvTable {
         copy.common_handle_prefix_lengths = self.common_handle_prefix_lengths.clone();
         copy.common_handle_version = self.common_handle_version;
         copy.affinity = self.affinity.clone();
+        // Go `BuildTableInfoWithLike` copies `TableSplitPolicy` with the
+        // table and clones every index with its `RegionSplitPolicy`.
+        copy.table_split_policy = self.table_split_policy.clone();
+        copy.index_split_policies = self.index_split_policies.clone();
         // Go `BuildTableInfoWithLike` clones these with the table, for a
         // temporary copy too.
         copy.engine_attribute = self.engine_attribute.clone();
@@ -2275,6 +2286,28 @@ impl KvTable {
     }
 
     /// Records Go `TableInfo.Affinity`.
+    /// Records Go `TableInfo.TableSplitPolicy`.
+    pub fn set_table_split_policy(&mut self, policy: Option<tidb_model::RegionSplitPolicy>) {
+        self.table_split_policy = policy;
+    }
+
+    /// Go `TableInfo.TableSplitPolicy`.
+    #[must_use]
+    pub const fn table_split_policy(&self) -> Option<&tidb_model::RegionSplitPolicy> {
+        self.table_split_policy.as_ref()
+    }
+
+    /// Records Go `IndexInfo.RegionSplitPolicy` for the index `index_id`.
+    pub fn set_index_split_policy(&mut self, index_id: i64, policy: tidb_model::RegionSplitPolicy) {
+        self.index_split_policies.insert(index_id, policy);
+    }
+
+    /// Go `IndexInfo.RegionSplitPolicy` of the index `index_id`.
+    #[must_use]
+    pub fn index_split_policy(&self, index_id: i64) -> Option<&tidb_model::RegionSplitPolicy> {
+        self.index_split_policies.get(&index_id)
+    }
+
     pub fn set_affinity(&mut self, affinity: Option<tidb_model::TableAffinityInfo>) {
         self.affinity = affinity;
     }
@@ -2793,6 +2826,13 @@ impl KvTable {
     /// Sets the table's name, used to qualify a duplicate-key error.
     pub fn set_name(&mut self, name: &str) {
         self.name = name.to_owned();
+    }
+
+    /// The table's name as created (Go `TableInfo.Name.O`), empty when the
+    /// table was built without one.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Go's key name in a duplicate-entry error: `table.index`.

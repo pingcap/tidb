@@ -440,8 +440,21 @@ fn sample_mem_stats(force: bool) -> MemStats {
     }
 }
 
+/// A non-zero value answers [`mem_total`] in place of the host reading.
+static MEM_TOTAL_OVERRIDE: AtomicU64 = AtomicU64::new(0);
+
+/// Replaces `memory.MemTotal`'s answer, as Go's tests reassign that package
+/// variable; `None` restores the host reading.
+pub fn override_mem_total(bytes: Option<u64>) {
+    MEM_TOTAL_OVERRIDE.store(bytes.unwrap_or(0), Ordering::Release);
+}
+
 /// Go `memory.MemTotal` after the startup cgroup/host hook decision.
 pub fn mem_total() -> std::io::Result<u64> {
+    let overridden = MEM_TOTAL_OVERRIDE.load(Ordering::Acquire);
+    if overridden != 0 {
+        return Ok(overridden);
+    }
     cached_memory_read(
         &MEM_TOTAL_CACHE,
         Duration::from_secs(60),

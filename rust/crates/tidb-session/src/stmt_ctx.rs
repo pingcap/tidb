@@ -672,10 +672,20 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         is_dml: bool,
     ) -> tidb_executor::StmtContext {
-        self.statement_context(is_dml)
+        let ctx = self
+            .statement_context(is_dml)
             .with_statement_priority(crate::statement_priority_of(stmt))
             .with_not_fill_cache(crate::statement_not_fill_cache(stmt))
-            .with_client_warning_counts(self.sys_error_count(), self.sys_warning_count())
+            .with_client_warning_counts(self.sys_error_count(), self.sys_warning_count());
+        // Go installs the session's reusable chunk allocator for every
+        // statement (`SetAlloc` in `conn.handleQuery`), which
+        // `tidb_enable_reuse_chunk` gates; the planner may clear it.
+        ctx.set_chunk_alloc_valid(
+            self.vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
+                .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1"),
+        );
+        ctx
     }
 
     fn latest_index_schema_snapshot(
@@ -1081,6 +1091,18 @@ impl Session {
     }
 
     pub(crate) fn statement_context_ignoring(
+        &self,
+        is_dml: bool,
+        ignore_err: bool,
+    ) -> tidb_executor::StmtContext {
+        let ctx = self.session_statement_context(is_dml, ignore_err);
+        match &self.txn {
+            Some(txn) => ctx.with_txn_read_snapshot(Arc::clone(&txn.read_snapshot)),
+            None => ctx,
+        }
+    }
+
+    fn session_statement_context(
         &self,
         is_dml: bool,
         ignore_err: bool,

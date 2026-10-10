@@ -2347,8 +2347,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .as_ref()
             .is_some_and(|sample| sample.method != Some(tidb_ast::SampleMethod::Region))
         {
-            return Err(PlanError::internal(
-                "Invalid TABLESAMPLE: Only supports REGIONS sampling method",
+            return Err(PlanError::invalid_table_sample(
+                "Only supports REGIONS sampling method",
             ));
         }
         // `:4932` "Try CTE." An UNQUALIFIED name may name a CTE in scope, and
@@ -2387,7 +2387,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 return Err(PlanError::key_not_exists(index.clone(), view.view_name.clone()));
             }
             if table_ref.sample.is_some() {
-                return Err(PlanError::internal("Unsupported TABLESAMPLE in views"));
+                return Err(PlanError::invalid_table_sample(
+                    "Unsupported TABLESAMPLE in views",
+                ));
             }
             let visible_name = table_ref.alias.as_deref().unwrap_or(&view.view_name);
             let current_offset = self.select_offset();
@@ -2427,6 +2429,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // table (`buildResultSetNode` renames to the visible name), so a
         // qualified `alias.column` over a memory table resolves.
         if table.is_memory_table {
+            if table_ref.sample.is_some() {
+                return Err(PlanError::invalid_table_sample(
+                    "Unsupported TABLESAMPLE in virtual tables",
+                ));
+            }
             return Ok(self.build_mem_table(&db_name, &table, table_ref.alias.as_deref()));
         }
 

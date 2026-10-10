@@ -1004,6 +1004,15 @@ pub struct StmtContextData {
     /// those readers; `SLEEP` needs only the empty/non-empty distinction when
     /// deciding whether a handled kill may reset the statement killer.
     has_physical_table_reader: Arc<AtomicBool>,
+    /// Go `SessionVars.IsAllocValid()` for this statement: the session
+    /// installed its reusable chunk allocator (`SetAlloc`, under
+    /// `tidb_enable_reuse_chunk`) and the planner has not cleared it
+    /// (`disableReuseChunkIfNeeded`).
+    chunk_alloc_valid: Arc<AtomicBool>,
+    /// The catalog image an open transaction started from: what Go's
+    /// `GetSnapshot(TxnCtx.StartTS)` reads, as opposed to the transaction's
+    /// own staged writes. `None` outside a transaction.
+    txn_read_snapshot: Option<Arc<crate::Catalog>>,
     /// The warnings TiKV reported for THIS statement's coprocessor requests.
     ///
     /// It is an `Arc` sink rather than the `Rc` buffer beside it because a
@@ -2209,6 +2218,8 @@ impl StmtContext {
             enable_parallel_apply: false,
             statement_class: StatementClass::Other,
             has_physical_table_reader: Arc::default(),
+            chunk_alloc_valid: Arc::default(),
+            txn_read_snapshot: None,
             cop_warnings: WarningCollector::new(),
             cop_lite_worker: Arc::default(),
         }))
@@ -2282,6 +2293,32 @@ impl StmtContext {
         };
         self.strict_not_null_check = enable_strict_not_null_check;
         self
+    }
+
+    /// Go `SessionVars.SetAlloc` / `ClearAlloc` for this statement.
+    pub fn set_chunk_alloc_valid(&self, valid: bool) {
+        self.chunk_alloc_valid.store(valid, Ordering::Relaxed);
+    }
+
+    /// Go `SessionVars.IsAllocValid`.
+    #[must_use]
+    pub fn is_chunk_alloc_valid(&self) -> bool {
+        self.chunk_alloc_valid.load(Ordering::Relaxed)
+    }
+
+    /// Declares the catalog image the open transaction started from.
+    #[must_use]
+    pub fn with_txn_read_snapshot(mut self, snapshot: Arc<crate::Catalog>) -> Self {
+        self.txn_read_snapshot = Some(snapshot);
+        self
+    }
+
+    /// The open transaction's start-time catalog image, read by
+    /// `TABLESAMPLE` (Go `tableRegionSampler` scans `GetSnapshot(startTS)`,
+    /// never the membuffer).
+    #[must_use]
+    pub fn txn_read_snapshot(&self) -> Option<&crate::Catalog> {
+        self.txn_read_snapshot.as_deref()
     }
 
     /// Records the same physical-reader fact Go records by appending to

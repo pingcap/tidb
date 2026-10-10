@@ -31,16 +31,30 @@ pub(crate) enum SampleOutputColumn {
     ExtraCommitTs,
 }
 
-/// Go `TableSampleExecutor` for the `REGIONS` method.
+/// One key range Go `splitIntoMultiRanges` cut out of a physical table's
+/// record range: a region, clipped to the record prefix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SampleRange {
+    /// The position in [`TableSampleExec`]'s tables of the physical table
+    /// whose rows the range holds.
+    pub(crate) table: usize,
+    /// The inclusive start key.
+    pub(crate) start: Vec<u8>,
+    /// The exclusive end key.
+    pub(crate) end: Vec<u8>,
+}
+
+/// Go `TableSampleExecutor` for the `REGIONS` method (`tableRegionSampler`):
+/// the first record of each range, in the ranges' order.
 ///
-/// Each `KvTable` is one physical table range in the local backend. This is
-/// Go's non-TiKV fallback from `splitIntoMultiRanges`: the full physical table
-/// key range, whose first record is the sample.
+/// The builder supplies the ranges already sorted by start key (descending
+/// for a descending sample, Go `sortRanges`), and each range is scanned
+/// forward from its start, as Go's `sampleFetcher` does.
 pub struct TableSampleExec {
     meta: ExecutorMeta,
     tables: Vec<KvTable>,
+    ranges: Vec<SampleRange>,
     output_columns: Vec<SampleOutputColumn>,
-    desc: bool,
     decode_context: RowDecodeContext,
     rows: Vec<(TableHandle, Vec<Datum>)>,
     cursor: usize,
@@ -52,15 +66,15 @@ impl TableSampleExec {
     pub(crate) fn new(
         meta: ExecutorMeta,
         tables: Vec<KvTable>,
+        ranges: Vec<SampleRange>,
         output_columns: Vec<SampleOutputColumn>,
-        desc: bool,
         decode_context: RowDecodeContext,
     ) -> Self {
         Self {
             meta,
             tables,
+            ranges,
             output_columns,
-            desc,
             decode_context,
             rows: Vec::new(),
             cursor: 0,
@@ -72,9 +86,13 @@ impl Executor for TableSampleExec {
     fn open(&mut self) -> Result<(), ExecError> {
         self.rows.clear();
         self.cursor = 0;
-        for table in &mut self.tables {
+        for range in &self.ranges {
+            let table = self
+                .tables
+                .get_mut(range.table)
+                .ok_or_else(|| ExecError::unsupported("a sampled range names no physical table"))?;
             let sampled = table
-                .first_row_with_handle_recomputed(self.desc, &self.decode_context)
+                .first_snapshot_row_in_range(&range.start, &range.end, &self.decode_context)
                 .map_err(|error| {
                     ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
                 })?;

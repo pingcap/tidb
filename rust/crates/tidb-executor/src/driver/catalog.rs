@@ -194,6 +194,13 @@ pub struct Catalog {
     /// BDR role, "" when unset. It is store-global meta rather than schema,
     /// so every snapshot and staged copy of this catalog shares it.
     bdr_role: Arc<std::sync::RwLock<String>>,
+    /// The store's region boundaries (`kv.SplittableStore`), store metadata
+    /// every snapshot and staged copy of this catalog shares.
+    ///
+    /// NOT MODELLED (documented): this is the in-process store's map. A
+    /// cluster catalog has no SplitRegion RPC behind it yet, so its splits
+    /// and sampled ranges come from the same map rather than TiKV's regions.
+    regions: Arc<std::sync::RwLock<crate::region_map::RegionMap>>,
     /// Go's process-global `pdhelper.GlobalPDHelper` approximate-count
     /// cache, scoped to this in-process catalog and shared by its snapshots.
     pd_helper_cache: Arc<std::sync::Mutex<crate::pd_helper::ApproximateTableCountCache>>,
@@ -546,6 +553,7 @@ impl CatalogSnapshot {
         Catalog {
             plan_cache_epoch: Arc::clone(&owner.plan_cache_epoch),
             bdr_role: Arc::clone(&owner.bdr_role),
+            regions: Arc::clone(&owner.regions),
             pd_helper_cache: Arc::clone(&owner.pd_helper_cache),
             local_temporary_ids: owner.local_temporary_ids.clone(),
             databases: Arc::clone(&self.databases),
@@ -720,6 +728,7 @@ impl Default for Catalog {
             metadata_version: next_metadata_version(),
             plan_cache_epoch: Arc::default(),
             bdr_role: Arc::default(),
+            regions: Arc::default(),
             // Go `defaultPDHelper`'s capacity and TTL.
             pd_helper_cache: Arc::new(std::sync::Mutex::new(
                 crate::pd_helper::ApproximateTableCountCache::new(
@@ -1155,6 +1164,27 @@ impl Catalog {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// client-go `SplitRegions` over this store: the number of regions the
+    /// keys created.
+    pub fn split_regions<I>(&self, keys: I) -> usize
+    where
+        I: IntoIterator<Item = Vec<u8>>,
+    {
+        self.regions
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .split(keys)
+    }
+
+    /// The regions overlapping `[start, end)`, clipped to it.
+    #[must_use]
+    pub fn region_ranges_in(&self, start: &[u8], end: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        self.regions
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .ranges_in(start, end)
     }
 
     /// Go `meta.Mutator.SetBDRRole` / `ClearBDRRole` (the empty role).

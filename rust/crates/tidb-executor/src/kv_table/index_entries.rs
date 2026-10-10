@@ -392,6 +392,27 @@ impl KvTable {
             .collect()
     }
 
+    /// Go `index.GenIndexKey(..., kv.IntHandle(math.MinInt64), nil)`: the
+    /// key `SPLIT INDEX` splits at for one (possibly leading-column-only)
+    /// value tuple. The minimum handle keeps the handle suffix from moving
+    /// the split point.
+    pub(crate) fn split_index_key(
+        &self,
+        index: &KvIndex,
+        values: Vec<Datum>,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<u8>, KvTableError> {
+        self.index_key_of_values(
+            index,
+            values,
+            &TableHandle::Int(i64::MIN),
+            physical_id,
+            zone,
+        )
+        .map(|(key, _)| key)
+    }
+
     /// Go `GenIndexKey` over one value tuple.
     fn index_key_of_values(
         &self,

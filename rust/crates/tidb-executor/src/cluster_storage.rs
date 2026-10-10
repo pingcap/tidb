@@ -1236,6 +1236,25 @@ impl TableStorage for ClusterTableStorage {
             })
     }
 
+    fn snapshot_first(
+        &mut self,
+        start: &Key,
+        upper_bound: &Key,
+    ) -> Result<Option<(Key, Vec<u8>)>, StorageError> {
+        self.check_usable()?;
+        crate::storage::note_storage_op(|ops| ops.scans += 1);
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .scan(start, upper_bound, Some(1))
+            .map(|pairs| {
+                pairs
+                    .into_iter()
+                    .next()
+                    .map(|(key, value)| (Key::from_bytes(key), value))
+            })
+    }
+
     /// Opens the snapshot stream and returns the range-bounded staged overlay.
     /// Readers that can suppress shadowed keys admit unordered responses;
     /// order-sensitive readers retain the key-ordered merge contract.

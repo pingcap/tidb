@@ -752,6 +752,8 @@ pub(crate) fn add_index_to_table(
             index.unique,
         )])?;
     }
+    // Go `createIndex`: `checkAndWarnMissingRegionSplitPolicy` before the job.
+    super::region_split::warn_missing_region_split_policy(table, &built.name, ctx);
     let index_name = index.name;
     let condition = index.condition;
     let added = pending.len();

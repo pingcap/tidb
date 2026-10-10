@@ -300,6 +300,20 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         Ok(result)
     }
 
+    /// The first pair in `[start, upper_bound)` of the transaction's READ
+    /// SNAPSHOT, without its own staged writes -- Go
+    /// `GetSnapshot(startTS).Iter`, which `TABLESAMPLE` reads instead of the
+    /// transaction. The in-process store writes through, so its callers pass
+    /// a table from the catalog image taken when the transaction opened (see
+    /// [`crate::StmtContext::txn_read_snapshot`]) and this default reads it.
+    fn snapshot_first(
+        &mut self,
+        start: &Key,
+        upper_bound: &Key,
+    ) -> Result<Option<(Key, Vec<u8>)>, StorageError> {
+        self.first(Some(start), Some(upper_bound))
+    }
+
     /// Optionally serves a base-table scan remotely, with the predicate, the
     /// row cap and the column projection evaluated at the backend.
     ///

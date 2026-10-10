@@ -1467,6 +1467,13 @@ impl Session {
                         i32::from(self.last_plan_from_cache()).to_string(),
                     ));
                 }
+                // `@@last_sql_use_alloc` is Go's `preUseChunkAlloc` read: the
+                // previous statement's `StmtCtx.useChunkAlloc`.
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_USE_ALLOC)
+                {
+                    return Ok(Expr::Int(i32::from(self.pre_use_chunk_alloc).to_string()));
+                }
                 // `@@last_plan_from_binding` is Go's `PrevFoundInBinding`
                 // read, for the same reason and at the same boundary as
                 // `@@last_plan_from_cache` above.

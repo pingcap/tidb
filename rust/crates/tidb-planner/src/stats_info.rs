@@ -472,6 +472,12 @@ impl HistColl {
         self.realtime_count
     }
 
+    /// Go `HistColl.ColNum()`: how many columns carry statistics.
+    #[must_use]
+    pub fn column_count(&self) -> usize {
+        self.columns.len()
+    }
+
     /// Go `HistColl.ModifyCount`.
     #[must_use]
     pub const fn modify_count(&self) -> i64 {

@@ -561,6 +561,7 @@ pub(super) fn show_create_table_text(
     if table.is_cached() {
         out.push_str(" /* CACHED ON */");
     }
+    out.push_str(&region_split_text(table, ansi_quotes));
     out.push_str(&ttl_clause_text(table));
     // Go prints the affinity level after the TTL block and before the
     // partition clause.
@@ -569,6 +570,74 @@ pub(super) fn show_create_table_text(
     }
     out.push_str(&partition_clause_text(table, ansi_quotes));
     Ok(out)
+}
+
+/// Go `ShowCreateTable`'s region split policies (`executor/show.go:1435`):
+/// the table's own, then each index's in index order, each on its own line
+/// behind the `region_split` feature comment.
+fn region_split_text(table: &tidb_executor::KvTable, ansi_quotes: bool) -> String {
+    fn bounds(policy: &tidb_model::RegionSplitPolicy) -> String {
+        let values = |values: &[String]| {
+            values
+                .iter()
+                .map(|value| split_value_text(value))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        format!(
+            "BETWEEN ({}) AND ({}) REGIONS {}",
+            policy.lower.with_visible(values),
+            policy.upper.with_visible(values),
+            policy.regions,
+        )
+    }
+    let mut text = String::new();
+    if let Some(policy) = table.table_split_policy() {
+        text.push_str(&format!("\n/*T![region_split] SPLIT {} */", bounds(policy)));
+    }
+    for index in table.indexes() {
+        let Some(policy) = table.index_split_policy(index.id) else {
+            continue;
+        };
+        let target = if index.name == "PRIMARY" {
+            "PRIMARY KEY"
+        } else {
+            "INDEX"
+        };
+        text.push_str(&format!(
+            "\n/*T![region_split] SPLIT {target} {} {} */",
+            escape_name(&index.name, ansi_quotes),
+            bounds(policy),
+        ));
+    }
+    text
+}
+
+/// Go `formatSplitValue`: re-parses the stored bound as `select <value>` and
+/// prints the field through the server parser driver's `ExprNode.Format`,
+/// whose string literal is single-quoted (`WrapInSingleQuotes`) with no
+/// charset introducer -- the restored `_UTF8MB4'a'` prints `'a'`.
+fn split_value_text(value: &str) -> String {
+    fn format(expr: &tidb_ast::Expr) -> String {
+        match expr {
+            tidb_ast::Expr::String(value) | tidb_ast::Expr::CharsetString { value, .. } => {
+                String::from_utf8_lossy(&tidb_datatype::wrap_in_single_quotes(value.as_bytes()))
+                    .into_owned()
+            }
+            tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Minus, inner) => format!("-{}", format(inner)),
+            other => other.format(),
+        }
+    }
+    let Ok(tidb_ast::Stmt::Query(query)) = tidb_parser::parse(&format!("select {value}")) else {
+        return value.to_owned();
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        return value.to_owned();
+    };
+    match select.fields.fields().first() {
+        Some(tidb_ast::SelectField::Expr { expr, .. }) => format(expr),
+        _ => value.to_owned(),
+    }
 }
 
 /// Go `ShowCreateTable`'s `TTLInfo` block (`executor/show.go:1510`): three

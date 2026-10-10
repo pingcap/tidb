@@ -2691,6 +2691,11 @@ impl Session {
         // no database selected (captured). The driver's own
         // `split_table_path` raises it at the resolution point, which is
         // where Go's does.
+        if matches!(stmt, Stmt::Query(_)) && self.txn.is_some() && query_has_lock(&stmt) {
+            if let Some(txn) = self.txn.as_mut() {
+                txn.locking_read = true;
+            }
+        }
         let output = match &stmt {
             Stmt::Query(query) => {
                 let current_db = self.current_db.clone();

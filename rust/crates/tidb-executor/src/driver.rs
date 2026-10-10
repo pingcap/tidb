@@ -362,6 +362,12 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::PartitionClauseOnNonpartitioned => {
             DriverError::PartitionClauseOnNonpartitioned
         }
+        tidb_planner::plan_base::PlanErrorKind::InvalidTableSample(_) => {
+            DriverError::Mysql(crate::MysqlError::new(
+                tidb_error::tidb::errcode::ErrInvalidTableSample,
+                error.message(),
+            ))
+        }
         tidb_planner::plan_base::PlanErrorKind::KeyNotExists { key, table } => {
             DriverError::KeyNotExists {
                 key: key.clone(),

@@ -379,6 +379,8 @@ pub enum PlanErrorKind {
     },
     /// Go `plannererrors.ErrPartitionClauseOnNonpartitioned` (1747).
     PartitionClauseOnNonpartitioned,
+    /// Go `expression.ErrInvalidTableSample` (8128), carrying the reason.
+    InvalidTableSample(String),
     /// Go `infoschema.ErrKeyNotExists` (1176).
     KeyNotExists {
         /// The index name as written.
@@ -654,6 +656,16 @@ impl PlanError {
         Self {
             message: format!("Unknown partition '{partition}' in table '{table}'"),
             kind: PlanErrorKind::UnknownPartition { partition, table },
+        }
+    }
+
+    /// Go `expression.ErrInvalidTableSample.GenWithStackByArgs(reason)`.
+    #[must_use]
+    pub fn invalid_table_sample(reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        Self {
+            message: format!("Invalid TABLESAMPLE: {reason}"),
+            kind: PlanErrorKind::InvalidTableSample(reason),
         }
     }
 

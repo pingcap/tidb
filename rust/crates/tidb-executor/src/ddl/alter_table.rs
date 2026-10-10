@@ -764,6 +764,9 @@ fn submitted_jobs(
                     PreparedMetadataChange::Ttl(_) => A::ACTION_ALTER_TTLINFO,
                     PreparedMetadataChange::Placement(_) => A::ACTION_ALTER_TABLE_PLACEMENT,
                     PreparedMetadataChange::Affinity(_) => A::ACTION_ALTER_TABLE_AFFINITY,
+                    PreparedMetadataChange::SplitPolicy(..) => {
+                        A::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY
+                    }
                     PreparedMetadataChange::EngineAttribute { .. } => {
                         A::ACTION_MODIFY_ENGINE_ATTRIBUTE
                     }
@@ -1813,6 +1816,9 @@ enum PreparedMetadataChange {
     Ttl(Option<tidb_model::TTLInfo>),
     Placement(Option<tidb_model::PolicyRefInfo>),
     Affinity(Option<tidb_model::TableAffinityInfo>),
+    /// Go `ActionAlterTableSetRegionSplitPolicy`: the lower-cased index name
+    /// (`""` for the table) and its policy.
+    SplitPolicy(String, tidb_model::RegionSplitPolicy),
     /// Go `ActionModifyEngineAttribute`: the attribute, and the storage
     /// classes it resolves to when it names one.
     EngineAttribute {
@@ -1875,6 +1881,9 @@ impl PreparedMetadataChange {
                     Self::Ttl(info) => table.set_ttl_info(info),
                     Self::Placement(policy) => table.set_placement_policy(policy),
                     Self::Affinity(affinity) => table.set_affinity(affinity),
+                    Self::SplitPolicy(index_name, policy) => {
+                        super::region_split::set_split_policy(table, &index_name, policy);
+                    }
                     Self::EngineAttribute {
                         attribute,
                         table_class,
@@ -1936,6 +1945,7 @@ fn is_metadata_change(action: &tidb_ast::AlterTableAction) -> bool {
             | tidb_ast::AlterTableAction::WithValidation
             | tidb_ast::AlterTableAction::WithoutValidation
             | tidb_ast::AlterTableAction::OrderByColumns { .. }
+            | tidb_ast::AlterTableAction::SplitRegion { .. }
     )
 }
 
@@ -1985,6 +1995,24 @@ fn prepare_metadata_change(
                 target,
                 overwrite_columns: true,
             }])
+        }
+        // Go `AlterTableSetRegionSplitPolicy`.
+        tidb_ast::AlterTableAction::SplitRegion { target, option } => {
+            let target = match target {
+                tidb_ast::SplitTarget::Table => super::region_split::SplitPolicyTarget::Table,
+                tidb_ast::SplitTarget::PrimaryKey => {
+                    super::region_split::SplitPolicyTarget::PrimaryKey
+                }
+                tidb_ast::SplitTarget::Index(name) => {
+                    super::region_split::SplitPolicyTarget::Index(name)
+                }
+            };
+            let (index_name, policy) =
+                super::region_split::normalize_split_policy(target, option, table)?;
+            reject_metadata_multi_job(multi_schema, "alter table set region split policy")?;
+            Ok(vec![PreparedMetadataChange::SplitPolicy(
+                index_name, policy,
+            )])
         }
         tidb_ast::AlterTableAction::RemoveTtl(_) => {
             if table.ttl_info().is_none() {

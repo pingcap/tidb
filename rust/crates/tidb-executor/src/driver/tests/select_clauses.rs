@@ -549,8 +549,9 @@ fn a_having_scalar_subquery_does_not_leak_its_value_as_a_result_column() {
     );
 }
 
-/// Go's non-TiKV `splitIntoMultiRanges` fallback produces one full table-key
-/// range, and `TableSampleExecutor` returns that range's first record.
+/// A table no `SPLIT` has cut lies in one region, so Go's
+/// `splitIntoMultiRanges` yields one record range per physical table and
+/// `TableSampleExecutor` returns each range's first record.
 #[test]
 fn table_sample_regions_uses_the_ordinary_physical_executor_path() {
     let mut catalog = Catalog::default();
@@ -652,16 +653,21 @@ fn table_sample_regions_uses_the_ordinary_physical_executor_path() {
         vec![vec![Datum::Int(12)]],
     );
 
+    // Go `expression.ErrInvalidTableSample` (8128).
     for sql in [
         "SELECT a FROM smp TABLESAMPLE BERNOULLI (10 PERCENT)",
         "SELECT a FROM smp TABLESAMPLE SYSTEM (2 ROWS) REPEATABLE(7)",
     ] {
-        assert!(
-            matches!(
-                run_select_on(sql, &catalog, &ctx),
-                Err(DriverError::Unsupported(_))
+        let error = run_select_on(sql, &catalog, &ctx)
+            .expect_err("only the REGIONS method samples")
+            .to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (
+                8128,
+                "Invalid TABLESAMPLE: Only supports REGIONS sampling method"
             ),
-            "{sql} must reject the sampling method",
+            "{sql}",
         );
     }
 

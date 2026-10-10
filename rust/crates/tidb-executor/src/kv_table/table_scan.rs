@@ -2363,18 +2363,25 @@ impl KvTable {
         Ok(rows)
     }
 
-    /// Decodes only the first record in the selected physical table range.
-    /// This is the local-storage form of Go table sampling's one `kv.Scan`
-    /// result per range.
-    pub(crate) fn first_row_with_handle_recomputed(
+    /// Go `sampleFetcher.run` over one sampled range: the first record of
+    /// the read snapshot in `[start, end)`, scanned forward whatever the
+    /// sample's order, decoded with generated columns recomputed.
+    pub(crate) fn first_snapshot_row_in_range(
         &mut self,
-        descending: bool,
+        start: &[u8],
+        end: &[u8],
         context: &RowDecodeContext,
     ) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let decoder = self.row_decoder_recomputed(context)?;
-        let mut cursor =
-            self.row_cursor_with_decoder(decoder, None, descending, true, context.zone())?;
-        cursor.next_row()
+        let Some((key, value)) = self.store.snapshot_first(
+            &Key::from_bytes(start.to_vec()),
+            &Key::from_bytes(end.to_vec()),
+        )?
+        else {
+            return Ok(None);
+        };
+        self.row_decoder_recomputed(context)?
+            .decode_record(key.as_bytes(), &value)
+            .map(Some)
     }
 
     /// The handles an index range covers, in index order.

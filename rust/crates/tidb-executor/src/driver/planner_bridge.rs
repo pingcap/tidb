@@ -2691,6 +2691,16 @@ pub(crate) fn physical_plan_for_logical(
     if ctx.enable_parallel_apply() {
         tidb_planner::physical::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
     }
+    // Go postOptimize: disableReuseChunkIfNeeded.
+    if ctx.is_chunk_alloc_valid()
+        && tidb_planner::physical::chunk_reuse::should_disable_reuse_chunk(
+            &physical,
+            ctx.executor_chunk_sizes().1,
+            tidb_util::memory::mem_total().ok(),
+        )
+    {
+        ctx.set_chunk_alloc_valid(false);
+    }
     physical
         .base_mut()
         .base

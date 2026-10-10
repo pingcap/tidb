@@ -486,6 +486,45 @@ impl crate::Session {
     /// fully determined by its task count: `checksum = tasks % 2`,
     /// `kvs = bytes = tasks`. The row is
     /// `(db, table, checksum, total_kvs, total_bytes)`.
+    /// go `SplitTableRegionExec` / `SplitIndexRegionExec`
+    /// (`pkg/executor/split.go`): one `(TOTAL_SPLIT_REGION,
+    /// SCATTER_FINISH_RATIO)` row.
+    pub(crate) fn split_region_stmt(
+        &mut self,
+        split: &tidb_ast::SplitRegionStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (database, name) = self.split_table_path(&split.table)?;
+        let ctx = self.statement_context(false);
+        let wait_finish = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_WAIT_SPLIT_REGION_FINISH)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        let row = self.with_catalog_mut(|catalog| {
+            let catalog = &*catalog;
+            match catalog.table_in(&database, &name) {
+                Some(tidb_executor::TableEntry::Kv(table)) => {
+                    tidb_executor::split_region::split_region(
+                        split,
+                        table,
+                        catalog,
+                        &ctx,
+                        wait_finish,
+                    )
+                }
+                Some(_) => Err(DriverError::unsupported(
+                    "SPLIT names a table without regions",
+                )),
+                None => Err(DriverError::Schema(
+                    tidb_executor::SchemaErrorKind::UnknownTable(format!("{database}.{name}")),
+                )),
+            }
+        })?;
+        Ok(StmtOutput::Rows {
+            columns: tidb_executor::split_region::split_region_columns(),
+            rows: vec![row],
+        })
+    }
+
     pub(crate) fn admin_checksum_stmt(
         &mut self,
         tables: &[Vec<String>],

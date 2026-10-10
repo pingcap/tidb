@@ -59,6 +59,17 @@ pub type SnapshotSchemaProvider =
 /// whole catalog, so this refuses some commits Go would allow (documented).
 pub(crate) struct Transaction {
     pub(crate) working: Catalog,
+    /// The catalog as `BEGIN` found it: Go's `GetSnapshot(TxnCtx.StartTS)`,
+    /// the committed state the transaction reads beneath its own writes.
+    /// The in-process store writes through into `working`, so a reader that
+    /// must skip the membuffer (`TABLESAMPLE`) reads this image instead.
+    pub(crate) read_snapshot: std::sync::Arc<Catalog>,
+    /// Whether a locking read (`SELECT ... FOR UPDATE/SHARE`) ran in this
+    /// transaction. Go records its keys as `Op_Lock` mutations, which COMMIT
+    /// prewrites even when nothing else was written; this store keeps no
+    /// per-key record of them, so such a transaction keeps the whole-catalog
+    /// conflict check.
+    pub(crate) locking_read: bool,
     base_version: u64,
     /// The transaction's start timestamp -- Go `TxnCtx.StartTS`, which
     /// `@@tidb_current_ts` reports. For a stale transaction it IS the as-of
@@ -125,6 +136,8 @@ impl Transaction {
         let working = catalog.clone();
         Transaction {
             working,
+            read_snapshot: std::sync::Arc::new(catalog.clone()),
+            locking_read: false,
             base_version: catalog.version(),
             start_ts,
             stale_read_ts: None,
@@ -535,6 +548,8 @@ impl Session {
         let local_temporary_at_open = self.local_temporary_tables.clone();
         self.txn = Some(Transaction {
             base_version: snapshot.version(),
+            read_snapshot: std::sync::Arc::new(snapshot.clone()),
+            locking_read: false,
             working: snapshot,
             start_ts: ts,
             stale_read_ts: Some(ts),
@@ -871,6 +886,20 @@ impl Session {
             // Go's stale transaction is read-only by construction; its
             // COMMIT publishes nothing, and `setLastTxnInfoBeforeTxnEnd`
             // leaves the start-only record (`pkg/session/session.go:1056`).
+            self.set_last_txn_info_started(txn.start_ts);
+            self.current_tso().clear();
+            if let Some(process) = &self.process {
+                process.registry().transaction_finished(process.id());
+            }
+            return Ok(());
+        }
+        if txn.working.version() == txn.base_version && !txn.locking_read {
+            // client-go `KVTxn.Commit` returns before prewrite when the
+            // membuffer holds no mutation (`committer.mutations.Len() == 0`),
+            // so a transaction that wrote nothing commits whatever its peers
+            // committed meanwhile, and `LastTxnInfo` keeps the start-only
+            // record `setLastTxnInfoBeforeTxnEnd` wrote. A working copy whose
+            // mutation counter never moved is that empty membuffer.
             self.set_last_txn_info_started(txn.start_ts);
             self.current_tso().clear();
             if let Some(process) = &self.process {

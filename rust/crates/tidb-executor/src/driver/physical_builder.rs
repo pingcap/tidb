@@ -983,12 +983,18 @@ fn build_table_sample(
     } else {
         sample.table_sample_info.partition_ids.clone()
     };
+    // Go samples `GetSnapshot(TxnCtx.StartTS)`, so an open transaction reads
+    // the catalog image it started from rather than its own writes.
+    let snapshot = ctx.txn_read_snapshot().unwrap_or(catalog);
     let mut tables = physical_ids
-        .into_iter()
+        .iter()
         .map(|physical_id| {
-            catalog.physical_kv_table_by_id(physical_id).ok_or_else(|| {
-                DriverError::unsupported("physical table-sample ID is absent from the catalog")
-            })
+            snapshot
+                .physical_kv_table_by_id(*physical_id)
+                .or_else(|| catalog.physical_kv_table_by_id(*physical_id))
+                .ok_or_else(|| {
+                    DriverError::unsupported("physical table-sample ID is absent from the catalog")
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
     match tables.first().map(|table| table.temp_table_type()) {
@@ -1007,7 +1013,7 @@ fn build_table_sample(
             meta(ctx, plan, plan_schema(plan)?),
             Vec::new(),
             Vec::new(),
-            sample.desc,
+            Vec::new(),
             RowDecodeContext::for_query(ctx),
         )));
     }
@@ -1038,6 +1044,28 @@ fn build_table_sample(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // Go `splitTableRanges` + `splitIntoMultiRanges`: every physical
+    // table's record range `[t{id}_r, PrefixNext)`, cut at the store's
+    // region boundaries, then `sortRanges` by start key.
+    let mut ranges = Vec::new();
+    for (position, physical_id) in physical_ids.iter().enumerate() {
+        let start = tidb_codec::gen_table_record_prefix(*physical_id);
+        let end = tidb_txnkv::Key::from_bytes(start.clone()).prefix_next();
+        ranges.extend(
+            catalog
+                .region_ranges_in(&start, end.as_bytes())
+                .into_iter()
+                .map(|(start, end)| crate::table_sample::SampleRange {
+                    table: position,
+                    start,
+                    end,
+                }),
+        );
+    }
+    ranges.sort_by(|left, right| left.start.cmp(&right.start));
+    if sample.desc {
+        ranges.reverse();
+    }
     let tables = tables
         .into_iter()
         .map(std::sync::Arc::unwrap_or_clone)
@@ -1045,8 +1073,8 @@ fn build_table_sample(
     Ok(Box::new(TableSampleExec::new(
         meta(ctx, plan, schema),
         tables,
+        ranges,
         output_columns,
-        sample.desc,
         RowDecodeContext::for_query(ctx),
     )))
 }
