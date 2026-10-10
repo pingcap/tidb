@@ -357,43 +357,142 @@ fn canonical_view_query(
     catalog: &Catalog,
     current_db: &str,
 ) -> Result<String, DriverError> {
-    let canonical = canonical_query(query, catalog, current_db)?;
+    let canonical = canonical_query(query, catalog, current_db, &mut Vec::new())?;
     Ok(Stmt::Query(tidb_ast::NodeBox::new(canonical)).restore())
 }
 
-/// The canonical form of a view body, as an AST.
+/// One CTE visible to a view body. Go `tryBuildCTE` resolves an unqualified
+/// table name to the innermost CTE of that name before any stored table, and
+/// the CTE's output names carry its name and no schema (captured: `SELECT
+/// `cte`.`a` AS `a` FROM `cte``).
+#[derive(Clone)]
+struct BodyCte {
+    name: String,
+    columns: Vec<String>,
+}
+
+/// The canonical form of a view body, as an AST. `ctes` is the stack of CTEs
+/// visible here, restored on return.
 fn canonical_query(
     query: &QueryStmt,
     catalog: &Catalog,
     current_db: &str,
+    ctes: &mut Vec<BodyCte>,
 ) -> Result<QueryStmt, DriverError> {
     Ok(match query {
-        QueryStmt::Select(select) => {
-            QueryStmt::Select(Box::new(canonical_select(select, catalog, current_db)?))
-        }
+        QueryStmt::Select(select) => QueryStmt::Select(Box::new(canonical_select(
+            select, catalog, current_db, ctes,
+        )?)),
         QueryStmt::SetOpr(set_opr) => {
             let mut set_opr = set_opr.clone();
-            for term in &mut set_opr.terms {
-                term.body = match &term.body {
-                    SetOprTermBody::Select(select) => SetOprTermBody::Select(Box::new(
-                        canonical_select(select, catalog, current_db)?,
-                    )),
-                    SetOprTermBody::Nested(nested) => {
-                        let QueryStmt::SetOpr(nested) = canonical_query(
-                            &QueryStmt::SetOpr(nested.clone()),
-                            catalog,
-                            current_db,
-                        )?
-                        else {
-                            unreachable!("a set operation canonicalizes to a set operation");
-                        };
-                        SetOprTermBody::Nested(nested)
-                    }
-                };
-            }
+            let depth = ctes.len();
+            let terms = canonical_with(set_opr.with.as_mut(), catalog, current_db, ctes)
+                .and_then(|()| canonical_set_opr_terms(&mut set_opr, catalog, current_db, ctes));
+            ctes.truncate(depth);
+            terms?;
             QueryStmt::SetOpr(set_opr)
         }
     })
+}
+
+fn canonical_set_opr_terms(
+    set_opr: &mut tidb_ast::SetOprStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctes: &mut Vec<BodyCte>,
+) -> Result<(), DriverError> {
+    for term in &mut set_opr.terms {
+        term.body = match &term.body {
+            SetOprTermBody::Select(select) => SetOprTermBody::Select(Box::new(canonical_select(
+                select, catalog, current_db, ctes,
+            )?)),
+            SetOprTermBody::Nested(nested) => {
+                let QueryStmt::SetOpr(nested) = canonical_query(
+                    &QueryStmt::SetOpr(nested.clone()),
+                    catalog,
+                    current_db,
+                    ctes,
+                )?
+                else {
+                    unreachable!("a set operation canonicalizes to a set operation");
+                };
+                SetOprTermBody::Nested(nested)
+            }
+        };
+    }
+    Ok(())
+}
+
+/// Canonicalizes a `WITH` clause's definitions in order, leaving each CTE on
+/// `ctes` for the definitions after it and the query it prefixes. A
+/// recursive definition sees itself, with its declared columns or its seed
+/// term's output names, as Go's recursive part reads `cte.seedLP`'s names.
+fn canonical_with(
+    with: Option<&mut tidb_ast::WithClause>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctes: &mut Vec<BodyCte>,
+) -> Result<(), DriverError> {
+    let Some(with) = with else {
+        return Ok(());
+    };
+    for cte in &mut with.ctes {
+        let canonical = if with.recursive {
+            let columns = if cte.columns.is_empty() {
+                query_output_names(&canonical_seed(&cte.query, catalog, current_db, ctes)?)
+            } else {
+                cte.columns.clone()
+            };
+            ctes.push(BodyCte {
+                name: cte.name.clone(),
+                columns,
+            });
+            let canonical = canonical_query(&cte.query, catalog, current_db, ctes);
+            ctes.pop();
+            canonical?
+        } else {
+            canonical_query(&cte.query, catalog, current_db, ctes)?
+        };
+        let output = query_output_names(&canonical);
+        let columns = if cte.columns.is_empty() {
+            output
+        } else if cte.columns.len() == output.len() {
+            cte.columns.clone()
+        } else {
+            // Go `ErrViewWrongList` (1353) for a CTE's column list too.
+            return Err(DriverError::ViewWrongList);
+        };
+        *cte.query = canonical;
+        ctes.push(BodyCte {
+            name: cte.name.clone(),
+            columns,
+        });
+    }
+    Ok(())
+}
+
+/// A recursive CTE's seed: its first set-operation term, canonicalized.
+fn canonical_seed(
+    query: &QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctes: &mut Vec<BodyCte>,
+) -> Result<QueryStmt, DriverError> {
+    match query {
+        QueryStmt::SetOpr(set_opr) => match set_opr.terms.first().map(|term| &term.body) {
+            Some(SetOprTermBody::Select(select)) => Ok(QueryStmt::Select(Box::new(
+                canonical_select(select, catalog, current_db, ctes)?,
+            ))),
+            Some(SetOprTermBody::Nested(nested)) => canonical_seed(
+                &QueryStmt::SetOpr(nested.clone()),
+                catalog,
+                current_db,
+                ctes,
+            ),
+            None => canonical_query(query, catalog, current_db, ctes),
+        },
+        QueryStmt::Select(_) => canonical_query(query, catalog, current_db, ctes),
+    }
 }
 
 /// The output column names of a canonicalized body: every field is aliased by
@@ -431,14 +530,29 @@ fn canonical_select(
     select: &SelectStmt,
     catalog: &Catalog,
     current_db: &str,
+    ctes: &mut Vec<BodyCte>,
 ) -> Result<SelectStmt, DriverError> {
     let mut select = select.clone();
+    let depth = ctes.len();
+    let result = canonical_select_in_scope(&mut select, catalog, current_db, ctes);
+    ctes.truncate(depth);
+    result.map(|()| select)
+}
+
+fn canonical_select_in_scope(
+    select: &mut SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctes: &mut Vec<BodyCte>,
+) -> Result<(), DriverError> {
+    canonical_with(select.with.as_mut(), catalog, current_db, ctes)?;
     let mut tables = Vec::new();
     if let Some(join) = &mut select.from {
-        qualify_join_node(&mut join.left, catalog, current_db, &mut tables)?;
+        qualify_join_node(&mut join.left, catalog, current_db, ctes, &mut tables)?;
         if let Some(right) = &mut join.right {
-            qualify_join_node(right, catalog, current_db, &mut tables)?;
+            qualify_join_node(right, catalog, current_db, ctes, &mut tables)?;
         }
+        canonical_expr_subqueries(join.on.as_mut(), catalog, current_db, ctes)?;
     }
 
     let mut fields = Vec::new();
@@ -492,7 +606,61 @@ fn canonical_select(
         }
     }
     select.fields = SelectFieldList::from(fields);
-    Ok(select)
+    // Go builds every subquery of the body with the same AST expansion.
+    for field in select.fields.fields_mut() {
+        if let SelectField::Expr { expr, .. } = field {
+            canonical_expr_subqueries(Some(expr), catalog, current_db, ctes)?;
+        }
+    }
+    canonical_expr_subqueries(select.where_clause.as_mut(), catalog, current_db, ctes)?;
+    canonical_expr_subqueries(select.having.as_mut(), catalog, current_db, ctes)?;
+    Ok(())
+}
+
+/// Canonicalizes the subqueries inside one expression of a view body, with
+/// the CTEs visible at that expression.
+fn canonical_expr_subqueries(
+    expr: Option<&mut Expr>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctes: &[BodyCte],
+) -> Result<(), DriverError> {
+    struct Canonicalizer<'a> {
+        catalog: &'a Catalog,
+        current_db: &'a str,
+        ctes: Vec<BodyCte>,
+        error: Option<DriverError>,
+    }
+    impl tidb_ast::Visitor for Canonicalizer<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if self.error.is_some() {
+                return true;
+            }
+            if let Some(query) = node.downcast_mut::<QueryStmt>() {
+                match canonical_query(query, self.catalog, self.current_db, &mut self.ctes) {
+                    Ok(canonical) => *query = canonical,
+                    Err(error) => self.error = Some(error),
+                }
+                return true;
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            self.error.is_none()
+        }
+    }
+    let Some(expr) = expr else {
+        return Ok(());
+    };
+    let mut canonicalizer = Canonicalizer {
+        catalog,
+        current_db,
+        ctes: ctes.to_vec(),
+        error: None,
+    };
+    tidb_ast::Visitable::accept(expr, &mut canonicalizer);
+    canonicalizer.error.map_or(Ok(()), Err)
 }
 
 /// Schema-qualifies every table reference of a `FROM` tree, collecting each
@@ -501,9 +669,30 @@ fn qualify_join_node(
     node: &mut JoinNode,
     catalog: &Catalog,
     current_db: &str,
+    ctes: &mut Vec<BodyCte>,
     tables: &mut Vec<BodyTable>,
 ) -> Result<(), DriverError> {
     match node {
+        JoinNode::Table(table_ref)
+            if table_ref.name.len() == 1
+                && ctes
+                    .iter()
+                    .any(|cte| cte.name.to_lowercase() == table_ref.name[0].to_lowercase()) =>
+        {
+            let cte = ctes
+                .iter()
+                .rev()
+                .find(|cte| cte.name.to_lowercase() == table_ref.name[0].to_lowercase())
+                .expect("matched above");
+            tables.push(BodyTable {
+                qualifier: vec![table_ref
+                    .alias
+                    .clone()
+                    .unwrap_or_else(|| table_ref.name[0].clone())],
+                columns: cte.columns.clone(),
+            });
+            Ok(())
+        }
         JoinNode::Table(table_ref) => {
             let (database, name) =
                 crate::driver::split_table_path_pub(&table_ref.name, current_db)?;
@@ -525,11 +714,11 @@ fn qualify_join_node(
             Ok(())
         }
         JoinNode::Join(join) => {
-            qualify_join_node(&mut join.left, catalog, current_db, tables)?;
+            qualify_join_node(&mut join.left, catalog, current_db, ctes, tables)?;
             if let Some(right) = &mut join.right {
-                qualify_join_node(right, catalog, current_db, tables)?;
+                qualify_join_node(right, catalog, current_db, ctes, tables)?;
             }
-            Ok(())
+            canonical_expr_subqueries(join.on.as_mut(), catalog, current_db, ctes)
         }
         JoinNode::Derived {
             subquery,
@@ -550,7 +739,7 @@ fn qualify_join_node(
             };
             // The subquery is canonicalized in place, so the stored body
             // carries the qualified, fully aliased inner SELECT too.
-            let canonical = canonical_query(subquery, catalog, current_db)?;
+            let canonical = canonical_query(subquery, catalog, current_db, ctes)?;
             let columns = query_output_names(&canonical);
             **subquery = canonical;
             tables.push(BodyTable {

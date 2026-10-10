@@ -552,6 +552,21 @@ impl Session {
             self.append_warning(crate::WarningLevel::Warning, 1105, warning);
         }
         self.found_in_binding = true;
+        // Go `optimize`: `originStmtHints.QueryHasHints` -- the statement
+        // wrote hints of its own, which the binding's replace.
+        if !tidb_hint::extract_table_hints_from_stmt_node(stmt)
+            .0
+            .is_empty()
+        {
+            self.append_warning(
+                crate::WarningLevel::Warning,
+                1105,
+                format!(
+                    "The system ignores the hints in the current query and uses the hints \
+                     specified in the bindSQL: {bind_sql}"
+                ),
+            );
+        }
         Some((bound, bind_sql))
     }
 

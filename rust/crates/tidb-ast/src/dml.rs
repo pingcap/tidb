@@ -167,7 +167,7 @@ impl InsertStmt {
         } else {
             out.push_str("INSERT ");
         }
-        restore_dml_hints(out, &self.hints);
+        restore_dml_hints(out, &self.hints, context);
         self.priority.restore_into(out);
         if self.ignore {
             out.push_str("IGNORE ");
@@ -434,7 +434,7 @@ impl UpdateStmt {
             None => context,
         };
         out.push_str("UPDATE ");
-        restore_dml_hints(out, &self.hints);
+        restore_dml_hints(out, &self.hints, context);
         self.priority.restore_into(out);
         if self.ignore {
             out.push_str("IGNORE ");
@@ -529,7 +529,7 @@ impl DeleteStmt {
             None => context,
         };
         out.push_str("DELETE ");
-        restore_dml_hints(out, &self.hints);
+        restore_dml_hints(out, &self.hints, context);
         self.priority.restore_into(out);
         if self.quick {
             out.push_str("QUICK ");
@@ -570,7 +570,7 @@ impl DeleteStmt {
 /// Appends Go's canonical optimizer-hint block shared by INSERT, UPDATE, and
 /// DELETE. Their hand parsers all call `parseOptHints` directly after the
 /// statement verb.
-fn restore_dml_hints(out: &mut String, hints: &[Hint]) {
+fn restore_dml_hints(out: &mut String, hints: &[Hint], context: &RestoreContext) {
     if hints.is_empty() {
         return;
     }
@@ -579,7 +579,7 @@ fn restore_dml_hints(out: &mut String, hints: &[Hint]) {
         if index > 0 {
             out.push(' ');
         }
-        hint.restore_into(out);
+        hint.restore_into_with_context(out, context);
     }
     out.push_str("*/ ");
 }

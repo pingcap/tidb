@@ -291,7 +291,7 @@ impl SelectStmt {
                 if i > 0 {
                     out.push(' ');
                 }
-                h.restore_into(out);
+                h.restore_into_with_context(out, context);
             }
             out.push_str("*/ ");
         }

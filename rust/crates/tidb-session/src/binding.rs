@@ -112,20 +112,33 @@ struct TableNameCollector {
     names: Vec<(String, String)>,
 }
 
+impl TableNameCollector {
+    fn push(&mut self, path: &[String]) {
+        let (schema, table) = match path {
+            [table] => (String::new(), table.clone()),
+            [schema, table] => (schema.clone(), table.clone()),
+            _ => return,
+        };
+        self.names.push((go_to_lower(schema), go_to_lower(table)));
+    }
+}
+
 impl Visitor for TableNameCollector {
     fn enter(&mut self, node: &mut dyn Any) -> bool {
         if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
-            let (schema, table) = match table_ref.name.as_slice() {
-                [table] => (String::new(), table.clone()),
-                [schema, table] => (schema.clone(), table.clone()),
-                _ => return false,
-            };
-            self.names.push((go_to_lower(schema), go_to_lower(table)));
+            let path = table_ref.name.clone();
+            self.push(&path);
         }
         false
     }
 
-    fn leave(&mut self, _node: &mut dyn Any) -> bool {
+    fn leave(&mut self, node: &mut dyn Any) -> bool {
+        // Go `InsertStmt.Accept` visits the SELECT source, then the target
+        // `TableName`, which this AST keeps as a bare path.
+        if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
+            let path = insert.table.clone();
+            self.push(&path);
+        }
         true
     }
 }
@@ -202,7 +215,16 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
             false
         }
 
-        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+        fn leave(&mut self, node: &mut dyn Any) -> bool {
+            // The INSERT target, as `TableNameCollector::leave` adds it.
+            if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
+                let (schema, table) = match insert.table.as_slice() {
+                    [table] => (String::new(), table.clone()),
+                    [schema, table] => (schema.clone(), table.clone()),
+                    _ => return true,
+                };
+                self.names.push((go_to_lower(schema), go_to_lower(table)));
+            }
             true
         }
     }

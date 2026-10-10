@@ -837,3 +837,101 @@ fn cte_scope_batch_pinning_respects_definition_order_and_query_boundaries() {
         assert_eq!(actual, expected, "{sql}");
     }
 }
+
+/// planner/core/integration TestIssue40910 (Go recording): a query that
+/// writes hints of its own but matches a binding is told the binding's
+/// replace them, quoting the bind SQL with the hint names as written.
+#[test]
+fn binding_warns_that_it_replaces_the_querys_own_hints() {
+    let mut session = Session::new();
+    session
+        .run("create table t(a int, b int, index idx_a(a), index idx_b(b))")
+        .unwrap();
+    session
+        .run(
+            "create session binding for select * from t where a > 1 and a < 10 order by b \
+             using select /*+ use_index(t, idx_a) */ * from t where a > 1 and a < 10 order by b",
+        )
+        .unwrap();
+    session
+        .run("select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b")
+        .unwrap();
+    assert_eq!(
+        crate::tests_support::warnings_of(&session),
+        [(
+            1105,
+            "The system ignores the hints in the current query and uses the hints specified in \
+             the bindSQL: SELECT /*+ use_index(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 1 \
+             AND `a` < 10 ORDER BY `b`"
+                .to_owned()
+        )]
+    );
+    session
+        .run("select * from t where a > 1 and a < 10 order by b")
+        .unwrap();
+    assert!(crate::tests_support::warnings_of(&session).is_empty());
+}
+
+/// planner/core/integration TestSplitJoinHint (Go recording): without
+/// advanced join hints, conflicting join methods warn once while the join is
+/// built; with them, the reorder phase warns per rebuilt join.
+#[test]
+fn join_hint_conflict_follows_tidb_opt_advanced_join_hint() {
+    let mut session = Session::new();
+    session
+        .run("create table t(a int, b int, index idx_a(a), index idx_b(b))")
+        .unwrap();
+    let sql = "select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 \
+               where t1.a = t2.a and t2.a=t3.a";
+    session.run("set @@tidb_opt_advanced_join_hint=0").unwrap();
+    session.run(sql).unwrap();
+    assert_eq!(
+        crate::tests_support::warnings_of(&session),
+        [(
+            1815,
+            "Join hints are conflict, you can only specify one type of join".to_owned()
+        )]
+    );
+    session.run("set @@tidb_opt_advanced_join_hint=1").unwrap();
+    session.run(sql).unwrap();
+    let reorder = (
+        1815,
+        "Join hints conflict after join reorder phase, you can only specify one type of join"
+            .to_owned(),
+    );
+    assert_eq!(
+        crate::tests_support::warnings_of(&session),
+        [reorder.clone(), reorder]
+    );
+}
+
+/// bindinfo/session_handle (Go recording): Go's `ExtractTableList` includes
+/// an INSERT's target, so a binding over `INSERT INTO <temporary> SELECT` is
+/// refused like one reading a temporary table.
+#[test]
+fn binding_over_an_insert_into_a_temporary_table_is_refused() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create global temporary table t(a int, b int, key(a), key(b)) \
+             on commit delete rows",
+        )
+        .unwrap();
+    session
+        .run("create table t2(a int, b int, key(a), key(b))")
+        .unwrap();
+    for verb in ["insert", "replace"] {
+        let error = session
+            .run(&format!(
+                "create binding for {verb} into t select * from t2 where t2.b = 1 and t2.c > 1 \
+                 using {verb} into t select /*+ use_index(t2,c) */ * from t2 \
+                 where t2.b = 1 and t2.c > 1"
+            ))
+            .expect_err("must be refused")
+            .to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (8006, "`create binding` is unsupported on temporary tables.")
+        );
+    }
+}

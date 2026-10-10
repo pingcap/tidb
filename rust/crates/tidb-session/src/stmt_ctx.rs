@@ -78,6 +78,7 @@ pub(crate) struct StatementVarSnapshot {
     partial_ordered_index_for_topn: bool,
     enable_unsafe_substitute: bool,
     enable_force_inline_cte: bool,
+    advanced_join_hint: bool,
     enable_semi_join_rewrite: bool,
     allow_in_subq_to_join_and_agg: bool,
     enable_no_decorrelate_in_select: bool,
@@ -928,6 +929,7 @@ impl Session {
                 .is_ok_and(|value| value.eq_ignore_ascii_case("COST")),
             enable_unsafe_substitute: on(tidb_vardef::tidb_vars::TIDB_ENABLE_UNSAFE_SUBSTITUTE),
             enable_force_inline_cte: on(tidb_vardef::tidb_vars::TIDB_OPT_FORCE_INLINE_CTE),
+            advanced_join_hint: on(tidb_vardef::tidb_vars::TIDB_OPT_ADVANCED_JOIN_HINT),
             enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
             allow_in_subq_to_join_and_agg: on(
                 tidb_vardef::tidb_vars::TIDB_OPT_IN_SUBQ_TO_JOIN_AND_AGG,
@@ -1181,6 +1183,7 @@ impl Session {
         let partial_ordered_index_for_topn = snapshot.partial_ordered_index_for_topn;
         let enable_unsafe_substitute = snapshot.enable_unsafe_substitute;
         let enable_force_inline_cte = snapshot.enable_force_inline_cte;
+        let advanced_join_hint = snapshot.advanced_join_hint;
         let enable_semi_join_rewrite = snapshot.enable_semi_join_rewrite;
         let allow_in_subq_to_join_and_agg =
             if self.stmt_hints.has_allow_in_subq_to_join_and_agg_hint {
@@ -1448,6 +1451,7 @@ impl Session {
                     .with_always_keep_join_key(always_keep_join_key)
                     .with_enable_unsafe_substitute(enable_unsafe_substitute)
                     .with_enable_force_inline_cte(enable_force_inline_cte)
+                    .with_advanced_join_hint(advanced_join_hint)
                     .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
                     .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
                     .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
@@ -1569,6 +1573,7 @@ impl Session {
                 .with_always_keep_join_key(always_keep_join_key)
                 .with_enable_unsafe_substitute(enable_unsafe_substitute)
                 .with_enable_force_inline_cte(enable_force_inline_cte)
+                .with_advanced_join_hint(advanced_join_hint)
                 .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
                 .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
                 .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)

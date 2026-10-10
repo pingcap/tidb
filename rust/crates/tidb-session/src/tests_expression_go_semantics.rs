@@ -451,3 +451,79 @@ fn decimal_quotient_reaches_double_with_its_stored_digits() {
         assert_eq!(cell(&mut session, sql), want, "{sql}");
     }
 }
+
+/// expression/issues (Go recording): SEC_TO_TIME clamps once the whole hours
+/// pass 838 and warns the absolute seconds as Go `FormatFloat(.., 'f', -1)`
+/// prints them, and TIME_FORMAT casts its first argument to TIME, so a
+/// number that is no valid time warns through that cast and answers NULL.
+#[test]
+fn sec_to_time_and_time_format_warn_like_their_go_signatures() {
+    let mut session = Session::new();
+    session
+        .run("create table t12205(col_varchar_64 varchar(64), col_varchar_64_key varchar(64))")
+        .unwrap();
+    session
+        .run("insert into t12205 values('-1038024704','-527892480')")
+        .unwrap();
+    assert_eq!(
+        cell(
+            &mut session,
+            "select SEC_TO_TIME(col_varchar_64 & col_varchar_64_key) from t12205"
+        ),
+        "838:59:59"
+    );
+    assert_eq!(
+        warnings_of(&session),
+        [(
+            1292,
+            "Truncated incorrect time value: '18446744072635875000'".to_owned()
+        )]
+    );
+    session
+        .run(
+            "create table t12206(col_tinyint_unsigned tinyint(3) unsigned, \
+             col_double_unsigned double unsigned, col_year_key year(4))",
+        )
+        .unwrap();
+    session.run("insert into t12206 values(73,0,0000)").unwrap();
+    assert_eq!(
+        cell(
+            &mut session,
+            "SELECT TIME_FORMAT(col_tinyint_unsigned, IFNULL(col_double_unsigned, col_year_key)) \
+             FROM t12206"
+        ),
+        "NULL"
+    );
+    assert_eq!(
+        warnings_of(&session),
+        [(1292, "Truncated incorrect time value: '73'".to_owned())]
+    );
+}
+
+/// Go `builtinValues*Sig` (expression/issues): an ENUM column's VALUES()
+/// reads back the member name, which the ON DUPLICATE KEY UPDATE assignment
+/// casts again (a second 1265), and VALUES(col) outside that clause resolves
+/// against the query's own columns and reads an empty insert row: NULL.
+#[test]
+fn values_reads_the_insert_row_as_its_go_signature() {
+    let mut session = Session::new();
+    session
+        .run("create table t (c int primary key, c2 enum('a', 'b'))")
+        .unwrap();
+    session.run("set session sql_mode = ''").unwrap();
+    session.run("insert into t values(4, 'a')").unwrap();
+    session
+        .run("insert into t values(4, 0) on duplicate key update c=values(c), c2=values(c2)")
+        .unwrap();
+    let truncated = (1265, "Data truncated for column 'c2' at row 1".to_owned());
+    assert_eq!(warnings_of(&session), [truncated.clone(), truncated]);
+    session.run("create table t2(a int)").unwrap();
+    session.run("insert into t2 values (1)").unwrap();
+    session
+        .run("insert into t2 select values(a) from t2")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("select a from t2 order by a")),
+        [["NULL"], ["1"]]
+    );
+}

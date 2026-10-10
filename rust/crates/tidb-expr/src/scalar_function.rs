@@ -1894,9 +1894,19 @@ impl ScalarFunction {
             let offset = self
                 .values_offset
                 .ok_or(EvalError::Unsupported("VALUES offset is not initialized"))?;
-            return ctx
-                .current_insert_value(offset)?
-                .map_or(Ok(Datum::Null), Ok);
+            return match ctx.current_insert_value(offset)? {
+                None => Ok(Datum::Null),
+                // Go `builtinValuesStringSig` reads an ENUM/SET value back
+                // through `row.GetDatum(offset, retType).ToString()`: the
+                // member name as a plain string.
+                Some(value @ (Datum::Enum(..) | Datum::Set(..))) => {
+                    let bytes = value
+                        .to_bytes()
+                        .map_err(|_| EvalError::Unsupported("ENUM/SET VALUES() name"))?;
+                    Ok(Datum::new_collation_string(bytes, self.derived_collation()))
+                }
+                Some(value) => Ok(value),
+            };
         }
         if name == "json_schema_valid" {
             return self.json_schema_cache.eval(&self.args, ctx, row);

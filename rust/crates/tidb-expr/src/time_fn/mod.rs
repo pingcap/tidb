@@ -987,6 +987,16 @@ fn sec_to_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let Some(seconds) = number_arg(&vals[0], cols)? else {
         return Ok(Datum::Null);
     };
+    // Go clamps once the whole hours pass 838 and reports the absolute
+    // seconds, `strconv.FormatFloat(secondsFloat, 'f', -1, 64)`, through
+    // `HandleTruncate`.
+    let magnitude = seconds.abs();
+    if (magnitude as u64) / 3600 > 838 {
+        cols.handle_truncate(&format!(
+            "Truncated incorrect time value: '{}'",
+            tidb_datatype::go_strconv::format_float(magnitude, b'f', -1, 64)
+        ))?;
+    }
     Ok(Datum::new_string(format_duration(
         seconds,
         duration_precision(&vals[0])?,

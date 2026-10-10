@@ -329,26 +329,47 @@ impl Hint {
     /// name keeps its written case and names are not back-quoted.
     pub fn restore_unflagged(&self) -> String {
         let mut out = String::new();
-        self.restore_into_styled(&mut out, true);
+        self.restore_into_styled(&mut out, self.written_name(), false);
         out
     }
 
     pub(crate) fn restore_into(&self, out: &mut String) {
-        self.restore_into_styled(out, false);
+        self.restore_into_styled(out, &self.name, true);
     }
 
-    fn restore_into_styled(&self, out: &mut String, unflagged: bool) {
-        let back_quote = |name: &str| {
-            if unflagged {
-                name.to_owned()
-            } else {
-                back_quote(name)
-            }
-        };
-        let hint_name = if unflagged {
-            self.written_name.as_deref().unwrap_or(&self.name)
-        } else {
+    /// Go `ctx.WriteKeyWord(n.HintName.String())`: the written name unless a
+    /// keyword-case flag recases it, as a binding's restore (no case flag)
+    /// keeps `use_index` lowercase.
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
+        let flags = context.flags();
+        let lowered;
+        let hint_name = if flags.has_keyword_uppercase() {
             &self.name
+        } else if flags.has_keyword_lowercase() {
+            lowered = self.written_name().to_lowercase();
+            &lowered
+        } else {
+            self.written_name()
+        };
+        self.restore_into_styled(
+            out,
+            hint_name,
+            flags.contains(crate::RestoreFlags::NAME_BACK_QUOTES),
+        );
+    }
+
+    /// Go `HintName.O`.
+    fn written_name(&self) -> &str {
+        self.written_name.as_deref().unwrap_or(&self.name)
+    }
+
+    fn restore_into_styled(&self, out: &mut String, hint_name: &str, back_quote_names: bool) {
+        let back_quote = |name: &str| {
+            if back_quote_names {
+                back_quote(name)
+            } else {
+                name.to_owned()
+            }
         };
         // `ReadFromStorage` bypasses the generic `NAME(...)` wrapper
         // below entirely — see its own doc for why one written

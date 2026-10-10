@@ -145,12 +145,17 @@ pub trait ColumnResolver {
         None
     }
 
-    /// Resolves `VALUES(column)` to Go's `NewValuesFunc` over the column's
-    /// insert-row offset. Go's rewriter builds it in an INSERT's ON
-    /// DUPLICATE KEY UPDATE from `insertPlan.TableColNames`; a resolver for
-    /// that scope overrides this, and every other scope keeps the default.
-    fn resolve_values(&self, _path: &[String]) -> Option<Expression> {
-        None
+    /// Resolves `VALUES(column)` to Go's `NewValuesFunc`. Go's rewriter builds
+    /// it in every scope over the column the current schema names
+    /// (`FindFieldName`, else 1054); an INSERT's ON DUPLICATE KEY UPDATE
+    /// resolves `insertPlan.TableColNames` instead, which its resolver
+    /// overrides this with. Outside that scope the function reads an empty
+    /// `CurrInsertValues` and answers NULL.
+    fn resolve_values(&self, path: &[String]) -> Option<Expression> {
+        let (index, field_type, _) = self.resolve(path)?;
+        Some(Expression::ScalarFunction(ScalarFunction::new_values(
+            index, field_type,
+        )))
     }
 
     /// The session `time_zone` the rewrite runs under -- Go's
@@ -761,6 +766,35 @@ pub(crate) fn restore_function_result_charset(expr: &mut Expression) -> Result<(
 
 /// Applies the two `ETReal` argument declarations of Go's
 /// `powFunctionClass.getFunction` while building the expression tree.
+/// Go `timeFormatFunctionClass.getFunction` builds through
+/// `newBaseBuiltinFuncWithTp(..., types.ETString, types.ETDuration,
+/// types.ETString)`: the time argument is cast to TIME
+/// (`WrapWithCastAsDuration`), so a number that is no valid time warns
+/// through that cast and reaches the function as NULL.
+fn wrap_time_format_arguments(
+    name: &str,
+    args: Vec<Expression>,
+    resolver: &impl ColumnResolver,
+) -> Result<Vec<Expression>, EvalError> {
+    if name != "time_format" {
+        return Ok(args);
+    }
+    let mut args = args.into_iter();
+    let Some(first) = args.next() else {
+        return Ok(Vec::new());
+    };
+    let is_duration = first
+        .static_type()
+        .is_some_and(|field_type| field_type.code() == FieldTypeCode::Duration);
+    let mut first = wrap_with_cast_as_duration(first)?;
+    if !is_duration {
+        // `BuildCastFunction` folds the cast it built.
+        derive_tree_collation_with_connection(&mut first, resolver.connection_charset_info())?;
+        resolver.fold_constant(&mut first, ConstantFoldMode::Normal);
+    }
+    Ok(std::iter::once(first).chain(args).collect())
+}
+
 fn wrap_power_arguments(
     name: &str,
     args: Vec<Expression>,
@@ -3070,6 +3104,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 .map(|arg| rewrite_expr_resolved(arg, &child_resolver))
                 .collect::<Result<_, _>>()?;
             let rewritten = wrap_power_arguments(&lowered, rewritten, resolver)?;
+            let rewritten = wrap_time_format_arguments(&lowered, rewritten, resolver)?;
             let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or_else(|| {
                 crate::builtin_registry::unresolved_error(&lowered, resolver.current_database())
             })?;

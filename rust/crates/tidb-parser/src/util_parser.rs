@@ -165,11 +165,12 @@ pub fn simple_cases(node: &Stmt, default_db: &str, origin: &str) -> Option<Strin
 
 /// Source `defaultRestoreFlag`: single-quoted strings, spaces around binary
 /// operations, strings without their charset introducer, back-quoted names.
-/// This crate's [`RestoreFlags::DEFAULT`] additionally uppercases keywords,
-/// which is what Go's restore emits anyway because its `WriteKeyWord` calls
-/// pass uppercase text.
+/// It sets no keyword-case flag, so a `WriteKeyWord` of written text -- a hint
+/// name -- keeps the user's case (`use_index`), while literal keywords stay
+/// uppercase.
 fn default_restore_flags() -> RestoreFlags {
-    RestoreFlags::DEFAULT
+    RestoreFlags::STRING_SINGLE_QUOTES
+        | RestoreFlags::NAME_BACK_QUOTES
         | RestoreFlags::SPACES_AROUND_BINARY_OPERATION
         | RestoreFlags::STRING_WITHOUT_CHARSET
 }

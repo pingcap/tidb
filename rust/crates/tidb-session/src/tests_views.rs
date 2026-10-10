@@ -1551,3 +1551,59 @@ fn a_stale_read_view_is_invalid() {
          definer/invoker of view lack rights to use them"
     );
 }
+
+/// Go plans a view body with its AST expansion, CTEs included: a CTE
+/// reference resolves to the CTE (recursive ones to themselves), stays
+/// unqualified, and expands as `cte`.`col`, while every SELECT of the body
+/// -- CTE definitions, derived tables, IN subqueries -- is aliased.
+/// Captured from Go TiDB (planner/core/issuetest TestIssue... `v1`).
+#[test]
+fn view_bodies_resolve_their_ctes_like_go() {
+    let mut session = view_session();
+    session.run("create table t2(a int, b int)").unwrap();
+    let definition = |session: &mut Session, view: &str| {
+        let (_, rows) = query_text(session, &format!("SHOW CREATE VIEW {view}"));
+        let text = rows[0][1].clone();
+        text[text.find(" AS ").expect("view text") + 4..].to_owned()
+    };
+    session
+        .run(
+            "create view cte_v1(id) as with recursive cte(a) as \
+             (select 1 union select a+1 from cte where a<3) select * from cte",
+        )
+        .unwrap();
+    assert_eq!(
+        definition(&mut session, "cte_v1"),
+        "WITH RECURSIVE `cte` (`a`) AS (SELECT 1 AS `1` UNION SELECT `a`+1 AS `a+1` FROM `cte` \
+         WHERE `a`<3) SELECT `cte`.`a` AS `a` FROM `cte`"
+    );
+    assert_eq!(
+        query_text(&mut session, "select * from cte_v1").1,
+        [["1"], ["2"], ["3"]]
+    );
+    session
+        .run("create view cte_v2 as with c as (select a, b from t2) select * from c")
+        .unwrap();
+    assert_eq!(
+        definition(&mut session, "cte_v2"),
+        "WITH `c` AS (SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t2`) SELECT `c`.`a` AS `a`,\
+         `c`.`b` AS `b` FROM `c`"
+    );
+    session
+        .run(
+            "create view cte_v5 as select * from (with c as (select 1 as k) select * from c) d \
+             where d.k in (with e as (select 1) select * from e)",
+        )
+        .unwrap();
+    assert_eq!(
+        definition(&mut session, "cte_v5"),
+        "SELECT `d`.`k` AS `k` FROM (WITH `c` AS (SELECT 1 AS `k`) SELECT `c`.`k` AS `k` FROM \
+         `c`) AS `d` WHERE `d`.`k` IN (WITH `e` AS (SELECT 1 AS `1`) SELECT `e`.`1` AS `1` FROM \
+         `e`)"
+    );
+    let error = session
+        .run("create view cte_v3 as with c(x) as (select * from t2) select c.* from c")
+        .expect_err("column list width differs")
+        .to_mysql_error();
+    assert_eq!(error.code, 1353);
+}

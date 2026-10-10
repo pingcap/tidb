@@ -1273,6 +1273,13 @@ context_configuration! {
         self
     }
 
+    /// Sets `@@tidb_opt_advanced_join_hint` for this statement.
+    #[must_use]
+    pub fn with_advanced_join_hint(mut self, enabled: bool) -> Self {
+        self.advanced_join_hint = enabled;
+        self
+    }
+
     /// Sets `@@tidb_opt_enable_semi_join_rewrite` for this statement.
     #[must_use]
     pub fn with_enable_semi_join_rewrite(mut self, enable: bool) -> Self {
@@ -3390,13 +3397,6 @@ impl StmtContext {
     #[must_use]
     pub fn cartesian_join_order_threshold(&self) -> f64 {
         self.cartesian_join_order_threshold
-    }
-
-    /// Sets `@@tidb_opt_advanced_join_hint` for this statement.
-    #[must_use]
-    pub fn with_advanced_join_hint(mut self, enabled: bool) -> Self {
-        self.advanced_join_hint = enabled;
-        self
     }
 
     /// Go `SessionVars.EnableAdvancedJoinHint`.
