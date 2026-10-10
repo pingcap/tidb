@@ -410,8 +410,10 @@ func TestExternalMetaPath(t *testing.T) {
 	require.Equal(t, "1/plan/prepared/meta.json", PreparedMetaPath(1))
 	require.Equal(t, "2/plan/prepared/meta.json", PreparedMetaPath(2))
 
-	require.Equal(t, "1/1/meta.json", SubtaskMetaPath(1, 1))
-	require.Equal(t, "2/3/meta.json", SubtaskMetaPath(2, 3))
+	require.Equal(t, "1/1/meta-a1.json", SubtaskMetaPath(1, 1, "a1"))
+	require.Equal(t, "2/3/meta-b2.json", SubtaskMetaPath(2, 3, "b2"))
+	// same subtask, different executions must not share a key
+	require.NotEqual(t, SubtaskMetaPath(1, 1, "a1"), SubtaskMetaPath(1, 1, "a2"))
 }
 
 func TestDivideMergeSortDataFilesBasic(t *testing.T) {

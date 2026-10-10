@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "objstore-perf_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/tools/objstore-perf",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/lightning/backend/external",
+        "//pkg/objstore",
+        "//pkg/objstore/recording",
+        "//pkg/objstore/storeapi",
+        "@com_github_docker_go_units//:go-units",
+    ],
+)
+
+go_binary(
+    name = "objstore-perf",
+    embed = [":objstore-perf_lib"],
+    visibility = ["//visibility:public"],
+)
