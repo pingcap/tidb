@@ -610,10 +610,14 @@ func TestAddIndexValidateRangesFailed(t *testing.T) {
 }
 
 func TestIndexChangeWithModifyColumn(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = 0")
 	tk.MustExec("create table t (b int, c varchar(100) collate utf8mb4_unicode_ci)")
 	tk.MustExec("insert t values (1, 'aa'), (2, 'bb'), (3, 'cc');")
 
