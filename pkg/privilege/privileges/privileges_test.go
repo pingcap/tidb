@@ -86,6 +86,56 @@ func TestCheckDBPrivilege(t *testing.T) {
 
 func TestCheckTablePrivilege(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
+	t.Run("delete join privileges", func(t *testing.T) {
+		root := testkit.NewTestKit(t, store)
+		root.MustExec("create database delete_priv_a")
+		root.MustExec("create database delete_priv_b")
+		root.MustExec("create table delete_priv_a.t(id int)")
+		root.MustExec("create table delete_priv_b.t(id int)")
+		root.MustExec("insert into delete_priv_a.t values (1)")
+		root.MustExec("insert into delete_priv_b.t values (1)")
+		root.MustExec("create user 'delete_join'@'localhost'")
+		root.MustExec("grant select,delete on delete_priv_a.* to 'delete_join'@'localhost'")
+		for _, query := range []string{
+			"delete a from delete_priv_a.t a join delete_priv_b.t b where a.id=b.id",
+			"delete a from delete_priv_a.t a join delete_priv_b.t b on a.id=b.id",
+			"delete a from delete_priv_a.t a join delete_priv_b.t b using(id)",
+			"delete a from (delete_priv_a.t a join delete_priv_b.t b on a.id=b.id)",
+			"delete a from delete_priv_b.t b join delete_priv_a.t a on a.id=b.id",
+		} {
+			t.Run(query, func(t *testing.T) {
+				user := testkit.NewTestKit(t, store)
+				require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "delete_join", Hostname: "localhost"}, nil, nil, nil))
+				user.MustExec("begin")
+				defer user.MustExec("rollback")
+				user.MustGetErrCode(query, mysql.ErrTableaccessDenied)
+			})
+		}
+		user := testkit.NewTestKit(t, store)
+		require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "delete_join", Hostname: "localhost"}, nil, nil, nil))
+		root.MustExec("grant select on delete_priv_b.* to 'delete_join'@'localhost'")
+		user.MustExec("begin")
+		user.MustExec("delete a from delete_priv_a.t a join delete_priv_b.t b on a.id=b.id")
+		require.Equal(t, uint64(1), user.Session().GetSessionVars().StmtCtx.AffectedRows())
+		user.MustExec("rollback")
+		root.MustExec("revoke select on delete_priv_a.* from 'delete_join'@'localhost'")
+		// Keep DELETE-only access for unqualified single-table forms, without the fast path.
+		user.MustExec("set tidb_opt_fix_control='52592:ON'")
+		for _, query := range []string{
+			"delete from delete_priv_a.t",
+			"delete a from delete_priv_a.t a",
+			"delete from a using delete_priv_a.t a",
+			"delete a from (delete_priv_a.t a)",
+			"delete from a using (delete_priv_a.t a)",
+		} {
+			user.MustExec("begin")
+			user.MustExec(query)
+			require.Equal(t, uint64(1), user.Session().GetSessionVars().StmtCtx.AffectedRows())
+			user.MustExec("rollback")
+		}
+		user.MustGetErrCode("delete a from delete_priv_a.t a join delete_priv_a.t b on a.id=b.id", mysql.ErrTableaccessDenied)
+		root.MustQuery("select * from delete_priv_a.t").Check(testkit.Rows("1"))
+	})
 
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER 'test1'@'localhost';`)
