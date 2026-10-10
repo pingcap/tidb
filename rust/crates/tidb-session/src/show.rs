@@ -927,13 +927,26 @@ impl Session {
             tidb_ast::AdminStmt::ShowPrivileges => {
                 Ok(Some(crate::show_admin::show_privileges_output()))
             }
-            // go `fetchShowOpenTables` walks the table-lock map; with no
-            // locks held the answer is the empty set, exactly as MySQL's.
+            // Go `fetchShowOpenTables` answers the empty set; the schema is
+            // `buildShowSchema`'s four columns.
             tidb_ast::AdminStmt::ShowOpenTables(_) => Ok(Some(StmtOutput::Rows {
                 columns: vec![
-                    ("Database".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-                    ("In_use".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long)),
-                    ("Name_locked".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long)),
+                    (
+                        "Database".to_owned(),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                    ),
+                    (
+                        "Table".to_owned(),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                    ),
+                    (
+                        "In_use".to_owned(),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long),
+                    ),
+                    (
+                        "Name_locked".to_owned(),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long),
+                    ),
                 ],
                 rows: Vec::new(),
             })),
@@ -1147,8 +1160,11 @@ impl Session {
             // lists rather than erroring); `SESSION`/unqualified reads this
             // session's own copy, same as a plain `@@x`.
             tidb_ast::AdminStmt::ShowVariables(show) => {
+                // Go `ShowBaseExtractor` lowercases the pattern.
                 let pattern = match &show.like {
-                    Some(tidb_ast::Expr::String(text)) => Some(text.clone()),
+                    Some(tidb_ast::Expr::String(text)) => {
+                        Some(tidb_util::stringutil::go_to_lower(text))
+                    }
                     Some(_) => {
                         return Err(DriverError::unsupported(
                             "SHOW VARIABLES LIKE takes a string pattern",
@@ -1437,9 +1453,12 @@ impl Session {
             // 15 collations Go actually lists rather than this crate's
             // full 16-variant registry.
             tidb_ast::AdminStmt::ShowCollation(show) => {
+                // Go `ShowBaseExtractor` lowercases the pattern
+                // (`strings.ToLower(ptn)`) before matching it against the
+                // lowercase collation names.
                 let pattern = match &show.filter {
                     Some(tidb_ast::ShowCollationFilter::Like(tidb_ast::Expr::String(text))) => {
-                        Some(text.clone())
+                        Some(tidb_util::stringutil::go_to_lower(text))
                     }
                     Some(tidb_ast::ShowCollationFilter::Like(_)) => {
                         return Err(DriverError::unsupported(
@@ -1698,6 +1717,7 @@ impl Session {
                         reported,
                         charset,
                         *if_not_exists,
+                        self.vars.sql_mode().has_ansi_quotes_mode(),
                     )));
                 }
                 // Go `fetchShowCreatePlacementPolicy` (`executor/show.go:1774`)
@@ -1755,6 +1775,7 @@ impl Session {
                 // A view answers either spelling with the same row, which
                 // is Go's own behaviour; only `SHOW CREATE VIEW` on a base
                 // table is refused.
+                let ansi_quotes = self.vars.sql_mode().has_ansi_quotes_mode();
                 let shown = self.with_catalog_mut(|catalog| {
                     let Some(entry) = catalog.table_in(&database, &table_name) else {
                         return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
@@ -1763,7 +1784,7 @@ impl Session {
                     };
                     match entry {
                         tidb_executor::TableEntry::View(view) => Ok((
-                            show_create_view_text(view),
+                            show_create_view_text(view, ansi_quotes),
                             table_name.clone(),
                             Some((
                                 view.character_set_client.clone(),

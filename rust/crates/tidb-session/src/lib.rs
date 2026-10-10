@@ -2976,6 +2976,8 @@ mod tests_partition_projection;
 #[cfg(test)]
 mod tests_partition_prune_collation;
 #[cfg(test)]
+mod tests_partition_show_go;
+#[cfg(test)]
 mod tests_planner_checks;
 #[cfg(test)]
 mod tests_planner_core_rewriter;

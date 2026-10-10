@@ -931,22 +931,16 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                     .join(","),
                 _ => String::new(),
             };
-            let description = if description.is_empty() {
-                Datum::Null
-            } else {
-                Datum::Bytes(description.into_bytes())
-            };
+            // Go keeps both as strings, so a HASH/KEY description and an
+            // absent comment read back as '' rather than NULL.
+            let description = Datum::Bytes(description.into_bytes());
             let policy = definition
                 .placement_policy
                 .as_ref()
                 .map_or(Datum::Null, |reference| {
                     Datum::Bytes(reference.name.original().as_bytes().to_vec())
                 });
-            let comment = if definition.comment.is_empty() {
-                Datum::Null
-            } else {
-                Datum::Bytes(definition.comment.clone().into_bytes())
-            };
+            let comment = Datum::Bytes(definition.comment.clone().into_bytes());
             rows.push(vec![
                 catalog_value(),
                 Datum::Bytes(schema.clone().into_bytes()),

@@ -948,13 +948,12 @@ const MAX_PARTITION_COMMENT_LENGTH: usize = 1024;
 /// range already, so copying would freeze a snapshot and break the cascade
 /// when the policy is altered. Only a policy written on this definition is
 /// recorded.
-fn partition_definition_placement(
+pub(crate) fn partition_definition_placement(
     definition: &PartitionDefinition,
 ) -> Option<tidb_model::PolicyRefInfo> {
     definition.options.iter().find_map(|option| match option {
-        // The ID is left at zero here and stamped by
-        // `resolve_placement_policies`, which runs where the catalog is in
-        // reach. Go resolves a table's and its partitions' references in ONE
+        // The ID is left at zero here and stamped where the catalog is in
+        // reach (`run_create_table_in`, the ALTER partition builders). Go resolves a table's and its partitions' references in ONE
         // place for the same reason (`CreateTableWithInfo`): the policy has
         // to exist, and the reference is BY id once it does.
         tidb_ast::TableOption::PlacementPolicy(name) => Some(tidb_model::PolicyRefInfo {
@@ -965,7 +964,7 @@ fn partition_definition_placement(
     })
 }
 
-fn partition_definition_comment(
+pub(crate) fn partition_definition_comment(
     definition: &PartitionDefinition,
     ctx: &crate::StmtContext,
     validate_length: bool,
@@ -1398,13 +1397,13 @@ fn range_bound_from_stored_text(text: &str) -> Option<RangeBound> {
 ///
 /// The doubling is what makes the output re-parseable -- a partition named
 /// ``p`0`` printed as ``` `p`0` ``` reads as three tokens, and reloading the
-/// dump fails. Go doubles the quote character it chose; this renderer is
-/// reached only from the backtick spelling today, so ANSI_QUOTES support
-/// belongs with the wider `SHOW CREATE TABLE` identifier work rather than
-/// here.
+/// dump fails. Go doubles the quote character it chose: a double quote under
+/// `ANSI_QUOTES`, a backtick otherwise.
 #[must_use]
-pub fn escape_partition_name(name: &str) -> String {
-    format!("`{}`", name.replace('`', "``"))
+pub fn escape_identifier(name: &str, ansi_quotes: bool) -> String {
+    let quote = if ansi_quotes { '"' } else { '`' };
+    let doubled: String = [quote, quote].iter().collect();
+    format!("{quote}{}{quote}", name.replace(quote, &doubled))
 }
 
 /// Go `AppendPartitionDefs` (`ddl/partition.go:5196`): the whole definition
@@ -1423,14 +1422,18 @@ pub fn escape_partition_name(name: &str) -> String {
 /// both real values and `DEFAULT` printed as a bare `DEFAULT`, losing the
 /// values, and RANGE COLUMNS lost Go's `_binary` spelling.
 #[must_use]
-pub fn append_partition_defs(definitions: &[PartitionDef], kind: &PartitionKind) -> String {
+pub fn append_partition_defs(
+    definitions: &[PartitionDef],
+    kind: &PartitionKind,
+    ansi_quotes: bool,
+) -> String {
     let mut out = String::from("\n(");
     for (ordinal, definition) in definitions.iter().enumerate() {
         if ordinal > 0 {
             out.push_str(",\n ");
         }
         out.push_str("PARTITION ");
-        out.push_str(&escape_partition_name(&definition.name));
+        out.push_str(&escape_identifier(&definition.name, ansi_quotes));
         match kind {
             PartitionKind::Range { .. } | PartitionKind::RangeColumns { .. } => {
                 out.push_str(" VALUES LESS THAN (");
@@ -1480,6 +1483,7 @@ pub fn append_partition_defs(definitions: &[PartitionDef], kind: &PartitionKind)
         out.push_str(&partition_comment_text(&definition.comment));
         out.push_str(&partition_placement_text(
             definition.placement_policy.as_ref(),
+            ansi_quotes,
         ));
     }
     out.push(')');
@@ -1494,7 +1498,10 @@ pub fn append_partition_defs(definitions: &[PartitionDef], kind: &PartitionKind)
 /// syntax: another MySQL-compatible parser skips it, while TiDB reads it
 /// back. Printing the clause bare would make the dump unloadable elsewhere.
 #[must_use]
-pub fn partition_placement_text(reference: Option<&tidb_model::PolicyRefInfo>) -> String {
+pub fn partition_placement_text(
+    reference: Option<&tidb_model::PolicyRefInfo>,
+    ansi_quotes: bool,
+) -> String {
     let Some(reference) = reference else {
         return String::new();
     };
@@ -1502,7 +1509,7 @@ pub fn partition_placement_text(reference: Option<&tidb_model::PolicyRefInfo>) -
     // round-trips.
     format!(
         " /*T![placement] PLACEMENT POLICY={} */",
-        escape_partition_name(reference.name.original())
+        escape_identifier(reference.name.original(), ansi_quotes)
     )
 }
 
@@ -1624,6 +1631,19 @@ pub(super) fn check_too_long_partition_name(name: &str) -> Result<(), DriverErro
     Ok(())
 }
 
+/// Go `checkUniqueKeyIncludePartKey`: a partition column is covered only by
+/// a key part over the WHOLE column; a prefix part (`Length > 0`) is not.
+pub(crate) fn key_part_covers(offsets: &[usize], prefix_lengths: &[i64], column: usize) -> bool {
+    offsets
+        .iter()
+        .position(|offset| *offset == column)
+        .is_some_and(|position| {
+            prefix_lengths
+                .get(position)
+                .is_none_or(|length| *length <= 0)
+        })
+}
+
 /// Go `checkPartitionKeysConstraint` and `ErrGlobalIndexNotExplicitlySet`
 /// (8264): every UNIQUE key must contain every column the partition
 /// expression reads, unless the index was declared GLOBAL.
@@ -1646,7 +1666,7 @@ fn check_unique_keys_include_partition_columns(
         }
         if dependencies
             .iter()
-            .all(|offset| index.column_offsets.contains(offset))
+            .all(|offset| key_part_covers(&index.column_offsets, &index.prefix_lengths, *offset))
         {
             continue;
         }

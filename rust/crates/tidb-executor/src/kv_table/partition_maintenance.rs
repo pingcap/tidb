@@ -294,7 +294,7 @@ impl KvTable {
     /// grows to it.
     pub(crate) fn rehash_hash_partitions(
         &mut self,
-        new_ids: &[i64],
+        definitions: Vec<PartitionDef>,
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
         let old_ids: Vec<i64> = {
@@ -311,23 +311,11 @@ impl KvTable {
         // Retire every old physical table: data and index entries.
         self.clear_partition_data(&old_ids, ctx)?;
 
-        // Rebuild the HASH definitions. Go's default-optioned path
-        // (`isNonDefaultPartitionOptionsUsed` -> a single empty definition)
-        // regenerates the names `p0..`.
-        let partition = self.partition.as_mut().expect("validated by DDL");
-        let comment = String::new();
-        partition.definitions = new_ids
-            .iter()
-            .enumerate()
-            .map(|(index, id)| crate::partition_routing::PartitionDef {
-                id: *id,
-                name: format!("p{index}"),
-                less_than: Vec::new(),
-                in_values: Vec::new(),
-                comment: comment.clone(),
-                placement_policy: None,
-            })
-            .collect();
+        // The definitions Go's `buildHashPartitionDefinitions` built.
+        self.partition
+            .as_mut()
+            .expect("validated by DDL")
+            .definitions = definitions;
         self.read_partitions = None;
 
         // Re-insert every row through the normal write path, which routes it

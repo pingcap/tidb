@@ -27,10 +27,10 @@ fn push_column_comment(clause: &mut String, column: &tidb_executor::KvColumn) {
     clause.push('\'');
 }
 
-/// Go `stringutil.Escape` with a non-ANSI_QUOTES sql_mode: backtick-quoted,
-/// with an embedded backtick doubled.
-fn escape_name(name: &str) -> String {
-    format!("`{}`", name.replace('`', "``"))
+/// Go `stringutil.Escape`: double-quoted under `ANSI_QUOTES`, backtick-quoted
+/// otherwise, with the quote character doubled inside.
+fn escape_name(name: &str, ansi_quotes: bool) -> String {
+    tidb_executor::escape_identifier(name, ansi_quotes)
 }
 
 /// Go's `TABLE_TYPE` / `Table_type` value for an object — `getTableType`
@@ -60,20 +60,20 @@ pub(super) fn table_type_of(is_view: bool, is_sequence: bool) -> &'static str {
 /// is an in-process session rather than a served connection -- a served
 /// one prints its user, as the wire test in `tidb-server` captures
 /// (`DEFINER=\`alice\`@\`%\``).
-pub(super) fn show_create_view_text(view: &tidb_executor::ViewDef) -> String {
+pub(super) fn show_create_view_text(view: &tidb_executor::ViewDef, ansi_quotes: bool) -> String {
     let mut out = format!(
         "CREATE ALGORITHM={} DEFINER={}@{} SQL SECURITY {} VIEW {} (",
         view.algorithm,
-        escape_name(&view.definer_user),
-        escape_name(&view.definer_host),
+        escape_name(&view.definer_user, ansi_quotes),
+        escape_name(&view.definer_host, ansi_quotes),
         view.security,
-        escape_name(&view.name),
+        escape_name(&view.name, ansi_quotes),
     );
     for (index, (name, _)) in view.columns.iter().enumerate() {
         if index > 0 {
             out.push_str(", ");
         }
-        out.push_str(&escape_name(name));
+        out.push_str(&escape_name(name, ansi_quotes));
     }
     out.push_str(") AS ");
     out.push_str(&view.select_sql);
@@ -91,7 +91,12 @@ pub(super) fn show_create_view_text(view: &tidb_executor::ViewDef) -> String {
 /// `create table t (a char(255), b int, unique key idx(a(2), b))` prints
 /// ``UNIQUE KEY `idx` (`a`(2),`b`)``, and a prefix covering the whole column
 /// prints no `(n)` at all because the DDL stored none.
-fn index_part_text(table: &tidb_executor::KvTable, offset: usize, prefix_length: i64) -> String {
+fn index_part_text(
+    table: &tidb_executor::KvTable,
+    offset: usize,
+    prefix_length: i64,
+    ansi_quotes: bool,
+) -> String {
     let column = &table.columns[offset];
     match column
         .generated
@@ -100,9 +105,12 @@ fn index_part_text(table: &tidb_executor::KvTable, offset: usize, prefix_length:
     {
         Some(generated) => format!("({})", generated.expr_text),
         None if prefix_length == tidb_executor::ddl::index_prefix::UNSPECIFIED_LENGTH => {
-            escape_name(&column.name)
+            escape_name(&column.name, ansi_quotes)
         }
-        None => format!("{}({prefix_length})", escape_name(&column.name)),
+        None => format!(
+            "{}({prefix_length})",
+            escape_name(&column.name, ansi_quotes)
+        ),
     }
 }
 
@@ -123,18 +131,25 @@ pub(super) fn show_create_table_text(
     table: &tidb_executor::KvTable,
     ctx: &tidb_executor::StmtContext,
 ) -> Result<String, DriverError> {
+    let ansi_quotes = ctx.sql_mode().ansi_quotes;
     // Go `ConstructResultOfShowCreateTable` (`executor/show.go:1073`): the
     // header names the table's kind, and the two temporary spellings are NOT
     // symmetric -- a global one prints `GLOBAL TEMPORARY` while a local one
     // prints plain `TEMPORARY`, which is the syntax each was created with.
     let mut out = match table.temp_table_type() {
         tidb_model::TempTableType::GLOBAL => {
-            format!("CREATE GLOBAL TEMPORARY TABLE {} (\n", escape_name(name))
+            format!(
+                "CREATE GLOBAL TEMPORARY TABLE {} (\n",
+                escape_name(name, ansi_quotes)
+            )
         }
         tidb_model::TempTableType::LOCAL => {
-            format!("CREATE TEMPORARY TABLE {} (\n", escape_name(name))
+            format!(
+                "CREATE TEMPORARY TABLE {} (\n",
+                escape_name(name, ansi_quotes)
+            )
         }
-        _ => format!("CREATE TABLE {} (\n", escape_name(name)),
+        _ => format!("CREATE TABLE {} (\n", escape_name(name, ansi_quotes)),
     };
     let mut clauses: Vec<String> = Vec::with_capacity(table.columns.len() + 1);
 
@@ -145,7 +160,7 @@ pub(super) fn show_create_table_text(
     for (offset, column) in table.visible_columns().iter().enumerate() {
         let mut clause = format!(
             "  {} {}",
-            escape_name(&column.name),
+            escape_name(&column.name, ansi_quotes),
             column.field_type.type_desc(STRICT_INTEGER_DISPLAY_WIDTH)
         );
         clause.push_str(&column_charset_clause(&column.field_type, table_charset));
@@ -283,7 +298,7 @@ pub(super) fn show_create_table_text(
     if primary_emitted_from_handles {
         let columns = handle_columns
             .iter()
-            .map(|offset| escape_name(&table.columns[*offset].name))
+            .map(|offset| escape_name(&table.columns[*offset].name, ansi_quotes))
             .collect::<Vec<_>>()
             .join(",");
         clauses.push(format!(
@@ -317,7 +332,7 @@ pub(super) fn show_create_table_text(
             .iter()
             .enumerate()
             .map(|(position, offset)| {
-                index_part_text(table, *offset, index.prefix_length(position))
+                index_part_text(table, *offset, index.prefix_length(position), ansi_quotes)
             })
             .collect::<Vec<_>>()
             .join(",");
@@ -325,9 +340,15 @@ pub(super) fn show_create_table_text(
         let mut clause = if primary {
             format!("  PRIMARY KEY ({columns})")
         } else if index.unique {
-            format!("  UNIQUE KEY {} ({columns})", escape_name(&index.name))
+            format!(
+                "  UNIQUE KEY {} ({columns})",
+                escape_name(&index.name, ansi_quotes)
+            )
         } else {
-            format!("  KEY {} ({columns})", escape_name(&index.name))
+            format!(
+                "  KEY {} ({columns})",
+                escape_name(&index.name, ansi_quotes)
+            )
         };
         // Go `show.go`: a partial index prints its stored condition right
         // after the key parts, before the visibility and comment suffixes.
@@ -367,13 +388,13 @@ pub(super) fn show_create_table_text(
         let columns = foreign_key
             .cols
             .iter()
-            .map(|name| escape_name(name))
+            .map(|name| escape_name(name, ansi_quotes))
             .collect::<Vec<_>>()
             .join(",");
         let referenced = foreign_key
             .ref_cols
             .iter()
-            .map(|name| escape_name(name))
+            .map(|name| escape_name(name, ansi_quotes))
             .collect::<Vec<_>>()
             .join(",");
         // Go `pkg/executor/show.go`: the referenced table is qualified with
@@ -385,17 +406,17 @@ pub(super) fn show_create_table_text(
         let target = if foreign_key.ref_schema.is_empty()
             || foreign_key.ref_schema.eq_ignore_ascii_case(database)
         {
-            escape_name(&foreign_key.ref_table)
+            escape_name(&foreign_key.ref_table, ansi_quotes)
         } else {
             format!(
                 "{}.{}",
-                escape_name(&foreign_key.ref_schema),
-                escape_name(&foreign_key.ref_table)
+                escape_name(&foreign_key.ref_schema, ansi_quotes),
+                escape_name(&foreign_key.ref_table, ansi_quotes)
             )
         };
         let mut clause = format!(
             "  CONSTRAINT {} FOREIGN KEY ({columns}) REFERENCES {target} ({referenced})",
-            escape_name(&foreign_key.name),
+            escape_name(&foreign_key.name, ansi_quotes),
         );
         if let Some(action) = referential_action_sql(foreign_key.on_delete) {
             clause.push_str(&format!(" ON DELETE {action}"));
@@ -419,7 +440,7 @@ pub(super) fn show_create_table_text(
     {
         let mut clause = format!(
             "  CONSTRAINT {} CHECK (({}))",
-            escape_name(constraint.name.original()),
+            escape_name(constraint.name.original(), ansi_quotes),
             constraint.expr_string
         );
         if !constraint.enforced {
@@ -521,12 +542,13 @@ pub(super) fn show_create_table_text(
     // carrying placement still loads on a parser that does not know it.
     out.push_str(&tidb_executor::partition_placement_text(
         table.placement_policy(),
+        ansi_quotes,
     ));
     if table.is_cached() {
         out.push_str(" /* CACHED ON */");
     }
     out.push_str(&ttl_clause_text(table));
-    out.push_str(&partition_clause_text(table));
+    out.push_str(&partition_clause_text(table, ansi_quotes));
     Ok(out)
 }
 
@@ -600,7 +622,7 @@ fn hash_definitions_are_default(definitions: &[tidb_executor::PartitionDef]) -> 
     })
 }
 
-fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
+fn partition_clause_text(table: &tidb_executor::KvTable, ansi_quotes: bool) -> String {
     let Some(partition) = table.partition() else {
         return String::new();
     };
@@ -609,7 +631,19 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
         partition.kind.sql(),
         partition.expr_text
     );
-    let defs = || tidb_executor::append_partition_defs(&partition.definitions, &partition.kind);
+    let defs = || {
+        tidb_executor::append_partition_defs(&partition.definitions, &partition.kind, ansi_quotes)
+    };
+    // Go `writeColumnListToBuffer` escapes each partition column by the
+    // session's sql_mode.
+    let column_list = || {
+        partition
+            .dependencies
+            .iter()
+            .map(|name| escape_name(name, ansi_quotes))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     match &partition.kind {
         // Go `AppendPartitionInfo` (`ddl/partition.go:5147-5171`): HASH and
         // KEY print the COMPACT `PARTITIONS n` form only when every partition
@@ -630,7 +664,7 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
                 let columns = if partition.is_empty_columns {
                     String::new()
                 } else {
-                    partition.expr_text.clone()
+                    column_list()
                 };
                 format!("\nPARTITION BY KEY ({columns})")
             } else {
@@ -651,7 +685,7 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
         | tidb_executor::PartitionKind::ListColumns { .. } => format!(
             "\nPARTITION BY {} COLUMNS({}){}",
             partition.kind.sql(),
-            partition.expr_text,
+            column_list(),
             defs()
         ),
         // Go `AppendPartitionInfo` has no NONE special case: `Columns` is

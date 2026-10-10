@@ -347,7 +347,7 @@ pub use placement_policy::{
     run_alter_placement_policy, run_create_placement_policy, run_drop_placement_policy,
 };
 pub use table_partition::{
-    append_partition_defs, build_partition_metadata, escape_partition_name,
+    append_partition_defs, build_partition_metadata, escape_identifier,
     linear_partitioning_warning, partition_placement_text, partition_spec_from_metadata,
     StoredPartitionDefinition, StoredPartitionMetadata,
 };

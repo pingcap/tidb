@@ -433,7 +433,8 @@ mod tests {
                 &crate::partition_routing::PartitionKind::Range {
                     less_than: Vec::new(),
                     unsigned: false,
-                }
+                },
+                false,
             ),
             "\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n \
              PARTITION `pm` VALUES LESS THAN (MAXVALUE))"

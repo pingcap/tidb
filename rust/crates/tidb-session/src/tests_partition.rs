@@ -3670,10 +3670,11 @@ fn information_schema_partitions_reports_gos_rows() {
                 "RANGE".to_owned(),
                 "`a`".to_owned(),
                 "MAXVALUE".to_owned(),
-                "NULL".to_owned()
+                String::new()
             ],
         ],
-        "the ordinal is ONE-based and the description is the stored bound"
+        "the ordinal is ONE-based, the description is the stored bound, and \
+         Go's comment is a string (`pi.Comment`), so an absent one is ''"
     );
 
     // Feed a statement-time TableSizeStats result into the catalog image

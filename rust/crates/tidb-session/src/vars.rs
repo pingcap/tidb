@@ -687,7 +687,7 @@ impl GlobalSysvars {
         if !def.has_global_scope() && !def.has_instance_scope() && def.has_session_scope() {
             return Err(VarError::NoGlobalCopy(name.to_ascii_lowercase()));
         }
-        self.get(name)
+        self.get(name).map(|value| global_get_hook(def.name, value))
     }
 
     /// Rebuilds the read-mostly image from the two authoritative maps. Every
@@ -3094,7 +3094,10 @@ impl SessionVars {
         // (`port`, `socket`) reads the same node tier, which is where the
         // startup `set_global_vars` push (Go `variable.SetSysVar`) lives.
         if !def.has_session_scope() {
-            return self.globals.get_by_registry_index(index).map(Cow::Owned);
+            return self
+                .globals
+                .get_by_registry_index(index)
+                .map(|value| Cow::Owned(global_get_hook(def.name, value)));
         }
         if let Some(value) = self.session_resolved.values.get(index) {
             if let Some(value) = value.as_ref() {
@@ -5802,5 +5805,18 @@ mod pd_region_batch_tests {
         globals.set("max_connections", "333".to_owned()).unwrap();
         assert!(!policy.0.load(Ordering::SeqCst));
         assert_eq!(globals.get("max_connections").unwrap(), "333");
+    }
+}
+
+/// Go's `GetGlobal` hooks that report something other than the stored text:
+/// an LDAP bind password reads back as `vardef.MaskPwd` once it is set.
+fn global_get_hook(name: &str, value: String) -> String {
+    match name {
+        "authentication_ldap_sasl_bind_root_pwd" | "authentication_ldap_simple_bind_root_pwd"
+            if !value.is_empty() =>
+        {
+            "******".to_owned()
+        }
+        _ => value,
     }
 }

@@ -555,9 +555,9 @@ fn build_index_definition(
                 ))
             })?;
             if !global
-                && !partition_offsets
-                    .iter()
-                    .all(|offset| offsets.contains(offset))
+                && !partition_offsets.iter().all(|offset| {
+                    super::table_partition::key_part_covers(&offsets, &prefix_lengths, *offset)
+                })
             {
                 return Err(DriverError::PartitionGlobalIndexNeeded(
                     index_name.to_owned(),

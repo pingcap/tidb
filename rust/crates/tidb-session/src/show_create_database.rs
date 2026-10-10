@@ -17,14 +17,20 @@ use tidb_executor::TableCharset;
 
 use crate::StmtOutput;
 
-pub(crate) fn output(database: String, charset: TableCharset, if_not_exists: bool) -> StmtOutput {
+/// Go `ConstructResultOfShowCreateDatabase`: the name is escaped by the
+/// session's sql_mode (`stringutil.Escape`).
+pub(crate) fn output(
+    database: String,
+    charset: TableCharset,
+    if_not_exists: bool,
+    ansi_quotes: bool,
+) -> StmtOutput {
     let mut text = String::from("CREATE DATABASE ");
     if if_not_exists {
         text.push_str("IF NOT EXISTS ");
     }
-    text.push('`');
-    text.push_str(&database.replace('`', "``"));
-    text.push_str("` /*!40100 DEFAULT CHARACTER SET ");
+    text.push_str(&tidb_executor::escape_identifier(&database, ansi_quotes));
+    text.push_str(" /*!40100 DEFAULT CHARACTER SET ");
     text.push_str(charset.charset.name());
     if charset.collation != charset.charset.default_collation() {
         text.push_str(" COLLATE ");

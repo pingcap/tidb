@@ -653,7 +653,13 @@ fn run_alter_table_in_inner(
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Coalesce {
                 count,
                 ..
-            }) => coalesce_partition_action(catalog, &database, &name, *count, ctx)?,
+            }) => hash_partition_management(
+                catalog,
+                &database,
+                &name,
+                HashManagement::Coalesce(*count),
+                ctx,
+            )?,
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Exchange {
                 partition,
                 table,
@@ -883,106 +889,161 @@ fn truncate_partition_action(
         .map_err(|error| crate::driver::kv_read_error("truncate partition", error))
 }
 
-/// Go `CoalescePartitions` (`pkg/ddl/executor.go:2751-2778`): reduce a
-/// HASH table's partition count by `count`, re-hashing every row. Refusals
-/// in Go's order: a non-partitioned table (1505), a non-HASH method (1509),
-/// a count below one (1515), and a count that would remove the last
-/// partition (1508).
-/// Go `AddTablePartitions`'s HASH arm (executor.go:2297-2306): grow a HASH
-/// table to `current + count` partitions, re-hashing every row. Go's
-/// refusals apply before the reorganize: a non-partitioned table (1505) and
-/// a count of zero (1501, `ErrPartitionsError`).
-fn add_hash_partitions_action(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    count: u64,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let new_count = {
-        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
-            return Err(DriverError::unsupported(
-                "ALTER TABLE ... ADD PARTITION needs a storage-backed table",
-            ));
-        };
-        let Some(partition) = table.partition() else {
-            return Err(DriverError::PartitionManagementOnNonpartitioned);
-        };
-        if !matches!(
-            partition.kind,
-            crate::partition_routing::PartitionKind::Hash
-        ) {
-            return Err(DriverError::unsupported(
-                "ADD PARTITION PARTITIONS n on a non-HASH table is not supported yet",
-            ));
-        }
-        let grown = partition.definitions.len() + count as usize;
-        if grown > super::table_partition::MAX_PARTITIONS as usize {
-            return Err(DriverError::PartitionTooMany);
-        }
-        grown
-    };
-    // Every partition gets a FRESH physical id, matching Go's reorganize.
-    let new_ids: Vec<i64> = (0..new_count)
-        .map(|_| catalog.allocate_table_id())
-        .collect();
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
-        unreachable!("the table was resolved above")
-    };
-    std::sync::Arc::make_mut(table)
-        .rehash_hash_partitions(&new_ids, ctx)
-        .map_err(|error| crate::driver::kv_read_error("add partition", error))
+/// What a HASH/KEY reorganization asks for (Go `hashPartitionManagement`).
+enum HashManagement<'a> {
+    /// `ADD PARTITION PARTITIONS n` or `ADD PARTITION (definitions)`.
+    Add {
+        count: u64,
+        definitions: &'a [tidb_ast::PartitionDefinition],
+    },
+    /// `COALESCE PARTITION n`.
+    Coalesce(u64),
 }
 
-fn coalesce_partition_action(
+/// Go `hashPartitionManagement` and the `ReorganizePartitions` it calls for
+/// a HASH/KEY table: every partition is reorganized into
+/// `buildHashPartitionDefinitions`' list -- the existing definitions keep
+/// their names, comments and placement policies, the written ones follow,
+/// and the rest are named `p{i}` -- whose names must be unique (1517), and
+/// every row is re-hashed. Refusals in Go's order: a non-partitioned table
+/// (1505), AFFINITY (8200), a COALESCE on another method (1509), a count
+/// below one (1515) or one removing the last partition (1508), and a value
+/// clause on an added definition (1480).
+fn hash_partition_management(
     catalog: &mut Catalog,
     database: &str,
     table_name: &str,
-    count: u64,
+    change: HashManagement<'_>,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let new_count = {
+    let built = {
         let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
             return Err(DriverError::unsupported(
-                "ALTER TABLE ... COALESCE PARTITION needs a storage-backed table",
+                "ALTER TABLE ... PARTITION needs a storage-backed table",
             ));
         };
         let Some(partition) = table.partition() else {
             return Err(DriverError::PartitionManagementOnNonpartitioned);
         };
-        // go's ErrCoalesceOnlyOnHashPartition fires on HASH **and** KEY
-        // (`ddl_api.go:4385` guards both) — oracle g-partition: COALESCE on
-        // a KEY-partitioned table answers (ok) with the outdated-stats
-        // warning, not 1509.
-        if !matches!(
+        let hash_or_key = matches!(
             partition.kind,
             crate::partition_routing::PartitionKind::Hash
                 | crate::partition_routing::PartitionKind::Key
-        ) {
-            return Err(DriverError::CoalesceOnlyOnHashPartition);
+        );
+        if table.has_affinity() {
+            return Err(DriverError::DdlCoded {
+                errno: 8200,
+                message: format!(
+                    "Unsupported DDL operation: {} of a table with AFFINITY option",
+                    match change {
+                        HashManagement::Add { .. } => "ADD PARTITION",
+                        HashManagement::Coalesce(_) => "REORGANIZE PARTITION",
+                    }
+                ),
+            });
         }
-        if count < 1 {
-            return Err(DriverError::CoalescePartitionNoPartition);
+        let existing = &partition.definitions;
+        let (count, written) = match change {
+            HashManagement::Add { count, definitions } => {
+                for definition in definitions {
+                    let (method, clause) = match definition.clause {
+                        tidb_ast::PartitionDefinitionClause::None => continue,
+                        tidb_ast::PartitionDefinitionClause::LessThan(_) => {
+                            ("RANGE", "VALUES LESS THAN")
+                        }
+                        tidb_ast::PartitionDefinitionClause::In(_)
+                        | tidb_ast::PartitionDefinitionClause::Default => ("LIST", "VALUES IN"),
+                        tidb_ast::PartitionDefinitionClause::History { .. } => {
+                            ("SYSTEM_TIME", "VALUES HISTORY")
+                        }
+                    };
+                    return Err(DriverError::PartitionWrongValues { method, clause });
+                }
+                let added = if definitions.is_empty() {
+                    count as usize
+                } else {
+                    definitions.len()
+                };
+                (existing.len() + added, definitions)
+            }
+            HashManagement::Coalesce(count) => {
+                // Go's ErrCoalesceOnlyOnHashPartition fires on HASH and KEY
+                // alike (oracle g-partition: COALESCE on a KEY table is ok).
+                if !hash_or_key {
+                    return Err(DriverError::CoalesceOnlyOnHashPartition);
+                }
+                if count < 1 {
+                    return Err(DriverError::CoalescePartitionNoPartition);
+                }
+                if count as usize >= existing.len() {
+                    return Err(DriverError::PartitionDropLast);
+                }
+                (existing.len() - count as usize, &[][..])
+            }
+        };
+        if count > super::table_partition::MAX_PARTITIONS as usize {
+            return Err(DriverError::PartitionTooMany);
         }
-        if count as usize >= partition.definitions.len() {
-            return Err(DriverError::PartitionDropLast);
+        let mut built = Vec::with_capacity(count);
+        for ordinal in 0..count {
+            if let Some(definition) = existing.get(ordinal) {
+                built.push((
+                    definition.name.clone(),
+                    definition.comment.clone(),
+                    definition.placement_policy.clone(),
+                ));
+            } else if let Some(definition) = written.get(ordinal - existing.len()) {
+                built.push((
+                    definition.name.clone(),
+                    super::table_partition::partition_definition_comment(definition, ctx, false)?,
+                    super::table_partition::partition_definition_placement(definition),
+                ));
+            } else {
+                built.push((format!("p{ordinal}"), String::new(), None));
+            }
         }
-        partition.definitions.len() - count as usize
+        // Go `checkPartitionNameUnique` over the reorganized definitions.
+        let mut seen = std::collections::HashSet::with_capacity(built.len());
+        for (name, _, _) in &built {
+            if !seen.insert(super::table_partition::go_to_lower(name)) {
+                return Err(DriverError::PartitionSameName(name.clone()));
+            }
+        }
+        // Go `handlePartitionPlacement`: each policy must exist.
+        for (_, _, policy) in &mut built {
+            if let Some(reference) = policy.as_mut() {
+                let Some(found) = catalog.policy(reference.name.original()) else {
+                    return Err(DriverError::PlacementPolicyNotExists(
+                        reference.name.original().to_owned(),
+                    ));
+                };
+                reference.id = found.id;
+            }
+        }
+        built
     };
-    let new_ids: Vec<i64> = (0..new_count)
-        .map(|_| catalog.allocate_table_id())
-        .collect();
+    // Every partition gets a fresh physical id, as Go's reorganize does.
+    let definitions = built
+        .into_iter()
+        .map(
+            |(name, comment, placement_policy)| crate::partition_routing::PartitionDef {
+                id: catalog.allocate_table_id(),
+                name,
+                less_than: Vec::new(),
+                in_values: Vec::new(),
+                comment,
+                placement_policy,
+            },
+        )
+        .collect::<Vec<_>>();
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };
     std::sync::Arc::make_mut(table)
-        .rehash_hash_partitions(&new_ids, ctx)
-        .map_err(|error| crate::driver::kv_read_error("coalesce partition", error))?;
-    // Go `CoalescePartitions` DELEGATES to `ReorganizePartitions`
-    // (ddl_api.go:4431), whose success arm appends the statistics-outdated
-    // warning (ddl_api.go:4303) — a coalesce warns exactly like a
-    // reorganize (oracle m24: ALTER TABLE ... COALESCE PARTITION 2 answers
-    // (ok) with the warning, not a bare ok).
+        .rehash_hash_partitions(definitions, ctx)
+        .map_err(|error| crate::driver::kv_read_error("reorganize partition", error))?;
+    // Go `ReorganizePartitions` warns on success, which both ADD and
+    // COALESCE reach (oracle m24: COALESCE answers ok with this warning).
     ctx.append_warning_parts(
         1105,
         "The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now",
@@ -1057,13 +1118,36 @@ fn add_partition_action(
     spec: &tidb_ast::AddPartitionSpec,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    // Go `AddTablePartitions`: on a HASH/KEY table an ADD is a reorganize
+    // of every partition (`hashPartitionManagement`), whichever form it was
+    // written in.
+    let hash_or_key = matches!(
+        catalog.table_in(database, table_name),
+        Some(crate::TableEntry::Kv(table)) if table.partition().is_some_and(|partition| matches!(
+            partition.kind,
+            PartitionKind::Hash | PartitionKind::Key
+        ))
+    );
     let definitions = match spec {
+        tidb_ast::AddPartitionSpec::Definitions(definitions) if hash_or_key => {
+            let change = HashManagement::Add {
+                count: 0,
+                definitions,
+            };
+            return hash_partition_management(catalog, database, table_name, change, ctx);
+        }
         tidb_ast::AddPartitionSpec::Definitions(definitions) => definitions,
-        // Go `AddTablePartitions` (executor.go:2297-2306): `PARTITIONS n` on
-        // a HASH table reorganizes to count + n partitions, re-hashing every
-        // row -- the mirror of COALESCE PARTITION.
         tidb_ast::AddPartitionSpec::Count(count) => {
-            return add_hash_partitions_action(catalog, database, table_name, *count, ctx);
+            if !hash_or_key {
+                return Err(DriverError::unsupported(
+                    "ADD PARTITION PARTITIONS n on a non-HASH table is not supported yet",
+                ));
+            }
+            let change = HashManagement::Add {
+                count: *count,
+                definitions: &[],
+            };
+            return hash_partition_management(catalog, database, table_name, change, ctx);
         }
     };
     if definitions.is_empty() {
@@ -1591,8 +1675,12 @@ fn prepare_metadata_change(
             if *charset_handled {
                 return Ok(Vec::new());
             }
-            let target =
-                prepare_convert_table_charset(table, charset.as_deref(), collation.as_deref())?;
+            let target = prepare_convert_table_charset(
+                table,
+                charset.as_deref(),
+                collation.as_deref(),
+                catalog.max_index_length(),
+            )?;
             *charset_handled = true;
             Ok(vec![PreparedMetadataChange::Charset {
                 target,
@@ -1842,10 +1930,16 @@ fn alter_table_charset_pair(
     })
 }
 
+/// Go `checkAlterTableCharset` for `CONVERT TO CHARACTER SET`
+/// (`needsOverwriteCols`): the table's own charset change, then every
+/// index's length under the new charset, the VARCHAR length limit, and each
+/// string column's charset/collation change -- an indexed column may not
+/// move to an incompatible collation under the new collation framework.
 fn prepare_convert_table_charset(
     table: &crate::KvTable,
     charset: Option<&str>,
     collation: Option<&str>,
+    max_index_length: i64,
 ) -> Result<TableCharset, DriverError> {
     let current = table.charset();
     let options = [
@@ -1854,29 +1948,160 @@ fn prepare_convert_table_charset(
     ];
     let options: Vec<_> = options.into_iter().flatten().collect();
     let target = alter_table_charset_pair(&options, TableCharset::default())?;
-    if target.charset == Charset::Gbk {
-        return Err(DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
-            message: "unsupported alter table charset operation".to_owned(),
-        });
+    let (to_charset, to_collation) = (target.charset.name(), target.collation.name());
+    if let Some(refusal) = modify_charset_and_collation_refusal(
+        to_charset,
+        to_collation,
+        current.charset.name(),
+        current.collation.name(),
+        false,
+    ) {
+        return Err(refusal.into_error(|| unreachable!("no rewrite was asked for")));
+    }
+    // Go `checkIndexLengthWithNewCharset`.
+    let converted: Vec<FieldType> = table
+        .columns()
+        .iter()
+        .map(|column| {
+            let mut field_type = column.field_type.clone();
+            if field_type.has_charset() {
+                field_type.set_charset_name(to_charset);
+                field_type.set_collation(target.collation);
+            }
+            field_type
+        })
+        .collect();
+    for index in table.indexes() {
+        let parts = index
+            .column_offsets
+            .iter()
+            .enumerate()
+            .map(|(position, offset)| (&converted[*offset], index.prefix_length(position)));
+        crate::ddl::index_prefix::check_index_key_length_with_max(
+            parts,
+            index.column_offsets.len(),
+            true,
+            true,
+            max_index_length,
+        )
+        .map_err(crate::ddl::index_prefix::driver_error)?;
     }
     for column in table.columns() {
-        if !column.field_type.is_character_string() {
+        if column.field_type.code() == FieldTypeCode::Varchar {
+            let maximum = 65535 / i64::from(target.charset.maxlen());
+            if column.field_type.flen() > maximum {
+                return Err(DriverError::TooBigFieldLength {
+                    column: column.name.clone(),
+                    maximum,
+                });
+            }
+        }
+        if !column.field_type.has_charset() || column.field_type.charset_name() == "binary" {
             continue;
         }
-        let column_charset = column.field_type.charset();
-        if column_charset == Charset::Ascii
-            || (target.charset == Charset::Utf8
-                && current.charset != Charset::Utf8
-                && column_charset != Charset::Utf8)
-        {
-            return Err(DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
-                message: "unsupported alter table charset operation".to_owned(),
-            });
+        let indexed = table.indexes().iter().any(|index| {
+            index
+                .column_offsets
+                .contains(&column_offset(table, &column.name))
+        });
+        if let Some(refusal) = modify_charset_and_collation_refusal(
+            to_charset,
+            to_collation,
+            column.field_type.charset_name(),
+            column.field_type.collation_name(),
+            indexed,
+        ) {
+            return Err(refusal.into_error(|| {
+                format!(
+                    "Unsupported converting collation of column '{}' from '{}' to '{}' when index is defined on it.",
+                    column.name.go_to_lower(),
+                    column.field_type.collation_name(),
+                    to_collation
+                )
+            }));
         }
     }
     Ok(target)
+}
+
+fn column_offset(table: &crate::KvTable, name: &str) -> usize {
+    table
+        .columns()
+        .iter()
+        .position(|column| column.name == name)
+        .expect("the column was read from this table")
+}
+
+/// Go `checkModifyCharsetAndCollation`'s two refusals.
+enum CharsetChangeRefusal {
+    /// `ErrUnsupportedModifyCollation`: an indexed column would need its
+    /// entries rewritten for an incompatible collation. The caller words it.
+    Collation,
+    /// `ErrUnsupportedModifyCharset`, with Go's `modify %s` argument.
+    Charset(String),
+}
+
+impl CharsetChangeRefusal {
+    /// The 8200 error, with the indexed-collation case worded by the caller
+    /// as Go's callers reword it.
+    fn into_error(self, collation_message: impl FnOnce() -> String) -> DriverError {
+        let message = match self {
+            Self::Collation => collation_message(),
+            Self::Charset(reason) => format!("Unsupported modify {reason}"),
+        };
+        DriverError::DdlCoded {
+            errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            message,
+        }
+    }
+}
+
+/// Go `checkModifyCharsetAndCollation`, after its validity check (a built
+/// type always carries a valid pair): an indexed column may not move to an
+/// incompatible collation under the new collation framework, and only
+/// utf8/latin1 to utf8mb4, or a collation change within utf8/utf8mb4, is
+/// metadata-only.
+fn modify_charset_and_collation_refusal(
+    to_charset: &str,
+    to_collation: &str,
+    from_charset: &str,
+    from_collation: &str,
+    rewrites_index_data: bool,
+) -> Option<CharsetChangeRefusal> {
+    if rewrites_index_data
+        && tidb_datatype::new_collation_enabled()
+        && !compatible_collate(from_collation, to_collation)
+    {
+        return Some(CharsetChangeRefusal::Collation);
+    }
+    if matches!(
+        (from_charset, to_charset),
+        ("utf8", "utf8mb4") | ("utf8", "utf8") | ("utf8mb4", "utf8mb4") | ("latin1", "utf8mb4")
+    ) {
+        return None;
+    }
+    if to_charset != from_charset {
+        return Some(CharsetChangeRefusal::Charset(format!(
+            "charset from {from_charset} to {to_charset}"
+        )));
+    }
+    if to_collation != from_collation {
+        return Some(CharsetChangeRefusal::Charset(format!(
+            "change collate from {from_collation} to {to_collation}"
+        )));
+    }
+    None
+}
+
+/// Go `collate.CompatibleCollate`.
+fn compatible_collate(left: &str, right: &str) -> bool {
+    let general = |name: &str| matches!(name, "utf8mb4_general_ci" | "utf8_general_ci");
+    let bin = |name: &str| matches!(name, "utf8mb4_bin" | "utf8_bin" | "latin1_bin");
+    let unicode = |name: &str| matches!(name, "utf8mb4_unicode_ci" | "utf8_unicode_ci");
+    (general(left) && general(right))
+        || (bin(left) && bin(right))
+        || (unicode(left) && unicode(right))
+        || left == right
 }
 
 /// Go `checkColumnDefaultValue` (`pkg/ddl/add_column.go:1212`), the BLOB /
@@ -2722,51 +2947,47 @@ fn modify_type_needs_reorganization(origin: &FieldType, to: &FieldType) -> bool 
         || origin.is_unsigned() != to.is_unsigned()
 }
 
-/// Go `checkModifyCharsetAndCollation`'s metadata-only charset/collation
-/// admission, reached from `checkModifyTypes` after type-pair validation and
-/// before the catalog or any row is changed. Indexed collation rewrites are a
-/// separate new-collation-mode concern; this guard closes the unsupported
-/// metadata reinterpretation regardless of that mode.
+/// Go `checkModifyTypes`' charset/collation step: `checkModifyCharsetAndCollation`
+/// with the column's index membership, and the indexed-collation refusal
+/// reworded for the column. A type change that reorganizes anyway absorbs
+/// either refusal (Go's `ErrUnsupportedModifyCharset.Equal(err)` compares
+/// the shared 8200 code, so it matches both) -- except to or from GBK.
 fn check_modify_charset_and_collation(
     origin: &FieldType,
     to: &FieldType,
     can_reorganize: bool,
+    column_name: &str,
+    indexed: bool,
 ) -> Result<(), DriverError> {
-    let allowed = matches!(
-        (origin.charset_name(), to.charset_name()),
-        ("utf8", "utf8mb4") | ("utf8", "utf8") | ("utf8mb4", "utf8mb4") | ("latin1", "utf8mb4")
-    );
-    if allowed {
+    let Some(refusal) = modify_charset_and_collation_refusal(
+        to.charset_name(),
+        to.collation_name(),
+        origin.charset_name(),
+        origin.collation_name(),
+        indexed,
+    ) else {
+        return Ok(());
+    };
+    let gbk = origin.charset_name() == "gbk" || to.charset_name() == "gbk";
+    if !gbk && can_reorganize {
         return Ok(());
     }
-
-    let reason = if origin.charset_name() != to.charset_name() {
-        Some(format!(
-            "charset from {} to {}",
-            origin.charset_name(),
-            to.charset_name()
-        ))
-    } else if origin.collation_name() != to.collation_name() {
-        Some(format!(
-            "change collate from {} to {}",
-            origin.collation_name(),
-            to.collation_name()
-        ))
-    } else {
-        None
-    };
-    match reason {
-        Some(_)
-            if can_reorganize && origin.charset_name() != "gbk" && to.charset_name() != "gbk" =>
-        {
-            Ok(())
+    Err(refusal.into_error(|| {
+        if gbk {
+            format!(
+                "Unsupported modifying collation from {} to {}",
+                origin.collation_name(),
+                to.collation_name()
+            )
+        } else {
+            format!(
+                "Unsupported modifying collation of column '{}' from '{}' to '{}' when index is defined on it.",
+                column_name.go_to_lower(),
+                origin.collation_name(),
+                to.collation_name()
+            )
         }
-        Some(reason) => Err(DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
-            message: format!("Unsupported modify {reason}"),
-        }),
-        None => Ok(()),
-    }
+    }))
 }
 
 fn integer_type_widens(origin: &FieldType, to: &FieldType) -> bool {
@@ -3229,6 +3450,11 @@ pub(super) fn prepare_modify_column(
         &table.columns[offset].field_type,
         &field_type,
         can_reorganize,
+        old_name,
+        table
+            .indexes()
+            .iter()
+            .any(|index| index.column_offsets.contains(&offset)),
     )?;
     if let Some(index_name) = table.partial_index_condition_dependency(old_name) {
         return Err(super::indexes::partial_index_column_dependency(
