@@ -38,8 +38,11 @@ go_test(
     flaky = True,
     shard_count = 4,
     deps = [
+        "//br/pkg/glue",
         "//br/pkg/restore/nameroute",
         "//br/pkg/utils",
+        "//pkg/domain",
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/types",
