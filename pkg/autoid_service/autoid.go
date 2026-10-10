@@ -48,17 +48,92 @@ const (
 	autoIDLeaderPath = "tidb/autoid/leader"
 )
 
-type autoIDKey struct {
-	dbID  int64
-	tblID int64
-}
-
 type autoIDValue struct {
 	sync.Mutex
-	base       int64
-	end        int64
-	isUnsigned bool
-	token      chan struct{}
+	base        int64
+	end         int64
+	currentDBID int64
+	isUnsigned  bool
+	token       chan struct{}
+}
+
+func (alloc *autoIDValue) getIncrementIDAccessor(
+	ctx context.Context,
+	txn kv.Transaction,
+	requestDBID int64,
+	tblID int64,
+) (meta.AutoIDAccessor, int64, error) {
+	m := meta.NewMutator(txn)
+	dbID, err := alloc.resolveCurrentDBID(ctx, m, requestDBID, tblID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return m.GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5), dbID, nil
+}
+
+func (alloc *autoIDValue) resolveCurrentDBID(ctx context.Context, m *meta.Mutator, requestDBID, tblID int64) (int64, error) {
+	candidates := make([]int64, 0, 2)
+	addCandidate := func(dbID int64) {
+		if dbID == 0 {
+			return
+		}
+		for _, candidate := range candidates {
+			if candidate == dbID {
+				return
+			}
+		}
+		candidates = append(candidates, dbID)
+	}
+	addCandidate(alloc.currentDBID)
+	addCandidate(requestDBID)
+
+	requestDBExists := false
+	for _, dbID := range candidates {
+		tblInfo, err := m.GetTable(dbID, tblID)
+		if err != nil {
+			if meta.ErrDBNotExists.Equal(err) {
+				continue
+			}
+			return 0, errors.Trace(err)
+		}
+		if dbID == requestDBID {
+			requestDBExists = true
+		}
+		if tblInfo != nil {
+			return dbID, nil
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return 0, errors.Trace(err)
+	}
+	dbInfos, err := m.ListDatabases()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	for _, dbInfo := range dbInfos {
+		if err := ctx.Err(); err != nil {
+			return 0, errors.Trace(err)
+		}
+		tables, err := m.ListSimpleTables(dbInfo.ID)
+		if err != nil {
+			if meta.ErrDBNotExists.Equal(err) {
+				continue
+			}
+			return 0, errors.Trace(err)
+		}
+		for _, tbl := range tables {
+			if tbl.ID == tblID {
+				return dbInfo.ID, nil
+			}
+		}
+	}
+	// Compatibility path for callers that initialize an auto ID before the table
+	// meta is created, for example CREATE TABLE ... AUTO_INCREMENT=N.
+	if requestDBExists {
+		return requestDBID, nil
+	}
+	return 0, errors.Errorf("cannot resolve autoid table location, table ID %d not found", tblID)
 }
 
 func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, dbID, tblID int64, isUnsigned bool,
@@ -79,13 +154,17 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 	// The local rest is not enough for alloc.
 	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) || alloc.base == 0 {
 		var newBase, newEnd int64
+		var resolvedDBID int64
 		nextStep := int64(batch)
 		fromBase := alloc.base
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
-			var err1 error
+		err := kv.RunInNewTxn(ctx, store, true, func(txnCtx context.Context, txn kv.Transaction) error {
+			idAcc, resolved, err1 := alloc.getIncrementIDAccessor(txnCtx, txn, dbID, tblID)
+			if err1 != nil {
+				return err1
+			}
+			resolvedDBID = resolved
 			newBase, err1 = idAcc.Get()
 			if err1 != nil {
 				return err1
@@ -115,9 +194,11 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 		if uint64(newBase) == math.MaxUint64 {
 			return 0, 0, errAutoincReadFailed
 		}
+		alloc.currentDBID = resolvedDBID
 		logutil.BgLogger().Info("alloc4Unsigned from",
 			zap.String("category", "autoid service"),
 			zap.Int64("dbID", dbID),
+			zap.Int64("resolvedDBID", resolvedDBID),
 			zap.Int64("tblID", tblID),
 			zap.Int64("from base", fromBase),
 			zap.Int64("from end", alloc.end),
@@ -154,13 +235,17 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 	// If alloc.base is 0, the alloc may not be initialized, force fetch from remote.
 	if alloc.base+n1 > alloc.end || alloc.base == 0 {
 		var newBase, newEnd int64
+		var resolvedDBID int64
 		nextStep := int64(batch)
 		fromBase := alloc.base
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
-			var err1 error
+		err := kv.RunInNewTxn(ctx, store, true, func(txnCtx context.Context, txn kv.Transaction) error {
+			idAcc, resolved, err1 := alloc.getIncrementIDAccessor(txnCtx, txn, dbID, tblID)
+			if err1 != nil {
+				return err1
+			}
+			resolvedDBID = resolved
 			newBase, err1 = idAcc.Get()
 			if err1 != nil {
 				return err1
@@ -191,9 +276,11 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 		if newBase == math.MaxInt64 {
 			return 0, 0, errAutoincReadFailed
 		}
+		alloc.currentDBID = resolvedDBID
 		logutil.BgLogger().Info("alloc4Signed from",
 			zap.String("category", "autoid service"),
 			zap.Int64("dbID", dbID),
+			zap.Int64("resolvedDBID", resolvedDBID),
 			zap.Int64("tblID", tblID),
 			zap.Int64("from base", fromBase),
 			zap.Int64("from end", alloc.end),
@@ -222,10 +309,15 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 
 	var newBase, newEnd uint64
 	var oldValue int64
+	var resolvedDBID int64
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
+	err := kv.RunInNewTxn(ctx, store, true, func(txnCtx context.Context, txn kv.Transaction) error {
+		idAcc, resolved, err1 := alloc.getIncrementIDAccessor(txnCtx, txn, dbID, tblID)
+		if err1 != nil {
+			return err1
+		}
+		resolvedDBID = resolved
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
 			return err1
@@ -245,9 +337,11 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 	logutil.BgLogger().Info("rebase4Unsigned from",
 		zap.String("category", "autoid service"),
 		zap.Int64("dbID", dbID),
+		zap.Int64("resolvedDBID", resolvedDBID),
 		zap.Int64("tblID", tblID),
 		zap.Int64("from", oldValue),
 		zap.Uint64("to", newEnd))
+	alloc.currentDBID = resolvedDBID
 	alloc.base, alloc.end = int64(newBase), int64(newEnd)
 	return nil
 }
@@ -264,10 +358,15 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 	}
 
 	var oldValue, newBase, newEnd int64
+	var resolvedDBID int64
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
+	err := kv.RunInNewTxn(ctx, store, true, func(txnCtx context.Context, txn kv.Transaction) error {
+		idAcc, resolved, err1 := alloc.getIncrementIDAccessor(txnCtx, txn, dbID, tblID)
+		if err1 != nil {
+			return err1
+		}
+		resolvedDBID = resolved
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
 			return err1
@@ -285,10 +384,12 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 
 	logutil.BgLogger().Info("rebase4Signed from",
 		zap.Int64("dbID", dbID),
+		zap.Int64("resolvedDBID", resolvedDBID),
 		zap.Int64("tblID", tblID),
 		zap.Int64("from", oldValue),
 		zap.Int64("to", newEnd),
 		zap.String("category", "autoid service"))
+	alloc.currentDBID = resolvedDBID
 	alloc.base, alloc.end = newBase, newEnd
 	return nil
 }
@@ -296,7 +397,7 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 // Service implement the grpc AutoIDAlloc service, defined in kvproto/pkg/autoid.
 type Service struct {
 	autoIDLock sync.Mutex
-	autoIDMap  map[autoIDKey]*autoIDValue
+	autoIDMap  map[int64]*autoIDValue
 
 	leaderShip owner.Manager
 	store      kv.Storage
@@ -333,7 +434,7 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
 	service := &Service{
-		autoIDMap:  make(map[autoIDKey]*autoIDValue),
+		autoIDMap:  make(map[int64]*autoIDValue),
 		leaderShip: l,
 		store:      store,
 	}
@@ -371,7 +472,7 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 	if !ok {
 		ret = &mockClient{
 			Service{
-				autoIDMap:  make(map[autoIDKey]*autoIDValue),
+				autoIDMap:  make(map[int64]*autoIDValue),
 				leaderShip: nil,
 				store:      store,
 			},
@@ -449,17 +550,17 @@ func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 }
 
 func (s *Service) getAlloc(dbID, tblID int64, isUnsigned bool) *autoIDValue {
-	key := autoIDKey{dbID: dbID, tblID: tblID}
 	s.autoIDLock.Lock()
 	defer s.autoIDLock.Unlock()
 
-	val, ok := s.autoIDMap[key]
+	val, ok := s.autoIDMap[tblID]
 	if !ok {
 		val = &autoIDValue{
-			isUnsigned: isUnsigned,
-			token:      make(chan struct{}, 1),
+			currentDBID: dbID,
+			isUnsigned:  isUnsigned,
+			token:       make(chan struct{}, 1),
 		}
-		s.autoIDMap[key] = val
+		s.autoIDMap[tblID] = val
 	}
 
 	return val
@@ -490,10 +591,14 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		}
 		// This item is not initialized, get the data from remote.
 		var currentEnd int64
+		var resolvedDBID int64
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
-			idAcc := meta.NewMutator(txn).GetAutoIDAccessors(req.DbID, req.TblID).IncrementID(model.TableInfoVersion5)
-			var err1 error
+		err := kv.RunInNewTxn(ctx, s.store, true, func(txnCtx context.Context, txn kv.Transaction) error {
+			idAcc, resolved, err1 := val.getIncrementIDAccessor(txnCtx, txn, req.DbID, req.TblID)
+			if err1 != nil {
+				return err1
+			}
+			resolvedDBID = resolved
 			currentEnd, err1 = idAcc.Get()
 			if err1 != nil {
 				return err1
@@ -505,6 +610,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		if err != nil {
 			return &autoid.AutoIDResponse{Errmsg: []byte(err.Error())}, nil
 		}
+		val.currentDBID = resolvedDBID
 		return &autoid.AutoIDResponse{
 			Min: currentEnd,
 			Max: currentEnd,
@@ -531,8 +637,13 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbID, tblID, requiredBase int64, isUnsigned bool) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	var oldValue int64
-	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
+	var resolvedDBID int64
+	err := kv.RunInNewTxn(ctx, store, true, func(txnCtx context.Context, txn kv.Transaction) error {
+		idAcc, resolved, err1 := alloc.getIncrementIDAccessor(txnCtx, txn, dbID, tblID)
+		if err1 != nil {
+			return err1
+		}
+		resolvedDBID = resolved
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
 			return err1
@@ -553,11 +664,13 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 	}
 	logutil.BgLogger().Info("forceRebase from",
 		zap.Int64("dbID", dbID),
+		zap.Int64("resolvedDBID", resolvedDBID),
 		zap.Int64("tblID", tblID),
 		zap.Int64("from", oldValue),
 		zap.Int64("to", requiredBase),
 		zap.Bool("isUnsigned", isUnsigned),
 		zap.String("category", "autoid service"))
+	alloc.currentDBID = resolvedDBID
 	alloc.base, alloc.end = requiredBase, requiredBase
 	return nil
 }
