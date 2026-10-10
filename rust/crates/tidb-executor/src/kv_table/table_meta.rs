@@ -160,6 +160,13 @@ impl RowDecodeContext {
         &self.zone
     }
 
+    /// The statement's processed-keys budget, which a reader executor
+    /// installs on its own table copy.
+    #[must_use]
+    pub(crate) fn keys_read(&self) -> &crate::KeysReadBudget {
+        self.expression.keys_read()
+    }
+
     /// The caller's type-context flags for defaults and column conversion.
     #[must_use]
     pub(crate) fn type_flags(&self) -> ConversionFlags {

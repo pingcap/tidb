@@ -2476,6 +2476,27 @@ impl Session {
         };
     }
 
+    /// Go `FinishExecuteStmt` adds the statement's processed keys to
+    /// `KeysExamined`; folding the finished statement in as the next one
+    /// starts is the same total by the time anything reads it.
+    fn begin_statement_keys_read(&mut self) {
+        let finished = std::mem::take(&mut self.statement_keys_read);
+        self.keys_examined = self
+            .keys_examined
+            .saturating_add(finished.load(std::sync::atomic::Ordering::Relaxed));
+        self.statement_in_select = self.statement_kind == StatementKind::Select;
+    }
+
+    /// Go `FLUSH STATUS` (`SimpleExec.executeFlush`) clears `KeysExamined`.
+    pub(crate) fn flush_keys_examined(&mut self) {
+        self.keys_examined = 0;
+    }
+
+    /// Go `GetStatusVars`' `tidb_keys_examined`.
+    pub(crate) fn keys_examined(&self) -> u64 {
+        self.keys_examined
+    }
+
     fn execute_parsed_statement_inner(
         &mut self,
         sql: &str,
@@ -2485,6 +2506,13 @@ impl Session {
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
         self.set_statement_arbitration_key(sql);
+        // Go `ResetContextOfStmt` sets the `In*Stmt` bits before any
+        // statement-specific door -- an EXPLAIN by its target -- so a
+        // statement that FAILS still classifies itself for the next
+        // statement's `ROW_COUNT()` (captured: a failed SELECT leaves -1, a
+        // failed INSERT leaves 0).
+        self.statement_kind = statement_kind_of(&stmt);
+        self.begin_statement_keys_read();
         // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
         // its one row lands in the named user variables. Intercepted at this
         // one door so text and prepared spellings share the rules: more than
@@ -2685,11 +2713,6 @@ impl Session {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .end_run();
         }
-        // Go sets the `InSelectStmt`/`In*Stmt` bits here, before execution,
-        // so a statement that FAILS still classifies itself for the next
-        // statement's `ROW_COUNT()` (captured: a failed SELECT leaves -1, a
-        // failed INSERT leaves 0).
-        self.statement_kind = statement_kind_of(&stmt);
         // With autocommit OFF a read or a write joins a transaction rather
         // than standing alone; DDL is left out because it commits the open
         // transaction instead of joining it.

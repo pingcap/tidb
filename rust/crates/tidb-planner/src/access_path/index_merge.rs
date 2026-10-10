@@ -168,110 +168,9 @@ fn prepare_union_index_merge_path_for_or(
     let mut alternatives: Vec<Vec<Partial>> = Vec::with_capacity(disjuncts.len());
     for disjunct in &disjuncts {
         let mut branch = Vec::new();
-        // Keep every ordinary alternative. Property convergence, rather than
-        // catalog enumeration order, determines the physical partial later.
-        for (index_pos, source_index) in ds.indexes.iter().enumerate() {
-            if !enumerated_indexes[index_pos]
-                || source_index.is_columnar
-                || !source_index.condition_expr_string.is_empty()
-            {
-                continue;
-            }
-            if source_index.is_multi_valued {
-                if !index_merge_hint_allows(ds, &source_index.name) {
-                    continue;
-                }
-                // Go initUnfinishedPathsFromExpr, then handleTopLevelANDList,
-                // then buildIntoAccessPath, for an MV candidate.
-                let Some(mut unfinished) =
-                    super::mv_index::init_unfinished_mv_path(ds, ctx, index_pos, disjunct)
-                else {
-                    continue;
-                };
-                for filter in &table_filters {
-                    if let Some(item) =
-                        super::mv_index::init_unfinished_mv_path(ds, ctx, index_pos, filter)
-                    {
-                        unfinished.merge_and_item(item);
-                    }
-                }
-                if let Some((paths, keep_source_filter)) = super::mv_index::build_mv_alternative(
-                    ds,
-                    ctx,
-                    index_pos,
-                    &unfinished,
-                    use_plan_cache,
-                )? {
-                    branch.push(Partial::MvIndex {
-                        index_pos,
-                        paths,
-                        keep_source_filter,
-                    });
-                }
-                continue;
-            }
-            // Go models an int-clustered table's PRIMARY key AS the handle,
-            // never as a secondary index partial; the handle fallback below
-            // builds that disjunct's TableRangeScan instead.
-            if ds.handle_is_int && source_index.primary {
-                continue;
-            }
-            if !index_merge_hint_allows(ds, &source_index.name) {
-                continue;
-            }
-            let Some((mut usable, keep_branch_filter)) =
-                collect_unfinished_filters(ds, Some(source_index), disjunct, ctx)
-            else {
-                continue;
-            };
-            for filter in &table_filters {
-                if let Some((filters, _)) =
-                    collect_unfinished_filters(ds, Some(source_index), filter, ctx)
-                {
-                    usable.extend(filters);
-                }
-            }
-            let (pushable, rejected) = partition_partial_filters(&usable, ctx);
-            let Ok(mut filled) = super::ordinary::fill_index_path(
-                ds,
-                source_index,
-                &pushable,
-                ctx,
-                ctx.opt_prefix_index_single_scan,
-                false,
-            ) else {
-                // Go accessPathsForConds declines a partial when derivation fails.
-                continue;
-            };
-            let result = &filled.detached;
-            // Go keeps a partial whose ranges came out empty: it reads
-            // nothing, and only a full range disqualifies a partial.
-            if result.ranges.iter().any(|range| range.is_full_range(false)) {
-                continue;
-            }
-            let Ok(rows) = estimate_partial_index_ranges(ds, source_index, &filled, ctx) else {
-                continue;
-            };
-            let mut keep_source_filter =
-                keep_branch_filter || !rejected.is_empty() || !filled.table_filters.is_empty();
-            filled.table_filters.clear();
-            if !crate::pushdown::can_exprs_push_down(
-                &filled.index_filters,
-                tidb_expr::infer_pushdown::PushDownStore::TiKv,
-                ctx.expr_pushdown_blacklist,
-            ) {
-                keep_source_filter = true;
-                filled.index_filters.clear();
-            }
-            filled.count_after_index =
-                Some(rows * super::ordinary::filter_selectivity(ds, &filled.index_filters, ctx));
-            branch.push(Partial::Index {
-                index_pos,
-                filled,
-                rows,
-                keep_source_filter,
-            });
-        }
+        // Go walks `PossibleAccessPaths` in order, the table path first, and
+        // `cmpAlternatives` keeps the first of equal alternatives: a table
+        // partial wins a row-count tie against an index.
         // Go `accessPathsForConds` over the table path: an integer handle
         // (`IsIntHandlePath`) or a clustered common handle
         // (`IsCommonHandlePath`, ranged over its PRIMARY index's columns).
@@ -352,6 +251,108 @@ fn prepare_union_index_merge_path_for_or(
                     }
                 }
             }
+        }
+        for (index_pos, source_index) in ds.indexes.iter().enumerate() {
+            if !enumerated_indexes[index_pos]
+                || source_index.is_columnar
+                || !source_index.condition_expr_string.is_empty()
+            {
+                continue;
+            }
+            if source_index.is_multi_valued {
+                if !index_merge_hint_allows(ds, &source_index.name) {
+                    continue;
+                }
+                // Go initUnfinishedPathsFromExpr, then handleTopLevelANDList,
+                // then buildIntoAccessPath, for an MV candidate.
+                let Some(mut unfinished) =
+                    super::mv_index::init_unfinished_mv_path(ds, ctx, index_pos, disjunct)
+                else {
+                    continue;
+                };
+                for filter in &table_filters {
+                    if let Some(item) =
+                        super::mv_index::init_unfinished_mv_path(ds, ctx, index_pos, filter)
+                    {
+                        unfinished.merge_and_item(item);
+                    }
+                }
+                if let Some((paths, keep_source_filter)) = super::mv_index::build_mv_alternative(
+                    ds,
+                    ctx,
+                    index_pos,
+                    &unfinished,
+                    use_plan_cache,
+                )? {
+                    branch.push(Partial::MvIndex {
+                        index_pos,
+                        paths,
+                        keep_source_filter,
+                    });
+                }
+                continue;
+            }
+            // Go folds a clustered PRIMARY key into the table path
+            // (`getPossibleAccessPaths`), never a secondary index partial; the
+            // table partial above builds that disjunct's TableRangeScan.
+            if source_index.primary && (ds.handle_is_int || ds.is_common_handle) {
+                continue;
+            }
+            if !index_merge_hint_allows(ds, &source_index.name) {
+                continue;
+            }
+            let Some((mut usable, keep_branch_filter)) =
+                collect_unfinished_filters(ds, Some(source_index), disjunct, ctx)
+            else {
+                continue;
+            };
+            for filter in &table_filters {
+                if let Some((filters, _)) =
+                    collect_unfinished_filters(ds, Some(source_index), filter, ctx)
+                {
+                    usable.extend(filters);
+                }
+            }
+            let (pushable, rejected) = partition_partial_filters(&usable, ctx);
+            let Ok(mut filled) = super::ordinary::fill_index_path(
+                ds,
+                source_index,
+                &pushable,
+                ctx,
+                ctx.opt_prefix_index_single_scan,
+                false,
+            ) else {
+                // Go accessPathsForConds declines a partial when derivation fails.
+                continue;
+            };
+            let result = &filled.detached;
+            // Go keeps a partial whose ranges came out empty: it reads
+            // nothing, and only a full range disqualifies a partial.
+            if result.ranges.iter().any(|range| range.is_full_range(false)) {
+                continue;
+            }
+            let Ok(rows) = estimate_partial_index_ranges(ds, source_index, &filled, ctx) else {
+                continue;
+            };
+            let mut keep_source_filter =
+                keep_branch_filter || !rejected.is_empty() || !filled.table_filters.is_empty();
+            filled.table_filters.clear();
+            if !crate::pushdown::can_exprs_push_down(
+                &filled.index_filters,
+                tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                ctx.expr_pushdown_blacklist,
+            ) {
+                keep_source_filter = true;
+                filled.index_filters.clear();
+            }
+            filled.count_after_index =
+                Some(rows * super::ordinary::filter_selectivity(ds, &filled.index_filters, ctx));
+            branch.push(Partial::Index {
+                index_pos,
+                filled,
+                rows,
+                keep_source_filter,
+            });
         }
         if branch.is_empty() {
             return Ok(None);

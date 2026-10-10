@@ -273,12 +273,8 @@ impl KvTable {
         let mut iterators = Vec::new();
         for (low, upper) in self.record_key_ranges(handle_ranges, zone, ordered || descending)? {
             iterators.push(
-                if descending {
-                    self.store.iter_reverse(Some(&upper), Some(&low))
-                } else {
-                    self.store.iter(Some(&low), Some(&upper))
-                }
-                .map_err(KvTableError::from)?,
+                self.scan_iterator(&low, &upper, descending)
+                    .map_err(KvTableError::from)?,
             );
         }
         if descending {
@@ -2580,12 +2576,9 @@ impl KvTable {
             }
             for (low, high) in key_ranges {
                 partition_of_iterator.push(ordinal);
-                let iterator = if descending {
-                    self.store.iter_reverse(Some(&high), Some(&low))
-                } else {
-                    self.store.iter(Some(&low), Some(&high))
-                }
-                .map_err(KvTableError::from)?;
+                let iterator = self
+                    .scan_iterator(&low, &high, descending)
+                    .map_err(KvTableError::from)?;
                 iterators.push(iterator);
             }
         }
@@ -4129,10 +4122,13 @@ impl TableScanExec {
     #[must_use]
     pub fn new_with_context(
         meta: ExecutorMeta,
-        table: KvTable,
+        mut table: KvTable,
         decode_context: RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
+        // Go's TableReader reads through the coprocessor, whose processed
+        // keys count against `tidb_max_keys_read`.
+        table.count_keys_read(decode_context.keys_read());
         // The physical DML schema includes hidden expression-index columns;
         // user-facing scans may provide only the visible prefix. Preserve
         // the supplied schema before later accept_column_prune composition.

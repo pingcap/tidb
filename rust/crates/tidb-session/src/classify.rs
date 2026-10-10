@@ -119,7 +119,9 @@ pub(crate) enum StatementKind {
 
 /// Classifies a parsed statement for `ROW_COUNT()`, unwrapping a `WITH`
 /// prefix the way Go does -- the CTE belongs to the mutation, so
-/// `WITH x AS (...) DELETE ...` still sets `InDeleteStmt`.
+/// `WITH x AS (...) DELETE ...` still sets `InDeleteStmt` -- and an EXPLAIN,
+/// which `ResetContextOfStmt` replaces by its target before setting the bits
+/// (`EXPLAIN SELECT` leaves `ROW_COUNT()` at -1).
 pub(crate) fn statement_kind_of(stmt: &Stmt) -> StatementKind {
     fn dml_kind(dml: &DmlStmt) -> StatementKind {
         match dml {
@@ -131,6 +133,12 @@ pub(crate) fn statement_kind_of(stmt: &Stmt) -> StatementKind {
     match stmt {
         Stmt::Query(_) => StatementKind::Select,
         Stmt::Dml(dml) => dml_kind(dml),
+        Stmt::Admin(admin) => match &**admin {
+            tidb_ast::AdminStmt::Explain(explain) => explain
+                .statement()
+                .map_or(StatementKind::Other, statement_kind_of),
+            _ => StatementKind::Other,
+        },
         _ => StatementKind::Other,
     }
 }

@@ -1345,6 +1345,10 @@ impl Session {
                     .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
                     .with_statement_phase_observer(self.statement_phase_observer())
                     .with_kv_exec_counter(self.statement_kv_exec_counter())
+                    .with_keys_read(tidb_executor::KeysReadBudget::new(
+                        Arc::clone(&self.statement_keys_read),
+                        self.vars.max_keys_read(self.statement_in_select),
+                    ))
                     .with_brief_binary_plan(!self.binary_prepared_execution)
                     .with_allow_write_row_id(allow_write_row_id)
                     .with_static_partition_prune(static_partition_prune)

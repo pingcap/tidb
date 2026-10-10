@@ -1002,6 +1002,15 @@ impl HandleSourceExec {
                 .stored_records_batched(&self.handles, self.partition_ids.as_deref())
                 .map_err(ExecError::from)?
         };
+        // Counted only on an IndexMerge reader's table side, whose copy
+        // carries the statement budget; a point get's copy does not.
+        let found = match &rows {
+            crate::kv_table::PointReadValues::Single(row) => usize::from(row.is_some()),
+            crate::kv_table::PointReadValues::Batch { values, .. } => values.len(),
+        };
+        self.table
+            .note_keys_read(found as u64)
+            .map_err(ExecError::from)?;
         self.preloaded = Some(rows);
         self.decoder = Some(crate::kv_table::PointRowDecoder::new(&self.table));
         Ok(())
@@ -1617,6 +1626,14 @@ const DEFAULT_LOOKUP_FETCH_CONCURRENCY: usize = 5;
 pub(crate) type RangeRebuilder =
     std::sync::Arc<dyn Fn() -> Result<Vec<IndexRange>, ExecError> + Send + Sync>;
 
+/// Adds the rows a table-side handle lookup found to the statement's
+/// processed keys: Go's table-side coprocessor scan processes one key per
+/// existing row.
+fn note_found_rows<T>(table: &KvTable, rows: &[Option<T>]) -> Result<(), ExecError> {
+    let found = rows.iter().filter(|row| row.is_some()).count();
+    table.note_keys_read(found as u64).map_err(ExecError::from)
+}
+
 pub struct IndexRangeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
@@ -2030,12 +2047,15 @@ impl IndexRangeSourceExec {
     #[must_use]
     pub fn new_with_statement(
         meta: ExecutorMeta,
-        table: KvTable,
+        mut table: KvTable,
         index_id: i64,
         ranges: Vec<IndexRange>,
         decode_context: crate::kv_table::RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
+        // Go's IndexReader/IndexLookUp read both the index and the table
+        // side through the coprocessor; every processed key counts.
+        table.count_keys_read(decode_context.keys_read());
         // The IDENTITY default is only right when the schema is the table's
         // leading columns; a caller whose schema was narrowed by column
         // pruning must say so with [`Self::read_table_columns`].
@@ -3092,7 +3112,13 @@ impl IndexRangeSourceExec {
                             Some(&self.keep),
                             &self.decode_context,
                         ) {
-                        Ok(rows) => rows,
+                        // Go's covering IndexReader has no table side; this
+                        // tier's local lookup for it reads nothing Go reads.
+                        Ok(rows) if self.covering => rows,
+                        Ok(rows) => {
+                            note_found_rows(&self.table, &rows)?;
+                            rows
+                        }
                         Err(error) => {
                             if let Some(controller) = &self.adaptive_limit {
                                 controller.abort_lookup(reserved_handles);
@@ -5356,11 +5382,13 @@ impl IndexJoinLookupExec {
     #[must_use]
     pub(crate) fn new_with_statement(
         meta: ExecutorMeta,
-        table: KvTable,
+        mut table: KvTable,
         object: LookupObject,
         decode_context: crate::kv_table::RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
+        // Go's index-join inner reader is a coprocessor read too.
+        table.count_keys_read(decode_context.keys_read());
         // Go evaluates the inner Selection before its final projection. Keep
         // that physical table shape here even when `meta` already describes
         // the compact row emitted to the join above.
@@ -6324,6 +6352,7 @@ impl IndexJoinLookupExec {
                 &self.decode_context,
             )
             .map_err(ExecError::from)?;
+        note_found_rows(&self.table, &rows)?;
         Ok(handles.iter().cloned().map(Some).zip(rows).collect())
     }
 

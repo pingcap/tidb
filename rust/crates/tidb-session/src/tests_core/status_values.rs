@@ -141,6 +141,17 @@ fn row_count_reports_the_previous_statements_class() {
         "0",
         "captured: after SET"
     );
+
+    // Go `ResetContextOfStmt` replaces an EXPLAIN by its target before
+    // setting the bits: EXPLAIN SELECT is a SELECT, EXPLAIN INSERT an INSERT
+    // that affected nothing.
+    session.run("EXPLAIN SELECT * FROM rc").unwrap();
+    assert_eq!(session_scalar(&mut session, "SELECT ROW_COUNT()"), "-1");
+    session.run("INSERT INTO rc VALUES (5, 50, 5)").unwrap();
+    session
+        .run("EXPLAIN INSERT INTO rc VALUES (6, 60, 6)")
+        .unwrap();
+    assert_eq!(session_scalar(&mut session, "SELECT ROW_COUNT()"), "0");
 }
 
 /// `LAST_INSERT_ID(expr)`'s captured rules

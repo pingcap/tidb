@@ -660,6 +660,15 @@ pub struct Session {
     /// `ResetContextOfStmt`). It is recorded even for a statement that ends
     /// in an error, because Go's bits survive the failure too.
     statement_kind: StatementKind,
+    /// Go `StmtCtx.InSelectStmt` for the running statement, which
+    /// `GetMaxKeysRead` reads: a SELECT or set operation, EXPLAIN unwrapped.
+    statement_in_select: bool,
+    /// The running statement's processed keys, shared by every context it
+    /// builds (Go `DistSQLContext.MaxKeysReadCounter`).
+    statement_keys_read: Arc<std::sync::atomic::AtomicU64>,
+    /// Go `SessionVars.KeysExamined`, the `tidb_keys_examined` status
+    /// variable: every finished statement's processed keys.
+    keys_examined: u64,
     /// Go `SessionVars.TxnCtx.StartTS`, shared with statement contexts so a
     /// lazily opened cluster snapshot becomes visible inside the statement
     /// that opened it.
@@ -978,6 +987,9 @@ impl Session {
             in_set_session_states: false,
             last_found_rows: 0,
             statement_kind: StatementKind::Other,
+            statement_in_select: false,
+            statement_keys_read: Arc::default(),
+            keys_examined: 0,
             current_tso: tidb_executor::CurrentTso::default(),
             staged_writes: std::sync::Arc::default(),
             server_info_syncer: None,
@@ -2921,6 +2933,8 @@ mod tests_multi_valued_index;
 mod tests_index_merge_union;
 #[cfg(test)]
 mod tests_insert_go;
+#[cfg(test)]
+mod tests_max_keys_read;
 #[cfg(test)]
 mod tests_nontransactional;
 #[cfg(test)]

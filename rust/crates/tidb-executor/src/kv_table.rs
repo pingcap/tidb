@@ -77,7 +77,7 @@ pub use table_scan::{
 };
 pub(crate) use table_scan::{FinishedLookup, FinishedLookupChunk};
 
-use crate::storage::{MemTableStorage, StorageError, TableStorage};
+use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use auto_id::AutoIdAllocator;
 use row_decoder::fill_handle_columns;
 use std::collections::HashSet;
@@ -507,6 +507,10 @@ pub struct KvTable {
     /// The byte store, reached through the [`TableStorage`] seam (module
     /// doc), so a TiKV-backed backend replaces it without touching this file.
     store: Box<dyn TableStorage>,
+    /// The statement budget a reader's own copy counts its scanned keys
+    /// against (see [`Self::count_keys_read`]); `None` on catalog tables and
+    /// on reads Go serves outside the coprocessor.
+    keys_read: Option<crate::KeysReadBudget>,
     /// Go `TableInfo.PKIsHandle`: the offset of the single integer primary-key
     /// column whose value IS the row handle, when the table has one.
     pk_handle_offset: Option<usize>,
@@ -1032,6 +1036,37 @@ pub(crate) struct RowConflict {
     pub(crate) error: KvTableError,
 }
 
+/// A reader's range iterator under a statement budget: each entry it moves
+/// past is one key its scan processed, unistore's `tableScanExec` /
+/// `indexScanExec` row count.
+struct KeysReadIterator {
+    inner: Box<dyn StorageIterator>,
+    budget: crate::KeysReadBudget,
+}
+
+impl StorageIterator for KeysReadIterator {
+    fn valid(&self) -> bool {
+        self.inner.valid()
+    }
+
+    fn key(&self) -> &Key {
+        self.inner.key()
+    }
+
+    fn value(&self) -> &[u8] {
+        self.inner.value()
+    }
+
+    fn next(&mut self) -> Result<(), StorageError> {
+        self.budget.add(1)?;
+        self.inner.next()
+    }
+
+    fn close(&mut self) {
+        self.inner.close();
+    }
+}
+
 impl From<crate::storage::StorageError> for KvTableError {
     fn from(error: crate::storage::StorageError) -> Self {
         Self::Storage(error)
@@ -1229,6 +1264,7 @@ impl KvTable {
             hidden_columns: 0,
             mv_key_part_sources: std::collections::BTreeMap::new(),
             store,
+            keys_read: None,
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
             max_index_id: 0,
@@ -2165,6 +2201,46 @@ impl KvTable {
     /// statement snapshot.
     pub(crate) fn point_rpc_counts(&mut self) -> (u64, u64) {
         self.store.point_rpc_counts()
+    }
+
+    /// Counts the keys this copy's range scans and handle lookups process
+    /// against the statement's budget, as Go's coprocessor reads add each
+    /// response's `ScanDetail.ProcessedKeys`. Reader executors install it on
+    /// their own copy; point gets, foreign-key checks and DDL reads stay
+    /// outside it, as they stay outside Go's coprocessor.
+    pub(crate) fn count_keys_read(&mut self, budget: &crate::KeysReadBudget) {
+        self.keys_read = Some(budget.clone());
+    }
+
+    /// Opens one scan range, counting the keys it moves past when this copy
+    /// carries a statement budget.
+    pub(crate) fn scan_iterator(
+        &mut self,
+        low: &Key,
+        high: &Key,
+        descending: bool,
+    ) -> Result<Box<dyn StorageIterator>, crate::storage::StorageError> {
+        let iterator = if descending {
+            self.store.iter_reverse(Some(high), Some(low))?
+        } else {
+            self.store.iter(Some(low), Some(high))?
+        };
+        Ok(match &self.keys_read {
+            Some(budget) => Box::new(KeysReadIterator {
+                inner: iterator,
+                budget: budget.clone(),
+            }),
+            None => iterator,
+        })
+    }
+
+    /// Adds the rows a handle lookup found, the keys Go's table-side
+    /// coprocessor scan processes.
+    pub(crate) fn note_keys_read(&self, keys: u64) -> Result<(), crate::storage::StorageError> {
+        match &self.keys_read {
+            Some(budget) if keys > 0 => budget.add(keys),
+            _ => Ok(()),
+        }
     }
 
     /// Installs point-reader options on the same backend that serves its keys.

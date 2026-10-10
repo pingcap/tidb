@@ -115,3 +115,31 @@ fn an_empty_common_handle_range_stays_an_or_partial() {
     );
     assert!(row_text(session.run(sql)).is_empty());
 }
+
+/// `executor/explain.test`'s TestIssue49605: Go walks `PossibleAccessPaths`
+/// with the table path first and `cmpAlternatives` keeps the first of equal
+/// alternatives, so `h > 240817` reads through the clustered PRIMARY as a
+/// TableRangeScan rather than the `idx_23 (h, f)` that ties with it; without
+/// STREAM_AGG that union costs more than reading the table.
+#[test]
+fn a_table_partial_wins_a_tie_against_an_index() {
+    let mut session = Session::new();
+    session.run(r#"CREATE TABLE `t` (`a` mediumint(9) NOT NULL,`b` year(4) NOT NULL,`c` varbinary(62) NOT NULL,`d` text COLLATE utf8mb4_unicode_ci NOT NULL,`e` tinyint(4) NOT NULL DEFAULT '115',`f` smallint(6) DEFAULT '2675',`g` date DEFAULT '1981-09-17',`h` mediumint(8) unsigned NOT NULL,`i` varchar(384) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL,UNIQUE KEY `idx_23` (`h`,`f`),PRIMARY KEY (`h`,`a`) /*T![clustered_index] CLUSTERED */,UNIQUE KEY `idx_25` (`h`,`i`(5),`e`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (`h`) PARTITIONS 1"#).unwrap();
+    session.run(r#"INSERT INTO `t` VALUES (2065948,1999,_binary '8jxN','rf',-54,-5656,'1987-07-03',259254,'7me坨'),(-8248164,2024,_binary 'zA5A','s)DAkX3',-93,-12983,'2027-12-18',299573,'LUf咲'),(-6131509,2023,_binary 'xdex#Y2','1th%h',-51,19149,'2013-10-28',428279,'矷莒X'),(7545837,1998,_binary 'PCVO','&(lJw6',30,4093,'1987-07-03',736235,'腏@TOIJ'),(-7449472,2029,_binary 'B7&jrl','EjbFfX!',80,-7590,'2011-11-03',765580,'堮ZQF_'),(-7176200,1988,_binary 'tiPglv7mX_#','CnCtNb',-25,NULL,'1987-07-03',842956,'Gq羣嗳殓'),(-115168,2036,_binary 'BqmX$-4It','!8#dvH',82,18787,'1991-09-20',921706,'椉2庘v'),(6665100,1987,_binary '4IJgk0fr4','(D',-73,28628,'1987-07-03',1149668,'摔玝S渉'),(-4065661,2021,_binary '8G%','xDO39xw#',-107,17356,'1970-12-20',1316239,'+0c35掬-阗'),(7622462,1990,_binary '&o+)s)D0','kjoS9Dzld',84,688,'1987-07-03',1403663,'$H鍿_M~'),(5269354,2018,_binary 'wq9hC8','s8XPrN+',-2,-31272,'2008-05-26',1534517,'y椁n躁Q'),(2065948,1982,_binary '8jxNjbksV','g$+i4dg',11,19800,'1987-07-03',1591457,'z^+H~薼A'),(4076971,2024,_binary '&!RrsH','7Mpvk',-63,-632,'2032-10-28',1611011,'鬰+EXmx'),(3522062,1981,_binary ')nq#!UiHKk8','j~wFe77ai',50,6951,'1987-07-03',1716854,'J'),(7859777,2012,_binary 'PBA5xgJ&G&','UM7o!u',18,-5978,'1987-07-03',1967012,'e)浢L獹'),(2065948,2028,_binary '8jxNjbk','JmsEki9t4',51,12002,'2017-12-23',1981288,'mp氏襚')"#).unwrap();
+    assert_eq!(
+        plan_tree(
+            &mut session,
+            r#"SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`"#
+        )[3..],
+        [
+            "└─IndexMerge partition:all type: union",
+            "├─TableRangeScan(Build) table:t range:(240817,+inf], keep order:false, stats:pseudo",
+            "├─IndexFullScan(Build) table:t, index:idx_25(h, i, e) keep order:false, stats:pseudo",
+            "└─TableRowIDScan(Probe) table:t keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        plan_tree(&mut session, r#"SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`"#).last().map(String::as_str),
+        Some("└─TableFullScan table:t keep order:false, stats:pseudo")
+    );
+}

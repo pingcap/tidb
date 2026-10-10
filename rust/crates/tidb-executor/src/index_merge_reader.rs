@@ -1277,11 +1277,13 @@ impl IndexMergeReaderExec {
     #[must_use]
     pub fn new(
         meta: ExecutorMeta,
-        table: KvTable,
+        mut table: KvTable,
         decode_context: RowDecodeContext,
         partials: Vec<Box<dyn PartialHandleSource>>,
         is_intersection: bool,
     ) -> Self {
+        // The table side is a coprocessor read of the handles' rows.
+        table.count_keys_read(decode_context.keys_read());
         IndexMergeReaderExec {
             meta,
             table,

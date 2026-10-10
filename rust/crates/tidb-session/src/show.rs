@@ -471,8 +471,8 @@ const SHOW_COLLATION_COLUMNS: &[&str; 7] = &[
 ///
 /// NOT modelled (this tier has no metrics/server tier to read them from):
 /// the `Performance_schema_session_connect_attrs_*` counters,
-/// `ddl_schema_version`, `server_id`, `last_plan_binding_update_time`, and
-/// `tidb_keys_examined`.
+/// `ddl_schema_version`, `server_id` and `last_plan_binding_update_time`.
+/// `Uptime` and `tidb_keys_examined` are appended per statement.
 const SHOW_STATUS_VARS: &[(&str, &str, bool)] = &[
     ("Compression", "OFF", true),
     ("Compression_algorithm", "", true),
@@ -1269,10 +1269,14 @@ impl Session {
                         .map_or(0, |since| since.as_secs() as i64);
                     (now - start).max(0).to_string()
                 });
+                // `tidb_keys_examined` (`statusvar.go`), session scope.
+                let keys_examined = self.keys_examined().to_string();
                 let dynamic = uptime
                     .as_ref()
-                    .map(|value| ("Uptime", value.as_str(), false));
-                for &(name, value, session_only) in SHOW_STATUS_VARS.iter().chain(dynamic.iter()) {
+                    .map(|value| ("Uptime", value.as_str(), false))
+                    .into_iter()
+                    .chain([("tidb_keys_examined", keys_examined.as_str(), true)]);
+                for (name, value, session_only) in SHOW_STATUS_VARS.iter().copied().chain(dynamic) {
                     // Go fills these two per connection from the negotiated
                     // TLS state (`server.go:1329`); a plaintext connection
                     // keeps the table's empty strings.
@@ -1562,6 +1566,9 @@ impl Session {
             // answer without touching a user table, and keeping them here
             // pushed this file past the repository's 2200-line ceiling.
             tidb_ast::AdminStmt::Flush(flush) => {
+                if matches!(flush.target, tidb_ast::FlushTarget::Status) {
+                    self.flush_keys_examined();
+                }
                 let current_db = self.current_db.clone();
                 let shared = self.shared_catalog();
                 let mut catalog = shared

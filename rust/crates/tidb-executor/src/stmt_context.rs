@@ -308,6 +308,48 @@ impl PlannerWarningAppender {
     }
 }
 
+/// Go `kv.Request.MaxKeysRead` with its statement-wide `MaxKeysReadCounter`:
+/// every coprocessor read of one statement adds the keys its scans processed
+/// (`ScanDetail.ProcessedKeys`, which unistore reports as its scans' row
+/// count) to one counter, and a read that takes the total past a nonzero
+/// limit fails with `ErrMaxKeysReadExceeded` (8274). The same counter is the
+/// statement's share of `tidb_keys_examined`.
+#[derive(Clone, Debug, Default)]
+pub struct KeysReadBudget {
+    read: Arc<AtomicU64>,
+    max: u64,
+}
+
+impl KeysReadBudget {
+    /// A budget over the statement's shared counter; `max` 0 is unlimited.
+    #[must_use]
+    pub fn new(read: Arc<AtomicU64>, max: u64) -> Self {
+        Self { read, max }
+    }
+
+    /// The keys this statement's reads have processed so far.
+    #[must_use]
+    pub fn read(&self) -> u64 {
+        self.read.load(Ordering::Relaxed)
+    }
+
+    /// Adds processed keys and checks the limit, as `copIterator.Next` does
+    /// once each response's scan detail arrives.
+    pub fn add(&self, keys: u64) -> Result<(), crate::storage::StorageError> {
+        let total = self
+            .read
+            .fetch_add(keys, Ordering::Relaxed)
+            .saturating_add(keys);
+        if self.max > 0 && total > self.max {
+            return Err(crate::storage::StorageError::Sql(crate::MysqlError::new(
+                tidb_error::tidb::errcode::ErrMaxKeysReadExceeded,
+                "tidb_max_keys_read limit exceeded",
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
 /// condition warns or fails the statement.
@@ -838,6 +880,7 @@ pub struct StmtContextData {
     publish_brief_binary_plan: bool,
     statement_phase_observer: Option<Arc<dyn Fn(StatementPhase) + Send + Sync>>,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    keys_read: KeysReadBudget,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -1617,6 +1660,14 @@ context_configuration! {
         self
     }
 
+    /// Shares the statement's processed-keys counter and limit with every
+    /// read of this execution.
+    #[must_use]
+    pub fn with_keys_read(mut self, budget: KeysReadBudget) -> Self {
+        self.keys_read = budget;
+        self
+    }
+
     /// Installs the existing statement phase notification.
     pub fn with_statement_phase_observer(
         mut self,
@@ -2167,6 +2218,7 @@ impl StmtContext {
             publish_brief_binary_plan: true,
             statement_phase_observer: None,
             kv_exec_counter: Default::default(),
+            keys_read: KeysReadBudget::default(),
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
@@ -3694,6 +3746,12 @@ impl StmtContext {
     /// Borrows the counter shared by every request in this execution.
     pub fn kv_exec_counter(&self) -> tidb_util::topsql_stmtstats::KvExecCounterHandle {
         self.kv_exec_counter.clone()
+    }
+
+    /// The statement's processed-keys budget; see [`KeysReadBudget`].
+    #[must_use]
+    pub fn keys_read(&self) -> &KeysReadBudget {
+        &self.keys_read
     }
 
     /// Go executor InitSnapshotWithSessCtx/newReplicaReadAdjuster for point readers.

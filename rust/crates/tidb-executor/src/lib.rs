@@ -280,8 +280,8 @@ pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
-    GlobalSysvarAccessor, ProcessPlanInfo, RetryAutoIds, RowIdShardGenerator, SequenceSnapshot,
-    StatementClass, StatementPhase, StmtContext, StmtContextSessionState,
+    GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo, RetryAutoIds, RowIdShardGenerator,
+    SequenceSnapshot, StatementClass, StatementPhase, StmtContext, StmtContextSessionState,
 };
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
