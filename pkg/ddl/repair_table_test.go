@@ -144,6 +144,7 @@ func TestRepairTable(t *testing.T) {
 	})
 
 	// Exec the repair statement to override the tableInfo.
+	tk.MustExec("set tidb_default_auto_id_cache = 1")
 	tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key nonclustered auto_increment, b varchar(5), c int);")
 	require.NoError(t, repairErr)
 
@@ -158,6 +159,7 @@ func TestRepairTable(t *testing.T) {
 	require.Equal(t, 1, len(repairTable.Meta().Indices))
 	require.Equal(t, originTableInfo.Columns[0].ID, repairTable.Meta().Indices[0].ID)
 	require.Equal(t, originTableInfo.AutoIncID, repairTable.Meta().AutoIncID)
+	require.Zero(t, repairTable.Meta().AutoIDCache)
 
 	require.Equal(t, mysql.TypeLong, repairTable.Meta().Columns[0].GetType())
 	require.Equal(t, mysql.TypeVarchar, repairTable.Meta().Columns[1].GetType())
