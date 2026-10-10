@@ -174,15 +174,23 @@ func NewPlainIndexKVGenerator(
 	}
 }
 
-// Next returns the next index key and value.
+// IndexedValues returns the scalar indexed values for the next entry without advancing.
+// It must only be called while Valid returns true. After a successful Next,
+// it refers to the following entry. The returned slice is borrowed and must not be
+// modified by the caller. Key generation may normalize the values in place, but
+// advancing to subsequent entries does not reuse the slice.
+func (iter *IndexKVGenerator) IndexedValues() []types.Datum {
+	if iter.isMultiValue {
+		return iter.allIdxVals[iter.i]
+	}
+	return iter.idxVals
+}
+
+// Next returns the next index key and value, advancing only on success.
+// It must only be called while Valid returns true.
 // For non multi-value indexes, there is only one index kv.
 func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool, error) {
-	var val []types.Datum
-	if iter.isMultiValue {
-		val = iter.allIdxVals[iter.i]
-	} else {
-		val = iter.idxVals
-	}
+	val := iter.IndexedValues()
 	key, distinct, err := iter.index.GenIndexKey(iter.ec, iter.loc, val, iter.handle, keyBuf)
 	if err != nil {
 		return nil, nil, false, err

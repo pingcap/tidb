@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -181,6 +182,88 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	return tblInfo
+}
+
+func TestIndexKVGenerator(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	for _, tc := range []struct {
+		name   string
+		sql    string
+		values []types.Datum
+		want   [][]types.Datum
+	}{
+		{"plain", "create table t (a int, unique index i(a))", types.MakeDatums(7), [][]types.Datum{types.MakeDatums(7)}},
+		{"plain null", "create table t (a int, unique index i(a))", types.MakeDatums(nil), [][]types.Datum{types.MakeDatums(nil)}},
+		{"multi", "create table t (a json, unique index i((cast(a as signed array))))", types.MakeDatums(types.CreateBinaryJSON([]any{int64(7), int64(8), int64(7)})), [][]types.Datum{types.MakeDatums(7), types.MakeDatums(8)}},
+		{"empty", "create table t (a json, unique index i((cast(a as signed array))))", types.MakeDatums(types.CreateBinaryJSON([]any{})), nil},
+		{"null", "create table t (a json, unique index i((cast(a as signed array))))", types.MakeDatums(nil), [][]types.Datum{types.MakeDatums(nil)}},
+		{"composite", "create table t (a json, b int, unique index i(b, (cast(a as signed array))))", types.MakeDatums(3, types.CreateBinaryJSON([]any{int64(7), int64(8), int64(7)})), [][]types.Datum{types.MakeDatums(3, 7), types.MakeDatums(3, 8)}},
+		{"composite prefix", "create table t (a json, b varchar(8), unique index i(b(2), (cast(a as signed array))))", types.MakeDatums("abcd", types.CreateBinaryJSON([]any{int64(7), int64(8)})), [][]types.Datum{types.MakeDatums("abcd", 7), types.MakeDatums("abcd", 8)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tblInfo := buildTableInfo(t, tc.sql)
+			idx, err := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
+			require.NoError(t, err)
+			iter := idx.GenIndexKVIter(sc.ErrCtx(), sc.TimeZone(), tc.values, kv.IntHandle(1), nil)
+			var retained [][]types.Datum
+			for _, want := range tc.want {
+				require.True(t, iter.Valid())
+				values := iter.IndexedValues()
+				require.Equal(t, want, values)
+				require.Equal(t, values, iter.IndexedValues()) // Access does not advance.
+				retained = append(retained, values)
+				wantKey, wantDistinct, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), want, kv.IntHandle(1), nil)
+				require.NoError(t, err)
+				key, value, distinct, err := iter.Next(nil, nil)
+				require.NoError(t, err)
+				require.Equal(t, wantKey, key)
+				require.Equal(t, wantDistinct, distinct)
+				wantValue, err := idx.GenIndexValue(sc.ErrCtx(), sc.TimeZone(), distinct, false, want, kv.IntHandle(1), nil, nil)
+				require.NoError(t, err)
+				require.Equal(t, wantValue, value)
+			}
+			require.False(t, iter.Valid())
+			require.Equal(t, tc.want, retained) // Advancing does not reuse entry slices.
+		})
+	}
+}
+
+type failingGeneratorIndex struct {
+	table.Index
+	keyErr, valueErr error
+}
+
+func (idx *failingGeneratorIndex) GenIndexKey(_ errctx.Context, _ *time.Location, _ []types.Datum, _ kv.Handle, _ []byte) ([]byte, bool, error) {
+	return []byte("key"), true, idx.keyErr
+}
+
+func (idx *failingGeneratorIndex) GenIndexValue(_ errctx.Context, _ *time.Location, _, _ bool, _ []types.Datum, _ kv.Handle, _ []types.Datum, _ []byte) ([]byte, error) {
+	return nil, idx.valueErr
+}
+
+func TestIndexKVGeneratorErrors(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	keyErr, valueErr := fmt.Errorf("key error"), fmt.Errorf("value error")
+	idx := &failingGeneratorIndex{keyErr: keyErr, valueErr: valueErr}
+	values := types.MakeDatums(7)
+	iter := table.NewPlainIndexKVGenerator(idx, sc.ErrCtx(), sc.TimeZone(), kv.IntHandle(1), nil, values)
+	_, _, _, err := iter.Next(nil, nil)
+	require.ErrorIs(t, err, keyErr)
+	require.True(t, iter.Valid())
+	require.Equal(t, values, iter.IndexedValues())
+
+	idx.keyErr = nil
+	_, _, _, err = iter.Next(nil, nil)
+	require.ErrorIs(t, err, valueErr)
+	require.True(t, iter.Valid())
+	require.Equal(t, values, iter.IndexedValues())
+
+	idx.valueErr = nil
+	key, _, distinct, err := iter.Next(nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("key"), key)
+	require.True(t, distinct)
+	require.False(t, iter.Valid())
 }
 
 func TestGenIndexValueFromIndex(t *testing.T) {
