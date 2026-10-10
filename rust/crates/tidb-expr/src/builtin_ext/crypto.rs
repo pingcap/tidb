@@ -363,15 +363,19 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// statement context and is intentionally not fabricated in this value-only
 /// dispatch.
 fn password_hash(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    // go `builtinPasswordSig`: the deprecated spelling warns
-    // ErrDeprecatedSyntaxNoReplacement (1681) and still hashes.
+    // go `builtinPasswordSig.evalString`: an empty password is '' without a
+    // word; any other spelling warns ErrDeprecatedSyntaxNoReplacement (1681)
+    // and still hashes.
+    let Some(bytes) = hash_input(value)? else {
+        return Ok(Datum::Null);
+    };
+    if bytes.is_empty() {
+        return Ok(Datum::new_string(String::new()));
+    }
     ctx.append_warning(
         1681,
         "PASSWORD is deprecated and will be removed in a future release.",
     );
-    let Some(bytes) = hash_input(value)? else {
-        return Ok(Datum::Null);
-    };
     Ok(Datum::new_string(tidb_parser::auth::encode_password_bytes(
         &bytes,
     )))

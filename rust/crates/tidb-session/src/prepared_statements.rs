@@ -409,23 +409,30 @@ impl Session {
 ///
 /// Go's `GeneratePlanCacheStmtWithAST` refuses `IMPORT INTO`, `LOAD DATA`,
 /// `PREPARE`, `EXECUTE`, `DEALLOCATE`, a non-transactional DML and a
-/// `SELECT ... INTO OUTFILE` with `ErrUnsupportedPs`. The three the suite
-/// writes are the prepared-statement kinds themselves -- captured:
+/// `SELECT ... INTO OUTFILE` with `ErrUnsupportedPs` -- captured:
 /// `prepare pe from 'execute ob using @one'` is
 /// `[executor:1295]This command is not supported in the prepared statement
-/// protocol yet` -- so those are the arms this covers; the loaders and
-/// `INTO OUTFILE` are not modelled by this engine at all and would be refused
-/// on their own.
+/// protocol yet`, and so is `prepare stmt from "load data local infile ..."`.
 fn is_unpreparable(stmt: &Stmt) -> bool {
-    let Stmt::Session(session) = stmt else {
-        return false;
-    };
-    matches!(
-        &**session,
-        tidb_ast::SessionStmt::Prepare { .. }
-            | tidb_ast::SessionStmt::Execute { .. }
-            | tidb_ast::SessionStmt::Deallocate(_)
-    )
+    match stmt {
+        Stmt::Session(session) => matches!(
+            &**session,
+            tidb_ast::SessionStmt::Prepare { .. }
+                | tidb_ast::SessionStmt::Execute { .. }
+                | tidb_ast::SessionStmt::Deallocate(_)
+        ),
+        Stmt::Dml(dml) => matches!(
+            &**dml,
+            tidb_ast::DmlStmt::ImportInto(_)
+                | tidb_ast::DmlStmt::LoadData(_)
+                | tidb_ast::DmlStmt::Batch(_)
+        ),
+        Stmt::Query(query) => matches!(
+            &**query,
+            QueryStmt::Select(select) if select.into_outfile.is_some()
+        ),
+        _ => false,
+    }
 }
 
 /// go's plan for a FROM-less `SELECT` roots at a `TableDual`, which the

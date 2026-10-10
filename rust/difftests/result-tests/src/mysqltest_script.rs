@@ -302,7 +302,11 @@ pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
         // the same statement.
         let line = strip_trailing_comment(line);
         let trimmed = line.trim();
-        buffer.push(line);
+        // The recorder trims every script line before joining a statement's
+        // lines, so a continuation line's indentation never reaches the
+        // server -- nor the column name it derives from the SQL text
+        // (`elt(4, "hello", "中文",\n"tidb")`).
+        buffer.push(trimmed);
         if !trimmed.ends_with(';') {
             continue;
         }

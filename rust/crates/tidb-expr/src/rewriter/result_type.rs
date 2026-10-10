@@ -581,21 +581,36 @@ fn raw_arg_flen(args: &[Expression], i: usize) -> i64 {
         .map_or(tidb_datatype::UNSPECIFIED_LENGTH, FieldType::flen)
 }
 
-/// Go `getExpressionFsp` for `timeFunctionClass`: a constant uses the digits
-/// written after its first decimal point (capped at `MaxFsp`); a non-constant
-/// inherits the argument type's scale after the implicit TIME cast.
+/// Go `getExpressionFsp`: a constant's `types.GetFsp` of its string form,
+/// otherwise the decimal `WrapWithCastAsTime(arg, DATETIME)` gives it --
+/// the argument's own for DATE/DATETIME/TIMESTAMP (the early return), 0 for
+/// an integer, `MaxFsp` for a string, real or JSON, and the argument's own
+/// (capped) for a duration or decimal.
 fn time_argument_fsp(arg: &Expression) -> i64 {
     const MAX_FSP: i64 = 6;
     if let Expression::Constant(constant) = arg {
-        return constant.value.sql_string().ok().map_or(0, |value| {
-            value.find('.').map_or(0, |dot| {
-                (value.len() - dot - 1).min(MAX_FSP as usize) as i64
-            })
-        });
+        return constant
+            .value
+            .sql_string()
+            .ok()
+            .map_or(0, |value| i64::from(tidb_datatype::get_fsp(&value)));
     }
-    arg.static_type()
-        .map_or(0, FieldType::decimal)
-        .clamp(0, MAX_FSP)
+    let Some(source) = arg.static_type() else {
+        return 0;
+    };
+    let decimal = match source.code() {
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
+            source.decimal()
+        }
+        _ => match source.eval_type() {
+            tidb_datatype::EvalType::Int => 0,
+            tidb_datatype::EvalType::String
+            | tidb_datatype::EvalType::Real
+            | tidb_datatype::EvalType::Json => MAX_FSP,
+            _ => source.decimal(),
+        },
+    };
+    decimal.clamp(0, MAX_FSP)
 }
 
 /// `timeFunctionClass.getFunction` + `setDecimalAndFlenForTime`.
@@ -1569,9 +1584,18 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         // holding 12.191: `greatest(c,0)` prints 12.190999984741211 while
         // `case ... then c else 0 end` prints 12.191.
         "greatest" | "least" => extremum_return_type(args)?,
-        // `NULLIF` keeps its first argument's type; the second only decides
-        // whether the result is NULL.
-        "nullif" => args.first()?.static_type()?.clone(),
+        // Go rewrites NULLIF(a, b) into IF(a = b, NULL, a) whose type is
+        // `a`'s with NotNullFlag cleared, and a binary charset for a
+        // non-string one (`expression_rewriter.go`'s `ast.Nullif` arm).
+        "nullif" => {
+            let mut ret = args.first()?.static_type()?.clone();
+            ret.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            if !ret.eval_type().is_string_kind() {
+                ret.set_charset_name("binary");
+                ret.set_collation_name("binary");
+            }
+            ret
+        }
         // `ANY_VALUE` is the identity on both value AND type: Go
         // `anyValueFunctionClass.getFunction` clones the argument's whole
         // `FieldType` over the builder's (`*bf.tp = *ft`), so the charset,
@@ -1879,16 +1903,20 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         "compress" if args.len() == 1 => {
             crypto::compress_return_type(str_arg_flen(args, 0), text())
         }
+        // `aesEncryptFunctionClass` / `aesDecryptFunctionClass` size the
+        // result after `newBaseBuiltinFuncWithTp` cast the argument to a
+        // string, so an INT is 20 wide (`aes_encrypt(int_col, k)` is
+        // varbinary(32)).
         "aes_encrypt" => {
             let mut ft = text();
-            let input = raw_arg_flen(args, 0);
+            let input = str_arg_flen(args, 0);
             ft.set_flen(16 * (input / 16 + 1));
             set_binary_charset(&mut ft);
             ft
         }
         "aes_decrypt" => {
             let mut ft = text();
-            ft.set_flen(raw_arg_flen(args, 0));
+            ft.set_flen(str_arg_flen(args, 0));
             set_binary_charset(&mut ft);
             ft
         }

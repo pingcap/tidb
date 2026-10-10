@@ -117,9 +117,9 @@ impl Parser {
     /// `parseLikeExpr` (`pkg/parser/expr_parser.go`): the escape
     /// argument is a MANDATORY string literal of BYTE length 0 or 1
     /// (any other length is a genuine `ParseError`,
-    /// `ErrWrongArguments`) — folds the "explicit but matches the
-    /// default backslash" case into `None` directly, matching
-    /// `tidb_ast::Expr::Like`'s own doc for why that's safe.
+    /// `ErrWrongArguments`). A written clause is always `Some`, even
+    /// `ESCAPE '\'`: Go keeps `EscapeExplicit`, which decides whether
+    /// NO_BACKSLASH_ESCAPES may drop the escape.
     fn parse_opt_escape_clause(&mut self) -> PResult<Option<u8>> {
         if !self.is_kw("ESCAPE") {
             return Ok(None);
@@ -131,7 +131,6 @@ impl Parser {
         let decoded = self.bumped_string();
         match decoded.as_bytes() {
             [] => Ok(Some(0)),
-            [b'\\'] => Ok(None),
             [b] => Ok(Some(*b)),
             _ => Err(self.err_coded(1210, "Incorrect arguments to ESCAPE")),
         }

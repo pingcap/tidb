@@ -281,9 +281,12 @@ fn date_applies_its_own_zero_date_modes_after_the_argument_cast() {
             "sql_mode='{sql_mode}'"
         );
         let expected_warnings = if warns {
+            // `WrapWithCastAsTime` gives a string argument fsp 6, and DATE
+            // names the cast value (recorded: `date('0000-00-01')` warns
+            // '0000-00-01 00:00:00.000000').
             vec![(
                 1292,
-                "Incorrect datetime value: '2024-00-01 12:34:56'".to_owned(),
+                "Incorrect datetime value: '2024-00-01 12:34:56.000000'".to_owned(),
             )]
         } else {
             Vec::new()

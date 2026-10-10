@@ -189,6 +189,13 @@ impl std::error::Error for TextFormatError {}
 /// shortest-round-trip digits; this function only normalizes the exponent
 /// spelling and MySQL-specific mantissa shape.
 pub fn append_format_float(buffer: &mut Vec<u8>, value: f64, precision: i32, bit_size: u8) {
+    // Go's FLOAT caller passes `float64(row.GetFloat32(idx))`: the chunk
+    // stored the value as float32, so one past its range is +Inf and prints 0.
+    let value = if bit_size == 32 {
+        f64::from(value as f32)
+    } else {
+        value
+    };
     if value.is_nan() || value.abs() > f64::MAX {
         buffer.push(b'0');
         return;

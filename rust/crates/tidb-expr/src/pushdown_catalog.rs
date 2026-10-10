@@ -1486,6 +1486,24 @@ pub const CATALOG: &[BuiltinSignature] = &[
         ScalarFuncSig::LowerUtf8,
         RetCollation::FirstArgString,
     ),
+    // `tidbToBinaryFunctionClass` / `tidbFromBinaryFunctionClass`: the
+    // charset boundary `HandleBinaryLiteral` inserts. The node carries its
+    // own result type (the target charset), so the call's metadata is read
+    // from the expression the way a control function's is.
+    string_signature(
+        "to_binary",
+        &[ArgPattern::any_string()],
+        &[EvalType::String],
+        ScalarFuncSig::ToBinary,
+        RetCollation::ControlBranches,
+    ),
+    string_signature(
+        "from_binary",
+        &[ArgPattern::any_string()],
+        &[EvalType::String],
+        ScalarFuncSig::FromBinary,
+        RetCollation::ControlBranches,
+    ),
     // `substringFunctionClass.getFunction`, whose switch is arity crossed with
     // `types.IsBinaryStr(args[0])`. TiDB registers the one class under three
     // names (`builtin.go`: `ast.Substr`, `ast.Substring`, `ast.Mid`), each
@@ -2662,6 +2680,24 @@ fn from_expression_with_context(
                     charset: field.charset_name().to_owned(),
                     collation: field.collation_name().to_owned(),
                 };
+            }
+            // `to_binary` / `from_binary` carry their own result type (the
+            // charset they convert to), which the encoder sends as is.
+            if matches!(function.func_name.lowercase(), "to_binary" | "from_binary") {
+                if let Some(PbScalar::Call { control, .. }) = &mut described {
+                    let Some(field) = expression.static_type() else {
+                        return Ok(None);
+                    };
+                    *control = Some(Box::new(ControlMetadata {
+                        field_type: field.clone(),
+                        collation: crate::expr_collation::ExprCollation {
+                            coer: crate::collation_derive::coercibility_of(expression),
+                            repe: crate::collation_derive::repertoire_of(expression),
+                            charset: field.charset_name().to_owned(),
+                            collation: field.collation_name().to_owned(),
+                        },
+                    }));
+                }
             }
             Ok(described)
         }

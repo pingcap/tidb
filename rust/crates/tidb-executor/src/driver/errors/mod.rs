@@ -28,6 +28,7 @@ mod txn;
 mod var;
 
 pub use driver_error::DriverError;
+pub(crate) use exec::coprocessor_evaluation_error;
 pub use schema::SchemaErrorKind;
 pub use txn::TxnErrorKind;
 pub use var::VarErrorKind;

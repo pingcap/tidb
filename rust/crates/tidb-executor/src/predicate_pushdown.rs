@@ -272,9 +272,13 @@ impl PushedScanFilter {
     /// the remote request when the expression has a TiKV representation.
     #[must_use]
     pub(crate) fn from_physical_conditions(
-        filters: Vec<Expression>,
+        mut filters: Vec<Expression>,
         ctx: &crate::StmtContext,
     ) -> Self {
+        // The source evaluates what a coprocessor rebuilds from the request.
+        filters
+            .iter_mut()
+            .for_each(tidb_expr::scalar_function::into_coprocessor_form);
         let predicates = filters
             .iter()
             .filter_map(|filter| describe_execution_condition(filter, ctx).ok())
@@ -334,6 +338,7 @@ impl PushedScanFilter {
             .collect();
         for filter in &additional.filters {
             let mut filter = filter.clone();
+            tidb_expr::scalar_function::into_coprocessor_form(&mut filter);
             if !existing.insert(filter.hash_code().to_vec())
                 && !tidb_expr::expr_util::is_mutable_effects_expr(&filter)
             {
@@ -371,7 +376,10 @@ impl PushedScanFilter {
                 }
                 continue;
             }
-            if truthy_of(&filter.eval(ctx, row)?)? != Some(true) {
+            let value = filter
+                .eval(ctx, row)
+                .map_err(crate::driver::coprocessor_evaluation_error)?;
+            if truthy_of(&value)? != Some(true) {
                 return Ok(false);
             }
         }

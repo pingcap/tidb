@@ -1161,43 +1161,57 @@ fn to_days_source_vectors() {
     assert_eq!(calendar::to_days(&[Datum::Null]).unwrap(), Datum::Null);
 }
 
-/// Exact scalar rows from `TestTimeDiff` at
-/// `pkg/expression/builtin_time_test.go:1985`.  The Go suite also checks
-/// typed result FSP and StatementContext warnings; those metadata paths
-/// remain explicit partial evidence rather than being guessed here.
+/// Rows from `TestTimeDiff` at `pkg/expression/builtin_time_test.go:1985`:
+/// two string constants take `builtinStringStringTimeDiffSig`, whose result
+/// precision is `max(types.GetFsp(arg))`.
 #[test]
 fn time_diff_source_vectors() {
-    for ((left, right), want) in [
+    let ctx = crate::NoColumns;
+    for ((left, right), want, fsp) in [
         (
             ("2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"),
             "-00:00:00.000001",
+            6,
         ),
         (
             ("2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"),
             "46:58:57.999999",
+            6,
         ),
-        (("2016-12-00 12:00:00", "2016-12-01 12:00:00"), "-24:00:00"),
-        (("10:10:10", "10:9:0"), "00:01:10"),
-        (("00:00:00.000000", "00:00:00.000001"), "-00:00:00.000001"),
+        (
+            ("2016-12-00 12:00:00", "2016-12-01 12:00:00"),
+            "-24:00:00",
+            0,
+        ),
+        (("10:10:10", "10:9:0"), "00:01:10", 0),
+        (
+            ("00:00:00.000000", "00:00:00.000001"),
+            "-00:00:00.000001",
+            6,
+        ),
     ] {
-        assert_eq!(
-            time_diff(&[string_datum(left), string_datum(right)]).unwrap(),
-            Datum::new_string(want.to_string()),
-            "TIMEDIFF({left:?}, {right:?})"
-        );
+        let got =
+            time_diff::time_diff_untyped(&[string_datum(left), string_datum(right)], &ctx).unwrap();
+        let Datum::Duration(duration) = got else {
+            panic!("TIMEDIFF({left:?}, {right:?}) = {got:?}");
+        };
+        assert_eq!(duration.to_string(), want, "TIMEDIFF({left:?}, {right:?})");
+        assert_eq!(duration.fsp(), fsp, "TIMEDIFF({left:?}, {right:?})");
     }
+    // A datetime against a duration is NULL; the empty string is a
+    // truncated zero duration, so it is NULL beside a datetime too.
     for (left, right) in [
         ("2016-12-00 12:00:00", "10:9:0"),
         ("2016-12-00 12:00:00", ""),
     ] {
         assert_eq!(
-            time_diff(&[string_datum(left), string_datum(right)]).unwrap(),
+            time_diff::time_diff_untyped(&[string_datum(left), string_datum(right)], &ctx).unwrap(),
             Datum::Null,
             "TIMEDIFF({left:?}, {right:?})"
         );
     }
     assert_eq!(
-        time_diff(&[Datum::Null, string_datum("00:00:00")]).unwrap(),
+        time_diff::time_diff_untyped(&[Datum::Null, string_datum("00:00:00")], &ctx).unwrap(),
         Datum::Null
     );
 }

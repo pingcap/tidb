@@ -619,15 +619,11 @@ pub enum Expr {
     /// default escape character (when `ESCAPE` is omitted entirely) is
     /// `\` — read directly from `pkg/parser/expr_parser.go`'s
     /// `parseLikeExpr`, which sets `Escape = '\\'` unconditionally in
-    /// that case. `escape` here is `None` for BOTH that default case
-    /// AND — a real, deliberate restore-elision quirk, NOT modelled as
-    /// two separate booleans (`EscapeExplicit`/`Escape` in the Go AST,
-    /// collapsed here since they always move together in every case
-    /// that matters for restore) — an EXPLICIT `ESCAPE '\'` matching
-    /// that same default: confirmed via `godump restore`, `LIKE 'x'
-    /// ESCAPE '\\'` restores with NO visible `ESCAPE` clause at all,
-    /// identical to omitting it entirely (real TiDB's own
-    /// `PatternLikeOrIlikeExpr.Restore`: `if n.EscapeExplicit &&
+    /// that case. `escape` is `None` exactly when no clause was written
+    /// (Go `EscapeExplicit == false`) and `Some(byte)` for a written one,
+    /// `ESCAPE '\'` included: under NO_BACKSLASH_ESCAPES Go drops only an
+    /// implicit escape. Restore still elides an explicit `ESCAPE '\'`
+    /// (`PatternLikeOrIlikeExpr.Restore`: `if n.EscapeExplicit &&
     /// n.Escape != '\\'`). `Some(0)` represents the OTHER real, distinct
     /// shape — `ESCAPE ''` (an explicit, deliberately EMPTY escape
     /// string, meaning "no escape character at all", confirmed via

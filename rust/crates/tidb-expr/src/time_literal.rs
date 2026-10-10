@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The typed temporal LITERALS `DATE 'lit'` and `TIMESTAMP 'lit'` (and their
-//! ODBC spellings `{d 'lit'}` / `{ts 'lit'}`), which are NOT a
-//! `CAST(lit AS DATE/DATETIME)`.
+//! The typed temporal LITERALS `DATE 'lit'`, `TIME 'lit'` and `TIMESTAMP
+//! 'lit'` (and their ODBC spellings `{d 'lit'}` / `{t 'lit'}` / `{ts 'lit'}`),
+//! which are NOT a `CAST(lit AS DATE/TIME/DATETIME)`.
 //!
 //! Go builds a dedicated function class for each
 //! (`pkg/expression/builtin_time.go`'s `dateLiteralFunctionClass` and
@@ -210,6 +210,56 @@ pub(crate) fn timestamp_literal(
     ft.set_decimal_under_limit(fsp);
     ft.set_flen_under_limit(MAX_DATETIME_WIDTH_NO_FSP + fsp + i64::from(fsp > 0));
     Ok((time, ft))
+}
+
+/// Go's `durationPattern` (`pkg/expression/builtin_time.go`), with RE2's
+/// ASCII `\s`/`\d` spelled out the way the other two patterns are.
+fn duration_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(concat!(
+            r"^[\t\n\x0C\r ]*[-]?((([0-9]{1,2}[\t\n\x0C\r ]+)?0*[0-9]{0,3}(:0*[0-9]{1,2}){0,2})",
+            r"|([0-9]{1,7}))?(\.[0-9]*)?[\t\n\x0C\r ]*$",
+        ))
+        .expect("durationPattern is a valid regex")
+    })
+}
+
+/// Go `timeLiteralFunctionClass.getFunction`: the value of `TIME 'lit'`, or
+/// the error that rejects the whole statement. The regex gate is
+/// `ErrWrongValue` (1292, `Incorrect time value`), and every `ParseDuration`
+/// error -- a leftover suffix or an out-of-range value included -- is its
+/// `ErrTruncatedWrongVal` (1292, `Truncated incorrect time value`), never a
+/// warning. The literal's own fsp (`types.GetFsp`) types the result.
+pub(crate) fn time_literal(
+    text: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+    modes: tidb_datatype::DateModes,
+) -> Result<(tidb_datatype::MySqlDuration, FieldType), EvalError> {
+    if !duration_pattern().is_match(text) {
+        return Err(wrong_value(1292, "time", text));
+    }
+    let truncated = || EvalError::WrongTemporalLiteral {
+        code: 1292,
+        message: format!("Truncated incorrect time value: '{text}'"),
+    };
+    let fsp = i64::from(tidb_datatype::get_fsp(text));
+    let parsed =
+        tidb_datatype::parse_mysql_duration(text, fsp, zone, true, modes.allow_invalid_dates)
+            .map_err(|_| truncated())?;
+    if parsed.event().is_some() {
+        return Err(truncated());
+    }
+    let duration =
+        tidb_datatype::MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp())
+            .map_err(|_| truncated())?;
+    // Go `setDecimalAndFlenForTime(duration.Fsp)`: `MaxDurationWidthNoFsp`
+    // plus the fraction and its separator.
+    let fsp = duration.fsp();
+    let mut ft = FieldType::new(FieldTypeCode::Duration);
+    ft.set_decimal(fsp);
+    ft.set_flen(10 + if fsp > 0 { fsp + 1 } else { 0 });
+    Ok((duration, ft))
 }
 
 /// The parse runs in the SESSION's zone, as Go's does.

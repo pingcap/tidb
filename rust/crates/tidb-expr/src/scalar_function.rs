@@ -158,16 +158,16 @@ fn same_eval_family(value: &Datum, ret_type: &tidb_datatype::FieldType) -> bool 
         return true;
     }
     // The REAL family is the one place where sharing an eval type is not
-    // enough. Go's `EvalReal` is float64-valued for both `FLOAT` and `DOUBLE`,
-    // so a 4-byte `KindFloat32` datum is only ever a `FLOAT` COLUMN's own
-    // cell, never an expression's result -- while `getFixedLen` gives
-    // `TypeFloat` a 4-byte cell and `TypeDouble` an 8-byte one. A `Float32`
-    // value under a `DOUBLE` result type therefore has to widen, or
-    // `append_float32` writes 4 bytes into an 8-byte cell.
+    // enough. Go's `ScalarFunction.Eval` returns `EvalReal`'s float64 for both
+    // `FLOAT` and `DOUBLE` (`cast(1.1 as float) = 1.1` is true), so a
+    // 4-byte `KindFloat32` datum is only ever a `FLOAT` COLUMN's own cell,
+    // never an expression's result: a `Float32` value under a `DOUBLE`
+    // result type widens, while a float64 under `FLOAT` stays one until a
+    // chunk's 4-byte cell stores it.
     if ret_type.eval_type() == EvalType::Real {
         return match value {
             Datum::Float32(_) => ret_type.code() == tidb_datatype::FieldTypeCode::Float,
-            Datum::Real(_) => ret_type.code() != tidb_datatype::FieldTypeCode::Float,
+            Datum::Real(_) => true,
             _ => false,
         };
     }
@@ -271,6 +271,48 @@ fn append_canonical_args_reversed(output: &mut Vec<u8>, args: &[Vec<u8>]) {
     }
 }
 
+/// The expression a coprocessor rebuilds from `expr`'s protobuf. Go's wire
+/// signatures carry no `cannotConvertStringAsWarning`, so a pushed-down
+/// `from_binary` errors where the root-side one would warn.
+pub fn into_coprocessor_form(expr: &mut Expression) {
+    if let Expression::ScalarFunction(function) = expr {
+        function.cannot_convert_string_as_warning = false;
+        function.args.iter_mut().for_each(into_coprocessor_form);
+    }
+}
+
+/// `fromUnixTimeFunctionClass`'s ETDecimal argument for a string source:
+/// `WrapWithCastAsDecimal` takes the column's width and scale, and a scale of
+/// 0 is then widened to 6 (`#35184`), so the cast keeps microseconds and an
+/// over-wide number overflows the `DECIMAL(flen + 6, 6)` instead of reading as
+/// the epoch.
+fn from_unixtime_string_argument(
+    value: &Datum,
+    source: &FieldType,
+    ctx: &dyn Columns,
+) -> Result<Datum, EvalError> {
+    use tidb_datatype::{EvalType, FieldTypeCode};
+    const MAX_DECIMAL_WIDTH: i64 = 65;
+    const MAX_DECIMAL_SCALE: i64 = 30;
+    if value.is_null() || source.eval_type() != EvalType::String || !source.is_string() {
+        return Ok(value.clone());
+    }
+    let mut target = FieldType::new(FieldTypeCode::NewDecimal);
+    target.set_flen(source.flen().min(MAX_DECIMAL_WIDTH));
+    target.set_decimal(source.decimal().min(MAX_DECIMAL_SCALE));
+    if target.decimal() == 0 {
+        target.set_decimal(6);
+        target.set_flen((target.flen() + 6).min(MAX_DECIMAL_WIDTH));
+    }
+    crate::cast::eval_numeric_cast_with_type(
+        value.clone(),
+        EvalType::String,
+        Some(source),
+        &target,
+        ctx,
+    )
+}
+
 /// Go `ScalarFunction`: the application of a built-in function to arguments.
 #[derive(Clone, Debug, Default)]
 pub struct ScalarFunction {
@@ -295,6 +337,11 @@ pub struct ScalarFunction {
     /// validated metadata on the node is what lets clones and substitution
     /// preserve the function's grouping-id semantics and hash identity.
     grouping_metadata: Option<GroupingMetadata>,
+    /// Go `builtinInternalFromBinarySig.cannotConvertStringAsWarning`: the
+    /// `from_binary` an explicit CAST builds warns where an implicit one
+    /// errors. The protobuf signature has no field for it, so a copy pushed
+    /// to the coprocessor errors either way.
+    cannot_convert_string_as_warning: bool,
 
     /// Go embedded collation state (via the `Function`'s `collationInfo`).
     pub collation: CollationInfo,
@@ -665,6 +712,18 @@ impl ScalarFunction {
             args,
             ..Default::default()
         }
+    }
+
+    /// Go `BuildFromBinaryFunction` before its `FoldConstant`: decodes the
+    /// binary `arg` into `ret_type`'s charset.
+    pub fn new_from_binary(
+        arg: Expression,
+        ret_type: FieldType,
+        cannot_convert_string_as_warning: bool,
+    ) -> Self {
+        let mut function = Self::new(CiString::new("from_binary"), ret_type, vec![arg]);
+        function.cannot_convert_string_as_warning = cannot_convert_string_as_warning;
+        function
     }
 
     /// Go newDistSQLFunctionBySig: retain the wire type and implementation.
@@ -1111,6 +1170,16 @@ impl ScalarFunction {
             Ok(converted) => Ok(converted.value),
             Err(_) => Ok(value),
         }
+    }
+
+    /// Whether Go evaluates this call through its `vecEval*` body. A call
+    /// whose arguments are all CONSTANT is what Go folds, and folding runs
+    /// the ROW body; anything reading a column runs the vectorized one.
+    fn runs_vectorized_body(&self) -> bool {
+        !self
+            .args
+            .iter()
+            .all(|arg| matches!(arg, Expression::Constant(_)))
     }
 
     /// The collation this function's own evaluation runs under: the one the
@@ -2249,7 +2318,12 @@ impl ScalarFunction {
             return if name == "to_binary" {
                 crate::convert_charset::to_binary(&value, &charset)
             } else {
-                crate::convert_charset::from_binary(&value, &charset)
+                crate::convert_charset::from_binary(
+                    &value,
+                    &charset,
+                    self.cannot_convert_string_as_warning,
+                    ctx,
+                )
             };
         }
         if name == "convert_using" && self.args.len() == 2 {
@@ -3045,19 +3119,46 @@ impl ScalarFunction {
         // in the result fsp and in whether the answer is NULL at all. Only
         // this tier has those types; `time_fn::dispatch` below still serves
         // the AST tier on Go's `default` branch.
+        // REPEAT and PASSWORD have the same row/vec split as ADDTIME below.
+        // Only `vecEvalString` nulls a REPEAT result past the MaxBlobWidth
+        // flen (`SELECT REPEAT(a, 16777217) FROM t` is NULL while the folded
+        // `REPEAT('a', 16777217)` is the 16 MiB string), and only it answers
+        // '' for a NULL password.
+        if upper == "REPEAT" && vals.len() == 2 {
+            let vec_flen = self
+                .runs_vectorized_body()
+                .then(|| self.get_static_type().map(FieldType::flen))
+                .flatten();
+            return crate::string_packet::repeat_in_mode(&vals, vec_flen, ctx);
+        }
+        if upper == "PASSWORD"
+            && vals.len() == 1
+            && vals[0].is_null()
+            && self.runs_vectorized_body()
+        {
+            return Ok(Datum::new_string(String::new()));
+        }
+        // `TIMEDIFF` is the third family typed from its ARGUMENTS: Go's
+        // `timeDiffFunctionClass` picks one of eight signatures from their
+        // eval types.
+        if upper == "TIMEDIFF" && vals.len() == 2 {
+            use crate::time_fn::time_diff::{arg_kind, time_diff};
+            let kinds = [
+                arg_kind(arg_types[0].as_ref(), &vals[0]),
+                arg_kind(arg_types[1].as_ref(), &vals[1]),
+            ];
+            let fsp = self
+                .get_static_type()
+                .map_or(tidb_datatype::MAX_FSP, FieldType::decimal);
+            return time_diff(&vals, kinds, fsp, ctx);
+        }
         if matches!(upper.as_str(), "ADDTIME" | "SUBTIME") && vals.len() == 2 {
             use crate::time_fn::add_sub::{add_sub_time, kind_of, TemporalKind};
             let kinds: [TemporalKind; 2] = [
                 kind_of(arg_types[0].as_ref(), &vals[0]),
                 kind_of(arg_types[1].as_ref(), &vals[1]),
             ];
-            // A call whose arguments are all CONSTANT is what Go folds, and
-            // folding runs the ROW body. Anything reading a column runs the
-            // vectorized one.
-            let row_path = self
-                .args
-                .iter()
-                .all(|arg| matches!(arg, Expression::Constant(_)));
+            let row_path = !self.runs_vectorized_body();
             let sign = if upper == "SUBTIME" { -1 } else { 1 };
             let result = add_sub_time(&vals, kinds, sign, row_path, ctx)?;
             return match self.get_static_type().map(FieldType::code) {
@@ -3110,11 +3211,17 @@ impl ScalarFunction {
                 | "SEC_TO_TIME"
                 | "MAKETIME"
                 | "STR_TO_DATE"
-                | "TIMEDIFF"
                 | "CONVERT_TZ"
                 | "FROM_UNIXTIME"
         ) {
             let mut result = if upper == "FROM_UNIXTIME" {
+                let mut vals = vals;
+                if let (Some(value), Some(source)) = (
+                    vals.first_mut(),
+                    self.args.first().and_then(Expression::static_type),
+                ) {
+                    *value = from_unixtime_string_argument(value, source, ctx)?;
+                }
                 crate::time_fn::session_tz::from_unixtime_with_precision(
                     &vals,
                     ctx,

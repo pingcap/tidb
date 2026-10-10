@@ -225,6 +225,7 @@ impl Connections {
         host: &str,
         initial_database: Option<&str>,
     ) -> Result<Session, String> {
+        recording_server_time_zone();
         let mut session = Session::with_catalog(SharedCatalog::clone(&self.catalog));
         // mysql-tester answers the server's local-file request (`LOAD STATS
         // 's/x.json'`) with the file relative to `tests/integrationtest`,
@@ -540,4 +541,13 @@ mod tests {
             Some(("testuser1", "%"))
         );
     }
+}
+
+/// run-tests.sh exports `TZ=Asia/Shanghai` before it starts the recording
+/// server, so the server's `SYSTEM` zone -- what `SET time_zone = default`
+/// falls back to -- is Shanghai there. The engine reads `$TZ` once, so it is
+/// set before the first session of the process exists.
+fn recording_server_time_zone() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| std::env::set_var("TZ", "Asia/Shanghai"));
 }

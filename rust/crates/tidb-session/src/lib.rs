@@ -2908,6 +2908,8 @@ mod tests_explain_derived;
 #[cfg(test)]
 mod tests_explain_merge_join;
 #[cfg(test)]
+mod tests_expression_go_semantics;
+#[cfg(test)]
 mod tests_expression_indexes;
 #[cfg(test)]
 mod tests_expression_time;

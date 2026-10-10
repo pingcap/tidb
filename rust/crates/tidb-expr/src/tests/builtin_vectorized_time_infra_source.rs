@@ -151,7 +151,7 @@ fn vectorized_time_harness_representative_cases_match_scalar_answers() {
                 ("2016-12-00 12:00:00", "10:9:0"),
             ],
         ),
-        ["STR:46:58:57.999999", "STR:-24:00:00", "NULL"]
+        ["DUR:46:58:57.999999", "DUR:-24:00:00", "NULL"]
     );
 }
 

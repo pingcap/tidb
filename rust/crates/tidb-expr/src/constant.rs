@@ -333,6 +333,18 @@ impl Constant {
         } else if let Some(deferred) = self.deferred_expr.as_deref() {
             evaluate_deferred(deferred).map_err(|error| (self.value.clone(), error))?
         } else {
+            // Go `Constant.EvalDecimal` runs `adjustDecimal` on every
+            // constant: a folded value whose fraction is shorter than its
+            // result type's scale is padded to it.
+            if let (Datum::Decimal(value), Some(target)) = (&self.value, self.ret_type.as_ref()) {
+                if target.code() == tidb_datatype::FieldTypeCode::NewDecimal
+                    && i64::from(value.precision_and_frac().1) < target.decimal()
+                {
+                    return Ok(Datum::Decimal(
+                        value.round_to_scale(target.decimal() as i32),
+                    ));
+                }
+            }
             return Ok(self.value.clone());
         };
         if self.deferred_expr.is_none() || value.is_null() {

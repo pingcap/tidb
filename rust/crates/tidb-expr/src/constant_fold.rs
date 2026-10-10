@@ -231,6 +231,18 @@ fn special_fold(
         let value = constant.eval_in(ctx).ok()?;
         crate::truthy_of(&value).ok()
     };
+    // Go's handlers fold the condition themselves (`foldConstant(ctx,
+    // args[0])`) before reading it, so a constant condition still wrapped
+    // in `istrue` decides the branch.
+    let folded_condition = |argument: &Expression| -> Option<crate::constant::Constant> {
+        match argument {
+            Expression::Constant(constant) => Some(constant.clone()),
+            other => match fold_current_value_in(other, ctx, false) {
+                Some(Folded::Constant(constant, _)) => Some(constant),
+                _ => None,
+            },
+        }
+    };
     let branch = |argument: &Expression| -> Folded {
         match argument {
             Expression::Constant(constant) => {
@@ -260,19 +272,30 @@ fn special_fold(
             }
         }
         "if" => {
-            let [Expression::Constant(condition), then, otherwise] = func.args.as_slice() else {
+            let [condition, then, otherwise] = func.args.as_slice() else {
                 return Some(None);
             };
-            let Some(value) = truth(condition) else {
+            let Some(condition) = folded_condition(condition) else {
+                return Some(None);
+            };
+            let Some(value) = truth(&condition) else {
                 return Some(None);
             };
             Some(branch(if value == Some(true) { then } else { otherwise }))
         }
         "ifnull" => {
-            let [first @ Expression::Constant(constant), second] = func.args.as_slice() else {
+            let [first, second] = func.args.as_slice() else {
                 return Some(None);
             };
-            Some(branch(if constant.value.is_null() { second } else { first }))
+            let Some(constant) = folded_condition(first) else {
+                return Some(None);
+            };
+            if constant.value.is_null() {
+                Some(branch(second))
+            } else {
+                let deferred = constant.literal_value().is_none();
+                Some(Folded::Constant(constant, deferred))
+            }
         }
         _ => {
             // `caseWhenHandler`: the first constant-true condition decides;
@@ -290,10 +313,10 @@ fn special_fold(
             };
             let mut index = 0;
             while index + 1 < arguments.len() {
-                let Expression::Constant(condition) = &arguments[index] else {
+                let Some(condition) = folded_condition(&arguments[index]) else {
                     return Some(None);
                 };
-                let Some(value) = truth(condition) else {
+                let Some(value) = truth(&condition) else {
                     return Some(None);
                 };
                 if value == Some(true) {

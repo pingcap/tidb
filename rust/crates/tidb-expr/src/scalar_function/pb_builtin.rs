@@ -60,6 +60,12 @@ enum Kernel {
         binary: bool,
     },
     Round,
+    /// Go `builtinInternalToBinarySig` / `builtinInternalFromBinarySig`. The
+    /// wire signature carries no `cannotConvertStringAsWarning`, so a
+    /// decoded `from_binary` errors on bytes its charset cannot hold.
+    ConvertCharset {
+        from_binary: bool,
+    },
     FromUnixTime,
     Regexp,
     Json,
@@ -228,6 +234,8 @@ impl PbBuiltin {
                 operation: StringOp::Substring,
                 binary: false,
             },
+            ToBinary => Kernel::ConvertCharset { from_binary: false },
+            FromBinary => Kernel::ConvertCharset { from_binary: true },
             Acos => Kernel::Values(crate::math_fn::acos),
             Asin => Kernel::Values(crate::math_fn::asin),
             Atan1Arg => Kernel::Values(crate::math_fn::atan),
@@ -619,6 +627,22 @@ impl PbBuiltin {
                 }
                 match kernel {
                     Kernel::Values(eval) => eval(&values, ctx),
+                    Kernel::ConvertCharset { from_binary } => {
+                        let [value] = values.as_slice() else {
+                            return Err(EvalError::Unsupported("protobuf charset builtin arity"));
+                        };
+                        if from_binary {
+                            let charset = function
+                                .get_static_type()
+                                .map_or("binary", FieldType::charset_name);
+                            crate::convert_charset::from_binary(value, charset, false, ctx)
+                        } else {
+                            let charset = args[0]
+                                .static_type()
+                                .map_or("binary", FieldType::charset_name);
+                            crate::convert_charset::to_binary(value, charset)
+                        }
+                    }
                     Kernel::Round => crate::math_fn::round_or_truncate_with_result_decimal(
                         &values,
                         true,

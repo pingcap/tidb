@@ -181,10 +181,7 @@ fn string_with_ctx_constant(
     if value.is_null() {
         return Some("<nil>".to_owned());
     }
-    let value = value
-        .truncated_stringify()
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())?;
+    let value = constant_value_text(value)?;
     if constant.subquery_ref_id > 0 {
         Some(format!(
             "ScalarQueryCol#{}({value})",
@@ -192,6 +189,18 @@ fn string_with_ctx_constant(
         ))
     } else {
         Some(value)
+    }
+}
+
+/// Go's `%v` of `Datum.GetValue()`: a hex or bit literal prints through
+/// `BinaryLiteral.String()` (`0x80`), whatever its bytes spell.
+fn constant_value_text(value: &Datum) -> Option<String> {
+    match value {
+        Datum::BinaryLiteral(literal) | Datum::Bit(literal) => Some(literal.to_string()),
+        value => value
+            .truncated_stringify()
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok()),
     }
 }
 
@@ -215,10 +224,7 @@ fn explain_constant(
     if datum.is_null() {
         return Some("NULL".to_owned());
     }
-    let value = datum
-        .truncated_stringify()
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())?;
+    let value = constant_value_text(datum)?;
     let value = match datum {
         Datum::String(_)
         | Datum::Bytes(_)

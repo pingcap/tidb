@@ -162,16 +162,77 @@ pub fn to_binary_by_collation(value: &Datum) -> Result<Datum, EvalError> {
     to_binary(value, charset)
 }
 
-/// Go `builtinInternalFromBinarySig`: encoded bytes in, UTF-8 out.
-pub fn from_binary(value: &Datum, target_charset: &str) -> Result<Datum, EvalError> {
+/// Go `maxBytesToShow`: how much of an undecodable value the 3854 message
+/// quotes.
+const MAX_BYTES_TO_SHOW: usize = 6;
+
+/// Go `builtinInternalFromBinarySig`: encoded bytes in, UTF-8 out. An
+/// undecodable value is `ErrCannotConvertString`; the `from_binary` an
+/// explicit CAST builds downgrades it to a warning and answers NULL under a
+/// strict sql_mode, or the transform's replaced text otherwise.
+pub fn from_binary(
+    value: &Datum,
+    target_charset: &str,
+    cannot_convert_string_as_warning: bool,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
     let bytes = crate::arg_eval_type::eval_string(value)?.unwrap_or_default();
     let (decoded, error) = find_encoding(target_charset)
         .transform(&bytes, TransformOp::DECODE)
         .into_parts();
-    if error.is_some() {
-        return Err(EvalError::Unsupported("invalid character string"));
+    if error.is_none() {
+        return Ok(Datum::new_bytes(decoded));
+    }
+    let error = tidb_error::terror::TerrorError::registered_std(
+        tidb_error::terror::TerrorClass::Expression,
+        tidb_error::terror::TerrorCode::new(3854),
+    )
+    .fast_generate(
+        tidb_error::tidb::errname::ErrCannotConvertString.raw,
+        &[
+            tidb_error::mysql::FormatArg::from(fmt_non_ascii_printable_char_to_hex(
+                &bytes,
+                MAX_BYTES_TO_SHOW,
+                false,
+            )),
+            tidb_error::mysql::FormatArg::from("binary"),
+            tidb_error::mysql::FormatArg::from(target_charset),
+        ],
+    );
+    if !cannot_convert_string_as_warning {
+        return Err(EvalError::Conversion(error));
+    }
+    ctx.append_warning(3854, error.message());
+    if ctx.strict_sql_mode() {
+        return Ok(Datum::Null);
     }
     Ok(Datum::new_bytes(decoded))
+}
+
+/// Go `util.FmtNonASCIIPrintableCharToHex`: printable ASCII as itself,
+/// anything else as `\xHH`, at most `max_bytes_to_show` bytes then `...`.
+/// `0x7f` is skipped unless `display_delete_character`.
+fn fmt_non_ascii_printable_char_to_hex(
+    bytes: &[u8],
+    max_bytes_to_show: usize,
+    display_delete_character: bool,
+) -> String {
+    let mut out = String::with_capacity(max_bytes_to_show * 2);
+    for (index, &byte) in bytes.iter().enumerate() {
+        if index >= max_bytes_to_show {
+            out.push_str("...");
+            break;
+        }
+        if (0x20..=0x7e).contains(&byte) {
+            out.push(byte as char);
+            continue;
+        }
+        if byte == 0x7f && !display_delete_character {
+            continue;
+        }
+        out.push_str(&format!("\\x{byte:02X}"));
+    }
+    out
 }
 
 /// Go `builtinConvertSig`: `CONVERT(expr USING charset)`.

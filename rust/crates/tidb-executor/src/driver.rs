@@ -105,6 +105,7 @@ pub use set_opr::*;
 pub(crate) use subquery::*;
 pub(crate) use write_cast::*;
 
+pub(crate) use errors::coprocessor_evaluation_error;
 pub use errors::{DriverError, MysqlError, SchemaErrorKind, TxnErrorKind, VarErrorKind};
 
 /// Parses and runs a `FROM`-less `SELECT`, returning its rows as `Datum`s.

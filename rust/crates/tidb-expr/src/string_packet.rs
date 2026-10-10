@@ -41,6 +41,18 @@ use crate::{Datum, EvalError};
 /// with warning 1301; the multiplication overflow arm takes the same exit,
 /// since a product too large for `usize` is by construction over any limit.
 pub(crate) fn repeat(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    repeat_in_mode(vals, None, ctx)
+}
+
+/// [`repeat`] with Go's body choice: `vec_flen` is `Some(bf.tp.GetFlen())`
+/// for `builtinRepeatSig.vecEvalString`, which after the packet check also
+/// answers a silent NULL when `byteLength > flen/num` -- a check
+/// `evalString` (the row body constant folding runs) does not have.
+pub(crate) fn repeat_in_mode(
+    vals: &[Datum],
+    vec_flen: Option<i64>,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
     let [value, count] = vals else {
         return Err(EvalError::Unsupported("bad REPEAT arity"));
     };
@@ -61,6 +73,9 @@ pub(crate) fn repeat(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, 
     };
     if output_len as u64 > ctx.max_allowed_packet() {
         ctx.handle_allowed_packet_overflowed("repeat")?;
+        return Ok(Datum::Null);
+    }
+    if vec_flen.is_some_and(|flen| value.len() as i64 > flen / count as i64) {
         return Ok(Datum::Null);
     }
     let mut output = Vec::with_capacity(output_len);

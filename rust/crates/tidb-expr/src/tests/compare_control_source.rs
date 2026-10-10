@@ -536,10 +536,11 @@ fn test_coalesce() {
             "coalesce(cast('2020-10-10 12:59:59' as datetime), cast('2020-10-10' as date))",
             "STR:2020-10-10 12:59:59",
         ),
-        // {1, dec 123.456} -> decimal(value 1). Go compares NUMERIC equality
-        // against NewDecFromInt(1); the trailing-zero-insensitive compare
-        // below mirrors that instead of asserting display scale.
-        ("coalesce(1, 123.456)", "DEC:1.000"),
+        // {1, dec 123.456} -> decimal(value 1). Go's `require.Equal` against
+        // `NewDecFromInt(1)` compares the `MyDecimal` struct, frac included:
+        // COALESCE casts to the eval type only, so the unfolded call keeps
+        // the integer's scale 0.
+        ("coalesce(1, 123.456)", "DEC:1"),
     ] {
         assert_eq!(chunk_e(expr), want, "{expr}");
     }

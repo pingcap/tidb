@@ -379,6 +379,8 @@ pub fn new_function_impl(
         function.args = crate::rewriter::wrap_binary_literals(
             func_name,
             &derived.charset,
+            &derived.collation,
+            ret_type.eval_type(),
             std::mem::take(&mut function.args),
             |expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
         );

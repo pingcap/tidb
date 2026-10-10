@@ -22,10 +22,9 @@ use crate::Decimal;
 use crate::{Datum, EvalError};
 use tidb_ast::CastType;
 use tidb_datatype::{
-    find_encoding, number_to_duration, ConversionFlags, DatumValueError, EvalType, FieldType,
-    FieldTypeCode, ScalarConversionEvent, TransformOp, JSON_TYPE_CODE_DATE,
-    JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION, JSON_TYPE_CODE_STRING,
-    JSON_TYPE_CODE_TIMESTAMP,
+    number_to_duration, ConversionFlags, DatumValueError, EvalType, FieldType, FieldTypeCode,
+    ScalarConversionEvent, JSON_TYPE_CODE_DATE, JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION,
+    JSON_TYPE_CODE_STRING, JSON_TYPE_CODE_TIMESTAMP,
 };
 
 /// Go's protobuf cast-as-string signatures retain the complete wire field
@@ -518,6 +517,11 @@ pub(crate) fn eval_cast(
             FieldType::new(FieldTypeCode::LongLong)
         }
         CastType::Double => FieldType::new(FieldTypeCode::Double),
+        // Go's real cast signatures keep the float64 they evaluate;
+        // `ProduceFloatWithSpecifiedTp` only clamps a STRING source to the
+        // float32 range (1690 "constant 1e+300 overflows float"), and the
+        // float32 narrowing itself happens where a FLOAT column is stored.
+        CastType::Float => FieldType::new(FieldTypeCode::Float),
         CastType::Decimal { .. } => FieldType::new(FieldTypeCode::NewDecimal),
         _ => return eval_cast_value(cast_type, v, source, ctx),
     };
@@ -541,20 +545,10 @@ pub(crate) fn eval_cast(
     if matches!(v, Datum::BinaryLiteral(_))
         && matches!(target.eval_type(), EvalType::Real | EvalType::Decimal)
     {
-        let warnings = crate::constant::ConversionWarnings(ctx);
-        let zone = ctx.time_zone();
-        let context = tidb_datatype::ConversionContext::new(
-            ctx.type_flags(),
-            tidb_datatype::ConversionLocation::from_time_zone(&zone),
-            &warnings,
-        );
         let Datum::BinaryLiteral(value) = v else {
             unreachable!()
         };
-        let (integer, error) = value.to_int_with_context(&context);
-        if let Some(error) = error {
-            return Err(EvalError::Conversion(error));
-        }
+        let integer = binary_literal_eval_int(&value, ctx)?;
         return Ok(if target.eval_type() == EvalType::Real {
             Datum::Real(integer as f64)
         } else {
@@ -592,6 +586,21 @@ fn eval_cast_value(
         ));
     }
     match cast_type {
+        // Go builds `builtinCastIntAsIntSig` for a binary literal
+        // (`castAsIntFunctionClass.getFunction`), whose body is
+        // `Constant.EvalInt`: the literal's unsigned value reinterpreted as
+        // int64, so `cast(0xffffffffffffffff as signed)` is -1.
+        CastType::Signed | CastType::Unsigned if matches!(v, Datum::BinaryLiteral(_)) => {
+            let Datum::BinaryLiteral(value) = &v else {
+                unreachable!()
+            };
+            let integer = binary_literal_eval_int(value, ctx)?;
+            Ok(if matches!(cast_type, CastType::Signed) {
+                Datum::Int(integer as i64)
+            } else {
+                Datum::UInt(integer)
+            })
+        }
         CastType::Signed => Ok(Datum::Int(to_i64_signed_with_warnings(&v, ctx)?)),
         CastType::Unsigned => {
             report_int_truncation(&v, ctx)?;
@@ -631,27 +640,10 @@ fn eval_cast_value(
                 )
                 .with_charset_name(&target_charset)
                 .with_collation_name(&target_collation);
-            // Go inserts from_binary at the AST argument boundary. Protobuf
-            // signatures carry that wrapper explicitly, so decoding stays here.
-            if source.is_some_and(FieldType::is_binary_string) && target_charset != "binary" {
-                let bytes = datum_binary_bytes(&v)?;
-                let (decoded, error) = find_encoding(&target_charset)
-                    .transform(&bytes, TransformOp::DECODE)
-                    .into_parts();
-                if error.is_some() {
-                    let hex = bytes
-                        .iter()
-                        .map(|byte| format!("{byte:02X}"))
-                        .collect::<String>();
-                    ctx.append_warning(
-                        3854,
-                        &format!("Cannot convert string '{hex}' from binary to {target_charset}"),
-                    );
-                }
-                eval_string_cast_with_type(Datum::new_bytes(decoded), None, &target, ctx)
-            } else {
-                eval_string_cast_with_type(v, source, &target, ctx)
-            }
+            // A binary argument reaches this cast already decoded: Go's
+            // `castAsStringFunctionClass` wraps it in `from_binary`
+            // (`crate::rewriter::wrap_cast_as_string_arg`).
+            eval_string_cast_with_type(v, source, &target, ctx)
         }
         CastType::Binary { len } => {
             let target = FieldType::new(FieldTypeCode::String)
@@ -663,7 +655,9 @@ fn eval_cast_value(
                 .with_collation_name("binary");
             eval_string_cast_with_type(v, source, &target, ctx)
         }
-        CastType::Decimal { .. } | CastType::Double => eval_cast(cast_type, v, source, ctx),
+        CastType::Decimal { .. } | CastType::Double | CastType::Float => {
+            eval_cast(cast_type, v, source, ctx)
+        }
         CastType::Date => cast_to_time(&v, source, ctx, tidb_datatype::TimeType::Date, 0),
         CastType::DateTime { fsp } => cast_to_time(
             &v,
@@ -673,30 +667,6 @@ fn eval_cast_value(
             i64::from(fsp.unwrap_or(0)),
         ),
         CastType::Year => cast_to_year(&v, ctx),
-        // go's FLOAT cast narrows through float32, and the two operand kinds
-        // diverge (captured on the oracle): a TEXT value beyond the float32
-        // range is `types.ErrOverflow`'s "constant 1e+300 overflows float"
-        // (1690 / 22003), while a REAL constant's conversion answers 0
-        // (`CAST(1e300 AS FLOAT)` -> 0). Within range both answer the value.
-        CastType::Float => match v {
-            Datum::Real(x) | Datum::Float32(x) => {
-                let narrowed = x as f32;
-                if narrowed.is_infinite() {
-                    Ok(Datum::Real(0.0))
-                } else {
-                    Ok(Datum::Real(f64::from(narrowed)))
-                }
-            }
-            other => {
-                let converted = str_to_real_for_cast(&other, ctx)?;
-                if converted.abs() > f64::from(f32::MAX) {
-                    return Err(EvalError::ConstantFloatCastOverflow {
-                        value: tidb_datatype::format_float_g_shortest(converted),
-                    });
-                }
-                Ok(Datum::Real(converted))
-            }
-        },
         CastType::Vector { dimensions } => {
             let mut target = FieldType::new(FieldTypeCode::VectorFloat32);
             if let Some(dimensions) = dimensions {
@@ -963,6 +933,27 @@ pub(crate) fn to_i64_signed(v: &Datum) -> i64 {
 /// [`to_i64_signed`] with the session's `time_zone`, which Go's
 /// `toSignedInteger` hands to `Time.RoundFrac` -- load-bearing only when a
 /// DATETIME's fractional carry lands on a DST transition instant.
+/// Go `Constant.EvalInt`'s `KindBinaryLiteral` arm: `BinaryLiteral.ToInt`,
+/// whose literal wider than eight bytes is `math.MaxUint64` plus a
+/// `Truncated incorrect BINARY value` the statement's truncate level handles.
+fn binary_literal_eval_int(
+    value: &tidb_datatype::BinaryLiteral,
+    ctx: &dyn crate::Columns,
+) -> Result<u64, EvalError> {
+    let warnings = crate::constant::ConversionWarnings(ctx);
+    let zone = ctx.time_zone();
+    let context = tidb_datatype::ConversionContext::new(
+        ctx.type_flags(),
+        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+        &warnings,
+    );
+    let (integer, error) = value.to_int_with_context(&context);
+    match error {
+        Some(error) => Err(EvalError::Conversion(error)),
+        None => Ok(integer),
+    }
+}
+
 pub(crate) fn to_i64_signed_in(v: &Datum, zone: &tidb_datatype::SessionTimeZone) -> i64 {
     match v {
         Datum::Int(i) => *i,
@@ -1871,10 +1862,41 @@ pub(crate) fn cast_arg_as_datetime(
     if matches!(v, Datum::Time(_) | Datum::Null) {
         return Ok(v.clone());
     }
+    let fsp = wrap_cast_as_time_fsp(v, source);
     Ok(
-        cast_to_time_value(v, source, ctx, tidb_datatype::TimeType::DateTime, None)?
+        cast_to_time_value(v, source, ctx, tidb_datatype::TimeType::DateTime, fsp)?
             .map_or(Datum::Null, Datum::Time),
     )
+}
+
+/// The precision `WrapWithCastAsTime` gives the cast it builds, by the
+/// argument's eval type: 0 for an integer, `MaxFsp` for a string, real or
+/// JSON, and the argument's own decimal (capped at `MaxFsp`) for a temporal
+/// or decimal one. A string's 6 is why `date('0000-00-01')` under
+/// NO_ZERO_IN_DATE warns `'0000-00-01 00:00:00.000000'`. Without a static
+/// type only a numeric or duration datum decides it; `None` leaves the
+/// value's own precision alone.
+fn wrap_cast_as_time_fsp(v: &Datum, source: Option<&tidb_datatype::FieldType>) -> Option<i64> {
+    let max_fsp = tidb_datatype::MAX_FSP;
+    let own_decimal = |decimal: i64| (decimal >= 0).then(|| decimal.min(max_fsp));
+    match source {
+        Some(source) => match source.eval_type() {
+            EvalType::Int => Some(0),
+            EvalType::String | EvalType::Real | EvalType::Json => Some(max_fsp),
+            EvalType::Datetime | EvalType::Timestamp | EvalType::Duration | EvalType::Decimal => {
+                own_decimal(source.decimal())
+            }
+            EvalType::VectorFloat32 => None,
+        },
+        // The untyped value tier evaluates constants, whose result types Go
+        // derives from the literal itself (`getExpressionFsp`'s
+        // `types.GetFsp`), so a string keeps its own precision there.
+        None => match v {
+            Datum::Int(_) | Datum::UInt(_) | Datum::Enum(..) | Datum::Set(..) => Some(0),
+            Datum::Duration(duration) => own_decimal(duration.fsp()),
+            _ => None,
+        },
+    }
 }
 
 /// Go `WrapWithCastAsInt(ctx, expr, nil)` (`builtin_cast.go:2666-2698`),

@@ -110,6 +110,53 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
     }
 }
 
+/// The codes `ClassTiKV` registers (`pkg/store/driver/error/error.go`,
+/// `pkg/kv/error.go`): the only ones a coprocessor error keeps.
+const CLASS_TIKV_CODES: &[u16] = {
+    use tidb_error::tidb::errcode::*;
+    &[
+        ErrSharedLockLost,
+        ErrLockExpire,
+        ErrAssertionFailed,
+        ErrTiKVStoreLimit,
+        ErrTiKVServerTimeout,
+        ErrTiFlashServerTimeout,
+        ErrTxnAbortedByGC,
+        ErrTiKVStaleCommand,
+        ErrQueryInterrupted,
+        ErrTiKVMaxTimestampNotSynced,
+        ErrLockAcquireFailAndNoWaitSet,
+        ErrResolveLockTimeout,
+        ErrLockWaitTimeout,
+        ErrTiKVServerBusy,
+        ErrTiFlashServerBusy,
+        ErrPDServerTimeout,
+        ErrRegionUnavailable,
+        ErrResourceGroupNotExists,
+        ErrResourceGroupConfigUnavailable,
+        ErrResourceGroupThrottled,
+        ErrUnknown,
+        ErrDataOutOfRange,
+        ErrTruncatedWrongValue,
+        ErrDivisionByZero,
+    ]
+};
+
+/// An evaluation failure inside a pushed-down predicate. Go's coprocessor
+/// answers it in the `SelectResponse` under the error's own MySQL code
+/// (`toPBError`), and TiDB re-raises that as
+/// `dbterror.ClassTiKV.Synthesize(code, msg)`: a code `ClassTiKV` registers
+/// keeps its number, anything else reaches the client as 1105 with the bare
+/// message (`select * from t where a > 0x80` over a utf8mb4 `a`).
+pub(crate) fn coprocessor_evaluation_error(error: EvalError) -> ExecError {
+    let mysql = eval_to_mysql_error(error).from_evaluation();
+    if CLASS_TIKV_CODES.contains(&mysql.code) {
+        ExecError::Mysql(mysql)
+    } else {
+        ExecError::Mysql(MysqlError::unknown(mysql.message))
+    }
+}
+
 /// The MySQL error an evaluation failure reaches the client as.
 ///
 /// Every arm names its code and its message TOGETHER. They used to be two
@@ -242,10 +289,6 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // DECIMAL one. See [`out_of_range`] for the one part still missing.
         EvalError::IntOverflow => out_of_range("BIGINT"),
         EvalError::FloatOverflow => out_of_range("DOUBLE"),
-        EvalError::ConstantFloatCastOverflow { value } => MysqlError::new(
-            ER_DATA_OUT_OF_RANGE,
-            format!("constant {value} overflows float"),
-        ),
         EvalError::DecimalOverflow => out_of_range("DECIMAL"),
         // Porting boundaries with no TiDB answer to match: TiDB evaluates
         // these, so there is no Go message for "not ported yet". The carried

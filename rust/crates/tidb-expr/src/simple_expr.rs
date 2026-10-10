@@ -601,6 +601,13 @@ pub fn build_cast_function(
     {
         target.del_flags(FieldTypeFlags::NOT_NULL);
     }
+    // Go `castAsStringFunctionClass.getFunction`: a BIT source is first cast
+    // to a binary string, and a binary source decodes into the target charset
+    // through `from_binary`.
+    if target.eval_type() == tidb_datatype::EvalType::String {
+        crate::rewriter::size_string_cast_for_bit_source(&mut target, &expr);
+        expr = crate::rewriter::wrap_cast_as_string_arg(expr, &target, &|_| {})?;
+    }
     // Go `castAsStringFunctionClass.getFunction` → `adjustRetFtForCastString`:
     // an unspecified-width CHAR target takes the produced value's width (and
     // a JSON source widens the code to LongBlob).

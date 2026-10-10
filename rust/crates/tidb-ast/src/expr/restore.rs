@@ -756,12 +756,12 @@ impl Expr {
                     (false, false) => " LIKE ",
                 });
                 pattern.restore_into_with_context(out, context);
-                // `None` also covers an explicit `ESCAPE '\'` matching
-                // the default — see this variant's own doc.
-                if let Some(esc) = escape {
+                // Go restores an explicit `ESCAPE '\'` as if it were
+                // omitted -- see this variant's own doc.
+                if let Some(esc) = escape.filter(|esc| *esc != b'\\') {
                     out.push_str(" ESCAPE '");
-                    if *esc != 0 {
-                        out.push_str(&escape_string_literal(&(*esc as char).to_string()));
+                    if esc != 0 {
+                        out.push_str(&escape_string_literal(&(esc as char).to_string()));
                     }
                     out.push('\'');
                 }

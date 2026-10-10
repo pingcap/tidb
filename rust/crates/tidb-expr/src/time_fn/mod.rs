@@ -29,6 +29,7 @@ mod convert_tz;
 pub(crate) mod duration_parse;
 pub(crate) mod extract;
 pub(crate) mod session_tz;
+pub(crate) mod time_diff;
 
 use self::calendar::{civil_from_days, days_from_civil, parse_date_ymd, week_of_year};
 use crate::coerce::coerce_str;
@@ -82,7 +83,7 @@ pub(crate) fn dispatch(
         "TIME_FORMAT" => time_format(vals),
         "STR_TO_DATE" => calendar::str_to_date(vals, cols),
         "FROM_DAYS" => calendar::from_days(vals),
-        "TIMEDIFF" => time_diff(vals),
+        "TIMEDIFF" => time_diff::time_diff_untyped(vals, cols),
         "CONVERT_TZ" => convert_tz::convert_tz(vals),
         "FROM_UNIXTIME" => session_tz::from_unixtime(vals, cols),
         "UNIX_TIMESTAMP" => session_tz::unix_timestamp(vals, cols),
@@ -894,134 +895,6 @@ fn duration(value: &Datum) -> Result<Option<(i64, String)>, EvalError> {
         if negative { -total } else { total },
         fraction.chars().take(6).collect(),
     )))
-}
-
-enum TimeDiffValue {
-    DateTime { micros: i64, fsp: usize },
-    Duration { micros: i64, fsp: usize },
-}
-
-/// `TIMEDIFF(expr1, expr2)`, covering the string-valued signatures exercised
-/// by `builtin_time_test.go`.  Go selects among typed Time/Duration
-/// signatures before evaluation; this value-only port keeps that distinction
-/// by rejecting a mixed date-time/duration pair, while returning the canonical
-/// duration string for matching pairs.  Zero month/day components are
-/// accepted for the same `IgnoreZeroInDate` source rows and are interpreted
-/// by the source-compatible `calcDaynr` arithmetic.
-fn time_diff(vals: &[Datum]) -> Result<Datum, EvalError> {
-    if vals.len() != 2 {
-        return Err(EvalError::Unsupported("bad function arity"));
-    }
-    let Some(left) = parse_time_diff_value(&vals[0])? else {
-        return Ok(Datum::Null);
-    };
-    let Some(right) = parse_time_diff_value(&vals[1])? else {
-        return Ok(Datum::Null);
-    };
-    let (left_micros, right_micros, fsp) = match (left, right) {
-        (
-            TimeDiffValue::DateTime {
-                micros: left,
-                fsp: left_fsp,
-            },
-            TimeDiffValue::DateTime {
-                micros: right,
-                fsp: right_fsp,
-            },
-        )
-        | (
-            TimeDiffValue::Duration {
-                micros: left,
-                fsp: left_fsp,
-            },
-            TimeDiffValue::Duration {
-                micros: right,
-                fsp: right_fsp,
-            },
-        ) => (left, right, left_fsp.max(right_fsp)),
-        _ => return Ok(Datum::Null),
-    };
-    Ok(Datum::new_string(format_time_diff(
-        truncate_time_diff(left_micros.saturating_sub(right_micros)),
-        fsp,
-    )))
-}
-
-fn parse_time_diff_value(value: &Datum) -> Result<Option<TimeDiffValue>, EvalError> {
-    let Some(text) = coerce_str(value)? else {
-        return Ok(None);
-    };
-    let text = text.trim();
-    if text.is_empty() {
-        return Ok(None);
-    }
-    if let Some((date, time)) = text.split_once(char::is_whitespace) {
-        return Ok(parse_datetime_diff_value(date, time.trim()));
-    }
-    if text.contains(':') {
-        return Ok(parse_duration_diff_value(text));
-    }
-    // A date-only value is a datetime at midnight.  Do not mistake a
-    // colon-separated duration for a date (`10:9:0` was handled above).
-    Ok(parse_datetime_diff_value(text, "00:00:00"))
-}
-
-fn parse_datetime_diff_value(date: &str, time: &str) -> Option<TimeDiffValue> {
-    let parts = calendar::split_numeric_components_for_time_diff(date)?;
-    let year = calendar::expand_year_for_time_diff(parts[0].0, parts[0].1);
-    let month = parts[1].0;
-    let day = parts[2].0;
-    if month > 12 || day > 31 {
-        return None;
-    }
-    if month != 0 && day > calendar::days_in_month_for_time_diff(year, month) {
-        return None;
-    }
-    let (hour, minute, second, fraction) = calendar::parse_time_with_fraction(time)?;
-    let fsp = fraction.len();
-    let microsecond = fraction.parse::<u32>().ok().unwrap_or(0) * 10u32.pow(6 - fsp as u32);
-    let micros = calendar::time_diff_daynr(year, month, day)
-        .checked_mul(86_400_000_000)?
-        .checked_add(i64::from(hour) * 3_600_000_000)?
-        .checked_add(i64::from(minute) * 60_000_000)?
-        .checked_add(i64::from(second) * 1_000_000)?
-        .checked_add(i64::from(microsecond))?;
-    Some(TimeDiffValue::DateTime { micros, fsp })
-}
-
-const MAX_TIME_DIFF_MICROS: i64 = (838 * 3_600 + 59 * 60 + 59) * 1_000_000;
-
-fn truncate_time_diff(micros: i64) -> i64 {
-    micros.clamp(-MAX_TIME_DIFF_MICROS, MAX_TIME_DIFF_MICROS)
-}
-
-fn parse_duration_diff_value(text: &str) -> Option<TimeDiffValue> {
-    let (negative, text) = text
-        .strip_prefix('-')
-        .map_or((false, text), |text| (true, text));
-    let mut fields = text.splitn(3, ':');
-    let hour = fields.next()?.parse::<i64>().ok()?;
-    let minute = fields.next()?.parse::<u32>().ok()?;
-    let second_part = fields.next()?;
-    let (second_part, fraction) = second_part.split_once('.').unwrap_or((second_part, ""));
-    let second = second_part.parse::<u32>().ok()?;
-    if minute > 59 || second > 59 || fraction.len() > 6 || !fraction.is_ascii() {
-        return None;
-    }
-    let microsecond = if fraction.is_empty() {
-        0
-    } else {
-        fraction.parse::<u32>().ok()? * 10u32.pow(6 - fraction.len() as u32)
-    };
-    let micros = hour
-        .checked_mul(3_600_000_000)?
-        .checked_add(i64::from(minute) * 60_000_000)?
-        .checked_add(i64::from(second) * 1_000_000)?
-        .checked_add(i64::from(microsecond))?;
-    Some(TimeDiffValue::Duration {
-        micros: if negative { -micros } else { micros },
-        fsp: fraction.len(),
-    })
 }
 
 fn format_time_diff(micros: i64, fsp: usize) -> String {

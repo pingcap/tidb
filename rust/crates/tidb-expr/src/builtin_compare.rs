@@ -781,11 +781,36 @@ pub(crate) fn wrap_comparison_arguments(
         }),
         EvalType::VectorFloat32 => wrap_with_cast_as_vector_float32(expression),
     };
+    // Go derives the comparison collation before the casts and hands it to
+    // `HandleBinaryLiteral` for every ETString argument: a binary operand
+    // compared under a character-set collation decodes through an implicit
+    // `from_binary` (`u = 0x6162` folds to `eq(u, "ab")`).
+    let derived = (comparison_type == EvalType::String)
+        .then(|| {
+            crate::collation_derive::derive_collation_with_connection(
+                "eq",
+                arguments,
+                EvalType::Int,
+                connection,
+            )
+        })
+        .transpose()?;
     *arguments = arguments
         .iter()
         .cloned()
         .map(wrap)
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|argument| {
+            let argument = argument?;
+            Ok(match &derived {
+                Some(derived) => crate::rewriter::wrap_implicit_from_binary(
+                    argument,
+                    &derived.charset,
+                    &derived.collation,
+                ),
+                None => argument,
+            })
+        })
+        .collect::<Result<Vec<_>, EvalError>>()?;
     Ok(())
 }
 
@@ -824,7 +849,8 @@ pub(crate) fn wrap_comparison_arguments_with_fold(
     // conversion warnings are raised once during construction.
     for argument in arguments {
         if matches!(argument, Expression::ScalarFunction(function)
-            if function.func_name.lowercase().starts_with("cast_")
+            if (function.func_name.lowercase().starts_with("cast_")
+                || function.func_name.lowercase() == "from_binary")
                 && function.ret_type.as_ref().is_some_and(|tp| tp.eval_type() != EvalType::Json))
         {
             fold(argument);

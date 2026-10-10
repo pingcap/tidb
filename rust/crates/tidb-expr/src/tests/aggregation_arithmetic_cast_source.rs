@@ -1671,10 +1671,11 @@ fn test_wrap_with_cast_as_types_classes_enum_row() {
 
 #[test]
 fn test_wrap_with_cast_as_string_binary_literal_warns_invalid_utf8() {
-    // Go `BuildCastFunction(..., TypeVarString)` inserts `from_binary` for a
-    // BINARY source.  An invalid UTF-8 byte is truncated at the first bad
-    // group, publishes ErrCannotConvertString (3854), and returns the
-    // successfully decoded prefix in non-strict mode (empty here).
+    // Go `BuildCastFunction(..., TypeVarString)` inserts an explicit
+    // `from_binary` for a BINARY source. An invalid UTF-8 byte publishes
+    // ErrCannotConvertString (3854) as a warning, and
+    // `builtinInternalFromBinarySig` answers NULL under a strict sql_mode --
+    // which this context reports -- and the decoded prefix otherwise.
     let mut source = FieldType::new(C::VarString);
     source.set_charset_name("binary");
     source.set_collation_name("binary");
@@ -1689,8 +1690,8 @@ fn test_wrap_with_cast_as_string_binary_literal_warns_invalid_utf8() {
     let wrapped = crate::simple_expr::build_cast_function(invalid, target, false).unwrap();
     let out = wrapped
         .eval(&ctx, tidb_chunk::row::Row::empty())
-        .expect("CAST AS CHAR should keep the non-strict decoded prefix");
-    assert_eq!(out, Datum::new_string(""));
+        .expect("CAST AS CHAR warns rather than errors");
+    assert_eq!(out, Datum::Null);
     assert_eq!(ctx.0.borrow().len(), 1);
     assert_eq!(ctx.0.borrow()[0].0, 3854);
 

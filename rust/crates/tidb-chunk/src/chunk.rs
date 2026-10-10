@@ -798,10 +798,19 @@ impl Chunk {
             Datum::Null => self.append_null(col_idx),
             Datum::Int(i) => self.append_int64(col_idx, *i),
             Datum::UInt(u) => self.append_uint64(col_idx, *u),
-            Datum::Real(f) => self.append_float64(col_idx, *f),
-            Datum::Float32(f) => {
+            // Go writes an ETReal result by the output column's type
+            // (`evalOneCell` / `evalOneVec`: `AppendFloat32(float32(res))`
+            // for `TypeFloat`), so a FLOAT column's 4-byte cell is where a
+            // float64 narrows -- and a FLOAT column value read back widens
+            // into a DOUBLE column's 8-byte cell.
+            Datum::Real(f) | Datum::Float32(f) => {
                 self.append_sel(col_idx);
-                self.columns[col_idx].write().append_float32(*f as f32);
+                let mut column = self.columns[col_idx].write();
+                if column.elem_buffer_len() == 4 {
+                    column.append_float32(*f as f32);
+                } else {
+                    column.append_float64(*f);
+                }
             }
             Datum::String(s) => self.append_bytes(col_idx, s.bytes()),
             Datum::Bytes(b) | Datum::Raw(b) => self.append_bytes(col_idx, b),
