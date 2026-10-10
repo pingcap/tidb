@@ -223,7 +223,7 @@
         "Plan": [
           "Projection root  test.obj.txt_val, test.obj.label",
           "└─TopN root  test.obj.label, offset:0, count:1",
-          "  └─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.relationship.ref_ojb_id, inner key:test.obj.id, equal cond:eq(test.relationship.ref_ojb_id, test.obj.id)",
+          "  └─HashJoin root  inner join, equal:[eq(test.relationship.ref_ojb_id, test.obj.id)]",
           "    ├─HashJoin(Build) root  inner join, equal:[eq(test.relationship.obj_id, test.obj.id)]",
           "    │ ├─IndexReader(Build) root  index:Selection",
           "    │ │ └─Selection cop[tikv]  not(isnull(test.relationship.ref_ojb_id))",
@@ -231,9 +231,8 @@
           "    │ └─TableReader(Probe) root  data:Selection",
           "    │   └─Selection cop[tikv]  eq(test.obj.type_id, 1)",
           "    │     └─TableFullScan cop[tikv] table:o1 keep order:false",
-          "    └─IndexLookUp(Probe) root  ",
-          "      ├─IndexRangeScan(Build) cop[tikv] table:o, index:idx_id(id) range: decided by [eq(test.obj.id, test.relationship.ref_ojb_id)], keep order:false",
-          "      └─TableRowIDScan(Probe) cop[tikv] table:o keep order:false"
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:o keep order:false"
         ]
       },
       {
