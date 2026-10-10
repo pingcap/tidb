@@ -17,6 +17,7 @@ package util
 import (
 	"bufio"
 	"net"
+	"reflect"
 	"syscall"
 )
 
@@ -65,7 +66,8 @@ func (conn BufferedReadConn) IsAlive() int {
 // can work on the underlying file descriptor. TiDB wraps the raw socket with
 // BufferedReadConn and, when TLS is enabled, with a *tls.Conn, so unwrap those
 // wrappers before giving up. It returns nil when no probed connection is found.
-func unwrapSyscallConn(c net.Conn) syscall.Conn {
+func unwrapSyscallConn(conn net.Conn) syscall.Conn {
+	c := conn
 	for depth := 0; c != nil && depth < 16; depth++ {
 		if sc, ok := c.(syscall.Conn); ok {
 			return sc
@@ -76,7 +78,40 @@ func unwrapSyscallConn(c net.Conn) syscall.Conn {
 		case *BufferedReadConn:
 			c = v.Conn
 		default:
-			return nil
+			// Third-party wrappers such as the PROXY-protocol conn embed a
+			// net.Conn without promoting SyscallConn or NetConn, so they are
+			// not caught by the cases above. Unwrap the embedded field when
+			// one is present; otherwise the fd is not reachable.
+			c = embeddedConn(c)
+			if c == nil {
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+// embeddedConn returns the net.Conn embedded in c, if any. Some third-party
+// net.Conn wrappers (for example the PROXY-protocol conn used when
+// proxy-protocol is enabled) embed a net.Conn rather than forwarding
+// SyscallConn or NetConn, so unwrapping that field is the only way to reach the
+// underlying file descriptor. It returns nil when c is not such a wrapper.
+func embeddedConn(c net.Conn) net.Conn {
+	v := reflect.ValueOf(c)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return nil
+	}
+	v = v.Elem()
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+	for i := range v.NumField() {
+		f := v.Field(i)
+		if !f.CanInterface() {
+			continue
+		}
+		if nc, ok := f.Interface().(net.Conn); ok && nc != nil {
+			return nc
 		}
 	}
 	return nil
