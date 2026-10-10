@@ -51,6 +51,14 @@ pub trait ProcessKillTarget: Send + Sync {
     /// Cancels the running statement and ends the connection (Go `KILL` /
     /// `KILL CONNECTION`).
     fn kill_connection(&self);
+
+    /// Cancels the running statement with a watchdog's own signal (Go server
+    /// `killQuery`), so it fails as `max_execution_time` or a runaway rule
+    /// rather than as `KILL QUERY`.
+    fn cancel_query_with(&self, signal: tidb_util::sqlkiller::KillSignal) {
+        let _ = signal;
+        self.cancel_query();
+    }
 }
 
 /// One snapshot shared by SHOW and information_schema.PROCESSLIST.
@@ -119,6 +127,8 @@ pub struct TransactionRow {
 
 struct TransactionEntry {
     start_ts: u64,
+    /// Go `ProcessInfo.CurTxnCreateTime`.
+    created: Instant,
     current_sql_digest: Option<String>,
     state: &'static str,
     waiting_start: Option<DateTime<Utc>>,
@@ -169,6 +179,9 @@ struct ProcessEntry {
     external_transaction_owner: bool,
     transaction_history: Arc<tidb_exec::txn_summary::TransactionHistoryRecorder>,
     process_plan_info: Option<Arc<Mutex<tidb_executor::ProcessPlanInfo>>>,
+    /// An internal session's entry: its statements are restricted SQL (Go
+    /// `StmtCtx.InRestrictedSQL`).
+    restricted: bool,
     /// Result-set owners retaining the current command after execution has
     /// returned. Go clears `ProcessInfo` only when the server command ends,
     /// after `writeResultSet` has drained the executor.
@@ -249,6 +262,7 @@ impl ProcessEntry {
         let digest = (!self.digest.is_empty()).then(|| self.digest.clone());
         self.transaction = Some(TransactionEntry {
             start_ts,
+            created: Instant::now(),
             current_sql_digest: digest.clone(),
             state: if self.info.is_some() {
                 "Running"
@@ -493,6 +507,7 @@ impl ProcessRegistry {
             external_transaction_owner: false,
             transaction_history: Arc::clone(&self.transaction_history),
             process_plan_info: None,
+            restricted: false,
             statement_holds: 0,
         }));
         self.lock().insert(id, Arc::clone(&entry));
@@ -511,6 +526,11 @@ impl ProcessRegistry {
             ..Self::default()
         }
         .register(id, String::new(), String::new(), db, None);
+        guard
+            .entry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .restricted = true;
         self.internal
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -556,6 +576,14 @@ impl ProcessRegistry {
             entry.session_alias = session_alias;
             entry.redact_sql = redact_sql;
             entry.oom_alarm_variables_info = oom_alarm_variables_info;
+        });
+    }
+
+    /// Publishes the running statement's resource group, which a statement
+    /// hint may override once the statement is parsed.
+    pub(crate) fn statement_resource_group(&self, id: u64, resource_group_name: String) {
+        self.with_entry(id, |entry| {
+            entry.resource_group_name = resource_group_name;
         });
     }
 
@@ -707,6 +735,21 @@ impl ProcessRegistry {
     /// answers OK. (`ErrNoSuchThread`/1094 is raised by `EXPLAIN FOR
     /// CONNECTION`, not by `KILL`.)
     pub fn kill(&self, id: u64, query: bool) -> bool {
+        self.kill_with_signal(
+            id,
+            query,
+            tidb_util::sqlkiller::KillSignal::QueryInterrupted,
+        )
+    }
+
+    /// [`Self::kill`] with the signal the statement observes (Go server
+    /// `Kill`'s `killQuery`).
+    fn kill_with_signal(
+        &self,
+        id: u64,
+        query: bool,
+        signal: tidb_util::sqlkiller::KillSignal,
+    ) -> bool {
         let client = self.lock().get(&id).cloned();
         let Some(client) = client else {
             // Serialize interruption with UnTrack's reset, like Go SysProcesses.
@@ -730,7 +773,7 @@ impl ProcessRegistry {
             return true;
         };
         if query {
-            target.cancel_query();
+            target.cancel_query_with(signal);
         } else {
             target.kill_connection();
         }
@@ -761,6 +804,14 @@ impl ProcessRegistry {
                         .clone()
                 })
                 .unwrap_or_default();
+            // A running statement's `Time` is its execution start, which Go's
+            // `ExecStmt.Exec` republishes after planning; the plan cell is
+            // reset when the next statement starts.
+            let running = entry.info.is_some();
+            let (since, started_at) = plan_info
+                .execution_started
+                .filter(|_| running)
+                .unwrap_or((entry.since, entry.started_at));
             Arc::new(ProcessInfo {
                 id,
                 user: entry.user.clone(),
@@ -769,8 +820,8 @@ impl ProcessRegistry {
                 digest: entry.digest.clone(),
                 info: entry.info.clone().unwrap_or_default(),
                 redact_sql: entry.redact_sql,
-                time: entry.started_at,
-                started_instant: Some(entry.since),
+                time: started_at,
+                started_instant: Some(since),
                 mem_tracker: entry.mem_tracker.as_ref().map(Arc::clone),
                 disk_tracker: entry.disk_tracker.as_ref().map(Arc::clone),
                 cur_txn_start_ts: entry.cur_txn_start_ts,
@@ -782,6 +833,14 @@ impl ProcessRegistry {
                 table_ids: plan_info.table_ids,
                 index_names: plan_info.index_names,
                 stats_info: plan_info.stats_info,
+                max_execution_time: if running {
+                    plan_info.max_execution_time
+                } else {
+                    0
+                },
+                state: entry.state.clone(),
+                cur_txn_create_time: entry.transaction.as_ref().map(|txn| txn.created),
+                in_restricted_sql: entry.restricted,
                 ..ProcessInfo::default()
             })
         })
@@ -802,6 +861,21 @@ impl SessionManager for ProcessRegistry {
 
     fn get_process_info(&self, id: u64) -> Option<Arc<ProcessInfo>> {
         self.process_info(id)
+    }
+
+    /// Go server `Kill` / `killQuery`: a runaway rule or `max_execution_time`
+    /// interrupts the statement with its own signal; any other kill is
+    /// `QueryInterrupted`.
+    fn kill(&self, connection_id: u64, query: bool, max_execution_time: bool, runaway: bool) {
+        use tidb_util::sqlkiller::KillSignal;
+        let signal = if runaway {
+            KillSignal::RunawayQueryExceeded
+        } else if max_execution_time {
+            KillSignal::MaxExecTimeExceeded
+        } else {
+            KillSignal::QueryInterrupted
+        };
+        self.kill_with_signal(connection_id, query, signal);
     }
 }
 

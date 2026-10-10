@@ -193,6 +193,10 @@ pub(crate) fn analyzed_filter_selectivity_in(
         conditions,
         &crate::cardinality::selectivity::SelectivityContext {
             range_fallback_handler: context.range_fallback_handler,
+            // The derivation context carries a marker only when the
+            // statement uses the plan cache.
+            use_plan_cache: context.plan_cache_marker.is_some(),
+            plan_cache_marker: context.plan_cache_marker,
             ..crate::cardinality::selectivity::SelectivityContext::new(
                 &options,
                 context.expression_evaluator,

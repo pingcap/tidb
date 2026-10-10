@@ -2306,11 +2306,8 @@ impl CachedDmlPlan {
         ctx: Option<&crate::StmtContext>,
     ) -> Result<u64, super::planner_bridge::CachedPlanBindFailure> {
         use super::planner_bridge::CachedPlanBindFailure;
-        super::bind_prepared_statement_in_place(&mut self.statement, values).map_err(|_| {
-            CachedPlanBindFailure::Rejected {
-                rebuild_error: None,
-            }
-        })?;
+        super::bind_prepared_statement_in_place(&mut self.statement, values)
+            .map_err(|_| CachedPlanBindFailure::unbound())?;
         let needs_statement = std::sync::atomic::AtomicBool::new(false);
         let statement = super::planner_bridge::deferred_rebuild_context(ctx, values);
         let parameters = tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values);

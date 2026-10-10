@@ -767,6 +767,9 @@ impl GlobalSysvars {
         let stats_cache_mem_quota = effective(tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA)
             .parse::<i64>()
             .expect("validated statistics cache quota is an integer");
+        let max_auto_analyze_time = effective(tidb_vardef::tidb_vars::TIDB_MAX_AUTO_ANALYZE_TIME)
+            .parse::<i64>()
+            .expect("validated auto-analyze time limit is an integer");
         let check_mb4 = effective(tidb_vardef::tidb_vars::TIDB_CHECK_MB4_VALUE_IN_UTF8);
         let check_mb4_value_in_utf8 = check_mb4.eq_ignore_ascii_case("on") || check_mb4 == "1";
         let check_constraint = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_CHECK_CONSTRAINT);
@@ -793,6 +796,8 @@ impl GlobalSysvars {
             carries(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N);
         let publish_stats_cache_mem_quota =
             carries(tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA);
+        let publish_max_auto_analyze_time =
+            carries(tidb_vardef::tidb_vars::TIDB_MAX_AUTO_ANALYZE_TIME);
         let mut publish = self
             .resolved
             .write()
@@ -832,6 +837,10 @@ impl GlobalSysvars {
             if publish_stats_cache_mem_quota {
                 tidb_vardef::STATS_CACHE_MEM_QUOTA
                     .store(stats_cache_mem_quota, std::sync::atomic::Ordering::SeqCst);
+            }
+            if publish_max_auto_analyze_time {
+                tidb_vardef::MAX_AUTO_ANALYZE_TIME
+                    .store(max_auto_analyze_time, std::sync::atomic::Ordering::SeqCst);
             }
             // Keep the callback ordered with the image and other process
             // options; dropping this lock first can publish an older value last.
@@ -1816,6 +1825,12 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N {
             tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(
                 tidb_vardef::defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N as u64,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_MAX_AUTO_ANALYZE_TIME {
+            tidb_vardef::MAX_AUTO_ANALYZE_TIME.store(
+                tidb_vardef::defaults::DEF_TIDB_MAX_AUTO_ANALYZE_TIME,
                 std::sync::atomic::Ordering::SeqCst,
             );
         }

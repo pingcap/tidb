@@ -1625,6 +1625,7 @@ impl Session {
             self.set_statement_arbitration_key(sql);
             let cache_hit = execution.cache_hit();
             self.active_resource_group.clone_from(&self.resource_group);
+            self.publish_statement_resource_group();
             self.begin_cached_prepared_query_boundary();
             // Go Optimize applies StmtHints.SetVars for cached plans too. The
             // effective PREPARE tree carries the same binding-selected hints as
@@ -1763,6 +1764,7 @@ impl Session {
         let parameters = execution.parameters();
         self.set_statement_arbitration_key(prepared.sql());
         self.active_resource_group.clone_from(&self.resource_group);
+        self.publish_statement_resource_group();
         self.begin_cached_prepared_query_boundary();
         for (level, code, message) in execution.take_planning_warnings() {
             self.append_warning(crate::WarningLevel::from_executor(level), code, message);
@@ -2331,6 +2333,29 @@ impl Session {
         {
             if let Some(ts) = self.configured_historical_read_ts()? {
                 return self.run_statement_as_of(ts, stmt);
+            }
+        }
+        // Go `DDLExec.executeCreateView` preprocesses the view's SELECT as a
+        // statement of its own, after the DDL's implicit commit, and refuses
+        // a stale read there: a table read `AS OF`, or `tidb_read_staleness`.
+        if let Stmt::Ddl(ddl) = &stmt {
+            if let tidb_ast::DdlStmt::CreateView(create) = ddl.as_ref() {
+                let read_staleness = self
+                    .vars
+                    .get_system("tidb_read_staleness")
+                    .unwrap_or_default()
+                    .parse::<i64>()
+                    .unwrap_or(0);
+                if scan.has_as_of || read_staleness != 0 {
+                    let (schema, name) = match create.name.as_slice() {
+                        [schema, name] => (schema.as_str(), name.as_str()),
+                        [name] => (self.current_db.as_str(), name.as_str()),
+                        _ => ("", ""),
+                    };
+                    return Err(DriverError::Schema(crate::SchemaErrorKind::ViewInvalid(
+                        format!("{}.{}", schema.to_lowercase(), name.to_lowercase()),
+                    )));
+                }
             }
         }
         if scan.has_as_of && self.in_transaction() {

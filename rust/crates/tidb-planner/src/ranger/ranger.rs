@@ -488,6 +488,9 @@ pub struct ColumnRangeResult<'a, E = Expression> {
     /// Go's third return: the conditions that stay as filters (non-empty
     /// only on the memory fallback).
     pub remained_conds: &'a [E],
+    /// What Go's builder passed to `sctx.SetSkipPlanCache` (a point the
+    /// column's type could not hold); the caller forwards it.
+    pub skip_plan_cache_reason: Option<String>,
 }
 
 /// Go `buildColumnRange`.
@@ -523,6 +526,7 @@ fn build_column_range_impl<'a, E: std::borrow::Borrow<Expression>>(
             ranges,
             access_conds: &[],
             remained_conds: access_conditions,
+            skip_plan_cache_reason: skip_reason,
         });
     }
     let ranges = if col_len != UNSPECIFIED_LENGTH {
@@ -534,6 +538,7 @@ fn build_column_range_impl<'a, E: std::borrow::Borrow<Expression>>(
         ranges,
         access_conds: access_conditions,
         remained_conds: &[],
+        skip_plan_cache_reason: skip_reason,
     })
 }
 
@@ -598,6 +603,7 @@ pub fn build_column_range_in<'a, E: std::borrow::Borrow<Expression>>(
             ranges: super::points::full_range(),
             access_conds: &[],
             remained_conds: &[],
+            skip_plan_cache_reason: None,
         });
     }
     build_column_range_impl(conds, tp, false, col_len, range_mem_quota, eval_expression)

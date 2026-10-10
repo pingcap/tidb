@@ -110,6 +110,22 @@ pub struct ProcessInfo {
     pub affected_rows: u64,
     /// Go `OOMAlarmVariablesInfo`.
     pub oom_alarm_variables_info: OOMAlarmVariablesInfo,
+    // boundary: Go keeps the server-status bits and renders them with
+    // `serverStatus2Str`; the process list publishes that text.
+    /// Go `State`, as `SHOW PROCESSLIST` renders it.
+    pub state: String,
+    /// Go `MaxExecutionTime`: the running SELECT's `max_execution_time` in
+    /// milliseconds, zero for every other statement.
+    pub max_execution_time: u64,
+    /// Go `CurTxnCreateTime`, as the monotonic reading of the current
+    /// transaction's creation.
+    pub cur_txn_create_time: Option<Instant>,
+    // boundary: Go reads this through `StmtCtx.InRestrictedSQL`.
+    /// Whether the statement is internal (restricted) SQL.
+    pub in_restricted_sql: bool,
+    // boundary: Go `RunawayChecker`, narrowed to `CheckRuleKillAction`.
+    /// The statement's runaway watch rule: a kill cause when it must end.
+    pub runaway_rule_kill_action: Option<Arc<dyn Fn() -> Option<String> + Send + Sync>>,
 }
 
 impl Default for ProcessInfo {
@@ -136,19 +152,29 @@ impl Default for ProcessInfo {
             stats_info: HashMap::new(),
             affected_rows: 0,
             oom_alarm_variables_info: OOMAlarmVariablesInfo::default(),
+            state: String::new(),
+            max_execution_time: 0,
+            cur_txn_create_time: None,
+            in_restricted_sql: false,
+            runaway_rule_kill_action: None,
         }
     }
 }
 
-// boundary: Go `sessmgr.Manager`, narrowed to the two methods these two
-// packages call; `ShowProcessList`'s `map[uint64]*ProcessInfo` flattens to a
-// vec of snapshots.
+// boundary: Go `sessmgr.Manager`, narrowed to the methods the memory alarm,
+// server memory limit and expensive-query packages call;
+// `ShowProcessList`'s `map[uint64]*ProcessInfo` flattens to a vec of
+// snapshots.
 /// The session-manager seam over Go `sessmgr.Manager`.
 pub trait SessionManager: Send + Sync {
     /// Go `Manager.ShowProcessList`.
     fn show_process_list(&self) -> Vec<Arc<ProcessInfo>>;
     /// Go `Manager.GetProcessInfo`.
     fn get_process_info(&self, id: u64) -> Option<Arc<ProcessInfo>>;
+    /// Go `Manager.Kill`: ends the connection, or only its running statement
+    /// when `query`; `max_execution_time` and `runaway` name the watchdog that
+    /// asked, which picks the statement's kill signal.
+    fn kill(&self, connection_id: u64, query: bool, max_execution_time: bool, runaway: bool);
 }
 
 /// Go `ConfigProvider`: memory usage alarm configuration values.
@@ -914,7 +940,8 @@ fn get_plan_string(info: &ProcessInfo) -> String {
 /// snapshot. Rust snapshots the statement fields while the registry lock is
 /// held, so Go's `RefCountOfStmtCtx.TryIncrease` lifetime guard has no
 /// separate runtime branch here.
-fn gen_log_fields(cost_time: ChronoDuration, info: &ProcessInfo) -> Vec<Field> {
+#[must_use]
+pub fn gen_log_fields(cost_time: ChronoDuration, info: &ProcessInfo) -> Vec<Field> {
     let mut log_fields = Vec::with_capacity(20);
     let nanos = cost_time.num_nanoseconds().unwrap_or_else(|| {
         if cost_time < ChronoDuration::zero() {

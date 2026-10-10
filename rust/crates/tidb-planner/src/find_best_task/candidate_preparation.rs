@@ -115,7 +115,12 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 let single_scan = state.is_single_scan.unwrap_or_else(|| {
                     index_path_is_single_scan(ds, index, ctx.opt_prefix_index_single_scan)
                 });
+                // Go `derivePathStatsAndTryHeuristics` selects a path whose
+                // ranges came out empty before any skyline pruning: the
+                // statement reads nothing, whatever conditions remain.
+                let empty_ranges = filled.detached.ranges.is_empty();
                 if filled.detached.access_conds.is_empty()
+                    && !empty_ranges
                     && prop.is_sort_item_empty()
                     && !ds.forced_index_ids.contains(&index.id)
                     && !single_scan
@@ -130,16 +135,21 @@ pub(super) fn prepare_ordinary_paths<'a>(
                     single_scan,
                     index_path_matches_order(ds, index, prop),
                 );
-                let heuristic = metrics.as_ref().map(|metrics| HeuristicPath {
-                    range_count: filled.detached.ranges.len(),
-                    only_points: filled.detached.ranges.iter().all(|range| {
-                        range.is_point_non_nullable() && range.low_val.len() == index.columns.len()
-                    }),
-                    unique: index.unique,
-                    single_scan,
-                    table_filter_count: filled.table_filters.len(),
-                    access_columns: metrics.access_columns.clone(),
-                });
+                let heuristic = if empty_ranges {
+                    Some(HeuristicPath::default())
+                } else {
+                    metrics.as_ref().map(|metrics| HeuristicPath {
+                        range_count: filled.detached.ranges.len(),
+                        only_points: filled.detached.ranges.iter().all(|range| {
+                            range.is_point_non_nullable()
+                                && range.low_val.len() == index.columns.len()
+                        }),
+                        unique: index.unique,
+                        single_scan,
+                        table_filter_count: filled.table_filters.len(),
+                        access_columns: metrics.access_columns.clone(),
+                    })
+                };
                 (metrics, heuristic)
             }
             PossiblePath::TiFlashTable => (None, None),

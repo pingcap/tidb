@@ -717,7 +717,16 @@ impl IndexJoinPathRebuild {
     pub(crate) fn rebuild(
         &self,
         evaluate: &ExpressionEvaluator<'_>,
-    ) -> Result<Option<Ranges>, PlanError> {
+    ) -> Result<(Option<Ranges>, Option<String>), PlanError> {
+        /// Go's `SetSkipPlanCache` during the rebuild, which ends the hit.
+        #[derive(Default)]
+        struct Recorded(std::cell::RefCell<Option<String>>);
+        impl crate::logical::rule::PlanCacheMarker for Recorded {
+            fn set_skip_plan_cache(&self, reason: &str) {
+                self.0.borrow_mut().get_or_insert_with(|| reason.to_owned());
+            }
+        }
+        let recorded = Recorded::default();
         let info = IndexJoinPathInfo {
             other_conditions: &self.other_conditions,
             outer_join_keys: &self.outer_join_keys,
@@ -730,12 +739,13 @@ impl IndexJoinPathRebuild {
             fallback_handler: None,
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
             evaluate,
-            plan_cache_marker: None,
+            plan_cache_marker: Some(&recorded),
         };
-        Ok(match index_join_path_build(info, &self.idx_cols, &self.idx_col_lens, env)? {
+        let ranges = match index_join_path_build(info, &self.idx_cols, &self.idx_col_lens, env)? {
             IndexJoinPathOutcome::Built(core) if !core.ranges.is_empty() => Some(core.ranges),
             _ => None,
-        })
+        };
+        Ok((ranges, recorded.0.into_inner()))
     }
 }
 
@@ -1192,10 +1202,11 @@ mod tests {
             inner_schema: fixture.ds_schema.clone(),
             opt_prefix_index_single_scan: true,
         };
-        let ranges = rebuild
+        let (ranges, skip_plan_cache) = rebuild
             .rebuild(&crate::ranger::points::evaluate_static)
-            .expect("rebuilds")
-            .expect("a range");
+            .expect("rebuilds");
+        assert_eq!(skip_plan_cache, None);
+        let ranges = ranges.expect("a range");
         assert_eq!(
             render_ranges(&ranges),
             "[[NULL 1 NULL 2,NULL 1 NULL 2] [NULL 1 NULL 4,NULL 1 NULL 4] [NULL 3 NULL 2,NULL 3 NULL 2] [NULL 3 NULL 4,NULL 3 NULL 4]]"

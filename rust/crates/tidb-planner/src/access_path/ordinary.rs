@@ -346,6 +346,12 @@ pub(crate) fn detach_table_path(
             context.expression_evaluator,
         )
         .map_err(map_error)?;
+        if let (Some(marker), Some(reason)) = (
+            context.plan_cache_marker,
+            built.skip_plan_cache_reason.as_deref(),
+        ) {
+            marker.set_skip_plan_cache(reason);
+        }
         if !built.remained_conds.is_empty() {
             if let Some(handler) = context.range_fallback_handler {
                 handler.record_range_fallback(context.range_max_size);

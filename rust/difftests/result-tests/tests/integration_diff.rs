@@ -825,6 +825,10 @@ fn run_topic_on_this_stack(topic: &str) -> Result<TopicReport, String> {
 
     let mut report = TopicReport::default();
     let mut connections = Connections::open(topic)?;
+    // `INTEGRATION_SHOW_CONTEXT` lists the statements that ran before each
+    // divergence, which a repeated `select @@last_plan_from_cache` needs.
+    let show_context = std::env::var_os("INTEGRATION_SHOW_CONTEXT").is_some();
+    let mut recent: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     for (item, block) in aligned {
         let stmt = match item {
             Item::Stmt(stmt) => stmt,
@@ -838,16 +842,34 @@ fn run_topic_on_this_stack(topic: &str) -> Result<TopicReport, String> {
             }
             Item::Echo(_) => continue,
         };
+        let command = connections.begin_command();
         let outcome = compare(connections.current(), stmt, &block, &mut report);
+        drop(command);
         if matches!(outcome, Err(None)) && !stmt.expect_error {
             connections.recover_account_row_from_unsupported_create_user(&stmt.sql);
         }
         match outcome {
             Ok(kind) => report.matched(kind),
             Err(None) => {}
-            Err(Some(detail)) => report
-                .divergences
-                .push(format!("\n--- [{topic}] {}\n{detail}", stmt.sql)),
+            Err(Some(detail)) => {
+                let context = if show_context {
+                    recent
+                        .iter()
+                        .map(|sql| format!("  after: {sql}\n"))
+                        .collect::<String>()
+                } else {
+                    String::new()
+                };
+                report
+                    .divergences
+                    .push(format!("\n--- [{topic}] {}\n{context}{detail}", stmt.sql));
+            }
+        }
+        if show_context {
+            recent.push_back(stmt.sql.clone());
+            if recent.len() > 8 {
+                recent.pop_front();
+            }
         }
     }
     Ok(report)

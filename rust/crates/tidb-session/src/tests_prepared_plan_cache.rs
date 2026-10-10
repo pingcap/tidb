@@ -2418,3 +2418,199 @@ fn an_empty_rebuilt_handle_range_reads_nothing() {
         (vec![vec!["NULL".into()]], "1".to_owned())
     );
 }
+
+/// Go `optimize` tries `TryFastPlan` before the optimizer for a cached
+/// statement too, and the point plan keeps its markers (`HandleConstant`,
+/// `IndexConstants`, `HandleParams`): a hit moves each execution's parameter
+/// into the key column's domain (`convertConstant2Datum`), and a parameter
+/// that no longer equals itself there replans. The ordinary planner's
+/// comparison refine had refused every DECIMAL or string parameter on an
+/// integer key ("may be converted to INT"), so none was ever cached
+/// (`planner/core/tests/prepare/prepare`).
+#[test]
+fn fast_point_plans_cache_parameters_of_any_type() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    let one = vec![vec!["1".to_owned()]];
+    let none = Vec::<Vec<String>>::new();
+    for table in [
+        "create table t(pk int primary key)",
+        "create table t(pk int, unique index idx(pk))",
+    ] {
+        session.run("drop table if exists t").unwrap();
+        session.run(table).unwrap();
+        session.run("insert into t values(1)").unwrap();
+        session
+            .run("prepare stmt from 'select * from t where pk = ?'")
+            .unwrap();
+        session
+            .run("set @a0=1.1, @a1='1.1', @a2=1, @a3=1.0, @a4='1.0'")
+            .unwrap();
+        for (vars, expected) in [
+            ("@a2", (one.clone(), "0")),
+            ("@a2", (one.clone(), "1")),
+            ("@a3", (one.clone(), "0")),
+            ("@a3", (one.clone(), "1")),
+            ("@a0", (none.clone(), "0")),
+            ("@a4", (one.clone(), "0")),
+            ("@a4", (one.clone(), "1")),
+            ("@a1", (none.clone(), "0")),
+        ] {
+            assert_eq!(
+                execute_and_flag(&mut session, vars),
+                (expected.0, expected.1.to_owned()),
+                "{table}: EXECUTE USING {vars}"
+            );
+        }
+    }
+
+    // A batch keeps its literal and parameter keys alike.
+    session.run("drop table if exists t").unwrap();
+    session.run("create table t(pk int primary key)").unwrap();
+    session
+        .run("insert into t values (1), (2), (3), (4), (5)")
+        .unwrap();
+    session
+        .run("prepare stmt from 'select * from t where pk in (1, ?, ?)'")
+        .unwrap();
+    session
+        .run("set @a0=0, @a2=2, @a3=3, @a1_1=1.1, @a4=4, @a5=5")
+        .unwrap();
+    let rows = |keys: &[&str]| -> Vec<Vec<String>> {
+        keys.iter().map(|key| vec![(*key).to_owned()]).collect()
+    };
+    assert_eq!(
+        execute_and_flag(&mut session, "@a2, @a3"),
+        (rows(&["1", "2", "3"]), "0".to_owned())
+    );
+    assert_eq!(
+        execute_and_flag(&mut session, "@a2, @a3"),
+        (rows(&["1", "2", "3"]), "1".to_owned())
+    );
+    assert_eq!(
+        execute_and_flag(&mut session, "@a0, @a4"),
+        (rows(&["1", "4"]), "1".to_owned())
+    );
+    assert_eq!(
+        execute_and_flag(&mut session, "@a1_1, @a5"),
+        (rows(&["1", "5"]), "0".to_owned())
+    );
+}
+
+/// Go `derivePathStatsAndTryHeuristics` selects a path whose ranges came
+/// out empty before any pruning, and `findBestTask` answers it with a
+/// `TableDual` it keeps out of the plan cache. `col3 = '545:50:46.85487'`
+/// rounds in a `time(0)` column, so the `(col3, col2)` index range is empty;
+/// that path had been pruned for its missing access conditions, and the
+/// cached full scan was served to the next parameters
+/// (`planner/core/tests/prepare/issue`, TestIssue31280).
+#[test]
+fn an_empty_index_range_plans_a_table_dual() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session
+        .run("CREATE TABLE t (COL1 varbinary(20), COL2 bit(16), COL3 time, COL4 int, UNIQUE KEY U_M_COL4 (COL1(10),COL2), UNIQUE KEY U_M_COL5 (COL3,COL2))")
+        .unwrap();
+    session
+        .run("insert into t values(0x1C4FDBA09B42D999AC3019B6A9C0C787FBA08446, 0xCA74, '-836:46:08', 735655453)")
+        .unwrap();
+    let plan = row_text(session.run(
+        "explain select col4 from t where col2 >= -32373 and col1 is not null and col3 = '545:50:46.85487'",
+    ));
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("TableDual") && row[4] == "rows:0"),
+        "{plan:?}"
+    );
+    session
+        .run("prepare stmt from 'select col4 from t where col2 >= ? and col1 is not null and col3 = ?'")
+        .unwrap();
+    session.run("set @a=-32373, @b='545:50:46.85487'").unwrap();
+    session.run("execute stmt using @a, @b").unwrap();
+    assert_eq!(
+        warnings(&mut session),
+        [[
+            "Warning",
+            "1105",
+            "skip prepared plan-cache: get a TableDual plan"
+        ]]
+    );
+    session.run("set @a=-27225, @b='-836:46:08'").unwrap();
+    assert_eq!(
+        execute_and_flag(&mut session, "@a, @b"),
+        (vec![vec!["735655453".into()]], "0".to_owned())
+    );
+    assert_eq!(
+        execute_and_flag(&mut session, "@a, @b"),
+        (vec![vec!["735655453".into()]], "1".to_owned())
+    );
+}
+
+/// A cache hit rebuilds a function of a parameter (`FROM_UNIXTIME(?)`) in
+/// the executing statement, which carries the session time zone. The
+/// context-free probe had evaluated it without one and the cached scan
+/// matched no row (`expression/issues`, TestIssue17287).
+#[test]
+fn a_cached_function_of_a_parameter_reads_the_session_time_zone() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session.run("set time_zone = '+08:00'").unwrap();
+    session.run("create table t(a datetime)").unwrap();
+    session
+        .run("insert into t values(from_unixtime(1589873945)), (from_unixtime(1589873946))")
+        .unwrap();
+    session
+        .run("prepare stmt from 'SELECT unix_timestamp(a) FROM t WHERE a = from_unixtime(?)'")
+        .unwrap();
+    session
+        .run("set @val1 = 1589873945, @val2 = 1589873946")
+        .unwrap();
+    assert_eq!(
+        execute_and_flag(&mut session, "@val1"),
+        (vec![vec!["1589873945".into()]], "0".to_owned())
+    );
+    assert_eq!(
+        execute_and_flag(&mut session, "@val2"),
+        (vec![vec!["1589873946".into()]], "1".to_owned())
+    );
+}
+
+/// Go `RebuildPlan4CachedPlan` refuses a hit when the rebuild itself calls
+/// `SetSkipPlanCache`: here the index join's `col2 BETWEEN ? AND ?` merges
+/// into a point for two equal parameters (`planner/core/tests/prepare/issue`).
+#[test]
+fn a_rebuild_that_skips_the_cache_refuses_the_hit() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session
+        .run("CREATE TABLE t (COL1 blob NOT NULL, COL2 char(1) NOT NULL, PRIMARY KEY (COL1(5),COL2) CLUSTERED)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES ('a', 'x')").unwrap();
+    session
+        .run("prepare stmt from 'SELECT/*+ INL_JOIN(t1, t2) */ t1.col2 FROM t t1 JOIN t t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN ? AND ? AND t1.col2 BETWEEN ? AND ?'")
+        .unwrap();
+    session.run("set @a='a', @b='z'").unwrap();
+    assert_eq!(
+        execute_and_flag(&mut session, "@a, @b, @a, @b"),
+        (vec![vec!["x".into()]], "0".to_owned())
+    );
+    session.run("set @x='x'").unwrap();
+    session.run("execute stmt using @x, @x, @x, @x").unwrap();
+    assert_eq!(
+        warnings(&mut session),
+        [[
+            "Warning",
+            "1105",
+            "skip prepared plan-cache: some parameters may be overwritten"
+        ]]
+    );
+    assert_eq!(last_plan_from_cache(&mut session), [["0"]]);
+}

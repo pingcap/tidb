@@ -344,6 +344,94 @@ pub enum PointRangeRebuild {
     /// Go `mutableIndexJoinRange`: the template ranges rebuilt by rerunning
     /// `indexJoinPathBuild` with the new parameters.
     IndexJoin(Box<crate::find_best_task::index_join_path::IndexJoinPathRebuild>),
+    /// A fast point plan's keys (`TryFastPlan`), rebuilt from its constants.
+    Constants(PointConstantsRebuild),
+}
+
+/// One key part of a fast point plan: Go `PointGetPlan.HandleConstant` /
+/// `IndexConstants[i]`, or `BatchPointGetPlan.HandleParams[i]` /
+/// `IndexValueParams[i][j]`.
+#[derive(Clone, Debug)]
+pub struct PointKeyConstant {
+    /// The EXECUTE parameter this part reads, or `None` for a literal.
+    pub marker: Option<usize>,
+    /// The planned value: the literal, or the planning execution's
+    /// parameter, already in the key column's domain.
+    pub value: Datum,
+}
+
+/// A fast point plan's keys, which Go's `buildRangesForPointGet` /
+/// `buildRangesForBatchGet` move into each execution's parameters through
+/// `convertConstant2Datum`; a parameter that does not survive that
+/// conversion rebuilds no plan.
+#[derive(Clone, Debug)]
+pub struct PointConstantsRebuild {
+    /// Every candidate key in written order. A batch keeps its repeated
+    /// keys here, as Go's plan does, so each execution dedups its own.
+    pub rows: Vec<Vec<PointKeyConstant>>,
+    /// The key columns' types, aligned with each row.
+    pub field_types: Vec<FieldType>,
+    /// A batch over a record handle: a repeated key is read once, and an
+    /// unsigned integer handle is keyed by its signed bit pattern, as the
+    /// planned batch was.
+    pub handle_batch: bool,
+}
+
+impl PointConstantsRebuild {
+    /// Whether any key part reads an EXECUTE parameter.
+    #[must_use]
+    pub fn has_parameters(&self) -> bool {
+        self.rows.iter().flatten().any(|part| part.marker.is_some())
+    }
+
+    /// Go `convertConstant2Datum` over every parameter part, giving the
+    /// closed point ranges this execution reads.
+    fn rebuild(
+        &self,
+        plan_id: i32,
+        context: &CachedPlanRebuildContext<'_>,
+    ) -> Result<Ranges, PlanCacheRebuildError> {
+        let mut keys: Vec<Vec<Datum>> = Vec::with_capacity(self.rows.len());
+        for row in &self.rows {
+            if row.len() != self.field_types.len() {
+                return Err(PlanCacheRebuildError::InvalidMetadata {
+                    plan_id,
+                    detail: "point key constants and their column types must be aligned",
+                });
+            }
+            let mut key = Vec::with_capacity(row.len());
+            for (part, field_type) in row.iter().zip(&self.field_types) {
+                let Some(order) = part.marker else {
+                    key.push(part.value.clone());
+                    continue;
+                };
+                let parameter = context
+                    .parameters
+                    .get(order)
+                    .ok_or(PlanCacheRebuildError::MissingParameter(order as i64))?;
+                let value = crate::point_get_value::point_get_value(field_type, parameter)
+                    .ok_or(PlanCacheRebuildError::ConstantChanged)?;
+                key.push(match (self.handle_batch, value) {
+                    (true, Datum::UInt(handle)) if row.len() == 1 => Datum::Int(handle as i64),
+                    (_, value) => value,
+                });
+            }
+            if self.handle_batch && keys.contains(&key) {
+                continue;
+            }
+            keys.push(key);
+        }
+        Ok(keys
+            .into_iter()
+            .map(|values| crate::ranger::types::Range {
+                collators: vec![tidb_datatype::Collation::Binary; values.len()],
+                low_val: values.clone(),
+                high_val: values,
+                low_exclude: false,
+                high_exclude: false,
+            })
+            .collect())
+    }
 }
 
 /// An evaluator for a deferred constant such as a non-deterministic function.
@@ -424,6 +512,13 @@ pub enum PlanCacheRebuildError {
         /// The invariant the retained metadata violated.
         detail: &'static str,
     },
+    /// Go `convertConstant2Datum`: a parameter no longer equals itself once
+    /// moved into the key column's domain.
+    ConstantChanged,
+    /// Go's ranger called `SetSkipPlanCache` while rebuilding (`a>=? and
+    /// a<=?` merged into a point for these parameters):
+    /// `RebuildPlan4CachedPlan` sees `UseCache` flip and refuses the hit.
+    SkipPlanCache(String),
     /// A point or batch-point rebuild changed the number of point keys.
     RangeCountChanged {
         /// The point plan whose key count changed.
@@ -444,6 +539,10 @@ impl fmt::Display for PlanCacheRebuildError {
                 write!(formatter, "deferred expression evaluation failed: {error}")
             }
             Self::RangeBuild(error) => write!(formatter, "range build failed: {error}"),
+            Self::SkipPlanCache(reason) => write!(formatter, "{reason}"),
+            Self::ConstantChanged => formatter.write_str(
+                "Convert constant to datum is failed, because the constant has changed after the covert",
+            ),
             // Go `buildRangeForTableScan` / `buildRangeForIndexScan`.
             Self::UnsafeRange { .. } => formatter.write_str("rebuild to get an unsafe range"),
             Self::InvalidMetadata { plan_id, detail } => {
@@ -666,6 +765,15 @@ fn bind_plan_expressions(
     Ok(())
 }
 
+/// Go `RebuildPlan4CachedPlan`: a `SetSkipPlanCache` from the ranger while
+/// rebuilding flips `UseCache`, and the hit is refused.
+fn refuse_skipped(reason: &Option<String>) -> Result<(), PlanCacheRebuildError> {
+    match reason {
+        Some(reason) => Err(PlanCacheRebuildError::SkipPlanCache(reason.clone())),
+        None => Ok(()),
+    }
+}
+
 fn range_is_safe(
     original: &Ranges,
     rebuilt: &Ranges,
@@ -703,6 +811,7 @@ fn rebuild_table_scan(
             &|expr| context.evaluate(expr),
         )
         .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+        refuse_skipped(&result.skip_plan_cache_reason)?;
         // Go `buildRangeForTableScan` hands `isSafeRange` the scan's OLD
         // ranges as the rebuilt result here, so an integer handle only
         // refuses when the previous execution's ranges were empty: `c1>=3
@@ -739,6 +848,7 @@ fn rebuild_table_scan(
         &|expr| context.evaluate(expr),
     )
     .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+    refuse_skipped(&result.skip_plan_cache_reason)?;
     if !range_is_safe(
         &original,
         &result.ranges,
@@ -779,6 +889,7 @@ fn rebuild_index_scan(
         &|expr| context.evaluate(expr),
     )
     .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+    refuse_skipped(&result.skip_plan_cache_reason)?;
     if !range_is_safe(
         &scan.ranges,
         &result.ranges,
@@ -802,6 +913,12 @@ fn rebuild_point_ranges(
     expected_count: Option<usize>,
     context: &CachedPlanRebuildContext<'_>,
 ) -> Result<(), PlanCacheRebuildError> {
+    if let PointRangeRebuild::Constants(constants) = rebuild {
+        // A batch may read fewer distinct keys than it planned; Go keeps the
+        // repeats in the plan and its executor reads each key once.
+        *ranges = constants.rebuild(plan_id, context)?;
+        return Ok(());
+    }
     let original = ranges.clone();
     let rebuilt = match rebuild {
         PointRangeRebuild::Table(rebuild) => {
@@ -814,6 +931,7 @@ fn rebuild_point_ranges(
                     &|expr| context.evaluate(expr),
                 )
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+                refuse_skipped(&result.skip_plan_cache_reason)?;
                 if !range_is_safe(
                     &original,
                     &result.ranges,
@@ -845,6 +963,7 @@ fn rebuild_point_ranges(
                     &|expr| context.evaluate(expr),
                 )
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+                refuse_skipped(&result.skip_plan_cache_reason)?;
                 if !range_is_safe(
                     &original,
                     &result.ranges,
@@ -864,10 +983,11 @@ fn rebuild_point_ranges(
             }
             // Go `mutableIndexJoinRange.Rebuild`: an empty or no-longer-built
             // range, or one whose count or width changed, is refused.
-            let rebuilt = rebuild
+            let (rebuilt, skip_plan_cache) = rebuild
                 .rebuild(&|expr| context.evaluate(expr))
-                .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?
-                .ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
+                .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+            refuse_skipped(&skip_plan_cache)?;
+            let rebuilt = rebuilt.ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
             if rebuilt.len() != original.len()
                 || rebuilt.first().map(|range| range.width())
                     != original.first().map(|range| range.width())
@@ -896,6 +1016,7 @@ fn rebuild_point_ranges(
                 &|expr| context.evaluate(expr),
             )
             .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+            refuse_skipped(&result.skip_plan_cache_reason)?;
             if !range_is_safe(
                 &original,
                 &result.ranges,
@@ -908,6 +1029,7 @@ fn rebuild_point_ranges(
             }
             result.ranges
         }
+        PointRangeRebuild::Constants(_) => unreachable!("rebuilt above"),
     };
     if expected_count.is_some_and(|expected| rebuilt.len() != expected) {
         return Err(PlanCacheRebuildError::RangeCountChanged {

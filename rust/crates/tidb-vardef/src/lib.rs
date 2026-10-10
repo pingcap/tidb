@@ -50,6 +50,11 @@ pub fn set_ddl_error_count_limit(limit: i64) {
     DDL_ERROR_COUNT_LIMIT.store(limit, Ordering::SeqCst);
 }
 
+/// Go `vardef.MaxAutoAnalyzeTime`: the seconds an auto-analyze job may run
+/// before the expensive-query watchdog kills it; zero disables the limit.
+pub static MAX_AUTO_ANALYZE_TIME: AtomicI64 =
+    AtomicI64::new(defaults::DEF_TIDB_MAX_AUTO_ANALYZE_TIME);
+
 /// Go `vardef.AnalyzeDefaultNumBuckets`.
 pub static ANALYZE_DEFAULT_NUM_BUCKETS: AtomicU64 =
     AtomicU64::new(defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS as u64);

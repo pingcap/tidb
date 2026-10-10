@@ -257,13 +257,20 @@ impl StatementCancellation {
 
     /// Interrupts the command that owns this handle.
     pub fn cancel(&self) {
+        self.cancel_with(KillSignal::QueryInterrupted);
+    }
+
+    /// Interrupts the command with the watchdog's own signal (Go server
+    /// `killQuery`: `MaxExecTimeExceeded` for `max_execution_time`,
+    /// `RunawayQueryExceeded` for a runaway rule).
+    pub fn cancel_with(&self, signal: KillSignal) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.generation != self.generation {
             return;
         }
         state.requested = true;
         drop(state);
-        self.killer.send_kill_signal(KillSignal::QueryInterrupted);
+        self.killer.send_kill_signal(signal);
     }
 }
 

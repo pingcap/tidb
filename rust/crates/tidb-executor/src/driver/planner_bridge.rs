@@ -3522,11 +3522,8 @@ impl CachedSelectPlan {
         values: &[tidb_datatype::Datum],
         ctx: Option<&crate::StmtContext>,
     ) -> Result<u64, CachedPlanBindFailure> {
-        super::bind_prepared_statement_in_place(&mut self.statement, values).map_err(|_| {
-            CachedPlanBindFailure::Rejected {
-                rebuild_error: None,
-            }
-        })?;
+        super::bind_prepared_statement_in_place(&mut self.statement, values)
+            .map_err(|_| CachedPlanBindFailure::unbound())?;
         // Rebuild through the current execute parameters, never the datum
         // cached when the marker-bearing expression was first planned.
         let needs_statement = std::sync::atomic::AtomicBool::new(false);
@@ -3572,6 +3569,10 @@ pub(crate) enum CachedPlanBindFailure {
         /// Go `RebuildPlan4CachedPlan`'s `rebuildRange` error, which it
         /// reports as "skip plan-cache: plan rebuild failed, %s".
         rebuild_error: Option<String>,
+        /// The reason Go's ranger passed to `SetSkipPlanCache` while
+        /// rebuilding: the hit is refused and the replanned statement is not
+        /// cached either.
+        skip_plan_cache: Option<String>,
     },
 }
 
@@ -3579,8 +3580,25 @@ impl CachedPlanBindFailure {
     pub(crate) fn rebuild_failed(
         error: tidb_planner::physical_plan_cache::PlanCacheRebuildError,
     ) -> Self {
+        match error {
+            tidb_planner::physical_plan_cache::PlanCacheRebuildError::SkipPlanCache(reason) => {
+                Self::Rejected {
+                    rebuild_error: None,
+                    skip_plan_cache: Some(reason),
+                }
+            }
+            error => Self::Rejected {
+                rebuild_error: Some(error.to_string()),
+                skip_plan_cache: None,
+            },
+        }
+    }
+
+    /// The statement-binding failure, which carries no rebuild reason.
+    pub(crate) const fn unbound() -> Self {
         Self::Rejected {
-            rebuild_error: Some(error.to_string()),
+            rebuild_error: None,
+            skip_plan_cache: None,
         }
     }
 
@@ -3589,9 +3607,20 @@ impl CachedPlanBindFailure {
     /// uncacheable one leaves it for the next execute. A context-free probe
     /// answers `false`, so the bind that carries the statement replans.
     pub(crate) fn replan(&self, ctx: Option<&crate::StmtContext>) -> bool {
-        let (Self::Rejected { rebuild_error }, Some(ctx)) = (self, ctx) else {
+        let (
+            Self::Rejected {
+                rebuild_error,
+                skip_plan_cache,
+            },
+            Some(ctx),
+        ) = (self, ctx)
+        else {
             return false;
         };
+        if let Some(reason) = skip_plan_cache {
+            ctx.start_prepared_range_tracking();
+            ctx.set_skip_plan_cache(reason.as_str());
+        }
         if let Some(error) = rebuild_error {
             ctx.append_warning_parts(
                 1105,
@@ -3602,11 +3631,13 @@ impl CachedPlanBindFailure {
     }
 }
 
-/// One evaluation during a cached plan's rebuild. Bound parameters and plain
-/// constants evaluate without a statement, so a context-free probe rebuilds
-/// the same ranges the statement would; only a deferred expression (`NOW()`)
-/// needs the executing statement, and the probe then reports
-/// `NeedsStatement` instead of building from a failed evaluation.
+/// One evaluation during a cached plan's rebuild. A bound parameter or a
+/// literal is its own value, so a context-free probe rebuilds the same
+/// ranges the statement would. Anything else -- a deferred expression
+/// (`NOW()`) or a function of a parameter (`FROM_UNIXTIME(?)`, which reads
+/// the session time zone) -- is evaluated in the executing statement, and
+/// the probe reports `NeedsStatement` instead of building from a value
+/// computed without it.
 pub(super) fn rebuild_evaluate(
     expression: &tidb_expr::expression::Expression,
     statement: Option<&crate::StmtContext>,
@@ -3616,22 +3647,18 @@ pub(super) fn rebuild_evaluate(
     if let Some(statement) = statement {
         return tidb_expr::eval_expression_once(expression, statement);
     }
-    if contains_deferred_constant(expression) {
-        needs_statement.store(true, std::sync::atomic::Ordering::Relaxed);
-        return Err(tidb_expr::EvalError::Unsupported(
-            "a deferred expression needs the executing statement",
-        ));
-    }
-    tidb_expr::eval_expression_once(expression, parameters)
-}
-
-fn contains_deferred_constant(expression: &tidb_expr::expression::Expression) -> bool {
     match expression {
-        tidb_expr::expression::Expression::Constant(constant) => constant.deferred_expr.is_some(),
-        tidb_expr::expression::Expression::ScalarFunction(function) => {
-            function.args.iter().any(contains_deferred_constant)
+        tidb_expr::expression::Expression::Constant(constant)
+            if constant.deferred_expr.is_none() =>
+        {
+            tidb_expr::eval_expression_once(expression, parameters)
         }
-        _ => false,
+        _ => {
+            needs_statement.store(true, std::sync::atomic::Ordering::Relaxed);
+            Err(tidb_expr::EvalError::Unsupported(
+                "the expression needs the executing statement",
+            ))
+        }
     }
 }
 
@@ -3681,7 +3708,24 @@ pub(crate) fn cached_physical_query_plan(
         return None;
     }
     ctx.start_prepared_range_tracking();
-    let (_, physical) = planner_physical_query(query, catalog, current_database, ctx, true).ok()?;
+    // Go `optimize` tries `TryFastPlan` before the optimizer, for a cached
+    // statement too; the point plan keeps its parameter markers
+    // (`HandleConstant` / `IndexConstants`) so a hit rebuilds its keys.
+    let fast = match query {
+        tidb_ast::QueryStmt::Select(select) => {
+            super::access::try_fast_point_physical_plan(select, catalog, current_database, ctx)
+                .ok()?
+        }
+        tidb_ast::QueryStmt::SetOpr(_) => None,
+    };
+    let physical = match fast {
+        Some(physical) => physical,
+        None => {
+            planner_physical_query(query, catalog, current_database, ctx, true)
+                .ok()?
+                .1
+        }
+    };
     if ctx.skip_plan_cache() {
         return Some((physical, false));
     }

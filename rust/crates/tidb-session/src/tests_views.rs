@@ -1533,3 +1533,21 @@ fn view_hints_inside_inlined_ctes_keep_their_query_block_offsets() {
     );
     assert_eq!(row_text(session.run("show warnings")), Vec::<Vec<String>>::new());
 }
+
+/// Go `DDLExec.executeCreateView` preprocesses the view's SELECT on its own
+/// and refuses a stale read there with 1356, whatever instant it names
+/// (`executor/ddl`, issue 25876). The AS OF statement path had stripped the
+/// clause and created the view.
+#[test]
+fn a_stale_read_view_is_invalid() {
+    let mut session = Session::new();
+    session.run("create table source_table (id int)").unwrap();
+    let error = session
+        .run("create view v_stale as select * from source_table as of timestamp now()")
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "View 'test.v_stale' references invalid table(s) or column(s) or function(s) or \
+         definer/invoker of view lack rights to use them"
+    );
+}

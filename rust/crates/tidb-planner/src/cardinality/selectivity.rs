@@ -51,6 +51,9 @@ pub struct SelectivityContext<'a> {
     /// Go `recordUsedItemStatsStatus`: told of every column (by its
     /// `ColumnInfo` ID, `false`) and index (`true`) the estimate consults.
     pub record_used_item: Option<&'a dyn Fn(i64, bool)>,
+    /// Go `sctx.SetSkipPlanCache` from the ranger calls the estimate makes;
+    /// `None` unless the statement uses the plan cache.
+    pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
 }
 
 /// Go `Selectivity`'s `filledPaths`, keyed as its `id2Paths`: each possible
@@ -68,6 +71,14 @@ impl<'a> SelectivityContext<'a> {
             range_fallback_handler: None,
             use_plan_cache: false,
             record_used_item: None,
+            plan_cache_marker: None,
+        }
+    }
+
+    /// Forwards a ranger's `SetSkipPlanCache` reason to the statement.
+    fn skip_plan_cache(&self, reason: Option<&str>) {
+        if let (Some(marker), Some(reason)) = (self.plan_cache_marker, reason) {
+            marker.set_skip_plan_cache(reason);
         }
     }
 
@@ -441,6 +452,7 @@ fn column_mask_and_ranges(
         ctx.options.range_max_size,
         ctx.evaluate,
     )?;
+    ctx.skip_plan_cache(built.skip_plan_cache_reason.as_deref());
     if !built.remained_conds.is_empty() {
         if let Some(handler) = ctx.range_fallback_handler {
             handler.record_range_fallback(ctx.options.range_max_size);
@@ -469,7 +481,7 @@ fn detach_index_range(
     columns: &[Column],
     lengths: &[i64],
 ) -> Result<crate::ranger::detacher::DetachRangeResult, PointBuilderError> {
-    match ctx.range_fallback_handler {
+    let detached = match ctx.range_fallback_handler {
         Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler_in(
             exprs,
             columns,
@@ -485,7 +497,9 @@ fn detach_index_range(
             ctx.options.range_max_size,
             ctx.evaluate,
         ),
-    }
+    }?;
+    ctx.skip_plan_cache(detached.skip_plan_cache_reason.as_deref());
+    Ok(detached)
 }
 
 /// Go `getMaskAndSelectivityForMVIndex`: the selectivity of the IndexMerge

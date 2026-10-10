@@ -415,8 +415,25 @@ impl Session {
     }
 
     /// Resets Go `StmtCtx.ResourceGroupName` for one statement before its
-    /// snapshot, transaction, planner, or executor is opened.
+    /// snapshot, transaction, planner, or executor is opened, and publishes
+    /// it as the process list's `RESOURCE_GROUP` (Go `SetProcessInfo` reads
+    /// the statement's group, hint included).
     pub(crate) fn activate_statement_resource_group(&mut self, stmt: &Stmt) {
+        self.resolve_statement_resource_group(stmt);
+        self.publish_statement_resource_group();
+    }
+
+    /// Publishes the statement's resource group to this connection's
+    /// process-list entry.
+    pub(crate) fn publish_statement_resource_group(&self) {
+        if let Some(guard) = &self.process {
+            guard
+                .registry()
+                .statement_resource_group(guard.id(), self.active_resource_group.clone());
+        }
+    }
+
+    fn resolve_statement_resource_group(&mut self, stmt: &Stmt) {
         self.active_resource_group.clone_from(&self.resource_group);
         let Some(hints) = statement_hints(stmt) else {
             return;

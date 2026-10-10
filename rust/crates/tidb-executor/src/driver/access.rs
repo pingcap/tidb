@@ -2146,6 +2146,11 @@ fn try_fast_point_physical_plan_with_allocator_mode(
         let partition_ids = if global_index {
             None
         } else if let Some(partition) = table.partition() {
+            // The routed partitions follow this execution's keys; a cached
+            // plan rebuilding parameter keys could not route them again.
+            if batch.constants.is_some() {
+                return Ok(None);
+            }
             // Go newBatchPointGetPlan requires a bare partition column.
             // Secondary and common keys need their own index-value routing.
             if !matches!(
@@ -2213,7 +2218,9 @@ fn try_fast_point_physical_plan_with_allocator_mode(
                 } else {
                     Vec::new()
                 },
-                range_rebuild: None,
+                range_rebuild: batch
+                    .constants
+                    .map(tidb_planner::physical_plan_cache::PointRangeRebuild::Constants),
                 keep_order: false,
                 desc: false,
             },
@@ -2277,6 +2284,25 @@ fn try_fast_point_physical_plan_with_allocator_mode(
     base.base
         .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(1.0, [])));
     base.base.set_schema(Some(schema));
+    // Go `PointGetPlan.HandleConstant` / `IndexConstants`.
+    let constants = tidb_planner::physical_plan_cache::PointConstantsRebuild {
+        rows: vec![point
+            .key_markers
+            .iter()
+            .zip(&point.key_values)
+            .map(
+                |(marker, value)| tidb_planner::physical_plan_cache::PointKeyConstant {
+                    marker: *marker,
+                    value: value.clone(),
+                },
+            )
+            .collect()],
+        field_types: point.key_types.clone(),
+        handle_batch: false,
+    };
+    let range_rebuild = constants
+        .has_parameters()
+        .then_some(tidb_planner::physical_plan_cache::PointRangeRebuild::Constants(constants));
     Ok(Some(tidb_planner::physical::PhysicalPlan::PointGet(
         tidb_planner::physical::PhysicalPointGet {
             base,
@@ -2292,7 +2318,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
             index_id: point.index_id,
             access_cols: None,
             ranges: closed_point_ranges(&[point.key_values]),
-            range_rebuild: None,
+            range_rebuild,
             lock: false,
         },
     )))
@@ -2489,6 +2515,37 @@ pub(crate) struct BatchPointLookup {
     common_handle: bool,
     plan_rows: usize,
     key_values: Vec<Vec<Datum>>,
+    /// Go `HandleParams` / `IndexValueParams`: every candidate key with the
+    /// EXECUTE parameters it reads, present when any part is a parameter.
+    constants: Option<tidb_planner::physical_plan_cache::PointConstantsRebuild>,
+}
+
+/// One IN-list item a batch point plan keys by. Go's `newBatchPointGetPlan`
+/// accepts only a literal (`ValueExpr`) or a marker (`ParamMarkerExpr`),
+/// whose parameter order a cached plan reads again.
+fn batch_point_constant(
+    item: &tidb_ast::Expr,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<(Datum, Option<usize>)> {
+    let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
+        item,
+        &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+    ) else {
+        return None;
+    };
+    if constant.deferred_expr.is_some() {
+        return None;
+    }
+    let marker = constant
+        .param_marker
+        .and_then(|marker| usize::try_from(marker.order).ok());
+    // A marker's constant holds the value its parameter carried; evaluating
+    // it would read the parameter again from a statement this has none of.
+    let value = match marker {
+        Some(_) => constant.value.clone(),
+        None => constant.eval().ok()?,
+    };
+    Some((value, marker))
 }
 
 impl BatchPointLookup {
@@ -2505,6 +2562,7 @@ impl BatchPointLookup {
             common_handle: false,
             plan_rows,
             key_values,
+            constants: None,
         }
     }
 
@@ -2514,7 +2572,25 @@ impl BatchPointLookup {
             common_handle: true,
             plan_rows,
             key_values,
+            constants: None,
         }
+    }
+
+    /// Keeps the candidate keys a cached plan rebuilds, when any of them
+    /// reads an EXECUTE parameter.
+    fn with_constants(
+        mut self,
+        rows: Vec<Vec<tidb_planner::physical_plan_cache::PointKeyConstant>>,
+        field_types: Vec<FieldType>,
+        handle_batch: bool,
+    ) -> Self {
+        let rebuild = tidb_planner::physical_plan_cache::PointConstantsRebuild {
+            rows,
+            field_types,
+            handle_batch,
+        };
+        self.constants = rebuild.has_parameters().then_some(rebuild);
+        self
     }
 
     fn index(
@@ -2540,6 +2616,7 @@ impl BatchPointLookup {
             common_handle: false,
             plan_rows,
             key_values,
+            constants: None,
         }
     }
 
@@ -2659,6 +2736,7 @@ pub(crate) fn try_batch_point_get_stmt(
             if positions.len() == common_offsets.len() {
                 let mut handles = Vec::with_capacity(list.len());
                 let mut all_key_values = Vec::with_capacity(list.len());
+                let mut constant_rows = Vec::with_capacity(list.len());
                 for candidate in list {
                     let tidb_ast::Expr::Row(values) = candidate else {
                         return Ok(None);
@@ -2667,21 +2745,22 @@ pub(crate) fn try_batch_point_get_stmt(
                         return Ok(None);
                     }
                     let mut key_values = Vec::with_capacity(common_offsets.len());
+                    let mut constant_row = Vec::with_capacity(common_offsets.len());
                     for (offset, position) in common_offsets.iter().zip(&positions) {
-                        let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
-                            &values[*position],
-                            &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
-                        ) else {
-                            return Ok(None);
-                        };
-                        let Ok(value) = constant.eval() else {
+                        let Some((value, marker)) = batch_point_constant(&values[*position], zone)
+                        else {
                             return Ok(None);
                         };
                         let Some(value) = point_get_value(&columns[*offset].1, &value) else {
                             return Ok(None);
                         };
+                        constant_row.push(tidb_planner::physical_plan_cache::PointKeyConstant {
+                            marker,
+                            value: value.clone(),
+                        });
                         key_values.push(value);
                     }
+                    constant_rows.push(constant_row);
                     let encoded =
                         tidb_codec::encode_key_in_timezone(zone, &key_values).map_err(|e| {
                             DriverError::Parse(format!("common handle encode failed: {e:?}"))
@@ -2695,10 +2774,17 @@ pub(crate) fn try_batch_point_get_stmt(
                         all_key_values.push(key_values);
                     }
                 }
-                return Ok(Some(BatchPointLookup::common_handle(
-                    all_key_values,
-                    list.len(),
-                )));
+                let key_types = common_offsets
+                    .iter()
+                    .map(|offset| columns[*offset].1.clone())
+                    .collect();
+                return Ok(Some(
+                    BatchPointLookup::common_handle(all_key_values, list.len()).with_constants(
+                        constant_rows,
+                        key_types,
+                        true,
+                    ),
+                ));
             }
         }
         for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
@@ -2724,6 +2810,7 @@ pub(crate) fn try_batch_point_get_stmt(
                 continue;
             }
             let mut index_values = Vec::with_capacity(list.len());
+            let mut constant_rows = Vec::with_capacity(list.len());
             for candidate in list {
                 let tidb_ast::Expr::Row(values) = candidate else {
                     return Ok(None);
@@ -2732,30 +2819,33 @@ pub(crate) fn try_batch_point_get_stmt(
                     return Ok(None);
                 }
                 let mut key_values = Vec::with_capacity(index.column_offsets.len());
+                let mut constant_row = Vec::with_capacity(index.column_offsets.len());
                 for (offset, position) in index.column_offsets.iter().zip(&positions) {
-                    let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
-                        &values[*position],
-                        &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
-                    ) else {
-                        return Ok(None);
-                    };
-                    let Ok(value) = constant.eval() else {
+                    let Some((value, marker)) = batch_point_constant(&values[*position], zone)
+                    else {
                         return Ok(None);
                     };
                     let Some(value) = point_get_value(&columns[*offset].1, &value) else {
                         return Ok(None);
                     };
+                    constant_row.push(tidb_planner::physical_plan_cache::PointKeyConstant {
+                        marker,
+                        value: value.clone(),
+                    });
                     key_values.push(value);
                 }
                 index_values.push(key_values);
+                constant_rows.push(constant_row);
             }
-            return Ok(Some(BatchPointLookup::index(
-                list.len(),
-                table,
-                columns,
-                &index,
-                index_values,
-            )));
+            let key_types = index
+                .column_offsets
+                .iter()
+                .map(|offset| columns[*offset].1.clone())
+                .collect();
+            return Ok(Some(
+                BatchPointLookup::index(list.len(), table, columns, &index, index_values)
+                    .with_constants(constant_rows, key_types, false),
+            ));
         }
         return Ok(None);
     }
@@ -2768,17 +2858,13 @@ pub(crate) fn try_batch_point_get_stmt(
 
     // Every list element must be a constant, or this is not a point plan.
     let mut values = Vec::with_capacity(list.len());
+    let mut markers = Vec::with_capacity(list.len());
     for item in list {
-        let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
-            item,
-            &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
-        ) else {
-            return Ok(None);
-        };
-        let Ok(value) = constant.eval() else {
+        let Some((value, marker)) = batch_point_constant(item, zone) else {
             return Ok(None);
         };
         values.push(value);
+        markers.push(marker);
     }
 
     // The handle path.
@@ -2790,24 +2876,29 @@ pub(crate) fn try_batch_point_get_stmt(
             // mixing `1.0` with `1.5` still answers from a scan rather than
             // silently dropping the element it cannot key.
             let mut handles = Vec::with_capacity(values.len());
-            for value in &values {
-                match point_get_value(&columns[offset].1, value) {
-                    Some(Datum::Int(v)) => {
-                        let handle = TableHandle::Int(v);
-                        if !handles.contains(&handle) {
-                            handles.push(handle);
-                        }
-                    }
-                    Some(Datum::UInt(v)) => {
-                        let handle = TableHandle::Int(v as i64);
-                        if !handles.contains(&handle) {
-                            handles.push(handle);
-                        }
-                    }
+            let mut constant_rows = Vec::with_capacity(values.len());
+            for (value, marker) in values.iter().zip(&markers) {
+                let handle = match point_get_value(&columns[offset].1, value) {
+                    Some(Datum::Int(v)) => v,
+                    Some(Datum::UInt(v)) => v as i64,
                     _ => return Ok(None),
+                };
+                constant_rows.push(vec![tidb_planner::physical_plan_cache::PointKeyConstant {
+                    marker: *marker,
+                    value: Datum::Int(handle),
+                }]);
+                let handle = TableHandle::Int(handle);
+                if !handles.contains(&handle) {
+                    handles.push(handle);
                 }
             }
-            return Ok(Some(BatchPointLookup::handle(handles, list.len())));
+            return Ok(Some(
+                BatchPointLookup::handle(handles, list.len()).with_constants(
+                    constant_rows,
+                    vec![columns[offset].1.clone()],
+                    true,
+                ),
+            ));
         }
     }
 
@@ -2841,17 +2932,25 @@ pub(crate) fn try_batch_point_get_stmt(
             };
             converted.push(value);
         }
+        let constant_rows = converted
+            .iter()
+            .zip(&markers)
+            .map(|(value, marker)| {
+                vec![tidb_planner::physical_plan_cache::PointKeyConstant {
+                    marker: *marker,
+                    value: value.clone(),
+                }]
+            })
+            .collect();
         let index_values = converted
             .into_iter()
             .map(|value| vec![value])
             .collect::<Vec<_>>();
-        return Ok(Some(BatchPointLookup::index(
-            list.len(),
-            table,
-            columns,
-            &index,
-            index_values,
-        )));
+        let field_type = field_type.clone();
+        return Ok(Some(
+            BatchPointLookup::index(list.len(), table, columns, &index, index_values)
+                .with_constants(constant_rows, vec![field_type], false),
+        ));
     }
     Ok(None)
 }
@@ -2895,6 +2994,9 @@ pub(crate) fn convert_pairs_to_column_domain_by<'a>(
 pub(crate) struct NameValuePair {
     column: String,
     value: Datum,
+    /// Go `nameValuePair.con`: the EXECUTE parameter the value came from,
+    /// which a cached plan reads again on every execution.
+    marker: Option<usize>,
 }
 
 impl NameValuePair {
@@ -2972,15 +3074,24 @@ pub(crate) fn point_equal_pairs(
             let Some(name) = column.last() else {
                 return false;
             };
-            // A `?` marker IS a literal once its parameter arrived; every
-            // other shape must resolve to a constant exactly as
+            // A `?` marker IS a literal once its parameter arrived (Go
+            // `ParamMarkerExpression` reads the value the marker carries);
+            // every other shape must resolve to a constant exactly as
             // [`name_value_pairs`] demands — anything needing evaluation
             // against a row is not a point-get key.
-            let value = if let Expr::ParamMarker { order, .. } = unparenthesized(value_expr) {
-                let Some(datum) = params.get(*order) else {
-                    return false;
+            let (value, marker) = if let Expr::ParamMarker {
+                order,
+                in_execute,
+                value,
+                ..
+            } = unparenthesized(value_expr)
+            {
+                let datum = match (params.get(*order), in_execute, value) {
+                    (Some(datum), _, _) => datum.clone(),
+                    (None, true, Some(datum)) => datum.clone(),
+                    _ => return false,
                 };
-                datum.clone()
+                (datum, Some(*order))
             } else {
                 let Ok(value) = rewrite_expr_resolved(
                     value_expr,
@@ -2991,14 +3102,21 @@ pub(crate) fn point_equal_pairs(
                 let Expression::Constant(constant) = value else {
                     return false;
                 };
+                // Go keys only a literal or a marker: a constant built from a
+                // parameter or a deferred function (`NOW()`) is an
+                // expression, whose value a cached point plan cannot replay.
+                if constant.param_marker.is_some() || constant.deferred_expr.is_some() {
+                    return false;
+                }
                 let Ok(value) = constant.eval() else {
                     return false;
                 };
-                value
+                (value, None)
             };
             pairs.push(NameValuePair {
                 column: name.clone(),
                 value,
+                marker,
             });
             true
         }
@@ -3198,6 +3316,12 @@ pub(crate) struct PointGetPin {
     pub(crate) key_values: Vec<Datum>,
     /// The selected unique-index id, or `None` for a record-handle lookup.
     pub(crate) index_id: Option<i64>,
+    /// Go `HandleConstant` / `IndexConstants`: the EXECUTE parameter each
+    /// key part came from, aligned with [`Self::key_values`].
+    pub(crate) key_markers: Vec<Option<usize>>,
+    /// The key columns' types, which a cached plan moves each execution's
+    /// parameters into.
+    pub(crate) key_types: Vec<FieldType>,
 }
 
 pub(crate) fn try_point_get(
@@ -3267,6 +3391,8 @@ pub(crate) fn try_point_get(
         return Ok(Some(PointGetPin {
             key_values: vec![value],
             index_id: None,
+            key_markers: vec![pairs[0].marker],
+            key_types: vec![handle_type],
         }));
     }
 
@@ -3287,6 +3413,8 @@ pub(crate) fn try_point_get(
             return Ok(Some(PointGetPin {
                 key_values: vec![pairs[0].value.clone()],
                 index_id: None,
+                key_markers: vec![pairs[0].marker],
+                key_types: vec![columns[handle_offset].1.clone()],
             }));
         }
         // Go's `else if handlePair.value.Kind() != KindNull { return nil }`:
@@ -3317,8 +3445,10 @@ pub(crate) fn try_point_get(
         .any(|length| *length != crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
     if !common_offsets.is_empty() && !prefix_common_handle {
         let mut values = Vec::with_capacity(common_offsets.len());
+        let mut markers = Vec::with_capacity(common_offsets.len());
+        let mut types = Vec::with_capacity(common_offsets.len());
         for offset in common_offsets {
-            let Some((name, _)) = columns.get(offset) else {
+            let Some((name, field_type)) = columns.get(offset) else {
                 values.clear();
                 break;
             };
@@ -3330,6 +3460,8 @@ pub(crate) fn try_point_get(
                 break;
             };
             values.push(pair.value.clone());
+            markers.push(pair.marker);
+            types.push(field_type.clone());
         }
         if values.len() == table.common_handle_offsets().len() {
             // A clustered common handle IS the record key, so it prints as
@@ -3337,6 +3469,8 @@ pub(crate) fn try_point_get(
             return Ok(Some(PointGetPin {
                 key_values: values,
                 index_id: None,
+                key_markers: markers,
+                key_types: types,
             }));
         }
     }
@@ -3356,6 +3490,8 @@ pub(crate) fn try_point_get(
             continue;
         }
         let mut values = Vec::with_capacity(index.column_offsets.len());
+        let mut markers = Vec::with_capacity(index.column_offsets.len());
+        let mut types = Vec::with_capacity(index.column_offsets.len());
         for offset in &index.column_offsets {
             // Go `getIndexValues` resolves each key part by NAME against the
             // `WHERE`'s pairs, so a key part the statement cannot name
@@ -3367,15 +3503,18 @@ pub(crate) fn try_point_get(
             // "not pinned by the WHERE" the same answer -- without it the
             // offset indexes past the end and panics, which is what
             // `explain_shard_index`'s `where a=100` reached.
-            let Some(pair) = columns.get(*offset).and_then(|(name, _)| {
+            let Some((pair, field_type)) = columns.get(*offset).and_then(|(name, field_type)| {
                 pairs
                     .iter()
                     .find(|pair| pair.column.eq_ignore_ascii_case(name))
+                    .map(|pair| (pair, field_type))
             }) else {
                 values.clear();
                 break;
             };
             values.push(pair.value.clone());
+            markers.push(pair.marker);
+            types.push(field_type.clone());
         }
         if values.len() != index.column_offsets.len() {
             continue;
@@ -3383,6 +3522,8 @@ pub(crate) fn try_point_get(
         return Ok(Some(PointGetPin {
             key_values: values,
             index_id: Some(index.id),
+            key_markers: markers,
+            key_types: types,
         }));
     }
     Ok(None)

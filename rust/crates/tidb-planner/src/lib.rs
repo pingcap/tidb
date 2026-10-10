@@ -118,6 +118,7 @@ pub mod plan_builder;
 pub mod plan_cache_lru;
 pub mod plan_cache_instance;
 pub mod plan_cost_ver2;
+pub mod point_get_value;
 pub mod prepared_dml;
 pub mod pushdown;
 pub mod ranger;

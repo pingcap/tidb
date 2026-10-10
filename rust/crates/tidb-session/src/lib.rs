@@ -1228,6 +1228,7 @@ pub(crate) use txn::Transaction;
 pub(crate) use variables::datum_text;
 pub use warnings::{SqlWarning, WarningLevel};
 pub(crate) use warnings::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
+pub mod expensivequery;
 pub mod privilege;
 pub mod process;
 mod process_arm;

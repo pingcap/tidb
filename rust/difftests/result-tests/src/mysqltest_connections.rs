@@ -74,8 +74,12 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::JoinHandle;
 
+use tidb_session::process::{ProcessKillTarget, ProcessRegistry};
 use tidb_session::{privilege::PrivilegeRegistry, GlobalSysvars, Session, SharedCatalog};
+use tidb_util::sqlkiller::KillSignal;
 
 /// The connection every script starts on, and the name `connection default`
 /// switches back to.
@@ -98,6 +102,86 @@ pub struct Connections {
     /// Go's two package-level push-down blacklists, shared by every session
     /// this pool opens because they are one server's.
     pushdown_blacklists: tidb_session::blacklist::PushdownBlacklists,
+    /// The server's `sessmgr.Manager`: every connection registers here, as
+    /// Go's server does after authentication.
+    processes: ProcessRegistry,
+    /// Each open connection's kill target, by connection name.
+    kill_targets: BTreeMap<String, Arc<CommandCancellation>>,
+    /// Go's expensive-query watchdog over this server's connections, which
+    /// is what ends a SELECT past its `max_execution_time`.
+    _watchdog: Watchdog,
+}
+
+/// One connection's kill target: the cancellation of the command running on
+/// it, which the server's `ConnectionCancellation` holds the same way.
+#[derive(Default)]
+struct CommandCancellation {
+    active: Mutex<Option<tidb_executor::StatementCancellation>>,
+}
+
+impl ProcessKillTarget for CommandCancellation {
+    fn cancel_query(&self) {
+        self.cancel_query_with(KillSignal::QueryInterrupted);
+    }
+
+    fn kill_connection(&self) {
+        self.cancel_query();
+    }
+
+    fn cancel_query_with(&self, signal: KillSignal) {
+        if let Some(active) = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            active.cancel_with(signal);
+        }
+    }
+}
+
+/// The running command's cancellation lifetime, which the server installs
+/// for each command it dispatches; dropping it ends the command.
+pub struct CommandGuard {
+    target: Arc<CommandCancellation>,
+}
+
+impl Drop for CommandGuard {
+    fn drop(&mut self) {
+        *self
+            .target
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+}
+
+/// The expensive-query handle's thread, stopped with the pool.
+struct Watchdog {
+    exit: mpsc::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Watchdog {
+    fn start(processes: &ProcessRegistry) -> Self {
+        let (exit, receiver) = mpsc::channel();
+        let handle = tidb_session::expensivequery::Handle::new(receiver);
+        handle.set_session_manager(Arc::new(processes.clone()));
+        let thread = std::thread::spawn(move || handle.run());
+        Self {
+            exit,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        let _ = self.exit.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl Connections {
@@ -105,6 +189,7 @@ impl Connections {
     /// database, which is the connection mysql-tester starts every script on.
     pub fn open(topic: &str) -> Result<Self, String> {
         let catalog = SharedCatalog::default();
+        let processes = ProcessRegistry::default();
         let mut pool = Connections {
             sessions: BTreeMap::new(),
             current: DEFAULT_CONNECTION.to_owned(),
@@ -113,9 +198,12 @@ impl Connections {
             privileges: PrivilegeRegistry::default(),
             next_connection_id: 1,
             pushdown_blacklists: tidb_session::blacklist::PushdownBlacklists::default(),
+            _watchdog: Watchdog::start(&processes),
+            processes,
+            kill_targets: BTreeMap::new(),
         };
         let database = topic_database(topic);
-        let mut session = pool.new_session("root", ANY_HOST, None)?;
+        let (mut session, kill_target) = pool.new_session("root", ANY_HOST, None)?;
         // The catalog above was created here, so this IS a fresh store and
         // the `mysql.*` system tables have to be created the way Go's
         // `bootstrap()` creates them for one. A recording's own statements
@@ -130,7 +218,27 @@ impl Connections {
             .select_database(&database)
             .map_err(|e| format!("use topic database `{database}`: {e:?}"))?;
         pool.sessions.insert(DEFAULT_CONNECTION.to_owned(), session);
+        pool.kill_targets
+            .insert(DEFAULT_CONNECTION.to_owned(), kill_target);
         Ok(pool)
+    }
+
+    /// Starts the next command on the current connection: its cancellation
+    /// is what a `KILL QUERY` or the expensive-query watchdog fires until the
+    /// returned guard drops.
+    pub fn begin_command(&mut self) -> CommandGuard {
+        let current = self.current.clone();
+        let cancellation = self.current().begin_query_cancellation();
+        let target = Arc::clone(
+            self.kill_targets
+                .get(&current)
+                .expect("every open connection has a kill target"),
+        );
+        *target
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cancellation);
+        CommandGuard { target }
     }
 
     /// The session statements currently run on.
@@ -162,13 +270,14 @@ impl Connections {
                          such account in the registry after the replay's own account statements"
                     ));
                 };
-                let session =
+                let (session, kill_target) =
                     self.new_session(user, &matched_host, (!db.is_empty()).then_some(db.as_str()))?;
                 // A `connect` MAKES THE NEW CONNECTION CURRENT: the statement
                 // after `connect (conn1, localhost, u_version29,, ...)` in
                 // `session/privileges` records `u_version29@%` from
                 // `current_user()`.
                 self.sessions.insert(name.clone(), session);
+                self.kill_targets.insert(name.clone(), kill_target);
                 self.current = name.clone();
                 Ok(())
             }
@@ -183,6 +292,7 @@ impl Connections {
                 if self.sessions.remove(name).is_none() {
                     return Err(format!("`disconnect {name}` names no open connection"));
                 }
+                self.kill_targets.remove(name);
                 // Closing the current connection falls back to the default
                 // one: `session/privileges` runs a root-only
                 // `drop database` immediately after `disconnect conn1` with no
@@ -224,7 +334,7 @@ impl Connections {
         user: &str,
         host: &str,
         initial_database: Option<&str>,
-    ) -> Result<Session, String> {
+    ) -> Result<(Session, Arc<CommandCancellation>), String> {
         recording_server_time_zone();
         let mut session = Session::with_catalog(SharedCatalog::clone(&self.catalog));
         // mysql-tester answers the server's local-file request (`LOAD STATS
@@ -240,7 +350,8 @@ impl Connections {
         session.attach_pushdown_blacklists(self.pushdown_blacklists.clone());
         let identity = format!("{user}@{host}");
         session.set_user(identity.clone(), identity);
-        session.set_connection_id(self.next_connection_id);
+        let connection_id = self.next_connection_id;
+        session.set_connection_id(connection_id);
         self.next_connection_id += 1;
         session
             .attach_globals(self.globals.clone())
@@ -316,7 +427,20 @@ impl Connections {
                 .run(setup)
                 .expect("mysql-tester's per-connection setup is accepted");
         }
-        Ok(session)
+        // Go's server registers the authenticated connection with its
+        // session manager, which `SHOW PROCESSLIST`, `KILL` and the
+        // expensive-query watchdog all reach it through.
+        let kill_target = Arc::new(CommandCancellation::default());
+        let target: Arc<dyn ProcessKillTarget> = kill_target.clone();
+        let guard = self.processes.register(
+            connection_id,
+            user.to_owned(),
+            host.to_owned(),
+            session.current_database().to_owned(),
+            Some(target),
+        );
+        session.attach_process(connection_id, guard);
+        Ok((session, kill_target))
     }
 
     /// Preserves the account-row side effect of an unsupported account

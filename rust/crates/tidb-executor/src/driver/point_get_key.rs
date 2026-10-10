@@ -14,71 +14,15 @@
 
 //! The key a point plan looks a row up by.
 //!
-//! Mirrors `getPointGetValue` and `checkCanConvertInPointGet` in
-//! `pkg/planner/core/point_get_plan.go`.
-//!
-//! A point plan replaces the comparison with a KEY LOOKUP, so the constant
-//! written in the `WHERE` has to be moved into the COLUMN's domain first --
-//! `pk = 1.0` looks up handle `1`, not "no handle at all". Go's rule is a
-//! single one for every column type and every point plan (`PointGet`,
-//! `Batch_Point_Get`, handle or unique index):
-//!
-//!  1. convert the constant to the column's field type, and
-//!  2. require the converted value to compare EQUAL to the original.
-//!
-//! When either step fails the point plan is ABANDONED -- Go returns `nil`
-//! from `getNameValuePairs`/`newBatchPointGetPlan` and the statement falls
-//! back to an ordinary scan, whose comparison then decides the rows. That is
-//! why a non-representable constant needs no special case here: `pk = 1.5`
-//! becomes a scan, and the scan's `=` returns no row on its own.
-//!
-//! The failure mode this replaces was returning "point plan, zero rows" for
-//! every non-integer constant, which silently dropped the row for
-//! `pk = 1.0`, `pk = 1e0`, `pk = '1'` and `pk IN (1.0, 2.0)`.
+//! Go's conversion rule (`getPointGetValue` / `checkCanConvertInPointGet`)
+//! lives with the planner in [`tidb_planner::point_get_value`], where a cached
+//! fast plan's rebuild applies it too. This module adds the executor-side
+//! answers for a constant that cannot be a key: a value outside the column's
+//! domain, or one longer than its capacity, matches no stored row.
 
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-
-/// Go `checkCanConvertInPointGet`: pairings whose conversion is meaningful
-/// for storage but wrong for key equality, so no point plan may be built.
-fn can_convert_in_point_get(column: &FieldType, value: &Datum) -> bool {
-    if column.eval_type() == tidb_datatype::EvalType::String
-        && matches!(
-            value,
-            Datum::Int(_) | Datum::UInt(_) | Datum::Float32(_) | Datum::Real(_) | Datum::Decimal(_)
-        )
-    {
-        // Column type is String and constant type is numeric.
-        return false;
-    }
-    if column.code() == FieldTypeCode::Bit && matches!(value, Datum::String(_)) {
-        // Column type is Bit and constant type is string.
-        return false;
-    }
-    true
-}
-
-/// Go `getPointGetValue`: the constant in the column's domain, or `None`
-/// when this statement may not use a point plan at all.
-pub(crate) fn point_get_value(column: &FieldType, value: &Datum) -> Option<Datum> {
-    if value.is_null() {
-        return None;
-    }
-    if !can_convert_in_point_get(column, value) {
-        return None;
-    }
-    let converted = value
-        .convert_to(column, tidb_datatype::STRICT_FLAGS)
-        .ok()?
-        .value;
-    // "The converted result must be same as original datum." A comparison in
-    // the ORIGINAL datum's domain, exactly as Go's `dVal.Compare(&d)`: this
-    // is what separates `1.0` (equal to `1`, so a point get on handle 1) from
-    // `1.5` (not equal to `2`, so no point plan).
-    match converted.compare(value, column.collation()) {
-        Ok(std::cmp::Ordering::Equal) => Some(converted),
-        _ => None,
-    }
-}
+use tidb_datatype::{Datum, FieldType};
+use tidb_planner::point_get_value::can_convert_in_point_get;
+pub(crate) use tidb_planner::point_get_value::point_get_value;
 
 /// Whether a constant cannot be represented in its column's domain.
 ///
@@ -139,7 +83,7 @@ pub(crate) fn names_no_rows(column: &FieldType, value: &Datum) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_datatype::Decimal;
+    use tidb_datatype::{Decimal, FieldTypeCode};
 
     fn int_column() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)

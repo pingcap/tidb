@@ -256,6 +256,14 @@ pub struct ProcessPlanInfo {
     pub index_names: Vec<String>,
     /// Go `physicalop.GetStatsInfo(ProcessInfo.Plan)`.
     pub stats_info: std::collections::HashMap<String, u64>,
+    /// Go `ProcessInfo.MaxExecutionTime` as `ExecStmt.Exec` publishes it:
+    /// the statement's `max_execution_time` in milliseconds, zero outside a
+    /// SELECT.
+    pub max_execution_time: u64,
+    /// Go `ProcessInfo.Time` as `ExecStmt.Exec` republishes it: when
+    /// execution began, after planning, which `max_execution_time` counts
+    /// from.
+    pub execution_started: Option<(std::time::Instant, chrono::DateTime<chrono::Utc>)>,
 }
 
 /// Boundaries shared by statement summaries and execution counters.
@@ -3356,12 +3364,18 @@ impl StmtContext {
         if let Some(observer) = &self.statement_phase_observer {
             observer(StatementPhase::PlanReady);
         }
-        self.publish_process_plan_info(crate::explain::process_plan_info_with_brief(
+        // Go records the start before `buildExecutor`, so the timeout covers
+        // executor construction and TSO waits but not planning.
+        let execution_started = Some((std::time::Instant::now(), chrono::Utc::now()));
+        let mut plan = crate::explain::process_plan_info_with_brief(
             self,
             physical,
             catalog,
             self.publish_brief_binary_plan,
-        ));
+        );
+        plan.max_execution_time = self.max_execution_time_ms();
+        plan.execution_started = execution_started;
+        self.publish_process_plan_info(plan);
     }
 
     /// The published `mysql.expr_pushdown_blacklist`.

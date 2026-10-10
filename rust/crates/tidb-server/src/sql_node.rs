@@ -72,11 +72,21 @@ pub struct ShutdownHandle {
 pub trait ActiveQueryCancellation: Send + Sync {
     /// Fires the query's canonical cancellation carrier.
     fn cancel(&self);
+
+    /// Fires it with a watchdog's own kill signal (Go server `killQuery`).
+    fn cancel_with(&self, signal: tidb_util::sqlkiller::KillSignal) {
+        let _ = signal;
+        self.cancel();
+    }
 }
 
 impl ActiveQueryCancellation for tidb_executor::StatementCancellation {
     fn cancel(&self) {
         tidb_executor::StatementCancellation::cancel(self);
+    }
+
+    fn cancel_with(&self, signal: tidb_util::sqlkiller::KillSignal) {
+        tidb_executor::StatementCancellation::cancel_with(self, signal);
     }
 }
 
@@ -145,6 +155,11 @@ impl ConnectionCancellation {
     /// able to run the next one -- Go's `KILL QUERY`, which differs from
     /// forced drain exactly in that it does not latch the request.
     fn cancel_current_query(&self) {
+        self.cancel_current_query_with(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+    }
+
+    /// [`Self::cancel_current_query`] with the signal the statement observes.
+    fn cancel_current_query_with(&self, signal: tidb_util::sqlkiller::KillSignal) {
         let active = self
             .state
             .lock()
@@ -152,7 +167,7 @@ impl ConnectionCancellation {
             .active
             .clone();
         if let Some(active) = active {
-            active.cancel();
+            active.cancel_with(signal);
         }
     }
 
@@ -235,6 +250,10 @@ impl ConnectionKillTarget {
 impl ProcessKillTarget for ConnectionKillTarget {
     fn cancel_query(&self) {
         self.cancellation.cancel_current_query();
+    }
+
+    fn cancel_query_with(&self, signal: tidb_util::sqlkiller::KillSignal) {
+        self.cancellation.cancel_current_query_with(signal);
     }
 
     fn kill_connection(&self) {
@@ -1898,6 +1917,37 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     connection_timeout: Duration,
     _server_memory_limit: Option<ServerMemoryLimitRunner>,
     _memory_usage_alarm: Option<MemoryUsageAlarmRunner>,
+    _expensive_query: Option<ExpensiveQueryRunner>,
+}
+
+/// Go `Domain.expensiveQueryHandle`, which the server's main starts with
+/// itself as the session manager (`dom.ExpensiveQueryHandle().
+/// SetSessionManager(svr).Run()`).
+struct ExpensiveQueryRunner {
+    exit: mpsc::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl ExpensiveQueryRunner {
+    fn start(manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>) -> Self {
+        let (exit, receiver) = mpsc::channel();
+        let handle = tidb_session::expensivequery::Handle::new(receiver);
+        handle.set_session_manager(manager);
+        let thread = std::thread::spawn(move || handle.run());
+        Self {
+            exit,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for ExpensiveQueryRunner {
+    fn drop(&mut self) {
+        let _ = self.exit.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 struct ServerMemoryLimitRunner {
@@ -1983,6 +2033,9 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         let server_memory_limit = session_manager
             .as_ref()
             .map(|manager| ServerMemoryLimitRunner::start(Arc::clone(manager)));
+        let expensive_query = session_manager
+            .as_ref()
+            .map(|manager| ExpensiveQueryRunner::start(Arc::clone(manager)));
         let memory_usage_alarm = session_manager.map(MemoryUsageAlarmRunner::start);
         let tracker = Arc::new(ConnectionTracker::with_config(
             &config.global_config,
@@ -2003,6 +2056,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             connection_timeout: config.connection_timeout,
             _server_memory_limit: server_memory_limit,
             _memory_usage_alarm: memory_usage_alarm,
+            _expensive_query: expensive_query,
         })
     }
 
