@@ -410,6 +410,21 @@ func (mr *MockTaskManagerMockRecorder) GetActiveSubtasks(arg0, arg1 any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveSubtasks", reflect.TypeOf((*MockTaskManager)(nil).GetActiveSubtasks), arg0, arg1)
 }
 
+// GetActiveTaskCountsByKeyspace mocks base method.
+func (m *MockTaskManager) GetActiveTaskCountsByKeyspace(arg0 context.Context) (*storage.ActiveTaskSummary, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetActiveTaskCountsByKeyspace", arg0)
+	ret0, _ := ret[0].(*storage.ActiveTaskSummary)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetActiveTaskCountsByKeyspace indicates an expected call of GetActiveTaskCountsByKeyspace.
+func (mr *MockTaskManagerMockRecorder) GetActiveTaskCountsByKeyspace(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveTaskCountsByKeyspace", reflect.TypeOf((*MockTaskManager)(nil).GetActiveTaskCountsByKeyspace), arg0)
+}
+
 // GetAllNodes mocks base method.
 func (m *MockTaskManager) GetAllNodes(arg0 context.Context) ([]proto.ManagedNode, error) {
 	m.ctrl.T.Helper()

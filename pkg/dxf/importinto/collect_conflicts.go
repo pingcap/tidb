@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictrows"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictpath"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -193,7 +193,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 	for i := range concurrency {
 		collectorCh := collectorChs[i]
 		encoder := encoders[i]
-		filenamePrefix := conflictrows.NewFileNamePrefix(e.task.ID, e.currSubtaskID)
+		filenamePrefix := conflictpath.NewFileNamePrefix(e.task.ID, e.currSubtaskID)
 		localSet := conflictedkv.NewBoundedKeySet(e.logger, &e.sizeOfRowKeysFromIndex, e.sizeLimitOfRowKeysFromIndex)
 		collector := conflictedkv.NewCollector(
 			e.tableImporter.Table,
