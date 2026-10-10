@@ -919,39 +919,6 @@ func splitByColon(line string) (fields []string, values []string) {
 	return fields, values
 }
 
-type slowLogBackoffTypes struct {
-	legacyPresent bool
-	prewrite      string
-	commit        string
-	invalidLine   bool
-}
-
-func (b *slowLogBackoffTypes) summary() (string, error) {
-	if b.invalidLine {
-		return "", errors.New("cannot derive Backoff_types after a slow-log field parsing failure")
-	}
-	var combined []string
-	for _, phase := range []struct{ field, value string }{
-		{execdetails.PrewriteBackoffTypesStr, b.prewrite},
-		{execdetails.CommitBackoffTypesStr, b.commit},
-	} {
-		value := strings.TrimSpace(phase.value)
-		if value == "" {
-			continue
-		}
-		if len(value) < 2 || value[0] != '[' || value[len(value)-1] != ']' || strings.ContainsAny(value[1:len(value)-1], "[]") {
-			return "", errors.Errorf("cannot derive Backoff_types from malformed %s", phase.field)
-		}
-		// Historical client-go assigned the prewrite list and appended the commit
-		// list. Preserve this order and duplicates rather than forming a set.
-		combined = append(combined, strings.Fields(value[1:len(value)-1])...)
-	}
-	if len(combined) == 0 {
-		return "", nil
-	}
-	return "[" + strings.Join(combined, " ") + "]", nil
-}
-
 func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
 	start := time.Now()
 	logSize := calculateLogSize(log)
@@ -975,8 +942,6 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 		}
 	})
 	var row []types.Datum
-	needsBackoffTypes := e.columnValueFactoryMap[execdetails.BackoffTypesStr] != nil
-	var backoffTypes slowLogBackoffTypes
 	user := ""
 	tz := sctx.GetSessionVars().Location()
 	startFlag := false
@@ -987,7 +952,6 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 		fileLine := getLineIndex(offset, index)
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			row = make([]types.Datum, len(e.outputCols))
-			backoffTypes = slowLogBackoffTypes{}
 			user = ""
 			valid := e.setColumnValue(sctx, row, tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], e.checker, fileLine)
 			if valid {
@@ -1032,22 +996,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogDBStr, line, e.checker, fileLine)
 				} else {
 					fields, values := splitByColon(line)
-					if needsBackoffTypes && fields == nil {
-						backoffTypes.invalidLine = true
-					}
 					for i := range fields {
-						// Capture dependencies even when the phase columns are pruned
-						// from SELECT output, including fields sharing one KV line.
-						if needsBackoffTypes {
-							switch fields[i] {
-							case execdetails.BackoffTypesStr:
-								backoffTypes.legacyPresent = true
-							case execdetails.PrewriteBackoffTypesStr:
-								backoffTypes.prewrite = values[i]
-							case execdetails.CommitBackoffTypesStr:
-								backoffTypes.commit = values[i]
-							}
-						}
 						valid := e.setColumnValue(sctx, row, tz, fields[i], values[i], e.checker, fileLine)
 						if !valid {
 							startFlag = false
@@ -1071,14 +1020,6 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				}
 				// Get the sql string, and mark the start flag to false.
 				_ = e.setColumnValue(sctx, row, tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), e.checker, fileLine)
-				if needsBackoffTypes && !backoffTypes.legacyPresent {
-					value, err := backoffTypes.summary()
-					if err != nil {
-						sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Parse slow log at line %v: %w", fileLine, err))
-					} else {
-						_ = e.setColumnValue(sctx, row, tz, execdetails.BackoffTypesStr, value, e.checker, fileLine)
-					}
-				}
 				e.setDefaultValue(row)
 				e.memConsume(types.EstimatedMemUsage(row, 1))
 				data = append(data, row)
