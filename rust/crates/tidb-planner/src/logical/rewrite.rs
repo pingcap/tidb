@@ -1311,12 +1311,20 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 (child, ())
             }
             PendingColumns::MergeSchema(parent_used_cols) => {
-                // Go `p.MergeSchema()` (`BuildLogicalJoinSchema`) then
-                // `p.InlineProjection(parentUsedCols)`. A left-outer-semi join
-                // re-appends its marker column before inlining
-                // (`logical_join.go:339`), which is what keeps the appended
-                // boolean alive after pruning.
+                // Go `p.MergeSchema()` (`BuildLogicalJoinSchema`) then, for a
+                // join only, `p.InlineProjection(parentUsedCols)`. A
+                // left-outer-semi join re-appends its marker column before
+                // inlining (`logical_join.go:339`), which is what keeps the
+                // appended boolean alive after pruning. `LogicalApply`
+                // (`logical_apply.go:140`) stops at `MergeSchema`: its
+                // executor emits every column of both children.
                 let own_schema = node.base().base.schema().cloned();
+                if let LogicalPlan::Apply(op) = &node {
+                    let schema =
+                        build_logical_join_schema(op.join.join_type, &schemas, own_schema.as_ref());
+                    set_own_schema(&mut node, schema);
+                    return (node, ());
+                }
                 let mut parent_used_cols = parent_used_cols;
                 let mut schema = match &node {
                     LogicalPlan::Join(op) => {

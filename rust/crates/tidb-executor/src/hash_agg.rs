@@ -1541,14 +1541,14 @@ fn real_aggregate_value(value: &Datum, function: &'static str) -> Result<f64, Ex
         })
 }
 
-/// One `APPROX_COUNT_DISTINCT` argument's contribution to the hashed tuple,
+/// One argument's contribution to the hashed tuple of `APPROX_COUNT_DISTINCT`
+/// and of the generic `COUNT(DISTINCT ...)` (Go `countOriginalWithDistinct`),
 /// Go `func_count_distinct.go`'s `evalAndEncode`: each argument type has its
 /// own raw encoding (a fixed-width native-endian copy of the scalar for
 /// `INT`/`REAL`, `MyDecimal.ToHashKey` for `DECIMAL`, a collation sort key
 /// wrapped in `codec.EncodeCompactBytes` for `STRING`/`BINARY`, the vector's
-/// wire serialization for `VECTOR`) rather than the generic datum hash key
-/// `COUNT(DISTINCT ...)` uses, because these bytes feed FarmHash directly
-/// and the sketch only matches Go's numbers if the hash INPUT matches too.
+/// wire serialization for `VECTOR`). The sketch's bytes feed FarmHash
+/// directly, so it only matches Go's numbers if the hash INPUT matches too.
 ///
 /// `TIME` encodes as Go's `appendTime`/`WriteTime`: a 16-byte struct-style
 /// layout (year as big-endian u16, then month/day/hour/minute/second as raw
@@ -3616,7 +3616,12 @@ fn eval_agg_input<C: Columns>(
     row: tidb_chunk::row::Row<'_>,
     extra_values: &mut Vec<Datum>,
 ) -> Result<AggInput, ExecError> {
+    // Go `countOriginalWithDistinct` serves every COUNT(DISTINCT) the typed
+    // single-argument sets do not; it goes through the tuple arm below.
+    let count_distinct_encoded =
+        matches!(f.kind, AggKind::Count) && f.distinct && !count_distinct_typed(f);
     let (value, distinct_key) = if f.extra_args.is_empty()
+        && !count_distinct_encoded
         && !matches!(
             f.kind,
             AggKind::ApproxCountDistinct(ApproxCountDistinctSig {
@@ -3645,15 +3650,12 @@ fn eval_agg_input<C: Columns>(
             None,
         )
     } else if matches!(f.kind, AggKind::Count) {
-        // `COUNT(a, b, ...)` / `COUNT(DISTINCT a, b, ...)`:
-        // Go's `count4MultiArgs.UpdatePartialResult` skips the
-        // row as soon as ANY argument is NULL (a row counts
-        // only when EVERY argument is non-NULL). DISTINCT
-        // dedupes over the whole tuple, so the per-argument
-        // hash keys are length-prefixed and concatenated
-        // (rather than joined with a fixed separator byte)
-        // so no argument's encoding can bleed into the next
-        // and manufacture a false collision or split.
+        // `COUNT(a, b, ...)` / `COUNT(DISTINCT a, b, ...)`: Go's
+        // `count4MultiArgs` and `countOriginalWithDistinct` skip the row as
+        // soon as ANY argument is NULL (a row counts only when EVERY
+        // argument is non-NULL). DISTINCT keys the row by `evalAndEncode` of
+        // every argument, appended with no separator, so JSON `3` and `3.0`
+        // collide through `HashValue` exactly as in Go.
         let mut tuple_key = Some(Vec::new());
         for expr in f.arg.iter().chain(f.extra_args.iter()) {
             let datum = expr.eval(ctx, row)?;
@@ -3661,15 +3663,20 @@ fn eval_agg_input<C: Columns>(
                 tuple_key = None;
                 break;
             }
-            if let Some(buf) = &mut tuple_key {
-                let key = datum
-                    .to_hash_key()
-                    .map_err(|_| ExecError::unsupported("COUNT over this datum kind"))?;
-                buf.extend_from_slice(&(key.len() as u64).to_be_bytes());
-                buf.extend_from_slice(&key);
+            if f.distinct {
+                if let Some(buf) = &mut tuple_key {
+                    buf.extend_from_slice(&approx_count_distinct_encode(
+                        &datum,
+                        expr_collation(expr),
+                    )?);
+                }
             }
         }
-        (Some(tuple_key.map_or(Datum::Null, Datum::Bytes)), None)
+        let distinct_key = tuple_key.clone().filter(|_| f.distinct);
+        (
+            Some(tuple_key.map_or(Datum::Null, Datum::Bytes)),
+            distinct_key,
+        )
     } else if matches!(f.kind, AggKind::ApproxCountDistinct(_)) {
         // `APPROX_COUNT_DISTINCT(a, b, ...)`: Go's
         // `approxCountDistinctOriginal.UpdatePartialResult`

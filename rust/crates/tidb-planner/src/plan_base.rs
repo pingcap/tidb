@@ -343,6 +343,8 @@ pub enum PlanErrorKind {
     Eval(EvalError),
     /// Go `plannererrors.ErrInternal` and message-only planner failures.
     Internal,
+    /// Go `plannererrors.ErrNonUniqTable` (1066), naming the repeated alias.
+    NonUniqTable(String),
     /// Go `plannererrors.ErrWrongArguments` (1210).
     WrongArguments(String),
     /// Go ErrWindowInvalidWindowFuncUse (3593).
@@ -528,6 +530,16 @@ impl PlanError {
         Self {
             message: format!("{error:?}"),
             kind: PlanErrorKind::Eval(error),
+        }
+    }
+
+    /// Go `plannererrors.ErrNonUniqTable.GenWithStackByArgs(alias)`.
+    #[must_use]
+    pub fn non_uniq_table(alias: impl Into<String>) -> Self {
+        let alias = alias.into();
+        Self {
+            message: format!("Not unique table/alias: '{alias}'"),
+            kind: PlanErrorKind::NonUniqTable(alias),
         }
     }
 

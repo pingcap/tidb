@@ -1629,6 +1629,10 @@ fn generated_column_admission_error(
             tidb_error::tidb::errcode::ErrGeneratedColumnFunctionIsNotAllowed,
             format!("Expression of generated column '{column}' contains a disallowed function."),
         ),
+        GeneratedDdlError::RefAutoInc(column) => DdlAdmissionError::with_code(
+            3109,
+            format!("Generated column '{column}' cannot refer to auto-increment column."),
+        ),
         GeneratedDdlError::Unsupported(reason) => DdlAdmissionError::with_code(
             tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
             format!("'{reason}' is not supported for generated columns."),

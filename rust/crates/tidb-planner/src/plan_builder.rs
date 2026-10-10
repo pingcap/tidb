@@ -126,11 +126,11 @@
 //!   [`only_full_group_by`]).
 //! * `expression.EvalBool` on a folded predicate
 //!   (`buildSelection`'s always-false arm). The rewriter hands back a folded
-//!   [`Constant`](tidb_expr::constant::Constant); reading its truth needs an
-//!   `EvalContext`, which [`constant_is_always_false`] takes from the already
-//!   materialised [`Datum`] rather than evaluating. A constant that is NOT
-//!   materialised (a parameter marker, a non-deterministic builtin) is
-//!   conservatively kept as a condition, which is Go's `useCache` arm.
+//!   [`Constant`](tidb_expr::constant::Constant), whose truth
+//!   [`constant_is_always_false`] reads under the statement context. A
+//!   constant that is NOT materialised (a parameter marker, a
+//!   non-deterministic builtin) is kept as a condition, which is Go's
+//!   `useCache` arm.
 //! * The unconsumed `hint.PlanHints` families.
 //!   Query-block hint handling, view-hint inheritance, table-syntax index
 //!   hints, and the consumed query-block hint families have ordinary planner
@@ -719,6 +719,12 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// rewriter's narrowing of `SessionVars` and nothing in it reads the SQL
     /// mode. Go likewise reads the mode off `SQLMode`, not off the rewriter.
     pub only_full_group_by: bool,
+    /// Whether the session `sql_mode` carries `ORACLE`, under which Go's
+    /// preprocessor skips `checkNonUniqTableAlias`.
+    pub oracle_mode: bool,
+    /// Go `ignoreTruncateErrForViewPredicateFolding`: set while a view body
+    /// is built, so folding its constant predicates ignores truncation.
+    pub(crate) ignore_truncate_err_for_view_predicate_folding: bool,
     /// Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck` (default OFF).
     /// It also gates statement-scoped projection expression-ID registration.
     pub new_only_full_group_by_check: bool,
@@ -792,25 +798,33 @@ pub fn hide_rewrite_columns(plan: &mut LogicalPlan, original_len: usize) {
 }
 
 /// Go's `expression.EvalBool(ctx, []{con}, chunk.Row{})` on an already-folded
-/// constant, reduced to the materialised [`Datum`].
+/// constant: NULL filters every row, and every other value is `Datum.ToBool`
+/// under the statement context, whose string truncation it warns about or
+/// refuses (or, folding a view's predicate, ignores).
 ///
-/// `None` means "not decidable here" — a parameter marker or a constant whose
-/// value the fold left deferred — which is exactly Go's `useCache` arm, where
-/// the constant is KEPT as a condition rather than decided at plan time.
-#[must_use]
-pub fn constant_is_always_false(constant: &Constant) -> Option<bool> {
+/// `Ok(None)` means "not decidable here" -- a parameter marker or a constant
+/// whose value the fold left deferred -- which is exactly Go's `useCache`
+/// arm, where the constant is KEPT as a condition rather than decided at plan
+/// time.
+///
+/// # Errors
+///
+/// The truncation error a strict statement context raises.
+pub fn constant_is_always_false(
+    constant: &Constant,
+    ctx: &dyn tidb_expr::Columns,
+    ignore_truncate: bool,
+) -> Result<Option<bool>, PlanError> {
     if constant.deferred_expr.is_some() || constant.param_marker.is_some() {
-        return None;
+        return Ok(None);
     }
-    match &constant.value {
-        // Go: a NULL predicate filters every row, the same as false.
-        Datum::Null => Some(true),
-        Datum::Int(value) => Some(*value == 0),
-        Datum::UInt(value) => Some(*value == 0),
-        Datum::Real(value) => Some(*value == 0.0),
-        Datum::Float32(value) => Some(*value == 0.0),
-        _ => None,
+    let truth = if ignore_truncate {
+        tidb_expr::truthy_of(&constant.value)
+    } else {
+        tidb_expr::truthy_in(&constant.value, ctx)
     }
+    .map_err(PlanError::eval)?;
+    Ok(Some(truth != Some(true)))
 }
 
 /// Resolves a column path against one plan's schema and output names, and
@@ -1410,6 +1424,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             no_index_lookup_push_down_hints: Vec::new(),
             // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
             only_full_group_by: true,
+            oracle_mode: false,
+            ignore_truncate_err_for_view_predicate_folding: false,
             new_only_full_group_by_check: false,
             // Go `DefTiDBRemoveOrderbyInSubquery = true`.
             remove_orderby_in_subquery: true,
@@ -2274,7 +2290,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                                 "evaluated EXISTS did not fold to a constant",
                             ));
                         };
-                        match constant_is_always_false(constant) {
+                        match constant_is_always_false(constant, self.ctx, false)? {
                             Some(true) => {
                                 let mut dual =
                                     LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
@@ -2355,7 +2371,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !self.source.database_exists(&db_name) {
             return Err(PlanError::unknown_database(db_name));
         }
-        if let Some(view) = self.source.find_view(&db_name, &table_name).cloned() {
+        // `:4945` "For tables in view, always ignore local temporary table":
+        // a view keeps reading the permanent table a temporary one shadows.
+        let in_view = !self.building_view_stack.is_empty();
+        let found_view = if in_view {
+            self.source
+                .find_view_ignoring_local_temporary(&db_name, &table_name)
+        } else {
+            self.source.find_view(&db_name, &table_name)
+        };
+        if let Some(view) = found_view.cloned() {
             // Go `getPossibleAccessPaths` runs before the view branch, and a
             // view has no index: an SQL index hint naming one is an error.
             if let Some(index) = table_ref.hints.iter().flat_map(|hint| &hint.indexes).next() {
@@ -2378,10 +2403,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 inherited,
             );
         }
-        let table = self
-            .source
-            .find_table(&db_name, &table_name)
-            .ok_or_else(|| PlanError::unknown_table(format!("{db_name}.{table_name}")))?;
+        let table = if in_view {
+            self.source
+                .find_table_ignoring_local_temporary(&db_name, &table_name)
+        } else {
+            self.source.find_table(&db_name, &table_name)
+        }
+        .ok_or_else(|| PlanError::unknown_table(format!("{db_name}.{table_name}")))?;
 
         if self.resolve_ctx.read().table_name(table_ref).is_none() {
             self.resolve_ctx
@@ -3121,33 +3149,41 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 markers
             };
             let built = self.rewrite_scalar_with_plan(&scratch, &plan, markers)?;
-            for item in into_cnf_items(built) {
-                if let Expression::Constant(constant) = &item {
-                    match constant_is_always_false(constant) {
-                        // "If there is condition which is always false, return
-                        // dual plan directly." (`:1381`)
-                        Some(true) => {
-                            let mut dual =
-                                LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
-                            dual.base.base.set_schema(Some(schema));
-                            dual.base
-                                .base
-                                .set_output_names(plan.output_names().to_vec());
-                            return Ok(LogicalPlan::TableDual(dual));
-                        }
-                        // An always-true conjunct is dropped.
-                        Some(false) => continue,
-                        // Not decidable at plan time: keep it. Go's `useCache` arm.
-                        None => {}
-                    }
-                }
-                conditions.push(item);
-            }
+            conditions.extend(into_cnf_items(built));
         }
-        if conditions.is_empty() {
+        // Go folds the constants only after EVERY conjunct is rewritten, so
+        // `WHERE 0 AND c = 10` still reports the unknown column.
+        let mut kept = Vec::with_capacity(conditions.len());
+        for item in conditions {
+            if let Expression::Constant(constant) = &item {
+                match constant_is_always_false(
+                    constant,
+                    self.ctx,
+                    self.ignore_truncate_err_for_view_predicate_folding,
+                )? {
+                    // "If there is condition which is always false, return
+                    // dual plan directly." (`:1381`)
+                    Some(true) => {
+                        let (schema, _) = snapshot_schema_and_names(&plan);
+                        let mut dual = LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
+                        dual.base.base.set_schema(Some(schema));
+                        dual.base
+                            .base
+                            .set_output_names(plan.output_names().to_vec());
+                        return Ok(LogicalPlan::TableDual(dual));
+                    }
+                    // An always-true conjunct is dropped.
+                    Some(false) => continue,
+                    // Not decidable at plan time: keep it. Go's `useCache` arm.
+                    None => {}
+                }
+            }
+            kept.push(item);
+        }
+        if kept.is_empty() {
             return Ok(plan);
         }
-        let mut selection = LogicalSelection::new(selection_base, conditions);
+        let mut selection = LogicalSelection::new(selection_base, kept);
         selection.base.set_children(vec![plan]);
         Ok(LogicalPlan::Selection(selection))
     }

@@ -629,6 +629,22 @@ fn fold_insert_subqueries(
     if !values.clone().any(expr_has_subquery) {
         return Ok(None);
     }
+    // Go rewrites each value against a dual; a subquery whose built plan
+    // carries a correlated column anywhere stays an Apply, and the value
+    // list refuses it (`buildValuesListOfInsert`, issue 30626).
+    for value in values.clone() {
+        for query in outermost_subqueries(value) {
+            if super::planner_bridge::query_builds_correlated_columns(
+                &query, catalog, current_db, ctx,
+            )
+            .unwrap_or(false)
+            {
+                return Err(DriverError::unsupported(
+                    "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now",
+                ));
+            }
+        }
+    }
     let scope = insert_table_scope(
         &layout.database,
         &layout.table_name,
@@ -647,6 +663,39 @@ fn fold_insert_subqueries(
         }
     }
     Ok(Some(folded))
+}
+
+/// The subqueries `expr` contains, outermost only.
+fn outermost_subqueries(expr: &tidb_ast::Expr) -> Vec<tidb_ast::QueryStmt> {
+    struct Collector(Vec<tidb_ast::QueryStmt>);
+    impl tidb_ast::Visitor for Collector {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() else {
+                return false;
+            };
+            let query = match expr {
+                tidb_ast::Expr::Subquery(query)
+                | tidb_ast::Expr::Exists {
+                    subquery: query, ..
+                }
+                | tidb_ast::Expr::InSubquery {
+                    subquery: query, ..
+                }
+                | tidb_ast::Expr::CompareSubquery {
+                    subquery: query, ..
+                } => query,
+                _ => return false,
+            };
+            self.0.push((**query).clone());
+            true
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let mut collector = Collector(Vec::new());
+    tidb_ast::Visitable::accept(&mut expr.clone(), &mut collector);
+    collector.0
 }
 
 fn run_insert_with_physical(

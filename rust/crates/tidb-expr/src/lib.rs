@@ -391,7 +391,7 @@ pub mod user_vars;
 pub use field_name::{find_field_name, find_field_name_index_by_column, NonUniqueFieldName};
 
 pub use build::{BuildContext, BuiltStringLength, StringLengthFunction, StringLengthSignature};
-pub use coerce::truthy_of;
+pub use coerce::{truthy_in, truthy_of};
 pub use context::{
     BlockEncryptionMode, Columns, CurrentTso, ErrorLevel, EvalError, JsonError, NoColumns,
     SequenceEvalError, SessionTimeZone, ZonedNoColumns,

@@ -752,9 +752,7 @@ pub fn is_table_alias_duplicate(
         } else {
             existing
         };
-        return Err(PlanError::internal(format!(
-            "Not unique table/alias: '{existing}'"
-        )));
+        return Err(PlanError::non_uniq_table(existing));
     }
     table_aliases.insert(key, display.to_owned());
     Ok(())
@@ -780,6 +778,23 @@ pub fn check_non_uniq_table_alias(node: &JoinNode, oracle_mode: bool) -> Result<
     }
     let mut aliases = BTreeMap::new();
     check_join_aliases(node, &mut aliases)
+}
+
+/// [`check_non_uniq_table_alias`] over a query block's whole `FROM` join.
+///
+/// # Errors
+///
+/// `ErrNonUniqTable` for the first duplicate alias found.
+pub fn check_non_uniq_table_alias_in_join(join: &Join, oracle_mode: bool) -> Result<(), PlanError> {
+    if oracle_mode {
+        return Ok(());
+    }
+    let mut aliases = BTreeMap::new();
+    check_join_aliases(&join.left, &mut aliases)?;
+    match &join.right {
+        Some(right) => check_join_aliases(right, &mut aliases),
+        None => Ok(()),
+    }
 }
 
 fn check_join_aliases(
@@ -827,6 +842,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let Some(join) = from else {
             return Ok(self.build_table_dual());
         };
+        // Go's preprocessor runs `checkNonUniqTableAlias` over each query
+        // block's join tree before the block is built.
+        check_non_uniq_table_alias_in_join(join, self.oracle_mode)?;
         let result = self.build_join(join);
         // Go resets this per query block. Multiple recursive SELECT blocks
         // may each reference the CTE once; a second reference in one block
@@ -1735,7 +1753,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         inherited_hints: tidb_hint::ViewHintContext,
     ) -> Result<LogicalPlan, PlanError> {
         let guard = self.check_recursive_view(&view.db_name, &view.view_name)?;
+        // Go relaxes truncation only while folding this view's constant
+        // predicates; the outer statement keeps its own semantics.
+        let outer_ignore_truncate = std::mem::replace(
+            &mut self.ignore_truncate_err_for_view_predicate_folding,
+            true,
+        );
         let built = self.build_view_body(view, inherited_hints);
+        self.ignore_truncate_err_for_view_predicate_folding = outer_ignore_truncate;
         guard.release(self);
         let mut plan = built?;
         if let Some(alias) = alias.filter(|alias| !alias.is_empty()) {

@@ -810,6 +810,8 @@ fn was_written_as_literal(field: &SelectField) -> bool {
             | Expr::String(_)
             | Expr::RawString(_)
             | Expr::Bool(_)
+            | Expr::CharsetString { .. }
+            | Expr::CharsetBinary { .. }
     )
 }
 

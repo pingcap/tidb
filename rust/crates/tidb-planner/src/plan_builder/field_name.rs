@@ -113,8 +113,11 @@ fn literal_field_display_name(
 ) -> String {
     match expr {
         // `types.KindString`: the VALUE names the column, with leading
-        // non-graphic characters trimmed.
-        tidb_ast::Expr::String(value) | tidb_ast::Expr::RawString(value) => {
+        // non-graphic characters trimmed. A charset introducer on a string
+        // literal still builds a string `ValueExpr` (`parseCharsetIntroducer`).
+        tidb_ast::Expr::String(value)
+        | tidb_ast::Expr::RawString(value)
+        | tidb_ast::Expr::CharsetString { value, .. } => {
             let value = match fields.projection_offset(index) {
                 Some(offset) => value
                     .get(..offset)
@@ -127,7 +130,9 @@ fn literal_field_display_name(
         tidb_ast::Expr::Null => "NULL".to_owned(),
         // `types.KindBinaryLiteral`: "Don't rewrite BIT literal or HEX
         // literals" -- the source text is kept exactly, untrimmed.
-        tidb_ast::Expr::Hex(_) | tidb_ast::Expr::Bit(_) => text.to_owned(),
+        tidb_ast::Expr::Hex(_) | tidb_ast::Expr::Bit(_) | tidb_ast::Expr::CharsetBinary { .. } => {
+            text.to_owned()
+        }
         // `types.KindInt64` carrying `mysql.IsBooleanFlag`: the `TRUE` and
         // `FALSE` keywords are int64 literals whose flag says they were
         // written as booleans, and they are named by that value rather than
@@ -196,6 +201,8 @@ fn is_value_literal(expr: &tidb_ast::Expr) -> bool {
             | tidb_ast::Expr::String(_)
             | tidb_ast::Expr::RawString(_)
             | tidb_ast::Expr::Bool(_)
+            | tidb_ast::Expr::CharsetString { .. }
+            | tidb_ast::Expr::CharsetBinary { .. }
     )
 }
 

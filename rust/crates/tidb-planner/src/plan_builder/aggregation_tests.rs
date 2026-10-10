@@ -420,7 +420,14 @@ fn test_having_over_an_aggregate_not_in_the_select_list() {
 fn test_having_resolves_an_alias_to_the_fields_expression_inside_an_aggregate() {
     // Go's `:2896` arm: `having sum(x) < 0` over `select a+1 as x` builds
     // `sum(a+1)`, which is only possible before the projection exists.
-    let plan = build("SELECT a+1 AS x FROM t HAVING sum(x) < 100");
+    // ONLY_FULL_GROUP_BY refuses the nonaggregated `a`, so it is off here.
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    builder.only_full_group_by = false;
+    let plan = builder
+        .build_select(&parse_select("SELECT a+1 AS x FROM t HAVING sum(x) < 100"))
+        .unwrap_or_else(|error| panic!("should build: {}", error.message()))
+        .0;
     let LogicalPlan::Aggregation(agg) = find(&plan, "Aggregation").expect("an Aggregation") else {
         unreachable!()
     };

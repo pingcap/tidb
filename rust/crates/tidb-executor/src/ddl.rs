@@ -1628,6 +1628,7 @@ pub fn run_create_table_in(
         &column_types,
         &ctx.session_zone(),
         ctx.like_default_escape(),
+        ctx.auto_increment_in_generated(),
     )
     .map_err(generated_column_error)?;
     // Go `ErrUnsupportedOnGeneratedColumn`: a VIRTUAL generated column cannot
@@ -2316,6 +2317,10 @@ pub(crate) fn generated_column_error(
         GeneratedDdlError::DisallowedFunction(column) => {
             DriverError::GeneratedColumnFunctionNotAllowed(column)
         }
+        GeneratedDdlError::RefAutoInc(column) => DriverError::DdlCoded {
+            errno: 3109,
+            message: format!("Generated column '{column}' cannot refer to auto-increment column."),
+        },
         GeneratedDdlError::CastArrayOutsideIndex => DriverError::NotSupportedYet(
             "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions".into(),
         ),

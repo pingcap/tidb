@@ -410,6 +410,10 @@ pub(crate) struct PlannerSchemaView {
     databases: std::collections::HashSet<String>,
     tables: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceTable>,
     views: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceView>,
+    /// The same image with the session's local temporary tables detached
+    /// (Go `temptable.DetachLocalTemporaryTableInfoSchema`), present only
+    /// while one is attached.
+    detached: Option<Arc<PlannerSchemaView>>,
 }
 
 impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
@@ -433,6 +437,32 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
 
     fn latest_index_schema(&self) -> Option<&tidb_planner::domain_misc::LatestIndexSchema> {
         self.latest_index_schema.as_deref()
+    }
+
+    fn find_table_ignoring_local_temporary(
+        &self,
+        db_name: &str,
+        table_name: &str,
+    ) -> Option<&tidb_planner::plan_builder::catalog::SourceTable> {
+        self.view
+            .detached
+            .as_deref()
+            .unwrap_or(&self.view)
+            .tables
+            .get(&CatalogTableKey::new(db_name, table_name))
+    }
+
+    fn find_view_ignoring_local_temporary(
+        &self,
+        db_name: &str,
+        view_name: &str,
+    ) -> Option<&tidb_planner::plan_builder::catalog::SourceView> {
+        self.view
+            .detached
+            .as_deref()
+            .unwrap_or(&self.view)
+            .views
+            .get(&CatalogTableKey::new(db_name, view_name))
     }
 
     fn find_view(
@@ -1789,10 +1819,21 @@ impl Catalog {
                 }
             }
         }
+        // A view reads around the session's temporary tables; plan it
+        // against the image they displaced.
+        let detached = tables
+            .values()
+            .any(|table| table.is_local_temporary)
+            .then(|| {
+                let mut detached = self.clone();
+                detached.take_local_temporary_tables();
+                Arc::new(detached.build_planner_schema_view())
+            });
         PlannerSchemaView {
             databases,
             tables,
             views,
+            detached,
         }
     }
 
@@ -2749,17 +2790,48 @@ impl Catalog {
     /// same stable ID, so executor construction must not recover the table by
     /// walking SQL names or aliases again.
     pub(crate) fn kv_table_by_id(&self, table_id: i64) -> Option<&crate::KvTable> {
-        let key = self.table_id_names().get(&table_id)?;
-        let TableEntry::Kv(table) = self
-            .databases
-            .get(&key.database)?
-            .tables
-            .get(&key.table)?
-            .as_ref()
-        else {
-            return None;
-        };
-        (table.table_id == table_id).then_some(table)
+        let current = self.table_id_names().get(&table_id).and_then(|key| {
+            let TableEntry::Kv(table) = self
+                .databases
+                .get(&key.database)?
+                .tables
+                .get(&key.table)?
+                .as_ref()
+            else {
+                return None;
+            };
+            Some(table)
+        });
+        current
+            .or_else(|| {
+                self.shadowed_kv_table_by_id(table_id)
+                    .map(|(_, table)| table)
+            })
+            .filter(|table| table.table_id == table_id)
+            .map(|table| &**table)
+    }
+
+    /// A table a session's local temporary table displaced, by logical or
+    /// partition id: Go's detached infoschema still resolves it, which is how
+    /// a view keeps reading the permanent table (see
+    /// [`PlannerSchemaView::detached`]). Returns the table's folded database.
+    fn shadowed_kv_table_by_id(&self, physical_id: i64) -> Option<(&str, &Arc<crate::KvTable>)> {
+        self.shadowed_by_local_temporary
+            .iter()
+            .find_map(|(database, _, entry)| match entry.as_ref() {
+                TableEntry::Kv(table)
+                    if table.table_id == physical_id
+                        || table.partition().is_some_and(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .any(|definition| definition.id == physical_id)
+                        }) =>
+                {
+                    Some((database.as_str(), table))
+                }
+                _ => None,
+            })
     }
 
     /// The bytes `key` holds in the table `table_id` names, read from a
@@ -2805,16 +2877,22 @@ impl Catalog {
     /// either. Only the partitioned branch pays `Arc::make_mut`'s clone,
     /// since restricting reads to one partition needs an independent copy.
     pub(crate) fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<Arc<crate::KvTable>> {
-        let key = self.table_id_names().get(&physical_id)?;
-        let TableEntry::Kv(table) = self
-            .databases
-            .get(&key.database)?
-            .tables
-            .get(&key.table)?
-            .as_ref()
-        else {
-            return None;
-        };
+        let current = self.table_id_names().get(&physical_id).and_then(|key| {
+            let TableEntry::Kv(table) = self
+                .databases
+                .get(&key.database)?
+                .tables
+                .get(&key.table)?
+                .as_ref()
+            else {
+                return None;
+            };
+            Some(table)
+        });
+        let table = current.or_else(|| {
+            self.shadowed_kv_table_by_id(physical_id)
+                .map(|(_, table)| table)
+        })?;
         let mut physical = Arc::clone(table);
         if table.table_id != physical_id {
             Arc::make_mut(&mut physical).restrict_read_to_partitions(&[physical_id]);
@@ -2824,8 +2902,11 @@ impl Catalog {
 
     /// Resolves a logical or partition table ID to its owning database name.
     pub(crate) fn physical_kv_table_database_by_id(&self, physical_id: i64) -> Option<&str> {
-        let key = self.table_id_names().get(&physical_id)?;
-        Some(self.databases.get(&key.database)?.name.as_str())
+        let database = match self.table_id_names().get(&physical_id) {
+            Some(key) => key.database.as_str(),
+            None => self.shadowed_kv_table_by_id(physical_id)?.0,
+        };
+        Some(self.databases.get(database)?.name.as_str())
     }
 
     /// A table of the default database, for tests that inspect the entry.

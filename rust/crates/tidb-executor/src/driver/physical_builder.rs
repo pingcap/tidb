@@ -1160,7 +1160,14 @@ fn aggregate_function(
         args.pop();
     }
     let mut kind = super::agg_build::aggregate_kind(&upper, &args, separator)?;
-    if descriptor.mode == AggFunctionMode::Final && matches!(kind, AggKind::Count) {
+    // Go merges partial counts in both merging modes: a Partial2 count (a
+    // root aggregate under a pushed-down union) sums its children's counts
+    // exactly as the Final one above it does.
+    if matches!(
+        descriptor.mode,
+        AggFunctionMode::Final | AggFunctionMode::Partial2
+    ) && matches!(kind, AggKind::Count)
+    {
         kind = AggKind::FinalCount;
     }
     // Go `buildApproxCountDistinct` picks the signature by mode and result

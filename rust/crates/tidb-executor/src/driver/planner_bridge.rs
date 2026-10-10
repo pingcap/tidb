@@ -856,6 +856,7 @@ pub(super) fn logical_from_plan(
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
+    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.advanced_join_hint = ctx.advanced_join_hint();
@@ -3078,6 +3079,7 @@ fn planner_optimized_query_with_allocators(
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
+    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.advanced_join_hint = ctx.advanced_join_hint();
@@ -3103,6 +3105,42 @@ fn planner_optimized_query_with_allocators(
         plan_ids,
         column_ids,
         &session_zone,
+    )
+}
+
+/// Whether `query`, built as Go's `buildSubquery` builds it (before any
+/// optimization), carries a correlated column anywhere in its tree: Go's
+/// `len(ExtractCorrelatedCols4LogicalPlan(np)) > 0`, which makes the
+/// rewriter keep the subquery as an Apply instead of evaluating it.
+pub(crate) fn query_builds_correlated_columns(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<bool, tidb_planner::plan_base::PlanError> {
+    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
+    let session_zone = ctx.session_zone();
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let evaluator = subquery_evaluator(
+        catalog,
+        ctx,
+        &plan_ids,
+        &column_ids,
+        false,
+        &session_zone,
+        &registry,
+    );
+    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone())
+        .with_subquery_evaluator(&evaluator);
+    builder.only_full_group_by = ctx.only_full_group_by();
+    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
+    let node = tidb_resolve::NodeW::new(query.clone());
+    let plan = builder.build_query_node(&node, false)?;
+    Ok(
+        !tidb_planner::expression_rewriter::extract_correlated_cols_4_logical_plan(&plan)
+            .is_empty(),
     )
 }
 
@@ -3148,6 +3186,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
+    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.advanced_join_hint = ctx.advanced_join_hint();
@@ -3602,6 +3641,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
+    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.advanced_join_hint = ctx.advanced_join_hint();

@@ -371,6 +371,27 @@ pub trait TableSource {
     fn find_view(&self, _db_name: &str, _view_name: &str) -> Option<&SourceView> {
         None
     }
+
+    /// [`Self::find_table`] over Go's `temptable.DetachLocalTemporaryTableInfoSchema`:
+    /// a session's local temporary table neither resolves nor hides the
+    /// permanent table it shadows. Tables inside a view resolve this way.
+    fn find_table_ignoring_local_temporary(
+        &self,
+        db_name: &str,
+        table_name: &str,
+    ) -> Option<&SourceTable> {
+        self.find_table(db_name, table_name)
+            .filter(|table| !table.is_local_temporary)
+    }
+
+    /// [`Self::find_view`] over the same detached schema.
+    fn find_view_ignoring_local_temporary(
+        &self,
+        db_name: &str,
+        view_name: &str,
+    ) -> Option<&SourceView> {
+        self.find_view(db_name, view_name)
+    }
 }
 
 /// Go `model.ViewInfo` plus the `TableInfo` fields

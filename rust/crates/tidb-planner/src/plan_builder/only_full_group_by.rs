@@ -337,14 +337,41 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 );
             }
         }
+        // Go's resolver walks HAVING and ORDER BY only once the field list
+        // named a column. HAVING keeps the last field's `exprIdx`; each ORDER
+        // BY aggregate overwrites `firstOrderByAggColIdx`, so the last wins.
+        let mut order_by_agg_index = None;
         if !offenders.is_empty() {
-            if let Some(index) = select
-                .order_by
-                .iter()
-                .position(|item| aggregates_anywhere(&item.expr))
-            {
-                return Err(err_aggregate_order_non_agg_query(index + 1));
+            if let Some(having) = &select.having {
+                has_aggregate |= aggregates_anywhere(having);
+                collect_offenders(
+                    having,
+                    select.fields.fields().len(),
+                    Clause::Select,
+                    &[],
+                    &no_pins,
+                    names,
+                    &mut offenders,
+                );
             }
+            for (index, item) in select.order_by.iter().enumerate() {
+                has_aggregate |= aggregates_anywhere(&item.expr);
+                if contains_aggregate_function(&item.expr) {
+                    order_by_agg_index = Some(index);
+                }
+                collect_offenders(
+                    &item.expr,
+                    index + 1,
+                    Clause::OrderBy,
+                    &[],
+                    &no_pins,
+                    names,
+                    &mut offenders,
+                );
+            }
+        }
+        if let Some(index) = order_by_agg_index {
+            return Err(err_aggregate_order_non_agg_query(index + 1));
         }
         // A query with no aggregate and no `GROUP BY` is not a grouped query
         // at all, so nothing needs justifying.
@@ -371,6 +398,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .map(|from| build_join_func_depend(from, names))
             .unwrap_or_default();
         for offender in offenders {
+            // Go `tblInfoFromCol` finds no table for a derived table's
+            // column, and such a column is not reported.
+            let from_table = names.get(offender.offset).is_some_and(|name| {
+                let (db, table) = (
+                    &name.names.database.original,
+                    &name.names.original_table.original,
+                );
+                self.source.find_table(db, table).is_some()
+                    || self.source.find_view(db, table).is_some()
+            });
+            if !from_table {
+                continue;
+            }
             if pinned.contains(&offender.offset)
                 || self.check_col_func_depend(
                     offender.offset,
@@ -836,6 +876,20 @@ pub fn is_exempt(expr: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether `expr` contains an aggregate function call (Go's
+/// `*ast.AggregateFuncExpr`), which `any_value` is not.
+fn contains_aggregate_function(expr: &Expr) -> bool {
+    let mut found = false;
+    super::aggregation::walk_exprs(expr, &mut |node| {
+        if matches!(node, Expr::Aggregate { .. } | Expr::GroupConcat { .. }) {
+            found = true;
+            return true;
+        }
+        false
+    });
+    found
 }
 
 /// Whether `expr` contains an aggregate anywhere, which is what makes a

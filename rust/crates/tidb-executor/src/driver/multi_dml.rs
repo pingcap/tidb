@@ -505,6 +505,7 @@ pub(crate) fn run_multi_update(
     let source = build_multi_layout(from, catalog, current_db, ctx)?;
     let scope = source.scope();
     let assignments = resolve_assignments(&update.assignments, &source, &scope, ctx)?;
+    check_update_list(&assignments, &source, catalog)?;
     let on_update_now: Vec<super::dml::PreparedOnUpdateNow> = source
         .tables
         .iter()
@@ -706,6 +707,83 @@ pub(crate) fn run_multi_update(
     } else {
         changed_rows
     })
+}
+
+/// Go `CheckUpdateList`: one physical table updated through two aliases may
+/// change neither its primary key nor its partition columns through either
+/// of them (MySQL's `ER_MULTI_UPDATE_KEY_CONFLICT`). Aliases are visited in
+/// join order, and the error names the first alias and the conflicting one.
+fn check_update_list(
+    assignments: &[MultiAssignment],
+    source: &MultiLayout,
+    catalog: &Catalog,
+) -> Result<(), DriverError> {
+    struct UpdatedAlias<'a> {
+        name: &'a str,
+        pk_updated: bool,
+        partition_col_updated: bool,
+    }
+    let mut updated_from_other_alias: BTreeMap<(String, String), UpdatedAlias<'_>> =
+        BTreeMap::new();
+    for (slot, table) in source.tables.iter().enumerate() {
+        let SourceOrigin::Base { database, name } = &table.origin else {
+            continue;
+        };
+        let mut columns = assignments
+            .iter()
+            .filter(|assignment| assignment.slot == slot)
+            .filter_map(|assignment| table.columns.get(assignment.column))
+            .peekable();
+        if columns.peek().is_none() {
+            continue;
+        }
+        let partition_columns = match catalog.table_in(database, name) {
+            Some(TableEntry::Kv(kv)) => kv
+                .partition()
+                .map(|spec| spec.dependencies.clone())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let (mut pk_updated, mut partition_col_updated) = (false, false);
+        for (column, field_type) in columns {
+            pk_updated |= field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY);
+            partition_col_updated |= partition_columns
+                .iter()
+                .any(|partition_column| partition_column.eq_ignore_ascii_case(column));
+        }
+        let key = (
+            tidb_hack::go_to_lower(database),
+            tidb_hack::go_to_lower(name),
+        );
+        match updated_from_other_alias.get(&key) {
+            Some(other) => {
+                if other.pk_updated
+                    || pk_updated
+                    || other.partition_col_updated
+                    || partition_col_updated
+                {
+                    return Err(DriverError::Mysql(MysqlError::new(
+                        1706,
+                        format!(
+                            "Primary key/partition key update is not allowed since the table is updated both as '{}' and '{}'.",
+                            other.name, table.visible
+                        ),
+                    )));
+                }
+            }
+            None => {
+                updated_from_other_alias.insert(
+                    key,
+                    UpdatedAlias {
+                        name: &table.visible,
+                        pk_updated,
+                        partition_col_updated,
+                    },
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// One resolved `SET` assignment: which target table it writes, that table's

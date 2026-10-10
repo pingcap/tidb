@@ -124,6 +124,30 @@ pub fn truthy_of(value: &Datum) -> Result<Option<bool>, EvalError> {
     }
 }
 
+/// Go `Datum.ToBool(typeCtx)` under the statement context, which
+/// `expression.EvalBool` applies to a folded condition: a string's numeric
+/// prefix decides it, and its truncation is the context's to warn about or
+/// refuse.
+pub fn truthy_in(value: &Datum, ctx: &dyn crate::Columns) -> Result<Option<bool>, EvalError> {
+    let bytes = match value {
+        Datum::String(value) => Some(value.bytes()),
+        Datum::Bytes(value) => Some(value.as_slice()),
+        _ => None,
+    };
+    if let Some(bytes) = bytes {
+        // `StrToFloat(ctx, s, false)`: not a function cast, so even the
+        // empty string is a truncated DOUBLE.
+        let text = String::from_utf8_lossy(bytes);
+        if tidb_datatype::str_to_float(&text, false).event.is_some() {
+            ctx.handle_truncate(&format!(
+                "Truncated incorrect DOUBLE value: '{}'",
+                tidb_datatype::float_warning_input(&text)
+            ))?;
+        }
+    }
+    truthy_of(value)
+}
+
 /// Returns a string datum's UTF-8 text without replacement.
 pub(crate) fn string_text(value: &StringDatum) -> Result<&str, EvalError> {
     value

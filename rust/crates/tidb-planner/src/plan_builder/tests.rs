@@ -1494,16 +1494,22 @@ fn test_constant_is_always_false_matches_go_s_eval_bool() {
     use tidb_datatype::Datum;
     use tidb_expr::constant::Constant;
 
-    let typed = |value: Datum| Constant::new(value, FieldType::new(FieldTypeCode::LongLong));
-    assert_eq!(constant_is_always_false(&typed(Datum::Int(0))), Some(true));
-    assert_eq!(constant_is_always_false(&typed(Datum::Int(1))), Some(false));
+    let ctx = tidb_expr::context::NoColumns;
+    let decide = |value: Datum| {
+        constant_is_always_false(
+            &Constant::new(value, FieldType::new(FieldTypeCode::LongLong)),
+            &ctx,
+            true,
+        )
+        .unwrap()
+    };
+    assert_eq!(decide(Datum::Int(0)), Some(true));
+    assert_eq!(decide(Datum::Int(1)), Some(false));
     // Go treats a NULL predicate as filtering every row.
-    assert_eq!(constant_is_always_false(&typed(Datum::Null)), Some(true));
-    // A string is not decided here; it is kept as a condition.
-    assert_eq!(
-        constant_is_always_false(&typed(Datum::Bytes(b"x".to_vec()))),
-        None
-    );
+    assert_eq!(decide(Datum::Null), Some(true));
+    // A string is `Datum.ToBool`'s numeric prefix.
+    assert_eq!(decide(Datum::Bytes(b"x".to_vec())), Some(true));
+    assert_eq!(decide(Datum::Bytes(b"2x".to_vec())), Some(false));
 }
 
 #[test]

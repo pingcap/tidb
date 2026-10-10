@@ -565,6 +565,10 @@ pub enum GeneratedDdlError {
     NonPrior,
     /// Go `ErrGeneratedColumnFunctionIsNotAllowed` (3102).
     DisallowedFunction(String),
+    /// Go `ErrGeneratedColumnRefAutoInc` (3109): the generated column reads
+    /// the table's AUTO_INCREMENT column, which
+    /// `tidb_enable_auto_increment_in_generated` did not allow.
+    RefAutoInc(String),
     /// Go `checkIllegalFn4Generated`'s `typeColumn` arm: `CAST(... AS ...
     /// ARRAY)` belongs to functional indexes only (1235).
     CastArrayOutsideIndex,
@@ -588,7 +592,7 @@ pub fn build_generated_columns(
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<Option<GeneratedColumn>>, GeneratedDdlError> {
-    build_generated_columns_with_like_default_escape(defs, names, types, zone, b'\\')
+    build_generated_columns_with_like_default_escape(defs, names, types, zone, b'\\', false)
 }
 
 /// Statement-aware generated-column builder. The implicit `LIKE` escape is
@@ -599,6 +603,7 @@ pub fn build_generated_columns_with_like_default_escape(
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    auto_increment_in_generated: bool,
 ) -> Result<Vec<Option<GeneratedColumn>>, GeneratedDdlError> {
     // Which columns are generated has to be known before any expression is
     // validated, because the 3107 check asks about the column it READS.
@@ -612,6 +617,7 @@ pub fn build_generated_columns_with_like_default_escape(
         .collect();
 
     let mut built = Vec::with_capacity(defs.len());
+    let mut dependencies_at = Vec::new();
     for (position, def) in defs.iter().enumerate() {
         let Some(tidb_ast::ColumnOption::Generated {
             expression, stored, ..
@@ -654,16 +660,7 @@ pub fn build_generated_columns_with_like_default_escape(
         if let Some(name) = resolver.missing_name() {
             return Err(GeneratedDdlError::UnknownDependency(name));
         }
-        let dependencies = resolver.dependencies();
-        for dependency in &dependencies {
-            // Go `verifyColumnGeneration`: a generated column may refer only
-            // to generated columns occurring EARLIER. A later NON-generated
-            // column is fine -- captured from Go, `create table t (a int, b
-            // int as (c+1), c int)` is accepted.
-            if generated_at[*dependency] && position <= *dependency {
-                return Err(GeneratedDdlError::NonPrior);
-            }
-        }
+        dependencies_at.push((position, resolver.dependencies()));
         built.push(Some(GeneratedColumn {
             expr_text: expression.restore_with_flags(generated_restore_flags()),
             stored: *stored,
@@ -675,6 +672,34 @@ pub fn build_generated_columns_with_like_default_escape(
             zone_sensitive: resolver.zone_was_read(),
             like_default_escape_sensitive: resolver.like_default_escape_was_read(),
         }));
+    }
+    // Go `checkGeneratedColumn`: once every column is read, a generated
+    // column may not read the AUTO_INCREMENT column unless
+    // `tidb_enable_auto_increment_in_generated` allows it ...
+    let auto_increment = defs.iter().rposition(|def| {
+        def.options
+            .iter()
+            .any(|option| matches!(option, tidb_ast::ColumnOption::AutoIncrement))
+    });
+    if let Some(auto_increment) = auto_increment.filter(|_| !auto_increment_in_generated) {
+        if let Some((position, _)) = dependencies_at
+            .iter()
+            .find(|(_, dependencies)| dependencies.contains(&auto_increment))
+        {
+            return Err(GeneratedDdlError::RefAutoInc(defs[*position].name.clone()));
+        }
+    }
+    // ... and `verifyColumnGeneration`: a generated column may refer only to
+    // generated columns occurring EARLIER. A later NON-generated column is
+    // fine -- captured from Go, `create table t (a int, b int as (c+1), c
+    // int)` is accepted.
+    for (position, dependencies) in &dependencies_at {
+        if dependencies
+            .iter()
+            .any(|dependency| generated_at[*dependency] && *position <= *dependency)
+        {
+            return Err(GeneratedDdlError::NonPrior);
+        }
     }
     Ok(built)
 }

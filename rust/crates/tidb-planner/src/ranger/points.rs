@@ -632,15 +632,17 @@ impl<'a> PointBuilder<'a> {
         op: &mut String,
     ) -> Result<(), ()> {
         if col_type.eval_type() == EvalType::String {
-            if let Datum::String(s) = value {
-                *value = Datum::String(tidb_datatype::StringDatum::new(
-                    s.bytes().to_vec(),
-                    col_type.collation(),
-                ));
-            } else if let Datum::BinaryLiteral(_) = value {
-                // Go re-collates KindBinaryLiteral through SetString too;
-                // the literal's bytes become a string under the column's
-                // collation.
+            // Go `value.SetString(value.GetString(), ft.GetCollate())` for a
+            // string or a binary literal: the literal's bytes, untrimmed,
+            // become a string under the column's collation.
+            let bytes = match value {
+                Datum::String(s) => Some(s.bytes().to_vec()),
+                Datum::BinaryLiteral(literal) => Some(literal.as_bytes().to_vec()),
+                _ => None,
+            };
+            if let Some(bytes) = bytes {
+                *value =
+                    Datum::String(tidb_datatype::StringDatum::new(bytes, col_type.collation()));
             }
         }
         if col_type.code() == FieldTypeCode::Year && !matches!(value, Datum::Null) {
@@ -999,12 +1001,16 @@ impl<'a> PointBuilder<'a> {
                     _ => continue,
                 }
             }
+            // "refine the string like what we did in builder.buildFromBinOp":
+            // a string or binary literal's untrimmed bytes, re-collated.
             if ft.eval_type() == EvalType::String {
-                if let Datum::String(s) = &dt {
-                    dt = Datum::String(tidb_datatype::StringDatum::new(
-                        s.bytes().to_vec(),
-                        ft.collation(),
-                    ));
+                let bytes = match &dt {
+                    Datum::String(s) => Some(s.bytes().to_vec()),
+                    Datum::BinaryLiteral(literal) => Some(literal.as_bytes().to_vec()),
+                    _ => None,
+                };
+                if let Some(bytes) = bytes {
+                    dt = Datum::String(tidb_datatype::StringDatum::new(bytes, ft.collation()));
                 }
             }
             range_points.push(Point {
