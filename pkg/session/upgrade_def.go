@@ -540,6 +540,10 @@ const (
 
 	// version318 adds tidb_opt_range_max_count.
 	version318 = 318
+
+	// version319 adds ndv_rate to mysql.analyze_options and keeps sampled NDV
+	// off on upgraded clusters.
+	version319 = 319
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -553,7 +557,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version318
+var currentBootstrapVersion int64 = version319
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -746,6 +750,7 @@ var (
 		{version: version316, fn: upgradeToVer316},
 		{version: version317, fn: upgradeToVer317},
 		{version: version318, fn: upgradeToVer318},
+		{version: version319, fn: upgradeToVer319},
 	}
 )
 
@@ -2364,4 +2369,9 @@ func upgradeToVer317(s sessionapi.Session, _ int64) {
 
 func upgradeToVer318(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBOptRangeMaxCount, vardef.DefTiDBOptRangeMaxCount)
+}
+
+func upgradeToVer319(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.analyze_options ADD COLUMN IF NOT EXISTS ndv_rate DOUBLE NOT NULL DEFAULT -1")
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeSampledNDVThreshold, 0)
 }
