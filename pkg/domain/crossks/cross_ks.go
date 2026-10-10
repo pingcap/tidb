@@ -25,7 +25,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
@@ -338,22 +337,18 @@ func (*Manager) createSessionManager(
 		ddlClient:         ddlClient,
 	}
 
-	if !diagnosticmode.Enabled() {
-		mgr.wg.RunWithLog(func() {
-			svrInfoSyncer.ServerInfoSyncLoop(store, mgr.exitCh)
-		})
-	}
+	mgr.wg.RunWithLog(func() {
+		svrInfoSyncer.ServerInfoSyncLoop(store, mgr.exitCh)
+	})
 	mgr.wg.RunWithLog(func() {
 		isSyncer.SyncLoop(ctx)
 	})
-	if !diagnosticmode.Enabled() {
-		mgr.wg.RunWithLog(func() {
-			isSyncer.MDLCheckLoop(ctx)
-		})
-	}
+	mgr.wg.RunWithLog(func() {
+		isSyncer.MDLCheckLoop(ctx)
+	})
 	shouldRunMinJobIDRefresher := true
 	failpoint.InjectCall("skipMinJobIDRefresher", &shouldRunMinJobIDRefresher)
-	if shouldRunMinJobIDRefresher && !diagnosticmode.Enabled() {
+	if shouldRunMinJobIDRefresher {
 		mgr.wg.RunWithLog(func() {
 			minJobIDRefresher.Start(ctx)
 		})
