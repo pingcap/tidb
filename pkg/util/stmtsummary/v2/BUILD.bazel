@@ -6,6 +6,7 @@ go_library(
         "column.go",
         "logger.go",
         "reader.go",
+        "reader_projection.go",
         "record.go",
         "stmtsummary.go",
     ],
@@ -42,6 +43,7 @@ go_test(
     srcs = [
         "column_test.go",
         "main_test.go",
+        "reader_projection_test.go",
         "reader_test.go",
         "record_test.go",
         "stmtsummary_benchmark_test.go",
@@ -49,7 +51,7 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-    shard_count = 27,
+    shard_count = 31,
     deps = [
         "//pkg/config",
         "//pkg/meta/model",
@@ -62,6 +64,7 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/plancodec",
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
         "@com_github_prometheus_client_golang//prometheus",
