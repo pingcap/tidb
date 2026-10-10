@@ -325,3 +325,28 @@ func TestParseIncludeGeneratedColumns(t *testing.T) {
 	_, err := parseConfigFromArgsForTestWithErr(t, "--include-generated-columns=true")
 	require.ErrorContains(t, err, "invalid --include-generated-columns value 'true'")
 }
+
+func TestConfigStringRedactsCredentials(t *testing.T) {
+	conf := defaultConfigForTest(t)
+	conf.OutputDirPath = "s3://bucket/path?access-key=AKID&secret_access_key=SKEY&session-token=TOKEN&region=us-east-1"
+	conf.S3.AccessKey = "AKID"
+	conf.S3.SecretAccessKey = "SKEY"
+	conf.S3.SessionToken = "TOKEN"
+	conf.Azblob.AccountKey = "AZKEY"
+	conf.Azblob.SASToken = "SAS"
+	conf.Azblob.EncryptionKey = "ENC"
+	conf.Azblob.Endpoint = "https://account.blob.core.windows.net/?sig=SASQUERY"
+
+	str := conf.String()
+	for _, secret := range []string{"AKID", "SKEY", "TOKEN", "AZKEY", "SAS", "ENC", "SASQUERY"} {
+		require.NotContains(t, str, secret)
+	}
+	require.Contains(t, str, "region=us-east-1")
+	require.Equal(t, "AKID", conf.S3.AccessKey)
+	require.Contains(t, conf.OutputDirPath, "AKID")
+
+	conf.OutputDirPath = "s3://bucket:port/path?access-key=AKID&secret-access-key=SKEY"
+	str = conf.String()
+	require.NotContains(t, str, "AKID")
+	require.NotContains(t, str, "SKEY")
+}

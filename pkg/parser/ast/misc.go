@@ -3810,8 +3810,16 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+<<<<<<< HEAD
 // RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
 // if the url is not a valid url, return the original string.
+=======
+// RedactedValue replaces a secret in redacted output.
+const RedactedValue = "xxxxxx"
+
+// RedactURL redacts sensitive query parameters in supported storage URLs.
+// If the URL is not valid, it returns the original string.
+>>>>>>> 03148cd4adf (objstore, dumpling, lightning: redact storage URLs in logs and errors (#71844))
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
 	u, err := url.Parse(str)
@@ -3846,7 +3854,7 @@ func RedactURL(str string) string {
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
 			if _, ok := redactKeys[normalizedKey]; ok {
-				values[k] = []string{"xxxxxx"}
+				values[k] = []string{RedactedValue}
 			}
 		}
 		// In go1.25.5, url.Values.Encode() will sort the keys.

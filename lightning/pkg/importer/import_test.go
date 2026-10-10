@@ -187,6 +187,36 @@ func TestVerifyCheckpoint(t *testing.T) {
 	}
 }
 
+func TestVerifyCheckpointRedactsSourceDir(t *testing.T) {
+	cfg := config.NewConfig()
+	cfg.App.CheckRequirements = true
+	cfg.TikvImporter.Backend = config.BackendTiDB
+	cfg.Mydumper.SourceDir = "s3://bucket/data?access-key=AKID&secret-access-key=SKEY&region=us-east-1"
+	taskCp := &checkpoints.TaskCheckpoint{
+		Backend:      config.BackendTiDB,
+		LightningVer: build.ReleaseVersion,
+		SourceDir:    "s3://bucket/old?access-key=AKID&secret-access-key=SKEY&region=us-east-1",
+	}
+
+	err := verifyCheckpoint(cfg, taskCp)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "SKEY")
+	require.Contains(t, err.Error(), "region=us-east-1")
+
+	cfg.Mydumper.SourceDir = "s3://bucket/old?access-key=NEWKEY&secret-access-key=NEWSECRET&region=us-east-1"
+	err = verifyCheckpoint(cfg, taskCp)
+	require.ErrorContains(t, err, "only the redacted parameters differ")
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "NEWKEY")
+
+	cfg.Mydumper.SourceDir = "s3://bucket:port/data?access-key=AKID&secret-access-key=SKEY"
+	err = verifyCheckpoint(cfg, taskCp)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "SKEY")
+}
+
 // failMetaMgrBuilder mocks meta manager init failure
 type failMetaMgrBuilder struct {
 	metaMgrBuilder
