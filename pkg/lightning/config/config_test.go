@@ -32,11 +32,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/objstore"
->>>>>>> 03148cd4adf (objstore, dumpling, lightning: redact storage URLs in logs and errors (#71844))
 	"github.com/stretchr/testify/require"
 )
 
