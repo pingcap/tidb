@@ -289,13 +289,6 @@ impl LogicalCTE {
         if let Some(seed_stat) = &self.seed_stat {
             *seed_stat.borrow_mut() = seed_profile.clone();
         }
-        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
-            eprintln!(
-                "CTEPROD rows={} name={}",
-                seed_profile.row_count(),
-                self.cte_name
-            );
-        }
         let mut row_count = seed_profile.row_count();
         let mut ndvs: Vec<(i64, f64)> = self_schema
             .columns

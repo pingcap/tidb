@@ -513,9 +513,10 @@ fn format_float64(value: f64) -> Option<String> {
     }
     let absolute = value.abs();
     if absolute != 0.0 && !(1e-15..1e15).contains(&absolute) {
-        return Some(format!("{value:e}"));
+        // The exponent loses its `+`.
+        return Some(crate::go_strconv::format_float(value, b'e', -1, 64).replacen('+', "", 1));
     }
-    let mut output = value.to_string();
+    let mut output = crate::go_strconv::format_float(value, b'f', -1, 64);
     if !output.contains('.') {
         output.push_str(".0");
     }

@@ -181,55 +181,37 @@ impl fmt::Display for TextFormatError {
 
 impl std::error::Error for TextFormatError {}
 
-/// Appends Go TiDB's `AppendFormatFloat` representation to `buffer`.
-///
-/// The exponent thresholds, float32 five-digit exponent precision, shortest
-/// precision handling, and trailing mantissa-zero removal mirror the Go
-/// implementation. Rust's standard float formatter supplies the same
-/// shortest-round-trip digits; this function only normalizes the exponent
-/// spelling and MySQL-specific mantissa shape.
+/// Appends Go TiDB's `AppendFormatFloat` (`pkg/format/textrow`)
+/// representation to `buffer`: `strconv.AppendFloat` in `'f'` form, or in
+/// `'e'` form outside `[1e-15, 1e15)` with the exponent's `+` and the
+/// mantissa's trailing zeros removed. The digits are Go's own
+/// ([`tidb_datatype::go_strconv`]).
 pub fn append_format_float(buffer: &mut Vec<u8>, value: f64, precision: i32, bit_size: u8) {
-    // Go's FLOAT caller passes `float64(row.GetFloat32(idx))`: the chunk
-    // stored the value as float32, so one past its range is +Inf and prints 0.
-    let value = if bit_size == 32 {
-        f64::from(value as f32)
-    } else {
-        value
-    };
-    if value.is_nan() || value.abs() > f64::MAX {
+    let abs_value = value.abs();
+    if value.is_nan() || abs_value > f64::MAX {
         buffer.push(b'0');
         return;
     }
-
-    let text = if bit_size == 32 {
-        let value = value as f32;
-        let abs_value = value.abs();
-        let exponential = abs_value >= 1e15 || (abs_value != 0.0 && abs_value < 1e-15);
-        if exponential {
-            // Go forces five digits after the decimal for float32 exponent
-            // output, then removes insignificant trailing zeroes below.
-            format!("{value:.5e}")
-        } else if precision < 0 {
-            value.to_string()
-        } else {
-            format!("{value:.precision$}", precision = precision as usize)
-        }
+    let exponential = if bit_size == 32 {
+        let abs_value = abs_value as f32;
+        abs_value >= 1e15 || (abs_value != 0.0 && abs_value < 1e-15)
     } else {
-        let abs_value = value.abs();
-        let exponential = abs_value >= 1e15 || (abs_value != 0.0 && abs_value < 1e-15);
-        if exponential {
-            if precision < 0 {
-                format!("{value:e}")
-            } else {
-                format!("{value:.precision$e}", precision = precision as usize)
-            }
-        } else if precision < 0 {
-            value.to_string()
-        } else {
-            format!("{value:.precision$}", precision = precision as usize)
-        }
+        abs_value >= 1e15 || (abs_value != 0.0 && abs_value < 1e-15)
     };
-
+    if !exponential {
+        tidb_datatype::go_strconv::append_float(
+            buffer,
+            value,
+            b'f',
+            precision,
+            u32::from(bit_size),
+        );
+        return;
+    }
+    // Go `defaultMySQLPrec` for a FLOAT; then the `+` of the exponent and
+    // the mantissa's trailing zeros (and a bare point) are removed.
+    let precision = if bit_size == 32 { 5 } else { precision };
+    let text = tidb_datatype::go_strconv::format_float(value, b'e', precision, u32::from(bit_size));
     append_normalized_float(buffer, &text);
 }
 
@@ -612,8 +594,6 @@ fn append_normalized_float(buffer: &mut Vec<u8>, text: &str) {
         buffer.extend_from_slice(mantissa.as_bytes());
     }
 
-    // Rust currently omits the exponent plus sign and leading zeroes, but
-    // normalizing here keeps the contract explicit if the formatter changes.
     let mut exponent_text = &text.as_bytes()[exponent + 1..];
     if exponent_text.first() == Some(&b'+') {
         exponent_text = &exponent_text[1..];

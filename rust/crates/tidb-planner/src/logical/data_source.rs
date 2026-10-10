@@ -563,9 +563,6 @@ impl DataSource {
                 )
             });
         self.pushed_down_conds = pushable;
-        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
-            eprintln!("DSPUSH table={} conds={}", self.table_name, self.pushed_down_conds.len());
-        }
         not_pushable
     }
 

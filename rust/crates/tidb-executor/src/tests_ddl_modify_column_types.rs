@@ -392,7 +392,13 @@ fn modify_integer_column_boundary_values_are_refused_or_converted_exactly() {
     run_insert_on("INSERT INTO t VALUES (-1)", &mut catalog, &ctx()).unwrap();
     let error = alter(&mut catalog, "ALTER TABLE t MODIFY COLUMN a INT UNSIGNED")
         .expect_err("Go: [minValOfOldCol, -1] fail");
-    assert!(message_of(&error).contains("Data truncated for column 'a'"));
+    // Go's `failedValue` accepts either spelling.
+    assert!(
+        message_of(&error).contains("Data truncated for column 'a'")
+            || message_of(&error).contains("overflow"),
+        "{}",
+        message_of(&error)
+    );
 
     // unsigned -> unsigned: values above the new maximum are refused,
     // the new maximum itself passes.
@@ -404,7 +410,12 @@ fn modify_integer_column_boundary_values_are_refused_or_converted_exactly() {
         "ALTER TABLE t MODIFY COLUMN a SMALLINT UNSIGNED",
     )
     .expect_err("Go: [maxValOfNewCol+1, maxValOfOldCol] fail");
-    assert!(message_of(&error).contains("Data truncated for column 'a'"));
+    assert!(
+        message_of(&error).contains("Data truncated for column 'a'")
+            || message_of(&error).contains("overflow"),
+        "{}",
+        message_of(&error)
+    );
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE t (a BIGINT UNSIGNED)", &mut catalog).unwrap();
     run_insert_on(
@@ -425,7 +436,12 @@ fn modify_integer_column_boundary_values_are_refused_or_converted_exactly() {
     run_insert_on("INSERT INTO t VALUES (128), (1), (0)", &mut catalog, &ctx()).unwrap();
     let error = alter(&mut catalog, "ALTER TABLE t MODIFY COLUMN a TINYINT")
         .expect_err("Go: [maxValOfNewCol+1, maxValOfOldCol] fail");
-    assert!(message_of(&error).contains("Data truncated for column 'a'"));
+    assert!(
+        message_of(&error).contains("Data truncated for column 'a'")
+            || message_of(&error).contains("overflow"),
+        "{}",
+        message_of(&error)
+    );
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE t (a BIGINT UNSIGNED)", &mut catalog).unwrap();
     run_insert_on("INSERT INTO t VALUES (127), (1), (0)", &mut catalog, &ctx()).unwrap();
@@ -572,10 +588,11 @@ fn multi_schema_modify_column_positions_keep_column_identity() {
     // then b after a), with `b` — Go's Columns[1] — again at offset 1.
     assert_eq!(catalog_column_names(&catalog, "t"), vec!["a", "b", "c"]);
     // Go's rows keep their values through the type/position changes
-    // (`admin check table t` verifies the same rows there).
+    // (`admin check table t` verifies the same rows there); the reorg's
+    // `CastColumnValue` trims a non-binary CHAR's trailing spaces.
     assert_eq!(
         text_rows(&catalog, "SELECT * FROM t"),
-        vec![["a  ", "1", "1"], ["b  ", "2", "2"], ["c ", "3", "3"]]
+        vec![["a", "1", "1"], ["b", "2", "2"], ["c", "3", "3"]]
     );
 }
 

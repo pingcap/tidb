@@ -3509,9 +3509,7 @@ fn eval_bytes(
                         .unwrap_or_else(|_| format!("{}", value as u64));
                     Some(text.into_bytes())
                 }
-                // Go `strconv.FormatFloat(val, 'f', -1, 64)`: the
-                // shortest decimal form without an exponent -- Rust's
-                // `Display` for f64.
+                // Go `strconv.FormatFloat(val, 'f', -1, 64)`.
                 SimpleSig::CastRealAsString => {
                     let value = nullable!(eval_real(
                         children.first(),
@@ -3519,7 +3517,7 @@ fn eval_bytes(
                         div_precision_increment,
                         time_zone
                     )?);
-                    Some(format!("{value}").into_bytes())
+                    Some(tidb_datatype::go_strconv::format_float(value, b'f', -1, 64).into_bytes())
                 }
                 SimpleSig::CastDecimalAsString => {
                     let value = nullable!(eval_decimal(

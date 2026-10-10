@@ -383,53 +383,9 @@ pub fn human_size(size: f64) -> String {
     format!("{}{}", format_g4(size), DECIMAL_ABBRS[index])
 }
 
-/// Go's `fmt` verb `%.4g` (i.e. `strconv.FormatFloat(v, 'g', 4, 64)`): four
-/// significant digits, scientific notation outside `[1e-4, 1e4)`, trailing
-/// zeros trimmed. Rust has no `%g`, so this derives the choice from the
-/// rounded exponent the same way C and Go do.
+/// Go's `fmt` verb `%.4g`, i.e. `strconv.FormatFloat(v, 'g', 4, 64)`.
 fn format_g4(value: f64) -> String {
-    const PRECISION: i32 = 4;
-
-    if value.is_nan() {
-        return "NaN".to_owned();
-    }
-    if value.is_infinite() {
-        return if value.is_sign_negative() {
-            "-Inf".to_owned()
-        } else {
-            "+Inf".to_owned()
-        };
-    }
-    if value == 0.0 {
-        return if value.is_sign_negative() { "-0" } else { "0" }.to_owned();
-    }
-
-    // Round to `PRECISION` significant digits first; the exponent of the
-    // *rounded* value is what selects the notation (9999.5 rounds up to
-    // 1.000e4, so it prints as `1e+04`, not as `9999`).
-    let scientific = format!("{:.*e}", (PRECISION - 1) as usize, value);
-    let (mantissa, exponent) = scientific
-        .split_once('e')
-        .expect("Rust `{:e}` always emits an exponent");
-    let exponent: i32 = exponent
-        .parse()
-        .expect("Rust `{:e}` exponent is an integer");
-
-    if !(-4..PRECISION).contains(&exponent) {
-        let mantissa = trim_trailing_zeros(mantissa);
-        let sign = if exponent < 0 { '-' } else { '+' };
-        return format!("{mantissa}e{sign}{:02}", exponent.abs());
-    }
-
-    let decimals = (PRECISION - 1 - exponent).max(0) as usize;
-    trim_trailing_zeros(&format!("{value:.decimals$}"))
-}
-
-fn trim_trailing_zeros(text: &str) -> String {
-    if !text.contains('.') {
-        return text.to_owned();
-    }
-    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    tidb_datatype::go_strconv::format_float(value, b'g', 4, 64)
 }
 
 /// The process-wide collector, Go's package-level `collector` var.

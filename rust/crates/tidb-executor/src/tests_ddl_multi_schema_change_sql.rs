@@ -1594,7 +1594,8 @@ fn multi_schema_change_preparation_publishes_notes_before_execution() {
             )
             .unwrap_err()
         ),
-        1265
+        // Go's reorg cast: `ConvertIntToInt` overflows TINYINT.
+        1690
     );
     let notes = context.take_warnings();
     assert_eq!(notes.len(), 1);

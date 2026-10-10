@@ -3700,43 +3700,17 @@ fn information_schema_partitions_reports_gos_rows() {
          Go's comment is a string (`pi.Comment`), so an absent one is ''"
     );
 
-    // Feed a statement-time TableSizeStats result into the catalog image
-    // directly here; the cluster provider path has its own storage-boundary
-    // regression.
-    {
-        let shared = session.shared_catalog();
-        let mut catalog = shared.lock().unwrap();
-        let (table_id, partition_ids) = {
-            let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "ip").unwrap()
-            else {
-                panic!("ip is a base table")
-            };
-            (
-                table.table_id,
-                table
-                    .partition()
-                    .unwrap()
-                    .definitions
-                    .iter()
-                    .map(|definition| definition.id)
-                    .collect::<Vec<_>>(),
-            )
-        };
-        catalog.set_table_storage_statistics(
-            table_id,
-            (12, 4, 48, 24),
-            &[
-                (partition_ids[0], (5, 4, 20, 10)),
-                (partition_ids[1], (7, 4, 28, 14)),
-            ],
-        );
-
-        let plain_id = match catalog.table_in("test", "plainp").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table.table_id,
-            _ => panic!("plainp is a base table"),
-        };
-        catalog.set_table_storage_statistics(plain_id, (3, 8, 24, 0), &[]);
-    }
+    // Go's `TableRowStatsCache` reads `stats_meta.count` and the column
+    // histograms per physical table, so ANALYZE is what publishes them: an
+    // INT costs its eight-byte storage width per row.
+    session
+        .run("INSERT INTO ip VALUES (1), (2), (3), (4), (5), (10), (11), (12), (13), (14), (15), (16)")
+        .unwrap();
+    session
+        .run("INSERT INTO plainp VALUES (1), (2), (3)")
+        .unwrap();
+    session.run("ANALYZE TABLE ip").unwrap();
+    session.run("ANALYZE TABLE plainp").unwrap();
     assert_eq!(
         tests_support::row_text(session.run(
             "SELECT partition_name, table_rows, avg_row_length, data_length, index_length \
@@ -3744,8 +3718,8 @@ fn information_schema_partitions_reports_gos_rows() {
              ORDER BY partition_ordinal_position",
         )),
         vec![
-            vec!["p0", "5", "4", "20", "10"],
-            vec!["p1", "7", "4", "28", "14"],
+            vec!["p0", "5", "8", "40", "0"],
+            vec!["p1", "7", "8", "56", "0"],
         ],
         "each partition reports its own physical statistics"
     );

@@ -546,10 +546,11 @@ fn modify_column() {
 
     // Captured: a value the new type cannot read is 1292, and the table is
     // left untouched.
-    assert!(matches!(
-        session.run("ALTER TABLE t MODIFY COLUMN b BIGINT"),
-        Err(DriverError::TruncatedIncorrectValue { ref kind, .. }) if kind == "DOUBLE"
-    ));
+    let error = session
+        .run("ALTER TABLE t MODIFY COLUMN b BIGINT")
+        .expect_err("'xx' is not an integer")
+        .to_mysql_error();
+    assert_eq!(error.code, 1292, "{}", error.message);
     assert_eq!(
         row_text(session.run("SELECT b FROM t WHERE a = 1")),
         [["xx"]]
@@ -653,10 +654,14 @@ fn modify_column() {
         .run("CREATE TABLE w (a BIGINT, b VARCHAR(10))")
         .unwrap();
     session.run("INSERT INTO w VALUES (1, 'xxxxxxxx')").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE w MODIFY COLUMN b VARCHAR(3)"),
-        Err(DriverError::DataTruncatedValue { .. })
-    ));
+    let error = session
+        .run("ALTER TABLE w MODIFY COLUMN b VARCHAR(3)")
+        .expect_err("'xxxxxxxx' does not fit VARCHAR(3)")
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1265, "Data truncated for column 'b', value is 'xxxxxxxx'")
+    );
     assert_eq!(row_text(session.run("SELECT b FROM w")), [["xxxxxxxx"]]);
 }
 

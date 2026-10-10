@@ -3155,9 +3155,11 @@ impl KvTable {
             &zone,
             &RowDecodeContext::for_ddl(ctx),
             substitute,
+            ctx,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn modify_column_in(
         &mut self,
         offset: usize,
@@ -3166,6 +3168,7 @@ impl KvTable {
         zone: &SessionTimeZone,
         decode_context: &RowDecodeContext,
         null_substitute: Option<Datum>,
+        ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
         // Go permits virtual generated changes without data reorganization.
         // Existing rows contain no value for this column; future reads bind
@@ -3198,7 +3201,18 @@ impl KvTable {
         // partition-column changes to definitions whose routing is stable.
         // In both cases the existing physical owner is the source of truth.
         let rows = self.scan_physical_rows_with_handles_with_context(decode_context)?;
+        let old_name = self.columns[offset].name.clone();
+        // Go `updateColumnWorker.getRowRecord` casts each row with
+        // `table.CastColumnValue` under the reorg context
+        // (`reorgTypeFlagsWithSQLMode`): a strict job fails on the first bad
+        // value, a non-strict one keeps the converted value and records the
+        // row's first warning. The statement's own warnings are set aside so
+        // each row's can be told apart.
+        let statement_warnings = ctx.take_warnings();
+        let flags = ctx.reorg_default_conversion_flags();
+        let mut reorg_warnings = ReorgWarnings::default();
         let mut converted_rows = Vec::with_capacity(rows.len());
+        let mut failure = None;
         for (physical_id, handle, row) in rows {
             let mut row = row;
             let mut value = row[offset].clone();
@@ -3209,28 +3223,68 @@ impl KvTable {
             if let (true, Some(substitute)) = (value.is_null(), null_substitute.as_ref()) {
                 value = substitute.clone();
             }
-            // Go reports the offending row's 1-based position for a value the
-            // new NOT NULL rejects, and the value itself for a bad conversion.
             if value.is_null() {
                 if not_null {
-                    return Err(KvTableError::InvalidUseOfNull);
+                    failure = Some(KvTableError::InvalidUseOfNull);
+                    break;
+                }
+            } else if target.code() == tidb_datatype::FieldTypeCode::VectorFloat32 {
+                match value.convert_to(&target, tidb_datatype::STRICT_FLAGS) {
+                    Ok(converted) if converted.event.is_none() => row[offset] = converted.value,
+                    Ok(_) => {
+                        failure = Some(convert_failure(&new_column.name, &target, &value));
+                        break;
+                    }
+                    Err(error) => {
+                        failure = Some(KvTableError::Vector(error.to_string()));
+                        break;
+                    }
                 }
             } else {
-                let converted = value
-                    .convert_to(&target, tidb_datatype::STRICT_FLAGS)
-                    .map_err(|error| {
-                        if target.code() == tidb_datatype::FieldTypeCode::VectorFloat32 {
-                            KvTableError::Vector(error.to_string())
-                        } else {
-                            convert_failure(&new_column.name, &target, &value)
-                        }
-                    })?;
-                if converted.event.is_some() {
-                    return Err(convert_failure(&new_column.name, &target, &value));
+                match crate::driver::cast_table_value_with_flags(
+                    value.clone(),
+                    &target,
+                    &new_column.name,
+                    ctx,
+                    flags,
+                    false,
+                ) {
+                    Ok(converted) => row[offset] = converted,
+                    Err(error) => {
+                        let reported = error.to_mysql_error();
+                        failure = Some(KvTableError::ColumnCast(reformat_reorg_error(
+                            reported.code,
+                            reported.message,
+                            &old_name,
+                            &value,
+                        )));
+                        break;
+                    }
                 }
-                row[offset] = converted.value;
+                if let Some((_, code, message)) = ctx.take_warnings().into_iter().next() {
+                    let warning = reformat_reorg_error(code, message, &old_name, &value);
+                    reorg_warnings.record(warning.code, warning.message);
+                }
             }
             converted_rows.push((physical_id, handle, row));
+        }
+        for (level, code, message) in statement_warnings {
+            ctx.append_leveled(level, code, &message);
+        }
+        if let Some(failure) = failure {
+            return Err(failure);
+        }
+        // Go `executor.DoDDLJob` appends the job's reorg warnings once it is
+        // synced: one per error code, counted when it repeated.
+        for (code, count, message) in reorg_warnings.into_entries() {
+            if count == 1 {
+                ctx.append_warning_parts(code, &message);
+            } else {
+                ctx.append_warning_parts(
+                    code,
+                    &format!("{count} warnings with this error code, first warning: {message}"),
+                );
+            }
         }
 
         self.max_column_id = self.max_column_id.max(new_column.id);
@@ -4581,6 +4635,60 @@ fn convert_failure(column: &str, target: &FieldType, value: &Datum) -> KvTableEr
     KvTableError::DataTruncatedValue {
         column: column.to_owned(),
         value: text,
+    }
+}
+
+/// Go `updateColumnWorker.reformatErrors`: a truncation or too-long value
+/// names the OLD column and the old value, as does an out-of-range one; other
+/// errors keep their own text.
+fn reformat_reorg_error(
+    code: u16,
+    message: String,
+    old_column: &str,
+    old_value: &Datum,
+) -> crate::MysqlError {
+    let value = || {
+        old_value
+            .sql_string()
+            .unwrap_or_else(|_| format!("{old_value:?}"))
+    };
+    match code {
+        tidb_error::tidb::errcode::WarnDataTruncated
+        | tidb_error::tidb::errcode::ErrDataTooLong => crate::MysqlError::new(
+            tidb_error::tidb::errcode::WarnDataTruncated,
+            format!(
+                "Data truncated for column '{old_column}', value is '{}'",
+                value()
+            ),
+        ),
+        tidb_error::tidb::errcode::ErrWarnDataOutOfRange => crate::MysqlError::new(
+            code,
+            format!(
+                "Out of range value for column '{old_column}', the value is '{}'",
+                value()
+            ),
+        ),
+        _ => crate::MysqlError::new(code, message),
+    }
+}
+
+/// Go `reorgCtx.mergeWarnings`: the first warning of each error code and how
+/// many rows raised one.
+#[derive(Default)]
+struct ReorgWarnings {
+    entries: Vec<(u16, i64, String)>,
+}
+
+impl ReorgWarnings {
+    fn record(&mut self, code: u16, message: String) {
+        match self.entries.iter_mut().find(|(seen, _, _)| *seen == code) {
+            Some((_, count, _)) => *count += 1,
+            None => self.entries.push((code, 1, message)),
+        }
+    }
+
+    fn into_entries(self) -> Vec<(u16, i64, String)> {
+        self.entries
     }
 }
 

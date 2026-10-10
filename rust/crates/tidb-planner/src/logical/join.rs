@@ -1124,12 +1124,6 @@ impl LogicalJoin {
         let left = &child_stats[0];
         let right = &child_stats[1];
         self.equal_cond_out_cnt = equal_cond_out_cnt;
-        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
-            eprintln!(
-                "[JDERIVE] type={:?} from_apply={}",
-                self.join_type, self.preserved_side_unscaled
-            );
-        }
         // Go's two anti-semi provenances estimate differently:
         // * a DIRECTLY-built one (NOT IN/EXISTS, TPC-DS q16) takes the
         //   preserved side times SelectionFactor (`logical_join.go:580`;

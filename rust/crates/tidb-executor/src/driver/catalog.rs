@@ -2452,14 +2452,6 @@ impl Catalog {
     ) -> Result<(), tidb_planner::plan_base::PlanError> {
         let wait = std::time::Duration::from_millis(context.stats_load_wait_ms());
         let items = self.statistics_load_items(usage, !wait.is_zero());
-        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
-            eprintln!(
-                "[STATLOAD] request items={} wait_ms={} sync_service={}",
-                items.len(),
-                wait.as_millis(),
-                self.statistics.sync_load.get().is_some()
-            );
-        }
         if items.is_empty() {
             return Ok(());
         }

@@ -1621,9 +1621,6 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             // (logic and bit operators). Anything still uncovered keeps the
             // LongLong placeholder.
             let built = binary_expression(*op, left, right, resolver)?;
-            if std::env::var_os("TIDB_DEBUG_SEL").is_some() && matches!(op, BinaryOp::LogicOr) {
-                eprintln!("[ORBUILD] built={built:?}");
-            }
             Ok(built)
         }
         Expr::Int(_)

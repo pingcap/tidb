@@ -949,6 +949,134 @@ fn information_schema_jdbc_tables() {
     assert_eq!(rows.len(), 2);
 }
 
+/// Go `infoschema_reader.go`'s per-index readers, `executor/
+/// infoschema_reader.test`'s cases read back through a fresh session: a
+/// prefix key part's `SUB_PART`, an expression part's `NULL` column name and
+/// expression, a common handle's clustered PRIMARY, a partial index's
+/// predicate, and `POSITION_IN_UNIQUE_CONSTRAINT` (1 only for the integer
+/// handle and foreign keys).
+#[test]
+fn information_schema_index_readers_follow_go() {
+    let mut session = Session::new();
+    let rows = |session: &mut Session, sql: &str| row_text(session.run(sql));
+    session.run("create table t (c text)").unwrap();
+    session
+        .run("alter table t add index idx_t (c(16))")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "select sub_part from information_schema.statistics where table_name = 't'"
+        ),
+        vec![vec!["16"]]
+    );
+    session
+        .run("create table e (a int, b int, key ke ((a + b)))")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "select column_name, expression from information_schema.statistics where table_name = 'e'"
+        ),
+        vec![vec!["NULL", "`a` + `b`"]]
+    );
+    session.run("set tidb_enable_clustered_index = on").unwrap();
+    session
+        .run("create table t_common (a varchar(64) primary key, b int)")
+        .unwrap();
+    session
+        .run("set tidb_enable_clustered_index = default")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "select key_name, clustered from information_schema.tidb_indexes where table_name = 't_common'"
+        ),
+        vec![vec!["PRIMARY", "YES"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "select constraint_name, position_in_unique_constraint from information_schema.key_column_usage where table_name = 't_common'"
+        ),
+        vec![vec!["PRIMARY", "NULL"]]
+    );
+    session
+        .run("create table p (col1 int primary key, col2 int, key idx(col2) where col1 > 100)")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "select table_name, predicate from information_schema.tidb_indexes where predicate is not null"
+        ),
+        vec![vec!["p", "`col1` > 100"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "select constraint_name, position_in_unique_constraint from information_schema.key_column_usage where table_name = 'p'"
+        ),
+        vec![vec!["PRIMARY", "1"]]
+    );
+}
+
+/// Go `TableRowStatsCache` over the in-process statistics: after ANALYZE,
+/// `TABLE_ROWS` is the analyzed count, `DATA_LENGTH` the fixed widths per
+/// row plus the variable columns' histogram sizes, `INDEX_LENGTH` the local
+/// indexes' column lengths; a sequence is one row; a generated column
+/// reports its expression.
+#[test]
+fn information_schema_tables_report_statistics_sizes_and_sequences() {
+    let mut session = Session::new();
+    let rows = |session: &mut Session, sql: &str| row_text(session.run(sql));
+    session
+        .run("CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16))")
+        .unwrap();
+    session
+        .run("insert into t(a, b, c) values(1, 2, 'c'), (7, 3, 'd'), (12, 4, 'e')")
+        .unwrap();
+    session.run("analyze table t").unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name = 't'"
+        ),
+        vec![vec!["3", "18", "54", "6"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "select partition_name, table_rows from information_schema.partitions where table_name = 't' order by partition_name"
+        ),
+        vec![vec!["p0", "1"], vec!["p1", "1"], vec!["p2", "1"]]
+    );
+    session
+        .run("CREATE SEQUENCE seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "select table_type, engine, table_rows, table_collation from information_schema.tables where table_name = 'seq2'"
+        ),
+        vec![vec!["SEQUENCE", "InnoDB", "1", "utf8mb4_bin"]]
+    );
+    session
+        .run("CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored)")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "select column_name, generation_expression from information_schema.columns where table_name = 'test_gc_read' order by ordinal_position"
+        ),
+        vec![
+            vec!["a", ""],
+            vec!["b", ""],
+            vec!["c", "`a` + `b`"],
+            vec!["d", "`a` * `b`"],
+        ]
+    );
+}
+
 /// `SHOW TABLE STATUS`, checked against captured TiDB output -- the
 /// 18-column header GUI clients read to list a schema.
 ///

@@ -82,9 +82,6 @@ fn convert_points_in_place(
     table_range: bool,
     skip_plan_cache_reason: &mut Option<String>,
 ) -> Result<Vec<Point>, PointBuilderError> {
-    if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
-        eprintln!("[CPIP] entry len={} skip_null={} table_range={}", range_points.len(), skip_null, table_range);
-    }
     let (min_value, max_value) = if new_tp.is_unsigned() {
         (Datum::UInt(0), Datum::UInt(u64::MAX))
     } else {
@@ -113,24 +110,6 @@ fn convert_points_in_place(
             continue;
         }
         let interval_valid = valid_interval(&start_point, &end_point)?;
-        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
-            let lkey = tidb_codec::encode_key(std::slice::from_ref(&start_point.value))
-                .map(|k| k.iter().map(|b| format!("{:02x}", b)).collect::<String>())
-                .unwrap_or_default();
-            let rkey = tidb_codec::encode_key(std::slice::from_ref(&end_point.value))
-                .map(|k| k.iter().map(|b| format!("{:02x}", b)).collect::<String>())
-                .unwrap_or_default();
-            eprintln!(
-                "[PAIR] start_excl={} end_excl={} start_val={:?} end_val={:?} lkey={} rkey={} valid={}",
-                start_point.excl,
-                end_point.excl,
-                start_point.value,
-                end_point.value,
-                lkey,
-                rkey,
-                interval_valid
-            );
-        }
         if !interval_valid {
             continue;
         }

@@ -268,17 +268,10 @@ fn clamp_decimal_magnitude(text: &str) -> String {
     }
 }
 
-/// Formats a float like Go's `strconv.FormatFloat(f, 'e', -1, 64)`: shortest
-/// scientific notation, lowercase `e`, a signed exponent zero-padded to at least
-/// two digits (`1000.0` -> `1e+03`, `0.0025` -> `2.5e-03`).
+/// Go `strconv.FormatFloat(f, 'e', -1, 64)`: shortest scientific notation, a
+/// signed exponent zero-padded to two digits (`1000.0` -> `1e+03`).
 pub(crate) fn format_go_float(f: f64) -> String {
-    // Rust's `{:e}` gives the same shortest mantissa but a bare exponent
-    // (`1e3`); reformat the exponent to Go's signed, zero-padded form.
-    let s = format!("{f:e}");
-    let (mantissa, exp) = s.split_once('e').unwrap_or((s.as_str(), "0"));
-    let exp: i32 = exp.parse().unwrap_or(0);
-    let sign = if exp < 0 { '-' } else { '+' };
-    format!("{mantissa}e{sign}{:02}", exp.abs())
+    tidb_datatype::go_strconv::format_float(f, b'e', -1, 64)
 }
 
 /// Restores a dotted, back-quoted name path (`db`.`t`).

@@ -103,14 +103,6 @@ impl DecorrelateSolver {
         mut apply: LogicalApply,
         group_by_column: &mut BTreeSet<i64>,
     ) -> Result<LogicalPlan, PlanError> {
-        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
-            eprintln!(
-                "[APPLYENTRY] type={:?} cor_cols={} no_decorrelate={}",
-                apply.join.join_type,
-                apply.cor_cols.len(),
-                apply.no_decorrelate
-            );
-        }
         let outer_schema = apply
             .base()
             .children()

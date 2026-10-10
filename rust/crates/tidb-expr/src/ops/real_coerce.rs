@@ -27,10 +27,7 @@ use super::*;
 /// `Decimal` operand promotes to `f64` (MySQL's implicit rule), using
 /// NATIVE `f64` arithmetic throughout — unlike `Decimal`, `Float` needs no
 /// custom digit-string math, since Rust's `f64` already implements the
-/// same IEEE-754 semantics Go's does (confirmed via direct comparison of
-/// `strconv.FormatFloat(f,'f',-1,64)` against Rust's own `f64` Display
-/// across a wide value range, including subnormals and `f64::MAX` —
-/// byte-identical in every case tried). A result that overflows to
+/// same IEEE-754 semantics Go's does. A result that overflows to
 /// `+/-infinity` is a genuine MySQL evaluation ERROR (confirmed via
 /// `goeval`, not silently allowed as IEEE-754 would); `NullEq` has its
 /// own NULL rule; every other operator here is `NULL` if either operand

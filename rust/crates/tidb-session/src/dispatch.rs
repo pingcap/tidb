@@ -709,11 +709,11 @@ impl Session {
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
         let mut storage_statistics = None;
         let mut storage_statistics_failed = false;
-        if needs_storage_stats
+        let reads_storage_statistics = needs_storage_stats
             && table_names.iter().any(|name| {
                 name.eq_ignore_ascii_case("TABLES") || name.eq_ignore_ascii_case("PARTITIONS")
-            })
-        {
+            });
+        if reads_storage_statistics {
             if let Some(provider) = &self.table_storage_stats {
                 match provider.load_table_storage_statistics(
                     &self.active_resource_group,
@@ -746,6 +746,17 @@ impl Session {
                     table.table_id,
                     table.table,
                     &table.partitions,
+                );
+            }
+        } else if reads_storage_statistics && self.table_storage_stats.is_none() {
+            // The in-process store is its own statistics handle: Go's
+            // `TableRowStatsCache` reads `stats_meta` and the column
+            // histograms, which here are the catalog's table statistics.
+            for estimate in tidb_executor::table_size_stats::table_storage_estimates(&scratch) {
+                scratch.set_table_storage_statistics(
+                    estimate.table_id,
+                    estimate.table,
+                    &estimate.partitions,
                 );
             }
         }

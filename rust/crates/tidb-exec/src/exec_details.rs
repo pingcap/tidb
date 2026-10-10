@@ -540,12 +540,10 @@ fn push_zap_duration_field(fields: &mut Vec<Field>, key: &str, duration: Duratio
 }
 
 /// Renders a duration's seconds the way Go spells
-/// `strconv.FormatFloat(d.Seconds(), 'f', -1, 64)`: shortest decimal that
-/// round-trips the float64, never exponent notation. Rust's `f64` `Display`
-/// has exactly that contract.
+/// `strconv.FormatFloat(d.Seconds(), 'f', -1, 64)`.
 #[must_use]
 pub fn format_seconds(d: Duration) -> String {
-    format!("{}", d.as_secs_f64())
+    tidb_datatype::go_strconv::format_float(d.as_secs_f64(), b'f', -1, 64)
 }
 
 /// Renders a duration's seconds the way Go spells

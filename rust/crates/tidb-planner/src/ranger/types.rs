@@ -478,17 +478,7 @@ fn format_datum(d: &Datum, is_left_side: bool) -> String {
         // Go `%v` of a MyDecimal prints its decimal text.
         Datum::Decimal(d) => d.to_string(),
         Datum::Float32(v) => {
-            let narrowed = *v as f32;
-            if (-4..21).contains(
-                &(format!("{narrowed:e}")
-                    .split_once('e')
-                    .and_then(|(_, exp)| exp.parse::<i32>().ok())
-                    .unwrap_or(0)),
-            ) {
-                format!("{narrowed}")
-            } else {
-                go_g_float(f64::from(narrowed))
-            }
+            tidb_datatype::go_strconv::format_float(f64::from(*v as f32), b'g', -1, 32)
         }
         // Go `"\"%v\""`: the value's String() between quotes, unescaped.
         Datum::Enum(value, _) => format!("\"{}\"", value.name()),
@@ -631,30 +621,9 @@ fn datum_equals(a: &Datum, b: &Datum) -> bool {
         && std::mem::discriminant(a) == std::mem::discriminant(b)
 }
 
-/// Go `strconv.FormatFloat(v, 'g', -1, 64)` — `fmt`'s `%v` for floats:
-/// shortest round-trip digits, switching to `e` notation when the decimal
-/// exponent is below -4 or at/above 21, with Go's signed two-digit
-/// exponent spelling.
+/// Go `strconv.FormatFloat(v, 'g', -1, 64)`, `fmt`'s `%v` for a float64.
 pub(super) fn go_g_float(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_owned();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 { "+Inf" } else { "-Inf" }.to_owned();
-    }
-    // Rust's `{:e}` is the shortest round-trip mantissa with its decimal
-    // exponent — the inputs Go's 'g' decision reads.
-    let scientific = format!("{value:e}");
-    let (mantissa, exponent) = scientific
-        .split_once('e')
-        .expect("`{:e}` always carries an exponent");
-    let exponent: i32 = exponent.parse().expect("a decimal exponent");
-    if (-4..21).contains(&exponent) {
-        // Plain notation; Rust's Display is the same shortest expansion.
-        return format!("{value}");
-    }
-    let sign = if exponent < 0 { '-' } else { '+' };
-    format!("{mantissa}e{sign}{:02}", exponent.abs())
+    tidb_datatype::go_strconv::format_float(value, b'g', -1, 64)
 }
 
 /// Go `kv.Key.PrefixNext`: the next prefix key — increment the last

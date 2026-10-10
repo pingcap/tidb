@@ -2284,7 +2284,7 @@ fn timestamp_hook_value(override_value: Option<&str>) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let seconds = now.as_secs() as f64 + now.subsec_nanos() as f64 / 1e9;
-    seconds.to_string()
+    format_double(seconds)
 }
 
 #[derive(Clone, Debug)]
@@ -4377,14 +4377,9 @@ fn render_var_error(error: &VarError) -> String {
     }
 }
 
-/// Go `strconv.FormatFloat(value, 'f', -1, 64)`: the shortest decimal that
-/// round-trips, without an exponent for the values these variables hold.
+/// Go `strconv.FormatFloat(value, 'f', -1, 64)`.
 fn format_double(value: f64) -> String {
-    if value == value.trunc() && value.abs() < 1e15 {
-        format!("{}", value as i64)
-    } else {
-        format!("{}", value)
-    }
+    tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)
 }
 
 #[cfg(test)]

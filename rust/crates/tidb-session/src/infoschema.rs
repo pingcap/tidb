@@ -421,124 +421,93 @@ fn tiflash_replica_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec
 }
 
 /// One row per column of every `PRIMARY KEY` or `UNIQUE` index.
+/// Go `keyColumnUsageInTable`: the integer handle (`POSITION_IN_UNIQUE_
+/// CONSTRAINT` 1), then every PRIMARY or UNIQUE index's visible key parts
+/// (`NULL` position, the primary named `PRIMARY`), then each foreign key's
+/// columns with their referenced column.
 fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
         };
-        // The clustered handle, reported as a one-column PRIMARY KEY not
-        // present in `table.indexes()`.
         if let Some(offset) = table.pk_handle_offset() {
-            push_key_column_usage_row(
-                &mut rows,
+            rows.push(key_column_usage_row(
                 &schema,
                 &table_name,
-                KeyColumnConstraint {
-                    name: "PRIMARY",
-                    is_primary: true,
-                    reference: None,
-                },
-                1,
+                "PRIMARY",
                 &table.columns[offset].name,
-            );
+                1,
+                Datum::Int(1),
+                None,
+            ));
         }
         for index in table.indexes() {
-            if !index.unique {
+            let constraint_name = if index.name.eq_ignore_ascii_case("PRIMARY") {
+                "PRIMARY"
+            } else if index.unique {
+                index.name.as_str()
+            } else {
                 continue;
-            }
-            let is_primary = index.name.eq_ignore_ascii_case("PRIMARY");
+            };
             for (position, offset) in index.column_offsets.iter().enumerate() {
-                push_key_column_usage_row(
-                    &mut rows,
+                if table.is_hidden(*offset) {
+                    continue;
+                }
+                rows.push(key_column_usage_row(
                     &schema,
                     &table_name,
-                    KeyColumnConstraint {
-                        name: &index.name,
-                        is_primary,
-                        reference: None,
-                    },
-                    (position + 1) as i64,
+                    constraint_name,
                     &table.columns[*offset].name,
-                );
+                    (position + 1) as i64,
+                    Datum::Null,
+                    None,
+                ));
             }
         }
         for foreign_key in table.foreign_keys() {
             for (position, column_name) in foreign_key.cols.iter().enumerate() {
-                push_key_column_usage_row(
-                    &mut rows,
+                rows.push(key_column_usage_row(
                     &schema,
                     &table_name,
-                    KeyColumnConstraint {
-                        name: &foreign_key.name,
-                        is_primary: false,
-                        reference: Some(KeyColumnReference {
-                            schema: &foreign_key.ref_schema,
-                            table: &foreign_key.ref_table,
-                            column: foreign_key
-                                .ref_cols
-                                .get(position)
-                                .map_or("", String::as_str),
-                        }),
-                    },
-                    (position + 1) as i64,
+                    &foreign_key.name,
                     column_name,
-                );
+                    (position + 1) as i64,
+                    Datum::Int(1),
+                    Some((
+                        foreign_key.ref_schema.as_str(),
+                        foreign_key.ref_table.as_str(),
+                        foreign_key
+                            .ref_cols
+                            .get(position)
+                            .map_or("", String::as_str),
+                    )),
+                ));
             }
         }
     }
     rows
 }
 
-struct KeyColumnReference<'a> {
-    schema: &'a str,
-    table: &'a str,
-    column: &'a str,
-}
-
-struct KeyColumnConstraint<'a> {
-    name: &'a str,
-    is_primary: bool,
-    reference: Option<KeyColumnReference<'a>>,
-}
-
-/// One `KEY_COLUMN_USAGE` row.
-///
-/// `POSITION_IN_UNIQUE_CONSTRAINT` was captured as the column's own ordinal
-/// for a `PRIMARY KEY` and `NULL` for every other `UNIQUE` key -- an
-/// asymmetry this reproduces rather than smooths over, since Go's own value
-/// is what a client reads.
-fn push_key_column_usage_row(
-    rows: &mut Vec<Vec<Datum>>,
+/// One `KEY_COLUMN_USAGE` row; `reference` is a foreign key's referenced
+/// `(schema, table, column)`.
+fn key_column_usage_row(
     schema: &str,
     table_name: &str,
-    constraint: KeyColumnConstraint<'_>,
-    ordinal_position: i64,
+    constraint_name: &str,
     column_name: &str,
-) {
-    let position_in_unique = if constraint.is_primary || constraint.reference.is_some() {
-        Datum::Int(if constraint.is_primary {
-            ordinal_position
-        } else {
-            1
-        })
-    } else {
-        Datum::Null
-    };
-    let (referenced_schema, referenced_table, referenced_column) =
-        constraint
-            .reference
-            .map_or((Datum::Null, Datum::Null, Datum::Null), |reference| {
-                (
-                    text(reference.schema),
-                    text(reference.table),
-                    text(reference.column),
-                )
-            });
-    rows.push(vec![
+    ordinal_position: i64,
+    position_in_unique: Datum,
+    reference: Option<(&str, &str, &str)>,
+) -> Vec<Datum> {
+    let (referenced_schema, referenced_table, referenced_column) = reference.map_or(
+        (Datum::Null, Datum::Null, Datum::Null),
+        |(schema, table, column)| (text(schema), text(table), text(column)),
+    );
+    vec![
         text(CATALOG),
         text(schema),
-        text(constraint.name),
+        text(constraint_name),
         text(CATALOG),
         text(schema),
         text(table_name),
@@ -548,14 +517,15 @@ fn push_key_column_usage_row(
         referenced_schema,
         referenced_table,
         referenced_column,
-    ]);
+    ]
 }
 
-/// One row per indexed column, the `STATISTICS` table's own column set over
-/// the same population `SHOW INDEX` reports.
+/// Go `setDataForStatisticsInTable`: the integer handle as `PRIMARY`, then
+/// one row per key part of every index. An expression key part reads
+/// `COLUMN_NAME` `NULL` beside its expression, and a prefix part reports its
+/// length in `SUB_PART`.
 fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
-    let mut indexed_rows: Vec<(i64, Vec<tidb_datatype::Datum>)> = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
@@ -570,9 +540,13 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                     comment: "",
                     visible: true,
                 },
-                1,
-                &table.columns[offset].name,
-                false,
+                StatisticsKeyPart {
+                    sequence: 1,
+                    column_name: &table.columns[offset].name,
+                    sub_part: Datum::Null,
+                    nullable: false,
+                    expression: Datum::Null,
+                },
             ));
         }
         for index in table.indexes() {
@@ -580,6 +554,13 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 let column = &table.columns[*offset];
                 let nullable =
                     column.field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL == 0;
+                let (column_name, expression) = match &column.generated {
+                    Some(generated) if table.is_hidden(*offset) => {
+                        ("NULL", text(&generated.expr_text))
+                    }
+                    _ => (column.name.as_str(), Datum::Null),
+                };
+                let prefix = index.prefix_length(position);
                 rows.push(statistics_row(
                     &schema,
                     &table_name,
@@ -589,9 +570,17 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                         comment: &index.comment,
                         visible: index.visible,
                     },
-                    position + 1,
-                    &column.name,
-                    nullable,
+                    StatisticsKeyPart {
+                        sequence: position + 1,
+                        column_name,
+                        sub_part: if prefix == UNSPECIFIED_LENGTH {
+                            Datum::Null
+                        } else {
+                            Datum::Int(prefix)
+                        },
+                        nullable,
+                        expression,
+                    },
                 ));
             }
         }
@@ -606,14 +595,20 @@ struct StatisticsIndex<'a> {
     visible: bool,
 }
 
+struct StatisticsKeyPart<'a> {
+    sequence: usize,
+    column_name: &'a str,
+    sub_part: Datum,
+    nullable: bool,
+    expression: Datum,
+}
+
 /// One `STATISTICS` row.
 fn statistics_row(
     schema: &str,
     table_name: &str,
     index: StatisticsIndex<'_>,
-    sequence: usize,
-    column_name: &str,
-    nullable: bool,
+    part: StatisticsKeyPart<'_>,
 ) -> Vec<Datum> {
     vec![
         text(CATALOG),
@@ -624,23 +619,22 @@ fn statistics_row(
         text(if index.unique { "0" } else { "1" }),
         text(schema),
         text(index.name),
-        Datum::Int(sequence as i64),
-        text(column_name),
+        Datum::Int(part.sequence as i64),
+        text(part.column_name),
         text("A"),
-        // No statistics tier, so Go's cardinality estimate is simply absent.
+        // Go reports no cardinality estimate here.
         Datum::Int(0),
+        part.sub_part,
         Datum::Null,
-        Datum::Null,
-        text(if nullable { "YES" } else { "" }),
+        text(if part.nullable { "YES" } else { "" }),
         text("BTREE"),
         text(""),
         text(index.comment),
         text(if index.visible { "YES" } else { "NO" }),
-        Datum::Null,
+        part.expression,
     ]
 }
 
-/// One row per `PRIMARY KEY` or `UNIQUE` constraint (not per column).
 fn table_constraints_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
@@ -2077,6 +2071,10 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
                 rows.push(view_tables_row(&schema, &table_name));
                 continue;
             }
+            Some(TableEntry::Sequence(sequence)) => {
+                rows.push(sequence_tables_row(&schema, sequence));
+                continue;
+            }
             _ => continue,
         };
         let (row_count, average_row_length, data_length, index_length) = table.storage_statistics();
@@ -2228,6 +2226,44 @@ fn view_tables_row(schema: &str, table_name: &str) -> Vec<Datum> {
     // The four trailing TiDB placement/mode columns.
     row.extend(std::iter::repeat_n(Datum::Null, 4));
     row
+}
+
+/// Go `setDataFromOneTable` for a sequence: Go stores it as a table with no
+/// columns and no collation (`CreateSequence` calls `BuildTableInfo` with
+/// neither), so `EstimateDataLength` reports one row and no data, and the
+/// collation falls back to the server default.
+fn sequence_tables_row(schema: &str, sequence: &tidb_executor::driver::SequenceDef) -> Vec<Datum> {
+    vec![
+        text(CATALOG),
+        text(schema),
+        text(&sequence.name),
+        text("SEQUENCE"),
+        text("InnoDB"),
+        Datum::Int(10),
+        text("Compact"),
+        Datum::UInt(1),
+        Datum::UInt(0),
+        Datum::UInt(0),
+        Datum::Int(0),
+        Datum::UInt(0),
+        Datum::Int(0),
+        Datum::Null,
+        // CREATE_TIME is NULL here as it is for a base table.
+        Datum::Null,
+        Datum::Null,
+        Datum::Null,
+        text(tidb_mysql::DefaultCollationName),
+        Datum::Null,
+        text(""),
+        text(""),
+        Datum::Int(sequence.id),
+        text("NOT_SHARDED"),
+        text("NONCLUSTERED"),
+        Datum::Null,
+        text("Normal"),
+        Datum::Null,
+        text(""),
+    ]
 }
 
 /// One row per view, in schema then view order.
@@ -2440,7 +2476,13 @@ fn column_row(
         text(PRIVILEGES),
         // Go `COLUMN_COMMENT`, from `ColumnInfo.Comment`.
         text(&column.comment),
-        text(""),
+        // Go `GENERATION_EXPRESSION`, `ColumnInfo.GeneratedExprString`.
+        text(
+            column
+                .generated
+                .as_ref()
+                .map_or("", |generated| generated.expr_text.as_str()),
+        ),
         Datum::Null,
     ]
 }
@@ -2456,89 +2498,88 @@ struct TypeCells {
     collation_name: Datum,
 }
 
-/// A character column reports its length and octet length; a numeric one
-/// reports precision and scale. Captured from TiDB: varchar(8) gives 8 and
-/// 32, bigint gives 19 and 0.
+/// Go `dataForColumnsInTable`'s type cells: SET reports the summed element
+/// lengths plus the separating commas, ENUM its longest element, a string
+/// type its length, a fractionable type its precision, a numeric type its
+/// precision and scale, and the NULL type zero lengths. The octet length is
+/// `calcCharOctLength`, the charset's bytes per character times the length.
+/// A column without a charset reports no charset or collation
+/// (`table.NewColDesc`).
 fn type_cells(field_type: &FieldType) -> TypeCells {
-    // Every type with a character length: the string types, plus ENUM/SET,
-    // which Go's `IsString` excludes but which do report one.
-    if field_type.code().is_string() || field_type.has_charset() {
-        // One rule for every string type, character or binary: the character
-        // length is the field length and the octet length scales it by the
-        // charset's bytes-per-character. Captured: `varchar(10)` utf8mb4 gives
-        // 10/40, the same column in latin1 gives 10/10, `varbinary(10)` gives
-        // 10/10, `text` gives 65535/262140, `enum('a','B')` gives 1/4.
-        //
-        // A binary-charset column reports no charset and no collation at all,
-        // which is exactly `HasCharset` being false for it.
-        let flen = field_type.flen();
-        let charset = field_type.charset();
-        let (charset_name, collation_name) = if field_type.has_charset() {
-            (
-                text(field_type.charset_name()),
-                text(field_type.collation_name()),
-            )
-        } else {
-            (Datum::Null, Datum::Null)
-        };
-        TypeCells {
-            char_max: Datum::Int(flen),
-            char_octet: Datum::Int(flen.saturating_mul(charset.maxlen())),
-            numeric_precision: Datum::Null,
-            numeric_scale: Datum::Null,
-            datetime_precision: Datum::Null,
-            charset_name,
-            collation_name,
-        }
+    let code = field_type.code();
+    let (default_flen, default_decimal) = code.default_length_and_decimal();
+    let flen = if field_type.flen() == UNSPECIFIED_LENGTH {
+        default_flen
     } else {
-        // Go `dataForColumnsInTable` substitutes the type's DEFAULT length and
-        // decimal whenever the column left them unspecified, and only then
-        // splits into the temporal and the numeric arm. Both cells are absent,
-        // not zero, for every type outside those two arms -- `YEAR` and `DATE`
-        // are neither fractionable nor numeric, so they report NULL twice.
-        let code = field_type.code();
-        let (default_flen, default_decimal) = code.default_length_and_decimal();
-        let flen = if field_type.flen() == UNSPECIFIED_LENGTH {
-            default_flen
-        } else {
-            field_type.flen()
-        };
-        let decimal = if field_type.decimal() == UNSPECIFIED_LENGTH {
-            default_decimal
-        } else {
-            field_type.decimal()
-        };
-        let (numeric_precision, numeric_scale, datetime_precision) = if code.is_type_fractionable()
-        {
-            (Datum::Null, Datum::Null, Datum::Int(decimal))
-        } else if code.is_type_numeric() {
-            // FLOAT and DOUBLE report no scale when none was written -- their
-            // default decimal is -1, which Go tests for rather than storing.
-            let scale = if !matches!(code, FieldTypeCode::Float | FieldTypeCode::Double)
+        field_type.flen()
+    };
+    let decimal = if field_type.decimal() == UNSPECIFIED_LENGTH {
+        default_decimal
+    } else {
+        field_type.decimal()
+    };
+    let (charset_name, collation_name) = if field_type.has_charset() {
+        (
+            text(field_type.charset_name()),
+            text(field_type.collation_name()),
+        )
+    } else {
+        (Datum::Null, Datum::Null)
+    };
+    let mut cells = TypeCells {
+        char_max: Datum::Null,
+        char_octet: Datum::Null,
+        numeric_precision: Datum::Null,
+        numeric_scale: Datum::Null,
+        datetime_precision: Datum::Null,
+        charset_name,
+        collation_name,
+    };
+    let character_lengths = |length: i64| {
+        (
+            Datum::Int(length),
+            Datum::Int(length.saturating_mul(field_type.charset().maxlen())),
+        )
+    };
+    match code {
+        FieldTypeCode::Set => {
+            let elems = field_type.elems().snapshot();
+            let mut length = elems.iter().map(|elem| elem.len() as i64).sum::<i64>();
+            if !elems.is_empty() {
+                length += elems.len() as i64 - 1;
+            }
+            (cells.char_max, cells.char_octet) = character_lengths(length);
+        }
+        FieldTypeCode::Enum => {
+            let length = field_type
+                .elems()
+                .snapshot()
+                .iter()
+                .map(|elem| elem.len() as i64)
+                .max()
+                .unwrap_or(0);
+            (cells.char_max, cells.char_octet) = character_lengths(length);
+        }
+        _ if code.is_string() => {
+            (cells.char_max, cells.char_octet) = character_lengths(flen);
+        }
+        _ if code.is_type_fractionable() => cells.datetime_precision = Datum::Int(decimal),
+        _ if code.is_type_numeric() => {
+            cells.numeric_precision = Datum::Int(numeric_precision_of(field_type, flen));
+            // FLOAT and DOUBLE report no scale when none was written.
+            if !matches!(code, FieldTypeCode::Float | FieldTypeCode::Double)
                 || decimal != UNSPECIFIED_LENGTH
             {
-                Datum::Int(decimal)
-            } else {
-                Datum::Null
-            };
-            (
-                Datum::Int(numeric_precision_of(field_type, flen)),
-                scale,
-                Datum::Null,
-            )
-        } else {
-            (Datum::Null, Datum::Null, Datum::Null)
-        };
-        TypeCells {
-            char_max: Datum::Null,
-            char_octet: Datum::Null,
-            numeric_precision,
-            numeric_scale,
-            datetime_precision,
-            charset_name: Datum::Null,
-            collation_name: Datum::Null,
+                cells.numeric_scale = Datum::Int(decimal);
+            }
         }
+        FieldTypeCode::Null => {
+            cells.char_max = Datum::Int(0);
+            cells.char_octet = Datum::Int(0);
+        }
+        _ => {}
     }
+    cells
 }
 
 /// One `COLUMNS` row for a view's column.
@@ -2863,15 +2904,22 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
             ));
         }
         for index in table.indexes() {
+            // Go `setDataFromIndex`: a common handle's primary key is the
+            // clustered index; `ConditionExprString` is a partial index's
+            // predicate.
+            let clustered = if index.clustered_primary { "YES" } else { "NO" };
+            let predicate = table
+                .partial_index_condition_string(index.id)
+                .map_or(Datum::Null, |condition| text(&condition));
             for (position, offset) in index.column_offsets.iter().enumerate() {
                 let column = &table.columns[*offset];
                 let prefix = index.prefix_length(position);
-                // go renders an expression index part with COLUMN_NAME 'NULL'
-                // beside the expression text (`builtinRegexpSig`-shaped
-                // `Null` for SUB_PART); the plain columns keep their names.
+                // An expression key part is a hidden column: Go reports
+                // COLUMN_NAME 'NULL' beside its expression text.
                 let generated_expr = column
                     .generated
                     .as_ref()
+                    .filter(|_| table.is_hidden(*offset))
                     .map(|generated| generated.expr_text.clone());
                 entries.push((
                     schema.to_lowercase(),
@@ -2886,10 +2934,10 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
                             Some(_) => text("NULL"),
                             None => text(&column.name),
                         },
-                        if prefix > 0 {
-                            Datum::Int(prefix)
-                        } else {
+                        if prefix == UNSPECIFIED_LENGTH {
                             Datum::Null
+                        } else {
+                            Datum::Int(prefix)
                         },
                         text(&index.comment),
                         match &generated_expr {
@@ -2898,9 +2946,9 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
                         },
                         Datum::Int(index.id),
                         text(if index.visible { "YES" } else { "NO" }),
-                        text("NO"),
+                        text(clustered),
                         Datum::Int(i64::from(index.global)),
-                        Datum::Null,
+                        predicate.clone(),
                     ],
                 ));
             }

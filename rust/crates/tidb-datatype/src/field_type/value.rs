@@ -415,28 +415,14 @@ pub fn parser_default_field_type_for_value(
     }
 }
 
+/// Go `strconv.FormatFloat(value, 'f', -1, 32)`.
 fn go_fixed_shortest_f32(value: f32) -> String {
-    if value.is_nan() {
-        "NaN".to_owned()
-    } else if value == f32::INFINITY {
-        "+Inf".to_owned()
-    } else if value == f32::NEG_INFINITY {
-        "-Inf".to_owned()
-    } else {
-        value.to_string()
-    }
+    crate::go_strconv::format_float(f64::from(value), b'f', -1, 32)
 }
 
+/// Go `strconv.FormatFloat(value, 'f', -1, 64)`.
 fn go_fixed_shortest_f64(value: f64) -> String {
-    if value.is_nan() {
-        "NaN".to_owned()
-    } else if value == f64::INFINITY {
-        "+Inf".to_owned()
-    } else if value == f64::NEG_INFINITY {
-        "-Inf".to_owned()
-    } else {
-        value.to_string()
-    }
+    crate::go_strconv::format_float(value, b'f', -1, 64)
 }
 
 const fn signed_display_len(value: i64) -> i64 {

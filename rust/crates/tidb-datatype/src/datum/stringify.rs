@@ -105,8 +105,10 @@ impl Datum {
             Self::Int(value) => value.to_string().into_bytes(),
             Self::UInt(value) => value.to_string().into_bytes(),
             Self::Decimal(value) => value.to_string().into_bytes(),
-            Self::Real(value) => format_go_float_f(*value).into_bytes(),
-            Self::Float32(value) => format_go_float_f(*value as f32).into_bytes(),
+            Self::Real(value) => crate::go_strconv::format_float(*value, b'f', -1, 64).into_bytes(),
+            Self::Float32(value) => {
+                crate::go_strconv::format_float(f64::from(*value as f32), b'f', -1, 32).into_bytes()
+            }
             Self::String(value) => value.bytes().to_vec(),
             Self::Bytes(value) => value.clone(),
             Self::BinaryLiteral(value) | Self::Bit(value) => value.as_bytes().to_vec(),
@@ -181,8 +183,10 @@ impl Datum {
             Self::Null => b"NULL".to_vec(),
             Self::Int(value) => value.to_string().into_bytes(),
             Self::UInt(value) => value.to_string().into_bytes(),
-            Self::Float32(value) => format_go_float_e(*value as f32).into_bytes(),
-            Self::Real(value) => format_go_float_e(*value).into_bytes(),
+            Self::Float32(value) => {
+                crate::go_strconv::format_float(f64::from(*value as f32), b'e', -1, 32).into_bytes()
+            }
+            Self::Real(value) => crate::go_strconv::format_float(*value, b'e', -1, 64).into_bytes(),
             Self::String(value) => quote_value_expr(value.bytes()),
             Self::Bytes(value) => quote_value_expr(value),
             Self::BinaryLiteral(value) => value.to_bit_literal_string(true).into_bytes(),
@@ -324,61 +328,6 @@ fn quote_value_expr_bytes(value: &[u8]) -> Vec<u8> {
     }
     quoted.push(b'\'');
     quoted
-}
-
-trait GoScientificFloat: fmt::Display + fmt::LowerExp + Copy {
-    fn special(self) -> Option<&'static str>;
-}
-
-impl GoScientificFloat for f32 {
-    fn special(self) -> Option<&'static str> {
-        if self.is_nan() {
-            Some("NaN")
-        } else if self == Self::INFINITY {
-            Some("+Inf")
-        } else if self == Self::NEG_INFINITY {
-            Some("-Inf")
-        } else {
-            None
-        }
-    }
-}
-
-impl GoScientificFloat for f64 {
-    fn special(self) -> Option<&'static str> {
-        if self.is_nan() {
-            Some("NaN")
-        } else if self == Self::INFINITY {
-            Some("+Inf")
-        } else if self == Self::NEG_INFINITY {
-            Some("-Inf")
-        } else {
-            None
-        }
-    }
-}
-
-/// Go `strconv.FormatFloat(value, 'f', -1, bitSize)` special-value spelling
-/// plus Rust's equivalent shortest fixed rendering for finite values.
-fn format_go_float_f<T: GoScientificFloat>(value: T) -> String {
-    value
-        .special()
-        .map_or_else(|| value.to_string(), str::to_owned)
-}
-
-/// Go `strconv.FormatFloat(value, 'e', -1, bitSize)` differs from Rust's
-/// lower-exponent display only in special values and exponent normalization.
-fn format_go_float_e<T: GoScientificFloat>(value: T) -> String {
-    if let Some(special) = value.special() {
-        return special.to_owned();
-    }
-    let scientific = format!("{value:e}");
-    let (mantissa, exponent) = scientific
-        .split_once('e')
-        .expect("Rust scientific float contains an exponent");
-    let exponent: i32 = exponent.parse().expect("Rust float exponent is numeric");
-    let sign = if exponent < 0 { '-' } else { '+' };
-    format!("{mantissa}e{sign}{:02}", exponent.unsigned_abs())
 }
 
 #[cfg(test)]

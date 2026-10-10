@@ -219,59 +219,12 @@ pub fn escape_string(value: impl AsRef<[u8]>) -> Vec<u8> {
     escape_string_backslash(Vec::with_capacity(value.len()), value)
 }
 
-fn normalize_exponent(mantissa: &str, exponent: i32) -> String {
-    let sign = if exponent < 0 { '-' } else { '+' };
-    format!("{mantissa}e{sign}{:02}", exponent.unsigned_abs())
-}
-
 fn format_go_float64(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_owned();
-    }
-    if value == f64::INFINITY {
-        return "+Inf".to_owned();
-    }
-    if value == f64::NEG_INFINITY {
-        return "-Inf".to_owned();
-    }
-    if value == 0.0 {
-        return if value.is_sign_negative() { "-0" } else { "0" }.to_owned();
-    }
-    let scientific = format!("{value:e}");
-    let (mantissa, exponent) = scientific
-        .split_once('e')
-        .expect("Rust scientific float contains exponent");
-    let exponent: i32 = exponent.parse().expect("Rust float exponent is numeric");
-    if !(-4..6).contains(&exponent) {
-        normalize_exponent(mantissa, exponent)
-    } else {
-        value.to_string()
-    }
+    tidb_datatype::go_strconv::format_float(value, b'g', -1, 64)
 }
 
 fn format_go_float32(value: f32) -> String {
-    if value.is_nan() {
-        return "NaN".to_owned();
-    }
-    if value == f32::INFINITY {
-        return "+Inf".to_owned();
-    }
-    if value == f32::NEG_INFINITY {
-        return "-Inf".to_owned();
-    }
-    if value == 0.0 {
-        return if value.is_sign_negative() { "-0" } else { "0" }.to_owned();
-    }
-    let scientific = format!("{value:e}");
-    let (mantissa, exponent) = scientific
-        .split_once('e')
-        .expect("Rust scientific float contains exponent");
-    let exponent: i32 = exponent.parse().expect("Rust float exponent is numeric");
-    if !(-4..6).contains(&exponent) {
-        normalize_exponent(mantissa, exponent)
-    } else {
-        value.to_string()
-    }
+    tidb_datatype::go_strconv::format_float(f64::from(value), b'g', -1, 32)
 }
 
 fn append_time(buffer: &mut Vec<u8>, value: Option<NaiveDateTime>) {

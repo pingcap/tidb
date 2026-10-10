@@ -263,11 +263,9 @@
 //! `FLOAT`/`DOUBLE` (`Datum::Real(f64)`) — the value domain for a
 //! scientific-notation literal (`Expr::Float`, e.g. `1.5e2`) — uses
 //! NATIVE `f64` arithmetic throughout: unlike `Decimal`, no custom
-//! digit-string math is needed, since Rust's own `f64` Display was
-//! confirmed (by direct comparison across a wide value range, including
-//! subnormals and `f64::MAX`, not assumed) to produce byte-identical
-//! output to Go's `strconv.FormatFloat(f, 'f', -1, 64)` — the parity risk
-//! this domain was originally deferred over turned out not to exist. An
+//! digit-string math is needed. Its text is Go's `strconv.FormatFloat`
+//! (`tidb_datatype::go_strconv`), whose shortest digits differ from Rust's
+//! own `Display` on an exact tie between two candidates. An
 //! `Int` or `Decimal` operand promotes to `f64` — `Float` DOMINATES
 //! `Decimal` in MySQL's promotion hierarchy, the OPPOSITE direction from
 //! how `Decimal` dominates `Int` (confirmed via `goeval`: `1.5e2 + 3.14`

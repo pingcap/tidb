@@ -163,52 +163,9 @@ fn pow10(exp: i32) -> f64 {
 /// Go `strconv.FormatFloat(f, 'g', -1, 64)`, which is also what `%v` prints
 /// for a `float64` -- the spelling every `constant %v overflows bigint`
 /// diagnostic carries.
-///
-/// `'g'` with the shortest precision picks scientific notation exactly when
-/// the decimal exponent is below -4 or at least 6 (Go `ftoa`: "if precision
-/// was the shortest possible, use precision 6 for this decision"), and the
-/// digits themselves are the shortest round-tripping ones, which is what
-/// Rust's own float formatting produces.
+#[must_use]
 pub fn format_float_g_shortest(f: f64) -> String {
-    if f.is_nan() {
-        return "NaN".to_owned();
-    }
-    if f.is_infinite() {
-        return if f > 0.0 { "+Inf" } else { "-Inf" }.to_owned();
-    }
-    let sign = if f.is_sign_negative() { "-" } else { "" };
-    let magnitude = f.abs();
-    if magnitude == 0.0 {
-        return format!("{sign}0");
-    }
-    let scientific = format!("{magnitude:e}");
-    let (mantissa, exponent) = scientific
-        .split_once('e')
-        .expect("Rust LowerExp always emits an exponent");
-    let exponent: i32 = exponent.parse().expect("exponent is an integer");
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
-    // Source: `exp < -4 || exp >= eprec`, with `eprec` pinned to 6 for the
-    // shortest precision.
-    if !(-4..6).contains(&exponent) {
-        return format!(
-            "{sign}{mantissa}e{}{:02}",
-            if exponent < 0 { '-' } else { '+' },
-            exponent.abs()
-        );
-    }
-    let point = exponent + 1;
-    let digit_count = digits.len() as i32;
-    if point <= 0 {
-        format!("{sign}0.{}{digits}", "0".repeat((-point) as usize))
-    } else if point >= digit_count {
-        format!(
-            "{sign}{digits}{}",
-            "0".repeat((point - digit_count) as usize)
-        )
-    } else {
-        let (integral, fraction) = digits.split_at(point as usize);
-        format!("{sign}{integral}.{fraction}")
-    }
+    crate::go_strconv::format_float(f, b'g', -1, 64)
 }
 
 /// Go `isSpace` (`helper.go`): only a space or a tab.

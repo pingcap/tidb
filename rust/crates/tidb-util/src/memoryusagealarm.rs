@@ -994,15 +994,9 @@ fn gen_log_fields(cost_time: ChronoDuration, info: &ProcessInfo) -> Vec<Field> {
     log_fields
 }
 
-/// Go `strconv.FormatFloat(v, 'f', -1, 64)`: shortest decimal round-trip
-/// without an exponent, which Rust's `Display` for whole and fractional
-/// values in this range matches once integral values drop the `.0`.
+/// Go `strconv.FormatFloat(v, 'f', -1, 64)`.
 fn format_go_float(v: f64) -> String {
-    if v == v.trunc() && v.abs() < 9.007_199_254_740_992e15 {
-        format!("{}", v as i64)
-    } else {
-        format!("{v}")
-    }
+    tidb_datatype::go_strconv::format_float(v, b'f', -1, 64)
 }
 
 #[cfg(test)]

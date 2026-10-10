@@ -997,7 +997,21 @@ fn all_topics() -> Vec<String> {
 #[test]
 #[ignore = "onboarding tool: replays the one topic named by INTEGRATION_TOPIC"]
 fn replay_one_topic_from_env() {
-    let topic = std::env::var("INTEGRATION_TOPIC").expect("INTEGRATION_TOPIC must name a topic");
+    let topics = std::env::var("INTEGRATION_TOPIC").expect("INTEGRATION_TOPIC must name a topic");
+    // A comma-separated list replays its topics in order in this one process,
+    // as the corpus test does, which is what exposes state one topic leaves
+    // behind for the next.
+    for topic in topics
+        .split(',')
+        .map(str::trim)
+        .filter(|topic| !topic.is_empty())
+    {
+        replay_topic_reporting(topic);
+    }
+}
+
+fn replay_topic_reporting(topic: &str) {
+    let topic = topic.to_owned();
     let started = std::time::Instant::now();
     match run_topic(&topic) {
         Ok(report) => {

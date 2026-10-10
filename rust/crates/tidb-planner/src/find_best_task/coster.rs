@@ -258,18 +258,6 @@ impl Ver2Coster {
                 }
             })
             .collect::<Vec<_>>();
-        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
-            let misses = columns.iter().filter(|c| c.stats.is_none()).count();
-            let pseudo = hist_coll.is_none_or(crate::stats_info::HistColl::pseudo);
-            let realtime = hist_coll.map_or(0, |h| h.realtime_count());
-            eprintln!(
-                "ROWSIZE cols={} misses={} pseudo={} realtime={}",
-                columns.len(),
-                misses,
-                pseudo,
-                realtime
-            );
-        }
         crate::plan_cost_ver2::plan_avg_row_size(
             &columns,
             hist_coll.map(|hist_coll| (hist_coll.pseudo(), hist_coll.realtime_count())),
@@ -1048,28 +1036,6 @@ impl Ver2Coster {
                     task_type,
                     (&build_cost, &probe_cost),
                 );
-                if std::env::var("TIDB_DEBUG_NDV").is_ok() {
-                    let probe_cols: Vec<String> = probe
-                        .schema()
-                        .map(|schema| {
-                            schema
-                                .columns
-                                .iter()
-                                .map(|column| column.orig_name.clone())
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    eprintln!(
-                        "Q50COST kind={:?} build_rows={} build_row_size={} probe_rows_one={} probe_row_size={} cost={} probe_cols={:?}",
-                        join.kind,
-                        Self::rows(build),
-                        Self::row_size(build),
-                        Self::rows(probe),
-                        Self::row_size(probe),
-                        cost.value(),
-                        probe_cols
-                    );
-                }
                 cost
             }
             // Leaves with no work of their own.

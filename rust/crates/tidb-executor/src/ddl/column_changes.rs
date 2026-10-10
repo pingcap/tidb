@@ -394,6 +394,10 @@ impl PreparedColumnChange {
                         crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
                             DriverError::DuplicateEntry { value, key }
                         }
+                        // Go `updateColumnWorker.reformatErrors`' text and code.
+                        crate::kv_table::KvTableError::ColumnCast(error) => {
+                            DriverError::Mysql(error)
+                        }
                         other => {
                             DriverError::Parse(format!("column modification failed: {other:?}"))
                         }

@@ -48,6 +48,7 @@ mod field_type;
 mod format;
 mod fsp;
 pub mod go_runtime;
+pub mod go_strconv;
 mod go_string;
 mod json_path;
 mod multibyte_encoding;

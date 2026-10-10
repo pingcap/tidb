@@ -114,10 +114,9 @@ pub fn gen_label_condition_values(values: &BTreeSet<String>) -> String {
         .join("|")
 }
 
-/// Go `strconv.FormatFloat(v, 'f', -1, 64)`: the shortest round-tripping
-/// decimal, never in exponent form, which is also Rust's `f64` display.
+/// Go `strconv.FormatFloat(v, 'f', -1, 64)`.
 fn format_float(value: f64) -> String {
-    format!("{value}")
+    tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)
 }
 
 /// Go `infoschema.MetricTableMap`, sorted by table name.
