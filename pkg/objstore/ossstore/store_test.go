@@ -53,6 +53,48 @@ func TestURI(t *testing.T) {
 	}
 }
 
+func TestIsTransientNoCredentialsError(t *testing.T) {
+	require.False(t, IsTransientNoCredentialsError(nil))
+	require.False(t, IsTransientNoCredentialsError(fmt.Errorf("some unrelated error")))
+	// A permanent misconfiguration, e.g. no credentials configured anywhere, is
+	// not retryable.
+	require.False(t, IsTransientNoCredentialsError(fmt.Errorf(
+		"failed to get credentials from default provider: unable to get credentials from any of the providers in the chain: "+
+			"open /home/pingcap/.aliyun/config.json: no such file or directory")))
+	require.False(t, IsTransientNoCredentialsError(fmt.Errorf(
+		"failed to get credentials from default provider: unable to get credentials from any of the providers in the chain")))
+	// A timeout or deadline talking to the ECS metadata service is transient and
+	// retryable.
+	require.True(t, IsTransientNoCredentialsError(fmt.Errorf(
+		"failed to get credentials from default provider: unable to get credentials from any of the providers in the chain: "+
+			"refresh Ecs sts token err: "+
+			`Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/tidbcloud-abc?": `+
+			"context deadline exceeded (Client.Timeout exceeded while awaiting headers)")))
+	require.True(t, IsTransientNoCredentialsError(fmt.Errorf(
+		"unable to get credentials from any of the providers in the chain: "+
+			`Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": `+
+			"dial tcp 100.100.100.200:80: i/o timeout")))
+	// The metadata service was reached but refused the request: not retryable.
+	require.False(t, IsTransientNoCredentialsError(fmt.Errorf(
+		"unable to get credentials from any of the providers in the chain: "+
+			`Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/": `+
+			"dial tcp 100.100.100.200:80: connect: connection refused")))
+	// After the first call DefaultCredentialsProvider returns the cached
+	// provider's error without the chain prefix, so this must still match.
+	require.True(t, IsTransientNoCredentialsError(fmt.Errorf(
+		`get role name failed: Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": `+
+			"dial tcp 100.100.100.200:80: i/o timeout")))
+	// Messages like the ones produced in production: no credentials configured
+	// anywhere plus a timeout talking to the ECS metadata service, so they are
+	// transient.
+	for _, msg := range []string{
+		`failed to get credentials from default provider: unable to get credentials from any of the providers in the chain: unable to get credentials from environment variables, Access key ID must be specified via environment variable (ALIBABA_CLOUD_ACCESS_KEY_ID), reading aliyun cli config from '/home/pingcap/.aliyun/config.json' failed open /home/pingcap/.aliyun/config.json: no such file or directory, ERROR: Can not open fileopen /home/pingcap/.alibabacloud/credentials: no such file or directory, get role name failed: Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": dial tcp 100.100.100.200:80: i/o timeout`,
+		`failed to get credentials from default provider: unable to get credentials from any of the providers in the chain: unable to get credentials from environment variables, Access key ID must be specified via environment variable (ALIBABA_CLOUD_ACCESS_KEY_ID), reading aliyun cli config from '/home/pingcap/.aliyun/config.json' failed open /home/pingcap/.aliyun/config.json: no such file or directory, ERROR: Can not open fileopen /home/pingcap/.alibabacloud/credentials: no such file or directory, refresh Ecs sts token err: Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/tidbcloud-4733fb75756c795202e84d8e2a58cd33-577c6ee7?": context deadline exceeded (Client.Timeout exceeded while awaiting headers)`,
+	} {
+		require.True(t, IsTransientNoCredentialsError(fmt.Errorf("%s", msg)))
+	}
+}
+
 func TestStore(t *testing.T) {
 	// example: acs:ram::00000000000000:role
 	roleARNPrefix := "place-holder"
