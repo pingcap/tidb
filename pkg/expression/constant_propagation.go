@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -140,10 +141,28 @@ func ValidCompareConstantPredicateHelper(ctx EvalContext, eq *ScalarFunction, co
 	if !conOk {
 		return nil, nil
 	}
-	if col.GetStaticType().GetCollate() != con.GetType(ctx).GetCollate() {
+	if col.GetStaticType().GetCollate() != con.GetType(ctx).GetCollate() && !comparedUnderColumnCollation(ctx, col, con) {
 		return nil, nil
 	}
 	return col, con
+}
+
+// comparedUnderColumnCollation reports whether col is a binary-charset column whose comparison with
+// con is evaluated bytewise even though con carries a different collation label, e.g. a varbinary
+// column compared with a utf8mb4_bin literal. Under the binary collation col = con means col holds
+// exactly con's bytes, so substituting con (cast to col's type) for col is safe in every predicate,
+// including ones that look at the raw bytes such as CAST(col AS BINARY) or HEX(col).
+// Non-binary collations are deliberately excluded: under utf8_general_ci, col = 'a' also matches
+// 'A', so substituting 'a' into such predicates would change their result.
+func comparedUnderColumnCollation(ctx EvalContext, col *Column, con *Constant) bool {
+	colTp, conTp := col.GetStaticType(), con.GetType(ctx)
+	if colTp.EvalType() != types.ETString || conTp.EvalType() != types.ETString ||
+		colTp.GetCharset() != charset.CharsetBin {
+		return false
+	}
+	// An explicit COLLATE on the constant decides the comparison and rules the substitution out.
+	ec := inferCollation(ctx, col, con)
+	return ec != nil && ec.Collation == charset.CollationBin
 }
 
 // validEqualCond checks if the cond is an expression like [column eq constant].
@@ -1000,7 +1019,7 @@ func PropConstForOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Exp
 	solver.outerSchema = outerSchema
 	solver.innerSchema = innerSchema
 	solver.nullSensitive = nullSensitive
-	solver.ctx = ctx
+	solver.ctx = exprctx.WithConstantPropagateCheck(ctx)
 	solver.vaildExprFunc = vaildExprFunc
 	return solver.solve(keepJoinKey, joinConds, filterConds)
 }
