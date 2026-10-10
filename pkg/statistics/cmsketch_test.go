@@ -45,7 +45,7 @@ func TestDecodeColumnTopNValueDuration(t *testing.T) {
 	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(want.Duration)))
 	require.NoError(t, err)
 
-	got, err := DecodeColumnTopNValue(encoded, ft, time.UTC)
+	got, err := DecodeColumnTopNValue(encoded, ft)
 	require.NoError(t, err)
 	require.Equal(t, types.KindMysqlDuration, got.Kind())
 	require.Equal(t, want, got.GetMysqlDuration())
@@ -57,7 +57,7 @@ func TestDecodeColumnTopNValuePreservesStringComparisonBytes(t *testing.T) {
 	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(want))
 	require.NoError(t, err)
 
-	got, err := DecodeColumnTopNValue(encoded, ft, time.UTC)
+	got, err := DecodeColumnTopNValue(encoded, ft)
 	require.NoError(t, err)
 	require.Equal(t, types.KindBytes, got.Kind())
 	require.Equal(t, want, got.GetBytes())

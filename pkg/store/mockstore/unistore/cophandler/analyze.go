@@ -46,6 +46,14 @@ import (
 	"github.com/twmb/murmur3"
 )
 
+// newAnalyzeSessionContext mirrors TiKV, whose analyze coprocessor builds an EvalConfig::default():
+// UTC, no flags. TiKV never reads AnalyzeReq.TimeZoneOffset or AnalyzeReq.Flags, and TiDB no longer
+// puts anything session-dependent in them, so honouring them here would only make the mock store
+// diverge from a real cluster. See issue #52429.
+func newAnalyzeSessionContext() sessionctx.Context {
+	return flagsAndTzToSessionContext(0, time.UTC)
+}
+
 // handleCopAnalyzeRequest handles coprocessor analyze request.
 func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
@@ -92,8 +100,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		statsVer = *analyzeReq.IdxReq.Version
 	}
 
-	tz := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
-	sctx := flagsAndTzToSessionContext(analyzeReq.Flags, tz)
+	sctx := newAnalyzeSessionContext()
 	sc := sctx.GetSessionVars().StmtCtx
 	processor := &analyzeIndexProcessor{
 		sctx:         sctx,
@@ -147,8 +154,7 @@ func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRang
 		statsVer = int(*analyzeReq.IdxReq.Version)
 	}
 
-	tz := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
-	sctx := flagsAndTzToSessionContext(analyzeReq.Flags, tz)
+	sctx := newAnalyzeSessionContext()
 	sc := sctx.GetSessionVars().StmtCtx
 	processor := &analyzeCommonHandleProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
@@ -288,8 +294,7 @@ type analyzeColumnsExec struct {
 }
 
 func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*analyzeColumnsExec, *statistics.SampleBuilder, int64, error) {
-	tz := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
-	sctx := flagsAndTzToSessionContext(analyzeReq.Flags, tz)
+	sctx := newAnalyzeSessionContext()
 	evalCtx := &evalContext{sctx: sctx}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
@@ -394,8 +399,7 @@ func handleAnalyzeFullSamplingReq(
 	analyzeReq *tipb.AnalyzeReq,
 	startTS uint64,
 ) (*coprocessor.Response, error) {
-	tz := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
-	sctx := flagsAndTzToSessionContext(analyzeReq.Flags, tz)
+	sctx := newAnalyzeSessionContext()
 	evalCtx := &evalContext{sctx: sctx}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
@@ -553,8 +557,7 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	if err != nil {
 		return nil, err
 	}
-	tz := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
-	sctx := flagsAndTzToSessionContext(analyzeReq.Flags, tz)
+	sctx := newAnalyzeSessionContext()
 	sc := sctx.GetSessionVars().StmtCtx
 	e := &analyzeMixedExec{
 		sctx:               sctx.GetSessionVars().StmtCtx,

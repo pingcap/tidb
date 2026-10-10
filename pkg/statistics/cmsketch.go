@@ -226,14 +226,13 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 }
 
 // QueryValue is used to query the count of specified value.
+// val must already be in UTC, matching the histogram bucket bounds. See issue #52429.
 func QueryValue(sctx planctx.PlanContext, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
 	var sc *stmtctx.StatementContext
-	tz := time.UTC
 	if sctx != nil {
 		sc = sctx.GetSessionVars().StmtCtx
-		tz = sc.TimeZone()
 	}
-	rawData, err := tablecodec.EncodeValue(tz, nil, val)
+	rawData, err := tablecodec.EncodeValue(time.UTC, nil, val)
 	if sc != nil {
 		err = sc.HandleError(err)
 	}
