@@ -68,3 +68,22 @@ set @int_tso = cast(@last_commit_ts as unsigned);
 select count(*) as int_tso_count from t1 as of timestamp @int_tso;
 int_tso_count
 2
+start transaction read only as of timestamp @int_tso;
+select @@tidb_current_ts = @int_tso as ts_before_system_read;
+ts_before_system_read
+1
+select table_name from information_schema.tables where table_schema=database() and table_name='t1';
+table_name
+t1
+select @@tidb_current_ts = @int_tso as ts_after_system_read;
+ts_after_system_read
+1
+select count(*) as rows_in_stale_txn from t1;
+rows_in_stale_txn
+2
+insert into t1 values(3);
+Error 1105 (HY000): only support read-only statement during read-only staleness transactions
+rollback;
+select count(*) as rows_after_rollback from t1;
+rows_after_rollback
+2

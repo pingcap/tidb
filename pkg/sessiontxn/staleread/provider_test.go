@@ -35,6 +35,28 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
 
+func TestStaleReadInformationSchemaTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table stale_write_guard(a int)")
+	tk.MustExec("start transaction read only as of timestamp now() - interval 1 second")
+	before := tk.MustQuery("select @@tidb_current_ts").Rows()
+	require.NotEqual(t, "0", before[0][0])
+	for _, sql := range []string{
+		"select table_name from information_schema.tables order by table_schema,table_name limit 1",
+		"select schema_name from information_schema.schemata order by schema_name limit 1",
+	} {
+		tk.MustQueryWithContext(context.Background(), sql)
+		tk.MustQuery("select @@tidb_current_ts").Check(before)
+		require.True(t, tk.Session().GetSessionVars().InTxn())
+		require.True(t, tk.Session().GetSessionVars().TxnCtx.IsStaleness)
+	}
+	require.ErrorContains(t, tk.ExecToErr("insert into stale_write_guard values(1)"), "only support read-only statement")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from stale_write_guard").Check(testkit.Rows("0"))
+}
+
 func TestStaleReadTxnScope(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
