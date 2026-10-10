@@ -664,3 +664,16 @@ func TestParseRawURLErrorDoesNotLeakURL(t *testing.T) {
 		require.NotContains(t, err.Error(), "SKEY")
 	}
 }
+
+func TestParseBackendMissingBucketDoesNotLeakUserinfo(t *testing.T) {
+	for _, raw := range []string{
+		"s3://AKID:SKEY@/prefix",
+		"gcs://AKID:SKEY@/prefix",
+		"azblob://AKID:SKEY@/prefix",
+	} {
+		_, err := ParseBackend(raw, nil)
+		require.ErrorContains(t, err, "please specify the bucket")
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+	}
+}

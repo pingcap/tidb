@@ -206,7 +206,7 @@ func TestVerifyCheckpointRedactsSourceDir(t *testing.T) {
 
 	cfg.Mydumper.SourceDir = "s3://bucket/old?access-key=NEWKEY&secret-access-key=NEWSECRET&region=us-east-1"
 	err = verifyCheckpoint(cfg, taskCp)
-	require.ErrorContains(t, err, "only the credentials differ")
+	require.ErrorContains(t, err, "only the redacted parameters differ")
 	require.NotContains(t, err.Error(), "AKID")
 	require.NotContains(t, err.Error(), "NEWKEY")
 

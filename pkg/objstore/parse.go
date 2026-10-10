@@ -65,7 +65,9 @@ const InvalidURLPlaceholder = "(invalid storage URL)"
 // logs and error messages. An unparseable URL is replaced by
 // InvalidURLPlaceholder, the userinfo is removed, and the query of a URL with an
 // unknown scheme is dropped, since ast.RedactURL cannot tell which parameters
-// are secret there.
+// are secret there. A value with neither "://" nor "?" is a local path and is
+// returned unchanged. Unlike ast.RedactURL, an unparseable URL is never
+// returned as-is.
 func RedactURL(rawURL string) string {
 	// A plain local path has nothing to mask, and parsing it would escape or
 	// reject characters such as spaces and '%'.
@@ -150,7 +152,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "s3", "ks3", "oss":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", ast.RedactURL(rawURL))
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
@@ -172,7 +174,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "gs", "gcs":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", ast.RedactURL(rawURL))
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		gcs := &backuppb.GCS{Bucket: u.Host, Prefix: prefix}
@@ -188,7 +190,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "azure", "azblob":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", ast.RedactURL(rawURL))
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		azblob := &backuppb.AzureBlobStorage{Bucket: u.Host, Prefix: prefix}
