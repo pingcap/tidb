@@ -385,6 +385,16 @@ func TestSlowQuery(t *testing.T) {
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	_, err = f.WriteString(`
+# Time: 2018-01-01T00:00:00+08:00
+# Backoff_types: [txnLock]
+select /* legacy backoff types */ 1;
+# Time: 2018-01-01T00:00:01+08:00
+# Prewrite_Backoff_types: [txnLock]
+# Commit_Backoff_types: [regionMiss]
+# Cop_backoff_txnLockFast_total_times: 2 Cop_backoff_txnLockFast_total_time: 0.2 Cop_backoff_txnLockFast_max_time: 0.1 Cop_backoff_txnLockFast_max_addr: 127.0.0.1 Cop_backoff_txnLockFast_avg_time: 0.1 Cop_backoff_txnLockFast_p90_time: 0.1
+# Cop_backoff_txnLockFast_total_times: 1 Cop_backoff_txnLockFast_total_time: 0.1
+# Cop_backoff_regionMiss_total_times: 1 Cop_backoff_regionMiss_total_time: 0.1 Cop_backoff_regionMiss_max_time: 0.1 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.1 Cop_backoff_regionMiss_p90_time: 0.1
+select /* phase-specific backoff types */ 1;
 # Time: 2019-01-01T00:00:00+08:00
 select /* issue:67199 */ 1;
 # Time: 2020-10-13T20:08:13.970563+08:00
@@ -444,6 +454,23 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 
 	tk.MustExec("set @@time_zone='+08:00'")
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'INFORMATION_SCHEMA' " +
+		"and table_name = 'CLUSTER_SLOW_QUERY' and column_name in " +
+		"('PREWRITE_BACKOFF_TYPES', 'COMMIT_BACKOFF_TYPES') order by ordinal_position").
+		Check(testkit.Rows("Prewrite_Backoff_types", "Commit_Backoff_types"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'INFORMATION_SCHEMA' " +
+		"and table_name = 'CLUSTER_SLOW_QUERY' and column_name in " +
+		"('QUERY', 'PREWRITE_BACKOFF_TYPES', 'COMMIT_BACKOFF_TYPES') order by ordinal_position").
+		Check(testkit.Rows("Query", "Prewrite_Backoff_types", "Commit_Backoff_types"))
+	tk.MustQuery("select concat(backoff_types, '|', prewrite_backoff_types, '|', commit_backoff_types) " +
+		"from information_schema.slow_query where query = 'select /* legacy backoff types */ 1;'").
+		Check(testkit.Rows("[txnLock]||"))
+	tk.MustQuery("select concat(backoff_types, '|', prewrite_backoff_types, '|', commit_backoff_types) " +
+		"from information_schema.slow_query where query = 'select /* phase-specific backoff types */ 1;'").
+		Check(testkit.Rows("|[txnLock]|[regionMiss]"))
+	tk.MustQuery("select backoff_detail like '%Cop_backoff_txnLockFast_total_times%' " +
+		"from information_schema.slow_query where query = 'select /* phase-specific backoff types */ 1;'").
+		Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2020-10-16 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("2"))
 	// Cover tidb issue 34320
@@ -457,6 +484,80 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
 	tk.MustExec("set @@time_zone='+10:00'")
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2022-04-21 16:44:54' and time < '2022-04-21 16:44:55'").Check(testkit.Rows("1"))
+}
+
+func TestSlowQueryBackoffTypes(t *testing.T) {
+	// Exercise the real SQL reader, including mixed KV lines and column pruning.
+	longPrewrite := "[" + strings.Repeat("txnLock ", 180) + "futureType]"
+	longCommit := "[" + strings.Repeat("regionMiss ", 120) + "txnLock]"
+	cases := []struct {
+		name     string
+		fields   string
+		legacy   string
+		prewrite string
+		commit   string
+	}{
+		{"legacy", "# Backoff_types: [pdRPC]\n# Prewrite_Backoff_types: [txnLock]\n# Commit_Backoff_types: [regionMiss]", "[pdRPC]", "[txnLock]", "[regionMiss]"},
+		{"legacy_empty", "# Prewrite_Backoff_types: [txnLock]\n# Backoff_types: ", "", "[txnLock]", ""},
+		{"legacy_empty_list", "# Backoff_types: []\n# Commit_Backoff_types: [regionMiss]", "[]", "", "[regionMiss]"},
+		{"duplicates", "# Prewrite_time: 0.1 Prewrite_Backoff_types: [txnLock txnLock] Commit_time: 0.2 Commit_Backoff_types: [regionMiss txnLock]", "", "[txnLock txnLock]", "[regionMiss txnLock]"},
+		{"no_types_after_duplicates", "# Query_time: 1", "", "", ""},
+		{"prewrite_only", "# Prewrite_Backoff_types: [txnLock]", "", "[txnLock]", ""},
+		{"commit_only", "# Commit_Backoff_types: [regionMiss]", "", "", "[regionMiss]"},
+		{"empty_lists", "# Prewrite_Backoff_types: [] Commit_Backoff_types: []", "", "[]", "[]"},
+		{"cop_only", "# Cop_backoff_txnLockFast_total_times: 2 Cop_backoff_txnLockFast_total_time: 0.2", "", "", ""},
+		{"unknown_type", "# Prewrite_Backoff_types: [futureType]", "", "[futureType]", ""},
+		{"long", "# Prewrite_Backoff_types: " + longPrewrite + " Commit_Backoff_types: " + longCommit, "", longPrewrite, longCommit},
+		{"invalid_phase", "# Prewrite_Backoff_types: txnLock Commit_Backoff_types: [regionMiss]", "", "txnLock", "[regionMiss]"},
+		{"invalid_nested", "# Prewrite_Backoff_types: [[txnLock]]", "", "[[txnLock]]", ""},
+		{"repeated_phase", "# Prewrite_Backoff_types: txnLock\n# Prewrite_Backoff_types: [futureType]", "", "[futureType]", ""},
+	}
+	var log strings.Builder
+	for i, tc := range cases {
+		fmt.Fprintf(&log, "# Time: 2018-01-01T00:00:%02d+08:00\n%s\nselect /* %s */ 1;\n", i, tc.fields, tc.name)
+	}
+	file := filepath.Join(t.TempDir(), "slow.log")
+	require.NoError(t, os.WriteFile(file, []byte(log.String()), 0600))
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Instance.SlowThreshold = math.MaxUint64
+	config.StoreGlobalConfig(&newCfg)
+	t.Cleanup(func() { config.StoreGlobalConfig(originCfg) })
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%s'", file))
+	tk.MustExec("set @@time_zone='+08:00'")
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%s'", file))
+			tk.MustExec("set @@time_zone='+08:00'")
+			predicate := fmt.Sprintf(" where query = 'select /* %s */ 1;'", tc.name)
+			tk.MustQuery("select backoff_types from information_schema.slow_query" + predicate).
+				Check(testkit.RowsWithSep("|", tc.legacy))
+			tk.MustQuery("select backoff_types, prewrite_backoff_types, commit_backoff_types from information_schema.slow_query" + predicate).
+				Check(testkit.RowsWithSep("|", tc.legacy+"|"+tc.prewrite+"|"+tc.commit))
+			tk.MustQuery("select prewrite_backoff_types, commit_backoff_types from information_schema.slow_query" + predicate).
+				Check(testkit.RowsWithSep("|", tc.prewrite+"|"+tc.commit))
+		})
+	}
+	// Phase-only records retain an empty legacy column even when it is used
+	// only by a predicate, with no phase column projected.
+	tk.MustQuery("select count(*) from information_schema.slow_query where backoff_types = '[txnLock txnLock regionMiss txnLock]'").
+		Check(testkit.Rows("0"))
+	tk.MustQuery("select query from information_schema.slow_query where backoff_types = '' and query = 'select /* duplicates */ 1;'").
+		Check(testkit.RowsWithSep("|", "select /* duplicates */ 1;"))
+	tk.MustQuery("select count(*) from information_schema.slow_query where backoff_types = ''").
+		Check(testkit.Rows(strconv.Itoa(len(cases) - 2)))
+	tk.MustQuery("select count(*) from information_schema.slow_query where backoff_types is null").
+		Check(testkit.Rows("0"))
+	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema = 'INFORMATION_SCHEMA' and table_name = 'SLOW_QUERY' and column_name in ('Backoff_types', 'Prewrite_Backoff_types', 'Commit_Backoff_types') order by ordinal_position").
+		Check(testkit.Rows("Backoff_types 64", "Prewrite_Backoff_types 1024", "Commit_Backoff_types 1024"))
+	tk.MustQuery("select length(backoff_types), length(prewrite_backoff_types), length(commit_backoff_types) from information_schema.slow_query where query = 'select /* long */ 1;'").
+		Check(testkit.Rows(fmt.Sprintf("0 %d %d", len(longPrewrite), len(longCommit))))
+	require.Empty(t, tk.MustQuery("show warnings").Rows())
 }
 
 func TestIssue37066(t *testing.T) {
