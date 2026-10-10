@@ -33,28 +33,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-<<<<<<< HEAD
-=======
-func TestURI(t *testing.T) {
-	for _, tc := range []struct {
-		prefix string
-		uri    string
-	}{
-		{"", "oss://bucket/"},
-		{"data", "oss://bucket/data/"},
-		{"data/", "oss://bucket/data/"},
-		{"data/nested%2E", "oss://bucket/data/nested%2E/"},
-	} {
-		t.Run(tc.prefix, func(t *testing.T) {
-			store := &OSSStore{Storage: newOSSStorageForTest(nil, &backuppb.S3{
-				Bucket: "bucket",
-				Prefix: tc.prefix,
-			}, nil)}
-			require.Equal(t, tc.uri, store.URI())
-		})
-	}
-}
-
 func TestIsTransientNoCredentialsError(t *testing.T) {
 	require.False(t, IsTransientNoCredentialsError(nil))
 	require.False(t, IsTransientNoCredentialsError(fmt.Errorf("some unrelated error")))
@@ -97,7 +75,6 @@ func TestIsTransientNoCredentialsError(t *testing.T) {
 	}
 }
 
->>>>>>> 788ad51619d (objstore: retry transient OSS credential fetch failures and make them retryable in IMPORT INTO (#71843))
 func TestStore(t *testing.T) {
 	// example: acs:ram::00000000000000:role
 	roleARNPrefix := "place-holder"
