@@ -845,3 +845,69 @@ fn zero_arg_format_functions_fail_normally_without_parameterizer_panics() {
         );
     }
 }
+
+/// Go clears `InMultiStmts` for each COM_QUERY and sets it for a text
+/// holding several statements; `getPlanFromNonPreparedPlanCache` then keeps
+/// every one of them out of the cache (TestNonPreparedPlanCacheMultiStmt).
+#[test]
+fn a_multi_statement_query_skips_the_non_prepared_cache() {
+    let mut session = cache_session();
+    session.run("create table t2 (a int)").unwrap();
+    session
+        .run("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+        .unwrap();
+    session.run("update t2 set a=1 where a<10").unwrap();
+    session.run("update t2 set a=2 where a<12").unwrap();
+    assert_eq!(hit(&mut session), "1");
+    for _ in 0..2 {
+        for statement in session
+            .split_statements(
+                "update t2 set a=1 where a<10; update t2 set a=2 where a<12;",
+                true,
+            )
+            .unwrap()
+        {
+            session.run(&statement).unwrap();
+        }
+    }
+    assert_eq!(hit(&mut session), "0");
+}
+
+/// Go's non-prepared statement collects its statistics tables from the
+/// parameterized statement, where an unqualified name resolves to no table:
+/// fresh statistics do not invalidate the entry (TestNonPreparedPlanCacheStats).
+#[test]
+fn fresh_statistics_keep_an_unqualified_non_prepared_entry() {
+    let mut session = cache_session();
+    session.run("create table t2(a int, index idx(a))").unwrap();
+    session.run("insert into t2 values (2)").unwrap();
+    rows(&mut session, "select * from t2 where a=1");
+    rows(&mut session, "select * from t2 where a=1");
+    assert_eq!(hit(&mut session), "1");
+    session.run("analyze table t2").unwrap();
+    rows(&mut session, "select * from t2 where a=1");
+    assert_eq!(hit(&mut session), "1");
+}
+
+/// Go's `hint_only` strategy admits only `use_plan_cache()`, and
+/// `EXPLAIN FORMAT='plan_cache'` says why it refused.
+#[test]
+fn explain_plan_cache_names_the_hint_only_refusal() {
+    let mut session = cache_session();
+    session.run("create table t2 (a int)").unwrap();
+    session
+        .run("set tidb_plan_cache_strategy = 'hint_only'")
+        .unwrap();
+    session
+        .run("explain format = 'plan_cache' select * from t2 where a = 1")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        [[
+            "Warning",
+            "1105",
+            "skip non-prepared plan-cache: plan cache strategy is hint_only and use_plan_cache \
+             hint is absent"
+        ]]
+    );
+}

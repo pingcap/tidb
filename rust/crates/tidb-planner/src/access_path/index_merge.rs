@@ -244,9 +244,9 @@ fn prepare_union_index_merge_path_for_or(
                 continue;
             };
             let result = &filled.detached;
-            if result.ranges.is_empty()
-                || result.ranges.iter().any(|range| range.is_full_range(false))
-            {
+            // Go keeps a partial whose ranges came out empty: it reads
+            // nothing, and only a full range disqualifies a partial.
+            if result.ranges.iter().any(|range| range.is_full_range(false)) {
                 continue;
             }
             let Ok(rows) = estimate_partial_index_ranges(ds, source_index, &filled, ctx) else {

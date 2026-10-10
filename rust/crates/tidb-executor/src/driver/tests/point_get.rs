@@ -1022,7 +1022,6 @@ fn prepared_point_plan_binds_common_handle_without_cloning_template() {
     let fast = run_prepared_point_get(
         &execution,
         &mut catalog,
-        "test",
         &decode,
         &crate::StmtContext::for_query(),
     )
@@ -1175,16 +1174,10 @@ fn cached_rows(
     values: &[Datum],
 ) -> Vec<Vec<Datum>> {
     let execution = plan.bind(values, zone).expect("binds");
-    run_prepared_point_get(
-        &execution,
-        catalog,
-        DEFAULT_DATABASE,
-        ctx,
-        &crate::StmtContext::for_query(),
-    )
-    .unwrap()
-    .expect("the cached read")
-    .1
+    run_prepared_point_get(&execution, catalog, ctx, &crate::StmtContext::for_query())
+        .unwrap()
+        .expect("the cached read")
+        .1
 }
 
 /// `col IS NULL` beside the pins is a row-level residual: it never pins a
@@ -2631,7 +2624,6 @@ fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
     let fast = run_prepared_point_get(
         &execution,
         &mut catalog,
-        DEFAULT_DATABASE,
         &decode,
         &crate::StmtContext::for_query(),
     )
@@ -2819,11 +2811,10 @@ fn snapshot_read_policy_prepared_follow_go() {
         let ctx = snapshot_policy_context(mode);
         let execution = plan.bind(&[Datum::Int(1)], &zone).unwrap();
         let decode = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
-        let result =
-            run_prepared_point_get(&execution, &mut catalog, DEFAULT_DATABASE, &decode, &ctx)
-                .unwrap()
-                .unwrap()
-                .1;
+        let result = run_prepared_point_get(&execution, &mut catalog, &decode, &ctx)
+            .unwrap()
+            .unwrap()
+            .1;
         assert_eq!(result, vec![vec![Datum::Int(10)]]);
         assert_snapshot_policy(&options, mode, 0.0);
     }

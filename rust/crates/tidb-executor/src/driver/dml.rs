@@ -2272,6 +2272,10 @@ fn update_assignment_values_for_plan(
 pub struct PreparedDmlPlan {
     current_database: String,
     table_keys: Vec<CatalogTableKey>,
+    /// The tables whose statistics versions key a cache entry (Go
+    /// `PlanCacheStmt.tables`), when `tidb_plan_cache_invalidation_on_fresh_stats`
+    /// is on.
+    stats_table_keys: Vec<CatalogTableKey>,
     parameter_count: usize,
     limit_parameter_orders: Vec<usize>,
     stmt_info: super::access::PlanCacheStmtInfo,
@@ -2351,6 +2355,19 @@ pub struct PreparedDmlExecution {
 }
 
 impl PreparedDmlPlan {
+    /// Go's non-prepared plan cache collects its statistics tables from the
+    /// parameterized statement, where an unqualified table name resolves to
+    /// no table: only a name written with its database invalidates the
+    /// entry on fresh statistics.
+    #[must_use]
+    pub fn with_non_prepared_stats_tables(mut self) -> Self {
+        self.stats_table_keys = prepared_dml_table_names(&self.statement, "")
+            .iter()
+            .map(|(database, table)| CatalogTableKey::new(database, table))
+            .collect();
+        self
+    }
+
     /// Retain Go's original/parameterized SQL identity alongside PREPARE input.
     #[must_use]
     pub fn with_sql(mut self, sql: &str) -> Self {
@@ -2471,10 +2488,7 @@ impl PreparedDmlPlan {
         if !super::plan_cache::tables_cacheable(catalog, &self.table_keys) {
             return None;
         }
-
-        if !self.current_database.eq_ignore_ascii_case(current_database) {
-            return None;
-        }
+        // Keyed by the PREPARE-time database, as a cached SELECT is.
         let parameter_types: Arc<[PreparedParameterType]> =
             params.iter().map(PreparedParameterType::of).collect();
         let limit_values = self
@@ -2555,7 +2569,14 @@ impl PreparedDmlPlan {
                 };
                 // A rejected candidate executes once without a cache rebuild or insertion.
                 let cacheable = cacheable && admitted;
-                let generation = if cacheable { plan.bind(params, Some(&ctx)).ok()? } else { 0 };
+                // Go `generateNewPlan` caches the tree it just optimized
+                // without rebuilding it; a rebuild it cannot pass fails on
+                // the next hit instead, which then replans.
+                let generation = if cacheable {
+                    plan.bind(params, Some(&ctx)).unwrap_or(0)
+                } else {
+                    0
+                };
                 let plan = Arc::new(std::sync::Mutex::new(plan));
                 if cacheable {
                     cache.put(
@@ -2589,7 +2610,7 @@ impl PreparedDmlPlan {
         if !environment.hashes_fresh_statistics() {
             return 0;
         }
-        self.table_keys.iter().fold(0, |hash, key| {
+        self.stats_table_keys.iter().fold(0, |hash, key| {
             let version = match catalog.get_by_key(key) {
                 Some(TableEntry::Kv(table)) => catalog
                     .table_statistics(table.stats_physical_id())
@@ -2659,12 +2680,14 @@ pub fn build_prepared_dml_plan(
     {
         return Ok(None);
     }
+    let table_keys: Vec<CatalogTableKey> = prepared_dml_table_names(statement, current_db)
+        .iter()
+        .map(|(database, table)| CatalogTableKey::new(database, table))
+        .collect();
     Ok(Some(PreparedDmlPlan {
         current_database: current_db.to_owned(),
-        table_keys: prepared_dml_table_names(statement, current_db)
-            .iter()
-            .map(|(database, table)| CatalogTableKey::new(database, table))
-            .collect(),
+        stats_table_keys: table_keys.clone(),
+        table_keys,
         parameter_count,
         limit_parameter_orders: super::access::prepared_limit_parameter_orders(statement),
         stmt_info: super::access::PlanCacheStmtInfo::of(statement),

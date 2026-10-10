@@ -338,10 +338,8 @@ impl PreparedPointGetPlan {
 
     /// Whether the catalog still names the same unpartitioned physical table.
     #[must_use]
-    pub fn matches_catalog(&self, catalog: &Catalog, current_database: &str) -> bool {
-        if self.schema_version != catalog.schema_version()
-            || !self.current_database.eq_ignore_ascii_case(current_database)
-        {
+    pub fn matches_catalog(&self, catalog: &Catalog) -> bool {
+        if self.schema_version != catalog.schema_version() {
             return false;
         }
         matches!(
@@ -391,6 +389,10 @@ pub struct PreparedSelectPlan {
     table_names: Vec<(String, String)>,
     // Retain folded keys alongside the original names exposed for MDL.
     table_keys: Vec<CatalogTableKey>,
+    /// The tables whose statistics versions key a cache entry (Go
+    /// `PlanCacheStmt.tables`), when `tidb_plan_cache_invalidation_on_fresh_stats`
+    /// is on.
+    stats_table_keys: Vec<CatalogTableKey>,
     parameter_count: usize,
     limit_parameter_orders: Vec<usize>,
     stmt_info: PlanCacheStmtInfo,
@@ -695,6 +697,24 @@ pub struct PreparedSelectExecution {
 }
 
 impl PreparedSelectPlan {
+    /// Go's non-prepared plan cache collects its statistics tables from the
+    /// parameterized statement, where an unqualified table name has no
+    /// schema and resolves to no table (`planCacheStmtProcessor`): only a
+    /// name written with its database invalidates the entry on fresh
+    /// statistics.
+    #[must_use]
+    pub fn with_non_prepared_stats_tables(mut self) -> Self {
+        let mut names = Vec::new();
+        if let tidb_ast::Stmt::Query(query) = &self.statement {
+            collect_prepared_table_names(query, "", &mut names);
+        }
+        self.stats_table_keys = names
+            .iter()
+            .map(|(database, table)| CatalogTableKey::new(database, table))
+            .collect();
+        self
+    }
+
     /// Retain Go's original/parameterized SQL identity alongside PREPARE input.
     #[must_use]
     pub fn with_sql(mut self, sql: &str) -> Self {
@@ -850,10 +870,10 @@ impl PreparedSelectPlan {
         if !super::plan_cache::tables_cacheable(catalog, &self.table_keys) {
             return None;
         }
-
-        if !self.current_database.eq_ignore_ascii_case(current_database) {
-            return None;
-        }
+        // Go keys the entry by `PlanCacheStmt.StmtDB`, the PREPARE-time
+        // database its table names were pinned to (`self.cache_key`), so a
+        // `USE` between EXECUTEs keeps it; a non-prepared key names the
+        // current database itself.
         if !matches!(statement, tidb_ast::Stmt::Query(_)) {
             return None;
         }
@@ -931,7 +951,15 @@ impl PreparedSelectPlan {
                 )?;
                 // A rejected cache candidate still executes its already-bound plan.
                 let cacheable = cacheable && admitted;
-                let generation = if cacheable { plan.bind(values, Some(&ctx)).ok()? } else { 0 };
+                // Go `generateNewPlan` caches the tree it just optimized
+                // without rebuilding it; a rebuild this tree cannot pass
+                // (a prefix column keeps its filter) fails on the next hit
+                // instead, which then replans.
+                let generation = if cacheable {
+                    plan.bind(values, Some(&ctx)).unwrap_or(0)
+                } else {
+                    0
+                };
                 let plan = Arc::new(std::sync::Mutex::new(plan));
                 if cacheable {
                     cache.put(
@@ -966,7 +994,7 @@ impl PreparedSelectPlan {
         if !environment.invalidate_on_fresh_stats || environment.skip_stats_on_binding {
             return 0;
         }
-        self.table_keys.iter().fold(0, |hash, key| {
+        self.stats_table_keys.iter().fold(0, |hash, key| {
             let version = match catalog.get_by_key(key) {
                 Some(TableEntry::Kv(table)) => catalog
                     .table_statistics(table.stats_physical_id())
@@ -1464,12 +1492,14 @@ pub fn build_prepared_select_plan(
     collect_prepared_table_names(query, current_database, &mut table_names);
     let limit_parameter_orders = prepared_limit_parameter_orders(stmt);
 
+    let table_keys: Vec<CatalogTableKey> = table_names
+        .iter()
+        .map(|(database, table)| CatalogTableKey::new(database, table))
+        .collect();
     Some(PreparedSelectPlan {
         current_database: current_database.to_owned(),
-        table_keys: table_names
-            .iter()
-            .map(|(database, table)| CatalogTableKey::new(database, table))
-            .collect(),
+        stats_table_keys: table_keys.clone(),
+        table_keys,
         table_names,
         parameter_count,
         limit_parameter_orders,
@@ -1769,11 +1799,10 @@ fn prepared_primary_index_hint(table_ref: &tidb_ast::TableRef) -> bool {
 pub fn run_prepared_point_get(
     execution: &PreparedPointGetExecution,
     catalog: &Catalog,
-    current_database: &str,
     ctx: &crate::kv_table::PreparedPointGetDecodeContext,
     stmt_ctx: &crate::StmtContext,
 ) -> Result<Option<SelectMeta>, DriverError> {
-    open_prepared_point_get(execution, catalog, current_database, ctx, stmt_ctx)?
+    open_prepared_point_get(execution, catalog, ctx, stmt_ctx)?
         .map(super::QueryRecordSet::collect)
         .transpose()
 }
@@ -1783,12 +1812,11 @@ pub fn run_prepared_point_get(
 pub fn open_prepared_point_get(
     execution: &PreparedPointGetExecution,
     catalog: &Catalog,
-    current_database: &str,
     ctx: &crate::kv_table::PreparedPointGetDecodeContext,
     stmt_ctx: &crate::StmtContext,
 ) -> Result<Option<super::QueryRecordSet>, DriverError> {
     let plan = execution.plan();
-    if !plan.matches_catalog(catalog, current_database) {
+    if !plan.matches_catalog(catalog) {
         return Ok(None);
     }
     let Some(table) = catalog.table_handle_by_key(&plan.table_key) else {

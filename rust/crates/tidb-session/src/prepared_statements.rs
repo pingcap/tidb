@@ -334,6 +334,13 @@ impl Session {
         // whose root is a TableDual is refused with its own reason (oracle
         // m21: EXECUTE st USING @p over `SELECT ? + 1` carries `skip
         // prepared plan-cache: get a TableDual plan`).
+        // Reported once the uncached statement's boundary has reset the
+        // warnings (`prepare_bound_execution`).
+        self.pending_plan_cache_refusal = prepared
+            .cacheable
+            .is_ok()
+            .then(|| self.prepared_plan_cache_refusal(&prepared.statement, &effective_statement))
+            .flatten();
         if prepared.cacheable.is_ok()
             && self.prepared_plan_cache_allowed_for_statement(&effective_statement)
         {

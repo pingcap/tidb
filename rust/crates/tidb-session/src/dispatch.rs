@@ -1558,6 +1558,13 @@ impl Session {
     ) -> Result<PendingExecution, DriverError> {
         let parameters = tidb_executor::bound_parameter_values(&mut stmt)?;
         self.begin_prepared_statement_boundary(&stmt, parameters);
+        if let Some(reason) = self.pending_plan_cache_refusal.take() {
+            self.append_warning(
+                crate::warnings::WarningLevel::Warning,
+                1105,
+                format!("skip prepared plan-cache: {reason}"),
+            );
+        }
         // The plan-cache refusal warnings land AFTER the boundary reset so
         // they survive it: go records the refusals on every EXECUTE (oracle
         // m21: PREPARE/EXECUTE of a DDL carry the not-a-SELECT skip row and
@@ -1649,17 +1656,10 @@ impl Session {
                 let names = [(plan.names().0.to_owned(), plan.names().1.to_owned())];
                 self.record_mdl_related_table_names(&names);
             }
-            let current_db = self.current_db.clone();
             let ctx = self.prepared_point_get_context();
             let stmt_ctx = self.statement_context_for_stmt(statement, false);
             let result = self.with_catalog_mut(|catalog| {
-                tidb_executor::open_prepared_point_get(
-                    &execution,
-                    catalog,
-                    &current_db,
-                    &ctx,
-                    &stmt_ctx,
-                )
+                tidb_executor::open_prepared_point_get(&execution, catalog, &ctx, &stmt_ctx)
             })?;
             let Some(record_set) = result else {
                 return Ok(None);

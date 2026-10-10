@@ -42,7 +42,7 @@ fn next_metadata_version() -> u64 {
 /// The folded schema/table identity, corresponding to Go's two `CIStr.L`
 /// fields. Construct once when resolving retained plan metadata; raw-name
 /// catalog entrypoints normalize through the same constructor.
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct CatalogTableKey {
     database: String,
     table: String,

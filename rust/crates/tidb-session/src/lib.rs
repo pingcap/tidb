@@ -589,6 +589,13 @@ pub struct Session {
     /// LAST statement's context after it runs (`conn.go:2262`), so the reset
     /// each statement performs cannot clear it.
     deferred_multi_statement_warning: bool,
+    /// Why Go's prepared plan cache refused the running EXECUTE (`hint_only`
+    /// without `use_plan_cache()`, or an `ignore_plan_cache()` hint),
+    /// reported after the uncached statement's boundary.
+    pending_plan_cache_refusal: Option<&'static str>,
+    /// Go `SessionVars.InMultiStmts`: the running COM_QUERY text holds more
+    /// than one statement, which keeps the non-prepared plan cache out.
+    in_multi_stmts: bool,
     /// Go `StatementContext.InShowWarning`: set for exactly the statements
     /// that inherit the buffer, and the reason `WarningCount()` reports 0 for
     /// them. See [`Session::wire_warning_count`].
@@ -951,6 +958,8 @@ impl Session {
             active_resource_group: "default".to_owned(),
             warnings: Vec::new(),
             deferred_multi_statement_warning: false,
+            in_multi_stmts: false,
+            pending_plan_cache_refusal: None,
             in_show_warning: false,
             sys_warning_count: 0,
             sys_error_count: 0,
@@ -2291,6 +2300,9 @@ impl Session {
         const DISABLED: &str = "client has multi-statement capability disabled. Run SET \
                                 GLOBAL tidb_multi_statement_mode='ON' after you understand \
                                 the security risk";
+        // Go `handleQuery` clears `InMultiStmts` for every COM_QUERY and sets
+        // it once a multi-statement text is admitted.
+        self.in_multi_stmts = false;
         // Go parses this text ONCE; the admission parse below is this tier's
         // second pass over every COM_QUERY. A text that provably holds exactly
         // one statement needs no admission answer from a parser -- the
@@ -2325,6 +2337,7 @@ impl Session {
                 _ => self.deferred_multi_statement_warning = true,
             }
         }
+        self.in_multi_stmts = true;
         Ok(statements
             .iter()
             .map(|statement| String::from_utf8_lossy(statement.text()).into_owned())

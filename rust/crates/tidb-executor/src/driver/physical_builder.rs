@@ -4638,11 +4638,10 @@ fn build_index_merge_reader(
                 let mut partial_table = (*table).clone();
                 let ids: Vec<_> = selected.iter().map(|index| physical_ids[*index]).collect();
                 partial_table.restrict_read_to_partitions(&ids);
-                let ranges = if scan.ranges.is_empty() {
-                    vec![IndexRange::full()]
-                } else {
-                    executor_ranges(&scan.ranges)
-                };
+                // Go builds the worker's key ranges from the scan's Ranges:
+                // a partial whose ranges came out empty (`c1 >= 3 and
+                // c1 <= 1`) reads no keys.
+                let ranges = executor_ranges(&scan.ranges);
                 let mut source = IndexRangeSourceExec::new_with_statement(
                     meta(ctx, partial, partial_schema),
                     partial_table.clone(),

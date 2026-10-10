@@ -2614,3 +2614,193 @@ fn a_rebuild_that_skips_the_cache_refuses_the_hit() {
     );
     assert_eq!(last_plan_from_cache(&mut session), [["0"]]);
 }
+
+/// Go `Optimize` skips the cache for an `ignore_plan_cache()` hint and names
+/// where it came from: the statement or its matched binding.
+#[test]
+fn ignore_plan_cache_hints_say_where_they_came_from() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session.run("create table t (a int, key(a))").unwrap();
+    session
+        .run("prepare st from 'select * from t where a<?'")
+        .unwrap();
+    session.run("set @a=1").unwrap();
+    session
+        .run("create binding for select * from t where a<1 using select /*+ ignore_plan_cache() */ * from t where a<1")
+        .unwrap();
+    session.run("execute st using @a").unwrap();
+    assert_eq!(
+        warnings(&mut session),
+        [[
+            "Warning",
+            "1105",
+            "skip prepared plan-cache: ignore_plan_cache hint used in SQL binding"
+        ]]
+    );
+    session
+        .run("prepare st from 'select /*+ ignore_plan_cache() */ * from t where a>?'")
+        .unwrap();
+    session.run("execute st using @a").unwrap();
+    assert_eq!(
+        warnings(&mut session),
+        [[
+            "Warning",
+            "1105",
+            "skip prepared plan-cache: ignore_plan_cache hint used in SQL query"
+        ]]
+    );
+}
+
+/// Go `generateNewPlan` caches the tree it optimized without rebuilding it.
+/// A prefix index keeps its condition as a filter, so every hit fails
+/// `isSafeRange` and replans with a warning; the publish-time rebuild had
+/// kept such a plan out of the cache silently.
+#[test]
+fn a_prefix_index_plan_fails_its_rebuild_on_the_next_hit() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session
+        .run("create table t (a varchar(10), key(a(5)))")
+        .unwrap();
+    session
+        .run("prepare st from 'select a from t use index(a) where a=?'")
+        .unwrap();
+    session.run("set @a='a'").unwrap();
+    session.run("execute st using @a").unwrap();
+    session.run("execute st using @a").unwrap();
+    assert_eq!(
+        warnings(&mut session),
+        [[
+            "Warning",
+            "1105",
+            "skip plan-cache: plan rebuild failed, rebuild to get an unsafe range"
+        ]]
+    );
+}
+
+/// Go `accessPathsForConds` keeps an IndexMerge partial whose ranges came
+/// out empty (an enum IN of no member), and `isPlanCacheable` refuses the
+/// IndexMerge it reads as a full scan (TestIssue41828).
+#[test]
+fn an_empty_index_merge_partial_is_a_full_scan_the_cache_refuses() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session
+        .run("CREATE TABLE t (COL1 enum('aa', 'zzz'), COL2 smallint(6), COL3 date, KEY U_M_COL4 (COL1,COL2), KEY U_M_COL5 (COL3,COL2))")
+        .unwrap();
+    session
+        .run("prepare stmt from 'select * from t where col3 <=> ? or col1 in (?, ?, ?) and col2 not between ? and ?'")
+        .unwrap();
+    session
+        .run(r#"set @a="0051-12-23", @b="none", @c="none", @d="none", @e=-32757, @f=-32757"#)
+        .unwrap();
+    session.run("execute stmt using @a,@b,@c,@d,@e,@f").unwrap();
+    assert_eq!(
+        warnings(&mut session),
+        [[
+            "Warning",
+            "1105",
+            "skip prepared plan-cache: IndexMerge plan with full-scan is un-cacheable"
+        ]]
+    );
+}
+
+/// Go's `isPhysicalPlanCacheable` walks `Children()`, and a `PhysicalCTE`'s
+/// seed and recursive plans are fields, not children: the `select ? c1` seed
+/// plans a TableDual without refusing the statement.
+#[test]
+fn a_recursive_cte_seed_over_a_parameter_is_cached() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session
+        .run("prepare stmt from 'with recursive cte1 as (select ? c1 union all select c1 + 1 c1 from cte1 where c1 < ?) select * from cte1'")
+        .unwrap();
+    session.run("set @a=5, @b=4, @d=1").unwrap();
+    assert_eq!(
+        row_text(session.run("execute stmt using @d, @a")),
+        [["1"], ["2"], ["3"], ["4"], ["5"]]
+    );
+    assert!(warnings(&mut session).is_empty());
+    assert_eq!(
+        row_text(session.run("execute stmt using @d, @b")),
+        [["1"], ["2"], ["3"], ["4"]]
+    );
+    assert_eq!(cache_flag(&mut session), "1");
+}
+
+/// Go keys a prepared plan by `PlanCacheStmt.StmtDB`, the database PREPARE
+/// pinned its table names to, so a `USE` between EXECUTEs keeps the entry.
+#[test]
+fn a_use_between_executes_keeps_the_prepared_entry() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session.run("create table t(a int)").unwrap();
+    session.run("insert into t values (7)").unwrap();
+    session.run("prepare stmt from 'select * from t'").unwrap();
+    session.run("create database use_between").unwrap();
+    session.run("use use_between").unwrap();
+    session.run("create table t(a int)").unwrap();
+    assert_eq!(row_text(session.run("execute stmt")), [["7"]]);
+    assert_eq!(cache_flag(&mut session), "0");
+    assert_eq!(row_text(session.run("execute stmt")), [["7"]]);
+    assert_eq!(cache_flag(&mut session), "1");
+}
+
+/// Go builds an IndexMerge partial's key ranges from its `Ranges`, so a
+/// partial whose ranges came out empty reads nothing. A cached plan rebuilt
+/// to that range warns the ranger's skip and then the unsafe range:
+/// `RebuildPlan4CachedPlan` keeps rebuilding after `SetSkipPlanCache`.
+#[test]
+fn an_empty_index_merge_partial_reads_nothing() {
+    let mut session = Session::new();
+    session
+        .run("set tidb_enable_prepared_plan_cache=1")
+        .unwrap();
+    session
+        .run("create table t3(c1 int, c2 int, c3 int, unique key(c1), key(c2))")
+        .unwrap();
+    session.run("insert into t3 values(2,1,1)").unwrap();
+    assert!(row_text(
+        session.run(
+            "select /*+ use_index_merge(t3) */ * from t3 where (c1 >= 3 and c1 <= 1) or c2 > 1"
+        )
+    )
+    .is_empty());
+    session
+        .run("prepare s3 from 'select /*+ use_index_merge(t3) */ * from t3 where (c1 >= ? and c1 <= ?) or c2 > 1'")
+        .unwrap();
+    session.run("set @a3=1,@b3=3").unwrap();
+    session.run("execute s3 using @a3,@b3").unwrap();
+    assert_eq!(
+        row_text(session.run("execute s3 using @a3,@b3")),
+        [["2", "1", "1"]]
+    );
+    assert_eq!(cache_flag(&mut session), "1");
+    assert!(row_text(session.run("execute s3 using @b3,@a3")).is_empty());
+    assert_eq!(
+        warnings(&mut session),
+        [
+            [
+                "Warning",
+                "1105",
+                "skip prepared plan-cache: some parameters may be overwritten"
+            ],
+            [
+                "Warning",
+                "1105",
+                "skip plan-cache: plan rebuild failed, rebuild to get an unsafe range"
+            ]
+        ]
+    );
+}

@@ -357,6 +357,48 @@ impl Session {
         !hint_only || hints.use_plan_cache
     }
 
+    /// Why Go's prepared plan cache refuses this EXECUTE, as its warning
+    /// names it: the `hint_only` strategy without `use_plan_cache()`
+    /// (`GetPlanFromPlanCache`), or an `ignore_plan_cache()` hint from the
+    /// statement or from its matched binding (`Optimize`).
+    #[must_use]
+    pub(crate) fn prepared_plan_cache_refusal(
+        &self,
+        original: &Stmt,
+        effective: &Stmt,
+    ) -> Option<&'static str> {
+        if !self.vars.prepared_plan_cache_enabled() {
+            return None;
+        }
+        let hints = crate::variables::parse_statement_hints_without_catalog(
+            effective,
+            self.current_database(),
+        );
+        let hint_only = self
+            .vars
+            .system_value(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
+            .is_ok_and(|strategy| {
+                strategy.eq_ignore_ascii_case(
+                    tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,
+                )
+            });
+        if hint_only && !hints.use_plan_cache {
+            return Some("plan cache strategy is hint_only and use_plan_cache hint is absent");
+        }
+        if !hints.ignore_plan_cache {
+            return None;
+        }
+        let own = crate::variables::parse_statement_hints_without_catalog(
+            original,
+            self.current_database(),
+        );
+        Some(if own.ignore_plan_cache {
+            "ignore_plan_cache hint used in SQL query"
+        } else {
+            "ignore_plan_cache hint used in SQL binding"
+        })
+    }
+
     /// Go `IsSafeToReusePointGetExecutor` plus the plan-cache reuse gates of
     /// `GetPlanFromPlanCache`. Every uncertain state declines to ordinary
     /// planning; no cached lookup is allowed to widen into a multi-read plan.
@@ -379,7 +421,7 @@ impl Session {
             return false;
         }
         self.lock_catalog()
-            .is_ok_and(|catalog| plan.matches_catalog(&catalog, self.current_database()))
+            .is_ok_and(|catalog| plan.matches_catalog(&catalog))
     }
 
     /// Binds a retained point-get plan for a binary EXECUTE after applying

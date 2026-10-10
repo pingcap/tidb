@@ -1081,7 +1081,10 @@ impl crate::Session {
                     )
                     .ok()??
                 };
-                let plan = std::sync::Arc::new(plan.with_sql(&parameterized.key));
+                let plan = std::sync::Arc::new(
+                    plan.with_sql(&parameterized.key)
+                        .with_non_prepared_stats_tables(),
+                );
                 self.non_prepared_plan_cache.put(
                     parameterized.key.clone(),
                     NonPreparedPlan::Dml(std::sync::Arc::clone(&plan)),
@@ -1168,7 +1171,10 @@ impl crate::Session {
                         &ctx,
                     )?
                 };
-                let plan = std::sync::Arc::new(plan.with_sql(&parameterized.key));
+                let plan = std::sync::Arc::new(
+                    plan.with_sql(&parameterized.key)
+                        .with_non_prepared_stats_tables(),
+                );
                 self.non_prepared_plan_cache.put(
                     parameterized.key.clone(),
                     NonPreparedPlan::Select(std::sync::Arc::clone(&plan)),
@@ -1231,7 +1237,31 @@ impl crate::Session {
         self.session_bool("tidb_enable_non_prepared_plan_cache", false)
     }
 
+    /// Go `getPlanFromNonPreparedPlanCache`'s strategy gate: `hint_only`
+    /// admits only a statement carrying `use_plan_cache()`.
+    pub(crate) fn non_prepared_hint_only_refuses(&self, statement: &Stmt) -> bool {
+        let hint_only = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
+            .is_ok_and(|strategy| {
+                strategy.eq_ignore_ascii_case(
+                    tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,
+                )
+            });
+        hint_only
+            && !crate::variables::parse_statement_hints_without_catalog(
+                statement,
+                self.current_database(),
+            )
+            .use_plan_cache
+    }
+
     fn non_prepared_plan_cache_allowed(&self, statement: &Stmt) -> bool {
+        // Go `getPlanFromNonPreparedPlanCache`: a statement of a
+        // multi-statement query never reaches the cache.
+        if self.in_multi_stmts {
+            return false;
+        }
         let hints = crate::variables::parse_statement_hints_without_catalog(
             statement,
             self.current_database(),

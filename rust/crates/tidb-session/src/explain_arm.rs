@@ -260,6 +260,16 @@ impl Session {
         {
             return Ok(None);
         }
+        if self.non_prepared_hint_only_refuses(target) {
+            self.append_warning(
+                crate::WarningLevel::Warning,
+                1105,
+                "skip non-prepared plan-cache: plan cache strategy is hint_only and \
+                 use_plan_cache hint is absent"
+                    .to_owned(),
+            );
+            return Ok(None);
+        }
         let parameterized = match self.parameterize_non_prepared_select_or_refusal(target) {
             Ok(parameterized) => parameterized,
             Err(refusal) => {

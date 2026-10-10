@@ -3587,6 +3587,13 @@ impl CachedPlanBindFailure {
                     skip_plan_cache: Some(reason),
                 }
             }
+            tidb_planner::physical_plan_cache::PlanCacheRebuildError::SkippedThenFailed {
+                reason,
+                error,
+            } => Self::Rejected {
+                rebuild_error: Some(error.to_string()),
+                skip_plan_cache: Some(reason),
+            },
             error => Self::Rejected {
                 rebuild_error: Some(error.to_string()),
                 skip_plan_cache: None,

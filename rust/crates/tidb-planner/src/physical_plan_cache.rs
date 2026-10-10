@@ -105,10 +105,10 @@ fn physical_plan_cacheable(
     }
 
     let mut index_merge = under_index_merge;
+    // Go walks `Children()` and the readers' own sub-plans; a CTE's seed and
+    // recursive plans are `PhysicalCTE` fields, not children, so a
+    // `select ? c1` seed does not make the statement a TableDual plan.
     let hidden: Vec<&PhysicalPlan> = match plan {
-        PhysicalPlan::CTE(cte) => std::iter::once(cte.seed_plan.as_ref())
-            .chain(cte.recursive_plan.as_deref())
-            .collect(),
         PhysicalPlan::TableDual(_) if context.parameter_count > 0 => {
             return Err("get a TableDual plan".to_owned());
         }
@@ -442,6 +442,9 @@ pub type DeferredExpressionEvaluator<'a> =
 pub struct CachedPlanRebuildContext<'a> {
     parameters: &'a [Datum],
     deferred_evaluator: Option<&'a DeferredExpressionEvaluator<'a>>,
+    /// The first reason the ranger passed to Go's `SetSkipPlanCache` while
+    /// rebuilding; like Go, the rebuild goes on to its range checks.
+    skip_plan_cache: std::sync::OnceLock<String>,
 }
 
 impl<'a> CachedPlanRebuildContext<'a> {
@@ -452,6 +455,7 @@ impl<'a> CachedPlanRebuildContext<'a> {
         Self {
             parameters,
             deferred_evaluator: None,
+            skip_plan_cache: std::sync::OnceLock::new(),
         }
     }
 
@@ -519,6 +523,15 @@ pub enum PlanCacheRebuildError {
     /// a<=?` merged into a point for these parameters):
     /// `RebuildPlan4CachedPlan` sees `UseCache` flip and refuses the hit.
     SkipPlanCache(String),
+    /// The ranger called `SetSkipPlanCache` and the rebuild then failed
+    /// (`c1 >= 3 and c1 <= 1` came out empty): Go has warned the skip and
+    /// warns the failure after it.
+    SkippedThenFailed {
+        /// The ranger's skip reason.
+        reason: String,
+        /// The failure `rebuildRange` returned.
+        error: Box<PlanCacheRebuildError>,
+    },
     /// A point or batch-point rebuild changed the number of point keys.
     RangeCountChanged {
         /// The point plan whose key count changed.
@@ -540,6 +553,7 @@ impl fmt::Display for PlanCacheRebuildError {
             }
             Self::RangeBuild(error) => write!(formatter, "range build failed: {error}"),
             Self::SkipPlanCache(reason) => write!(formatter, "{reason}"),
+            Self::SkippedThenFailed { error, .. } => write!(formatter, "{error}"),
             Self::ConstantChanged => formatter.write_str(
                 "Convert constant to datum is failed, because the constant has changed after the covert",
             ),
@@ -766,11 +780,11 @@ fn bind_plan_expressions(
 }
 
 /// Go `RebuildPlan4CachedPlan`: a `SetSkipPlanCache` from the ranger while
-/// rebuilding flips `UseCache`, and the hit is refused.
-fn refuse_skipped(reason: &Option<String>) -> Result<(), PlanCacheRebuildError> {
-    match reason {
-        Some(reason) => Err(PlanCacheRebuildError::SkipPlanCache(reason.clone())),
-        None => Ok(()),
+/// rebuilding flips `UseCache`; the rebuild still runs its range checks, and
+/// the hit is refused once it finishes.
+fn note_skipped(context: &CachedPlanRebuildContext<'_>, reason: &Option<String>) {
+    if let Some(reason) = reason {
+        let _ = context.skip_plan_cache.set(reason.clone());
     }
 }
 
@@ -811,7 +825,7 @@ fn rebuild_table_scan(
             &|expr| context.evaluate(expr),
         )
         .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-        refuse_skipped(&result.skip_plan_cache_reason)?;
+        note_skipped(context, &result.skip_plan_cache_reason);
         // Go `buildRangeForTableScan` hands `isSafeRange` the scan's OLD
         // ranges as the rebuilt result here, so an integer handle only
         // refuses when the previous execution's ranges were empty: `c1>=3
@@ -848,7 +862,7 @@ fn rebuild_table_scan(
         &|expr| context.evaluate(expr),
     )
     .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-    refuse_skipped(&result.skip_plan_cache_reason)?;
+    note_skipped(context, &result.skip_plan_cache_reason);
     if !range_is_safe(
         &original,
         &result.ranges,
@@ -889,7 +903,7 @@ fn rebuild_index_scan(
         &|expr| context.evaluate(expr),
     )
     .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-    refuse_skipped(&result.skip_plan_cache_reason)?;
+    note_skipped(context, &result.skip_plan_cache_reason);
     if !range_is_safe(
         &scan.ranges,
         &result.ranges,
@@ -931,7 +945,7 @@ fn rebuild_point_ranges(
                     &|expr| context.evaluate(expr),
                 )
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-                refuse_skipped(&result.skip_plan_cache_reason)?;
+                note_skipped(context, &result.skip_plan_cache_reason);
                 if !range_is_safe(
                     &original,
                     &result.ranges,
@@ -963,7 +977,7 @@ fn rebuild_point_ranges(
                     &|expr| context.evaluate(expr),
                 )
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-                refuse_skipped(&result.skip_plan_cache_reason)?;
+                note_skipped(context, &result.skip_plan_cache_reason);
                 if !range_is_safe(
                     &original,
                     &result.ranges,
@@ -986,7 +1000,7 @@ fn rebuild_point_ranges(
             let (rebuilt, skip_plan_cache) = rebuild
                 .rebuild(&|expr| context.evaluate(expr))
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-            refuse_skipped(&skip_plan_cache)?;
+            note_skipped(context, &skip_plan_cache);
             let rebuilt = rebuilt.ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
             if rebuilt.len() != original.len()
                 || rebuilt.first().map(|range| range.width())
@@ -1016,7 +1030,7 @@ fn rebuild_point_ranges(
                 &|expr| context.evaluate(expr),
             )
             .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-            refuse_skipped(&result.skip_plan_cache_reason)?;
+            note_skipped(context, &result.skip_plan_cache_reason);
             if !range_is_safe(
                 &original,
                 &result.ranges,
@@ -1178,7 +1192,15 @@ impl PhysicalPlan {
         &mut self,
         context: &CachedPlanRebuildContext<'_>,
     ) -> Result<(), PlanCacheRebuildError> {
-        rebuild_ranges_for_cached_plan(self, context)
+        let rebuilt = rebuild_ranges_for_cached_plan(self, context);
+        match (rebuilt, context.skip_plan_cache.get()) {
+            (rebuilt, None) => rebuilt,
+            (Ok(()), Some(reason)) => Err(PlanCacheRebuildError::SkipPlanCache(reason.clone())),
+            (Err(error), Some(reason)) => Err(PlanCacheRebuildError::SkippedThenFailed {
+                reason: reason.clone(),
+                error: Box::new(error),
+            }),
+        }
     }
 
     /// Produces a privately rebuilt copy without changing this template.
