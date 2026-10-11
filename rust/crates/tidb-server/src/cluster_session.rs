@@ -901,8 +901,9 @@ pub(crate) fn cluster_table(
             })?;
         kv_table.set_pk_handle_offset(handle);
     } else if table.is_common_handle {
-        let handles = clustered_handle_offsets(table, &columns)?;
+        let (handles, prefix_lengths) = clustered_handle_offsets(table, &columns)?;
         kv_table.set_common_handle_offsets(handles);
+        kv_table.set_common_handle_prefix_lengths(prefix_lengths);
         kv_table.set_common_handle_version(table.common_handle_version);
     }
     kv_table.set_affinity(
@@ -1159,11 +1160,14 @@ pub(crate) fn planner_statistics(stats: &tidb_stats::Table, table: &TableInfo) -
     tidb_executor::load_stats::table_statistics_from_table_schema(stats, &columns, &indexes)
 }
 
-/// The public-column offsets of a clustered composite handle, in key order.
+/// The public-column offset and `IndexColumn.Length` of each clustered
+/// primary key part, in key order. Go `AddRecord` truncates a prefix part
+/// (`tablecodec.TruncateIndexValues`) before encoding the handle, so the
+/// lengths decide the record key as much as the offsets do.
 fn clustered_handle_offsets(
     table: &TableInfo,
     columns: &[GoShared<tidb_model::column::ColumnInfo>],
-) -> Result<Vec<usize>, String> {
+) -> Result<(Vec<usize>, Vec<i64>), String> {
     let primary = table
         .indices
         .iter_deref()
@@ -1171,12 +1175,14 @@ fn clustered_handle_offsets(
         .ok_or_else(|| "it is marked clustered but has no PRIMARY KEY index".to_owned())?;
     let primary_columns = primary.read().columns.clone();
     let mut offsets = Vec::with_capacity(primary_columns.len());
+    let mut prefix_lengths = Vec::with_capacity(primary_columns.len());
     for column in primary_columns.iter_deref() {
-        let (name, original_name) = {
+        let (name, original_name, length) = {
             let column = column.read();
             (
                 column.name.lowercase().to_owned(),
                 column.name.original().to_owned(),
+                column.length,
             )
         };
         let offset = columns
@@ -1189,8 +1195,9 @@ fn clustered_handle_offsets(
                 )
             })?;
         offsets.push(offset);
+        prefix_lengths.push(length);
     }
-    Ok(offsets)
+    Ok((offsets, prefix_lengths))
 }
 
 #[cfg(test)]
@@ -1936,6 +1943,48 @@ mod tests {
             let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
             assert_eq!(loaded.all_columns_public(), state == SchemaState::PUBLIC);
         }
+    }
+
+    /// Go `AddRecord` truncates a prefix part of a clustered PRIMARY KEY
+    /// (`TruncateIndexValues`) before it encodes the record key. The loader
+    /// once carried only the key's offsets, so this node wrote `('abc', 1)`
+    /// under the whole `'abc'` while every reader -- and Go -- keys it by
+    /// `'ab'`, and an index lookup met "an unrequested handle".
+    #[test]
+    fn a_clustered_primary_key_keeps_its_prefix_lengths() {
+        let mut primary = index(1, "PRIMARY", "a", 0, 2);
+        primary.primary = true;
+        primary.unique = true;
+        primary.columns = vec![
+            IndexColumn {
+                name: CiString::new("a"),
+                offset: 0,
+                length: 2,
+                ..IndexColumn::default()
+            },
+            IndexColumn {
+                name: CiString::new("b"),
+                offset: 1,
+                length: -1,
+                ..IndexColumn::default()
+            },
+        ]
+        .into();
+        let mut a = ColumnInfo::new(1, "a", FieldType::new(FieldTypeCode::Varchar));
+        a.field_type.add_flags(PRI_KEY_FLAG);
+        let table = TableInfo {
+            id: 304,
+            name: CiString::new("prefixed"),
+            columns: vec![a, column(2, 1, "b", true)].into(),
+            indices: vec![primary].into(),
+            is_common_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
+        assert_eq!(loaded.common_handle_offsets(), [0, 1]);
+        assert_eq!(loaded.common_handle_prefix_lengths(), [2, -1]);
     }
 
     /// Go's `getPossibleAccessPaths` attaches a clustered composite PRIMARY

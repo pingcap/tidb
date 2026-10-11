@@ -318,11 +318,13 @@ impl Connections {
     pub fn apply(&mut self, cmd: &crate::mysqltest_script::ConnectionCmd) -> Result<(), String> {
         use crate::mysqltest_script::ConnectionCmd;
         match cmd {
+            // The in-process pool authenticates by account row, not password.
             ConnectionCmd::Open {
                 name,
                 host,
                 user,
                 db,
+                ..
             } => {
                 // The login has to find an account ROW, exactly as Go's
                 // `ConnectionVerification` does, and the row it matches is
@@ -507,6 +509,7 @@ mod tests {
             name: name.to_owned(),
             host: "localhost".to_owned(),
             user: "root".to_owned(),
+            password: String::new(),
             db: topic_database("driver/isolation"),
         }
     }
@@ -624,6 +627,7 @@ mod tests {
                 name: "conn1".to_owned(),
                 host: "localhost".to_owned(),
                 user: "nobody".to_owned(),
+                password: String::new(),
                 db: String::new(),
             })
             .is_err());
@@ -632,6 +636,7 @@ mod tests {
             name: "conn1".to_owned(),
             host: "localhost".to_owned(),
             user: "u1".to_owned(),
+            password: String::new(),
             db: String::new(),
         })
         .unwrap();
@@ -651,6 +656,7 @@ mod tests {
             name: "conn1".to_owned(),
             host: "localhost".to_owned(),
             user: "no_db_privilege".to_owned(),
+            password: String::new(),
             db: topic_database("driver/accounts"),
         })
         .unwrap();
@@ -670,6 +676,7 @@ mod tests {
             name: "conn1".to_owned(),
             host: "localhost".to_owned(),
             user: "testuser1".to_owned(),
+            password: String::new(),
             db: String::new(),
         })
         .unwrap();

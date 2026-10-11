@@ -60,7 +60,7 @@ const STANDALONE_SERVER_ID: u64 = tidb_util::globalconn::SERVER_ID_FOR_STANDALON
 // large reserved stack is that semantics for a dedicated thread (reserved
 // address space, committed only as touched), leaving `maybe_grow` as the
 // safety net for genuinely deep plans.
-const SQL_WORKER_STACK_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const SQL_WORKER_STACK_BYTES: usize = 32 * 1024 * 1024;
 
 /// Cloneable process shutdown signal for the sole production accept loop.
 #[derive(Clone, Debug, Default)]

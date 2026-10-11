@@ -708,22 +708,34 @@ fn exec_table_scan(
             };
             let mut row_datums = Vec::with_capacity(tbl_scan.columns.len());
             for (offset, column) in tbl_scan.columns.iter().enumerate() {
+                // Go `ChunkDecoder.DecodeToChunk`: a non-NULL value in the row
+                // wins; the handle is consulted "only when there is no
+                // corresponding column in the value", because the handle may
+                // hold a prefix or a collation sort key rather than the data.
+                let stored = decoded.get(&column.column_id());
                 if physical_id_offset == Some(offset) {
                     row_datums.push(Datum::Int(tidb_codec::decode_table_id(&pair.key)));
+                } else if let Some(datum) = stored.filter(|datum| !matches!(datum, Datum::Null)) {
+                    row_datums.push(datum.clone());
                 } else if column.pk_handle() {
                     row_datums.push(Datum::Int(handle));
                 } else if let Some(datum) = common_handle.as_ref().and_then(|datums| {
-                    // Go matches `PrimaryColumnIds` positionally against the
-                    // handle's datums, which are encoded in key order.
-                    tbl_scan
+                    // Go `tryAppendHandleColumn` matches `PrimaryColumnIds`
+                    // positionally against the handle's datums (encoded in key
+                    // order), and refuses a column whose key bytes are not its
+                    // value (`NeedRestoredData`).
+                    let position = tbl_scan
                         .primary_column_ids
                         .iter()
-                        .position(|id| *id == column.column_id())
-                        .and_then(|position| datums.get(position))
+                        .position(|id| *id == column.column_id())?;
+                    if column_types[&column.column_id()].need_restored_data() {
+                        return None;
+                    }
+                    datums.get(position)
                 }) {
                     row_datums.push(datum.clone());
-                } else if let Some(datum) = decoded.get(&column.column_id()) {
-                    row_datums.push(datum.clone());
+                } else if stored.is_some() {
+                    row_datums.push(Datum::Null);
                 } else if !column.default_val().is_empty() {
                     // Go `getDefaultValue`: a row written before the column
                     // existed answers the encoded origin default.
@@ -5169,6 +5181,105 @@ mod tests {
             ],
             "both key columns and the value column come back"
         );
+    }
+
+    /// Go `ChunkDecoder.DecodeToChunk` reads a column from the row VALUE and
+    /// consults the handle "only when there is no corresponding column in the
+    /// value". A `utf8_general_ci` clustered key stores the collation sort key
+    /// in the row key and the data in the value; reading the key first
+    /// answered the sort key as the column, and the table reader above then
+    /// rebuilt a handle that no index entry had requested.
+    #[test]
+    fn a_clustered_key_column_reads_its_value_before_the_row_key() {
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::Datum;
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+
+        let mut store = MvccStore::new();
+        let table_id = 78_i64;
+        // `CREATE TABLE t (c VARCHAR(50) COLLATE utf8_general_ci, a INT,
+        // PRIMARY KEY (c))`: the key carries c's sort key, the value carries
+        // c itself (`NeedRestoredData`) and a.
+        let collator = tidb_datatype::get_collator("utf8_general_ci");
+        let handle = tidb_codec::encode_key(&[Datum::Bytes(collator.key(b" A   "))])
+            .expect("a common handle");
+        let key = encode_row_key_with_handle(table_id, &RecordHandle::Common(handle));
+        let value = tidb_codec::encode_value(&[
+            Datum::Int(1),
+            Datum::Bytes(b" A   ".to_vec()),
+            Datum::Int(2),
+            Datum::Int(5),
+        ])
+        .expect("row");
+        store
+            .prewrite(&crate::mvcc_store::PrewriteReq {
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::Put as i32,
+                    key: key.clone(),
+                    value,
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: key.clone(),
+                start_version: 10,
+                ..crate::mvcc_store::PrewriteReq::default()
+            })
+            .expect("prewrites");
+        store.commit(&[key], 10, 11).expect("commits");
+
+        let scan = tipb::Executor {
+            tp: Some(tipb::ExecType::TypeTableScan as i32),
+            tbl_scan: Some(tipb::TableScan {
+                table_id: Some(table_id),
+                columns: vec![
+                    tipb::ColumnInfo {
+                        column_id: Some(1),
+                        tp: Some(15), // TypeVarchar
+                        column_len: Some(50),
+                        collation: Some(tidb_datatype::collation_to_proto("utf8_general_ci")),
+                        ..tipb::ColumnInfo::default()
+                    },
+                    tipb::ColumnInfo {
+                        column_id: Some(2),
+                        tp: Some(8), // TypeLonglong
+                        ..tipb::ColumnInfo::default()
+                    },
+                ],
+                primary_column_ids: vec![1],
+                ..tipb::TableScan::default()
+            }),
+            ..tipb::Executor::default()
+        };
+        let dag = tipb::DagRequest {
+            executors: vec![scan],
+            ..tipb::DagRequest::default()
+        };
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_DAG,
+                data,
+                ranges: vec![coprocessor::KeyRange {
+                    start: range_start,
+                    end: range_end,
+                }],
+                start_ts: 20,
+                ..coprocessor::Request::default()
+            },
+        );
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("a select response");
+        let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
+        let decoded = tidb_codec::decode(rows_data, 2).expect("two datums");
+        let c = match &decoded[0] {
+            Datum::Bytes(bytes) => bytes.clone(),
+            Datum::String(string) => string.bytes().to_vec(),
+            other => panic!("c decoded as {other:?}"),
+        };
+        assert_eq!(c, b" A   ", "c is the stored value, not its sort key");
+        assert_eq!(decoded[1], Datum::Int(5));
     }
 
     /// Go `distsql_builtin.go` builds the string comparison signatures with

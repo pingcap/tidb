@@ -36,7 +36,9 @@ use tidb_executor::{DriverError, MysqlError};
 use tidb_session::StmtOutput;
 
 use super::super::ClusterServerSession;
-use super::node_fixture::{session_context, session_context_with_identity, ABC_HASH, SALT};
+use super::node_fixture::{
+    scramble, session_context, session_context_with_identity, ABC_HASH, SALT,
+};
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{QuerySession, SqlQueryError};
@@ -86,6 +88,30 @@ impl ReplaySession for UnistoreSession {
                 return Err(driver_error(error));
             }
         };
+        // LOAD STATS parks a file request the connection answers with the
+        // client's file, which mysql-tester reads relative to
+        // `tests/integrationtest`.
+        let local_infile_path = match &parsed {
+            Some(stmt) => self.session.local_infile_path_parsed(sql, stmt),
+            None => self.session.local_infile_path(sql),
+        }
+        .map_err(driver_error)?;
+        if let Some(path) = local_infile_path {
+            let data =
+                std::fs::read(difftest_result_tests::replay::integrationtest_dir().join(&path))
+                    .map_err(|error| {
+                        DriverError::Mysql(MysqlError::new(
+                            1105,
+                            format!("client file `{path}`: {error}"),
+                        ))
+                    })?;
+            let outcome = match &parsed {
+                Some(stmt) => self.session.execute_local_infile_parsed(sql, stmt, &data),
+                None => self.session.execute_local_infile(sql, &data),
+            }
+            .map_err(driver_error)?;
+            return Ok(StmtOutput::Affected(outcome.affected_rows));
+        }
         let control = match &parsed {
             Some(stmt) => self.session.control_transaction_parsed(sql, stmt),
             None => self.session.control_transaction(sql),
@@ -252,13 +278,14 @@ impl UnistoreConnections {
         self.open_with(session_context(connection_id), database)
     }
 
-    /// Logs `user` in from `host` the way mysql-tester does -- an empty
-    /// password through the node's own account verification -- and opens the
-    /// connection.
+    /// Logs `user` in from `host` the way mysql-tester does -- its password
+    /// scrambled against the handshake salt, through the node's own account
+    /// verification -- and opens the connection.
     fn open_account(
         &mut self,
         user: &str,
         host: &str,
+        password: &str,
         database: Option<&str>,
     ) -> Result<UnistoreSession, String> {
         let remote = if host == "localhost" {
@@ -266,9 +293,14 @@ impl UnistoreConnections {
         } else {
             host
         };
+        let response = if password.is_empty() {
+            Vec::new()
+        } else {
+            scramble(password.as_bytes(), &SALT).to_vec()
+        };
         let identity = self
             .users
-            .authenticate_native(user, remote, &SALT, &[])
+            .authenticate_native(user, remote, &SALT, &response)
             .map_err(|error| format!("log in `{user}`@`{host}`: {error:?}"))?;
         let connection_id = self.next_connection_id;
         self.open_with(
@@ -351,13 +383,14 @@ impl ReplayBackend for UnistoreConnections {
                 name,
                 host,
                 user,
+                password,
                 db,
             } => {
                 let database = (!db.is_empty()).then_some(db.as_str());
                 let session = if user == "root" {
                     self.open_root(database)?
                 } else {
-                    self.open_account(user, host, database)?
+                    self.open_account(user, host, password, database)?
                 };
                 self.sessions.insert(name.clone(), session);
                 self.current = name.clone();

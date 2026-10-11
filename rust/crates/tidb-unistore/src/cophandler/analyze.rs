@@ -119,17 +119,25 @@ fn execute(
                             }
                             _ => return Err(other_error("invalid integer handle")),
                         }
-                    } else if let Some(value) = decoded.get(&column.column_id()) {
+                    } else if let Some(value) = decoded
+                        .get(&column.column_id())
+                        .filter(|value| !matches!(value, Datum::Null))
+                    {
                         value.clone()
                     } else if let Some(position) = columns
                         .primary_column_ids
                         .iter()
                         .position(|id| *id == column.column_id())
+                        // Go `tryAppendHandleColumn`: a column whose key bytes
+                        // are not its value is never read from the handle.
+                        .filter(|_| !types[&column.column_id()].need_restored_data())
                     {
                         common
                             .get(position)
                             .cloned()
                             .ok_or_else(|| other_error("missing common handle"))?
+                    } else if decoded.contains_key(&column.column_id()) {
+                        Datum::Null
                     } else if !column.default_val().is_empty() {
                         tidb_tablecodec::decode_column_value(
                             column.default_val(),

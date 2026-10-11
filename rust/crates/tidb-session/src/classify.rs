@@ -378,6 +378,12 @@ impl Session {
             }
             // `SHOW`/`DESCRIBE`/`EXPLAIN` all answer with a result set.
             Stmt::Query(_) | Stmt::Admin(_) => StmtKind::Query,
+            // Go `NonTransactionalDMLExec` answers a `BATCH ...` with a result
+            // set -- the job count and status, or under `DRY RUN` the split
+            // and query statements -- never an OK packet.
+            Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::Batch(_)) => {
+                StmtKind::Query
+            }
             // `USE`, `SET` and the transaction controls answer with an OK
             // packet, the same shape a write uses.
             Stmt::Dml(_) | Stmt::Ddl(_) => StmtKind::Write,

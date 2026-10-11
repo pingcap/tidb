@@ -479,6 +479,22 @@ fn update_and_delete_through_the_session() {
         session.statement_kind("DELETE FROM t").unwrap(),
         StmtKind::Write
     );
+    // Go `NonTransactionalDMLExec` answers a BATCH with a result set (the
+    // job summary, or the statements under DRY RUN): a front end that
+    // routed it as a write refused it ("a write statement unexpectedly
+    // produced rows").
+    assert_eq!(
+        session
+            .statement_kind("BATCH ON a LIMIT 10 DELETE FROM t")
+            .unwrap(),
+        StmtKind::Query
+    );
+    assert_eq!(
+        session
+            .statement_kind("BATCH ON a LIMIT 10 DRY RUN UPDATE t SET a = 1")
+            .unwrap(),
+        StmtKind::Query
+    );
 }
 
 #[test]

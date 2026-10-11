@@ -354,6 +354,15 @@ pub(crate) fn append_datum_text_owned(
         Datum::MinNotNull => Err(TextFormatError::NotARowValue("MinNotNull")),
         Datum::MaxValue => Err(TextFormatError::NotARowValue("MaxValue")),
         Datum::Raw(_) => Err(TextFormatError::NotARowValue("Raw")),
+        // Go `dumpTextRow` reads an UNSIGNED BIGINT cell with `GetUint64`
+        // whatever its producer appended (`appendSplitRegionResultToChunk`
+        // appends an int64 to one), so a signed datum is its bits as u64.
+        Datum::Int(value)
+            if column.type_code == TYPE_LONGLONG && column.flag & UNSIGNED_FLAG != 0 =>
+        {
+            append_text_value(buffer, column, TextScalar::Unsigned(value as u64))?;
+            Ok(OwnedDatumText::Plain)
+        }
         Datum::Int(value) => {
             append_text_value(buffer, column, TextScalar::Signed(value))?;
             Ok(OwnedDatumText::Plain)
@@ -504,6 +513,13 @@ pub fn format_datum_text(
         Datum::MinNotNull => Err(TextFormatError::NotARowValue("MinNotNull")),
         Datum::MaxValue => Err(TextFormatError::NotARowValue("MaxValue")),
         Datum::Raw(_) => Err(TextFormatError::NotARowValue("Raw")),
+        // Go `dumpTextRow` reads an UNSIGNED BIGINT cell with `GetUint64`
+        // whatever its producer appended.
+        Datum::Int(value)
+            if column.type_code == TYPE_LONGLONG && column.flag & UNSIGNED_FLAG != 0 =>
+        {
+            format_text_value(column, TextScalar::Unsigned(*value as u64))
+        }
         Datum::Int(value) => format_text_value(column, TextScalar::Signed(*value)),
         Datum::UInt(value)
             if column.type_code == TYPE_LONGLONG && column.flag & UNSIGNED_FLAG != 0 =>

@@ -94,14 +94,20 @@ pub type AlignedBytes<'a> = Vec<(&'a Item, Vec<Vec<u8>>)>;
 pub enum ConnectionCmd {
     /// `connect (<name>, <host>, <user>, <password>, <db>)`: opens a NEW
     /// connection and makes it current. `db` is empty when the script omits
-    /// it. The password is parsed but not carried -- every script gives the
-    /// account's real password -- while the HOST is: TiDB matches an account
-    /// row by `user` AND `host`, and the suite creates accounts for
-    /// `localhost` as often as for `%` (see `mysqltest_connections`).
+    /// it. The HOST matters: TiDB matches an account row by `user` AND
+    /// `host`, and the suite creates accounts for `localhost` as often as for
+    /// `%` (see `mysqltest_connections`). The password is what the client
+    /// authenticates with; a backend that verifies logins uses it.
     Open {
+        /// The connection's name in the script.
         name: String,
+        /// The host the client connects from.
         host: String,
+        /// The account's user name.
         user: String,
+        /// The password the client sends, empty for none.
+        password: String,
+        /// The initial database, empty when the script omits it.
         db: String,
     },
     /// `connection <name>`: makes an already-open connection current.
@@ -140,6 +146,7 @@ fn parse_connection_cmd(line: &str) -> Result<ConnectionCmd, String> {
                 name: fields[0].to_owned(),
                 host: fields[1].to_owned(),
                 user: fields[2].to_owned(),
+                password: fields[3].to_owned(),
                 db: fields.get(4).copied().unwrap_or_default().to_owned(),
             })
         }
@@ -659,6 +666,7 @@ mod tests {
                     name: "conn1".to_owned(),
                     host: "localhost".to_owned(),
                     user: "u1".to_owned(),
+                    password: String::new(),
                     db: "db1".to_owned()
                 },
                 &ConnectionCmd::Close("conn1".to_owned()),
@@ -680,6 +688,7 @@ mod tests {
                 name: "conn1".to_owned(),
                 host: "localhost".to_owned(),
                 user: "root".to_owned(),
+                password: String::new(),
                 db: String::new()
             }
         );

@@ -212,3 +212,24 @@ fn test_format_value_text_invalid_type() {
     assert_eq!(error, TextFormatError::UnsupportedType(TYPE_GEOMETRY));
     assert!(error.to_string().contains("invalid column type"));
 }
+
+/// Go `dumpTextRow` reads an UNSIGNED BIGINT cell with `GetUint64` whatever
+/// its producer appended -- `appendSplitRegionResultToChunk` appends an int64
+/// to SPLIT TABLE's UNSIGNED `TOTAL_SPLIT_REGION` -- so a signed datum there
+/// is written as its bits read unsigned, not refused.
+#[test]
+fn an_unsigned_bigint_column_reads_a_signed_datum_as_unsigned() {
+    let column = TextColumn {
+        type_code: TYPE_LONGLONG,
+        flag: UNSIGNED_FLAG,
+        ..TextColumn::new(TYPE_LONGLONG)
+    };
+    assert_eq!(
+        tidb_protocol::format_datum_text(column, &tidb_datatype::Datum::Int(4)).unwrap(),
+        Some(b"4".to_vec())
+    );
+    assert_eq!(
+        tidb_protocol::format_datum_text(column, &tidb_datatype::Datum::Int(-1)).unwrap(),
+        Some(b"18446744073709551615".to_vec())
+    );
+}

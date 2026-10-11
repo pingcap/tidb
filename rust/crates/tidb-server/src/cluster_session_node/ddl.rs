@@ -356,8 +356,17 @@ where
                 }
             }
         });
+        // The scheduler runs a job's whole course on this thread -- the
+        // meta transaction's commit through client-rust's `block_on`, the
+        // backfill's scans and evaluation -- the work a SQL worker does, on
+        // the SQL worker's reserved stack. The default 2 MB overflowed in a
+        // debug build when a job's commit had to resolve a leftover lock
+        // (client-rust's `ResolveLock` retry chain on top of the commit
+        // future): `ddl/constraint`, `ddl/bdr_mode` and `infoschema/tables`
+        // aborted the whole-corpus replay over the embedded store.
         let handle = std::thread::Builder::new()
             .name("ddl-job-scheduler".to_owned())
+            .stack_size(crate::sql_node::SQL_WORKER_STACK_BYTES)
             .spawn({
                 let opener = Arc::clone(&self.opener);
                 let notifier = self.notifier.clone();

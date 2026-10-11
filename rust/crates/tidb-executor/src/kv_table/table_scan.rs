@@ -2288,6 +2288,8 @@ impl KvTable {
             noted_rows: 0,
             handle_is_unsigned,
             handle_field_types,
+            handle_prefix_lengths: self.common_handle_prefix_lengths.clone(),
+            common_handle_version: self.common_handle_version,
             pending_chunk: None,
             pending_chunk_row: 0,
         }))
@@ -3555,6 +3557,12 @@ pub struct RemoteIndexHandleCursor {
     /// response. Empty for integer handles, whose first datum has a fixed
     /// numeric representation.
     handle_field_types: Vec<FieldType>,
+    /// The clustered primary key's `IndexColumn.Length` per handle column,
+    /// for Go `getHandle`'s `TruncateIndexValues`.
+    handle_prefix_lengths: Vec<i64>,
+    /// Go `TableInfo.CommonHandleVersion`: version 0 stores no restored data
+    /// for the handle, so an index answers its sort-key bytes.
+    common_handle_version: u16,
     pending_chunk: Option<Chunk>,
     pending_chunk_row: usize,
 }
@@ -3573,6 +3581,44 @@ impl RemoteIndexHandleCursor {
         if fresh > 0 {
             crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
         }
+    }
+
+    /// Go `IndexLookUpExecutor.getHandle` for a common handle read from an
+    /// index: the handle columns are truncated to the clustered key's prefix
+    /// lengths (`TruncateIndexValues`), encoded, and padded by
+    /// `kv.NewCommonHandle` -- the same key the row was written under. Under
+    /// new collations a version-0 table's index answers a string key column as
+    /// its sort key, which Go reads back as `binary` so it is not keyed twice.
+    fn common_handle_from_index_values(
+        &self,
+        mut values: Vec<Datum>,
+    ) -> Result<TableHandle, KvTableError> {
+        for (position, value) in values.iter_mut().enumerate() {
+            let Some(field_type) = self.handle_field_types.get(position) else {
+                continue;
+            };
+            if self.use_new_collation
+                && self.common_handle_version == 0
+                && field_type.eval_type() == tidb_datatype::EvalType::String
+                && !field_type.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
+            {
+                if let Datum::String(string) = value {
+                    *value = Datum::new_collation_string(
+                        string.bytes().to_vec(),
+                        tidb_datatype::Collation::Binary,
+                    );
+                }
+            }
+            if let Some(length) = self.handle_prefix_lengths.get(position) {
+                crate::index_prefix_cut::cut_index_value(value, *length, field_type);
+            }
+        }
+        let encoded = Encoder::new(self.use_new_collation)
+            .encode_key_in_timezone(&self.zone, &values)
+            .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
+        let handle = tidb_txnkv::CommonHandle::new(encoded)
+            .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
+        Ok(TableHandle::Common(handle.encoded().to_vec()))
     }
 
     /// Extracts one handle from a decoded index response row. Go's
@@ -3597,10 +3643,7 @@ impl RemoteIndexHandleCursor {
                 .zip(self.handle_indices.iter())
                 .map(|(field_type, index)| row.get_datum(*index, field_type))
                 .collect::<Vec<_>>();
-            let encoded = Encoder::new(self.use_new_collation)
-                .encode_key_in_timezone(&self.zone, &values)
-                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
-            return Ok(TableHandle::Common(encoded));
+            return self.common_handle_from_index_values(values);
         }
         let Some(handle_index) = self.handle_indices.first().copied() else {
             return Err(KvTableError::Decode(
@@ -3769,10 +3812,7 @@ impl RemoteIndexHandleCursor {
                 .ok_or_else(|| {
                     KvTableError::Decode("an index row omitted a common handle column".to_owned())
                 })?;
-            let encoded = Encoder::new(self.use_new_collation)
-                .encode_key_in_timezone(&self.zone, &values)
-                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
-            return Ok(Some(TableHandle::Common(encoded)));
+            return self.common_handle_from_index_values(values).map(Some);
         }
         match self
             .handle_indices
@@ -7094,6 +7134,8 @@ mod remote_cursor_tests {
             noted_rows: 0,
             handle_is_unsigned: None,
             handle_field_types: Vec::new(),
+            handle_prefix_lengths: Vec::new(),
+            common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
         };
@@ -7230,6 +7272,8 @@ mod remote_cursor_tests {
             noted_rows: 0,
             handle_is_unsigned: Some(false),
             handle_field_types: Vec::new(),
+            handle_prefix_lengths: Vec::new(),
+            common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
         };
@@ -7265,6 +7309,8 @@ mod remote_cursor_tests {
                 noted_rows: 0,
                 handle_is_unsigned: Some(false),
                 handle_field_types: Vec::new(),
+                handle_prefix_lengths: Vec::new(),
+                common_handle_version: 1,
                 pending_chunk: None,
                 pending_chunk_row: 0,
             }
@@ -7301,6 +7347,8 @@ mod remote_cursor_tests {
             noted_rows: 0,
             handle_is_unsigned: Some(false),
             handle_field_types: Vec::new(),
+            handle_prefix_lengths: Vec::new(),
+            common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
         };
@@ -7340,6 +7388,8 @@ mod remote_cursor_tests {
             noted_rows: 0,
             handle_is_unsigned: Some(false),
             handle_field_types: Vec::new(),
+            handle_prefix_lengths: Vec::new(),
+            common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
         };
@@ -7353,6 +7403,69 @@ mod remote_cursor_tests {
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner()),
             vec![2, 2, 1]
+        );
+    }
+
+    /// Go `IndexLookUpExecutor.getHandle` truncates the handle columns an
+    /// index answers to the clustered key's prefix lengths before encoding
+    /// them. `PRIMARY KEY (a(2), b)` writes `('abc', 1)` under `'ab'`; a lookup
+    /// that keyed it by the whole `'abc'` read back no row at all.
+    #[test]
+    fn a_prefix_common_handle_from_an_index_is_the_record_key() {
+        let general_ci = || {
+            FieldType::new(tidb_datatype::FieldTypeCode::VarString)
+                .with_collation_name("utf8mb4_general_ci")
+        };
+        let field_types = vec![
+            general_ci(),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ];
+        let mut batch = Chunk::new_with_capacity(&field_types, 1);
+        batch.append_string(0, "abc");
+        batch.append_int64(1, 1);
+        let mut cursor = RemoteIndexHandleCursor {
+            inner: Box::new(ChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                returned: 0,
+            }),
+            handle_indices: vec![0, 1],
+            projected_indices: None,
+            common_handle: true,
+            zone: tidb_datatype::SessionTimeZone::utc(),
+            use_new_collation: true,
+            noted_rows: 0,
+            handle_is_unsigned: None,
+            handle_field_types: field_types,
+            handle_prefix_lengths: vec![2, -1],
+            common_handle_version: 1,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+        };
+        let identity = RemoteCommonHandle {
+            parts: vec![
+                (0, 2, general_ci()),
+                (
+                    1,
+                    -1,
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ),
+            ],
+            zone: tidb_datatype::SessionTimeZone::utc(),
+            use_new_collation: true,
+        };
+        let record = identity
+            .record_handle(&[
+                Datum::new_collation_string(
+                    b"abc".to_vec(),
+                    tidb_datatype::Collation::Utf8Mb4GeneralCi,
+                ),
+                Datum::Int(1),
+            ])
+            .unwrap();
+        assert_eq!(
+            cursor.next_handle_batch(1, 1024).unwrap(),
+            Some(vec![record]),
+            "the index's handle is the key the table reader answers"
         );
     }
 
@@ -7380,6 +7493,8 @@ mod remote_cursor_tests {
             noted_rows: 0,
             handle_is_unsigned: None,
             handle_field_types: field_types,
+            handle_prefix_lengths: Vec::new(),
+            common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
         };
