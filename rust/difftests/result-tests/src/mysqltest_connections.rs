@@ -184,6 +184,52 @@ impl Drop for Watchdog {
     }
 }
 
+/// What mysql-tester's driver issues on every connection it opens, before the
+/// script's first statement -- part of the recordings' provenance, not the
+/// engine's defaults.
+///
+/// The handshake collation comes first. Then the DSN's
+/// `...?time_zone='Asia/Shanghai'` (mysql-tester's `OpenDBWithRetry` call
+/// sites, pinned at commit f2d90ea), which go-sql-driver turns into
+/// `SET time_zone = 'Asia/Shanghai'` -- run-tests.sh exports
+/// TZ=Asia/Shanghai for the server to match (see
+/// [`recording_server_time_zone`]). Without it `select @@time_zone` reads the
+/// recording's literal value and every FROM_UNIXTIME/UUID_TIMESTAMP cell is
+/// shifted.
+///
+/// The `tidb_*` settings are the tester binary's own DSN list, read out of
+/// `tests/integrationtest/mysql_tester` verbatim:
+///
+/// ```sh
+/// strings tests/integrationtest/mysql_tester \
+///   | grep -oE "tidb_[a-z_]+=('?[A-Za-z0-9_]+'?)"
+/// ```
+///
+/// `r/sessionctx/setvar.result` records `select @@tidb_max_chunk_size` as 32
+/// and `@@tidb_init_chunk_size` as 1, while the registry defaults answer 1024
+/// and 32. `tidb_hash_join_concurrency=1` is the load-bearing one for PLAN
+/// text: `getPlanCostVer24PhysicalHashJoin` divides the probe filter and probe
+/// hash by `p.Concurrency`, so at 1 a hash join costs what five workers would
+/// have shared. Measured on `planner/core/join_reorder_through_projection`'s
+/// three-join shape against a `tidb-server` built from this tree, the SAME
+/// statement costs `3943972.48` at concurrency 1 and `2969908.48` at 5, and at
+/// 5 the join even swaps which side it builds; replaying that file through a
+/// HEAD-built server reproduces 87 of its 94 plans without this variable and
+/// 94 of 94 with it. See
+/// `tidb_executor::driver::index_join_decision::CHOOSER_IS_FAITHFUL`, whose
+/// cost seam this is the session half of.
+pub const MYSQL_TESTER_CONNECTION_SETUP: &[&str] = &[
+    "SET NAMES utf8mb4 COLLATE utf8mb4_general_ci",
+    "SET time_zone = 'Asia/Shanghai'",
+    "SET @@tidb_init_chunk_size=1",
+    "SET @@tidb_max_chunk_size=32",
+    "SET @@tidb_hash_join_concurrency=1",
+    "SET @@tidb_enable_analyze_snapshot=1",
+    "SET @@tidb_enable_pseudo_for_outdated_stats=false",
+    "SET @@tidb_multi_statement_mode=1",
+    "SET @@tidb_enable_clustered_index='int_only'",
+];
+
 impl Connections {
     /// Opens the default connection for `topic`: `root` on the topic
     /// database, which is the connection mysql-tester starts every script on.
@@ -389,59 +435,7 @@ impl Connections {
                 .map_err(|error| format!("initial database `{database}`: {error:?}"))?;
         }
         session.attach_privileges(self.privileges.clone());
-        session
-            .run("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
-            .expect("mysql-tester's driver handshake collation is accepted");
-        // The second half of the same handshake: mysql-tester's DSN is
-        // `...?time_zone='Asia/Shanghai'` (its `OpenDBWithRetry` call sites,
-        // pinned at commit f2d90ea), which go-sql-driver turns into
-        // `SET time_zone = 'Asia/Shanghai'` on every connection it opens --
-        // and run-tests.sh exports TZ=Asia/Shanghai for the server to match.
-        // Without it `select @@time_zone` reads the recording's literal
-        // value, and every FROM_UNIXTIME/UUID_TIMESTAMP cell is shifted.
-        session
-            .run("SET time_zone = 'Asia/Shanghai'")
-            .expect("mysql-tester's driver handshake time zone is accepted");
-        // mysql-tester puts these in the DSN of EVERY connection it opens, so
-        // the driver issues them before the script's first statement. They are
-        // in the recorded output's provenance, not the engine's defaults:
-        // `r/sessionctx/setvar.result` records `select @@tidb_max_chunk_size`
-        // as 32 and `@@tidb_init_chunk_size` as 1, while the registry defaults
-        // (and a `gorun` session, which is not driven by mysql-tester) answer
-        // 1024 and 32.
-        //
-        // The list is the tester binary's own, read out of
-        // `tests/integrationtest/mysql_tester` verbatim:
-        //
-        // ```sh
-        // strings tests/integrationtest/mysql_tester \
-        //   | grep -oE "tidb_[a-z_]+=('?[A-Za-z0-9_]+'?)"
-        // ```
-        //
-        // `tidb_hash_join_concurrency=1` is the load-bearing one for PLAN
-        // text, and it was the missing entry: `getPlanCostVer24PhysicalHashJoin`
-        // divides the probe filter and probe hash by `p.Concurrency`, so at 1
-        // a hash join costs what five workers would have shared. Measured on
-        // `planner/core/join_reorder_through_projection`'s three-join shape
-        // against a `tidb-server` built from this tree, the SAME statement
-        // costs `3943972.48` at concurrency 1 and `2969908.48` at 5 -- and at
-        // 5 the join even swaps which side it builds. Seven of that topic's
-        // eight recorded `IndexHashJoin`/`IndexJoin` plans are unreachable at
-        // concurrency 5: replaying the whole file through a HEAD-built server
-        // reproduces 87 of its 94 plans without this variable and 94 of 94
-        // with it (the four residual diffs are the harness's own
-        // `ScalarQueryCol#<id>` regex replacement). See
-        // `tidb_executor::driver::index_join_decision::CHOOSER_IS_FAITHFUL`,
-        // whose cost seam this is the session half of.
-        for setup in [
-            "SET @@tidb_init_chunk_size=1",
-            "SET @@tidb_max_chunk_size=32",
-            "SET @@tidb_hash_join_concurrency=1",
-            "SET @@tidb_enable_analyze_snapshot=1",
-            "SET @@tidb_enable_pseudo_for_outdated_stats=false",
-            "SET @@tidb_multi_statement_mode=1",
-            "SET @@tidb_enable_clustered_index='int_only'",
-        ] {
+        for setup in MYSQL_TESTER_CONNECTION_SETUP {
             session
                 .run(setup)
                 .expect("mysql-tester's per-connection setup is accepted");
@@ -696,7 +690,9 @@ mod tests {
 /// records a point get over a VARCHAR(1001) clearing the allocator), so the
 /// replay reports a 64 GiB host as Go's tests can by replacing
 /// `memory.MemTotal`.
-fn recording_server_time_zone() {
+/// Installs the recording server's process time zone and memory size, once
+/// per process, before any session reads the local clock.
+pub fn recording_server_time_zone() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         std::env::set_var("TZ", "Asia/Shanghai");

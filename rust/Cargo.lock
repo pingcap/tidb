@@ -3977,6 +3977,7 @@ dependencies = [
  "chrono",
  "crossbeam-channel",
  "ctrlc",
+ "difftest-result-tests",
  "fail",
  "futures",
  "hyper-util",

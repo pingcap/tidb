@@ -19,4 +19,5 @@ pub mod enrolled_topics;
 pub mod integration_plan_property;
 pub mod mysqltest_connections;
 pub mod mysqltest_script;
+pub mod replay;
 pub mod result_label;

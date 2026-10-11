@@ -103,6 +103,9 @@ rcgen.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
 tidb-parser = { path = "../tidb-parser" }
+# The integration corpus's script parser and comparison, driven over the
+# embedded store by `cluster_session_node::tests::corpus_unistore`.
+difftest-result-tests = { path = "../../difftests/result-tests" }
 
 # Manual cluster diagnostic; ordinary package builds only link tidb-server.
 [[bin]]

@@ -1,0 +1,427 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! The integration corpus replayed through the production node over the
+//! embedded store -- the stack `tidb-server --store unistore` serves, and the
+//! one Go's own integration runner uses (`mockstore.EmbedUnistoreDriver`).
+//!
+//! The comparison is the corpus harness's own (`difftest_result_tests::replay`);
+//! this module only supplies the backend, so a topic's counts here and from
+//! `difftests/result-tests/tests/integration_diff.rs` measure the two engines
+//! by one rule (`rust/docs/one-engine-corpus-execplan.md`).
+//!
+//!     INTEGRATION_TOPIC=executor/update cargo test -p tidb-server --lib \
+//!         corpus_unistore -- --ignored --nocapture
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use difftest_result_tests::mysqltest_connections::{
+    recording_server_time_zone, topic_database, MYSQL_TESTER_CONNECTION_SETUP,
+};
+use difftest_result_tests::mysqltest_script::ConnectionCmd;
+use difftest_result_tests::replay::{run_topic, ReplayBackend, ReplaySession};
+use tidb_executor::{DriverError, MysqlError};
+use tidb_session::StmtOutput;
+
+use super::super::ClusterServerSession;
+use super::node_fixture::{session_context, session_context_with_identity, ABC_HASH, SALT};
+use crate::configured_user_store::ConfiguredUserStore;
+use crate::resultset_source::ResultSetSource;
+use crate::sql_node::{QuerySession, SqlQueryError};
+use crate::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
+use crate::QuerySessionFactory;
+
+/// The connection mysql-tester starts every script on.
+const DEFAULT_CONNECTION: &str = "default";
+
+/// One connection: a production session and the output names of its last
+/// result, which the comparison reads after the statement.
+struct UnistoreSession {
+    session: ClusterServerSession,
+    output_names: Vec<tidb_datatype::FieldNameMetadata>,
+}
+
+fn driver_error(error: SqlQueryError) -> DriverError {
+    DriverError::Mysql(MysqlError::new(error.code, error.message))
+}
+
+fn source_error(error: MysqlError) -> DriverError {
+    DriverError::Mysql(error)
+}
+
+impl ReplaySession for UnistoreSession {
+    fn split_statements(
+        &mut self,
+        sql: &str,
+        client_multi_statements: bool,
+    ) -> Result<Vec<String>, DriverError> {
+        self.session
+            .migration_session()
+            .expect("a cluster session owns its SQL session")
+            .split_statements(sql, client_multi_statements)
+    }
+
+    /// The connection loop's COM_QUERY order for one statement
+    /// (`mysql_connection.rs`): parse once, then transaction control, then a
+    /// write answered by an OK packet, and only then a result-set query.
+    fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        self.output_names.clear();
+        let parsed = match self.session.parse_statement(sql) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                self.session
+                    .record_parse_failure(error.code, error.message.clone());
+                return Err(driver_error(error));
+            }
+        };
+        let control = match &parsed {
+            Some(stmt) => self.session.control_transaction_parsed(sql, stmt),
+            None => self.session.control_transaction(sql),
+        };
+        if control.map_err(driver_error)?.is_some() {
+            return Ok(StmtOutput::Affected(0));
+        }
+        let written = match &parsed {
+            Some(stmt) => self.session.execute_write_parsed(sql, stmt),
+            None => self.session.execute_write(sql),
+        };
+        if let Err(error) = &written {
+            crate::mysql_connection::record_text_write_failure(
+                &mut self.session,
+                parsed.as_ref(),
+                error,
+            );
+        }
+        if let Some(outcome) = written.map_err(driver_error)? {
+            return Ok(StmtOutput::Affected(outcome.affected_rows));
+        }
+        let mut result = self.session.execute(sql).map_err(driver_error)?;
+        // The rows a client reads are the server's result-set packets, so
+        // the comparison reads exactly those: the connection's own writer
+        // frames the result and it is decoded as mysql-tester decodes it.
+        let response = crate::connection_resultset::write_connection_result_set(
+            result.source(),
+            tidb_protocol::ResultSetOptions::default(),
+            1024,
+        )
+        .map_err(|error| source_error(error.cause))?;
+        drop(result);
+        if let Some(session) = self.session.migration_session() {
+            self.output_names = session.last_result_output_names().0.to_vec();
+        }
+        decode_text_result_set(&response.framed)
+    }
+
+    fn last_result_output_names(&self) -> Vec<tidb_datatype::FieldNameMetadata> {
+        self.output_names.clone()
+    }
+}
+
+/// Decodes one text-protocol result set -- column count, column definitions,
+/// EOF, length-encoded rows, EOF -- into the column names and each cell's
+/// wire text, typed as a plain string so the harness renders it unchanged.
+fn decode_text_result_set(framed: &[u8]) -> Result<StmtOutput, DriverError> {
+    fn malformed(what: &str) -> DriverError {
+        DriverError::Mysql(MysqlError::new(
+            1105,
+            format!("malformed result set: {what}"),
+        ))
+    }
+    fn packets(framed: &[u8]) -> Result<Vec<&[u8]>, DriverError> {
+        let mut packets = Vec::new();
+        let mut at = 0;
+        while at < framed.len() {
+            let header = framed
+                .get(at..at + 4)
+                .ok_or_else(|| malformed("short header"))?;
+            let length = usize::from(header[0])
+                | (usize::from(header[1]) << 8)
+                | (usize::from(header[2]) << 16);
+            let payload = framed
+                .get(at + 4..at + 4 + length)
+                .ok_or_else(|| malformed("short payload"))?;
+            packets.push(payload);
+            at += 4 + length;
+        }
+        Ok(packets)
+    }
+    /// A length-encoded integer; `None` is the NULL marker.
+    fn length(buf: &[u8], at: &mut usize) -> Result<Option<u64>, DriverError> {
+        let first = *buf.get(*at).ok_or_else(|| malformed("missing length"))?;
+        *at += 1;
+        let width = match first {
+            0xfb => return Ok(None),
+            0xfc => 2,
+            0xfd => 3,
+            0xfe => 8,
+            value => return Ok(Some(u64::from(value))),
+        };
+        let bytes = buf
+            .get(*at..*at + width)
+            .ok_or_else(|| malformed("short length"))?;
+        *at += width;
+        Ok(Some(
+            bytes
+                .iter()
+                .rev()
+                .fold(0u64, |value, byte| (value << 8) | u64::from(*byte)),
+        ))
+    }
+    fn text<'b>(buf: &'b [u8], at: &mut usize) -> Result<Option<&'b [u8]>, DriverError> {
+        let Some(len) = length(buf, at)? else {
+            return Ok(None);
+        };
+        let len = usize::try_from(len).map_err(|_| malformed("huge cell"))?;
+        let bytes = buf
+            .get(*at..*at + len)
+            .ok_or_else(|| malformed("short cell"))?;
+        *at += len;
+        Ok(Some(bytes))
+    }
+    let is_eof = |packet: &[u8]| packet.first() == Some(&0xfe) && packet.len() < 9;
+    let packets = packets(framed)?;
+    let mut packets = packets.into_iter();
+    let count_packet = packets.next().ok_or_else(|| malformed("no column count"))?;
+    let count = length(count_packet, &mut 0)?.ok_or_else(|| malformed("null column count"))?;
+    let text_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+    let mut columns = Vec::new();
+    for _ in 0..count {
+        let definition = packets.next().ok_or_else(|| malformed("missing column"))?;
+        let mut at = 0;
+        // catalog, schema, table, org_table, then the display name.
+        for _ in 0..4 {
+            text(definition, &mut at)?;
+        }
+        let name = text(definition, &mut at)?.unwrap_or_default();
+        columns.push((
+            String::from_utf8_lossy(name).into_owned(),
+            text_type.clone(),
+        ));
+    }
+    if packets
+        .as_slice()
+        .first()
+        .is_some_and(|packet| is_eof(packet))
+    {
+        packets.next();
+    }
+    let mut rows = Vec::new();
+    for packet in packets {
+        if is_eof(packet) {
+            break;
+        }
+        let mut at = 0;
+        let mut row = Vec::with_capacity(columns.len());
+        for _ in 0..columns.len() {
+            row.push(match text(packet, &mut at)? {
+                Some(bytes) => tidb_datatype::Datum::Bytes(bytes.to_vec()),
+                None => tidb_datatype::Datum::Null,
+            });
+        }
+        rows.push(row);
+    }
+    Ok(StmtOutput::Rows { columns, rows })
+}
+
+/// A topic's connections over one fresh embedded store.
+struct UnistoreConnections {
+    stack: UnistoreClusterStack,
+    users: Arc<ConfiguredUserStore>,
+    sessions: BTreeMap<String, UnistoreSession>,
+    current: String,
+    next_connection_id: u64,
+}
+
+impl UnistoreConnections {
+    /// Opens a root connection with mysql-tester's per-connection setup, on
+    /// `database` when one is named.
+    fn open_root(&mut self, database: Option<&str>) -> Result<UnistoreSession, String> {
+        let connection_id = self.next_connection_id;
+        self.open_with(session_context(connection_id), database)
+    }
+
+    /// Logs `user` in from `host` the way mysql-tester does -- an empty
+    /// password through the node's own account verification -- and opens the
+    /// connection.
+    fn open_account(
+        &mut self,
+        user: &str,
+        host: &str,
+        database: Option<&str>,
+    ) -> Result<UnistoreSession, String> {
+        let remote = if host == "localhost" {
+            "127.0.0.1"
+        } else {
+            host
+        };
+        let identity = self
+            .users
+            .authenticate_native(user, remote, &SALT, &[])
+            .map_err(|error| format!("log in `{user}`@`{host}`: {error:?}"))?;
+        let connection_id = self.next_connection_id;
+        self.open_with(
+            session_context_with_identity(connection_id, identity),
+            database,
+        )
+    }
+
+    fn open_with(
+        &mut self,
+        context: crate::sql_node::SessionContext,
+        database: Option<&str>,
+    ) -> Result<UnistoreSession, String> {
+        let connection_id = self.next_connection_id;
+        self.next_connection_id += 1;
+        let session = self
+            .stack
+            .factory
+            .open_session(context)
+            .map_err(|error| format!("open connection {connection_id}: {}", error.message))?;
+        let mut session = UnistoreSession {
+            session,
+            output_names: Vec::new(),
+        };
+        for setup in MYSQL_TESTER_CONNECTION_SETUP {
+            session
+                .run_with_columns(setup)
+                .map_err(|error| format!("connection setup `{setup}`: {error:?}"))?;
+        }
+        if let Some(database) = database {
+            session
+                .run_with_columns(&format!("use `{database}`"))
+                .map_err(|error| format!("use `{database}`: {error:?}"))?;
+        }
+        Ok(session)
+    }
+}
+
+impl ReplayBackend for UnistoreConnections {
+    fn open(topic: &str) -> Result<Self, String> {
+        recording_server_time_zone();
+        let config = crate::node_config::NodeConfig::parse([
+            "tidb-server",
+            "--store",
+            "unistore",
+            "--port",
+            "0",
+            "--auth-file",
+            "/dev/null",
+        ])
+        .map_err(|error| format!("node config: {error:?}"))?;
+        let users = Arc::new(
+            ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
+                .map_err(|error| format!("configured user store: {error:?}"))?,
+        );
+        let stack = unistore_cluster_session_stack(&config, &users, None, None)
+            .map_err(|error| format!("unistore stack: {error:?}"))?;
+        let mut pool = UnistoreConnections {
+            stack,
+            users,
+            sessions: BTreeMap::new(),
+            current: DEFAULT_CONNECTION.to_owned(),
+            next_connection_id: 1,
+        };
+        let database = topic_database(topic);
+        let mut session = pool.open_root(None)?;
+        session
+            .run_with_columns(&format!("create database if not exists `{database}`"))
+            .map_err(|error| format!("create topic database `{database}`: {error:?}"))?;
+        session
+            .run_with_columns(&format!("use `{database}`"))
+            .map_err(|error| format!("use topic database `{database}`: {error:?}"))?;
+        pool.sessions.insert(DEFAULT_CONNECTION.to_owned(), session);
+        Ok(pool)
+    }
+
+    fn apply(&mut self, cmd: &ConnectionCmd) -> Result<(), String> {
+        match cmd {
+            ConnectionCmd::Open {
+                name,
+                host,
+                user,
+                db,
+            } => {
+                let database = (!db.is_empty()).then_some(db.as_str());
+                let session = if user == "root" {
+                    self.open_root(database)?
+                } else {
+                    self.open_account(user, host, database)?
+                };
+                self.sessions.insert(name.clone(), session);
+                self.current = name.clone();
+                Ok(())
+            }
+            ConnectionCmd::Switch(name) => {
+                if !self.sessions.contains_key(name) {
+                    return Err(format!("`connection {name}` names no open connection"));
+                }
+                self.current = name.clone();
+                Ok(())
+            }
+            ConnectionCmd::Close(name) => {
+                if self.sessions.remove(name).is_none() {
+                    return Err(format!("`disconnect {name}` names no open connection"));
+                }
+                if self.current == *name {
+                    self.current = DEFAULT_CONNECTION.to_owned();
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn with_current<R>(&mut self, body: &mut dyn FnMut(&mut dyn ReplaySession) -> R) -> R {
+        let session = self
+            .sessions
+            .get_mut(&self.current)
+            .expect("the current connection is open: `apply` never leaves a dangling name");
+        body(session)
+    }
+}
+
+/// Replays each topic named by `INTEGRATION_TOPIC` (comma-separated) and
+/// prints the harness's per-topic line, with divergences and hidden failures
+/// under the harness's own switches.
+#[test]
+#[ignore = "corpus replay over the embedded store; name topics with INTEGRATION_TOPIC"]
+fn replay_corpus_topics_on_unistore() {
+    let Ok(topics) = std::env::var("INTEGRATION_TOPIC") else {
+        return;
+    };
+    for topic in topics
+        .split(',')
+        .map(str::trim)
+        .filter(|topic| !topic.is_empty())
+    {
+        let started = std::time::Instant::now();
+        match run_topic::<UnistoreConnections>(topic) {
+            Ok(report) => {
+                eprintln!(
+                    "{:>5} matched {:>5} diverged of {:>5} in {:>6}ms  {topic}  {:?} {:?}",
+                    report.matched_total(),
+                    report.divergences.len(),
+                    report.total(),
+                    started.elapsed().as_millis(),
+                    report.matched,
+                    report.skipped,
+                );
+                if std::env::var_os("INTEGRATION_SHOW_DIVERGENCES").is_some() {
+                    eprintln!("{}", report.divergences.join(""));
+                }
+            }
+            Err(reason) => eprintln!("UNALIGNED {topic}: {reason}"),
+        }
+    }
+}

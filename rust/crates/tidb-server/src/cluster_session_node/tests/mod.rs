@@ -11,6 +11,7 @@ mod observation_batch;
 
 mod accounts;
 mod autocommit_transactions;
+mod corpus_unistore;
 mod global_variables;
 mod point_get_max_ts;
 mod prepared_transactions;

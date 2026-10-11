@@ -856,6 +856,21 @@ fn execute_statement<'a, S: QuerySession>(
     }
 }
 
+/// Records a failed text-protocol write in the statement's warning buffer:
+/// go `driver_tidb.go:376` appends every error to StmtCtx. The DML
+/// column-validation path already appends its own warnings, so those codes are
+/// not appended twice (go's INSERT 1264 shows ONE row); a DDL error always is.
+pub(crate) fn record_text_write_failure<S: QuerySession + ?Sized>(
+    engine: &mut S,
+    parsed: Option<&Stmt>,
+    error: &SqlQueryError,
+) {
+    let is_ddl = parsed.is_some_and(|stmt| matches!(stmt, Stmt::Ddl(_)));
+    if is_ddl || !matches!(error.code, 1148 | 1210 | 1264 | 1265 | 1366 | 1406) {
+        engine.record_write_failure(error.code, error.message.clone());
+    }
+}
+
 fn record_client_warnings<O: ConnectionPacketOutput + ?Sized, S: QuerySession>(
     output: &O,
     session: &S,
@@ -2267,18 +2282,7 @@ fn run_connection_commands<S: QuerySession>(
                             None => engine.execute_write(sql),
                         };
                         if let Err(ref error) = written {
-                            // go `driver_tidb.go:376` appends every error to
-                            // StmtCtx. The DML column-validation path already
-                            // appends its own warns; avoid double-appending
-                            // (go's INSERT 1264 shows ONE row).
-                            let is_ddl = parsed
-                                .as_ref()
-                                .is_some_and(|stmt| matches!(stmt, Stmt::Ddl(_)));
-                            if is_ddl
-                                || !matches!(error.code, 1148 | 1210 | 1264 | 1265 | 1366 | 1406)
-                            {
-                                engine.record_write_failure(error.code, error.message.clone());
-                            }
+                            record_text_write_failure(engine, parsed.as_ref(), error);
                         }
                         match written {
                             Ok(Some(outcome)) => {
