@@ -33,8 +33,6 @@ pub const ROW_FORMAT_VERSION: &str = "tidb_row_format_version";
 pub const TXN_ASSERTION_LEVEL: &str = "tidb_txn_assertion_level";
 /// System variable controlling the mutation checker.
 pub const ENABLE_MUTATION_CHECKER: &str = "tidb_enable_mutation_checker";
-/// Ordered LIMIT lookup admission controller, enabled for fresh installs.
-pub const ENABLE_ADAPTIVE_LIMIT_SCAN: &str = "tidb_enable_adaptive_limit_scan";
 /// System variable controlling pessimistic fair locking.
 pub const PESSIMISTIC_TRANSACTION_FAIR_LOCKING: &str = "tidb_pessimistic_txn_fair_locking";
 
@@ -101,7 +99,6 @@ pub fn global_system_variable_initial_value(
             };
         }
         ENABLE_MUTATION_CHECKER => value = ON.to_owned(),
-        ENABLE_ADAPTIVE_LIMIT_SCAN => value = ON.to_owned(),
         PESSIMISTIC_TRANSACTION_FAIR_LOCKING => {
             value = if environment.next_gen {
                 OFF.to_owned()
@@ -136,7 +133,6 @@ mod tests {
             (ROW_FORMAT_VERSION, "1", "2"),
             (TXN_ASSERTION_LEVEL, "FAST", ASSERTION_FAST),
             (ENABLE_MUTATION_CHECKER, "OFF", ON),
-            (ENABLE_ADAPTIVE_LIMIT_SCAN, OFF, ON),
             (PESSIMISTIC_TRANSACTION_FAIR_LOCKING, "OFF", ON),
         ];
         for (name, val, init_val) in cases {
@@ -166,7 +162,6 @@ mod tests {
             ("tidb_txn_mode", "pessimistic", test_classic, "pessimistic"),
             (ENABLE_ASYNC_COMMIT, OFF, test_classic, OFF),
             (ENABLE_1PC, OFF, test_classic, OFF),
-            (ENABLE_ADAPTIVE_LIMIT_SCAN, OFF, test_classic, ON),
             (MEM_OOM_ACTION, "CANCEL", test_classic, OOM_ACTION_LOG),
             (ENABLE_AUTO_ANALYZE, ON, test_classic, OFF),
             (ROW_FORMAT_VERSION, "1", test_classic, ROW_FORMAT_V2),
@@ -175,7 +170,6 @@ mod tests {
             (PESSIMISTIC_TRANSACTION_FAIR_LOCKING, OFF, test_classic, ON),
             (ENABLE_ASYNC_COMMIT, OFF, tikv, ON),
             (ENABLE_1PC, OFF, tikv, ON),
-            (ENABLE_ADAPTIVE_LIMIT_SCAN, OFF, tikv, ON),
             (MEM_OOM_ACTION, "CANCEL", classic, "CANCEL"),
             (ENABLE_AUTO_ANALYZE, ON, classic, ON),
             (TXN_ASSERTION_LEVEL, "OFF", classic, ASSERTION_FAST),

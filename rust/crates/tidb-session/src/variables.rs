@@ -472,6 +472,39 @@ impl Session {
         }
     }
 
+    /// Go `replaceGlobalVariablesTableValue`, for an in-process store whose
+    /// GLOBAL tier is its own `mysql.global_variables`
+    /// ([`crate::vars::GlobalSysvars::catalog_backed`]): every row the
+    /// assignment changed -- its own, and any its SetGlobal hook wrote
+    /// through `SetGlobalSysVarOnly` (an alias) -- is replaced with the
+    /// stored value.
+    fn replace_global_variables_table_value(
+        &mut self,
+        stored_before: &std::collections::HashMap<String, String>,
+    ) -> Result<(), DriverError> {
+        let escape = |text: &str| {
+            String::from_utf8(tidb_util::sqlescape::escape_string(text))
+                .expect("escaping keeps UTF-8 text UTF-8")
+        };
+        let mut changed = self
+            .vars
+            .global_sysvars()
+            .overrides()
+            .into_iter()
+            .filter(|(name, value)| stored_before.get(name) != Some(value))
+            .collect::<Vec<_>>();
+        changed.sort();
+        for (name, value) in changed {
+            self.run_internal_write(&format!(
+                "REPLACE INTO mysql.global_variables (variable_name, variable_value) \
+                 VALUES ('{}', '{}')",
+                escape(&name),
+                escape(&value)
+            ))?;
+        }
+        Ok(())
+    }
+
     fn resource_group_hint_rejection(&self) -> Option<ResourceGroupHintRejection> {
         let resource_control_enabled = self.vars.resource_control_enabled();
         if !resource_control_enabled {
@@ -626,41 +659,17 @@ impl Session {
                     .global_value_for_session_default(&assignment.name)
                     .map_err(var_error)?,
             ),
-            // GLOBAL and INSTANCE DEFAULT restore the compiled default by
-            // clearing the stored override.
+            // Go `getVarValue`: GLOBAL and INSTANCE DEFAULT resolve to
+            // `GlobalSystemVariableInitialValue(sysVar.Name, sysVar.Value)`,
+            // which is then validated and set like any explicit value.
             tidb_ast::SetVariableValue::Default => {
-                if assignment
-                    .name
-                    .eq_ignore_ascii_case("tidb_enable_async_merge_global_stats")
-                {
-                    // Go resolves DEFAULT to a value and then runs the same
-                    // unconditional Validation warning as an explicit value.
-                    self.warn_sysvar_assignment(&assignment.name, "ON");
-                }
-                if assignment
-                    .name
-                    .eq_ignore_ascii_case("tidb_partition_prune_mode")
-                {
-                    let default = sysvar::get_sys_var(&assignment.name)
-                        .map(|definition| definition.value)
-                        .unwrap_or("dynamic");
-                    self.warn_partition_prune_assignment(default, is_global);
-                }
-                if is_global {
-                    self.vars
-                        .reset_global(&assignment.name)
-                        .map_err(var_error)?;
-                    let default = sysvar::get_sys_var(&assignment.name)
-                        .expect("the assignment named a registered sysvar")
-                        .value;
-                    self.apply_workload_repository_global(&assignment.name, default)?;
-                    self.notify_global_config_change(&assignment.name, default);
-                } else {
-                    self.vars
-                        .reset_instance(&assignment.name)
-                        .map_err(var_error)?;
-                }
-                return Ok(());
+                Some(crate::vars::global_system_variable_initial_value(
+                    sysvar::get_sys_var(&assignment.name).ok_or_else(|| {
+                        var_error(VarError::UnknownSystemVariable(
+                            assignment.name.to_ascii_lowercase(),
+                        ))
+                    })?,
+                ))
             }
             tidb_ast::SetVariableValue::Expr(expr) => self.eval_literal(expr)?,
         };
@@ -718,6 +727,8 @@ impl Session {
                     )));
                 }
             }
+            let stored_before = (is_global && self.vars.global_sysvars().catalog_backed())
+                .then(|| self.vars.global_sysvars().overrides());
             let truncated = if is_global {
                 self.vars.set_global(&assignment.name, value.clone())
             } else {
@@ -736,6 +747,9 @@ impl Session {
                 let stored = self.vars.get_global(&assignment.name).map_err(var_error)?;
                 self.apply_workload_repository_global(&assignment.name, &stored)?;
                 self.notify_global_config_change(&assignment.name, &stored);
+            }
+            if let Some(stored_before) = stored_before {
+                self.replace_global_variables_table_value(&stored_before)?;
             }
             return Ok(());
         }

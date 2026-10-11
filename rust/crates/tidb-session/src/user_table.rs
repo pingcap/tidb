@@ -251,8 +251,16 @@ impl Session {
     /// statement's do (Go's internal session plans the same way, so
     /// `@@TIME_ZONE` in an assignment reads the session value). Answers an
     /// INSERT's first allocated id (`LAST_INSERT_ID()`).
+    ///
+    /// The memory budget is not the user statement's: Go runs this SQL on a
+    /// pooled system session (`ExecRestrictedSQL`), whose
+    /// `tidb_mem_quota_query` is the default, so a connection that lowered
+    /// its own quota still persists a `SET GLOBAL` or account change.
     pub(crate) fn run_internal_write(&mut self, sql: &str) -> Result<Option<u64>, DriverError> {
-        let ctx = self.statement_context(true);
+        let (oom_action, _tmp_storage_on_oom) = self.vars.statement_memory_policy();
+        let ctx = self
+            .statement_context(true)
+            .with_mem_quota(tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY, oom_action);
         let mut stmt = self.parse(sql)?;
         self.bind_variables(&mut stmt)?;
         let tidb_ast::Stmt::Dml(dml) = &stmt else {

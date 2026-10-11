@@ -1628,11 +1628,18 @@ fn show_warnings() {
         other => panic!("expected rows, got {other:?}"),
     }
 
-    // A filter would silently report the wrong rows, so it is refused.
-    assert!(matches!(
-        session.run("SHOW WARNINGS WHERE 1"),
-        Err(DriverError::Unsupported(_)) | Err(DriverError::Parse(_))
-    ));
+    // Go `buildShow`: LIKE is a selection on `Level` and WHERE one over the
+    // rows, and neither consumes the warnings they read.
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS WHERE Code = 1235")),
+        reported
+    );
+    assert_eq!(row_text(session.run("SHOW WARNINGS LIKE 'Err%'")), reported);
+    assert!(row_text(session.run("SHOW WARNINGS WHERE Level = 'Warning'")).is_empty());
+    assert_eq!(
+        row_text(session.run("SHOW ERRORS WHERE Message LIKE '%SHARE%'")),
+        reported
+    );
 }
 
 /// Captured from TiDB (`pkg/executor` mock store): `SHOW FULL COLUMNS`,
@@ -2643,5 +2650,142 @@ fn stats_partition_unlock_obeys_the_whole_table_gate() {
             vec!["test", "t", "p0", "locked"],
             vec!["test", "t", "p1", "locked"],
         ]
+    );
+}
+
+/// Go `setDataFromCheckConstraints` / `setDataFromTiDBCheckConstraints` /
+/// `setDataFromKeywords`: the public check constraints with their clauses
+/// parenthesized (the TiDB form adds the table), and this branch's
+/// `parser.Keywords`. Captured from Go TiDB.
+#[test]
+fn check_constraint_and_keyword_tables_answer_as_go() {
+    let mut session = Session::new();
+    session
+        .run("set global tidb_enable_check_constraint = 1")
+        .unwrap();
+    session
+        .run("create table t1 (a int check (a > 0), b int, constraint t1_chk_b check (b < 10))")
+        .unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run(
+            "select constraint_catalog, constraint_schema, constraint_name, check_clause \
+             from information_schema.check_constraints where constraint_schema = 'test' \
+             order by constraint_name"
+        )),
+        [
+            ["def", "test", "t1_chk_1", "(`a` > 0)"],
+            ["def", "test", "t1_chk_b", "(`b` < 10)"],
+        ]
+    );
+    assert_eq!(
+        crate::tests_support::row_text(session.run(
+            "select constraint_name, check_clause, table_name \
+             from information_schema.tidb_check_constraints where constraint_schema = 'test' \
+             order by constraint_name"
+        )),
+        [
+            ["t1_chk_1", "(`a` > 0)", "t1"],
+            ["t1_chk_b", "(`b` < 10)", "t1"]
+        ]
+    );
+    assert_eq!(
+        crate::tests_support::row_text(
+            session.run("select count(*), sum(reserved) from information_schema.keywords")
+        ),
+        [["684", "233"]]
+    );
+}
+
+/// Go `setDataForVariablesInfo`: one row per variable, DEFAULT_VALUE the
+/// bootstrap initial value of a GLOBAL-scoped one, MIN/MAX only for the
+/// numeric types and POSSIBLE_VALUES only for an enum. Rows captured from
+/// Go TiDB (`infoschema/tables`, `executor/show`, `executor/infoschema_reader`).
+#[test]
+fn variables_info_answers_as_go() {
+    let mut session = Session::new();
+    session
+        .run("SET GLOBAL innodb_compression_level = 8")
+        .unwrap();
+    let row = |session: &mut Session, name: &str| {
+        crate::tests_support::row_text(session.run(&format!(
+            "select * from information_schema.variables_info where variable_name = '{name}'"
+        )))
+    };
+    assert_eq!(
+        row(&mut session, "innodb_compression_level"),
+        [[
+            "innodb_compression_level",
+            "GLOBAL",
+            "6",
+            "8",
+            "NULL",
+            "NULL",
+            "NULL",
+            "YES"
+        ]]
+    );
+    assert_eq!(
+        row(&mut session, "tidb_txn_mode"),
+        [[
+            "tidb_txn_mode",
+            "SESSION,GLOBAL",
+            "pessimistic",
+            "pessimistic",
+            "NULL",
+            "NULL",
+            "pessimistic,optimistic",
+            "NO"
+        ]]
+    );
+    assert_eq!(
+        row(&mut session, "max_connections"),
+        [[
+            "max_connections",
+            "INSTANCE",
+            "0",
+            "0",
+            "0",
+            "100000",
+            "NULL",
+            "NO"
+        ]]
+    );
+    assert_eq!(
+        row(&mut session, "tidb_checksum_table_concurrency"),
+        [[
+            "tidb_checksum_table_concurrency",
+            "SESSION",
+            "4",
+            "4",
+            "1",
+            "256",
+            "NULL",
+            "NO"
+        ]]
+    );
+    assert_eq!(
+        crate::tests_support::row_text(session.run(
+            "select variable_name from information_schema.variables_info \
+             where default_value = current_value and variable_name in \
+             ('tidb_row_format_version', 'tidb_txn_assertion_level', \
+             'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') \
+             order by variable_name"
+        )),
+        [
+            ["tidb_enable_mutation_checker"],
+            ["tidb_pessimistic_txn_fair_locking"],
+            ["tidb_row_format_version"],
+            ["tidb_txn_assertion_level"],
+        ]
+    );
+    session
+        .run("SET GLOBAL authentication_ldap_sasl_bind_root_pwd = 'secret'")
+        .unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run(
+            "select current_value from information_schema.variables_info \
+             where variable_name = 'authentication_ldap_sasl_bind_root_pwd'"
+        )),
+        [["******"]]
     );
 }

@@ -4078,6 +4078,7 @@ dependencies = [
  "tidb-expr",
  "tidb-gcutil",
  "tidb-hint",
+ "tidb-lexer",
  "tidb-log",
  "tidb-metadef",
  "tidb-model",

@@ -82,6 +82,8 @@ pub enum PrivMask {
     Any,
     /// `mysql.AllColumnPrivs`, which only `COLUMNS` uses.
     Column,
+    /// `mysql.SelectPriv`, which the check-constraint tables ask for.
+    Select,
 }
 
 impl SchemaVisibility {
@@ -118,6 +120,7 @@ impl SchemaVisibility {
             match mask {
                 PrivMask::Any => crate::privilege::any_priv_mask(),
                 PrivMask::Column => crate::privilege::column_privs_mask(),
+                PrivMask::Select => crate::privilege::GlobalPriv::Select.bit(),
             },
         )
     }
@@ -320,6 +323,15 @@ pub fn table_rows(
     }
     if name.eq_ignore_ascii_case("TABLE_CONSTRAINTS") {
         return Some(table_constraints_rows(catalog, visibility));
+    }
+    if name.eq_ignore_ascii_case("CHECK_CONSTRAINTS") {
+        return Some(check_constraints_rows(catalog, visibility, false));
+    }
+    if name.eq_ignore_ascii_case("TIDB_CHECK_CONSTRAINTS") {
+        return Some(check_constraints_rows(catalog, visibility, true));
+    }
+    if name.eq_ignore_ascii_case("KEYWORDS") {
+        return Some(keywords_rows());
     }
     if name.eq_ignore_ascii_case("TIFLASH_REPLICA") {
         return Some(tiflash_replica_rows(catalog, visibility));
@@ -744,6 +756,49 @@ fn referential_rule(action: tidb_executor::FkAction) -> &'static str {
 }
 
 /// One `TABLE_CONSTRAINTS` row.
+/// Go `setDataFromCheckConstraints` / `setDataFromTiDBCheckConstraints`
+/// (`infoschema_reader.go:937`/`:982`): each PUBLIC check constraint of a
+/// table the session may SELECT from, its clause parenthesized; the TiDB form
+/// adds the table's name and id.
+fn check_constraints_rows(
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+    tidb_form: bool,
+) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for (schema, table_name) in visible_tables(catalog, visibility, PrivMask::Select) {
+        let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+            continue;
+        };
+        for constraint in table.check_constraint_infos() {
+            if constraint.state != tidb_model::SchemaState::PUBLIC {
+                continue;
+            }
+            let mut row = vec![
+                text(CATALOG),
+                text(&schema),
+                text(constraint.name.original()),
+                text(&format!("({})", constraint.expr_string)),
+            ];
+            if tidb_form {
+                row.push(text(&table_name));
+                row.push(Datum::Int(table.table_id));
+            }
+            rows.push(row);
+        }
+    }
+    rows
+}
+
+/// Go `setDataFromKeywords` (`infoschema_reader.go:4055`): `parser.Keywords`
+/// in its own order, RESERVED as 1 or 0.
+fn keywords_rows() -> Vec<Vec<Datum>> {
+    tidb_lexer::KEYWORDS
+        .iter()
+        .map(|keyword| vec![text(keyword.word), Datum::Int(i64::from(keyword.reserved))])
+        .collect()
+}
+
 fn table_constraint_row(
     schema: &str,
     table_name: &str,

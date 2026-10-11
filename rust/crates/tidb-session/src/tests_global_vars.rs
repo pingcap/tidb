@@ -2930,3 +2930,75 @@ fn session_default_and_noop_variables_follow_go() {
     s.run("set global tidb_enable_noop_variables = on").unwrap();
     assert!(row_text(s.run("show global variables like 'tidb_snapshot'")).is_empty());
 }
+
+/// Go `doDMLWorks` seeds `mysql.global_variables` with each GLOBAL-scoped
+/// variable's `GlobalSystemVariableInitialValue`, the domain's sysvar cache
+/// loads it, and `SET GLOBAL` (DEFAULT included, which resolves to the same
+/// initial value in `getVarValue`) writes the row back -- an alias's row
+/// too, through its `SetGlobalSysVarOnly` hook. Captured from Go TiDB.
+#[test]
+fn bootstrap_seeds_global_variables_and_set_global_writes_them() {
+    let mut session = Session::new();
+    assert_eq!(
+        row_text(session.run(
+            "select @@tidb_row_format_version, @@global.tidb_row_format_version, \
+             @@tidb_txn_assertion_level, @@tidb_enable_mutation_checker, \
+             @@tidb_pessimistic_txn_fair_locking"
+        )),
+        [["2", "2", "FAST", "1", "1"]]
+    );
+    let stored = |session: &mut Session, names: &str| {
+        row_text(session.run(&format!(
+            "select variable_name, variable_value from mysql.global_variables \
+             where variable_name in ({names}) order by variable_name"
+        )))
+    };
+    assert_eq!(
+        stored(&mut session, "'tidb_row_format_version'"),
+        [["tidb_row_format_version", "2"]]
+    );
+
+    session
+        .run("set global tidb_row_format_version = 1")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("select @@global.tidb_row_format_version, @@tidb_row_format_version")),
+        [["1", "2"]]
+    );
+    assert_eq!(
+        stored(&mut session, "'tidb_row_format_version'"),
+        [["tidb_row_format_version", "1"]]
+    );
+    session
+        .run("set global tidb_row_format_version = default")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("select @@global.tidb_row_format_version")),
+        [["2"]]
+    );
+    assert_eq!(
+        stored(&mut session, "'tidb_row_format_version'"),
+        [["tidb_row_format_version", "2"]]
+    );
+
+    session
+        .run("set global tx_isolation = 'READ-COMMITTED'")
+        .unwrap();
+    assert_eq!(
+        stored(&mut session, "'tx_isolation', 'transaction_isolation'"),
+        [
+            ["transaction_isolation", "READ-COMMITTED"],
+            ["tx_isolation", "READ-COMMITTED"],
+        ]
+    );
+    session
+        .run("set global transaction_isolation = default")
+        .unwrap();
+    assert_eq!(
+        stored(&mut session, "'tx_isolation', 'transaction_isolation'"),
+        [
+            ["transaction_isolation", "REPEATABLE-READ"],
+            ["tx_isolation", "REPEATABLE-READ"],
+        ]
+    );
+}

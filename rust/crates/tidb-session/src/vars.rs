@@ -159,10 +159,13 @@ fn parse_ttl_offset(value: &str) -> Option<i32> {
 }
 
 /// The shared GLOBAL-scope value table every session of one
-/// [`crate::Session`] factory holds a clone of. In-memory only: Go persists
-/// this tier to `mysql.GLOBAL_VARIABLES`, so a real cluster survives a
-/// restart with its `SET GLOBAL` values and this one does not -- the same
-/// documented gap the account/privilege/process registries carry.
+/// [`crate::Session`] factory holds a clone of. Go persists this tier to
+/// `mysql.GLOBAL_VARIABLES`: a cluster node's front end does that through its
+/// sysvar seam, and an in-process store whose bootstrap loaded this table
+/// from its own `mysql.global_variables` ([`Self::catalog_backed`]) has each
+/// `SET GLOBAL` written back there by the session. Nothing survives a
+/// process restart in-process, the same documented gap the
+/// account/privilege/process registries carry.
 #[derive(Clone, Debug)]
 pub struct GlobalSysvars {
     pd_region_policy: Arc<RwLock<Option<Arc<dyn PdRegionPolicy>>>>,
@@ -193,6 +196,13 @@ pub struct GlobalSysvars {
     /// The read-mostly image described on [`ResolvedGlobals`]. Writers swap it
     /// wholesale; readers clone the `Arc` under a read lock.
     resolved: Arc<RwLock<Arc<ResolvedGlobals>>>,
+    /// Set once an in-process store's bootstrap loaded this table from that
+    /// store's `mysql.global_variables` (Go `rebuildSysVarCache`): from then
+    /// on the table is that store's sysvar cache, and a `SET GLOBAL` must
+    /// write its row back (Go `replaceGlobalVariablesTableValue`). Shared by
+    /// every clone; a cluster scratch or live table is never marked, since
+    /// its front end persists through the sysvar seam instead.
+    catalog_backed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -264,6 +274,7 @@ impl Default for GlobalSysvars {
             instance_mutations: None,
             publishes_runtime_settings: true,
             resolved: Arc::new(RwLock::new(EMPTY_RESOLVED.with(|it| it.clone()))),
+            catalog_backed: Arc::default(),
         }
     }
 }
@@ -2003,6 +2014,21 @@ impl GlobalSysvars {
         self.publish_embedding_settings();
         self.publish_instance_plan_cache_settings(None);
         self.refresh_resolved();
+    }
+
+    /// Marks this table (and every clone of it) as the sysvar cache of an
+    /// in-process store's `mysql.global_variables`; see the field.
+    pub(crate) fn mark_catalog_backed(&self) {
+        self.catalog_backed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether a `SET GLOBAL` against this table must also write the row
+    /// into the session's own `mysql.global_variables`; see the field.
+    #[must_use]
+    pub(crate) fn catalog_backed(&self) -> bool {
+        self.catalog_backed
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Every variable this table currently overrides from its default, for
@@ -3801,11 +3827,6 @@ impl SessionVars {
     /// else), so clearing the override answers a value no TiDB reports.
     /// Captured on a v8.5.6 playground: `SET tidb_row_format_version =
     /// DEFAULT; SELECT @@tidb_row_format_version` reads `2` on a Go node.
-    ///
-    /// The environment is the stock one. `store_is_tikv` is a PROCESS fact in
-    /// Go (`config.GetGlobalConfig().Store`) that this tier is not told, so
-    /// `tidb_enable_async_commit`/`tidb_enable_1pc` resolve to their
-    /// non-TiKV-store defaults here; every other override is unconditional.
     /// Go `GetGlobalSysVar` as a SESSION `SET x = DEFAULT` reads it: the
     /// stored GLOBAL value, or -- when nothing was ever stored -- the value
     /// bootstrap writes into `mysql.global_variables`
@@ -3821,32 +3842,13 @@ impl SessionVars {
         if let Some(stored) = self.globals.overrides().get(def.name) {
             return Ok(global_get_hook(def.name, stored.clone()));
         }
-        Ok(
-            tidb_vardef::global_sysvar_initial::global_system_variable_initial_value(
-                def.name,
-                &default,
-                tidb_vardef::global_sysvar_initial::GlobalSysvarEnvironment {
-                    store_is_tikv: false,
-                    in_test: false,
-                    next_gen: false,
-                },
-            ),
-        )
+        Ok(global_system_variable_initial_value(def))
     }
 
     pub fn reset_system(&mut self, name: &str) -> Result<(), VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        let default = crate::sysvar::effective_default(def);
-        let value = tidb_vardef::global_sysvar_initial::global_system_variable_initial_value(
-            &name.to_ascii_lowercase(),
-            &default,
-            tidb_vardef::global_sysvar_initial::GlobalSysvarEnvironment {
-                store_is_tikv: false,
-                in_test: false,
-                next_gen: false,
-            },
-        );
+        let value = global_system_variable_initial_value(def);
         self.set_system(name, value).map(|_truncated| ())
     }
 
@@ -5892,6 +5894,26 @@ mod pd_region_batch_tests {
         assert!(!policy.0.load(Ordering::SeqCst));
         assert_eq!(globals.get("max_connections").unwrap(), "333");
     }
+}
+
+/// Go `variable.GlobalSystemVariableInitialValue(sv.Name, sv.Value)`: the
+/// value bootstrap seeds into `mysql.global_variables` and `SET x = DEFAULT`
+/// resolves to.
+///
+/// The environment is the stock one. `store_is_tikv` is a PROCESS fact in Go
+/// (`config.GetGlobalConfig().Store`) that this tier is not told, so
+/// `tidb_enable_async_commit`/`tidb_enable_1pc` resolve to their non-TiKV-store
+/// defaults here; every other override is unconditional.
+pub(crate) fn global_system_variable_initial_value(def: &SysVarDef) -> String {
+    tidb_vardef::global_sysvar_initial::global_system_variable_initial_value(
+        def.name,
+        &crate::sysvar::effective_default(def),
+        tidb_vardef::global_sysvar_initial::GlobalSysvarEnvironment {
+            store_is_tikv: false,
+            in_test: false,
+            next_gen: false,
+        },
+    )
 }
 
 /// Go's `GetGlobal` hooks that report something other than the stored text:

@@ -743,6 +743,24 @@ pub(crate) fn filter_show_output(
 }
 
 impl Session {
+    /// Go `buildShow`'s selections over `SHOW WARNINGS` / `SHOW ERRORS`
+    /// rows: `LIKE` matches the `Level` column, `WHERE` any of the three.
+    fn filter_warning_output(
+        &mut self,
+        output: StmtOutput,
+        like: Option<&tidb_ast::Expr>,
+        where_clause: Option<&tidb_ast::Expr>,
+    ) -> Result<StmtOutput, DriverError> {
+        let like_pattern = match like {
+            Some(expr) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                Some(ShowLikePattern::from_expr(expr, value, false))
+            }
+            None => None,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
     /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
     /// narrowed to a single column as Go's `DESCRIBE tbl col` narrows it.
     fn show_columns(
@@ -1708,12 +1726,6 @@ impl Session {
                     rows,
                 }))
             }
-            // Go `ShowExec` with `ShowWarnings`/`ShowErrors`: the rows are
-            // the statement-context warnings, whose `Level` column is
-            // `Warning` or `Error`.
-            //
-            // DEFERRED (documented, and refused rather than ignored): the
-            // optional filter Go's shared SHOW grammar accepts here.
             // Go `SimpleExec.executeFlush`, `ShowDDLExec` and
             // `fetchShowMasterStatus` live in `crate::show_admin`: they
             // answer without touching a user table, and keeping them here
@@ -1739,21 +1751,30 @@ impl Session {
                     self.current_tso().value(),
                 )));
             }
+            // Go `buildShow` plans a `LIKE` as a selection on the first
+            // output column (`Level`) and a `WHERE` as a selection over the
+            // rows; there is no extractor, so a literal pattern is not
+            // folded. The rows are read before the operand is evaluated, so
+            // the filter cannot disturb the warnings it filters.
             tidb_ast::AdminStmt::ShowWarnings(show) => {
-                if show.filter.is_some() {
-                    return Err(DriverError::unsupported(
-                        "SHOW WARNINGS filters are not supported yet",
-                    ));
-                }
-                Ok(Some(self.warning_output(show.count_only, false)))
+                let output = self.warning_output(show.count_only, false);
+                let (like, where_clause) = match &show.filter {
+                    None => (None, None),
+                    Some(tidb_ast::ShowWarningsFilter::Like(expr)) => (Some(expr), None),
+                    Some(tidb_ast::ShowWarningsFilter::Where(expr)) => (None, Some(expr)),
+                };
+                self.filter_warning_output(output, like, where_clause)
+                    .map(Some)
             }
             tidb_ast::AdminStmt::ShowErrors(show) => {
-                if show.filter.is_some() {
-                    return Err(DriverError::unsupported(
-                        "SHOW ERRORS filters are not supported yet",
-                    ));
-                }
-                Ok(Some(self.warning_output(show.count_only, true)))
+                let output = self.warning_output(show.count_only, true);
+                let (like, where_clause) = match &show.filter {
+                    None => (None, None),
+                    Some(tidb_ast::ShowErrorsFilter::Like(expr)) => (Some(expr), None),
+                    Some(tidb_ast::ShowErrorsFilter::Where(expr)) => (None, Some(expr)),
+                };
+                self.filter_warning_output(output, like, where_clause)
+                    .map(Some)
             }
             // Go `ShowExec.fetchShowProcessList`: one row per live
             // connection of this server, read from the session manager.

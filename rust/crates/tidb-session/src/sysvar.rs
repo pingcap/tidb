@@ -645,6 +645,25 @@ impl SysVarDef {
         self.name == "tidb_redact_log"
     }
 
+    /// Go `ScopeFlag.String`: `NONE`, or the set scopes joined by commas in
+    /// SESSION, GLOBAL, INSTANCE order.
+    #[must_use]
+    pub fn scope_string(&self) -> String {
+        if self.scope == SCOPE_NONE {
+            return "NONE".to_owned();
+        }
+        [
+            (SCOPE_SESSION, "SESSION"),
+            (SCOPE_GLOBAL, "GLOBAL"),
+            (SCOPE_INSTANCE, "INSTANCE"),
+        ]
+        .iter()
+        .filter(|(flag, _)| self.scope & flag != 0)
+        .map(|(_, name)| *name)
+        .collect::<Vec<_>>()
+        .join(",")
+    }
+
     /// Go `SysVar.IsNoop`: compatibility-only variables retain their value in
     /// the global registry but skip the initial session copy.
     #[must_use]

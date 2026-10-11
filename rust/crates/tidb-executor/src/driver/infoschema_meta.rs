@@ -1141,6 +1141,182 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
     },
 ];
 
+/// Go `tableCheckConstraintsCols` (`pkg/infoschema/tables.go`).
+const CHECK_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "CONSTRAINT_CATALOG",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "CONSTRAINT_SCHEMA",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "CONSTRAINT_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "CHECK_CLAUSE",
+        tp: FieldTypeCode::LongBlob,
+        size: -1,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+];
+
+/// Go `tableTiDBCheckConstraintsCols` (`pkg/infoschema/tables.go`).
+const TIDB_CHECK_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "CONSTRAINT_CATALOG",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "CONSTRAINT_SCHEMA",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "CONSTRAINT_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "CHECK_CLAUSE",
+        tp: FieldTypeCode::LongBlob,
+        size: -1,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "TABLE_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "TABLE_ID",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+];
+
+/// Go `tableKeywords` (`pkg/infoschema/tables.go`).
+const KEYWORDS_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "WORD",
+        tp: FieldTypeCode::Varchar,
+        size: 128,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "RESERVED",
+        tp: FieldTypeCode::Long,
+        size: 11,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+];
+
+/// Go `tableVariablesInfoCols` (`pkg/infoschema/tables.go`).
+const VARIABLES_INFO_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "VARIABLE_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "VARIABLE_SCOPE",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "DEFAULT_VALUE",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "CURRENT_VALUE",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MIN_VALUE",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MAX_VALUE",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "POSSIBLE_VALUES",
+        tp: FieldTypeCode::Varchar,
+        size: 256,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "IS_NOOP",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+];
+
 /// Go `infoschema.tableTableConstraintsCols`, captured: one row per
 /// `PRIMARY KEY` or `UNIQUE` constraint (not per column).
 const TABLE_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
@@ -4504,6 +4680,10 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("STATISTICS", STATISTICS_COLUMNS),
     ("TABLES", TABLES_COLUMNS),
     ("TABLE_CONSTRAINTS", TABLE_CONSTRAINTS_COLUMNS),
+    ("CHECK_CONSTRAINTS", CHECK_CONSTRAINTS_COLUMNS),
+    ("TIDB_CHECK_CONSTRAINTS", TIDB_CHECK_CONSTRAINTS_COLUMNS),
+    ("KEYWORDS", KEYWORDS_COLUMNS),
+    ("VARIABLES_INFO", VARIABLES_INFO_COLUMNS),
     ("TABLE_PRIVILEGES", TABLE_PRIVILEGES_COLUMNS),
     ("TIDB_INDEX_USAGE", WORKLOAD_TIDB_INDEX_USAGE_COLUMNS),
     ("TIDB_SERVERS_INFO", TIDB_SERVERS_INFO_COLUMNS),

@@ -58,11 +58,48 @@ impl Session {
     /// carries `IF NOT EXISTS`.
     pub fn bootstrap_fresh_store(&mut self) {
         self.bootstrap_system_tables();
-        // Go's domain init then rebuilds the sysvar cache, calling each
-        // GLOBAL sysvar's SetGlobal hook.
+        // Go's domain init then rebuilds the sysvar cache from
+        // `mysql.global_variables`, calling each GLOBAL sysvar's SetGlobal
+        // hook.
+        self.load_global_variables_table();
         self.vars
             .global_sysvars()
             .rebuild_sys_var_cache_set_globals();
+    }
+
+    /// Go `Domain.rebuildSysVarCache`'s read of `mysql.global_variables`:
+    /// the GLOBAL tier answers the rows bootstrap seeded
+    /// (`GlobalSystemVariableInitialValue`, so `tidb_row_format_version` is
+    /// 2 although its registry value is 1), and this connection -- the
+    /// store's first session, which Go opens only after the cache is loaded
+    /// -- copies them as `loadCommonGlobalVariablesIfNeeded` does.
+    fn load_global_variables_table(&mut self) {
+        let ctx = self.statement_context(false);
+        let loaded = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_select_meta_in(
+                "SELECT variable_name, variable_value FROM mysql.global_variables",
+                catalog,
+                "mysql",
+                &ctx,
+            )
+        });
+        drop(ctx);
+        self.finish_bootstrap_statement();
+        let Ok((_columns, rows)) = loaded else {
+            return;
+        };
+        let globals = self.vars.global_sysvars();
+        globals.load_from_cluster(rows.iter().filter_map(|row| match row.as_slice() {
+            [name, value] => Some((
+                crate::datum_text(name)?,
+                crate::datum_text(value).unwrap_or_default(),
+            )),
+            _ => None,
+        }));
+        globals.mark_catalog_backed();
+        self.vars
+            .seed_from_globals(globals)
+            .expect("bootstrap: the seeded global variables must load into a session");
     }
 
     /// Creates the system tables a fresh catalog is born with.
@@ -90,12 +127,17 @@ impl Session {
             return;
         }
         let result = self.run_bootstrap_statements();
-        // Bootstrap is an internal execution boundary, completed before the
-        // connection installs its spill storage and memory arbitrator.
+        self.finish_bootstrap_statement();
+        result.expect("bootstrap: the mysql system tables must be creatable by this tier's own DDL");
+    }
+
+    /// Bootstrap is an internal execution boundary, completed before the
+    /// connection installs its spill storage and memory arbitrator: the
+    /// statement memory its internal statements opened is released here.
+    fn finish_bootstrap_statement(&mut self) {
         if let Some(authority) = self.statement_result_authority.get_mut().take() {
             authority.statement_memory().finish_statement();
         }
-        result.expect("bootstrap: the mysql system tables must be creatable by this tier's own DDL");
     }
 
     fn run_bootstrap_statements(&mut self) -> Result<(), DriverError> {
@@ -112,7 +154,11 @@ impl Session {
             sql_mode: self.scanner_sql_mode(),
             foreign_key_checks: self.foreign_key_checks(),
             enable_check_constraint: false,
-            clustered_index_mode: self.clustered_index_mode(),
+            // Go `BootstrapSession` pins the bootstrap session's
+            // `EnableClusteredIndex` to `ClusteredIndexDefModeIntOnly` "to be
+            // compatible with old TiDB versions": `mysql.global_grants`' composite
+            // primary key is NONCLUSTERED whatever the connection's default.
+            clustered_index_mode: tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY,
         };
         // Go's bootstrap session never loads the global variables
         // (`loadCommonGlobalVariablesIfNeeded` returns early while Initing),
@@ -203,6 +249,34 @@ impl Session {
              \"Y\", null, \"\")";
         self.with_staged_catalog(|catalog| {
             tidb_executor::run_insert_in(root, catalog, "mysql", &insert_ctx).map(|_| ())
+        })?;
+
+        // Go `doDMLWorks`: every GLOBAL-scoped variable's initial value
+        // (`GlobalSystemVariableInitialValue`, which differs from the
+        // registry value for the few defaults changed for new installs only)
+        // goes into `mysql.global_variables`.
+        let escape = |text: &str| {
+            String::from_utf8(tidb_util::sqlescape::escape_string(text))
+                .expect("escaping keeps UTF-8 text UTF-8")
+        };
+        let values = crate::sysvar::SYS_VARS
+            .iter()
+            .filter(|definition| definition.has_global_scope())
+            .map(|definition| {
+                format!(
+                    "(\"{}\", \"{}\")",
+                    escape(definition.name),
+                    escape(&crate::vars::global_system_variable_initial_value(
+                        definition
+                    ))
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let global_variables = format!("INSERT INTO mysql.global_variables VALUES {values}");
+        self.with_staged_catalog(|catalog| {
+            tidb_executor::run_insert_in(&global_variables, catalog, "mysql", &insert_ctx)
+                .map(|_| ())
         })
     }
 }

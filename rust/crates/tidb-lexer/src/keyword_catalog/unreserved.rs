@@ -58,11 +58,6 @@ pub(super) static KEYWORDS_UNRESERVED: &[Keyword] = &[
         section: "unreserved",
     },
     Keyword {
-        word: "ALERT",
-        reserved: false,
-        section: "unreserved",
-    },
-    Keyword {
         word: "ALGORITHM",
         reserved: false,
         section: "unreserved",
@@ -94,11 +89,6 @@ pub(super) static KEYWORDS_UNRESERVED: &[Keyword] = &[
     },
     Keyword {
         word: "ATTRIBUTES",
-        reserved: false,
-        section: "unreserved",
-    },
-    Keyword {
-        word: "AUTO",
         reserved: false,
         section: "unreserved",
     },
@@ -658,11 +648,6 @@ pub(super) static KEYWORDS_UNRESERVED: &[Keyword] = &[
         section: "unreserved",
     },
     Keyword {
-        word: "FAST",
-        reserved: false,
-        section: "unreserved",
-    },
-    Keyword {
         word: "FAULTS",
         reserved: false,
         section: "unreserved",
@@ -784,11 +769,6 @@ pub(super) static KEYWORDS_UNRESERVED: &[Keyword] = &[
     },
     Keyword {
         word: "IGNORE_STATS",
-        reserved: false,
-        section: "unreserved",
-    },
-    Keyword {
-        word: "IMMEDIATE",
         reserved: false,
         section: "unreserved",
     },
@@ -939,11 +919,6 @@ pub(super) static KEYWORDS_UNRESERVED: &[Keyword] = &[
     },
     Keyword {
         word: "MASTER",
-        reserved: false,
-        section: "unreserved",
-    },
-    Keyword {
-        word: "MATERIALIZED",
         reserved: false,
         section: "unreserved",
     },
@@ -1169,11 +1144,6 @@ pub(super) static KEYWORDS_UNRESERVED: &[Keyword] = &[
     },
     Keyword {
         word: "OPEN",
-        reserved: false,
-        section: "unreserved",
-    },
-    Keyword {
-        word: "OPERATE",
         reserved: false,
         section: "unreserved",
     },

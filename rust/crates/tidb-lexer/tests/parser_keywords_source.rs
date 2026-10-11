@@ -25,11 +25,9 @@ fn test_keywords() {
 
 #[test]
 fn test_keywords_length() {
-    // The catalog is generated/validated against go-master parser.y via
-    // `cargo run -p tidb-lexer --bin generate_keyword -- <parser.y> --check`
-    // (passes byte-for-byte); the hand-pinned 689 predated a keyword added
-    // to parser.y.
-    assert_eq!(KEYWORDS.len(), 690);
+    // `pkg/parser/keywords.go` on this branch -- the list Go's
+    // `information_schema.KEYWORDS` reads -- holds 684 keywords, 233 reserved.
+    assert_eq!(KEYWORDS.len(), 684);
     assert_eq!(
         KEYWORDS.iter().filter(|keyword| keyword.reserved).count(),
         233
@@ -37,14 +35,21 @@ fn test_keywords_length() {
 }
 
 #[test]
-fn test_go_master_added_unreserved_keywords() {
-    for word in ["ALERT", "FAST", "IMMEDIATE", "MATERIALIZED"] {
-        let keyword = KEYWORDS
-            .iter()
-            .find(|keyword| keyword.word == word)
-            .unwrap_or_else(|| panic!("missing Go-master keyword {word}"));
-        assert!(!keyword.reserved, "{word} must remain unreserved");
-        assert_eq!(keyword.section, "unreserved");
+fn test_keywords_match_this_branchs_keywords_go() {
+    // Go-master's parser.y adds these; this branch's keywords.go does not
+    // list them, so neither may the catalog (the Go oracle answers 684 rows).
+    for word in [
+        "ALERT",
+        "AUTO",
+        "FAST",
+        "IMMEDIATE",
+        "MATERIALIZED",
+        "OPERATE",
+    ] {
+        assert!(
+            KEYWORDS.iter().all(|keyword| keyword.word != word),
+            "{word} is not in this branch's keywords.go"
+        );
     }
 }
 

@@ -26,10 +26,9 @@ use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
-use crate::StmtResult;
 use crate::{
-    infoschema, privilege, statement_kind_of, statement_priority_of, Session, StatementKind,
-    StmtOutput, WarningLevel,
+    infoschema, privilege, statement_kind_of, statement_priority_of, sysvar, Session,
+    StatementKind, StmtOutput, WarningLevel,
 };
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 
@@ -988,6 +987,8 @@ impl Session {
                 self.user_privileges_table_rows()
             } else if table_name.eq_ignore_ascii_case("USER_ATTRIBUTES") {
                 self.user_attributes_table_rows(&scratch, ctx)
+            } else if table_name.eq_ignore_ascii_case("VARIABLES_INFO") {
+                self.variables_info_table_rows()
             } else if table_name.eq_ignore_ascii_case("CLUSTER_CONFIG") {
                 self.cluster_config_table_rows(cluster_config_filters)?
             } else if table_name.eq_ignore_ascii_case("TIDB_SERVERS_INFO") {
@@ -1012,6 +1013,57 @@ impl Session {
             );
         }
         Ok(scratch)
+    }
+
+    /// Go `memtableRetriever.setDataForVariablesInfo`: one row per system
+    /// variable the viewer may see. DEFAULT_VALUE is what bootstrap seeds
+    /// for a GLOBAL-scoped variable (`GlobalSystemVariableInitialValue`),
+    /// CURRENT_VALUE is `GetSessionOrGlobalSystemVar` ("" when that read
+    /// fails), MIN/MAX are reported only for the numeric types, and
+    /// POSSIBLE_VALUES only for an enum.
+    fn variables_info_table_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+        use tidb_datatype::Datum;
+        let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
+        let mut rows = Vec::with_capacity(sysvar::SYS_VARS.len());
+        for definition in sysvar::SYS_VARS {
+            if self.sem_hides_sysvar(definition.name) {
+                continue;
+            }
+            let current = self.vars.get_system(definition.name).unwrap_or_default();
+            let default = if definition.has_global_scope() {
+                crate::vars::global_system_variable_initial_value(definition)
+            } else {
+                sysvar::effective_default(definition)
+            };
+            let numeric = matches!(
+                definition.var_type,
+                sysvar::VarType::Unsigned | sysvar::VarType::Int | sysvar::VarType::Float
+            );
+            let (min, max) = if numeric {
+                (
+                    Datum::Int(definition.min_value),
+                    Datum::UInt(definition.max_value),
+                )
+            } else {
+                (Datum::Null, Datum::Null)
+            };
+            let possible = if definition.var_type == sysvar::VarType::Enum {
+                text(&definition.possible_values.join(","))
+            } else {
+                Datum::Null
+            };
+            rows.push(vec![
+                text(definition.name),
+                text(&definition.scope_string()),
+                text(&default),
+                text(&current),
+                min,
+                max,
+                possible,
+                text(if definition.is_noop() { "YES" } else { "NO" }),
+            ]);
+        }
+        rows
     }
 
     /// Go `memtableRetriever.setDataForUserAttributes`: read the metadata
