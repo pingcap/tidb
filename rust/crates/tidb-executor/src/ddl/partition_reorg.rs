@@ -540,6 +540,19 @@ pub(super) fn alter_table_partitioning_action(
         definition.id = catalog.allocate_table_id();
     }
     let new_table_id = catalog.allocate_table_id();
+    // Go `rewritePartitionQueryString`: INTERVAL sugar's job query records
+    // the partitions it generated.
+    let interval_rewrite = partitioning.method.interval.as_ref().map(|interval| {
+        let definitions = super::table_partition::append_partition_defs(
+            &spec.definitions,
+            &spec.kind,
+            ctx.sql_mode().ansi_quotes,
+        );
+        (
+            String::from_utf8_lossy(interval.original_text()).into_owned(),
+            definitions.trim_start_matches('\n').to_owned(),
+        )
+    });
     apply_reorg(
         catalog,
         database,
@@ -553,6 +566,9 @@ pub(super) fn alter_table_partitioning_action(
         },
         ctx,
     )?;
+    if let Some((original, replacement)) = interval_rewrite {
+        ctx.rewrite_ddl_job_query(original, replacement);
+    }
     ctx.append_warning_parts(1105, STATS_OUTDATED_NEW);
     Ok(())
 }

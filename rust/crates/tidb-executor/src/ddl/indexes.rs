@@ -724,6 +724,7 @@ pub(crate) fn add_index_to_table(
     max_index_length: i64,
     bdr: Option<&super::bdr::Admission>,
 ) -> Result<(), DriverError> {
+    let schema_id = catalog.database_id(database);
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{table_name}"),
@@ -751,6 +752,14 @@ pub(crate) fn add_index_to_table(
             tidb_model::ActionType::ACTION_ADD_INDEX,
             index.unique,
         )])?;
+        ctx.submit_ddl_job(
+            super::job_history::SubmittedDdlJob::new(
+                tidb_model::ActionType::ACTION_ADD_INDEX,
+                database,
+                table_name,
+            )
+            .with_ids(schema_id, Some(table.table_id)),
+        );
     }
     // Go `createIndex`: `checkAndWarnMissingRegionSplitPolicy` before the job.
     super::region_split::warn_missing_region_split_policy(table, &built.name, ctx);
@@ -789,7 +798,8 @@ pub(crate) fn add_index_to_table(
         }
     }
     let result = table
-        .create_index_with_context(built, ctx)
+        .create_index_counting_rows(built, ctx)
+        .map(|added| ctx.add_ddl_job_row_count(i64::try_from(added).unwrap_or(i64::MAX)))
         .map_err(index_backfill_error);
     // A failed `CREATE INDEX` must leave no trace. The hidden columns have to
     // be in place BEFORE the index is built (its entries are computed from
@@ -870,10 +880,12 @@ pub fn run_drop_index_in(
             } else {
                 tidb_model::ActionType::ACTION_DROP_INDEX
             };
-            super::bdr::admit(
+            super::bdr::submit(
                 catalog,
-                ctx.ddl_cdc_write_source(),
+                ctx,
                 &database,
+                &table_name,
+                None,
                 &[super::bdr::SubmittedJob::new(action)],
             )?;
             drop_prepared_index(catalog, &database, &table_name, id)

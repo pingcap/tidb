@@ -977,6 +977,10 @@ pub struct StmtContextData {
     ddl_session_alias: String,
     /// Go `TraceInfo.TraceID`, captured when the DDL job is submitted.
     ddl_trace_id: Vec<u8>,
+    /// Where this statement's DDL submits its jobs (Go `doDDLJob2`), for the
+    /// session to finish into history; `None` for a statement whose jobs no
+    /// history records (an internal or test context).
+    ddl_job_sink: Option<crate::ddl::job_history::DdlJobSink>,
     /// `NO_UNSIGNED_SUBTRACTION` changes expression typing and evaluation,
     /// not scanning, so it is kept beside the lexer's compact mode.
     no_unsigned_subtraction: bool,
@@ -1172,6 +1176,13 @@ context_configuration! {
     #[must_use]
     pub fn with_sql_mode(mut self, sql_mode: tidb_parser::SqlMode) -> Self {
         self.sql_mode = sql_mode;
+        self
+    }
+
+    /// Attaches the session's job sink for this statement.
+    #[must_use]
+    pub fn with_ddl_job_sink(mut self, sink: crate::ddl::job_history::DdlJobSink) -> Self {
+        self.ddl_job_sink = Some(sink);
         self
     }
 
@@ -2287,6 +2298,7 @@ impl StmtContext {
             ddl_reorg_priority: 1,
             ddl_session_alias: String::new(),
             ddl_trace_id: Vec::new(),
+            ddl_job_sink: None,
             no_unsigned_subtraction: false,
             like_default_escape: b'\\',
             default_string_match_selectivity: 0.0,
@@ -2623,6 +2635,28 @@ impl StmtContext {
     pub fn with_ddl_query(mut self, query: impl Into<String>) -> Self {
         self.ddl_query = query.into();
         self
+    }
+
+    /// Rewrites the running DDL job's query (Go's INTERVAL sugar rewrite).
+    pub fn rewrite_ddl_job_query(&self, original: String, replacement: String) {
+        if let Some(sink) = &self.ddl_job_sink {
+            sink.rewrite_query(original, replacement);
+        }
+    }
+
+    /// Rows the running DDL job processed (Go `Job.RowCount`).
+    pub fn add_ddl_job_row_count(&self, rows: i64) {
+        if let Some(sink) = &self.ddl_job_sink {
+            sink.add_row_count(rows);
+        }
+    }
+
+    /// Go `doDDLJob2`'s submission of `job`, recorded for the session to
+    /// finish into history when the statement completes.
+    pub fn submit_ddl_job(&self, job: crate::ddl::job_history::SubmittedDdlJob) {
+        if let Some(sink) = &self.ddl_job_sink {
+            sink.submit(job);
+        }
     }
 
     /// Go `SessionVars.RangeMaxSize`.

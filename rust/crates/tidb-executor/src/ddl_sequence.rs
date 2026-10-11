@@ -238,9 +238,9 @@ pub fn run_create_sequence_in(
     create: &tidb_ast::CreateSequenceStmt,
     catalog: &mut Catalog,
     current_db: &str,
-    // The session's `tidb_cdc_write_source`, which exempts the job from BDR
-    // admission.
-    cdc_write_source: u64,
+    // The statement's context: its `tidb_cdc_write_source` exempts the job
+    // from BDR admission, and its job sink records it.
+    ctx: &crate::StmtContext,
 ) -> Result<bool, DriverError> {
     let (database, name) = split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
@@ -282,15 +282,19 @@ pub fn run_create_sequence_in(
     // CREATE -- as real TiDB does (captured: `create sequence s restart with 5`
     // is an error there too). No check is needed here.
     let info = build_sequence_info(&create.options, &qualified(&database, &name))?;
-    crate::ddl::bdr::admit(
+    // Go builds the sequence's TableInfo, ID included, before it submits the
+    // job.
+    let id = catalog.allocate_table_id();
+    crate::ddl::bdr::submit(
         catalog,
-        cdc_write_source,
+        ctx,
         &database,
+        &name,
+        Some(id),
         &[crate::ddl::bdr::SubmittedJob::new(
             tidb_model::ActionType::ACTION_CREATE_SEQUENCE,
         )],
     )?;
-    let id = catalog.allocate_table_id();
     catalog.register_sequence_in(
         &database,
         &name,
@@ -315,7 +319,7 @@ pub fn run_alter_sequence_in(
     alter: &tidb_ast::AlterSequenceStmt,
     catalog: &mut Catalog,
     current_db: &str,
-    cdc_write_source: u64,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let (database, name) = split_table_path_pub(&alter.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
@@ -342,10 +346,15 @@ pub fn run_alter_sequence_in(
         SequenceOption::Restart => Some(info.start),
         _ => None,
     });
-    crate::ddl::bdr::admit(
+    let sequence_id = catalog
+        .sequence_in(&database, &name)
+        .map(|sequence| sequence.id);
+    crate::ddl::bdr::submit(
         catalog,
-        cdc_write_source,
+        ctx,
         &database,
+        &name,
+        sequence_id,
         &[crate::ddl::bdr::SubmittedJob::new(
             tidb_model::ActionType::ACTION_ALTER_SEQUENCE,
         )],
@@ -367,7 +376,7 @@ pub fn run_drop_sequence_in(
     drop: &tidb_ast::DropSequenceStmt,
     catalog: &mut Catalog,
     current_db: &str,
-    cdc_write_source: u64,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let mut missing = None;
     for path in &drop.names {
@@ -380,10 +389,15 @@ pub fn run_drop_sequence_in(
             continue;
         }
         // Go `dropTableObject` submits one ActionDropSequence per sequence.
-        crate::ddl::bdr::admit(
+        let sequence_id = catalog
+            .sequence_in(&database, &name)
+            .map(|sequence| sequence.id);
+        crate::ddl::bdr::submit(
             catalog,
-            cdc_write_source,
+            ctx,
             &database,
+            &name,
+            sequence_id,
             &[crate::ddl::bdr::SubmittedJob::new(
                 tidb_model::ActionType::ACTION_DROP_SEQUENCE,
             )],

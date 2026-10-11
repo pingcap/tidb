@@ -28,9 +28,13 @@ fn run(catalog: &mut Catalog, sql: &str) -> Result<(), DriverError> {
         panic!("expected a DDL envelope for {sql}")
     };
     match &*ddl {
-        tidb_ast::DdlStmt::CreateSequence(create) => {
-            run_create_sequence_in(create, catalog, "test", 0).map(|_| ())
-        }
+        tidb_ast::DdlStmt::CreateSequence(create) => run_create_sequence_in(
+            create,
+            catalog,
+            "test",
+            &tidb_executor::StmtContext::for_query(),
+        )
+        .map(|_| ()),
         other => panic!("unexpected DDL payload for {sql}: {other:?}"),
     }
 }

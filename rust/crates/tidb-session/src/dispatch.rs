@@ -570,7 +570,7 @@ impl Session {
                         tidb_ast::DatabaseOption::PlacementPolicy(name) => Some(name.clone()),
                         _ => None,
                     });
-                    let cdc_write_source = self.ddl_cdc_write_source();
+                    let context = self.ddl_statement_context();
                     let created = self.with_catalog_mut(|catalog| {
                         // Go `CreateSchemaWithInfo` checks the name's length
                         // and submits ActionCreateSchema unless the schema
@@ -589,10 +589,11 @@ impl Session {
                             })
                             .transpose()?
                             .flatten();
-                        tidb_executor::ddl::admit_bdr_job(
+                        tidb_executor::ddl::submit_ddl_job(
                             catalog,
-                            cdc_write_source,
+                            &context,
                             name,
+                            "",
                             tidb_model::ActionType::ACTION_CREATE_SCHEMA,
                         )?;
                         let created = catalog.create_database_with_charset(name, charset);
@@ -637,7 +638,7 @@ impl Session {
                             return Err(error);
                         }
                     }
-                    let cdc_write_source = self.ddl_cdc_write_source();
+                    let context = self.ddl_statement_context();
                     let mut schema_table_ids = Vec::new();
                     let dropped = self.with_catalog_mut(|catalog| {
                         // Go `DropSchema` submits ActionDropSchema for a
@@ -649,10 +650,11 @@ impl Session {
                                 .iter()
                                 .filter_map(|table| catalog.stored_table_id(name, table))
                                 .collect();
-                            tidb_executor::ddl::admit_bdr_job(
+                            tidb_executor::ddl::submit_ddl_job(
                                 catalog,
-                                cdc_write_source,
+                                &context,
                                 name,
+                                "",
                                 tidb_model::ActionType::ACTION_DROP_SCHEMA,
                             )?;
                             // Go `onDropSchema` deletes the tables' label
@@ -1165,6 +1167,25 @@ impl Session {
                     )?);
                 }
                 rows
+            } else if ["CLUSTER_HARDWARE", "CLUSTER_LOAD", "CLUSTER_SYSTEMINFO"]
+                .iter()
+                .any(|name| table_name.eq_ignore_ascii_case(name))
+            {
+                // Go `clusterServerInfoRetriever.retrieve`: hardware needs
+                // CONFIG, load and system info PROCESS; with no cluster
+                // server to ask, the tables answer no rows.
+                let (privilege, name) = if table_name.eq_ignore_ascii_case("CLUSTER_HARDWARE") {
+                    (crate::privilege::GlobalPriv::Config, "CONFIG")
+                } else {
+                    (crate::privilege::GlobalPriv::Process, "PROCESS")
+                };
+                if !self.has_scoped_privilege("", "", privilege) {
+                    return Err(DriverError::SpecificAccessDenied(name.to_owned()));
+                }
+                Vec::new()
+            } else if table_name.eq_ignore_ascii_case("DDL_JOBS") {
+                let jobs = self.last_history_ddl_jobs()?;
+                infoschema::ddl_jobs_rows(&jobs, &self.schema_visibility())
             } else if table_name.eq_ignore_ascii_case("PROFILING") {
                 crate::memtable_retrievers::pseudo_profiling_rows(
                     tidb_vardef::option_values::tidb_opt_on(
@@ -2835,8 +2856,13 @@ impl Session {
                 }
             };
         let was_autocommit_statement = !self.in_transaction();
-        let mut execution =
-            self.execute_parsed_statement_inner(sql, stmt, prepared, select_plan, dml_plan)?;
+        // The jobs this statement's DDL submits are finished into the DDL
+        // history once it completes, as Go's job worker finishes them.
+        drop(self.ddl_job_sink.take());
+        let execution =
+            self.execute_parsed_statement_inner(sql, stmt, prepared, select_plan, dml_plan);
+        self.finish_submitted_ddl_jobs(sql, execution.is_ok());
+        let mut execution = execution?;
         if was_autocommit_statement && !self.in_transaction() {
             match &mut execution {
                 PendingExecution::Query(query) => {
@@ -3580,7 +3606,7 @@ impl Session {
             }
             Stmt::Ddl(ddl) => match &**ddl {
                 DdlStmt::RenameTable(_) => {
-                    let cdc_write_source = self.ddl_cdc_write_source();
+                    let context = self.ddl_statement_context();
                     let current_db = self.current_db.clone();
                     self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_rename_table_in(
@@ -3588,13 +3614,13 @@ impl Session {
                             catalog,
                             &current_db,
                             sql_mode,
-                            cdc_write_source,
+                            &context,
                         )?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
                 DdlStmt::TruncateTable(name) => {
-                    let cdc_write_source = self.ddl_cdc_write_source();
+                    let context = self.ddl_statement_context();
                     let local = self.is_local_temporary_table_path(name);
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = !local && self.foreign_key_checks();
@@ -3620,7 +3646,7 @@ impl Session {
                                 &current_db,
                                 sql_mode,
                                 foreign_key_checks,
-                                cdc_write_source,
+                                &context,
                             )?;
                             Ok(before
                                 .zip(ids(catalog))
@@ -3749,7 +3775,7 @@ impl Session {
                     result
                 }
                 DdlStmt::DropTable(drop) => {
-                    let cdc_write_source = self.ddl_cdc_write_source();
+                    let context = self.ddl_statement_context();
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = self.foreign_key_checks();
                     let missing = if drop.temporary == tidb_ast::DropTemporary::Local {
@@ -3759,7 +3785,7 @@ impl Session {
                                 catalog,
                                 &current_db,
                                 false,
-                                cdc_write_source,
+                                &context,
                             )
                         })?
                     } else {
@@ -3780,7 +3806,7 @@ impl Session {
                                 catalog,
                                 &current_db,
                                 foreign_key_checks,
-                                cdc_write_source,
+                                &context,
                             )
                         })?;
                         // Go `dropTableObject` releases the session's lock on
@@ -3879,7 +3905,7 @@ impl Session {
                 // Go answers every sequence DDL with a zero affected-row
                 // count, as it does every other DDL.
                 DdlStmt::CreateSequence(create) => {
-                    let cdc_write_source = self.ddl_cdc_write_source();
+                    let context = self.ddl_statement_context();
                     let current_db = self.current_db.clone();
                     let create = create.clone();
                     self.with_persistent_catalog_mut(|catalog| {
@@ -3887,13 +3913,13 @@ impl Session {
                             &create,
                             catalog,
                             &current_db,
-                            cdc_write_source,
+                            &context,
                         )?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
                 DdlStmt::AlterSequence(alter) => {
-                    let cdc_write_source = self.ddl_cdc_write_source();
+                    let context = self.ddl_statement_context();
                     let current_db = self.current_db.clone();
                     let alter = alter.clone();
                     self.with_persistent_catalog_mut(|catalog| {
@@ -3901,22 +3927,17 @@ impl Session {
                             &alter,
                             catalog,
                             &current_db,
-                            cdc_write_source,
+                            &context,
                         )?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
                 DdlStmt::DropSequence(drop) => {
-                    let cdc_write_source = self.ddl_cdc_write_source();
+                    let context = self.ddl_statement_context();
                     let current_db = self.current_db.clone();
                     let drop = drop.clone();
                     self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_sequence_in(
-                            &drop,
-                            catalog,
-                            &current_db,
-                            cdc_write_source,
-                        )?;
+                        tidb_executor::run_drop_sequence_in(&drop, catalog, &current_db, &context)?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
@@ -3952,7 +3973,7 @@ impl Session {
                     Ok(StmtOutput::Done(false))
                 }
                 DdlStmt::DropView { if_exists, names } => {
-                    let cdc_write_source = self.ddl_cdc_write_source();
+                    let context = self.ddl_statement_context();
                     let current_db = self.current_db.clone();
                     let (if_exists, names) = (*if_exists, names.clone());
                     let missing = self.with_persistent_catalog_mut(|catalog| {
@@ -3961,7 +3982,7 @@ impl Session {
                             &names,
                             catalog,
                             &current_db,
-                            cdc_write_source,
+                            &context,
                         )
                     })?;
                     // Same demotion as `DROP TABLE IF EXISTS`, same code:

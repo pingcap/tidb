@@ -2932,6 +2932,18 @@ impl KvTable {
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
         self.create_index_in(index, ctx, &RowDecodeContext::for_ddl(ctx))
+            .map(|_| ())
+    }
+
+    /// [`Self::create_index_with_context`], answering the number of rows the
+    /// backfill added to the index (Go's reorg `addedCount`, the job's
+    /// `RowCount`).
+    pub fn create_index_counting_rows(
+        &mut self,
+        index: KvIndex,
+        ctx: &crate::StmtContext,
+    ) -> Result<usize, KvTableError> {
+        self.create_index_in(index, ctx, &RowDecodeContext::for_ddl(ctx))
     }
 
     fn create_index_in(
@@ -2939,7 +2951,7 @@ impl KvTable {
         index: KvIndex,
         ctx: &impl tidb_expr::Columns,
         decode_context: &RowDecodeContext,
-    ) -> Result<(), KvTableError> {
+    ) -> Result<usize, KvTableError> {
         // Go's transaction owns backfill rollback. The nontransactional test
         // store needs one COW image for the entire backfill instead of repair
         // writes that can themselves fail or hide the original error.
@@ -2959,7 +2971,7 @@ impl KvTable {
         index: KvIndex,
         ctx: &impl tidb_expr::Columns,
         decode_context: &RowDecodeContext,
-    ) -> Result<(), KvTableError> {
+    ) -> Result<usize, KvTableError> {
         let zone = ctx.time_zone();
         if self
             .indexes
@@ -2973,11 +2985,13 @@ impl KvTable {
         // before an index entry is persisted, including STORED columns whose
         // old bytes may predate this backfill.
         let rows = self.scan_physical_rows_with_handles(decode_context)?;
+        let mut added = 0;
         for (physical_id, handle, row) in &rows {
             let physical_id = *physical_id;
             if !self.index_condition_holds(&index, row, &zone)? {
                 continue;
             }
+            added += 1;
             let duplicate_value = duplicate_value_text(&self.index_values(&index, row));
             for entry in self.index_entry_keys(&index, row, handle, physical_id, &zone)? {
                 let key = Key::from_bytes(entry.key);
@@ -3007,7 +3021,7 @@ impl KvTable {
         self.max_index_id = self.max_index_id.max(index.id);
         self.record_mv_key_part_source(&index);
         self.indexes_mut().push(index);
-        Ok(())
+        Ok(added)
     }
 
     /// Removes the index's physical key ranges without evaluating rows. Go's

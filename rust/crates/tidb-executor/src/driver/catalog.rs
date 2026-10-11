@@ -167,8 +167,8 @@ impl std::fmt::Debug for StatisticsCache {
     }
 }
 
-/// A label-manager failure, which Go reports as the PD call's plain error
-/// (1105). The in-memory manager fails only to encode or decode a rule.
+/// A label-manager or meta-history failure, which Go reports as a plain
+/// error (1105). The in-memory stores fail only to encode or decode JSON.
 fn label_manager_error(error: serde_json::Error) -> DriverError {
     DriverError::DdlCoded {
         errno: 1105,
@@ -219,6 +219,10 @@ pub struct Catalog {
     /// DDL job's label writes are not undone by a rolled-back transaction
     /// (Go writes them to PD, outside the job's transaction).
     label_rules: Arc<std::sync::RwLock<crate::label_manager::MockLabelManager>>,
+    /// Go's meta `DDLJobHistory` hash: every finished DDL job's JSON by job
+    /// ID, store-global like the label rules (Go files it in the job's own
+    /// transaction, which this tier commits as the DDL runs).
+    ddl_job_history: Arc<std::sync::RwLock<BTreeMap<i64, Vec<u8>>>>,
     /// Go's process-global `pdhelper.GlobalPDHelper` approximate-count
     /// cache, scoped to this in-process catalog and shared by its snapshots.
     pd_helper_cache: Arc<std::sync::Mutex<crate::pd_helper::ApproximateTableCountCache>>,
@@ -596,6 +600,7 @@ impl CatalogSnapshot {
             bdr_role: Arc::clone(&owner.bdr_role),
             regions: Arc::clone(&owner.regions),
             label_rules: Arc::clone(&owner.label_rules),
+            ddl_job_history: Arc::clone(&owner.ddl_job_history),
             pd_helper_cache: Arc::clone(&owner.pd_helper_cache),
             local_temporary_ids: owner.local_temporary_ids.clone(),
             databases: Arc::clone(&self.databases),
@@ -782,6 +787,7 @@ impl Default for Catalog {
             bdr_role: Arc::default(),
             regions: Arc::default(),
             label_rules: Arc::default(),
+            ddl_job_history: Arc::default(),
             // Go `defaultPDHelper`'s capacity and TTL.
             pd_helper_cache: Arc::new(std::sync::Mutex::new(
                 crate::pd_helper::ApproximateTableCountCache::new(
@@ -1342,6 +1348,33 @@ impl Catalog {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get_label_rules(rule_ids)
             .map_err(label_manager_error)
+    }
+
+    /// Go `Mutator.AddHistoryDDLJob`: files a finished job under its ID in
+    /// this store's meta history.
+    pub fn add_history_ddl_job(&self, job: &mut tidb_model::Job) -> Result<(), DriverError> {
+        let encoded = job.encode(true).map_err(label_manager_error)?;
+        self.ddl_job_history
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(job.id, encoded);
+        Ok(())
+    }
+
+    /// Go `Mutator.GetLastHistoryDDLJobsIterator`: the meta history,
+    /// newest job first.
+    pub fn last_history_ddl_jobs(&self) -> Result<Vec<tidb_model::Job>, DriverError> {
+        self.ddl_job_history
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .rev()
+            .map(|encoded| {
+                let mut job = tidb_model::Job::default();
+                job.decode(encoded).map_err(label_manager_error)?;
+                Ok(job)
+            })
+            .collect()
     }
 
     /// Go `meta.Mutator.SetBDRRole` / `ClearBDRRole` (the empty role).

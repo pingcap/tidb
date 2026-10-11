@@ -2008,6 +2008,29 @@ pub(crate) fn attributes_rows(
     Ok(rows)
 }
 
+/// Go `DDLJobsReaderExec`: the history newest-first, each job rendered by
+/// `appendJobToChunk` and kept when the session holds any privilege on the
+/// table it names.
+pub(crate) fn ddl_jobs_rows(
+    jobs: &[tidb_model::Job],
+    visibility: &SchemaVisibility,
+) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for job in jobs {
+        let job_rows = crate::ddl_jobs::ddl_job_rows(job, false);
+        let names = |cell: &Datum| match cell {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).to_lowercase(),
+            _ => String::new(),
+        };
+        let (schema, table) = (names(&job_rows[0][1]), names(&job_rows[0][2]));
+        if !visibility.allows(&schema, &table, PrivMask::Any) {
+            continue;
+        }
+        rows.extend(job_rows);
+    }
+    rows
+}
+
 /// Go's `%s` of a decoded JSON value: a string prints as itself, a missing
 /// key as `%!s(<nil>)`.
 fn go_sprint_any(value: Option<&serde_json::Value>) -> String {
@@ -2224,15 +2247,14 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
     // view's own creation time for sys; the TIDB_TABLE_ID blocks the
     // bootstrap assigned per schema). performance_schema's tables are
     // catalog entries and render through the loop above.
-    for (schema, schema_upper, tables, created, is_view) in [
+    for (schema_upper, tables, created, is_view) in [
         (
-            "metrics_schema",
             "METRICS_SCHEMA",
             METRICS_SCHEMA_TABLES,
             "1970-01-01 08:00:00",
             false,
         ),
-        ("sys", "sys", SYS_TABLES, "2026-09-24 18:05:56", true),
+        ("sys", SYS_TABLES, "2026-09-24 18:05:56", true),
     ] {
         let created = tidb_datatype::parse_time(
             created,

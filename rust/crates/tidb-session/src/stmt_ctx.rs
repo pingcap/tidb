@@ -1422,6 +1422,7 @@ impl Session {
                         snapshot.ddl_session_alias.clone(),
                         Vec::new(),
                     )
+                    .with_ddl_job_sink(self.ddl_job_sink.clone())
                     .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
                     .with_like_default_escape(like_default_escape)
                     .with_default_string_match_selectivity(default_string_match_selectivity)
@@ -1543,6 +1544,7 @@ impl Session {
                     snapshot.ddl_session_alias.clone(),
                     Vec::new(),
                 )
+                .with_ddl_job_sink(self.ddl_job_sink.clone())
                 .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
                 .with_like_default_escape(like_default_escape)
                 .with_default_string_match_selectivity(default_string_match_selectivity)

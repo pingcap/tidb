@@ -142,7 +142,7 @@ impl Session {
         name: &str,
         charset: TableCharset,
     ) -> Result<(), DriverError> {
-        let cdc_write_source = self.ddl_cdc_write_source();
+        let context = self.ddl_statement_context();
         self.with_persistent_catalog_mut(|catalog| {
             let Some(current) = catalog.database_charset(name) else {
                 return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
@@ -152,10 +152,11 @@ impl Session {
             if current == charset {
                 return Ok(());
             }
-            tidb_executor::ddl::admit_bdr_job(
+            tidb_executor::ddl::submit_ddl_job(
                 catalog,
-                cdc_write_source,
+                &context,
                 name,
+                "",
                 tidb_model::ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE,
             )?;
             catalog.set_database_charset(name, charset);
@@ -170,7 +171,7 @@ impl Session {
         name: &str,
         policy: &str,
     ) -> Result<(), DriverError> {
-        let cdc_write_source = self.ddl_cdc_write_source();
+        let context = self.ddl_statement_context();
         self.with_persistent_catalog_mut(|catalog| {
             if !catalog.has_database(name) {
                 return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
@@ -178,10 +179,11 @@ impl Session {
                 )));
             }
             let reference = check_and_normalize_placement_policy(catalog, policy)?;
-            tidb_executor::ddl::admit_bdr_job(
+            tidb_executor::ddl::submit_ddl_job(
                 catalog,
-                cdc_write_source,
+                &context,
                 name,
+                "",
                 tidb_model::ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT,
             )?;
             // The job changes nothing when the reference is already this one.

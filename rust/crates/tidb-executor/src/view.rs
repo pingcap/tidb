@@ -58,10 +58,12 @@ pub fn run_create_view_in(
         view.columns.iter().map(|(column, _)| column.as_str()),
         0,
     )?;
-    crate::ddl::bdr::admit(
+    crate::ddl::bdr::submit(
         catalog,
-        ctx.ddl_cdc_write_source(),
+        ctx,
         &database,
+        &name,
+        None,
         &[crate::ddl::bdr::SubmittedJob::new(
             tidb_model::ActionType::ACTION_CREATE_VIEW,
         )],
@@ -298,9 +300,9 @@ pub fn run_drop_view_in(
     names: &[Vec<String>],
     catalog: &mut Catalog,
     current_db: &str,
-    // The session's `tidb_cdc_write_source`, which exempts the jobs from BDR
-    // admission.
-    cdc_write_source: u64,
+    // The statement's context: its `tidb_cdc_write_source` exempts the jobs
+    // from BDR admission, and its job sink records them.
+    ctx: &crate::StmtContext,
 ) -> Result<Vec<String>, DriverError> {
     use crate::ddl::{check_drop_object, drop_objects, DropObjectKind, DropObjectsError};
     let names = names
@@ -321,10 +323,12 @@ pub fn run_drop_view_in(
         };
         check_drop_object(schema, name, DropObjectKind::View, actual, false)?;
         // Go `dropTableObject` submits one ActionDropView per view.
-        crate::ddl::bdr::admit(
+        crate::ddl::bdr::submit(
             catalog,
-            cdc_write_source,
+            ctx,
             schema,
+            name,
+            None,
             &[crate::ddl::bdr::SubmittedJob::new(
                 tidb_model::ActionType::ACTION_DROP_VIEW,
             )],

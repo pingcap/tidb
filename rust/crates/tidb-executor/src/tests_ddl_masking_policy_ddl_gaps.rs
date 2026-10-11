@@ -51,7 +51,7 @@ fn masking_policy_rename_table_without_a_policy_renames_and_reads_back() {
         &mut catalog,
         "test",
         tidb_parser::SqlMode::default(),
-        0,
+        &crate::StmtContext::for_query(),
     )
     .expect("Go: the rename succeeds with no policy present");
 

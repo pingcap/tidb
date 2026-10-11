@@ -927,6 +927,10 @@ pub struct Session {
     /// promoted at the statement boundary for the same reason
     /// `@@last_plan_from_cache` is.
     prev_found_in_binding: bool,
+    /// The jobs the current statement's DDL submitted (Go `doDDLJob2`),
+    /// shared with every statement context built for it and finished into
+    /// the store's DDL history when the statement completes.
+    ddl_job_sink: tidb_executor::ddl::job_history::DdlJobSink,
 }
 
 #[cfg(test)]
@@ -1086,6 +1090,7 @@ impl Session {
             binary_prepared_execution: false,
             found_in_binding: false,
             prev_found_in_binding: false,
+            ddl_job_sink: tidb_executor::ddl::job_history::DdlJobSink::default(),
         }
     }
 
@@ -1232,6 +1237,7 @@ pub mod blacklist;
 mod bootstrap;
 mod classify;
 pub mod cursor;
+mod ddl_jobs;
 mod dispatch;
 mod explain_arm;
 mod gcutil;

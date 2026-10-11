@@ -589,17 +589,18 @@ impl Session {
             self.append_warning(crate::WarningLevel::Warning, warning.code, warning.message);
             return Ok(StmtOutput::Done(false));
         }
-        let cdc_write_source = self.ddl_cdc_write_source();
+        let context = self.ddl_statement_context();
         let unlock = self.get_all_table_locks();
         let (info, lock_tables, first_schema) = self.lock_tables_args(locks)?;
         // Go adds the locks before the job, so a session killed after the
         // job succeeded still releases them on close.
         self.add_table_lock(&lock_tables);
         self.with_persistent_catalog_mut(|catalog| {
-            tidb_executor::ddl::admit_bdr_job(
+            tidb_executor::ddl::submit_ddl_job(
                 catalog,
-                cdc_write_source,
+                &context,
                 &first_schema,
+                "",
                 tidb_model::ActionType::ACTION_LOCK_TABLE,
             )?;
             // `onLockTables`: the session's earlier locks are released first.
@@ -702,17 +703,18 @@ impl Session {
         let Some(cleanup) = self.cleanup_table_lock_args(tables)? else {
             return Ok(StmtOutput::Done(false));
         };
-        let cdc_write_source = self.ddl_cdc_write_source();
+        let context = self.ddl_statement_context();
         let info = self.table_lock_session_info();
         self.with_persistent_catalog_mut(|catalog| {
             let schema = catalog
                 .table_names_by_id(cleanup[0].table_id)
                 .map(|(schema, _)| schema)
                 .unwrap_or_default();
-            tidb_executor::ddl::admit_bdr_job(
+            tidb_executor::ddl::submit_ddl_job(
                 catalog,
-                cdc_write_source,
+                &context,
                 &schema,
+                "",
                 tidb_model::ActionType::ACTION_UNLOCK_TABLE,
             )?;
             unlock_tables(catalog, &cleanup, &info, true);
@@ -755,17 +757,18 @@ impl Session {
         if unlock.is_empty() {
             return Ok(());
         }
-        let cdc_write_source = self.ddl_cdc_write_source();
+        let context = self.ddl_statement_context();
         let info = self.table_lock_session_info();
         self.with_persistent_catalog_mut(|catalog| {
             let schema = catalog
                 .table_names_by_id(unlock[0].table_id)
                 .map(|(schema, _)| schema)
                 .unwrap_or_default();
-            tidb_executor::ddl::admit_bdr_job(
+            tidb_executor::ddl::submit_ddl_job(
                 catalog,
-                cdc_write_source,
+                &context,
                 &schema,
+                "",
                 tidb_model::ActionType::ACTION_UNLOCK_TABLE,
             )?;
             unlock_tables(catalog, &unlock, &info, false);

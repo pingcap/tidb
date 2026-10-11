@@ -207,9 +207,9 @@ pub fn run_rename_table_in(
     // already parsed, so without it a double-quoted name would mean one thing
     // to the session and another here.
     sql_mode: tidb_parser::SqlMode,
-    // The session's `tidb_cdc_write_source`, which exempts the job from BDR
-    // admission.
-    cdc_write_source: u64,
+    // The statement's context: its `tidb_cdc_write_source` exempts the job
+    // from BDR admission, and its job sink records it.
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
@@ -296,18 +296,41 @@ pub fn run_rename_table_in(
     // Go submits one ActionRenameTable, or one ActionRenameTables for a
     // statement naming several pairs; a pair renaming a table to itself
     // submits nothing.
-    if let Some(first) = staged.first() {
-        let action = if pairs.len() == 1 {
-            tidb_model::ActionType::ACTION_RENAME_TABLE
+    if let (Some(first), Some(last)) = (staged.first(), staged.last()) {
+        if pairs.len() == 1 {
+            // Go `renameTable`: the job names the new schema and the old
+            // table.
+            let table_id = catalog.stored_table_id(&first.from_db, &first.from_name);
+            super::bdr::submit(
+                catalog,
+                ctx,
+                &first.to_db,
+                &first.from_name,
+                table_id,
+                &[super::bdr::SubmittedJob::new(
+                    tidb_model::ActionType::ACTION_RENAME_TABLE,
+                )],
+            )?;
         } else {
-            tidb_model::ActionType::ACTION_RENAME_TABLES
-        };
-        super::bdr::admit(
-            catalog,
-            cdc_write_source,
-            &first.from_db,
-            &[super::bdr::SubmittedJob::new(action)],
-        )?;
+            // Go `renameTables`: the job names the last pair's new schema and
+            // no table; it finishes every renamed table.
+            let action = tidb_model::ActionType::ACTION_RENAME_TABLES;
+            super::bdr::admit(
+                catalog,
+                ctx.ddl_cdc_write_source(),
+                &first.from_db,
+                &[super::bdr::SubmittedJob::new(action)],
+            )?;
+            let table_ids = staged
+                .iter()
+                .filter_map(|rename| catalog.stored_table_id(&rename.from_db, &rename.from_name))
+                .collect::<Vec<_>>();
+            ctx.submit_ddl_job(
+                super::job_history::SubmittedDdlJob::new(action, &last.to_db, "")
+                    .with_ids(catalog.database_id(&last.to_db), table_ids.first().copied())
+                    .with_multiple_tables(table_ids),
+            );
+        }
     }
     for rename in &staged {
         // Go `checkAndRenameTables`: the label rules named for the table's
@@ -397,7 +420,14 @@ pub fn run_truncate_table_in(
     // to the session and another here.
     sql_mode: tidb_parser::SqlMode,
 ) -> Result<(), DriverError> {
-    run_truncate_table_in_with_foreign_key_checks(sql, catalog, current_db, sql_mode, true, 0)
+    run_truncate_table_in_with_foreign_key_checks(
+        sql,
+        catalog,
+        current_db,
+        sql_mode,
+        true,
+        &crate::StmtContext::for_query(),
+    )
 }
 
 /// Runs `TRUNCATE TABLE` with the issuing session's `foreign_key_checks`
@@ -410,7 +440,9 @@ pub fn run_truncate_table_in_with_foreign_key_checks(
     current_db: &str,
     sql_mode: tidb_parser::SqlMode,
     foreign_key_checks: bool,
-    cdc_write_source: u64,
+    // The statement's context: its `tidb_cdc_write_source` exempts the job
+    // from BDR admission, and its job sink records it.
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
@@ -448,7 +480,8 @@ pub fn run_truncate_table_in_with_foreign_key_checks(
             return Ok(());
         }
     }
-    let bdr = super::bdr::Admission::new(catalog, cdc_write_source, &database);
+    let bdr = super::bdr::Admission::new(catalog, ctx.ddl_cdc_write_source(), &database);
+    let schema_id = catalog.database_id(&database);
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(&database, &name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{name}"),
@@ -460,6 +493,14 @@ pub fn run_truncate_table_in_with_foreign_key_checks(
     bdr.admit(&[super::bdr::SubmittedJob::new(
         tidb_model::ActionType::ACTION_TRUNCATE_TABLE,
     )])?;
+    ctx.submit_ddl_job(
+        super::job_history::SubmittedDdlJob::new(
+            tidb_model::ActionType::ACTION_TRUNCATE_TABLE,
+            &database,
+            &name,
+        )
+        .with_ids(schema_id, Some(table.table_id)),
+    );
     // TRUNCATE starts the counter over, and on a shared counter that is a
     // write like any other: a failure here must not be reported as a
     // successful truncate whose next insert then collides.
@@ -536,7 +577,13 @@ pub fn run_drop_table_in(
             ))
         }
     };
-    run_drop_table_stmt_in(drop, catalog, current_db, foreign_key_checks, 0)
+    run_drop_table_stmt_in(
+        drop,
+        catalog,
+        current_db,
+        foreign_key_checks,
+        &crate::StmtContext::for_query(),
+    )
 }
 
 /// Execute the already parsed DROP using one resolved temporary/persistent split.
@@ -545,9 +592,9 @@ pub fn run_drop_table_stmt_in(
     catalog: &mut Catalog,
     current_db: &str,
     foreign_key_checks: bool,
-    // The session's `tidb_cdc_write_source`, which exempts the jobs from BDR
-    // admission.
-    cdc_write_source: u64,
+    // The statement's context: its `tidb_cdc_write_source` exempts the jobs
+    // from BDR admission, and its job sink records them.
+    ctx: &crate::StmtContext,
 ) -> Result<Vec<String>, DriverError> {
     // The kind of table each written name currently resolves to, resolved
     // ONCE so the two temporary arms below and the ordinary drop all judge
@@ -653,10 +700,12 @@ pub fn run_drop_table_stmt_in(
             return Ok(false);
         }
         // Go `dropTableObject` submits one ActionDropTable per table.
-        super::bdr::admit(
+        super::bdr::submit(
             catalog,
-            cdc_write_source,
+            ctx,
             schema,
+            name,
+            None,
             &[super::bdr::SubmittedJob::new(
                 tidb_model::ActionType::ACTION_DROP_TABLE,
             )],

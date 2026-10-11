@@ -704,78 +704,28 @@ impl crate::Session {
         })
     }
 
-    /// go `fetchShowDDLJobs` over `mysql.tidb_ddl_history`: the newest
-    /// `job_number` finished jobs (job id descending, so the newest job is
-    /// first), each with go's `buildShowDDLJobsFields` schema. The fork's
-    /// history table carries the job payload in `job_meta` (the other
-    /// cells stay denormalized in `db_name`/`table_name`/`create_time`),
-    /// so each row decodes its job to render the columns go's own history
-    /// table denormalizes. `ADMIN SHOW DDL JOBS 0`/omitted takes all.
+    /// Go `ShowDDLJobsExec`: the newest `job_number` jobs of the DDL history
+    /// (Go's `DefNumHistoryJobs`, ten, when the statement names none), each
+    /// rendered by `appendJobToChunk` with its COMMENTS, a multi-schema
+    /// change followed by its sub-jobs. The statement checks no table
+    /// privilege.
     pub(crate) fn admin_show_ddl_jobs_stmt(
         &mut self,
         show: &tidb_ast::AdminShowDdlJobsStmt,
     ) -> Result<StmtOutput, DriverError> {
-        use tidb_datatype::{Time, TimeType};
-        let ctx = self.statement_context(false);
-        let (columns, raw_rows) = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_select_meta_in(
-                "SELECT job_id, job_meta, db_name, table_name, create_time \
-                 FROM mysql.tidb_ddl_history",
-                catalog,
-                "mysql",
-                &ctx,
-            )
-        })?;
-        let mut rows = Vec::with_capacity(raw_rows.len());
-        for row in raw_rows {
-            // The meta reader decodes a longblob column as a STRING datum
-            // whenever the column's collation is binary (the history table's
-            // job_meta is longblob): accept both string and bytes kinds —
-            // the payload is the encoded job JSON either way.
-            let Some(encoded) = row.get(1).and_then(|value| match value {
-                Datum::Bytes(bytes) => Some(bytes.clone()),
-                Datum::String(text) => Some(text.bytes().to_vec()),
-                _ => None,
-            }) else {
-                continue;
-            };
-            let mut job = tidb_model::Job::default();
-            if let Err(decode_error) = job.decode(&encoded) {
-                eprintln!("DBG admin_show decode failed: {decode_error}");
-                continue;
-            }
-            // go `fetchShowDDLJobs` renders the times through
-            // `oracle.GetTimeFromTS` in the process-local zone; the fork's
-            // stored `create_time` column and the job's own TSOs carry the
-            // same instants.
-            let create_time = row.get(4).cloned().unwrap_or(Datum::Null);
-            let start_time = if job.real_start_ts == 0 {
-                create_time.clone()
-            } else {
-                Datum::new_time(tso_local_time(job.real_start_ts))
-            };
-            rows.push(vec![
-                Datum::Int(job.id),
-                Datum::Bytes(job.schema_name.as_bytes().to_vec()),
-                Datum::Bytes(job.table_name.as_bytes().to_vec()),
-                Datum::Bytes(job.type_.to_string().into_bytes()),
-                Datum::Bytes(job.schema_state.to_string().into_bytes()),
-                Datum::Int(job.schema_id),
-                Datum::Int(job.table_id),
-                Datum::Int(job.row_count),
-                create_time,
-                start_time,
-                row.get(4).cloned().unwrap_or(Datum::Null),
-                Datum::Bytes(job.state.to_string().into_bytes()),
-                Datum::Bytes(Vec::new()),
-            ]);
-        }
-        // History scan order is key order (oldest first); go shows the
-        // newest jobs first. `job_number` takes the newest N.
-        rows.reverse();
-        if show.job_number > 0 {
-            rows.truncate(show.job_number as usize);
-        }
+        /// Go `ddl.DefNumHistoryJobs`.
+        const DEF_NUM_HISTORY_JOBS: usize = 10;
+        let job_number = if show.job_number > 0 {
+            usize::try_from(show.job_number).unwrap_or(usize::MAX)
+        } else {
+            DEF_NUM_HISTORY_JOBS
+        };
+        let rows = self
+            .last_history_ddl_jobs()?
+            .iter()
+            .take(job_number)
+            .flat_map(|job| crate::ddl_jobs::ddl_job_rows(job, true))
+            .collect::<Vec<_>>();
         let varchar = || FieldType::new(FieldTypeCode::Varchar);
         let longlong = || FieldType::new(FieldTypeCode::LongLong);
         let output = StmtOutput::Rows {
@@ -815,24 +765,3 @@ impl crate::Session {
     }
 }
 
-/// The DDL-job TSO→local-DATETIME conversion `ddl_history_table.rs` performs
-/// for its own writes: the physical millis are the TSO's high 46 bits, read
-/// in the process-local zone exactly as go's `oracle.GetTimeFromTS` does.
-fn tso_local_time(timestamp: u64) -> tidb_datatype::Time {
-    use chrono::TimeZone;
-    let milliseconds = i64::try_from(timestamp >> 18).unwrap_or(0);
-    let utc = chrono::Utc
-        .timestamp_millis_opt(milliseconds)
-        .single()
-        .unwrap_or_else(chrono::Utc::now);
-    let core = tidb_datatype::core_time_from_datetime(utc.with_timezone(&chrono::Local));
-    tidb_datatype::Time::new(core, tidb_datatype::TimeType::Timestamp, 6)
-        .unwrap_or_else(|_| {
-            tidb_datatype::Time::new(
-                core,
-                tidb_datatype::TimeType::Timestamp,
-                0,
-            )
-            .expect("fsp 0 is valid")
-        })
-}

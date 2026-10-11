@@ -1994,9 +1994,11 @@ impl Session {
                         ))));
                     };
                     match entry {
+                        // Go prints the object's stored name
+                        // (`TableInfo.Name.O`), not the name as written.
                         tidb_executor::TableEntry::View(view) => Ok((
                             show_create_view_text(view, ansi_quotes),
-                            table_name.clone(),
+                            view.name.clone(),
                             Some((
                                 view.character_set_client.clone(),
                                 view.collation_connection.clone(),
@@ -2016,12 +2018,19 @@ impl Session {
                         tidb_executor::TableEntry::Sequence(_) => Err(DriverError::Schema(
                             SchemaErrorKind::UnknownTable(format!("{database}.{table_name}")),
                         )),
-                        tidb_executor::TableEntry::Kv(table) if !want_sequence => Ok((
-                            show_create_table_text(&database, &table_name, table, &ctx)?,
-                            table_name.clone(),
-                            None,
-                            false,
-                        )),
+                        tidb_executor::TableEntry::Kv(table) if !want_sequence => {
+                            let stored = if table.name().is_empty() {
+                                table_name.as_str()
+                            } else {
+                                table.name()
+                            };
+                            Ok((
+                                show_create_table_text(&database, stored, table, &ctx)?,
+                                stored.to_owned(),
+                                None,
+                                false,
+                            ))
+                        }
                         tidb_executor::TableEntry::Kv(_) => Err(DriverError::Schema(
                             SchemaErrorKind::UnknownTable(format!("{database}.{table_name}")),
                         )),

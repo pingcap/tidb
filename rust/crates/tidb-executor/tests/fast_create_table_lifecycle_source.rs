@@ -84,7 +84,7 @@ fn fast_path_table_lifecycle_round_trips() {
         &mut catalog,
         "db",
         ctx.sql_mode(),
-        0,
+        &tidb_executor::StmtContext::for_query(),
     )
     .unwrap();
     assert!(catalog.drop_database("db"));

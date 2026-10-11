@@ -150,10 +150,13 @@ pub(super) fn exchange_partition_action(
     if with_validation {
         validate_records(&mut partitioned, ordinal, &mut standalone, ctx)?;
     }
-    super::bdr::admit(
+    // Go's job names the standalone table.
+    super::bdr::submit(
         catalog,
-        ctx.ddl_cdc_write_source(),
+        ctx,
         &standalone_db,
+        &standalone_name,
+        None,
         &[super::bdr::SubmittedJob::new(
             tidb_model::ActionType::ACTION_EXCHANGE_TABLE_PARTITION,
         )],

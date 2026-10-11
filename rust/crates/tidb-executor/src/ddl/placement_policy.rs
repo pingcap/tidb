@@ -107,6 +107,14 @@ pub fn run_create_placement_policy(
         name: tidb_ast::CiString::new(statement.name.clone()),
         state: tidb_model::SchemaState::PUBLIC,
     };
+    if catalog.policy(&statement.name).is_none() || statement.or_replace {
+        submit_policy_job(
+            catalog,
+            ctx,
+            &statement.name,
+            tidb_model::ActionType::ACTION_CREATE_PLACEMENT_POLICY,
+        )?;
+    }
     if catalog.create_policy(policy) {
         return Ok(());
     }
@@ -132,6 +140,14 @@ pub fn run_alter_placement_policy(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let settings = settings_from_options(&statement.options)?;
+    if catalog.policy(&statement.name).is_some() {
+        submit_policy_job(
+            catalog,
+            ctx,
+            &statement.name,
+            tidb_model::ActionType::ACTION_ALTER_PLACEMENT_POLICY,
+        )?;
+    }
     if catalog.replace_policy_settings(&statement.name, settings) {
         return Ok(());
     }
@@ -172,6 +188,33 @@ pub fn run_drop_placement_policy(
     if catalog.policy_in_use(&statement.name) {
         return Err(DriverError::PlacementPolicyInUse(statement.name.clone()));
     }
+    submit_policy_job(
+        catalog,
+        ctx,
+        &statement.name,
+        tidb_model::ActionType::ACTION_DROP_PLACEMENT_POLICY,
+    )?;
     catalog.drop_policy(&statement.name);
+    Ok(())
+}
+
+/// Go's placement-policy job submission (`doDDLJob2`): the job carries the
+/// policy as its schema.
+fn submit_policy_job(
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    name: &str,
+    action: tidb_model::ActionType,
+) -> Result<(), DriverError> {
+    super::bdr::admit(
+        catalog,
+        ctx.ddl_cdc_write_source(),
+        name,
+        &[super::bdr::SubmittedJob::new(action)],
+    )?;
+    ctx.submit_ddl_job(
+        super::job_history::SubmittedDdlJob::new(action, name, "")
+            .with_ids(catalog.policy(name).map(|policy| policy.id), None),
+    );
     Ok(())
 }

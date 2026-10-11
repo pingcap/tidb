@@ -34,7 +34,14 @@ fn create(catalog: &mut Catalog, database: &str, table: &str) {
 }
 
 fn rename(catalog: &mut Catalog, sql: &str, database: &str) {
-    ddl::run_rename_table_in(sql, catalog, database, tidb_parser::SqlMode::default(), 0).unwrap();
+    ddl::run_rename_table_in(
+        sql,
+        catalog,
+        database,
+        tidb_parser::SqlMode::default(),
+        &tidb_executor::StmtContext::for_query(),
+    )
+    .unwrap();
 }
 
 // The common statement-level behavior used by TestRenameTable2 and

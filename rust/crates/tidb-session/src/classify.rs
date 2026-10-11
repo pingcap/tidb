@@ -536,7 +536,14 @@ impl Session {
         };
         self.with_catalog_mut(|catalog| {
             // A LOCAL temporary drop submits no DDL job, so no BDR admission.
-            tidb_executor::run_drop_table_stmt_in(&drop, catalog, &database, false, 0).map(|_| ())
+            tidb_executor::run_drop_table_stmt_in(
+                &drop,
+                catalog,
+                &database,
+                false,
+                &tidb_executor::StmtContext::for_query(),
+            )
+            .map(|_| ())
         })
     }
 

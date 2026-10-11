@@ -328,6 +328,7 @@ mod generated_modify;
 mod index_changes;
 pub mod index_prefix;
 mod indexes;
+pub mod job_history;
 pub mod label_rules;
 mod partition_interval;
 mod partition_reorg;
@@ -358,6 +359,7 @@ pub use table_partition::{
 };
 
 pub use bdr::admit_job as admit_bdr_job;
+pub use bdr::submit_job as submit_ddl_job;
 use column_types::{database_charset_of, field_type_of, table_charset_of, NOT_NULL_FLAG};
 pub use indexes::{index_backfill_error, run_create_index_in, run_drop_index_in};
 use table_constraints::{
@@ -2378,7 +2380,28 @@ fn create_table_in(
             reference.id = policy.id;
         }
     }
+    // Go `rewritePartitionQueryString`: the job of a table written with
+    // INTERVAL sugar records the partitions the sugar generated.
+    let interval_rewrite = create
+        .partitioning
+        .as_ref()
+        .and_then(|partitioning| partitioning.method.interval.as_ref())
+        .zip(table.partition())
+        .map(|(interval, partition)| {
+            let definitions = table_partition::append_partition_defs(
+                &partition.definitions,
+                &partition.kind,
+                sql_mode.ansi_quotes,
+            );
+            (
+                String::from_utf8_lossy(interval.original_text()).into_owned(),
+                definitions.trim_start_matches('\n').to_owned(),
+            )
+        });
     register_created_table(catalog, &database, name, table, temporary, ctx)?;
+    if let Some((original, replacement)) = interval_rewrite {
+        ctx.rewrite_ddl_job_query(original, replacement);
+    }
     Ok(true)
 }
 
@@ -2501,10 +2524,12 @@ fn register_created_table(
         catalog.register_local_temporary_in(database, name, table)
     } else {
         // The job Go submits for the built table.
-        bdr::admit(
+        bdr::submit(
             catalog,
-            ctx.ddl_cdc_write_source(),
+            ctx,
             database,
+            name,
+            Some(table.table_id),
             &[bdr::SubmittedJob::new(
                 tidb_model::ActionType::ACTION_CREATE_TABLE,
             )],

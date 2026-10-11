@@ -636,7 +636,11 @@ fn run_alter_table_in_inner(
             });
         }
     }
-    super::bdr::admit(catalog, ctx.ddl_cdc_write_source(), &database, &jobs)?;
+    if actions.len() > 1 && !jobs.is_empty() {
+        super::bdr::submit_multi_schema_change(catalog, ctx, &database, &name, &jobs)?;
+    } else {
+        super::bdr::submit(catalog, ctx, &database, &name, None, &jobs)?;
+    }
     for (action, prepared) in actions.iter().zip(changes) {
         if let Some(change) = prepared.change {
             match change {
@@ -1749,7 +1753,7 @@ fn first_partition_less_than_action(
     catalog: &mut Catalog,
     database: &str,
     table_name: &str,
-    expr: &tidb_ast::Expr,
+    bound: &tidb_ast::NodeBox<tidb_ast::Expr>,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let names = {
@@ -1772,7 +1776,7 @@ fn first_partition_less_than_action(
         };
         let generated = super::partition_interval::generate_from_interval(
             &interval.interval(),
-            super::partition_interval::IntervalStatement::DropFirst(expr),
+            super::partition_interval::IntervalStatement::DropFirst(bound),
             interval.column.as_ref(),
             partition.definitions.len(),
             ctx,
@@ -1794,7 +1798,22 @@ fn first_partition_less_than_action(
             .map(|definition| definition.name.clone())
             .collect::<Vec<_>>()
     };
-    drop_partition_action(catalog, database, table_name, false, &names, ctx)
+    // Go `DropTablePartition` rewrites the job's query: the FIRST clause
+    // becomes the partitions it names.
+    let replacement = format!(
+        "DROP PARTITION {}",
+        names
+            .iter()
+            .map(|name| super::table_partition::escape_identifier(name, ctx.sql_mode().ansi_quotes))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    drop_partition_action(catalog, database, table_name, false, &names, ctx)?;
+    ctx.rewrite_ddl_job_query(
+        String::from_utf8_lossy(bound.original_text()).into_owned(),
+        replacement,
+    );
+    Ok(())
 }
 
 /// Go `AddTablePartitions` for `LAST PARTITION LESS THAN (expr)`
@@ -1804,7 +1823,7 @@ fn last_partition_less_than_action(
     catalog: &mut Catalog,
     database: &str,
     table_name: &str,
-    expr: &tidb_ast::Expr,
+    bound: &tidb_ast::NodeBox<tidb_ast::Expr>,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let definitions = {
@@ -1840,12 +1859,13 @@ fn last_partition_less_than_action(
         }
         super::partition_interval::generate_from_interval(
             &interval.interval(),
-            super::partition_interval::IntervalStatement::AddLast(expr),
+            super::partition_interval::IntervalStatement::AddLast(bound),
             interval.column.as_ref(),
             partition.definitions.len(),
             ctx,
         )?
     };
+    let added = definitions.len();
     add_partition_action(
         catalog,
         database,
@@ -1853,7 +1873,24 @@ fn last_partition_less_than_action(
         false,
         &tidb_ast::AddPartitionSpec::Definitions(definitions),
         ctx,
-    )
+    )?;
+    // Go `AddTablePartitions` rewrites the job's query: the LAST clause
+    // becomes the partitions it added.
+    if let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) {
+        if let Some(partition) = table.partition() {
+            let start = partition.definitions.len().saturating_sub(added);
+            let definitions = super::table_partition::append_partition_defs(
+                &partition.definitions[start..],
+                &partition.kind,
+                ctx.sql_mode().ansi_quotes,
+            );
+            ctx.rewrite_ddl_job_query(
+                String::from_utf8_lossy(bound.original_text()).into_owned(),
+                format!("ADD PARTITION {}", definitions.trim_start_matches('\n')),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Go `rebuildStorageClassForPartitions`: resolves the table's

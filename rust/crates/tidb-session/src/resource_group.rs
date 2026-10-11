@@ -411,14 +411,23 @@ impl Session {
         action: ActionType,
         group: ResourceGroupInfo,
     ) -> Result<StmtOutput, DriverError> {
-        let cdc_write_source = self.ddl_cdc_write_source();
+        let context = self.ddl_statement_context();
         self.with_catalog_mut(|catalog| {
             tidb_executor::ddl::admit_bdr_job(
                 catalog,
-                cdc_write_source,
+                context.ddl_cdc_write_source(),
                 group.name.lowercase(),
                 action,
             )?;
+            // Go's resource-group job carries the group as its schema.
+            context.submit_ddl_job(
+                tidb_executor::ddl::job_history::SubmittedDdlJob::new(
+                    action,
+                    group.name.lowercase(),
+                    "",
+                )
+                .with_ids(Some(group.id), None),
+            );
             if action == ActionType::ACTION_DROP_RESOURCE_GROUP {
                 catalog.drop_resource_group(group.name.lowercase());
             } else {

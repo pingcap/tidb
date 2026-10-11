@@ -983,7 +983,7 @@ fn multi_schema_change_rename_table_then_alter_leaves_consistent_table() {
         &mut catalog,
         "test",
         tidb_parser::SqlMode::default(),
-        0,
+        &crate::StmtContext::for_query(),
     )
     .expect("Go: rename to t1");
     assert_eq!(text_rows(&catalog, "select * from t1"), vec![["1", "2"]]);

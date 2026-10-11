@@ -119,6 +119,25 @@ pub fn admit_job(
     )
 }
 
+/// [`admit_job`]'s admission and then the job's filing in the statement's
+/// job sink, for a DDL the session runs itself.
+pub fn submit_job(
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    schema: &str,
+    table: &str,
+    action: ActionType,
+) -> Result<(), DriverError> {
+    submit(
+        catalog,
+        ctx,
+        schema,
+        table,
+        None,
+        &[SubmittedJob::new(action)],
+    )
+}
+
 /// [`Admission`] for a statement that still holds the catalog.
 pub(crate) fn admit(
     catalog: &Catalog,
@@ -127,6 +146,75 @@ pub(crate) fn admit(
     jobs: &[SubmittedJob],
 ) -> Result<(), DriverError> {
     Admission::new(catalog, cdc_write_source, schema).admit(jobs)
+}
+
+/// Go `doDDLJob2`'s submission of `jobs` on `schema`.`table` (an empty table
+/// for a schema-level job): their BDR admission, then their filing in the
+/// statement's job sink with the IDs they have now (`table_id` overrides a
+/// table not yet registered under its name).
+pub(crate) fn submit(
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    schema: &str,
+    table: &str,
+    table_id: Option<i64>,
+    jobs: &[SubmittedJob],
+) -> Result<(), DriverError> {
+    admit(catalog, ctx.ddl_cdc_write_source(), schema, jobs)?;
+    let (schema_id, table_id) = submitted_ids(catalog, schema, table, table_id);
+    for job in jobs {
+        ctx.submit_ddl_job(
+            super::job_history::SubmittedDdlJob::new(job.action, schema, table)
+                .with_ids(schema_id, table_id),
+        );
+    }
+    Ok(())
+}
+
+/// Go `multiSchemaChange`'s submission: the sub-jobs' BDR admission, then one
+/// ActionMultiSchemaChange job carrying them, after `mergeAddIndex` has moved
+/// two or more ADD INDEX sub-jobs, merged into one, to the end (unless an ADD
+/// FOREIGN KEY needs their order).
+pub(crate) fn submit_multi_schema_change(
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    schema: &str,
+    table: &str,
+    jobs: &[SubmittedJob],
+) -> Result<(), DriverError> {
+    use tidb_model::ActionType as A;
+    admit(catalog, ctx.ddl_cdc_write_source(), schema, jobs)?;
+    let mut sub_jobs = jobs.iter().map(|job| job.action).collect::<Vec<_>>();
+    let add_indexes = sub_jobs
+        .iter()
+        .filter(|action| **action == A::ACTION_ADD_INDEX)
+        .count();
+    if add_indexes > 1 && !sub_jobs.contains(&A::ACTION_ADD_FOREIGN_KEY) {
+        sub_jobs.retain(|action| *action != A::ACTION_ADD_INDEX);
+        sub_jobs.push(A::ACTION_ADD_INDEX);
+    }
+    let (schema_id, table_id) = submitted_ids(catalog, schema, table, None);
+    ctx.submit_ddl_job(
+        super::job_history::SubmittedDdlJob::new(A::ACTION_MULTI_SCHEMA_CHANGE, schema, table)
+            .with_ids(schema_id, table_id)
+            .with_sub_jobs(sub_jobs),
+    );
+    Ok(())
+}
+
+fn submitted_ids(
+    catalog: &Catalog,
+    schema: &str,
+    table: &str,
+    table_id: Option<i64>,
+) -> (Option<i64>, Option<i64>) {
+    let schema_id = catalog.database_id(schema);
+    let table_id = table_id.or_else(|| {
+        (!table.is_empty())
+            .then(|| catalog.stored_table_id(schema, table))
+            .flatten()
+    });
+    (schema_id, table_id)
 }
 
 /// Go `AddColumn`'s `IsAddColumnDenied` check, after the column is built.
