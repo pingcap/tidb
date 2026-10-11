@@ -724,6 +724,39 @@ fn run_alter_table_in_inner(
             tidb_ast::AlterTableAction::Partition(
                 tidb_ast::AlterPartitionAction::LastPartitionLessThan { expr, .. },
             ) => last_partition_less_than_action(catalog, &database, &name, expr, ctx)?,
+            // Go `executor.AlterTable` (`pkg/ddl/executor.go:1763`) refuses
+            // these partition specs outright; the tablespace ones are not in
+            // its switch at all and reach `ErrUnsupportedAlterTableSpec`.
+            tidb_ast::AlterTableAction::Partition(action) => {
+                use tidb_ast::{AlterPartitionAction, PartitionMaintenanceOp};
+                let message = match action {
+                    AlterPartitionAction::MergeFirstPartitionLessThan { .. } => {
+                        "Unsupported MERGE FIRST PARTITION"
+                    }
+                    AlterPartitionAction::SplitMaxValuePartition { .. } => {
+                        "Unsupported SPLIT LAST PARTITION"
+                    }
+                    AlterPartitionAction::Check { .. } => "Unsupported check partition",
+                    AlterPartitionAction::Maintain { operation, .. } => match operation {
+                        PartitionMaintenanceOp::Rebuild => "Unsupported rebuild partition",
+                        PartitionMaintenanceOp::Optimize => "Unsupported optimize partition",
+                        PartitionMaintenanceOp::Repair => "Unsupported repair partition",
+                    },
+                    AlterPartitionAction::ImportTablespace { .. }
+                    | AlterPartitionAction::DiscardTablespace { .. } => {
+                        "Unsupported Unsupported/unknown ALTER TABLE specification"
+                    }
+                    _ => {
+                        return Err(DriverError::unsupported(
+                            "this ALTER TABLE action is not supported yet",
+                        ))
+                    }
+                };
+                return Err(DriverError::DdlCoded {
+                    errno: 8200,
+                    message: message.to_owned(),
+                });
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE action is not supported yet",
@@ -1307,9 +1340,12 @@ fn add_partition_action(
                 unsigned,
             } => {
                 if default_partition.is_some() {
-                    return Err(DriverError::unsupported(
-                        "ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead",
-                    ));
+                    // Go `dbterror.ErrGeneralUnsupportedDDL` (8200,
+                    // "Unsupported %s"), `pkg/ddl/executor.go:2315`.
+                    return Err(DriverError::DdlCoded {
+                        errno: 8200,
+                        message: "Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead".to_owned(),
+                    });
                 }
                 // On the ALTER path the added definitions are checked on
                 // their own, so a collision among them is raised here rather
@@ -1361,9 +1397,12 @@ fn add_partition_action(
                 ..
             } => {
                 if default_partition.is_some() {
-                    return Err(DriverError::unsupported(
-                        "ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead",
-                    ));
+                    // Go `dbterror.ErrGeneralUnsupportedDDL` (8200,
+                    // "Unsupported %s"), `pkg/ddl/executor.go:2315`.
+                    return Err(DriverError::DdlCoded {
+                        errno: 8200,
+                        message: "Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead".to_owned(),
+                    });
                 }
                 let columns = partition
                     .dependencies
@@ -4210,6 +4249,61 @@ pub(super) fn prepare_add_column(
         });
     }
     check_unsupported_column_constraint(def, database, table_name)?;
+    if table
+        .columns()
+        .iter()
+        .any(|column| column.name.eq_ignore_ascii_case(&def.name))
+    {
+        // Go's checkAndCreateNewColumn reports ErrColumnExists right after
+        // `checkUnsupportedColumnConstraint`, then lets an individual IF NOT
+        // EXISTS guard demote that 1060 to a Note and continue the ALTER
+        // (including the grouped ADD COLUMNS form).
+        let duplicate = DriverError::DuplicateColumnName(def.name.clone());
+        if if_not_exists {
+            ctx.append_suppressed(&duplicate);
+            return Ok(None);
+        }
+        return Err(duplicate);
+    }
+    // Go `checkAndCreateNewColumn`: the name's length, once it is new.
+    super::check_too_long_identifier(&def.name)?;
+    // Go `CreateNewColumn`'s option loop, which runs before `columnDefToCol`
+    // builds the column: a generated expression's legality and then the
+    // STORED refusal (a backfill of every existing row), and the defaults
+    // ADD COLUMN cannot backfill, refused by function NAME before the default
+    // itself is validated (`default (upper(uuid()))` is 1674, not 3770).
+    for option in &def.options {
+        match option {
+            tidb_ast::ColumnOption::Generated {
+                expression, stored, ..
+            } => {
+                crate::expression_index::check_illegal_fn_4_generated(
+                    &tidb_hack::go_to_lower(&def.name),
+                    crate::expression_index::GenType::Column,
+                    expression,
+                )?;
+                if *stored {
+                    return Err(DriverError::UnsupportedOnGeneratedColumn(
+                        "Adding generated stored column through ALTER TABLE".to_owned(),
+                    ));
+                }
+            }
+            tidb_ast::ColumnOption::Default(expr) => {
+                if crate::column_default::is_sequence_default_expression(expr) {
+                    return Err(DriverError::AddColumnSequenceDefault(def.name.clone()));
+                }
+                if let tidb_ast::Expr::Func { name, .. } = expr {
+                    if matches!(
+                        name.to_ascii_lowercase().as_str(),
+                        "rand" | "uuid" | "uuid_to_bin" | "replace" | "upper"
+                    ) {
+                        return Err(DriverError::BinlogUnsafeSystemFunction);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     let zone = &ctx.session_zone();
     let mut field_type = field_type_of(
         def,
@@ -4222,9 +4316,6 @@ pub(super) fn prepare_add_column(
     for option in &def.options {
         match option {
             tidb_ast::ColumnOption::Default(expr) => {
-                if crate::column_default::is_sequence_default_expression(expr) {
-                    return Err(DriverError::AddColumnSequenceDefault(def.name.clone()));
-                }
                 default_value = Some(crate::column_default::build_in_context(
                     expr,
                     &field_type,
@@ -4252,20 +4343,8 @@ pub(super) fn prepare_add_column(
                     .map_err(|_| DriverError::InvalidOnUpdate(def.name.clone()))?;
                 field_type.add_flags(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW);
             }
-            // Go `checkAddColumnTooManyColumns`'s neighbour in
-            // `pkg/ddl/column.go`: a STORED generated column added by ALTER
-            // would have to be backfilled into every existing row, which TiDB
-            // refuses outright. Captured: `alter table g add column f int as
-            // (a*2) stored` -> `Error|3106|'Adding generated stored column
-            // through ALTER TABLE' is not supported for generated columns.`
-            // The VIRTUAL form is accepted and computes on read, which is why
-            // only this half is refused.
-            tidb_ast::ColumnOption::Generated { stored: true, .. } => {
-                return Err(DriverError::UnsupportedOnGeneratedColumn(
-                    "Adding generated stored column through ALTER TABLE".to_owned(),
-                ))
-            }
-            tidb_ast::ColumnOption::Generated { stored: false, .. } => {}
+            // Checked, STORED refused, before this loop.
+            tidb_ast::ColumnOption::Generated { .. } => {}
             tidb_ast::ColumnOption::Check(_) => {
                 // Pinned Go `buildColumnAndConstraint` emits this warning
                 // while disabled, then `CreateNewColumn` discards the
@@ -4300,25 +4379,7 @@ pub(super) fn prepare_add_column(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
-    if table
-        .columns
-        .iter()
-        .any(|column| column.name.eq_ignore_ascii_case(&def.name))
-    {
-        // Go's checkAndCreateNewColumn reports ErrColumnExists after the
-        // column definition has passed its own option checks, then lets an
-        // individual IF NOT EXISTS guard demote that 1060 to a Note and
-        // continue the ALTER (including the grouped ADD COLUMNS form).
-        let duplicate = DriverError::DuplicateColumnName(def.name.clone());
-        if if_not_exists {
-            ctx.append_suppressed(&duplicate);
-            return Ok(None);
-        }
-        return Err(duplicate);
-    }
-    // Go `checkAndCreateNewColumn`: the name's length, once it is new; then
-    // `buildColumnAndConstraint` refuses the reserved handle name.
-    super::check_too_long_identifier(&def.name)?;
+    // Go `buildColumnAndConstraint` refuses the reserved handle name.
     if def.name.eq_ignore_ascii_case("_tidb_rowid") {
         return Err(DriverError::WrongColumnName(def.name.to_lowercase()));
     }

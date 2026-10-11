@@ -97,7 +97,7 @@ impl Parser {
             true
         } else if supports_string_options && self.is_kw("UNICODE") {
             self.bump();
-            return Err(self.err_here("[parser:1115]Unknown character set: 'ucs2'"));
+            return Err(self.err_coded(1115, "Unknown character set: 'ucs2'"));
         } else if supports_string_options && self.is_kw("BINARY") {
             self.bump();
             ty.binary = true;

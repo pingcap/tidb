@@ -341,24 +341,57 @@ fn no_clock_err() -> EvalError {
     EvalError::Unsupported("no session clock (SET timestamp)")
 }
 
-/// Parses the source family's optional 0-6 fractional-seconds precision.
-fn parse_fsp_for(vals: &[Datum], function: &'static str) -> Result<Option<u32>, EvalError> {
-    match vals {
-        [] => Ok(None),
-        [Datum::Int(i)] if (0..=6).contains(i) => Ok(Some(*i as u32)),
-        [Datum::UInt(i)] if *i <= 6 => Ok(Some(*i as u32)),
-        // Go `types.ErrTooBigPrecision` (1426), raised at evaluation time by
-        // the clock signatures themselves
-        // (`pkg/expression/builtin_time.go:2730` and siblings).
-        [Datum::Int(i)] if *i > 6 => Err(EvalError::TooBigFsp { fsp: *i, function }),
-        [Datum::UInt(i)] => Err(EvalError::TooBigFsp {
-            fsp: *i as i64,
-            function,
-        }),
-        _ => Err(EvalError::Unsupported(
-            "bad fractional-seconds-precision argument",
-        )),
+/// Go `types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)`: a clock
+/// function's precision outside `0..=MaxInt32`.
+pub(crate) fn fsp_syntax_error() -> EvalError {
+    EvalError::Conversion(tidb_error::terror::TerrorError::registered(
+        tidb_error::terror::TerrorClass::Types,
+        tidb_error::terror::TerrorCode::new(1064),
+        "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use",
+    ))
+}
+
+/// The `baseFunctionClass.funcName` a clock function class reports in
+/// `types.ErrTooBigPrecision`.
+pub(crate) fn clock_function_name(name: &str) -> &'static str {
+    match name {
+        "current_timestamp" => "current_timestamp",
+        "localtime" => "localtime",
+        "localtimestamp" => "localtimestamp",
+        "sysdate" => "sysdate",
+        "curtime" => "curtime",
+        "current_time" => "current_time",
+        "utc_time" => "utc_time",
+        "utc_timestamp" => "utc_timestamp",
+        _ => "now",
     }
+}
+
+/// Parses the source family's optional 0-6 fractional-seconds precision with
+/// the evaluation-time checks of Go's `builtinNowWithArgSig` and siblings
+/// (`pkg/expression/builtin_time.go:2730`): outside `0..=MaxInt32` is
+/// `types.ErrSyntax`, above `MaxFsp` is `types.ErrTooBigPrecision` (1426).
+/// A constant argument already failed these checks at build time
+/// (`getFspByIntArg`); this sees a per-row argument.
+fn parse_fsp_for(vals: &[Datum], function: &'static str) -> Result<Option<u32>, EvalError> {
+    let fsp = match vals {
+        [] => return Ok(None),
+        [Datum::Int(i)] => *i,
+        // Go `EvalInt` reads an unsigned datum's bits as int64.
+        [Datum::UInt(i)] => *i as i64,
+        _ => {
+            return Err(EvalError::Unsupported(
+                "bad fractional-seconds-precision argument",
+            ))
+        }
+    };
+    if fsp > i64::from(i32::MAX) || fsp < 0 {
+        return Err(fsp_syntax_error());
+    }
+    if fsp > 6 {
+        return Err(EvalError::TooBigFsp { fsp, function });
+    }
+    Ok(Some(fsp as u32))
 }
 
 fn parse_fsp_with_null_as_zero(

@@ -180,11 +180,14 @@ fn go_terror_class(errno: u16) -> Option<&'static str> {
     match errno {
         // parser_api.go: ErrUnknownCharacterSet, ErrSyntax and
         // ErrWrongArguments are `terror.ClassParser`.
-        1115 | 1149 | 1210 => Some("parser"),
+        // ErrWrongFieldTerminators, ErrWrongDBName, ErrWrongValue,
+        // ErrUnknownAlterAlgorithm/Lock and ErrInvalidYearColumnLength too.
+        1083 | 1102 | 1115 | 1149 | 1210 | 1525 | 1800 | 1801 | 1818 => Some("parser"),
         // ast/ddl.go: ErrWrongUsage (the generated-column check),
         // ErrNoParts, ErrPartitionColumnList, ErrTooManyValues and
-        // ErrRowSinglePartitionField are `terror.ClassDDL`.
-        1221 | 1504 | 1653 | 1657 | 1658 => Some("ddl"),
+        // ErrRowSinglePartitionField are `terror.ClassDDL`, as is
+        // charset.ErrUnknownCollation.
+        1221 | 1273 | 1479 | 1480 | 1504 | 1653 | 1657 | 1658 | 4113 | 4128 => Some("ddl"),
         // types/etc.go: ErrIllegalValueForType is `terror.ClassTypes`.
         1367 => Some("types"),
         _ => None,

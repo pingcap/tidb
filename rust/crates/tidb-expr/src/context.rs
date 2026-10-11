@@ -307,6 +307,19 @@ pub enum JsonError {
     /// column write path can produce it -- a SQL string literal reaching a
     /// JSON builtin is never empty by the time it is parsed.
     EmptyText,
+    /// `ErrInvalidJSONTextInParam` (3141): an argument's JSON text is invalid,
+    /// as `jsonSchemaValidFunctionClass.verifyArgs` reports an empty constant
+    /// document while building the function.
+    InvalidTextInParam {
+        /// Go's 1-based argument index.
+        argument: usize,
+        /// The lowercase function name Go names in the message.
+        function: &'static str,
+        /// The parser's reason, quoted in the message.
+        reason: &'static str,
+        /// The byte position the reason refers to.
+        position: usize,
+    },
     /// `ErrInvalidJSONPath` (3143), with the 1-based rune position Go's
     /// `parseJSONPathExpr` reports (`jsonPathStream.pos`, or a literal 1 when
     /// the expression does not begin with `$`).
@@ -355,14 +368,6 @@ pub enum JsonError {
         /// The lowercase function name Go names in the message.
         function: &'static str,
     },
-    /// `ErrInvalidJSONContainsPathType` (3150): `JSON_SEARCH`'s `one_or_all`
-    /// argument is neither `'one'` nor `'all'`.
-    ///
-    /// Go raises a DIFFERENT error here than `JSON_CONTAINS_PATH` raises for
-    /// the identical mistake -- `builtinJSONSearchSig.evalJSON` checks the
-    /// argument itself and returns this, so `BinaryJSON.Search`'s own
-    /// `ErrJSONBadOneOrAllArg` is unreachable from SQL.
-    InvalidContainsPathType,
     /// `ErrJSONDocumentTooDeep` (3157): a built document nests past Go's
     /// `maxJSONDepth` (100), which `CreateBinaryJSONWithCheck` refuses.
     DocumentTooDeep,
@@ -374,6 +379,7 @@ impl JsonError {
     pub const fn code(&self) -> u16 {
         match self {
             JsonError::InvalidText | JsonError::EmptyText => 3140,
+            JsonError::InvalidTextInParam { .. } => 3141,
             JsonError::InvalidCharset => 3144,
             // Go raises it where the function is evaluated; a function
             // pushed to the coprocessor reaches the client as 1105 through
@@ -387,7 +393,6 @@ impl JsonError {
             JsonError::VacuousPath => 3153,
             JsonError::InvalidPathArrayCell => 3165,
             JsonError::BadOneOrAllArg { .. } => 3154,
-            JsonError::InvalidContainsPathType => 3150,
             JsonError::DocumentTooDeep => 3157,
         }
     }
@@ -403,6 +408,14 @@ impl JsonError {
             JsonError::InvalidCharset => {
                 "Cannot create a JSON value from a string with CHARACTER SET 'binary'.".to_owned()
             }
+            JsonError::InvalidTextInParam {
+                argument,
+                function,
+                reason,
+                position,
+            } => format!(
+                "Invalid JSON text in argument {argument} to function {function}: \"{reason}\" at position {position}."
+            ),
             JsonError::InvalidPath(position) => format!(
                 "Invalid JSON path expression. The error is around character position {position}."
             ),
@@ -438,9 +451,6 @@ impl JsonError {
             JsonError::BadOneOrAllArg { function } => format!(
                 "The oneOrAll argument to {function} may take these values: 'one' or 'all'."
             ),
-            JsonError::InvalidContainsPathType => {
-                "The second argument can only be either 'one' or 'all'.".to_owned()
-            }
             JsonError::DocumentTooDeep => "The JSON document exceeds the maximum depth.".to_owned(),
         }
     }

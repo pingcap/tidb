@@ -670,31 +670,53 @@ fn timestamp_return_type(args: &[Expression]) -> Option<FieldType> {
     Some(result)
 }
 
-fn clock_fsp(args: &[Expression]) -> Option<i64> {
-    let fsp = match args {
-        [] => 0,
-        [Expression::Constant(constant)] => match &constant.value {
-            Datum::Null => 0,
-            // Go `types.CheckFsp` (`pkg/types/fsp.go:38`), run at BUILD time
-            // on the constant by `nowFunctionClass.getFunction`: above
-            // `MaxFsp` CLAMPS to 6 (`now(7)` answers as `now(6)`), -1 is the
-            // unspecified marker mapping to 0, and any other negative is a
-            // build error surfacing as this tier's None.
-            Datum::Int(value) => {
-                if *value > 6 {
-                    6
-                } else if *value < 0 {
-                    return None;
-                } else {
-                    *value
-                }
-            }
-            Datum::UInt(value) => i64::try_from(*value).ok()?,
-            value => value.sql_string().ok()?.parse().ok()?,
-        },
-        _ => return None,
+/// Go `getFspByIntArg` (`pkg/expression/builtin_time.go:7201`): the result
+/// fsp of the NOW, SYSDATE, CURRENT_TIME, UTC_TIME and UTC_TIMESTAMP function
+/// classes, read at BUILD time from the argument `newBaseBuiltinFuncWithTp`
+/// has already cast to INT. A NULL, or an argument that is not a constant
+/// ("should not happen" in Go; its tests build one), takes fsp 0. Outside
+/// `0..=MaxInt32` is `types.ErrSyntax`; above `MaxFsp` is
+/// `types.ErrTooBigPrecision`, so `NOW(7)` fails even when it is never
+/// evaluated.
+pub(crate) fn get_fsp_by_int_arg(args: &[Expression], func_name: &str) -> Result<i64, EvalError> {
+    let arg = match args {
+        [] => return Ok(0),
+        [arg] => arg,
+        _ => {
+            return Err(EvalError::Conversion(
+                tidb_error::terror::TerrorError::compatible(
+                    tidb_error::terror::TerrorCode::new(1105),
+                    format!(
+                        "Should not happen, the num of argument should be 1, but got {}",
+                        args.len()
+                    ),
+                ),
+            ))
+        }
     };
-    (0..=6).contains(&fsp).then_some(fsp)
+    let Expression::Constant(constant) = arg else {
+        return Ok(0);
+    };
+    // Go `Constant.EvalInt` reads an unsigned datum's bits as int64.
+    let fsp = match &constant.value {
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => *value as i64,
+        _ => return Ok(0),
+    };
+    if fsp > i64::from(i32::MAX) || fsp < 0 {
+        return Err(crate::time_fn::fsp_syntax_error());
+    }
+    if fsp > 6 {
+        return Err(EvalError::TooBigFsp {
+            fsp,
+            function: crate::time_fn::clock_function_name(func_name),
+        });
+    }
+    Ok(fsp)
+}
+
+fn clock_fsp(args: &[Expression]) -> Option<i64> {
+    get_fsp_by_int_arg(args, "").ok()
 }
 
 fn clock_datetime_return_type(args: &[Expression], not_null: bool) -> Option<FieldType> {

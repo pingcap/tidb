@@ -152,7 +152,8 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
                 }
                 let algorithm = parse_partition_count(parser, "KEY ALGORITHM")?;
                 if !(1..=2).contains(&algorithm) {
-                    return Err(parser.err_here("KEY ALGORITHM must be 1 or 2"));
+                    // Go `p.syntaxError(0)`: ErrSyntax (1149).
+                    return Err(parser.err_coded(1149, "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use"));
                 }
                 method.key_algorithm = Some(algorithm);
             }
@@ -499,6 +500,34 @@ fn validate_definition(
         }
         (PartitionType::LIST, PartitionDefinitionClause::Default) => Ok(()),
         (PartitionType::SYSTEM_TIME, PartitionDefinitionClause::History { .. }) => Ok(()),
+        // The rest of Go's `Validate` matrix (ast/ddl.go), each a coded DDL
+        // terror the grammar action appends.
+        (_, PartitionDefinitionClause::LessThan(_)) => Err(parser.err_coded(
+            1480,
+            "Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition",
+        )),
+        (_, PartitionDefinitionClause::In(_) | PartitionDefinitionClause::Default) => {
+            Err(parser.err_coded(
+                1480,
+                "Only LIST PARTITIONING can use VALUES IN in partition definition",
+            ))
+        }
+        (_, PartitionDefinitionClause::History { .. }) => Err(parser.err_coded(
+            4113,
+            "Wrong partitioning type, expected type: `SYSTEM_TIME`",
+        )),
+        (PartitionType::RANGE, PartitionDefinitionClause::None) => Err(parser.err_coded(
+            1479,
+            "Syntax : RANGE PARTITIONING requires definition of VALUES LESS THAN for each partition",
+        )),
+        (PartitionType::LIST, PartitionDefinitionClause::None) => Err(parser.err_coded(
+            1479,
+            "Syntax : LIST PARTITIONING requires definition of VALUES IN for each partition",
+        )),
+        (PartitionType::SYSTEM_TIME, PartitionDefinitionClause::None) => Err(parser.err_coded(
+            4128,
+            "Wrong Partitions: must have at least one HISTORY and exactly one last CURRENT",
+        )),
         _ => Err(parser.err_here("partition definition clause does not match partition method")),
     }
 }

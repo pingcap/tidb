@@ -162,43 +162,6 @@ pub(crate) fn is_disallowed_generated_function(name: &str) -> bool {
         .any(|blocked| name.eq_ignore_ascii_case(blocked))
 }
 
-fn generated_expression_has_disallowed_function(expression: &tidb_ast::Expr) -> bool {
-    struct Scanner {
-        found: bool,
-    }
-
-    impl tidb_ast::Visitor for Scanner {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            let Some(expression) = node.downcast_ref::<tidb_ast::Expr>() else {
-                return false;
-            };
-            self.found = match expression {
-                tidb_ast::Expr::Func { name, .. }
-                | tidb_ast::Expr::GenericFuncCall { name, .. } => {
-                    is_disallowed_generated_function(name)
-                }
-                tidb_ast::Expr::Subquery(_)
-                | tidb_ast::Expr::Exists { .. }
-                | tidb_ast::Expr::InSubquery { .. }
-                | tidb_ast::Expr::CompareSubquery { .. }
-                | tidb_ast::Expr::UserVar(_)
-                | tidb_ast::Expr::SysVar { .. } => true,
-                _ => false,
-            };
-            self.found
-        }
-
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            !self.found
-        }
-    }
-
-    let mut expression = expression.clone();
-    let mut scanner = Scanner { found: false };
-    tidb_ast::Visitable::accept(&mut expression, &mut scanner);
-    scanner.found
-}
-
 /// What makes a column generated: Go `ColumnInfo.GeneratedExprString` /
 /// `GeneratedStored`, plus the built expression Go keeps as `GeneratedExpr`.
 #[derive(Clone, Debug)]
@@ -530,29 +493,6 @@ pub(crate) fn eval_over_row(
     expr.eval(ctx, chunk.get_row(0))
 }
 
-/// Whether `expr` contains a `CAST(... AS ... ARRAY)` anywhere (Go
-/// `illegalFunctionChecker.hasCastArrayFunc`).
-pub(crate) fn expression_has_cast_array(expr: &tidb_ast::Expr) -> bool {
-    struct Finder {
-        found: bool,
-    }
-    impl tidb_ast::Visitor for Finder {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            if let Some(tidb_ast::Expr::Cast(cast)) = node.downcast_mut::<tidb_ast::Expr>() {
-                self.found |= cast.array;
-            }
-            self.found
-        }
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-    let mut finder = Finder { found: false };
-    let mut owned = expr.clone();
-    tidb_ast::Visitable::accept(&mut owned, &mut finder);
-    finder.found
-}
-
 /// Why DDL refused a generated column.
 #[derive(Clone, Debug)]
 pub enum GeneratedDdlError {
@@ -563,21 +503,38 @@ pub enum GeneratedDdlError {
     /// Go `ErrGeneratedColumnNonPrior` (3107): the expression names a
     /// generated column defined at or after this one.
     NonPrior,
-    /// Go `ErrGeneratedColumnFunctionIsNotAllowed` (3102).
-    DisallowedFunction(String),
     /// Go `ErrGeneratedColumnRefAutoInc` (3109): the generated column reads
     /// the table's AUTO_INCREMENT column, which
     /// `tidb_enable_auto_increment_in_generated` did not allow.
     RefAutoInc(String),
-    /// Go `checkIllegalFn4Generated`'s `typeColumn` arm: `CAST(... AS ...
-    /// ARRAY)` belongs to functional indexes only (1235).
-    CastArrayOutsideIndex,
+    /// Go `checkIllegalFn4Generated` for `typeColumn`: a disallowed or
+    /// unknown function (3102), an aggregate (1111), a row value (3764), a
+    /// window function (3593), a wrong argument count (1582), or
+    /// `CAST(... AS ... ARRAY)`, which belongs to functional indexes (1235).
+    IllegalFunction(crate::driver::DriverError),
     /// Go `ErrUnsupportedOnGeneratedColumn` (3106) with the reason as its
     /// argument, e.g. `Defining a virtual generated column as primary key`.
     Unsupported(&'static str),
     /// An expression form this tier cannot build (Go accepts some of these
     /// and refuses others as 3102). Refused rather than mis-evaluated.
     Unbuildable(&'static str),
+    /// An error the expression builder raised with its own MySQL identity,
+    /// which Go's `buildColumnAndConstraint` returns as it is: 1582 for a
+    /// wrong argument count, 3146 for a JSON argument of the wrong type.
+    Eval(tidb_expr::EvalError),
+}
+
+/// The generated-column error for a failed rewrite: an unresolved NAME is
+/// Go's 1054, an error carrying its own identity propagates, and only a form
+/// this tier does not build is [`GeneratedDdlError::Unbuildable`].
+fn rewrite_error(error: tidb_expr::EvalError, missing_name: Option<String>) -> GeneratedDdlError {
+    match (missing_name, error) {
+        (Some(name), _) => GeneratedDdlError::UnknownDependency(name),
+        (None, tidb_expr::EvalError::Unsupported(_)) => {
+            GeneratedDdlError::Unbuildable("this generated-column expression is not supported yet")
+        }
+        (None, error) => GeneratedDdlError::Eval(error),
+    }
 }
 
 /// Go `columnDefToCol`'s generated arm plus `verifyColumnGeneration`: turns
@@ -629,31 +586,20 @@ pub fn build_generated_columns_with_like_default_escape(
             built.push(None);
             continue;
         };
-        if generated_expression_has_disallowed_function(expression) {
-            return Err(GeneratedDdlError::DisallowedFunction(def.name.clone()));
-        }
-        if expression_has_cast_array(expression) {
-            return Err(GeneratedDdlError::CastArrayOutsideIndex);
-        }
+        crate::expression_index::check_illegal_fn_4_generated(
+            &tidb_hack::go_to_lower(&def.name),
+            crate::expression_index::GenType::Column,
+            expression,
+        )
+        .map_err(GeneratedDdlError::IllegalFunction)?;
         let resolver = TableColumnResolver::with_like_default_escape(
             names,
             types,
             zone.clone(),
             like_default_escape,
         );
-        let expr = match tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver) {
-            Ok(expr) => expr,
-            Err(_) => {
-                // An unresolved NAME is Go's 1054; anything else is a form
-                // this tier does not build.
-                return Err(match resolver.missing_name() {
-                    Some(name) => GeneratedDdlError::UnknownDependency(name),
-                    None => GeneratedDdlError::Unbuildable(
-                        "this generated-column expression is not supported yet",
-                    ),
-                });
-            }
-        };
+        let expr = tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver)
+            .map_err(|error| rewrite_error(error, resolver.missing_name()))?;
         // A rewrite can succeed while an unrelated branch of the tree failed
         // to resolve only if the resolver was never consulted, so the missing
         // name is still the authority on 1054.
@@ -742,29 +688,20 @@ pub fn build_added_generated_column_with_like_default_escape(
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
 ) -> Result<GeneratedColumn, GeneratedDdlError> {
-    if generated_expression_has_disallowed_function(expression) {
-        return Err(GeneratedDdlError::DisallowedFunction(name.to_owned()));
-    }
-    if expression_has_cast_array(expression) {
-        return Err(GeneratedDdlError::CastArrayOutsideIndex);
-    }
+    crate::expression_index::check_illegal_fn_4_generated(
+        &tidb_hack::go_to_lower(name),
+        crate::expression_index::GenType::Column,
+        expression,
+    )
+    .map_err(GeneratedDdlError::IllegalFunction)?;
     let resolver = TableColumnResolver::with_like_default_escape(
         names,
         types,
         zone.clone(),
         like_default_escape,
     );
-    let expr = match tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver) {
-        Ok(expr) => expr,
-        Err(_) => {
-            return Err(match resolver.missing_name() {
-                Some(name) => GeneratedDdlError::UnknownDependency(name),
-                None => GeneratedDdlError::Unbuildable(
-                    "this generated-column expression is not supported yet",
-                ),
-            })
-        }
-    };
+    let expr = tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver)
+        .map_err(|error| rewrite_error(error, resolver.missing_name()))?;
     if let Some(name) = resolver.missing_name() {
         return Err(GeneratedDdlError::UnknownDependency(name));
     }
@@ -902,7 +839,7 @@ impl ColumnResolver for TableColumnResolver<'_> {
     /// generated column for DML with `allowBuildCastArray`
     /// (`BuildHiddenColumnInfo`, `resolveGeneratedColumns`); an ordinary
     /// generated column's DDL refuses the cast first
-    /// ([`expression_has_cast_array`]).
+    /// ([`crate::expression_index::check_illegal_fn_4_generated`]).
     fn allow_build_cast_array(&self) -> bool {
         true
     }

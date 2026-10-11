@@ -127,7 +127,7 @@ impl Parser {
                 self.bump(); // COLLATE
                 let raw = self.parse_using_charset_name()?;
                 let collation = canonical_collation(&raw)
-                    .ok_or_else(|| self.err_here(&format!("[ddl:1273]Unknown collation: '{raw}'")))?
+                    .ok_or_else(|| self.err_coded(1273, &format!("Unknown collation: '{raw}'")))?
                     .to_owned();
                 left = Expr::Collate {
                     expr: Box::new(left),

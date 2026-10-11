@@ -356,9 +356,8 @@ impl Parser {
         if self.is_kw("USING") {
             self.bump();
             let raw = self.parse_using_charset_name()?;
-            let charset = canonical_charset(&raw).ok_or_else(|| {
-                self.err_here(&format!("[parser:1115]Unknown character set: '{raw}'"))
-            })?;
+            let charset = canonical_charset(&raw)
+                .ok_or_else(|| self.err_coded(1115, &format!("Unknown character set: '{raw}'")))?;
             args.push(Expr::RawString(charset.to_string()));
         } else {
             args.push(Expr::Null);
@@ -799,6 +798,15 @@ impl Parser {
         ) && self.peek().kind == TokenKind::Keyword
         {
             return Err(self.err_here("reserved keyword cannot be used as a function name"));
+        }
+        // Go `parseScalarFuncCall` routes SYSDATE and CURTIME to
+        // `parseDatetimePrecFuncCall`: an integer literal or nothing, so
+        // `sysdate(-1)` is 1064 near "-1)".
+        if matches!(
+            self.peek().text.to_ascii_uppercase().as_str(),
+            "SYSDATE" | "CURTIME"
+        ) {
+            return self.parse_datetime_precision_func();
         }
         let origin_position = self.peek().offset;
         let name = self.bump().text;

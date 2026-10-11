@@ -795,6 +795,52 @@ fn wrap_time_format_arguments(
     Ok(std::iter::once(first).chain(args).collect())
 }
 
+/// Go's clock function classes (`nowFunctionClass`, `sysDateFunctionClass`,
+/// `currentTimeFunctionClass`, `utcTimeFunctionClass`,
+/// `utcTimestampFunctionClass`) declare the optional precision `ETInt` and
+/// read it back with `getFspByIntArg` while BUILDING: a constant precision is
+/// cast to INT, folded, and range-checked before anything is evaluated.
+fn wrap_clock_fsp_argument(
+    name: &str,
+    args: Vec<Expression>,
+    resolver: &impl ColumnResolver,
+) -> Result<Vec<Expression>, EvalError> {
+    if !matches!(
+        name,
+        "now"
+            | "current_timestamp"
+            | "localtime"
+            | "localtimestamp"
+            | "sysdate"
+            | "curtime"
+            | "current_time"
+            | "utc_time"
+            | "utc_timestamp"
+    ) {
+        return Ok(args);
+    }
+    let args = args
+        .into_iter()
+        .map(|arg| {
+            let is_int = arg
+                .static_type()
+                .is_some_and(|field_type| field_type.eval_type() == EvalType::Int);
+            let mut arg = wrap_with_cast_as_int(arg, None)?;
+            if !is_int {
+                // `BuildCastFunction` folds the cast it built.
+                derive_tree_collation_with_connection(
+                    &mut arg,
+                    resolver.connection_charset_info(),
+                )?;
+                resolver.fold_constant(&mut arg, ConstantFoldMode::Normal);
+            }
+            Ok(arg)
+        })
+        .collect::<Result<Vec<_>, EvalError>>()?;
+    result_type::get_fsp_by_int_arg(&args, name)?;
+    Ok(args)
+}
+
 fn wrap_power_arguments(
     name: &str,
     args: Vec<Expression>,
@@ -1980,7 +2026,10 @@ fn rewrite_leaf_literal(
                 .map(|ft| {
                     if is_json {
                         "utf8mb4".to_owned()
-                    } else if ft.is_string() {
+                    } else if ft.is_string()
+                        || matches!(ft.code(), FieldTypeCode::Enum | FieldTypeCode::Set)
+                    {
+                        // An ENUM/SET column keeps its declared charset too.
                         ft.charset_name().to_owned()
                     } else {
                         "binary".to_owned()
@@ -2003,7 +2052,9 @@ fn rewrite_leaf_literal(
                     .static_type()
                     .is_some_and(|ft| matches!(ft.code(), FieldTypeCode::Enum | FieldTypeCode::Set))
                 {
-                    return Err(EvalError::Unsupported("use collate clause for enum or set"));
+                    return Err(EvalError::NotImplemented(
+                        "use collate clause for enum or set".into(),
+                    ));
                 }
                 let mut expr_type = if is_json {
                     let mut long_blob = FieldType::new(FieldTypeCode::LongBlob);
@@ -2996,6 +3047,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             }
             let rewritten = wrap_power_arguments(&lowered, rewritten, resolver)?;
             let rewritten = wrap_time_format_arguments(&lowered, rewritten, resolver)?;
+            let rewritten = wrap_clock_fsp_argument(&lowered, rewritten, resolver)?;
             // Go's JSON function classes check their arguments' TYPES in
             // `verifyArgs`; a malformed constant path is only an evaluation
             // error (`EXPLAIN` succeeds, an unevaluated call never fails).

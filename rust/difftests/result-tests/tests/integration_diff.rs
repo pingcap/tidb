@@ -732,8 +732,29 @@ fn compare_output(
     }
     match (outcome, recorded_error) {
         // TiDB rejected it and so did we. The wording is TiDB's; only the
-        // rejection is asserted.
-        (Err(_), true) => {
+        // rejection is asserted -- unless `INTEGRATION_COMPARE_ERROR_CODES` is
+        // set, which also compares the recorded error code with ours (a
+        // survey switch while the codes are being aligned).
+        (Err(error), true) => {
+            if std::env::var_os("INTEGRATION_COMPARE_ERROR_CODES").is_some() {
+                let first = recorded.first().map(|line| display_line(line));
+                let want = first.as_deref().and_then(|line| {
+                    line.strip_prefix("Error ")?
+                        .split(|c: char| !c.is_ascii_digit())
+                        .next()?
+                        .parse::<u16>()
+                        .ok()
+                });
+                let ours = error.to_mysql_error();
+                if want.is_some_and(|want| want != ours.code) {
+                    return Err(Some(format!(
+                        "  tidb: {}\n  rust: Error {}: {}",
+                        first.unwrap_or_default(),
+                        ours.code,
+                        ours.message
+                    )));
+                }
+            }
             report.skip(SkipClass::BothRejected);
             Err(None)
         }

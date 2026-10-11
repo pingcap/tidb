@@ -1647,13 +1647,30 @@ pub fn convert_point_in_place(
         }
         Err(error) => {
             *skip_plan_cache_reason = Some(format!("{error} when converting {:?}", p.value));
-            // The hard-failure arms Go tolerates end in `return nil` with
-            // the point untouched (invalid character strings); everything
-            // else surfaces.
-            return match new_tp.code() {
-                FieldTypeCode::String | FieldTypeCode::VarString | FieldTypeCode::Varchar => Ok(()),
-                _ => Err(error.into()),
-            };
+            match error {
+                // Go issue #28424: a DATE[TIME] point outside TIMESTAMP's
+                // range (or an impossible date) cannot match a point select,
+                // so `ErrWrongValue` is ignored and the value Go's
+                // `convertToMysqlTimestamp` returns -- the same time, retyped
+                // -- still compares by its representation.
+                tidb_datatype::DatumValueError::IncorrectTemporal(fallback)
+                    if matches!(p.value, Datum::Time(_))
+                        && new_tp.code() == FieldTypeCode::Timestamp =>
+                {
+                    Datum::Time(fallback)
+                }
+                // The hard-failure arms Go tolerates end in `return nil` with
+                // the point untouched (invalid character strings); everything
+                // else surfaces.
+                error => {
+                    return match new_tp.code() {
+                        FieldTypeCode::String
+                        | FieldTypeCode::VarString
+                        | FieldTypeCode::Varchar => Ok(()),
+                        _ => Err(error.into()),
+                    };
+                }
+            }
         }
     };
     let cmp = p.value.compare(&casted, new_tp.collation())?;

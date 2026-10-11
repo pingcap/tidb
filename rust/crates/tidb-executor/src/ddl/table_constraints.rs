@@ -100,9 +100,12 @@ pub(crate) fn table_indexes(
         let offset = columns
             .iter()
             .position(|col| col.name.original().eq_ignore_ascii_case(name))
-            .ok_or(DriverError::unsupported(
-                "an index names a column the table does not define",
-            ))?;
+            // Go `buildIndexColumns`: `ErrKeyColumnDoesNotExits` (1072)
+            // with its own "column does not exist" text.
+            .ok_or_else(|| DriverError::DdlCoded {
+                errno: 1072,
+                message: format!("column does not exist: {name}"),
+            })?;
         if columns[offset].field_type.code() == FieldTypeCode::Json {
             return Err(DriverError::JsonUsedInKey(
                 columns[offset].name.original().to_owned(),
@@ -1053,9 +1056,9 @@ pub(crate) fn primary_key_column(
                             .iter()
                             .find(|column| column.name.original().eq_ignore_ascii_case(&def.name))
                             .map(|column| &column.field_type)
-                            .ok_or(DriverError::unsupported(
-                                "the primary key names a column the table does not define",
-                            ))?;
+                            .ok_or_else(|| {
+                                DriverError::ForeignKeyChildColumnMissing(def.name.clone())
+                            })?;
                         let prefix_length =
                             check_inline_key_part(field_type, &def.name, true, max_index_length)?;
                         found = Some(PrimaryKeyDecl {
@@ -1112,9 +1115,9 @@ pub(crate) fn primary_key_column(
                 .iter()
                 .find(|column| column.name.original().eq_ignore_ascii_case(name))
                 .map(|column| &column.field_type)
-                .ok_or(DriverError::unsupported(
-                    "the primary key names a column the table does not define",
-                ))?;
+                // Go `CheckPKOnGeneratedColumn`: `ErrKeyColumnDoesNotExits`
+                // (1072), "Key column '%s' doesn't exist in table".
+                .ok_or_else(|| DriverError::ForeignKeyChildColumnMissing(name.clone()))?;
             let prefix_length = crate::ddl::index_prefix::key_part_length_with_max(
                 field_type,
                 crate::ddl::index_prefix::IndexedColumn::Named(name),

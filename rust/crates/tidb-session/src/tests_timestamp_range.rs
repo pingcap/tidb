@@ -379,3 +379,34 @@ fn timestampadd_checks_a_timestamp_result_in_the_session_zone() {
         [["2025-03-30 02:59:59"]]
     );
 }
+
+/// Go issue #28424 (`convertPointInPlace`): a DATETIME range point outside
+/// TIMESTAMP's window converts with `ErrWrongValue`, which the ranger ignores,
+/// keeping the same time retyped as its bound -- so the comparison answers
+/// instead of failing the statement. Recorded in
+/// `tests/integrationtest/r/planner/core/integration.result`.
+#[test]
+fn a_range_point_outside_the_timestamp_window_still_bounds_the_scan() {
+    let mut session = session();
+    set_zone(&mut session, "+00:00");
+    session.run("create table t28424 (t timestamp)").unwrap();
+    session
+        .run(r#"insert into t28424 values ("2038-01-19 03:14:07"), ("1970-01-01 00:00:01")"#)
+        .unwrap();
+    let both = [["2038-01-19 03:14:07"], ["1970-01-01 00:00:01"]];
+    let none: [[&str; 1]; 0] = [];
+    for (predicate, all) in [
+        (r#"t != "2038-1-19 3:14:08""#, true),
+        (r#"t <= "2038-1-19 3:14:08""#, true),
+        (r#"t > "2038-1-19 3:14:08""#, false),
+        (r#"t < "1970-1-1 0:0:0""#, false),
+        (r#"t >= "1970-1-1 0:0:0""#, true),
+    ] {
+        let rows = row_text(session.run(&format!("select * from t28424 where {predicate}")));
+        if all {
+            assert_eq!(rows, both, "{predicate}");
+        } else {
+            assert_eq!(rows, none, "{predicate}");
+        }
+    }
+}

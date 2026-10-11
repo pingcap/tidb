@@ -1264,10 +1264,9 @@ fn json_search_walk_is_not_the_extract_walk() {
     );
 }
 
-/// `one_or_all` is a USER error, not an evaluator gap, and Go raises a
-/// different code per function: 3154 `ErrJSONBadOneOrAllArg` from
-/// `builtinJSONContainsPathSig.evalInt`, 3150
-/// `ErrInvalidJSONContainsPathType` from `builtinJSONSearchSig.evalJSON`.
+/// `one_or_all` is a USER error, not an evaluator gap: 3154
+/// `ErrJSONBadOneOrAllArg`, from `builtinJSONContainsPathSig.evalInt` and,
+/// for JSON_SEARCH, from `BinaryJSON.Search` under Go's vectorized evaluation.
 #[test]
 fn json_one_or_all_argument_errors() {
     use crate::{EvalError, JsonError};
@@ -1283,7 +1282,9 @@ fn json_one_or_all_argument_errors() {
     );
     assert_eq!(
         call_result("JSON_SEARCH", &[s(r#"{"a":"x"}"#), s("bogus"), s("x")]),
-        Err(EvalError::Json(JsonError::InvalidContainsPathType))
+        Err(EvalError::Json(JsonError::BadOneOrAllArg {
+            function: "json_search"
+        }))
     );
     assert_eq!(
         JsonError::BadOneOrAllArg {
@@ -1292,7 +1293,6 @@ fn json_one_or_all_argument_errors() {
         .code(),
         3154
     );
-    assert_eq!(JsonError::InvalidContainsPathType.code(), 3150);
 }
 
 /// Source-shaped scalar table from `TestJSONSetInsertReplace` in

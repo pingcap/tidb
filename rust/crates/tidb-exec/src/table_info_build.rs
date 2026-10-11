@@ -1666,10 +1666,10 @@ fn generated_column_admission_error(
             tidb_error::tidb::errcode::ErrGeneratedColumnNonPrior,
             "Generated column can refer only to generated columns defined prior to it.",
         ),
-        GeneratedDdlError::DisallowedFunction(column) => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrGeneratedColumnFunctionIsNotAllowed,
-            format!("Expression of generated column '{column}' contains a disallowed function."),
-        ),
+        GeneratedDdlError::IllegalFunction(error) => {
+            let error = error.to_mysql_error();
+            DdlAdmissionError::with_code(error.code, error.message)
+        }
         GeneratedDdlError::RefAutoInc(column) => DdlAdmissionError::with_code(
             3109,
             format!("Generated column '{column}' cannot refer to auto-increment column."),
@@ -1678,11 +1678,11 @@ fn generated_column_admission_error(
             tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
             format!("'{reason}' is not supported for generated columns."),
         ),
-        GeneratedDdlError::CastArrayOutsideIndex => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrNotSupportedYet,
-            "This version of TiDB doesn't yet support 'Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions'",
-        ),
         GeneratedDdlError::Unbuildable(reason) => DdlAdmissionError::unsupported(reason),
+        GeneratedDdlError::Eval(error) => {
+            let error = tidb_executor::DriverError::Exec(error.into()).to_mysql_error();
+            DdlAdmissionError::with_code(error.code, error.message)
+        }
     }
 }
 

@@ -160,7 +160,57 @@ pub(crate) fn verify_json_function_args(
         }
         _ => return Ok(()),
     };
-    verify_json_args_type(function, use_json_err, args, indexes)
+    verify_json_args_type(function, use_json_err, args, indexes)?;
+    if name == "json_schema_valid" {
+        verify_json_schema_valid_constants(args)?;
+    }
+    Ok(())
+}
+
+/// `jsonSchemaValidFunctionClass.verifyArgs`: a non-NULL constant first
+/// argument with no bytes is `ErrInvalidJSONTextInParam` for argument 1, and
+/// only then is the second argument checked the same way
+/// (`JSON_SCHEMA_VALID(NULL, '')` is NULL, `JSON_SCHEMA_VALID('', NULL)` is
+/// the error).
+fn verify_json_schema_valid_constants(
+    args: &[crate::expression::Expression],
+) -> Result<(), EvalError> {
+    fn constant_value(arg: Option<&crate::expression::Expression>) -> Option<&Datum> {
+        match arg {
+            Some(crate::expression::Expression::Constant(constant)) => Some(&constant.value),
+            _ => None,
+        }
+    }
+    // Go `Datum.GetBytes` is empty for a string or bytes payload of length
+    // zero; the document types never reach here empty.
+    fn is_empty_document(value: &Datum) -> bool {
+        match value {
+            Datum::String(text) => text.bytes().is_empty(),
+            Datum::Bytes(bytes) => bytes.is_empty(),
+            _ => false,
+        }
+    }
+    let empty = |argument| {
+        EvalError::Json(crate::context::JsonError::InvalidTextInParam {
+            argument,
+            function: "json_schema_valid",
+            reason: "The document is empty.",
+            position: 0,
+        })
+    };
+    let Some(first) = constant_value(args.first()) else {
+        return Ok(());
+    };
+    if matches!(first, Datum::Null) {
+        return Ok(());
+    }
+    if is_empty_document(first) {
+        return Err(empty(1));
+    }
+    if constant_value(args.get(1)).is_some_and(is_empty_document) {
+        return Err(empty(2));
+    }
+    Ok(())
 }
 pub(crate) use report::JsonSchemaCache;
 pub(crate) use value::{cast_as_json, cast_as_json_typed, cast_as_json_value_typed};

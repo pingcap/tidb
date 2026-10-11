@@ -342,8 +342,9 @@ pub enum DriverError {
         /// The parent table being inspected.
         table: String,
     },
-    /// Go `ErrKeyColumnDoesNotExits` (1072): a FOREIGN KEY names a child
-    /// column that is absent from the table being created or altered.
+    /// Go `ErrKeyColumnDoesNotExits` (1072): a FOREIGN KEY or PRIMARY KEY
+    /// names a column that is absent from the table being created or altered
+    /// ("Key column '%s' doesn't exist in table").
     ForeignKeyChildColumnMissing(String),
     /// Go `ErrBlobKeyWithoutLength` (1170).
     BlobKeyWithoutLength(String),
@@ -574,6 +575,9 @@ pub enum DriverError {
     /// Go `dbterror.ErrFunctionalIndexRowValueIsNotAllowed` (3800), carrying
     /// the index name.
     FunctionalIndexRowValue(String),
+    /// Go `dbterror.ErrGeneratedColumnRowValueIsNotAllowed` (3764), carrying
+    /// the column name.
+    GeneratedColumnRowValue(String),
     /// Go `dbterror.ErrExpressionIndexCanNotRefer` (3754), carrying the index
     /// name: the expression reads an `AUTO_INCREMENT` column.
     ExpressionIndexCanNotRefer(String),

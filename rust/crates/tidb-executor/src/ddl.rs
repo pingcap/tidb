@@ -1220,13 +1220,6 @@ fn create_table_in(
 
     let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name);
-    // Go `createSessionTemporaryTable` (`pkg/executor/ddl.go:301`) asks
-    // `getLocalTemporaryTable`, NOT the infoschema: a local temporary table
-    // collides only with another LOCAL temporary table of the same name.
-    // `CREATE TEMPORARY TABLE t` in a schema that already has a permanent `t`
-    // therefore succeeds and SHADOWS it for this session, which is MySQL's
-    // rule and the reason the shadowed entry has to be preserved rather than
-    // overwritten (see `Catalog::register_local_temporary_in`).
     // Go's preprocessor resolves a LIKE source before the DDL layer checks
     // whether the target already exists.  Validate the source now so a
     // missing table (1146) or wrong object (1347) wins over a target 1050,
@@ -1236,26 +1229,22 @@ fn create_table_in(
         create_like_source(source_db, source_name, catalog)?;
     }
 
-    let name_taken = if temporary == tidb_model::TempTableType::LOCAL {
-        matches!(catalog.table_in(&database, name), Some(crate::TableEntry::Kv(table))
-            if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
-    } else {
-        catalog.contains_in(&database, name)
-    };
-    if name_taken {
-        let duplicate = DriverError::Schema(crate::SchemaErrorKind::TableExists(format!(
-            "{database}.{name}"
-        )));
-        if create.if_not_exists {
-            // Go's `createTableWithInfo` appends ErrTableExists (1050) as a
-            // Note for IF NOT EXISTS, including the CREATE TABLE ... LIKE
-            // form, then returns without replacing the existing table.
-            ctx.append_suppressed(&duplicate);
-            return Ok(false);
-        }
-        // Go `infoschema.ErrTableExists` (1050) prints the db-qualified name:
-        // "Table 'test.t1' already exists".
-        return Err(duplicate);
+    // Go `createSessionTemporaryTable` (`pkg/executor/ddl.go:294`) asks
+    // whether a LOCAL temporary target exists BEFORE building it; every other
+    // target is checked by `createTableWithInfoJob` only after
+    // `BuildTableInfoWithStmt`/`checkTableInfoValidWithStmt`, so a build error
+    // (`unique key(a) clustered` is 8200) outranks 1050 there.
+    if temporary == tidb_model::TempTableType::LOCAL
+        && !create_target_is_free(
+            catalog,
+            &database,
+            name,
+            temporary,
+            create.if_not_exists,
+            ctx,
+        )?
+    {
+        return Ok(false);
     }
 
     // `CREATE TABLE ... LIKE` copies a built table rather than building one
@@ -1295,6 +1284,18 @@ fn create_table_in(
             if source.placement_policy().is_some() {
                 return Err(DriverError::OptOnTemporaryTable("placement"));
             }
+        }
+        if temporary != tidb_model::TempTableType::LOCAL
+            && !create_target_is_free(
+                catalog,
+                &database,
+                name,
+                temporary,
+                create.if_not_exists,
+                ctx,
+            )?
+        {
+            return Ok(false);
         }
         let partitions = create_like_source(&source_db, &source_name, catalog)?
             .partition()
@@ -1510,9 +1511,7 @@ fn create_table_in(
                     columns
                         .iter()
                         .position(|col| col.name.original().eq_ignore_ascii_case(name))
-                        .ok_or(DriverError::unsupported(
-                            "the primary key names a column the table does not define",
-                        ))?,
+                        .ok_or_else(|| DriverError::ForeignKeyChildColumnMissing(name.clone()))?,
                 );
             }
             offsets
@@ -2318,6 +2317,18 @@ fn create_table_in(
             }
         }
     }
+    if temporary != tidb_model::TempTableType::LOCAL
+        && !create_target_is_free(
+            catalog,
+            &database,
+            name,
+            temporary,
+            create.if_not_exists,
+            ctx,
+        )?
+    {
+        return Ok(false);
+    }
     check_table_info_valid_extra(
         catalog,
         name,
@@ -2383,6 +2394,46 @@ pub fn check_too_long_identifier(name: &str) -> Result<(), DriverError> {
         return Err(DriverError::TooLongIdent(name.to_owned()));
     }
     Ok(())
+}
+
+/// Whether a CREATE TABLE target name is free. A taken name is Go's
+/// `infoschema.ErrTableExists` (1050), which prints the db-qualified name
+/// ("Table 'test.t1' already exists"); under `IF NOT EXISTS` it is appended as
+/// a Note instead and the statement returns without replacing the existing
+/// table (`Ok(false)`), the CREATE TABLE ... LIKE form included.
+///
+/// Go `createSessionTemporaryTable` (`pkg/executor/ddl.go:301`) asks
+/// `getLocalTemporaryTable`, NOT the infoschema: a local temporary table
+/// collides only with another LOCAL temporary table of the same name.
+/// `CREATE TEMPORARY TABLE t` in a schema that already has a permanent `t`
+/// therefore succeeds and SHADOWS it for this session, which is MySQL's rule
+/// and the reason the shadowed entry has to be preserved rather than
+/// overwritten (see `Catalog::register_local_temporary_in`).
+fn create_target_is_free(
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+    temporary: tidb_model::TempTableType,
+    if_not_exists: bool,
+    ctx: &crate::StmtContext,
+) -> Result<bool, DriverError> {
+    let name_taken = if temporary == tidb_model::TempTableType::LOCAL {
+        matches!(catalog.table_in(database, name), Some(crate::TableEntry::Kv(table))
+            if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
+    } else {
+        catalog.contains_in(database, name)
+    };
+    if !name_taken {
+        return Ok(true);
+    }
+    let duplicate = DriverError::Schema(crate::SchemaErrorKind::TableExists(format!(
+        "{database}.{name}"
+    )));
+    if if_not_exists {
+        ctx.append_suppressed(&duplicate);
+        return Ok(false);
+    }
+    Err(duplicate)
 }
 
 /// Go `checkTableInfoValidExtra`'s name, duplicate-column and count checks
@@ -2547,20 +2598,16 @@ pub(crate) fn generated_column_error(
             clause: "generated column function".to_owned(),
         },
         GeneratedDdlError::NonPrior => DriverError::GeneratedColumnNonPrior,
-        GeneratedDdlError::DisallowedFunction(column) => {
-            DriverError::GeneratedColumnFunctionNotAllowed(column)
-        }
+        GeneratedDdlError::IllegalFunction(error) => error,
         GeneratedDdlError::RefAutoInc(column) => DriverError::DdlCoded {
             errno: 3109,
             message: format!("Generated column '{column}' cannot refer to auto-increment column."),
         },
-        GeneratedDdlError::CastArrayOutsideIndex => DriverError::NotSupportedYet(
-            "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions".into(),
-        ),
         GeneratedDdlError::Unsupported(reason) => {
             DriverError::UnsupportedOnGeneratedColumn(reason.to_owned())
         }
         GeneratedDdlError::Unbuildable(reason) => DriverError::unsupported(reason),
+        GeneratedDdlError::Eval(error) => DriverError::Exec(error.into()),
     }
 }
 

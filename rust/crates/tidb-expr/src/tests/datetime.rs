@@ -130,19 +130,60 @@ fn now_current_timestamp() {
         e_at("now(8)", &clock),
         "TooBigFsp { fsp: 8, function: \"now\" }"
     );
-    assert_eq!(
-        e_at("now(-2)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
-    );
+    // Go `getFspByIntArg` refuses a negative precision while BUILDING
+    // the function, with `types.ErrSyntax`.
+    assert!(e_at("now(-2)", &clock).contains("types:1064"));
     // Additional boundary neighbors retain the same contract.
     assert_eq!(
         e_at("now(7)", &clock),
         "TooBigFsp { fsp: 7, function: \"now\" }"
     );
-    assert_eq!(
-        e_at("now(-1)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
-    );
+    assert!(e_at("now(-1)", &clock).contains("types:1064"));
+}
+
+/// Go `getFspByIntArg` (`builtin_time.go:7201`) checks a clock function's
+/// constant precision while BUILDING the function, after
+/// `newBaseBuiltinFuncWithTp` cast it to INT: the rewrite alone fails.
+#[test]
+fn clock_precision_is_checked_at_build_time() {
+    fn build(expr: &str) -> Result<crate::expression::Expression, EvalError> {
+        let stmt = tidb_parser::parse(&format!("select {expr}")).expect("parse");
+        let Stmt::Query(query) = stmt else {
+            panic!("expected Query")
+        };
+        let QueryStmt::Select(s) = query.into_inner() else {
+            panic!("expected Select")
+        };
+        let SelectField::Expr { expr, .. } = &s.fields[0] else {
+            panic!("expected expr field")
+        };
+        crate::rewriter::rewrite_expr(expr)
+    }
+    assert!(matches!(
+        build("now(7)"),
+        Err(EvalError::TooBigFsp {
+            fsp: 7,
+            function: "now"
+        })
+    ));
+    assert!(matches!(
+        build("curtime(7)"),
+        Err(EvalError::TooBigFsp {
+            fsp: 7,
+            function: "curtime"
+        })
+    ));
+    for expr in [
+        "now(18446744073709551615)",
+        "utc_timestamp(2147483648)",
+        "sysdate(2147483648)",
+    ] {
+        let result = build(expr);
+        assert!(
+            matches!(&result, Err(EvalError::Conversion(error)) if error.rfc_code() == "types:1064"),
+            "{expr}: {result:?}"
+        );
+    }
 }
 
 /// `pkg/expression/helper_test.go::TestCurrentTimestampTimeZone`.

@@ -2060,7 +2060,7 @@ fn is_extra_column_name(lower: &str) -> bool {
 
 /// Go `plannererrors.ErrAmbiguous.GenWithStackByArgs(name, "from clause")`.
 fn ambiguous(column: &str) -> PlanError {
-    PlanError::internal(format!("Column '{column}' in from clause is ambiguous"))
+    PlanError::ambiguous_column_in(column, "from clause")
 }
 
 /// Go `plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, name.O)`.

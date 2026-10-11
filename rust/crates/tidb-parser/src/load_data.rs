@@ -290,8 +290,9 @@ impl Parser {
 
     fn validate_load_field_separator(&self, value: &str) -> PResult<()> {
         if value != "\\" && value.len() > 1 {
-            return Err(self.err_here(
-                "[parser:1083]Field separator argument is not what is expected; check the manual",
+            return Err(self.err_coded(
+                1083,
+                "Field separator argument is not what is expected; check the manual",
             ));
         }
         Ok(())

@@ -69,24 +69,26 @@ impl Parser {
                 self.expect_kw("SET")?;
                 self.accept_optional_equals();
                 let raw = self.parse_table_option_word()?;
-                let charset = canonical_charset(&raw)
-                    .ok_or_else(|| self.err_here("unknown character set"))?;
+                let charset = canonical_charset(&raw).ok_or_else(|| {
+                    self.err_coded(1115, &format!("Unknown character set: '{raw}'"))
+                })?;
                 Some(TableOption::CharacterSet(charset.to_ascii_uppercase()))
             }
             "CHARSET" => {
                 self.bump();
                 self.accept_optional_equals();
                 let raw = self.parse_table_option_word()?;
-                let charset = canonical_charset(&raw)
-                    .ok_or_else(|| self.err_here("unknown character set"))?;
+                let charset = canonical_charset(&raw).ok_or_else(|| {
+                    self.err_coded(1115, &format!("Unknown character set: '{raw}'"))
+                })?;
                 Some(TableOption::CharacterSet(charset.to_ascii_uppercase()))
             }
             "COLLATE" => {
                 self.bump();
                 self.accept_optional_equals();
                 let raw = self.parse_table_option_word()?;
-                let collation =
-                    canonical_collation(&raw).ok_or_else(|| self.err_here("unknown collation"))?;
+                let collation = canonical_collation(&raw)
+                    .ok_or_else(|| self.err_coded(1273, &format!("Unknown collation: '{raw}'")))?;
                 Some(TableOption::Collate(collation.to_ascii_uppercase()))
             }
             "ENCRYPTION" => {
@@ -94,7 +96,11 @@ impl Parser {
                 self.accept_optional_equals();
                 let value = self.parse_table_option_string("ENCRYPTION")?;
                 if !matches!(value.as_str(), "Y" | "y" | "N" | "n") {
-                    return Err(self.err_here("ENCRYPTION value must be Y or N"));
+                    // Go `ddl_table_option_parser.go`: ErrWrongValue (1525).
+                    return Err(self.err_coded(
+                        1525,
+                        &format!("Incorrect argument (should be Y or N) value: '{value}'"),
+                    ));
                 }
                 Some(TableOption::Encryption(value))
             }

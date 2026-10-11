@@ -192,14 +192,22 @@ fn uuid_to_bin(value: &Datum, flag: Option<&Datum>) -> Result<Datum, EvalError> 
     let Some(input) = eval_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
+    // Go `builtinUUIDToBinSig.evalString`: surrounding spaces and an
+    // unparseable UUID are both `errWrongValueForType("string", val,
+    // "uuid_to_bin")` (1411).
+    let invalid = || EvalError::WrongValueForType {
+        value_class: "string",
+        value: String::from_utf8_lossy(&input).into_owned(),
+        function: "uuid_to_bin",
+    };
     if std::str::from_utf8(&input)
         .map(|text| text.trim() != text)
         .unwrap_or(false)
     {
-        return Err(EvalError::Unsupported("invalid UUID_TO_BIN whitespace"));
+        return Err(invalid());
     }
     let Some(uuid) = parse_uuid(&input) else {
-        return Err(EvalError::Unsupported("invalid UUID for UUID_TO_BIN"));
+        return Err(invalid());
     };
     let mut output = uuid;
     if eval_int_flag(flag) != 0 {
@@ -400,7 +408,12 @@ fn uuid_version(value: &Datum) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     let Some(bytes) = parse_uuid(value.as_bytes()) else {
-        return Err(EvalError::Unsupported("invalid UUID for UUID_VERSION"));
+        // Go `errWrongValueForType("string", val, "uuid_version")` (1411).
+        return Err(EvalError::WrongValueForType {
+            value_class: "string",
+            value,
+            function: "uuid_version",
+        });
     };
     Ok(Datum::Int(i64::from(bytes[6] >> 4)))
 }
@@ -414,14 +427,18 @@ fn uuid_version(value: &Datum) -> Result<Datum, EvalError> {
 /// decoding below is a direct port of `google/uuid.UUID.Time` and
 /// `Time.UnixTime` from TiDB's pinned module: the 1582 UUID epoch is converted
 /// to Unix microseconds before making a fixed six-place decimal. Invalid text
-/// remains an evaluator error, matching TiDB's error outcome; `EvalError`
-/// cannot yet preserve TiDB error 1411's diagnostic payload.
+/// is Go's 1411.
 fn uuid_timestamp(value: &Datum) -> Result<Datum, EvalError> {
     let Some(value) = coerce_str(value)? else {
         return Ok(Datum::Null);
     };
     let Some(uuid) = parse_uuid(value.as_bytes()) else {
-        return Err(EvalError::Unsupported("invalid UUID for UUID_TIMESTAMP"));
+        // Go `errWrongValueForType("string", val, "uuid_timestamp")` (1411).
+        return Err(EvalError::WrongValueForType {
+            value_class: "string",
+            value,
+            function: "uuid_timestamp",
+        });
     };
 
     let timestamp_100ns = match uuid[6] >> 4 {

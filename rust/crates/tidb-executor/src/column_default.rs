@@ -400,6 +400,8 @@ fn func_call_default(
     field_type: &FieldType,
     current_database: Option<&str>,
 ) -> Result<Option<ColumnDefault>, DefaultError> {
+    // Go's "%s with disallowed args" refusals print `expr.FnName.String()`,
+    // the name as written; only the dispatch is case-insensitive.
     let lower = name.to_ascii_lowercase();
     if lower == "current_date" {
         if !matches!(
@@ -526,17 +528,17 @@ fn func_call_default(
                 return Err(DefaultError::WrongParameterCount("date_format"));
             };
             let Some(now_args) = function_args(now, "now") else {
-                return Err(DefaultError::FunctionNotAllowed(
-                    "date_format with disallowed args".to_owned(),
-                ));
+                return Err(DefaultError::FunctionNotAllowed(format!(
+                    "{name} with disallowed args"
+                )));
             };
             if !now_args.is_empty() {
                 return Err(DefaultError::WrongParameterCount("now"));
             }
             let Some(format) = string_value(format) else {
-                return Err(DefaultError::FunctionNotAllowed(
-                    "date_format with disallowed args".to_owned(),
-                ));
+                return Err(DefaultError::FunctionNotAllowed(format!(
+                    "{name} with disallowed args"
+                )));
             };
             if !matches!(
                 format,
@@ -557,17 +559,17 @@ fn func_call_default(
                 source => source,
             };
             let Some(upper_args) = function_args(source, "upper") else {
-                return Err(DefaultError::FunctionNotAllowed(
-                    "replace with disallowed args".to_owned(),
-                ));
+                return Err(DefaultError::FunctionNotAllowed(format!(
+                    "{name} with disallowed args"
+                )));
             };
             let [uuid] = upper_args else {
                 return Err(DefaultError::WrongParameterCount("upper"));
             };
             let Some(uuid_args) = function_args(uuid, "uuid") else {
-                return Err(DefaultError::FunctionNotAllowed(
-                    "replace with disallowed args".to_owned(),
-                ));
+                return Err(DefaultError::FunctionNotAllowed(format!(
+                    "{name} with disallowed args"
+                )));
             };
             if !uuid_args.is_empty() {
                 return Err(DefaultError::WrongParameterCount("uuid"));
@@ -579,17 +581,17 @@ fn func_call_default(
                 return Err(DefaultError::WrongParameterCount("upper"));
             };
             let Some(substring_args) = function_args(substring, "substring_index") else {
-                return Err(DefaultError::FunctionNotAllowed(
-                    "upper with disallowed args".to_owned(),
-                ));
+                return Err(DefaultError::FunctionNotAllowed(format!(
+                    "{name} with disallowed args"
+                )));
             };
             let [user, separator, _] = substring_args else {
                 return Err(DefaultError::WrongParameterCount("substring_index"));
             };
             let Some(user_args) = function_args(user, "user") else {
-                return Err(DefaultError::FunctionNotAllowed(
-                    "upper with disallowed args".to_owned(),
-                ));
+                return Err(DefaultError::FunctionNotAllowed(format!(
+                    "{name} with disallowed args"
+                )));
             };
             if !user_args.is_empty() {
                 return Err(DefaultError::WrongParameterCount("user"));
@@ -602,18 +604,18 @@ fn func_call_default(
                     "KindString {separator}"
                 )));
             }
-            Err(DefaultError::FunctionNotAllowed(
-                "upper with disallowed args".to_owned(),
-            ))
+            Err(DefaultError::FunctionNotAllowed(format!(
+                "{name} with disallowed args"
+            )))
         }
         "str_to_date" => {
             if args.len() != 2 {
                 return Err(DefaultError::WrongParameterCount("str_to_date"));
             }
             if !args.iter().all(is_value_expr) {
-                return Err(DefaultError::FunctionNotAllowed(
-                    "str_to_date with disallowed args".to_owned(),
-                ));
+                return Err(DefaultError::FunctionNotAllowed(format!(
+                    "{name} with disallowed args"
+                )));
             }
             computed_default(expr, AddedOriginSafety::Safe)
         }

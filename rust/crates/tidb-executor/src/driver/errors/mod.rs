@@ -1748,6 +1748,10 @@ impl DriverError {
             3800,
             format!("Expression of expression index '{index}' cannot refer to a row value"),
         ),
+        DriverError::GeneratedColumnRowValue(column) => MysqlError::new(
+            3764,
+            format!("Expression of generated column '{column}' cannot refer to a row value"),
+        ),
         DriverError::ExpressionIndexCanNotRefer(index) => MysqlError::new(
             3754,
             format!("Expression index '{index}' cannot refer to an auto-increment column"),

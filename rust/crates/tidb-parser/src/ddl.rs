@@ -303,7 +303,7 @@ impl Parser {
                 let raw = self.parse_table_option_word()?;
                 let name = field_type::canonical_field_charset(&raw)
                     .ok_or_else(|| {
-                        self.err_here(&format!("[parser:1115]Unknown character set: '{raw}'"))
+                        self.err_coded(1115, &format!("Unknown character set: '{raw}'"))
                     })?
                     .to_owned();
                 DatabaseOption::CharacterSet(name)
@@ -315,7 +315,7 @@ impl Parser {
                 let raw = self.parse_table_option_word()?;
                 let name = field_type::canonical_field_charset(&raw)
                     .ok_or_else(|| {
-                        self.err_here(&format!("[parser:1115]Unknown character set: '{raw}'"))
+                        self.err_coded(1115, &format!("Unknown character set: '{raw}'"))
                     })?
                     .to_owned();
                 DatabaseOption::CharacterSet(name)
@@ -325,9 +325,8 @@ impl Parser {
                     self.bump();
                 }
                 let raw = self.parse_table_option_word()?;
-                let collation = canonical_collation(&raw).ok_or_else(|| {
-                    self.err_here(&format!("[ddl:1273]Unknown collation: '{raw}'"))
-                })?;
+                let collation = canonical_collation(&raw)
+                    .ok_or_else(|| self.err_coded(1273, &format!("Unknown collation: '{raw}'")))?;
                 DatabaseOption::Collate(collation.to_owned())
             } else if self.is_kw("ENCRYPTION") {
                 self.bump();
@@ -341,9 +340,10 @@ impl Parser {
                 self.bump();
                 let value = self.decode_string(&token.text);
                 if !matches!(value.as_str(), "Y" | "y" | "N" | "n") {
-                    return Err(self.err_here(&format!(
-                        "[parser:1525]Incorrect argument (should be Y or N) value: '{value}'"
-                    )));
+                    return Err(self.err_coded(
+                        1525,
+                        &format!("Incorrect argument (should be Y or N) value: '{value}'"),
+                    ));
                 }
                 DatabaseOption::Encryption(value)
             } else if self.is_kw("PLACEMENT") {
@@ -1120,10 +1120,9 @@ impl Parser {
                     // (parser.y:3188-3192): `ErrUnknownAlterAlgorithm` is
                     // `terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm)`
                     // — `[parser:1800]`, the name as written.
-                    return Err(self.err_coded(
-                        1800,
-                        &format!("[parser:1800]Unknown ALGORITHM '{}'", token.text),
-                    ));
+                    return Err(
+                        self.err_coded(1800, &format!("Unknown ALGORITHM '{}'", token.text))
+                    );
                 }
             };
             AlterTableAction::Algorithm(algorithm)
@@ -1668,8 +1667,8 @@ impl Parser {
         }
         self.bump();
         let raw = self.parse_table_option_word()?;
-        let collation =
-            canonical_collation(&raw).ok_or_else(|| self.err_here("unknown collation"))?;
+        let collation = canonical_collation(&raw)
+            .ok_or_else(|| self.err_coded(1273, &format!("Unknown collation: '{raw}'")))?;
         Ok(Some(collation.to_ascii_uppercase()))
     }
 

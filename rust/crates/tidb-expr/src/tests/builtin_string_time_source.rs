@@ -2047,12 +2047,14 @@ fn test_now_utc_timestamp_fixed_clock() {
     assert_eq!(got_text(&utc6), "1970-01-01 00:20:34.500000");
 
     for name in ["NOW", "UTC_TIMESTAMP"] {
-        // Negative fsp keeps the refusing form...
-        let result = time_fn::dispatch(name, &[Datum::Int(-2)], &ctx);
-        match result {
-            Some(Err(EvalError::Unsupported(_))) => {}
-            other => panic!("{name}(-2) must fail construction, got {other:?}"),
-        }
+        // A negative fsp is Go's `types.ErrSyntax` (types:1064)...
+        let err = time_fn::dispatch(name, &[Datum::Int(-2)], &ctx)
+            .unwrap()
+            .unwrap_err();
+        assert!(
+            matches!(&err, EvalError::Conversion(error) if error.rfc_code() == "types:1064"),
+            "{name}(-2): {err:?}"
+        );
         // ...while above `MaxFsp` the coded `types.ErrTooBigPrecision`
         // (1426) is raised (`builtin_time.go:2730`/:2600).
         let err = time_fn::dispatch(name, &[Datum::Int(8)], &ctx)
@@ -2583,13 +2585,16 @@ fn test_current_date_current_time_utc_time_clocks() {
         assert_eq!(text.chars().count(), want_len, "{text}");
         assert!(text.starts_with("00:20:"), "{text}");
     }
-    // Negative fsp keeps the refusing form; above `MaxFsp` the coded
-    // `types.ErrTooBigPrecision` (1426) is raised (`builtin_time.go:7219`).
-    let result = time_fn::dispatch("CURRENT_TIME", &[Datum::Int(-1)], &ctx);
-    match result {
-        Some(Err(EvalError::Unsupported(_))) => {}
-        other => panic!("CURRENT_TIME(-1) must fail construction, got {other:?}"),
-    }
+    // A negative fsp is Go's `types.ErrSyntax` (types:1064); above `MaxFsp`
+    // the coded `types.ErrTooBigPrecision` (1426) is raised
+    // (`builtin_time.go:7219`).
+    let err = time_fn::dispatch("CURRENT_TIME", &[Datum::Int(-1)], &ctx)
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        matches!(&err, EvalError::Conversion(error) if error.rfc_code() == "types:1064"),
+        "{err:?}"
+    );
     let err = time_fn::dispatch("CURRENT_TIME", &[Datum::Int(7)], &ctx)
         .unwrap()
         .unwrap_err();

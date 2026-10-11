@@ -224,6 +224,48 @@ fn now_advances_per_statement_unless_timestamp_is_set() {
     assert_eq!(pinned, "1700000000.654320");
 }
 
+/// Go's clock function classes cast the precision to INT and check it with
+/// `getFspByIntArg` while BUILDING the plan (`builtin_time.go:7201`): `NOW(7)`
+/// fails where no row evaluates it, a precision outside `0..=MaxInt32` is
+/// `types.ErrSyntax`, a castable constant sets the fsp, and a column
+/// precision is checked per row. Captured from Go TiDB.
+#[test]
+fn clock_precision_is_checked_while_building() {
+    let mut session = Session::new();
+    session.run("set timestamp = 1700000000.654321").unwrap();
+    session.run("create table t (a int)").unwrap();
+    let error = session
+        .run("select now(7) from t where 1 = 0")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            1426,
+            "Too-big precision 7 specified for 'now'. Maximum is 6."
+        )
+    );
+    let error = session
+        .run("select utc_timestamp(18446744073709551615)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1064);
+    assert_eq!(
+        cell(&mut session, "select unix_timestamp(now('3'))"),
+        "1700000000.654"
+    );
+    assert_eq!(
+        cell(&mut session, "select unix_timestamp(now(2.6))"),
+        "1700000000.654"
+    );
+    session.run("insert into t values (7)").unwrap();
+    let error = session
+        .run("select now(a) from t")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1426);
+}
+
 /// The date-part builtins read their ETDatetime argument as a typed time and
 /// refuse a zero (or zero-in) date with a 1292 warning naming the time as Go's
 /// `Time.String()` prints it, fraction and all (`builtinDayOfWeekSig` and its

@@ -190,52 +190,60 @@ pub struct HiddenIndexColumn {
 
 /// The functions Go allows a FUNCTION CALL in an expression index to be:
 /// `variable.GAFunction4ExpressionIndex`
-/// (`pkg/sessionctx/variable/varsutil.go`), paired with the argument count
-/// its `baseFunctionClass{minArgs, maxArgs}` admits
-/// (`pkg/expression/builtin.go`'s `funcs` map, read through
-/// `VerifyArgsWrapper`). `None` is Go's `maxArgs == -1`, "no upper bound".
+/// (`pkg/sessionctx/variable/varsutil.go`).
 ///
 /// A call outside this list is 8200 unless the server was started with
 /// `allow-expression-index`, which defaults off and which this tier does not
 /// model as settable, so the list IS the gate here. The list is transcribed
 /// VERBATIM rather than derived from a principle: an earlier attempt to drop
 /// an entry as redundant was falsified by the Go source, which lists it.
-const GA_FUNCTIONS: &[(&str, usize, Option<usize>)] = &[
-    ("lower", 1, Some(1)),
-    ("upper", 1, Some(1)),
-    ("md5", 1, Some(1)),
-    ("reverse", 1, Some(1)),
-    ("vitess_hash", 1, Some(1)),
-    ("tidb_shard", 1, Some(1)),
-    ("json_type", 1, Some(1)),
-    ("json_extract", 2, None),
-    ("json_unquote", 1, Some(1)),
-    ("json_array", 0, None),
-    ("json_object", 0, None),
-    ("json_set", 3, None),
-    ("json_insert", 3, None),
-    ("json_replace", 3, None),
-    ("json_remove", 2, None),
-    ("json_contains", 2, Some(3)),
-    ("json_contains_path", 3, None),
-    ("json_valid", 1, Some(1)),
-    ("json_array_append", 3, None),
-    ("json_array_insert", 3, None),
-    ("json_merge_patch", 2, None),
-    ("json_merge_preserve", 2, None),
-    ("json_pretty", 1, Some(1)),
-    ("json_quote", 1, Some(1)),
-    ("json_schema_valid", 2, Some(2)),
-    ("json_search", 3, None),
-    ("json_storage_size", 1, Some(1)),
-    ("json_depth", 1, Some(1)),
-    ("json_keys", 1, Some(2)),
-    ("json_length", 1, Some(2)),
+const GA_FUNCTIONS: &[&str] = &[
+    "lower",
+    "upper",
+    "md5",
+    "reverse",
+    "vitess_hash",
+    "tidb_shard",
+    "json_type",
+    "json_extract",
+    "json_unquote",
+    "json_array",
+    "json_object",
+    "json_set",
+    "json_insert",
+    "json_replace",
+    "json_remove",
+    "json_contains",
+    "json_contains_path",
+    "json_valid",
+    "json_array_append",
+    "json_array_insert",
+    "json_merge_patch",
+    "json_merge_preserve",
+    "json_pretty",
+    "json_quote",
+    "json_schema_valid",
+    "json_search",
+    "json_storage_size",
+    "json_depth",
+    "json_keys",
+    "json_length",
 ];
 
-/// Go `illegalFunctionChecker` for `typeIndex`: one pass that COLLECTS every
-/// flag the expression trips, which `checkIllegalFn4Generated` then reports in
-/// a FIXED order.
+/// Go `checkIllegalFn4Generated`'s `genType`: a generated column or an
+/// expression index key part.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum GenType {
+    /// Go `typeColumn`.
+    Column,
+    /// Go `typeIndex`.
+    #[default]
+    Index,
+}
+
+/// Go `illegalFunctionChecker`: one pass that COLLECTS every flag the
+/// expression trips, which `checkIllegalFn4Generated` then reports in a FIXED
+/// order.
 ///
 /// The order is the whole point, and it is why this is a scan and not an
 /// early return. `((abs(a) + sum(a)))` is 1111 and not 8200 -- Go sees both
@@ -244,20 +252,26 @@ const GA_FUNCTIONS: &[(&str, usize, Option<usize>)] = &[
 /// instead, which is a different function of the same input.
 #[derive(Default)]
 struct AdmissibilityScan {
-    /// Go `hasIllegalFunc`: a blocked function, a subquery, `values(x)`, or a
-    /// variable. Reported first, as 3758.
+    /// Which object the expression generates; it picks the error identities
+    /// and whether the GA list applies.
+    gen_type: GenType,
+    /// Go `hasIllegalFunc`: a blocked or unknown function, a subquery,
+    /// `values(x)`, or a variable. Reported first, as 3102 or 3758.
     illegal_func: bool,
     /// Go `hasAggFunc`: an aggregate or `GROUPING()`. Reported as 1111.
     agg_func: bool,
-    /// Go `hasRowVal`: a row value. Reported as 3800.
+    /// Go `hasRowVal`: a row value. Reported as 3764 or 3800.
     row_val: bool,
     /// Go `hasWindowFunc`. Reported as 3593.
     window_func: bool,
-    /// Go `otherErr`: the arity failure `VerifyArgsWrapper` raises, and the
-    /// forms this tier declines to build. First one wins, as in Go.
+    /// Go `otherErr`: the arity failure `VerifyArgsWrapper` raises, a nested
+    /// `CAST(... AS ... ARRAY)`, and the forms this tier declines to build.
     other: Option<DriverError>,
-    /// Go `hasNotGAFunc4ExprIdx`: reported LAST, as 8200.
+    /// Go `hasNotGAFunc4ExprIdx`: reported LAST, as 8200, for an index only.
     not_ga_func: bool,
+    /// Go `hasCastArrayFunc`: a generated column may not contain the cast at
+    /// all (1235, reported after everything else).
+    cast_array: bool,
     /// Go `disallowCastArrayFunc`, inverted: true until the walk enters its
     /// first node other than parentheses, so `CAST(... AS ... ARRAY)` is
     /// admitted only as the whole expression.
@@ -377,8 +391,9 @@ impl AdmissibilityScan {
                 // it never meets the GA list -- `((cast(a as char(10))))` is
                 // ACCEPTED by Go, captured. The ARRAY form makes the key part
                 // multi-valued, admitted only as the whole expression.
+                self.cast_array |= cast.array;
                 if cast.array && !cast_array_allowed {
-                    self.decline(DriverError::NotSupportedYet(
+                    self.fail(DriverError::NotSupportedYet(
                         "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions"
                             .into(),
                     ));
@@ -388,9 +403,12 @@ impl AdmissibilityScan {
             }
 
             Expr::Func { name, args, .. } | Expr::GenericFuncCall { name, args, .. } => {
-                self.call(name, args);
-                args.iter().for_each(|arg| self.walk(arg));
+                if self.call(name, args) {
+                    args.iter().for_each(|arg| self.walk(arg));
+                }
             }
+            // Go: `*ast.VariableExpr` (`@a := expr` included) -> 3102/3758.
+            Expr::Assign { .. } => self.illegal_func = true,
 
             // Go reaches these as `*ast.FuncCallExpr` under a name its
             // grammar picks -- `extract`, `locate`, `trim`, `weight_string`,
@@ -436,6 +454,12 @@ impl AdmissibilityScan {
                 remstr.iter().for_each(|e| self.walk(e));
             }
 
+            // Neither is a `FuncCallExpr` to Go's walk. A generated column
+            // leaves them to the expression builder.
+            Expr::ParamMarker { .. } | Expr::Default(_) if self.gen_type == GenType::Column => {}
+            Expr::MatchAgainst { against, .. } if self.gen_type == GenType::Column => {
+                self.walk(against);
+            }
             // Every remaining form is DECLINED rather than guessed at. Go
             // reaches some of them outside the function check and ACCEPTS
             // them -- `MATCH ... AGAINST` and `DEFAULT(a)` are both captured
@@ -450,82 +474,116 @@ impl AdmissibilityScan {
     }
 
     /// Go's `*ast.FuncCallExpr` arm, in its own order: `GROUPING()` first,
-    /// then the blocked list, then arity, then the GA list.
-    fn call(&mut self, name: &str, args: &[Expr]) {
+    /// then the blocked list and `IsFunctionSupported`, then arity, then the
+    /// GA list. Returns whether Go goes on into the arguments.
+    fn call(&mut self, name: &str, args: &[Expr]) -> bool {
         let name = name.to_ascii_lowercase();
         // Go: `ast.Grouping` is counted as an aggregate, issue #49909.
         if name == "grouping" {
             self.agg_func = true;
-            return;
+            return false;
         }
-        if is_disallowed_generated_function(&name) {
+        if is_disallowed_generated_function(&name)
+            || tidb_expr::builtin_registry::function_class(&name).is_none()
+        {
             self.illegal_func = true;
-            return;
+            return false;
         }
-        match GA_FUNCTIONS.iter().find(|(ga, ..)| *ga == name) {
-            Some((_, min, max)) => {
-                // Go `VerifyArgsWrapper` -> `baseFunctionClass.verifyArgsByCount`.
-                if args.len() < *min || max.is_some_and(|max| args.len() > max) {
-                    self.decline(DriverError::WrongParamCountToNativeFct(name));
-                }
-            }
-            // Go also answers 3758 for a name that is not a builtin AT ALL
-            // (`IsFunctionSupported`), which needs the whole `funcs` registry
-            // to tell apart from a builtin that is merely off the GA list.
-            // Both are refusals; this tier reports the 8200 for both, and the
-            // difference is one errno on an already-failing statement.
-            None => self.not_ga_func = true,
+        // Go `VerifyArgsWrapper` -> `baseFunctionClass.verifyArgsByCount`,
+        // over the argument count Go's AST carries: DATE_ADD and its
+        // siblings hold the interval's unit as a third argument.
+        let count = if matches!(
+            name.as_str(),
+            "date_add" | "date_sub" | "adddate" | "subdate"
+        ) && matches!(args, [_, Expr::Interval { .. }])
+        {
+            3
+        } else {
+            args.len()
+        };
+        if tidb_expr::builtin_registry::verify_args_by_count(&name, count).is_err() {
+            self.fail(DriverError::WrongParamCountToNativeFct(name));
+            return false;
         }
+        if !GA_FUNCTIONS.contains(&name.as_str()) {
+            self.not_ga_func = true;
+        }
+        true
     }
 
-    /// Go's `otherErr`, which is set once and then kept.
+    /// Go's `c.otherErr = err`: the latest error the walk raises replaces any
+    /// earlier one.
+    fn fail(&mut self, error: DriverError) {
+        self.other = Some(error);
+    }
+
+    /// A form this tier declines to build. Go accepts it, so a Go error the
+    /// walk raises elsewhere still wins.
     fn decline(&mut self, error: DriverError) {
         if self.other.is_none() {
             self.other = Some(error);
         }
     }
 
-    /// Go `checkIllegalFn4Generated`'s report order for `typeIndex`. Changing
-    /// it changes which error a statement that trips several flags reports.
-    fn verdict(self, index_name: &str) -> Result<(), DriverError> {
+    /// Go `checkIllegalFn4Generated`'s report order. Changing it changes
+    /// which error a statement that trips several flags reports.
+    fn verdict(self, name: &str) -> Result<(), DriverError> {
         if self.illegal_func {
-            return Err(DriverError::FunctionalIndexFunctionNotAllowed(
-                index_name.to_owned(),
-            ));
+            return Err(match self.gen_type {
+                GenType::Column => DriverError::GeneratedColumnFunctionNotAllowed(name.to_owned()),
+                GenType::Index => DriverError::FunctionalIndexFunctionNotAllowed(name.to_owned()),
+            });
         }
         if self.agg_func {
             return Err(DriverError::InvalidGroupFuncUse);
         }
         if self.row_val {
-            return Err(DriverError::FunctionalIndexRowValue(index_name.to_owned()));
+            return Err(match self.gen_type {
+                GenType::Column => DriverError::GeneratedColumnRowValue(name.to_owned()),
+                GenType::Index => DriverError::FunctionalIndexRowValue(name.to_owned()),
+            });
         }
         if self.window_func {
-            return Err(DriverError::WindowInvalidWindowFuncUse(
-                index_name.to_owned(),
-            ));
+            return Err(DriverError::WindowInvalidWindowFuncUse(name.to_owned()));
         }
         if let Some(error) = self.other {
             return Err(error);
         }
         // Go: `!config.GetGlobalConfig().Experimental.AllowsExpressionIndex`.
-        if self.not_ga_func
+        if self.gen_type == GenType::Index
+            && self.not_ga_func
             && !tidb_config::config_tree::config::get_global_config()
                 .experimental
                 .allows_expression_index
         {
             return Err(DriverError::UnsafeFunctionInExpressionIndex);
         }
+        if self.gen_type == GenType::Column && self.cast_array {
+            return Err(DriverError::NotSupportedYet(
+                "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions"
+                    .into(),
+            ));
+        }
         Ok(())
     }
 }
 
-fn check_admissible(index_name: &str, expr: &Expr) -> Result<(), DriverError> {
+/// Go `checkIllegalFn4Generated` (`pkg/ddl/generated_column.go:351`): the
+/// function, aggregate, row-value, window and arity rules a generated
+/// column's expression or an expression index key part must pass, `name`
+/// being the column or the index.
+pub(crate) fn check_illegal_fn_4_generated(
+    name: &str,
+    gen_type: GenType,
+    expr: &Expr,
+) -> Result<(), DriverError> {
     let mut scan = AdmissibilityScan {
+        gen_type,
         cast_array_allowed: true,
         ..AdmissibilityScan::default()
     };
     scan.walk(expr);
-    scan.verdict(index_name)
+    scan.verdict(name)
 }
 
 /// Go `BuildHiddenColumnInfo`: turns an index's EXPRESSION key parts into
@@ -570,7 +628,7 @@ pub fn build_hidden_columns_with_like_default_escape(
         if name.chars().count() > MAX_COLUMN_NAME_LENGTH {
             return Err(DriverError::TooLongIdent("hidden column".to_owned()));
         }
-        check_admissible(index_name, expr)?;
+        check_illegal_fn_4_generated(&tidb_hack::go_to_lower(index_name), GenType::Index, expr)?;
         // Go: the hidden column's name must not already be taken. Captured as
         // 1060 against a user column literally called `_V$_idxh_0`.
         if names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {

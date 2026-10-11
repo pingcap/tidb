@@ -405,6 +405,11 @@ fn test_builtin_cases_3() {
             true,
             "SELECT SYSDATE(),SYSDATE(6)",
         ),
+        // Go `parseDatetimePrecFuncCall`: SYSDATE takes an integer literal
+        // or nothing (`SELECT SYSDATE(-1)` is 1064 near "-1)").
+        ("select sysdate(-1)", false, ""),
+        ("select sysdate(1+1)", false, ""),
+        ("select sysdate('1')", false, ""),
         (
             "SELECT time('01:02:03');",
             true,

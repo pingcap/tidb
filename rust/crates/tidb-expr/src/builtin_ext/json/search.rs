@@ -37,10 +37,16 @@ pub(super) fn json_search(
     let mode = match mode.to_lowercase().as_str() {
         "one" => JSONSearchMode::One,
         "all" => JSONSearchMode::All,
-        // Go checks the argument itself and raises
-        // `ErrInvalidJSONContainsPathType` (3150), not the 3154
-        // `JSON_CONTAINS_PATH` raises for the same mistake.
-        _ => return Err(EvalError::Json(JsonError::InvalidContainsPathType)),
+        // Go's row `evalJSON` raises `ErrInvalidJSONContainsPathType`
+        // (3150), but only constant folding evaluates by row and it swallows
+        // the error; statements evaluate through `vecEvalJSON`, which leaves
+        // the check to `BinaryJSON.Search`: `ErrJSONBadOneOrAllArg` (3154)
+        // naming json_search.
+        _ => {
+            return Err(EvalError::Json(JsonError::BadOneOrAllArg {
+                function: "json_search",
+            }))
+        }
     };
     let Some(pattern) = coerce_str(&vals[2])? else {
         return Ok(Datum::Null);
