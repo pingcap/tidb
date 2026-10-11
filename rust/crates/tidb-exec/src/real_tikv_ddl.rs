@@ -1524,6 +1524,17 @@ fn commit_cluster_ddl_with_backfill_once<
             DdlPhase::Persisted { ddl_job_id, .. } => recover_ddl_action(ddl_job_id, stage_action),
             DdlPhase::Initial(..) => Ok(stage_action()),
         };
+        // Go `executor.DoDDLJob` appends the job's reorganization warnings
+        // to the statement once the job is synced (one per code, counted).
+        if let Some(reorg) = &write.column_reorg {
+            for (level, code, message) in reorg.context.0.take_warnings() {
+                let level = match level {
+                    tidb_distsql::WarningLevel::Note => DdlWarningLevel::Note,
+                    _ => DdlWarningLevel::Warning,
+                };
+                write.warnings.push((level, code, message));
+            }
+        }
         let failure = match staged {
             Ok(Ok(())) => None,
             Err(()) => Some(PersistedDdlJobFailure::Panic),

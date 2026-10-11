@@ -2374,10 +2374,36 @@ fn apply_prepared_column(
         let handle = info.columns.get(offset).expect("column is present");
         let old_name = handle.read().name.clone();
         column.offset = offset as i64;
+        // Go `adjustTableInfoAfterModifyColumn`: `updateNewIdxColsNameOffset`
+        // runs `UpdateIndexCol` on every index part naming the column (a part
+        // keeps its prefix only while the new type is prefixable and wider
+        // than it), and the foreign keys and TTL definition follow a rename.
         for index in info.indices.iter_deref() {
             for indexed in index.read().columns.iter_deref() {
-                if indexed.read().name.lowercase() == old_name.lowercase() {
-                    indexed.write().name = column.name.clone();
+                let mut indexed = indexed.write();
+                if indexed.name.lowercase() == old_name.lowercase() {
+                    indexed.name = column.name.clone();
+                    if !column.field_type.code().is_type_prefixable()
+                        || column.field_type.flen() <= indexed.length
+                    {
+                        indexed.length = -1;
+                    }
+                }
+            }
+        }
+        if old_name.lowercase() != column.name.lowercase() {
+            for foreign_key in info.foreign_keys.iter_deref() {
+                let foreign_key = foreign_key.read();
+                for position in 0..foreign_key.cols.len() {
+                    if foreign_key.cols.get(position).lowercase() == old_name.lowercase() {
+                        foreign_key.cols.set(position, column.name.clone());
+                    }
+                }
+            }
+            if let Some(ttl) = info.ttl_info.as_ref() {
+                let mut ttl = ttl.write();
+                if ttl.column_name.lowercase() == old_name.lowercase() {
+                    ttl.column_name = column.name.clone();
                 }
             }
         }
@@ -10237,8 +10263,6 @@ fn locate_table<'catalog>(
     Ok((database.info.id, stored))
 }
 
-/// The table's index of that name, matched the way MySQL matches one:
-/// case-insensitively.
 /// The name an added index takes: as written, or Go `GetName4AnonymousIndex`
 /// against `stored`'s indexes, after the first key column -- or
 /// `expression_index` when the first part is an expression
@@ -10468,6 +10492,8 @@ fn plan_added_index(
     Ok(added)
 }
 
+/// The table's index of that name, matched the way MySQL matches one:
+/// case-insensitively.
 fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
     table
         .indices

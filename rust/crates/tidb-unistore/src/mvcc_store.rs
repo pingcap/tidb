@@ -1262,9 +1262,10 @@ impl MvccStore {
         let mut visited: u32 = 0;
         let mut visit = |key: &[u8], value: &[u8]| -> bool {
             // Go's `dbreader.Scan` counts every PROCESSED entry against the
-            // limit — sampled-out and deleted entries included. That is what
-            // makes `SampleStep * Limit` visit exactly that many keys and
-            // emit `Limit` of them.
+            // limit -- sampled-out entries included, which is what makes
+            // `SampleStep * Limit` visit exactly that many keys and emit
+            // `Limit` of them. A deleted entry is never processed: Go skips
+            // `item.IsEmpty()` before counting.
             if visited >= limit {
                 return false;
             }
@@ -1307,6 +1308,13 @@ impl MvccStore {
                             error: Some(Box::new(err)),
                         }];
                     }
+                }
+                // Go `if item.IsEmpty() { continue }`, ahead of the count: a
+                // deleted key must not use up the limit, or a page over a
+                // range of tombstones comes back short and the client takes
+                // the region as exhausted while live keys remain past them.
+                if value.is_empty() {
+                    continue;
                 }
                 if !visit(&key, value) {
                     break;
@@ -2799,6 +2807,45 @@ mod tests {
         assert_eq!(
             reverse.iter().map(|p| p.key.clone()).collect::<Vec<_>>(),
             vec![b"c".to_vec(), b"a".to_vec()]
+        );
+    }
+
+    /// Go `dbreader.Scan` skips an empty (deleted) item before it counts
+    /// against the limit. Counting it returned a short page over a run of
+    /// tombstones, which the client reads as an exhausted region: a catalog
+    /// load past many dropped tables lost the newest table's key.
+    #[test]
+    fn a_deleted_key_does_not_use_up_the_scan_limit() {
+        let mut store = MvccStore::new();
+        for key in [b"a".as_slice(), b"b", b"c", b"d"] {
+            must_prewrite_optimistic(&mut store, key, key, b"v", 10, 200);
+            store.commit(&[key.to_vec()], 10, 11).expect("commits");
+        }
+        for key in [b"a".as_slice(), b"b"] {
+            store
+                .prewrite(&PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Del as i32,
+                        key: key.to_vec(),
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.to_vec(),
+                    start_version: 20,
+                    ..PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key.to_vec()], 20, 21).expect("commits");
+        }
+        let pairs = store.scan(&ScanReq {
+            start_key: b"a".to_vec(),
+            end_key: Vec::new(),
+            limit: 2,
+            version: 30,
+            ..ScanReq::default()
+        });
+        assert_eq!(
+            pairs.iter().map(|p| p.key.clone()).collect::<Vec<_>>(),
+            vec![b"c".to_vec(), b"d".to_vec()]
         );
     }
 
