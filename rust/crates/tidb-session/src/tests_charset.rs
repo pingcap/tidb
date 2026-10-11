@@ -181,3 +181,39 @@ fn gbk_defaults_to_chinese_ci_and_orders_by_gbk_weight() {
         vec![vec!["2"]]
     );
 }
+
+/// Go `ResetContextOfStmt` writes `tidb_skip_utf8_check` and
+/// `tidb_skip_ascii_check` into the statement's TypeFlags, which a column
+/// write casts under: with the check skipped, strict mode stores the invalid
+/// bytes as written (oracle-captured, `executor/statement_context`).
+#[test]
+fn skip_string_checks_reach_column_writes() {
+    let mut session = Session::new();
+    for sql in [
+        "set sql_mode = 'STRICT_TRANS_TABLES'",
+        "create table sc2 (a varchar(255))",
+        "create table sc3 (a varchar(255)) charset ascii",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (table, variable) in [
+        ("sc2", "tidb_skip_utf8_check"),
+        ("sc3", "tidb_skip_ascii_check"),
+    ] {
+        let error = session
+            .run(&format!("insert {table} values (unhex('4040ffff'))"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1366, "{table}: {}", error.message);
+        session.run(&format!("set @@{variable} = '1'")).unwrap();
+        session
+            .run(&format!("insert {table} values (unhex('4040ffff'))"))
+            .unwrap();
+        session.run(&format!("set @@{variable} = '0'")).unwrap();
+        assert_eq!(
+            crate::tests_support::row_text(session.run(&format!("select length(a) from {table}"))),
+            [["4"]],
+            "{table}"
+        );
+    }
+}

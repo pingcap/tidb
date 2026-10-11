@@ -2438,7 +2438,8 @@ impl StmtContext {
     /// Keeps evaluation inputs and statement effects shared while collecting
     /// local diagnostics independently. DDL admission publishes these in
     /// action order; statistics predicate replay discards duplicate warnings.
-    pub(crate) fn with_isolated_warnings(&self) -> Self {
+    #[must_use]
+    pub fn with_isolated_warnings(&self) -> Self {
         let mut context = self.clone();
         context.warnings = Arc::default();
         context
@@ -4096,6 +4097,17 @@ impl StmtContext {
         self.date_modes
     }
 
+    /// `base` with this statement's string-validation bits: Go's
+    /// `ResetContextOfStmt` writes `tidb_skip_utf8_check`,
+    /// `tidb_skip_ascii_check` and `tidb_check_mb4_value_in_utf8` into the
+    /// statement's one TypeFlags, which a column write casts under too.
+    fn statement_string_flags(
+        &self,
+        base: tidb_datatype::ConversionFlags,
+    ) -> tidb_datatype::ConversionFlags {
+        tidb_datatype::ConversionFlags::from_bits(base.bits() | self.string_type_flags.bits())
+    }
+
     /// Go `util.GetTypeFlagsForInsert` -- the flags a COLUMN WRITE converts
     /// under, which are NOT the ones an expression converts under.
     ///
@@ -4118,7 +4130,7 @@ impl StmtContext {
     #[must_use]
     pub fn write_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
         crate::zero_date::write_date_flags(
-            tidb_datatype::DEFAULT_STATEMENT_FLAGS
+            self.statement_string_flags(tidb_datatype::DEFAULT_STATEMENT_FLAGS)
                 .with_allow_negative_to_unsigned(false)
                 .with_ignore_truncate_err(self.truncate == ErrorLevel::Ignore)
                 .with_truncate_as_warning(self.truncate == ErrorLevel::Warn),
@@ -4133,7 +4145,7 @@ impl StmtContext {
     /// is intentionally not an alias for [`Self::write_conversion_flags`].
     #[must_use]
     pub fn ddl_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
-        tidb_datatype::DEFAULT_STATEMENT_FLAGS
+        self.statement_string_flags(tidb_datatype::DEFAULT_STATEMENT_FLAGS)
             .with_ignore_truncate_err(false)
             .with_truncate_as_warning(false)
             .with_allow_negative_to_unsigned(false)

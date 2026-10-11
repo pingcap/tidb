@@ -2387,7 +2387,11 @@ fn index_join_probe_shape(
     // only once"); the join still compares every key pair.
     dynamic.sort_unstable();
     dynamic.dedup_by_key(|(index, _)| *index);
-    if dynamic.is_empty() {
+    // Go builds an index join with no join key on the index when its lookup
+    // is the constant prefix plus a compare filter on the next column
+    // (`t1.c_int in (?, ?)` and `t1.c_str <= t2.c_str`): each outer row then
+    // contributes only its filter bounds.
+    if dynamic.is_empty() && join.compare_filters.is_none() {
         return Err(DriverError::unsupported(
             "a physical index join retained no usable lookup key",
         ));

@@ -5790,3 +5790,56 @@ fn a_locking_select_over_a_subquery_keeps_its_projection() {
     assert!(plan[1][0].contains("SelectLock"), "{plan:?}");
     session.run("commit").unwrap();
 }
+
+/// Go builds an index join with no join key on the index when the lookup is
+/// a constant prefix plus a compare filter on the next column; each outer
+/// row contributes its own filter bound (`planner/core/tests/prepare/issue`).
+/// Differential: the index join answers what a hash join answers.
+#[test]
+fn an_index_join_without_a_join_key_probes_by_its_compare_filter() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1 (c_int int, c_str varchar(40), primary key (c_int, c_str))",
+        "create table t2 (c_str varchar(40), primary key (c_str))",
+        "insert into t1 values (1, '1'), (1, '3'), (2, '2'), (3, '0')",
+        "insert into t2 values ('1'), ('2')",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let answer = |session: &mut Session, hint: &str| {
+        let mut rows = row_text(session.run(&format!(
+            "select /*+ {hint} */ * from t1 join t2 on t1.c_str <= t2.c_str where t1.c_int in (1, 2)"
+        )));
+        rows.sort();
+        rows
+    };
+    let expected = answer(&mut session, "HASH_JOIN(t1, t2)");
+    assert_eq!(
+        expected,
+        [["1", "1", "1"], ["1", "1", "2"], ["2", "2", "2"]]
+    );
+    assert_eq!(answer(&mut session, "INL_JOIN(t1, t2)"), expected);
+}
+
+/// PREPARE plans the tree EXECUTE plans: MATCH ... AGAINST's LIKE fallback
+/// (`tidb_opt_enable_alternative_logical_plans`) is applied before the
+/// PREPARE-time plan, with or without markers (`planner/core/fulltext_search`).
+#[test]
+fn a_prepared_match_against_plans_its_like_fallback() {
+    let mut session = Session::new();
+    for sql in [
+        "set @@tidb_opt_enable_alternative_logical_plans=ON",
+        "create table articles (id int primary key, title varchar(200))",
+        "insert into articles values (1, 'MySQL Tutorial'), (2, 'Optimizing MySQL'), (3, 'PostgreSQL')",
+        "prepare st_lit from 'select id from articles where match(title) against(''MySQL'')'",
+        "prepare st_param from 'select id from articles where match(title) against(?)'",
+        "set @q = 'MySQL'",
+    ] {
+        session.run(sql).unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+    }
+    for sql in ["execute st_lit", "execute st_param using @q"] {
+        let mut rows = row_text(session.run(sql));
+        rows.sort();
+        assert_eq!(rows, [["1"], ["2"]], "{sql}");
+    }
+}

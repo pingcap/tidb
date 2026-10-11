@@ -171,9 +171,13 @@ impl Session {
         // which EXECUTE binds afresh. Only the marker-free query validated
         // below needs the bound copy.
         let validated_query = match &statement {
-            tidb_ast::Stmt::Query(_) if param_count == 0 => {
+            tidb_ast::Stmt::Query(_) => {
                 let mut bound = statement.clone();
                 self.bind_variables(&mut bound)?;
+                // EXECUTE plans the tree the statement dispatch rewrites:
+                // MATCH ... AGAINST's LIKE fallback is applied there, so the
+                // PREPARE-time plan is built over the same tree.
+                self.rewrite_fts_for_planning(&mut bound);
                 Some(bound)
             }
             _ => None,
@@ -183,8 +187,10 @@ impl Session {
         let planner_context = self.statement_context(false);
         // Go `GeneratePlanCacheStmtWithAST` runs `CacheableWithCtx` here, at
         // PREPARE, and stores the verdict on the `PlanCacheStmt`.
+        // Go's PREPARE preprocesses against the session's infoschema, LOCAL
+        // temporary tables included, and reads under the open transaction.
+        let catalog = self.with_catalog_scope(true, |catalog| Ok(catalog.clone()))?;
         let (cacheable, select_plan, dml_plan, skip_reason) = {
-            let catalog = self.lock_catalog()?;
             let cacheable = self.prepared_statement_cacheable(&mut statement, &catalog);
             // go's PrepareExec builds the plan AT PREPARE, so plan errors
             // surface here rather than at the first EXECUTE (oracle m21:
@@ -193,13 +199,64 @@ impl Session {
             // parameters at EXECUTE, so only marker-free ones validate here.
             // The built plan is discarded -- the cache envelope above and
             // the EXECUTE-time plan remain the execution source.
-            if let Some(tidb_ast::Stmt::Query(query)) = &validated_query {
-                tidb_executor::plan_query_meta_stmt(
-                    query,
-                    &catalog,
-                    self.current_database(),
-                    &planner_context,
-                )?;
+            match &validated_query {
+                Some(tidb_ast::Stmt::Query(query)) if param_count == 0 => {
+                    tidb_executor::plan_query_meta_stmt(
+                        query,
+                        &catalog,
+                        self.current_database(),
+                        &planner_context,
+                    )?;
+                }
+                // Go builds this plan with each `?` still a ParamMarkerExpr,
+                // so what the markers will hold is not checked, but a name the
+                // query cannot resolve is refused. A marker stands here as a
+                // value, and an error raised under BOTH NULL and 1 does not
+                // depend on that value: it is the query's own.
+                Some(bound @ tidb_ast::Stmt::Query(_)) => {
+                    let stand_in_error = |stand_in: &Datum| -> Option<DriverError> {
+                        let values = vec![stand_in.clone(); param_count];
+                        let tidb_ast::Stmt::Query(query) =
+                            tidb_executor::bind_statement(bound.clone(), &values).ok()?
+                        else {
+                            return None;
+                        };
+                        tidb_executor::plan_query_meta_stmt(
+                            &query,
+                            &catalog,
+                            self.current_database(),
+                            &planner_context.with_isolated_warnings(),
+                        )
+                        .err()
+                    };
+                    // A shape this tier cannot plan is no answer Go gives,
+                    // so it never refuses a PREPARE Go would admit.
+                    let rust_only = |error: &DriverError| {
+                        matches!(
+                            error,
+                            DriverError::Unsupported(_)
+                                | DriverError::Exec(tidb_executor::ExecError::Unsupported(_))
+                                | DriverError::Exec(tidb_executor::ExecError::Eval(
+                                    tidb_expr::EvalError::Unsupported(_)
+                                ))
+                        )
+                    };
+                    if let (Some(with_null), Some(with_one)) =
+                        (stand_in_error(&Datum::Null), stand_in_error(&Datum::Int(1)))
+                    {
+                        let (null_reported, one_reported) = (
+                            with_null.clone().to_mysql_error(),
+                            with_one.to_mysql_error(),
+                        );
+                        if null_reported.code == one_reported.code
+                            && null_reported.message == one_reported.message
+                            && !rust_only(&with_null)
+                        {
+                            return Err(with_null);
+                        }
+                    }
+                }
+                _ => {}
             }
             // go's plan cache records the refusal as a statement warning at
             // PREPARE too (oracle m21: PREPARE st3 FROM 'CREATE TABLE ...'
