@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -114,9 +115,10 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
-		// Verify inline CHECK constraints before backfill.
-		if err := w.verifyAndAddInlineCheckConstraints(jobCtx, job, tblInfo, columnInfo); err != nil {
-			job.State = model.JobStateCancelled
+		// Add the inline CHECK constraints to the table info before backfill.
+		// They were verified against the column default value at job submission
+		// time, see verifyInlineCheckConstraints.
+		if err := addInlineCheckConstraints(job, tblInfo); err != nil {
 			return ver, errors.Trace(err)
 		}
 		// delete only -> write only
@@ -256,78 +258,66 @@ func isMLogMetaColumnName(name string) bool {
 }
 
 
-// verifyAndAddInlineCheckConstraints verifies that the column default value satisfies
-// each inline CHECK constraint, then adds the verified constraints to the table info.
-// This runs before backfill (DeleteOnly → WriteOnly), so failure can cancel the job cheaply.
-func (w *worker) verifyAndAddInlineCheckConstraints(
-	jobCtx *jobContext,
-	job *model.Job,
-	tblInfo *model.TableInfo,
-	columnInfo *model.ColumnInfo,
+// verifyInlineCheckConstraints verifies that the default value of the added column
+// satisfies each enforced inline CHECK constraint of an ADD COLUMN job. It runs at
+// job submission time (DDL API layer), before the job is created, using the user
+// session to evaluate the check expression; on violation it returns
+// ErrCheckConstraintIsViolated (3819) directly to the client. This must not run in
+// the DDL worker: after the None -> DeleteOnly transition, a cancelled job would be
+// finalized without rolling back the persisted DeleteOnly column (issue #71880).
+func verifyInlineCheckConstraints(
+	sctx sessionctx.Context,
+	schemaName, tableName string,
+	colInfo *model.ColumnInfo,
+	constraints []*model.ConstraintInfo,
 ) error {
-	args, err := model.GetTableColumnArgs(job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(args.Constraints) == 0 {
+	if len(constraints) == 0 {
 		return nil
 	}
 
-	sctx, err := w.sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer w.sessPool.Put(sctx)
-
 	// ExprString uses RestoreNameBackQuotes (no RestoreNameLowercase),
 	// so identifiers preserve original case. Use Name.O to match.
-	colIdent := sqlescape.MustEscapeSQL("%n", columnInfo.Name.O)
+	colIdent := sqlescape.MustEscapeSQL("%n", colInfo.Name.O)
 
-	verified := make([]*model.ConstraintInfo, 0, len(args.Constraints))
-	for _, c := range args.Constraints {
+	for _, c := range constraints {
 		if !c.Enforced {
-			verified = append(verified, c)
 			continue
 		}
 
-		// The default values must be read from the job args column: the table info
-		// read from meta at this state does not carry them, while args.Col is the
-		// authoritative column definition submitted with the job. Existing rows are
-		// backfilled with the column's origin default, so the CHECK must be verified
-		// against that exact value.
-		argsCol := args.Col
+		// colInfo is the authoritative column definition submitted with the job.
+		// Existing rows are backfilled with the column's origin default, so the
+		// CHECK must be verified against that exact value.
 		var defaultLiteral string
-		if argsCol.DefaultIsExpr {
-			defaultExpr, ok := argsCol.GetDefaultValue().(string)
+		if colInfo.DefaultIsExpr {
+			defaultExpr, ok := colInfo.GetDefaultValue().(string)
 			if !ok || defaultExpr == "" {
 				return dbterror.ErrCheckConstraintIsViolated.GenWithStackByArgs(c.Name.L)
 			}
 			defaultLiteral = defaultExpr
 		} else {
-			defaultValue := argsCol.GetOriginDefaultValue()
+			defaultValue := colInfo.GetOriginDefaultValue()
 			if defaultValue == nil {
-				if !mysql.HasNotNullFlag(argsCol.GetFlag()) {
+				if !mysql.HasNotNullFlag(colInfo.GetFlag()) {
 					// No origin default — existing rows get NULL. NULL passes every
 					// CHECK, skip check.
-					verified = append(verified, c)
 					continue
 				}
 				// NOT NULL without an explicit default: the backfill materializes the
 				// type's zero value into existing rows, see generateOriginDefaultValue.
-				originDefault, err := generateOriginDefaultValue(argsCol, nil, true)
+				originDefault, err := generateOriginDefaultValue(colInfo, nil, true)
 				if err != nil {
 					return errors.Trace(err)
 				}
 				defaultValue = originDefault
 			}
 			defaultLiteral = sqlescape.MustEscapeSQL("%?", defaultValue)
-			ft := argsCol.FieldType
+			ft := colInfo.FieldType
 			if field_types.IsTypeChar(ft.GetType()) || field_types.IsTypeBlob(ft.GetType()) {
 				// Bind the literal to the column's charset and collation: an untyped
-				// literal is evaluated under the internal session collation, which can
-				// differ from the column's (e.g. a case-insensitive VARCHAR compares
-				// 'A' = 'a' differently), so the verification would disagree with the
-				// real typed evaluation of existing rows.
+				// literal is evaluated under the session collation, which can differ
+				// from the column's (e.g. a case-insensitive VARCHAR compares 'A' = 'a'
+				// differently), so the verification would disagree with the real typed
+				// evaluation of existing rows.
 				defaultLiteral = "_" + ft.GetCharset() + " " + defaultLiteral +
 					" COLLATE " + sqlescape.MustEscapeSQL("%n", ft.GetCollate())
 			}
@@ -336,29 +326,39 @@ func (w *worker) verifyAndAddInlineCheckConstraints(
 		checkExpr := strings.ReplaceAll(c.ExprString, colIdent, "("+defaultLiteral+")")
 
 		var buf strings.Builder
-		sqlescape.MustFormatSQL(&buf, "select 1 from %n.%n where not (", job.SchemaName, tblInfo.Name.L)
+		sqlescape.MustFormatSQL(&buf, "select 1 from %n.%n where not (", schemaName, tableName)
 		buf.WriteString(checkExpr)
 		buf.WriteString(") limit 1")
 
-		ctx := kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnDDL)
-		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, buf.String())
+		ictx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ictx, nil, buf.String())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if len(rows) > 0 {
 			return dbterror.ErrCheckConstraintIsViolated.GenWithStackByArgs(c.Name.L)
 		}
-
-		verified = append(verified, c)
 	}
+	return nil
+}
 
-	// Add verified constraints to table info.
+// addInlineCheckConstraints adds the inline CHECK constraints of the ADD COLUMN job
+// to the table info, right before backfill (DeleteOnly -> WriteOnly). The enforced
+// constraints were verified at job submission time, see verifyInlineCheckConstraints.
+func addInlineCheckConstraints(job *model.Job, tblInfo *model.TableInfo) error {
+	args, err := model.GetTableColumnArgs(job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(args.Constraints) == 0 {
+		return nil
+	}
 	namesMap := map[string]bool{}
 	for _, c := range tblInfo.Constraints {
 		namesMap[c.Name.L] = true
 	}
-	setNameForConstraintInfo(tblInfo.Name.L, namesMap, verified)
-	for _, c := range verified {
+	setNameForConstraintInfo(tblInfo.Name.L, namesMap, args.Constraints)
+	for _, c := range args.Constraints {
 		c.ID = allocateConstraintID(tblInfo)
 		c.State = model.StatePublic
 		tblInfo.Constraints = append(tblInfo.Constraints, c)

@@ -2621,6 +2621,13 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Verify the inline CHECK constraints against the column default value before
+	// the job is submitted, so a violation returns 3819 directly to the client
+	// instead of cancelling a running job (which would leave a DeleteOnly column
+	// behind, see issue #71880).
+	if err = verifyInlineCheckConstraints(ctx, schema.Name.L, tbInfo.Name.L, col.ColumnInfo, constraintInfos); err != nil {
+		return errors.Trace(err)
+	}
 	args := &model.TableColumnArgs{
 		Col:                col.ColumnInfo,
 		Pos:                spec.Position,
