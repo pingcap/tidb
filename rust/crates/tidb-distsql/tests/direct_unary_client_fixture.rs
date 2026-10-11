@@ -182,13 +182,16 @@ impl RegionRecoveryLoader for ScriptedLoader {
     }
 }
 
+/// A scripted client whose clones share one script, as a real client's
+/// clones share one transport: the transport sends each RPC on a clone.
+#[derive(Clone)]
 pub struct ScriptedClient {
     pub calls: Arc<RwLock<Vec<ObservedCall>>>,
-    pub responses: VecDeque<Result<Vec<u8>, DirectUnaryClientError>>,
+    pub responses: Arc<Mutex<VecDeque<Result<Vec<u8>, DirectUnaryClientError>>>>,
     pub events: Arc<RwLock<Vec<ClientEvent>>>,
-    pub liveness: RwLock<VecDeque<Result<StoreLiveness, DirectUnaryClientError>>>,
-    pub batch_errors: RwLock<VecDeque<DirectUnaryClientError>>,
-    pub batch_ready_immediately: RwLock<VecDeque<bool>>,
+    pub liveness: Arc<RwLock<VecDeque<Result<StoreLiveness, DirectUnaryClientError>>>>,
+    pub batch_errors: Arc<RwLock<VecDeque<DirectUnaryClientError>>>,
+    pub batch_ready_immediately: Arc<RwLock<VecDeque<bool>>>,
     pub batch_begin_count: Option<Arc<AtomicUsize>>,
 }
 
@@ -364,6 +367,8 @@ impl ScriptedClient {
             stale_read: request.context.stale_read,
         });
         self.responses
+            .lock()
+            .unwrap()
             .pop_front()
             .expect("one scripted response per client call")
             .map(|encoded_response| DirectUnaryResponse::new(encoded_response, address, 1))
@@ -791,14 +796,18 @@ pub fn batch_first_transport_with_config(
     DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
             calls,
-            responses: responses
-                .into_iter()
-                .map(|response| response.map_err(DirectUnaryClientError::InvalidRequest))
-                .collect(),
+            responses: std::sync::Arc::new(std::sync::Mutex::new(
+                responses
+                    .into_iter()
+                    .map(|response| response.map_err(DirectUnaryClientError::InvalidRequest))
+                    .collect(),
+            )),
             events: Arc::new(RwLock::new(Vec::new())),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(ready_immediately.into_iter().collect()),
+            liveness: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_ready_immediately: std::sync::Arc::new(RwLock::new(
+                ready_immediately.into_iter().collect(),
+            )),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
@@ -845,14 +854,16 @@ pub fn transport_with_loader_calls_and_config(
     DirectUnaryQueryTransport::new_injected(
         ScriptedClient {
             calls,
-            responses: responses
-                .into_iter()
-                .map(|response| response.map_err(DirectUnaryClientError::InvalidRequest))
-                .collect(),
+            responses: std::sync::Arc::new(std::sync::Mutex::new(
+                responses
+                    .into_iter()
+                    .map(|response| response.map_err(DirectUnaryClientError::InvalidRequest))
+                    .collect(),
+            )),
             events: Arc::new(RwLock::new(Vec::new())),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            liveness: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_ready_immediately: std::sync::Arc::new(RwLock::new(VecDeque::new())),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
@@ -877,11 +888,11 @@ pub fn transport_with_transport_failures(
     DirectUnaryQueryTransport::new_injected(
         ScriptedClient {
             calls,
-            responses: responses.into_iter().collect(),
+            responses: std::sync::Arc::new(std::sync::Mutex::new(responses.into_iter().collect())),
             events,
-            liveness: RwLock::new(liveness.into_iter().collect()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            liveness: std::sync::Arc::new(RwLock::new(liveness.into_iter().collect())),
+            batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_ready_immediately: std::sync::Arc::new(RwLock::new(VecDeque::new())),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {

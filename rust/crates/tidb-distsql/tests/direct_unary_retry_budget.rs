@@ -50,13 +50,15 @@ fn region_evicted_after_task_build_rebuilds_ranges_before_any_rpc() {
     let shared = tidb_txnkv::SharedReadRuntime::new_injected(
         ScriptedClient {
             calls: calls.clone(),
-            responses: [Ok(response(b"left")), Ok(response(b"right"))]
-                .into_iter()
-                .collect(),
+            responses: std::sync::Arc::new(std::sync::Mutex::new(
+                [Ok(response(b"left")), Ok(response(b"right"))]
+                    .into_iter()
+                    .collect(),
+            )),
             events: Arc::new(RwLock::new(Vec::new())),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            liveness: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_ready_immediately: std::sync::Arc::new(RwLock::new(VecDeque::new())),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {

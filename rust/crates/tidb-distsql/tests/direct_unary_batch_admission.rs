@@ -27,13 +27,17 @@ fn local_batch_admission_busy_falls_back_without_route_failure_feedback() {
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
             calls: Arc::clone(&calls),
-            responses: VecDeque::from([Ok(response(b"sync-after-local-admission"))]),
+            responses: std::sync::Arc::new(std::sync::Mutex::new(VecDeque::from([Ok(response(
+                b"sync-after-local-admission",
+            ))]))),
             events: Arc::clone(&events),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::from([DirectUnaryClientError::AdmissionBusy {
-                address: "tikv-1:20160".to_owned(),
-            }])),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            liveness: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::from([
+                DirectUnaryClientError::AdmissionBusy {
+                    address: "tikv-1:20160".to_owned(),
+                },
+            ]))),
+            batch_ready_immediately: std::sync::Arc::new(RwLock::new(VecDeque::new())),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {

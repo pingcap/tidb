@@ -277,23 +277,25 @@ fn alive_scan_lock_uses_fast_backoff_capped_by_ttl() {
     let calls = Arc::new(RwLock::new(Vec::new()));
     let client = ScriptedClient {
         calls: Arc::clone(&calls),
-        responses: [20_000, 1, 0]
-            .into_iter()
-            .map(|ttl| {
-                Ok(locked_response(KvrpcLockInfo {
-                    key: b"locked-key".to_vec(),
-                    primary_lock: b"primary-key".to_vec(),
-                    lock_version: 42,
-                    lock_ttl: ttl,
-                    ..KvrpcLockInfo::default()
-                }))
-            })
-            .chain([Ok(response(b"unblocked"))])
-            .collect(),
+        responses: std::sync::Arc::new(std::sync::Mutex::new(
+            [20_000, 1, 0]
+                .into_iter()
+                .map(|ttl| {
+                    Ok(locked_response(KvrpcLockInfo {
+                        key: b"locked-key".to_vec(),
+                        primary_lock: b"primary-key".to_vec(),
+                        lock_version: 42,
+                        lock_ttl: ttl,
+                        ..KvrpcLockInfo::default()
+                    }))
+                })
+                .chain([Ok(response(b"unblocked"))])
+                .collect(),
+        )),
         events: Arc::new(RwLock::new(Vec::new())),
-        liveness: RwLock::new(VecDeque::new()),
-        batch_errors: RwLock::new(VecDeque::new()),
-        batch_ready_immediately: RwLock::new(VecDeque::new()),
+        liveness: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+        batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+        batch_ready_immediately: std::sync::Arc::new(RwLock::new(VecDeque::new())),
         batch_begin_count: None,
     };
     let shared = SharedReadRuntime::new_injected(
@@ -362,22 +364,24 @@ fn nested_lock_recovery_and_lock_wait_share_the_cop_region_budget() {
     let calls = Arc::new(RwLock::new(Vec::new()));
     let client = ScriptedClient {
         calls: Arc::clone(&calls),
-        responses: [
-            Ok(locked_response(KvrpcLockInfo {
-                key: b"locked-key".to_vec(),
-                primary_lock: b"primary-key".to_vec(),
-                lock_version: 42,
-                lock_ttl: 100,
-                ..KvrpcLockInfo::default()
-            })),
-            Ok(response(b"unblocked")),
-        ]
-        .into_iter()
-        .collect(),
+        responses: std::sync::Arc::new(std::sync::Mutex::new(
+            [
+                Ok(locked_response(KvrpcLockInfo {
+                    key: b"locked-key".to_vec(),
+                    primary_lock: b"primary-key".to_vec(),
+                    lock_version: 42,
+                    lock_ttl: 100,
+                    ..KvrpcLockInfo::default()
+                })),
+                Ok(response(b"unblocked")),
+            ]
+            .into_iter()
+            .collect(),
+        )),
         events: Arc::new(RwLock::new(Vec::new())),
-        liveness: RwLock::new(VecDeque::new()),
-        batch_errors: RwLock::new(VecDeque::new()),
-        batch_ready_immediately: RwLock::new(VecDeque::new()),
+        liveness: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+        batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+        batch_ready_immediately: std::sync::Arc::new(RwLock::new(VecDeque::new())),
         batch_begin_count: None,
     };
     let shared = SharedReadRuntime::new_injected(
@@ -482,23 +486,27 @@ fn request_hints_reach_the_resolver_without_a_second_transport_backoff() {
                         };
                         let client = ScriptedClient {
                             calls: Arc::clone(&calls),
-                            responses: (0..3)
-                                .map(|index| {
-                                    let mut lock = lock.clone();
-                                    if unhinted && index != 0 {
-                                        lock.lock_version = 43;
-                                        for child in &mut lock.shared_lock_infos {
-                                            child.lock_version = 43;
+                            responses: std::sync::Arc::new(std::sync::Mutex::new(
+                                (0..3)
+                                    .map(|index| {
+                                        let mut lock = lock.clone();
+                                        if unhinted && index != 0 {
+                                            lock.lock_version = 43;
+                                            for child in &mut lock.shared_lock_infos {
+                                                child.lock_version = 43;
+                                            }
                                         }
-                                    }
-                                    Ok(locked_response(lock))
-                                })
-                                .chain([Ok(response(b"unblocked"))])
-                                .collect(),
+                                        Ok(locked_response(lock))
+                                    })
+                                    .chain([Ok(response(b"unblocked"))])
+                                    .collect(),
+                            )),
                             events: Arc::default(),
-                            liveness: RwLock::default(),
-                            batch_errors: RwLock::default(),
-                            batch_ready_immediately: RwLock::new([true; 4].into()),
+                            liveness: std::sync::Arc::new(RwLock::default()),
+                            batch_errors: std::sync::Arc::new(RwLock::default()),
+                            batch_ready_immediately: std::sync::Arc::new(RwLock::new(
+                                [true; 4].into(),
+                            )),
                             batch_begin_count: None,
                         };
                         let shared_runtime = SharedReadRuntime::new_injected(

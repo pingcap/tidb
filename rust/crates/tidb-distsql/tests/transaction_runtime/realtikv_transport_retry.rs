@@ -52,6 +52,7 @@ struct DispatchTrace {
     usable_response: bool,
 }
 
+#[derive(Clone)]
 struct RecordingClient {
     inner: TonicCoprocessorClient,
     trace: Arc<Mutex<TransportTrace>>,

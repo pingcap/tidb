@@ -207,14 +207,14 @@ fn batch_known_leader_region_error_republishes_the_recovered_route() {
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
             calls: Arc::clone(&calls),
-            responses: VecDeque::from([
+            responses: std::sync::Arc::new(std::sync::Mutex::new(VecDeque::from([
                 Ok(not_leader(1, Some((102, 202)))),
                 Ok(response(b"fresh-batch-route")),
-            ]),
+            ]))),
             events: Arc::new(RwLock::new(Vec::new())),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            liveness: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_ready_immediately: std::sync::Arc::new(RwLock::new(VecDeque::new())),
             batch_begin_count: Some(Arc::clone(&batch_begins)),
         },
         RegionCache::new(ScriptedLoader {
@@ -263,7 +263,7 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
             calls: Arc::clone(&calls),
-            responses: VecDeque::from([
+            responses: std::sync::Arc::new(std::sync::Mutex::new(VecDeque::from([
                 Err(connection_failure(
                     "tikv-old:20160",
                     9,
@@ -271,11 +271,13 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
                     None,
                 )),
                 Ok(response(b"recovered-batch-route")),
-            ]),
+            ]))),
             events: Arc::clone(&events),
-            liveness: RwLock::new(VecDeque::from([Ok(StoreLiveness::Unreachable)])),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            liveness: std::sync::Arc::new(RwLock::new(VecDeque::from([Ok(
+                StoreLiveness::Unreachable,
+            )]))),
+            batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_ready_immediately: std::sync::Arc::new(RwLock::new(VecDeque::new())),
             batch_begin_count: Some(Arc::clone(&batch_begins)),
         },
         RegionCache::new(ScriptedLoader {

@@ -34,6 +34,7 @@ struct DelayedStoreMismatchState {
     sent_generations: Vec<u64>,
 }
 
+#[derive(Clone)]
 struct DelayedStoreMismatchClient {
     state: Arc<RwLock<DelayedStoreMismatchState>>,
     replace_before_first_response: bool,
@@ -188,6 +189,7 @@ struct ForwardedStaleMismatchState {
     active_proxy_version: u64,
 }
 
+#[derive(Clone)]
 struct ForwardedStaleMismatchClient {
     state: Arc<RwLock<ForwardedStaleMismatchState>>,
 }
@@ -532,7 +534,7 @@ fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
     let transport = DirectUnaryQueryTransport::new_injected(
         ScriptedClient {
             calls: Arc::clone(&calls),
-            responses: VecDeque::from([
+            responses: std::sync::Arc::new(std::sync::Mutex::new(VecDeque::from([
                 Err(connection_failure(
                     "target-a:20160",
                     1,
@@ -548,14 +550,14 @@ fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
                     None,
                 )),
                 Ok(response(b"right-without-refresh")),
-            ]),
+            ]))),
             events: Arc::clone(&events),
-            liveness: RwLock::new(VecDeque::from([
+            liveness: std::sync::Arc::new(RwLock::new(VecDeque::from([
                 Ok(StoreLiveness::Unreachable),
                 Ok(StoreLiveness::Unreachable),
-            ])),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            ]))),
+            batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_ready_immediately: std::sync::Arc::new(RwLock::new(VecDeque::new())),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {

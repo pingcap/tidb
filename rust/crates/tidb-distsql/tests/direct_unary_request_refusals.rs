@@ -26,11 +26,11 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
     let missing_cluster = DirectUnaryQueryTransport::new_injected(
         ScriptedClient {
             calls: Arc::clone(&calls),
-            responses: VecDeque::new(),
+            responses: std::sync::Arc::new(std::sync::Mutex::new(VecDeque::new())),
             events: Arc::new(RwLock::new(Vec::new())),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            liveness: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_errors: std::sync::Arc::new(RwLock::new(VecDeque::new())),
+            batch_ready_immediately: std::sync::Arc::new(RwLock::new(VecDeque::new())),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {

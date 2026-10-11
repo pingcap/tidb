@@ -103,6 +103,7 @@ struct ClientObservations {
     addresses: RefCell<Vec<String>>,
 }
 
+#[derive(Clone)]
 struct CancellationBlockingClient {
     observations: Rc<ClientObservations>,
     dispatch_started: Option<mpsc::Sender<()>>,
@@ -183,6 +184,7 @@ impl DirectUnaryClient for CancellationBlockingClient {
     }
 }
 
+#[derive(Clone)]
 struct CancellationThenTransportErrorClient {
     observations: Rc<ClientObservations>,
 }

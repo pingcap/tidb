@@ -252,7 +252,7 @@ pub enum DirectUnaryTransportError {
     Coordinator(String),
     /// The injected client failed before returning a raw response.
     Client(DirectUnaryClientError),
-    /// Another response is already dispatching through the shared client.
+    /// A dispatch panicked while it held the shared client.
     ClientLifecycle,
     /// The raw protobuf response was malformed.
     Decode(String),
@@ -323,7 +323,7 @@ impl std::fmt::Display for DirectUnaryTransportError {
             Self::Coordinator(message) => write!(formatter, "cop read task failed: {message}"),
             Self::Client(error) => write!(formatter, "unary client failed: {error}"),
             Self::ClientLifecycle => {
-                formatter.write_str("unary client is already in use by another response")
+                formatter.write_str("unary client was poisoned by a panicked dispatch")
             }
             Self::Decode(message) => write!(formatter, "invalid unary response: {message}"),
             Self::ResponseState(state) => {
@@ -425,7 +425,7 @@ where
     C: AsyncRequestDispatcher,
     C::Pending: Send + 'static,
 {
-    let mut client = try_borrow_client(client)?;
+    let mut client = borrow_client(client)?;
     counter.mark(selected.dispatch_address());
     Ok(client
         .begin(
@@ -607,7 +607,7 @@ where
     }
 }
 
-impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTransport
+impl<C: DirectUnaryClient + Clone + 'static, L: RegionRecoveryLoader + 'static> QueryTransport
     for DirectUnaryQueryTransport<C, L>
 {
     type Response = super::CopIterator<DirectUnaryQueryResponse<C, L>>;
@@ -1001,11 +1001,19 @@ impl<C, L> Drop for DirectUnaryQueryResponse<C, L> {
     }
 }
 
-fn try_borrow_client<C>(
+/// Locks the session's client capability for one short operation.
+///
+/// The capability is shared: every response of the session, its cop workers
+/// before they fork, and the transaction and lock-resolution paths
+/// (`tidb_txnkv::driver::client_bridge`) lock the same mutex. Go's client is
+/// concurrent and never refuses a caller, so a contended lock waits; no RPC
+/// runs under it ([`DirectUnaryQueryResponse::dispatch_attempt`] sends on a
+/// clone). A poisoned lock means a dispatch panicked while holding it.
+fn borrow_client<C>(
     client: &std::sync::Mutex<C>,
 ) -> Result<std::sync::MutexGuard<'_, C>, DirectUnaryTransportError> {
     client
-        .try_lock()
+        .lock()
         .map_err(|_| DirectUnaryTransportError::ClientLifecycle)
 }
 
@@ -1027,7 +1035,7 @@ fn cache_read_operation<C, L: RegionLoader, R>(
         .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)
 }
 
-impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, L> {
+impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, L> {
     /// Request-local network observations accumulated before publication.
     #[must_use]
     pub const fn network_metrics(&self) -> &UnaryNetworkMetrics {
@@ -1617,7 +1625,9 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             prepared_dispatch.traffic_location,
         );
         let dispatch = UnaryRouteDispatch::from_request(&prepared_dispatch.selected);
-        let mut client = try_borrow_client(self.shared_runtime.client())?;
+        // The RPC runs on a clone: the capability is shared (`borrow_client`),
+        // and holding it for a whole send would stall every other user.
+        let mut client = borrow_client(self.shared_runtime.client())?.clone();
         self.kv_exec_counter.mark(dispatch.physical_address());
         let send_result = blocking(|| {
             client.send_request_with_route(
@@ -1627,7 +1637,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 &call,
             )
         });
-        drop(client);
         let dispatch_duration = dispatch_started.elapsed();
         self.settle_dispatch(prepared_dispatch, send_result, dispatch_duration)
     }
@@ -1973,12 +1982,12 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         let failed = self.runtime.consume_failed_attempt(attempt_id)?;
         if close_generation {
             self.check_retry_active()?;
-            try_borrow_client(self.shared_runtime.client())?
+            borrow_client(self.shared_runtime.client())?
                 .close_address_version(connection.address(), connection.version())
                 .map_err(DirectUnaryTransportError::Client)?;
         }
         self.check_retry_active()?;
-        let liveness = try_borrow_client(self.shared_runtime.client())?
+        let liveness = borrow_client(self.shared_runtime.client())?
             .liveness(connection.address(), DEFAULT_STORE_LIVENESS_TIMEOUT)
             .map_err(DirectUnaryTransportError::Client)?;
         self.check_retry_active()?;
@@ -2067,7 +2076,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         // the logical target route below.
         if region_error.store_not_match.is_some() && selected.forwarded_host().is_none() {
             self.check_retry_active()?;
-            try_borrow_client(self.shared_runtime.client())?
+            borrow_client(self.shared_runtime.client())?
                 .close_address_version(
                     &physical_response.address,
                     physical_response.channel_version,
@@ -2310,7 +2319,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
     }
 }
 
-impl<C: DirectUnaryClient, L: RegionRecoveryLoader> QueryResponse
+impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> QueryResponse
     for DirectUnaryQueryResponse<C, L>
 {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
@@ -2335,7 +2344,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> QueryResponse
     }
 }
 
-impl<C: DirectUnaryClient, L: RegionRecoveryLoader> super::cop_iterator::CopTaskSource
+impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator::CopTaskSource
     for DirectUnaryQueryResponse<C, L>
 {
     fn try_next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
@@ -2483,7 +2492,7 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use super::{try_borrow_client, DirectUnaryTransportError, RequestAttemptWaiter};
+    use super::{borrow_client, DirectUnaryTransportError, RequestAttemptWaiter};
 
     #[test]
     fn limiter_waiter_ownership_retires_acquired_cancelled_and_replaced_drivers() {
@@ -2542,19 +2551,33 @@ mod tests {
         new_store.release();
     }
 
+    /// A contended borrow waits for the holder, as Go's concurrent client
+    /// never refuses a caller; only a dispatch that panicked under the lock
+    /// leaves a typed lifecycle error behind.
     #[test]
-    fn shared_client_borrow_conflict_is_a_typed_lifecycle_error() {
-        let client = Mutex::new(());
-        let active_dispatch = client.lock().unwrap();
+    fn a_contended_client_borrow_waits_and_a_poisoned_one_is_typed() {
+        let client = Arc::new(Mutex::new(0_u32));
+        let holder = client.lock().unwrap();
+        let waiter = {
+            let client = Arc::clone(&client);
+            std::thread::spawn(move || borrow_client(&client).map(|mut guard| *guard += 1))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        drop(holder);
+        assert!(waiter.join().unwrap().is_ok());
+        assert_eq!(*client.lock().unwrap(), 1);
 
-        let error = match try_borrow_client(&client) {
-            Ok(_) => panic!("a second mutable client owner must be rejected"),
+        let poisoner = Arc::clone(&client);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("a dispatch panics while holding the client");
+        })
+        .join();
+        let error = match borrow_client(&client) {
+            Ok(_) => panic!("a poisoned client must be refused"),
             Err(error) => error,
         };
         assert_eq!(error, DirectUnaryTransportError::ClientLifecycle);
         assert_eq!(error.kind(), "client_lifecycle");
-
-        drop(active_dispatch);
-        assert!(try_borrow_client(&client).is_ok());
     }
 }

@@ -45,6 +45,7 @@ struct Evidence {
     resolve_addresses: Vec<String>,
 }
 
+#[derive(Clone)]
 struct RecordingClient {
     inner: TonicCoprocessorClient,
     evidence: Arc<Mutex<Evidence>>,

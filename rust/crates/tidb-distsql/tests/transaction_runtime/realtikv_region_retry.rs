@@ -32,6 +32,7 @@ use tidb_txnkv::PdRegionLoader;
 
 const PHASE_TIMEOUT: Duration = Duration::from_secs(120);
 
+#[derive(Clone)]
 struct RecordingClient {
     inner: TonicCoprocessorClient,
     addresses: Arc<Mutex<Vec<String>>>,

@@ -388,6 +388,41 @@ fn an_added_foreign_key_checks_rows_and_keeps_gos_ids_on_rollback() {
     rows(&mut session, "ADMIN CHECK TABLE test.child");
 }
 
+/// The session's cop client capability is shared, and a read that met
+/// another user of it answered "unary client is already in use by another
+/// response": the transport took it with `try_lock` and held it across the
+/// whole RPC. Go's client is concurrent and never refuses a caller. This is
+/// `executor/foreign_key`'s script, whose first `count(*)` failed every time.
+#[test]
+fn a_read_never_finds_the_shared_cop_client_in_use() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(140)).unwrap();
+    rows(&mut session, "SET @@foreign_key_checks = 1");
+    rows(
+        &mut session,
+        "CREATE TABLE test.t1 (id INT AUTO_INCREMENT KEY, b INT, INDEX (b))",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE test.t2 (id INT, b INT, \
+         FOREIGN KEY fk (b) REFERENCES test.t1 (b) ON UPDATE SET NULL)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.t1 (b) VALUES (1), (2), (3), (4), (5), (6), (7), (8)",
+    );
+    for _ in 0..12 {
+        rows(
+            &mut session,
+            "INSERT INTO test.t1 (b) SELECT id FROM test.t1",
+        );
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT COUNT(*) FROM test.t1")),
+        [["32768"]]
+    );
+}
+
 /// Go's foreign-key guards on the production node, answers from the Go
 /// oracle for the same script: `AlterTable` names every anonymous key of one
 /// ALTER before any spec runs (`fk_1`, `fk_2`); `checkDropColumnWithForeignKeyConstraint`
