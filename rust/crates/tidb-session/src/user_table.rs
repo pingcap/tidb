@@ -240,26 +240,40 @@ impl Session {
         if self.account_storage_delegated {
             return Ok(());
         }
-        // The session's own DML context: it carries the statement clock
-        // (`password_last_changed=current_timestamp()` and the column's
-        // default both evaluate NOW), the session time zone, and the JSON
-        // machinery's sql-mode inputs.
+        self.run_internal_write(sql).map(|_| ())
+    }
+
+    /// One statement of the internal SQL Go's handlers run against the
+    /// `mysql` tables (`util.Exec`), through the session's own DML context:
+    /// it carries the statement clock (`current_timestamp()` and column
+    /// defaults evaluate NOW), the session time zone, and the JSON
+    /// machinery's sql-mode inputs, and its system variables bind as a user
+    /// statement's do (Go's internal session plans the same way, so
+    /// `@@TIME_ZONE` in an assignment reads the session value). Answers an
+    /// INSERT's first allocated id (`LAST_INSERT_ID()`).
+    pub(crate) fn run_internal_write(&mut self, sql: &str) -> Result<Option<u64>, DriverError> {
         let ctx = self.statement_context(true);
-        let head = sql.trim_start();
-        self.with_staged_catalog(|catalog| {
-            if head.len() >= 6 && head[..6].eq_ignore_ascii_case("INSERT") {
-                tidb_executor::run_insert_in(sql, catalog, "mysql", &ctx).map(|_| ())
-            } else if head.len() >= 7 && head[..7].eq_ignore_ascii_case("REPLACE") {
-                tidb_executor::run_insert_in(sql, catalog, "mysql", &ctx).map(|_| ())
-            } else if head.len() >= 6 && head[..6].eq_ignore_ascii_case("UPDATE") {
-                tidb_executor::run_update_in(sql, catalog, "mysql", &ctx).map(|_| ())
-            } else if head.len() >= 6 && head[..6].eq_ignore_ascii_case("DELETE") {
-                tidb_executor::run_delete_in(sql, catalog, "mysql", &ctx).map(|_| ())
-            } else {
-                Err(DriverError::unsupported(
-                    "internal mysql.user write must be INSERT/REPLACE/UPDATE/DELETE",
-                ))
+        let mut stmt = self.parse(sql)?;
+        self.bind_variables(&mut stmt)?;
+        let tidb_ast::Stmt::Dml(dml) = &stmt else {
+            return Err(DriverError::unsupported(
+                "internal mysql write must be INSERT/REPLACE/UPDATE/DELETE",
+            ));
+        };
+        self.with_staged_catalog(|catalog| match &**dml {
+            tidb_ast::DmlStmt::Insert(insert) => {
+                tidb_executor::driver::run_insert_stmt(insert, catalog, "mysql", &ctx)
+                    .map(|(_, id)| id)
             }
+            tidb_ast::DmlStmt::Update(update) => {
+                tidb_executor::run_update_stmt(update, catalog, "mysql", &ctx).map(|_| None)
+            }
+            tidb_ast::DmlStmt::Delete(delete) => {
+                tidb_executor::run_delete_stmt(delete, catalog, "mysql", &ctx).map(|_| None)
+            }
+            _ => Err(DriverError::unsupported(
+                "internal mysql write must be INSERT/REPLACE/UPDATE/DELETE",
+            )),
         })
     }
 

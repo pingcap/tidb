@@ -268,6 +268,13 @@ fn loaded_table(
     })
 }
 
+/// The stored statistics items of one statistics table: its columns, then
+/// its indexes, as the storage writers take them.
+#[must_use]
+pub fn stats_items_from_table(table: &Table) -> (Vec<ClusterStatsItem>, Vec<ClusterStatsItem>) {
+    (loaded_columns(table), loaded_indexes(table))
+}
+
 fn loaded_columns(table: &Table) -> Vec<ClusterStatsItem> {
     table
         .hist_coll

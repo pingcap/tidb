@@ -975,6 +975,7 @@ impl Session {
                 self.analyze_stmt(admin)
             }
             tidb_ast::AdminStmt::LoadStats(load) => self.load_stats_stmt(&load.path).map(Some),
+            tidb_ast::AdminStmt::DropStats(drop) => self.drop_stats_stmt(drop).map(Some),
             tidb_ast::AdminStmt::LockStats(lock) => self.stats_lock_stmt(lock, true),
             tidb_ast::AdminStmt::UnlockStats(unlock) => self.stats_lock_stmt(unlock, false),
             tidb_ast::AdminStmt::CreateWorkloadSnapshot => {

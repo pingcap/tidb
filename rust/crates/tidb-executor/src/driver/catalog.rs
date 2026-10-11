@@ -2119,7 +2119,7 @@ impl Catalog {
         database: &str,
         name: &str,
     ) -> Option<&mut TableEntry> {
-        self.get_mut_in(database, name)
+        self.get_rows_mut_in(database, name)
     }
 
     /// A mutable handle on a table of `database`, for the write paths.
@@ -2130,7 +2130,22 @@ impl Catalog {
     /// changing nothing still bumps it. That can refuse a commit Go would
     /// allow, never the reverse.
     pub(crate) fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
-        self.bump_version();
+        self.planner_view.take();
+        self.get_rows_mut_in(database, name)
+    }
+
+    /// [`Catalog::get_mut_in`] for the paths that write rows (DML, foreign-key
+    /// actions, the stats-delta flush): it bumps [`Catalog::version`] the
+    /// same way but keeps the planner's schema view, which carries schema
+    /// metadata only -- Go's `InfoSchema` does not move when rows do. A
+    /// caller must not change the table's schema through this handle; a
+    /// schema change takes [`Catalog::table_mut_in`].
+    pub(crate) fn get_rows_mut_in(
+        &mut self,
+        database: &str,
+        name: &str,
+    ) -> Option<&mut TableEntry> {
+        self.version += 1;
         let key = CatalogTableKey::new(database, name);
         let entry = self
             .database_mut(&key.database)?
@@ -2355,6 +2370,15 @@ impl Catalog {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(physical_id, options);
+    }
+
+    /// Removes one persisted ANALYZE-options row by physical ID (Go's
+    /// `delete from mysql.analyze_options` in `DeleteTableStatsFromKV`).
+    pub fn delete_analyze_options(&mut self, physical_id: i64) {
+        self.analyze_options
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&physical_id);
     }
 
     /// Installs the domain statistics worker used by logical optimization.
@@ -2866,7 +2890,7 @@ impl Catalog {
         }
         let mut flushed: Vec<(i64, i64)> = Vec::new();
         for (database, name, physical_ids) in targets {
-            if let Some(TableEntry::Kv(table)) = self.get_mut_in(&database, &name) {
+            if let Some(TableEntry::Kv(table)) = self.get_rows_mut_in(&database, &name) {
                 let table = Arc::make_mut(table);
                 for physical_id in physical_ids {
                     if let Ok(count) = table.stats_row_count_for_physical_id(physical_id) {

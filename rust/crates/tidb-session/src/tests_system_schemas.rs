@@ -1505,3 +1505,42 @@ fn a_subquery_over_information_schema_reads_the_memory_table() {
         "{plan:?}"
     );
 }
+
+/// An uncorrelated scalar subquery runs while its statement is still being
+/// planned (Go `EvalSubqueryFirstRow`), and a memory table it scans is read
+/// right then: the planned constant is the table's row, not the NULL a
+/// schema-only planning image answers.
+#[test]
+fn a_scalar_subquery_over_information_schema_reads_rows_during_planning() {
+    let mut session = Session::new();
+    session
+        .run("create table t (a bigint primary key)")
+        .unwrap();
+    session.run("create table u (id bigint)").unwrap();
+    let id = row_text(session.run(
+        "select tidb_table_id from information_schema.tables \
+         where table_schema = 'test' and table_name = 't'",
+    ))[0][0]
+        .clone();
+    session
+        .run(&format!("insert into u values ({id}), (0)"))
+        .unwrap();
+    let subquery = "(select tidb_table_id from information_schema.tables \
+                    where table_schema = 'test' and table_name = 't')";
+    assert_eq!(
+        row_text(session.run(&format!("select {subquery}"))),
+        [[id.as_str()]]
+    );
+    assert_eq!(
+        row_text(session.run(&format!("select id from u where id = {subquery}"))),
+        [[id.as_str()]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select table_name from information_schema.tables where tidb_table_id = \
+             (select max(tidb_table_id) from information_schema.tables \
+             where table_schema = 'test')"
+        )),
+        [["u"]]
+    );
+}

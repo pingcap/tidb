@@ -822,7 +822,7 @@ fn run_insert_with_physical(
         column_meta,
     } = target_layout;
     let TableEntry::Kv(kv) = catalog
-        .get_mut_in(&database, &table_name)
+        .get_rows_mut_in(&database, &table_name)
         .ok_or(DriverError::unsupported("table not found in catalog"))?
     else {
         unreachable!("the INSERT target was validated before reading its source")
@@ -1465,7 +1465,7 @@ fn run_insert_with_physical(
         database: &str,
         table_name: &str,
     ) -> &'a mut crate::kv_table::KvTable {
-        match catalog.get_mut_in(database, table_name) {
+        match catalog.get_rows_mut_in(database, table_name) {
             Some(TableEntry::Kv(kv)) => std::sync::Arc::make_mut(kv),
             _ => unreachable!("INSERT through a view is refused above"),
         }
@@ -1980,7 +1980,7 @@ fn apply_on_duplicate(
     updates: &mut UpdateRecords<'_>,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
-    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(database, target_table_name) else {
+    let Some(TableEntry::Kv(table)) = catalog.get_rows_mut_in(database, target_table_name) else {
         unreachable!("ODKU targets a byte-backed table")
     };
     let Some(existing) = std::sync::Arc::make_mut(table)

@@ -331,9 +331,32 @@ impl Session {
                     };
                     let ctx = self.statement_context(false);
                     let database = self.current_database().to_owned();
-                    let physical = self.with_catalog_mut(|catalog| {
-                        tidb_executor::plan_query_meta_stmt(&query, catalog, &database, &ctx)
-                    })?;
+                    // A read of information_schema plans (and runs) over the
+                    // virtual tables, as the same SELECT would on its own.
+                    let mut table_names = Vec::new();
+                    let mut written_db = None;
+                    crate::dispatch::information_schema_tables_in_query(
+                        &query,
+                        &database,
+                        &mut table_names,
+                        &mut written_db,
+                    );
+                    let (physical, virtual_catalog) = if table_names.is_empty() {
+                        let physical = self.with_catalog_mut(|catalog| {
+                            tidb_executor::plan_query_meta_stmt(&query, catalog, &database, &ctx)
+                        })?;
+                        (physical, None)
+                    } else {
+                        let (physical, catalog) = self
+                            .plan_information_schema_query_for_execution(
+                                &query,
+                                table_names,
+                                &database,
+                                &ctx,
+                                written_db,
+                            )?;
+                        (physical, Some(catalog))
+                    };
                     let field = physical
                         .schema()
                         .and_then(|schema| schema.columns.first())
@@ -345,24 +368,34 @@ impl Session {
                         query,
                         physical,
                         field,
+                        virtual_catalog,
                     ));
                 }
-                for (bound, key, query, mut physical, field) in planned {
+                for (bound, key, query, mut physical, field, virtual_catalog) in planned {
                     let value = if is_set_literal(&bound) {
                         // Raising a cancelled query's quota must not allocate a SELECT result.
                         self.eval_bound_value(&bound)?
                     } else {
                         let ctx = self.statement_context(false);
                         let database = self.current_database().to_owned();
-                        let (_, rows) = self.with_catalog_mut(|catalog| {
-                            tidb_executor::run_query_meta_stmt_with_physical(
+                        let (_, rows) = match &virtual_catalog {
+                            Some(catalog) => tidb_executor::run_query_meta_stmt_with_physical(
                                 &query,
                                 Some(&mut physical),
                                 catalog,
                                 &database,
                                 &ctx,
-                            )
-                        })?;
+                            )?,
+                            None => self.with_catalog_mut(|catalog| {
+                                tidb_executor::run_query_meta_stmt_with_physical(
+                                    &query,
+                                    Some(&mut physical),
+                                    catalog,
+                                    &database,
+                                    &ctx,
+                                )
+                            })?,
+                        };
                         match rows.len() {
                             0 => Datum::Null,
                             1 => rows[0].first().cloned().unwrap_or(Datum::Null),
@@ -1389,8 +1422,7 @@ impl Session {
         if let tidb_ast::Expr::Subquery(sub) = bound {
             let sql = sub.restore();
             let ctx = self.statement_context(false);
-            let rows =
-                self.with_catalog_mut(|catalog| tidb_executor::run_select_on(&sql, catalog, &ctx))?;
+            let rows = self.set_value_rows(&sql, &ctx)?;
             return match rows.len() {
                 0 => Ok(Datum::Null),
                 1 => Ok(rows[0].first().cloned().unwrap_or(Datum::Null)),
@@ -1399,13 +1431,45 @@ impl Session {
         }
         let sql = format!("SELECT {}", bound.restore());
         let ctx = self.statement_context(false);
-        let rows =
-            self.with_catalog_mut(|catalog| tidb_executor::run_select_on(&sql, catalog, &ctx))?;
+        let rows = self.set_value_rows(&sql, &ctx)?;
         Ok(rows
             .first()
             .and_then(|row| row.first())
             .cloned()
             .unwrap_or(Datum::Null))
+    }
+
+    /// Runs the SELECT a `SET` right-hand side is evaluated through. A read
+    /// of information_schema plans its virtual tables as memory tables, as
+    /// the statement itself would (Go plans the assignment's expression,
+    /// subqueries included, like any other).
+    fn set_value_rows(
+        &mut self,
+        sql: &str,
+        ctx: &tidb_executor::StmtContext,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        if let Stmt::Query(query) = self.parse(sql)? {
+            let current_db = self.current_db.clone();
+            let mut table_names = Vec::new();
+            let mut written_db = None;
+            crate::dispatch::information_schema_tables_in_query(
+                &query,
+                &current_db,
+                &mut table_names,
+                &mut written_db,
+            );
+            if !table_names.is_empty() {
+                let record_set = self.open_information_schema_query(
+                    &query,
+                    table_names,
+                    &current_db,
+                    ctx,
+                    written_db,
+                )?;
+                return record_set.collect().map(|(_, rows)| rows);
+            }
+        }
+        self.with_catalog_mut(|catalog| tidb_executor::run_select_on(sql, catalog, ctx))
     }
 
     /// Resolves system-variable scope and visibility before shared planning.

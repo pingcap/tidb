@@ -596,6 +596,34 @@ pub fn plan_query_meta_stmt(
         .map_err(planner_error_to_driver)
 }
 
+/// [`plan_query_meta_stmt`], also handing back the optimized child of every
+/// uncorrelated subquery the build evaluated: Go's `EvalSubqueryFirstRow`
+/// runs each one, memory-table retrievers included, while the statement is
+/// still being planned.
+pub fn plan_query_meta_stmt_with_subqueries(
+    query: &QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<
+    (
+        tidb_planner::physical::PhysicalPlan,
+        Vec<tidb_planner::physical::PhysicalPlan>,
+    ),
+    DriverError,
+> {
+    validate_query_sequence_names(query, ctx)?;
+    planner_bridge::physical_query_plan_with_scalar_subqueries(query, catalog, current_db, ctx)
+        .map(|(physical, registered)| {
+            let subqueries = registered
+                .into_iter()
+                .map(|subquery| subquery.physical)
+                .collect();
+            (physical, subqueries)
+        })
+        .map_err(planner_error_to_driver)
+}
+
 /// Answers Go `memtableRetriever.updateStatsCacheIfNeed` from the physical
 /// memory-table columns left after logical column pruning.
 #[must_use]

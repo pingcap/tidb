@@ -4443,6 +4443,15 @@ impl StmtContext {
             .len()
     }
 
+    /// Go `StatementContext.TruncateWarnings`: drops the warnings recorded
+    /// after the first `start`, for work that is redone from that point.
+    pub fn truncate_warnings(&self, start: usize) {
+        self.warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .truncate(start);
+    }
+
     /// Publishes the statement's human-readable info string for the protocol
     /// layer. The value is shared because executor helpers receive the context
     /// by reference, just like Go's `StatementContext`.

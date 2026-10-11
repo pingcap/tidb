@@ -328,6 +328,24 @@ impl ClusterTableStats {
     /// than cached independently.
     #[must_use]
     pub fn to_statistics_table(&self, table_info: &TableInfo) -> Arc<Table> {
+        self.to_statistics_table_for_schema(&StatsTableSchema::of_table_info(table_info))
+    }
+
+    /// Go `TableStatsFromStorage(.., loadAll = false)` as `StatsCache.Update`
+    /// installs it for a table it holds no copy of: the storage image, with
+    /// `LastAnalyzeVersion` falling back to the analyze snapshot.
+    #[must_use]
+    pub fn to_updated_statistics_table_for_schema(&self, schema: &StatsTableSchema) -> Table {
+        let mut table = self.to_statistics_table_for_schema(schema).as_ref().clone();
+        table.last_analyze_version = self.refresh_last_analyze_version(0);
+        table.last_stats_hist_version = self.last_stats_hist_version;
+        table
+    }
+
+    /// [`Self::to_statistics_table`] over the schema parts it reads, which a
+    /// caller without a Go `TableInfo` (the in-process catalog) supplies.
+    #[must_use]
+    pub fn to_statistics_table_for_schema(&self, schema: &StatsTableSchema) -> Arc<Table> {
         let row_count = stats_meta_count_as_go_int64(self.row_count);
         let stats_version = self
             .columns
@@ -350,29 +368,22 @@ impl ClusterTableStats {
                 i32::MAX
             }
         });
-        let mut existence =
-            ColAndIdxExistenceMap::new(table_info.columns.len(), table_info.indices.len());
+        let mut existence = ColAndIdxExistenceMap::new(schema.columns.len(), schema.indexes.len());
 
         // Go `statistics.PseudoTable` seeds schema-visible items as known,
         // but not analyzed. Storage may have a real stats_meta row before
         // any column or index histogram rows exist; starting from the schema
         // keeps later load decisions and `ColAndIdxExistenceMap` queries
         // equivalent to that metadata-only table.
-        for column in table_info.cols().iter_deref() {
-            let column = column.read();
-            if column.state == tidb_model::SchemaState::PUBLIC && !column.hidden {
-                existence.insert_column(column.id, false);
-            }
+        for column in schema.columns.iter().filter(|column| column.visible) {
+            existence.insert_column(column.info.id, false);
         }
-        for index in table_info.indices.iter_deref() {
-            let index = index.read();
-            if index.state == tidb_model::SchemaState::PUBLIC {
-                existence.insert_index(index.id, false);
-            }
+        for index in schema.indexes.iter().filter(|index| index.public) {
+            existence.insert_index(index.info.id, false);
         }
 
         for item in &self.columns {
-            let Some(column) = item.to_column(self.table_id, table_info) else {
+            let Some(column) = item.to_column_for_schema(self.table_id, schema) else {
                 continue;
             };
             existence.insert_column(
@@ -382,7 +393,7 @@ impl ClusterTableStats {
             hist_coll.set_column(item.id, column);
         }
         for item in &self.indexes {
-            let Some(index) = item.to_index(self.table_id, table_info) else {
+            let Some(index) = item.to_index_for_schema(self.table_id, schema) else {
                 continue;
             };
             existence.insert_index(item.id, item.stats_ver != 0);
@@ -397,29 +408,210 @@ impl ClusterTableStats {
                 .last_analyze_version
                 .max(self.analyzed_histogram_version()),
             last_stats_hist_version: self.last_stats_hist_version.max(self.snapshot),
-            table_info_update_ts: table_info.update_ts,
-            is_pk_handle: table_info.pk_is_handle,
+            table_info_update_ts: schema.update_ts,
+            is_pk_handle: schema.pk_is_handle,
         })
+    }
+}
+
+/// Go's load state for one `mysql.stats_histograms` row: an item never
+/// analyzed (and, for a column, holding no counted value) is uninitialized;
+/// otherwise it is resident when its payload was read, evicted when not.
+fn histogram_row_load_status(
+    is_index: bool,
+    stats_ver: i64,
+    histogram: &Histogram,
+    full_load: bool,
+) -> StatsLoadedStatus {
+    let initialized = if is_index {
+        stats_ver != 0
+    } else {
+        stats_ver != 0 || histogram.ndv > 0 || histogram.null_count > 0
+    };
+    if !initialized {
+        StatsLoadedStatus::default()
+    } else if full_load {
+        StatsLoadedStatus::full_load()
+    } else {
+        StatsLoadedStatus::all_evicted()
+    }
+}
+
+/// One `mysql.stats_histograms` row as the metadata-only (`loadAll = false`)
+/// load reads it, for a caller that read the row itself: no buckets, TopN or
+/// sketch, and an index keeps no `tot_col_size` or `correlation`
+/// (`read.go::LoadHistogram`).
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn histogram_row_item(
+    id: i64,
+    is_index: bool,
+    stats_ver: i64,
+    flag: i64,
+    ndv: i64,
+    null_count: i64,
+    version: u64,
+    tot_col_size: i64,
+    correlation: f64,
+) -> ClusterStatsItem {
+    let histogram = Histogram {
+        id,
+        ndv,
+        null_count,
+        last_update_version: version,
+        tot_col_size: if is_index { 0 } else { tot_col_size },
+        correlation: if is_index { 0.0 } else { correlation },
+        buckets: Vec::new(),
+    };
+    ClusterStatsItem {
+        id,
+        is_index,
+        stats_ver,
+        flag,
+        load_status: histogram_row_load_status(is_index, stats_ver, &histogram, false),
+        histogram,
+        topn: None,
+        cms: None,
+        fm_sketch: None,
+    }
+}
+
+/// The schema parts Go's statistics loader reads while it turns storage rows
+/// into a `statistics.Table`: each column's and index's identity, which of
+/// them `PseudoTable` seeds (public, and for a column not hidden),
+/// `PKIsHandle` and `UpdateTS`.
+#[derive(Clone, Debug)]
+pub struct StatsTableSchema {
+    columns: Vec<StatsSchemaColumn>,
+    indexes: Vec<StatsSchemaIndex>,
+    pk_is_handle: bool,
+    update_ts: u64,
+}
+
+#[derive(Clone, Debug)]
+struct StatsSchemaColumn {
+    info: ColumnInfo,
+    visible: bool,
+}
+
+#[derive(Clone, Debug)]
+struct StatsSchemaIndex {
+    info: IndexInfo,
+    public: bool,
+}
+
+impl StatsTableSchema {
+    /// The schema of a Go `TableInfo`.
+    #[must_use]
+    pub fn of_table_info(table_info: &TableInfo) -> Self {
+        let columns = table_info
+            .cols()
+            .iter_deref()
+            .map(|column| {
+                let column = column.read();
+                StatsSchemaColumn {
+                    info: ColumnInfo {
+                        id: column.id,
+                        name: column.name.lowercase().to_owned(),
+                        primary_key: column.field_type.flags()
+                            & tidb_datatype::FieldTypeFlags::PRI_KEY
+                            != 0,
+                    },
+                    visible: column.state == tidb_model::SchemaState::PUBLIC && !column.hidden,
+                }
+            })
+            .collect();
+        let indexes = table_info
+            .indices
+            .iter_deref()
+            .map(|index| {
+                let index = index.read();
+                StatsSchemaIndex {
+                    info: IndexInfo {
+                        id: index.id,
+                        name: index.name.lowercase().to_owned(),
+                        columns: index
+                            .columns
+                            .iter_deref()
+                            .map(|column| column.read().name.lowercase().to_owned())
+                            .collect(),
+                        mv_index: index.mv_index,
+                    },
+                    public: index.state == tidb_model::SchemaState::PUBLIC,
+                }
+            })
+            .collect();
+        Self {
+            columns,
+            indexes,
+            pk_is_handle: table_info.pk_is_handle,
+            update_ts: table_info.update_ts,
+        }
+    }
+
+    /// The schema of an in-process table, whose columns and indexes are all
+    /// public and which keeps no `UpdateTS`.
+    #[must_use]
+    pub fn of_kv_table(table: &tidb_executor::KvTable) -> Self {
+        let columns = table
+            .columns()
+            .iter()
+            .enumerate()
+            .map(|(offset, column)| StatsSchemaColumn {
+                info: ColumnInfo {
+                    id: column.id,
+                    name: tidb_util::stringutil::go_to_lower(&column.name),
+                    primary_key: column
+                        .field_type
+                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                },
+                visible: !table.is_hidden(offset),
+            })
+            .collect();
+        let indexes = table
+            .indexes()
+            .iter()
+            .map(|index| StatsSchemaIndex {
+                info: IndexInfo {
+                    id: index.id,
+                    name: tidb_util::stringutil::go_to_lower(&index.name),
+                    columns: index
+                        .column_offsets
+                        .iter()
+                        .filter_map(|offset| table.columns().get(*offset))
+                        .map(|column| tidb_util::stringutil::go_to_lower(&column.name))
+                        .collect(),
+                    mv_index: table.mv_key_part_source(index.id).is_some(),
+                },
+                public: true,
+            })
+            .collect();
+        Self {
+            columns,
+            indexes,
+            pk_is_handle: table.pk_handle_offset().is_some(),
+            update_ts: 0,
+        }
     }
 }
 
 impl ClusterStatsItem {
     pub(crate) fn to_column(&self, table_id: i64, table_info: &TableInfo) -> Option<Column> {
-        let (metadata, is_handle) = table_info.cols().iter_deref().find_map(|column| {
-            let column = column.read();
-            (column.id == self.id).then(|| {
-                let primary_key =
-                    column.field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY != 0;
-                (
-                    ColumnInfo {
-                        id: column.id,
-                        name: column.name.lowercase().to_owned(),
-                        primary_key,
-                    },
-                    table_info.pk_is_handle && primary_key,
-                )
-            })
-        })?;
+        self.to_column_for_schema(table_id, &StatsTableSchema::of_table_info(table_info))
+    }
+
+    pub(crate) fn to_index(&self, table_id: i64, table_info: &TableInfo) -> Option<Index> {
+        self.to_index_for_schema(table_id, &StatsTableSchema::of_table_info(table_info))
+    }
+
+    fn to_column_for_schema(&self, table_id: i64, schema: &StatsTableSchema) -> Option<Column> {
+        let metadata = schema
+            .columns
+            .iter()
+            .find(|column| column.info.id == self.id)?
+            .info
+            .clone();
+        let is_handle = schema.pk_is_handle && metadata.primary_key;
         Some(Column {
             cmsketch: self.cms.clone(),
             fm_sketch: self.fm_sketch.clone(),
@@ -434,20 +626,13 @@ impl ClusterStatsItem {
         })
     }
 
-    pub(crate) fn to_index(&self, table_id: i64, table_info: &TableInfo) -> Option<Index> {
-        let metadata = table_info.indices.iter_deref().find_map(|index| {
-            let index = index.read();
-            (index.id == self.id).then(|| IndexInfo {
-                id: index.id,
-                name: index.name.lowercase().to_owned(),
-                columns: index
-                    .columns
-                    .iter_deref()
-                    .map(|column| column.read().name.lowercase().to_owned())
-                    .collect(),
-                mv_index: index.mv_index,
-            })
-        })?;
+    fn to_index_for_schema(&self, table_id: i64, schema: &StatsTableSchema) -> Option<Index> {
+        let metadata = schema
+            .indexes
+            .iter()
+            .find(|index| index.info.id == self.id)?
+            .info
+            .clone();
         Some(Index {
             cmsketch: self.cms.clone(),
             fm_sketch: self.fm_sketch.clone(),
@@ -922,10 +1107,9 @@ impl ClusterStatsLoader {
             return Ok(None);
         };
         let Some(current) = current else {
-            let mut table = lite.to_statistics_table(table_info).as_ref().clone();
-            table.last_analyze_version = lite.refresh_last_analyze_version(0);
-            table.last_stats_hist_version = lite.last_stats_hist_version;
-            return Ok(Some(Arc::new(table)));
+            return Ok(Some(Arc::new(lite.to_updated_statistics_table_for_schema(
+                &StatsTableSchema::of_table_info(table_info),
+            ))));
         };
 
         let mut updated = current.copy_as(tidb_stats::CopyIntent::BothMapsWritable);
@@ -1177,18 +1361,7 @@ impl ClusterStatsLoader {
             } else {
                 (None, None)
             };
-            let initialized = if is_index {
-                stats_ver != 0
-            } else {
-                stats_ver != 0 || histogram.ndv > 0 || histogram.null_count > 0
-            };
-            let load_status = if !initialized {
-                StatsLoadedStatus::default()
-            } else if full_load {
-                StatsLoadedStatus::full_load()
-            } else {
-                StatsLoadedStatus::all_evicted()
-            };
+            let load_status = histogram_row_load_status(is_index, stats_ver, &histogram, full_load);
             let item = ClusterStatsItem {
                 id,
                 is_index,

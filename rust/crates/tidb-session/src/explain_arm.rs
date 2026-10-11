@@ -181,9 +181,12 @@ impl Session {
         }
         // A query over information_schema plans its virtual tables as memory
         // tables (Go `buildDataSource`'s `LogicalMemTable`): plan against the
-        // same schema-only overlay the query itself plans against.
+        // catalog the query itself plans against -- schema-only, or the
+        // generated rows a subquery evaluated during planning read. The
+        // explain below plans again, so this pass's warnings are dropped.
         let mut memory_tables = Vec::new();
         let mut written_db = None;
+        let mut planning_catalog = None;
         if let Stmt::Query(query) = target {
             crate::dispatch::information_schema_tables_in_query(
                 query,
@@ -191,14 +194,19 @@ impl Session {
                 &mut memory_tables,
                 &mut written_db,
             );
+            if !memory_tables.is_empty() {
+                let warnings_start = ctx.warning_count();
+                let (_, catalog, _) = self.plan_information_schema_query(
+                    query,
+                    &memory_tables,
+                    &current_db,
+                    &ctx,
+                    written_db,
+                )?;
+                ctx.truncate_warnings(warnings_start);
+                planning_catalog = Some(catalog);
+            }
         }
-        let planning_catalog = if memory_tables.is_empty() {
-            None
-        } else {
-            memory_tables.sort_unstable_by_key(|name| name.to_ascii_lowercase());
-            memory_tables.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
-            Some(self.information_schema_planning_catalog(&memory_tables, written_db)?)
-        };
         let explain_query =
             |query: &tidb_ast::QueryStmt, catalog: &tidb_executor::Catalog| match query {
                 tidb_ast::QueryStmt::Select(select) => {

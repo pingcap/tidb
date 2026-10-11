@@ -1562,3 +1562,121 @@ fn analyze_notes_the_adjusted_sample_rate_like_go() {
     session.run("ANALYZE TABLE s WITH 100 SAMPLES").unwrap();
     assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
 }
+
+/// `ANALYZE` stores what it published as Go's `SaveAnalyzeResultToStorage`
+/// writes it -- the `stats_meta` row, each histogram row, the TopN values as
+/// their exact key bytes -- and finishes its `analyze_jobs` row, whose start
+/// and finish read `@@TIME_ZONE` through the session's variable binding.
+#[test]
+fn analyze_saves_statistics_and_finishes_its_job_row() {
+    let mut session = Session::new();
+    session
+        .run("create table t (a int, b varchar(10), key ia(a))")
+        .unwrap();
+    session
+        .run("insert into t values (1, 'x'), (2, 'y'), (2, 'z'), (3, null)")
+        .unwrap();
+    session.run("analyze table t").unwrap();
+    let id = "(select tidb_table_id from information_schema.tables \
+              where table_schema = 'test' and table_name = 't')";
+    assert_eq!(
+        row_text(session.run(&format!(
+            "select count, modify_count, version = snapshot from mysql.stats_meta \
+             where table_id = {id}"
+        ))),
+        [["4", "0", "1"]]
+    );
+    assert_eq!(
+        row_text(session.run(&format!(
+            "select is_index, hist_id, distinct_count, null_count, stats_ver, \
+             cm_sketch is null from mysql.stats_histograms where table_id = {id} \
+             order by is_index, hist_id"
+        ))),
+        [
+            ["0", "1", "3", "0", "2", "1"],
+            ["0", "2", "3", "1", "2", "1"],
+            ["1", "1", "3", "0", "2", "1"],
+        ]
+    );
+    assert_eq!(
+        row_text(session.run(&format!(
+            "select is_index, hex(value), count from mysql.stats_top_n \
+             where table_id = {id} and hist_id = 1 order by is_index, value"
+        ))),
+        [
+            ["0", "038000000000000001", "1"],
+            ["0", "038000000000000002", "2"],
+            ["0", "038000000000000003", "1"],
+            ["1", "038000000000000001", "1"],
+            ["1", "038000000000000002", "2"],
+            ["1", "038000000000000003", "1"],
+        ]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select table_schema, table_name, state, processed_rows, fail_reason is null, \
+             process_id is null, start_time is not null, end_time is not null \
+             from mysql.analyze_jobs"
+        )),
+        [["test", "t", "finished", "4", "1", "1", "1", "1"]]
+    );
+}
+
+/// `DROP STATS` is Go's soft delete: the meta row keeps its counts, each
+/// histogram row is reset in place, the buckets and TopN go, and the cache
+/// reloads from what storage now holds -- a table with a real row count
+/// whose distribution is pseudo again. The statistics id comes from a
+/// `SET` whose subquery reads information_schema.
+#[test]
+fn drop_stats_soft_deletes_storage_and_reloads_the_table() {
+    let mut session = Session::new();
+    session
+        .run("create table t (c1 varchar(20), c2 varchar(20))")
+        .unwrap();
+    session
+        .run("insert into t values ('1', '1'), ('2', '2'), ('3', '3'), ('4', '4')")
+        .unwrap();
+    session.run("insert into t select * from t").unwrap();
+    session.run("insert into t select * from t").unwrap();
+    session
+        .run("analyze table t all columns with 2 topn")
+        .unwrap();
+    session
+        .run(
+            "set @a = (select tidb_table_id from information_schema.tables \
+             where table_name = 't' and table_schema = 'test')",
+        )
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("select count(*) > 0 from mysql.stats_top_n where table_id = @a")),
+        [["1"]]
+    );
+    session.run("drop stats t").unwrap();
+    assert_eq!(
+        row_text(
+            session.run("select modify_count, count from mysql.stats_meta where table_id = @a")
+        ),
+        [["0", "16"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select hist_id, distinct_count, stats_ver from mysql.stats_histograms \
+             where table_id = @a order by hist_id"
+        )),
+        [["1", "0", "0"], ["2", "0", "0"]]
+    );
+    assert!(
+        row_text(session.run("select * from mysql.stats_buckets where table_id = @a")).is_empty()
+    );
+    assert!(
+        row_text(session.run("select * from mysql.stats_top_n where table_id = @a")).is_empty()
+    );
+    let (est_rows, info) = scan_row(&mut session, "explain select * from t");
+    assert_eq!(est_rows, "16.00");
+    assert!(info.contains("stats:pseudo"), "{info}");
+    assert!(session
+        .run("drop stats nosuch")
+        .unwrap_err()
+        .to_string()
+        .contains("doesn't exist"));
+}

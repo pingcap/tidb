@@ -64,7 +64,7 @@ impl<'a> DeleteRecords<'a> {
                 return Err(error);
             }
         }
-        match catalog.get_mut_in(database, name) {
+        match catalog.get_rows_mut_in(database, name) {
             Some(TableEntry::Kv(kv)) => {
                 let handle = id;
                 let kv = std::sync::Arc::make_mut(kv);

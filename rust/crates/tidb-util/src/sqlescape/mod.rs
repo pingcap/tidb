@@ -307,7 +307,20 @@ fn append_string_argument(mut buffer: Vec<u8>, value: &[u8]) -> Vec<u8> {
     buffer
 }
 
-fn append_argument(mut buffer: Vec<u8>, argument: &SqlArg<'_>) -> Result<Vec<u8>, EscapeError> {
+/// How a byte-slice argument is spelled. Go writes the bytes raw inside a
+/// `_binary'...'` literal; a caller whose SQL must be UTF-8 text spells the
+/// same value as `_binary X'...'`, which stores the same bytes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BytesForm {
+    Raw,
+    Hex,
+}
+
+fn append_argument(
+    mut buffer: Vec<u8>,
+    argument: &SqlArg<'_>,
+    bytes_form: BytesForm,
+) -> Result<Vec<u8>, EscapeError> {
     match argument {
         SqlArg::Null => buffer.extend_from_slice(b"NULL"),
         SqlArg::Signed(value) => buffer.extend_from_slice(value.to_string().as_bytes()),
@@ -326,6 +339,13 @@ fn append_argument(mut buffer: Vec<u8>, argument: &SqlArg<'_>) -> Result<Vec<u8>
             buffer.push(b'\'');
         }
         SqlArg::Bytes(None) => buffer.extend_from_slice(b"NULL"),
+        SqlArg::Bytes(Some(value)) if bytes_form == BytesForm::Hex => {
+            buffer.extend_from_slice(b"_binary X'");
+            for byte in value.iter() {
+                buffer.extend_from_slice(format!("{byte:02X}").as_bytes());
+            }
+            buffer.push(b'\'');
+        }
         SqlArg::Bytes(Some(value)) => {
             buffer.extend_from_slice(b"_binary'");
             buffer = escape_bytes_backslash(buffer, value);
@@ -369,6 +389,7 @@ fn append_argument(mut buffer: Vec<u8>, argument: &SqlArg<'_>) -> Result<Vec<u8>
 fn escape_sql_impl(
     sql: impl AsRef<[u8]>,
     arguments: &[SqlArg<'_>],
+    bytes_form: BytesForm,
 ) -> Result<Vec<u8>, EscapeError> {
     let bytes = sql.as_ref();
     let mut buffer = Vec::with_capacity(bytes.len());
@@ -414,7 +435,7 @@ fn escape_sql_impl(
                             supplied: arguments.len(),
                         })?;
                 argument_position += 1;
-                match append_argument(buffer, argument) {
+                match append_argument(buffer, argument, bytes_form) {
                     Ok(next) => buffer = next,
                     Err(EscapeError::UnsupportedArgument { value, .. }) => {
                         return Err(EscapeError::UnsupportedArgument {
@@ -441,7 +462,7 @@ fn escape_sql_impl(
 
 /// Escapes arguments into SQL using `%?`, `%n`, and `%%`.
 pub fn escape_sql(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Result<Vec<u8>, EscapeError> {
-    escape_sql_impl(sql, arguments)
+    escape_sql_impl(sql, arguments, BytesForm::Raw)
 }
 
 /// Escapes SQL and panics on a statically avoidable argument error.
@@ -453,13 +474,28 @@ pub fn must_escape_sql(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Vec<u
     escape_sql(sql, arguments).unwrap_or_else(|error| panic!("{error}"))
 }
 
+/// [`must_escape_sql`] for SQL that this tier's parser will read, which takes
+/// UTF-8 text where Go's takes bytes: a byte-slice argument is spelled
+/// `_binary X'...'` instead of raw bytes in `_binary'...'`. Both store the
+/// same bytes into a BLOB column, which is what Go's internal SQL writes
+/// byte slices into.
+///
+/// # Panics
+///
+/// Panics when [`escape_sql`] would return an error.
+pub fn must_escape_sql_text(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> String {
+    let buffer =
+        escape_sql_impl(sql, arguments, BytesForm::Hex).unwrap_or_else(|error| panic!("{error}"));
+    String::from_utf8_lossy(&buffer).into_owned()
+}
+
 /// Writes one escaped SQL byte string with one call to the destination.
 pub fn format_sql(
     writer: &mut impl Write,
     sql: impl AsRef<[u8]>,
     arguments: &[SqlArg<'_>],
 ) -> Result<(), EscapeError> {
-    let buffer = escape_sql_impl(sql, arguments)?;
+    let buffer = escape_sql_impl(sql, arguments, BytesForm::Raw)?;
     writer.write(&buffer).map_err(EscapeError::Write)?;
     Ok(())
 }
@@ -845,7 +881,7 @@ mod tests {
         ];
 
         for case in cases {
-            let direct = escape_sql_impl(case.input, &case.arguments);
+            let direct = escape_sql_impl(case.input, &case.arguments, BytesForm::Raw);
             let public = escape_sql(case.input, &case.arguments);
             let mut writer = Vec::new();
             let formatted = format_sql(&mut writer, case.input, &case.arguments);

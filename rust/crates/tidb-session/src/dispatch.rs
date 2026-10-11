@@ -340,6 +340,113 @@ fn cached_dml_plan<'a>(
     Ok(Some(plan))
 }
 
+/// What a statement's memory-table scans read, which decides how the
+/// virtual tables are generated: each table's needed columns, whether
+/// `TABLES`/`PARTITIONS` need the storage statistics (Go
+/// `memtableRetriever.updateStatsCacheIfNeed`) and their column lengths, and
+/// the cluster tables' extracted routing.
+#[derive(Default)]
+pub(crate) struct InformationSchemaReads {
+    columns: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    needs_storage_stats: bool,
+    needs_column_lengths: bool,
+    cluster_config_filters: Vec<tidb_planner::memtable_predicate_extractor::ClusterTableFilter>,
+    cluster_log_extractors:
+        Vec<tidb_planner::memtable_predicate_extractor::ClusterLogTableExtractor>,
+}
+
+impl InformationSchemaReads {
+    fn of(plans: &[&tidb_planner::physical::PhysicalPlan]) -> Self {
+        fn visit(
+            plan: &tidb_planner::physical::PhysicalPlan,
+            columns: &mut std::collections::HashMap<String, std::collections::HashSet<String>>,
+        ) {
+            use tidb_planner::physical::PhysicalPlan;
+            if let PhysicalPlan::MemTable(scan) = plan {
+                columns
+                    .entry(scan.table_name.to_ascii_uppercase())
+                    .or_default()
+                    .extend(
+                        scan.columns
+                            .iter()
+                            .map(|column| column.name.to_ascii_uppercase()),
+                    );
+            }
+            if let PhysicalPlan::CTE(cte) = plan {
+                visit(&cte.seed_plan, columns);
+                if let Some(recursive) = &cte.recursive_plan {
+                    visit(recursive, columns);
+                }
+            }
+            for child in plan.children() {
+                visit(child, columns);
+            }
+        }
+        let mut reads = Self::default();
+        for plan in plans {
+            visit(plan, &mut reads.columns);
+            reads.needs_storage_stats |=
+                tidb_executor::physical_plan_needs_table_storage_statistics(plan);
+            reads.needs_column_lengths |=
+                tidb_executor::physical_plan_needs_table_storage_column_lengths(plan);
+            reads.cluster_config_filters.extend(
+                tidb_planner::memtable_predicate_extractor::cluster_table_filters(
+                    plan,
+                    "CLUSTER_CONFIG",
+                ),
+            );
+            reads
+                .cluster_log_extractors
+                .extend(tidb_planner::memtable_predicate_extractor::cluster_log_extractors(plan));
+        }
+        reads
+    }
+
+    /// Whether rows generated for `self` serve every scan of `reads`.
+    fn covers(&self, reads: &Self) -> bool {
+        let contains = |have: &[String], want: &String| have.iter().any(|item| item == want);
+        let filters = |filters: &[_]| -> Vec<String> {
+            filters.iter().map(|filter| format!("{filter:?}")).collect()
+        };
+        let logs = |extractors: &[_]| -> Vec<String> {
+            extractors
+                .iter()
+                .map(|extractor| format!("{extractor:?}"))
+                .collect()
+        };
+        reads.columns.iter().all(|(table, columns)| {
+            self.columns
+                .get(table)
+                .is_some_and(|have| columns.is_subset(have))
+        }) && (self.needs_storage_stats || !reads.needs_storage_stats)
+            && (self.needs_column_lengths || !reads.needs_column_lengths)
+            && {
+                let have = filters(&self.cluster_config_filters);
+                filters(&reads.cluster_config_filters)
+                    .iter()
+                    .all(|want| contains(&have, want))
+            }
+            && {
+                let have = logs(&self.cluster_log_extractors);
+                logs(&reads.cluster_log_extractors)
+                    .iter()
+                    .all(|want| contains(&have, want))
+            }
+    }
+
+    fn extend(&mut self, reads: Self) {
+        for (table, columns) in reads.columns {
+            self.columns.entry(table).or_default().extend(columns);
+        }
+        self.needs_storage_stats |= reads.needs_storage_stats;
+        self.needs_column_lengths |= reads.needs_column_lengths;
+        self.cluster_config_filters
+            .extend(reads.cluster_config_filters);
+        self.cluster_log_extractors
+            .extend(reads.cluster_log_extractors);
+    }
+}
+
 impl Session {
     /// Applies `USE`, `CREATE DATABASE`, `DROP DATABASE`, `SHOW DATABASES`
     /// and `SHOW TABLES`.
@@ -601,74 +708,22 @@ impl Session {
         }
     }
 
-    fn information_schema_read_columns(
-        plan: &tidb_planner::physical::PhysicalPlan,
-    ) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
-        fn visit(
-            plan: &tidb_planner::physical::PhysicalPlan,
-            columns: &mut std::collections::HashMap<String, std::collections::HashSet<String>>,
-        ) {
-            use tidb_planner::physical::PhysicalPlan;
-            if let PhysicalPlan::MemTable(scan) = plan {
-                columns
-                    .entry(scan.table_name.to_ascii_uppercase())
-                    .or_default()
-                    .extend(
-                        scan.columns
-                            .iter()
-                            .map(|column| column.name.to_ascii_uppercase()),
-                    );
-            }
-            if let PhysicalPlan::CTE(cte) = plan {
-                visit(&cte.seed_plan, columns);
-                if let Some(recursive) = &cte.recursive_plan {
-                    visit(recursive, columns);
-                }
-            }
-            for child in plan.children() {
-                visit(child, columns);
-            }
-        }
-        let mut columns = std::collections::HashMap::new();
-        visit(plan, &mut columns);
-        columns
-    }
-
     /// Opens the ordinary executor over the virtual table image. The image
     /// remains eagerly generated; query evaluation and result delivery use Next.
-    fn open_information_schema_query(
+    pub(crate) fn open_information_schema_query(
         &mut self,
         query: &tidb_ast::QueryStmt,
-        mut table_names: Vec<String>,
+        table_names: Vec<String>,
         current_db: &str,
         ctx: &tidb_executor::StmtContext,
         written_db: Option<String>,
     ) -> Result<tidb_executor::driver::QueryRecordSet, DriverError> {
-        table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
-        table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
-
-        // Go resolves and prunes the memory-table scan before its executor
-        // performs the restricted statistics reads. Plan against schema-only
-        // virtual tables so the real rows are generated exactly once below.
-        let planning_catalog =
-            self.information_schema_planning_catalog(&table_names, written_db)?;
-        let mut physical =
-            tidb_executor::plan_query_meta_stmt(query, &planning_catalog, current_db, ctx)?;
-        let needs_storage_stats =
-            tidb_executor::physical_plan_needs_table_storage_statistics(&physical);
-        let needs_column_lengths =
-            tidb_executor::physical_plan_needs_table_storage_column_lengths(&physical);
-        let scratch = self.materialize_information_schema_catalog(
+        let (mut physical, scratch) = self.plan_information_schema_query_for_execution(
+            query,
             table_names,
+            current_db,
             ctx,
-            needs_storage_stats,
-            needs_column_lengths,
-            &Self::information_schema_read_columns(&physical),
-            &tidb_planner::memtable_predicate_extractor::cluster_table_filters(
-                &physical,
-                "CLUSTER_CONFIG",
-            ),
-            &tidb_planner::memtable_predicate_extractor::cluster_log_extractors(&physical),
+            written_db,
         )?;
         tidb_executor::driver::open_query_meta_stmt_with_physical(
             query,
@@ -677,6 +732,88 @@ impl Session {
             current_db,
             ctx,
         )
+    }
+
+    /// [`Self::plan_information_schema_query`], with the virtual tables
+    /// generated for the plan's scans when planning did not already: the
+    /// plan and the catalog it runs on.
+    pub(crate) fn plan_information_schema_query_for_execution(
+        &mut self,
+        query: &tidb_ast::QueryStmt,
+        table_names: Vec<String>,
+        current_db: &str,
+        ctx: &tidb_executor::StmtContext,
+        written_db: Option<String>,
+    ) -> Result<(tidb_planner::physical::PhysicalPlan, Catalog), DriverError> {
+        let (physical, catalog, materialized) =
+            self.plan_information_schema_query(query, &table_names, current_db, ctx, written_db)?;
+        if materialized {
+            return Ok((physical, catalog));
+        }
+        let reads = InformationSchemaReads::of(&[&physical]);
+        let scratch = self.materialize_information_schema_catalog(table_names, ctx, &reads)?;
+        Ok((physical, scratch))
+    }
+
+    /// Plans a query over virtual tables. Go resolves and prunes each
+    /// memory-table scan before its executor performs the restricted
+    /// statistics reads, so the plan is built against schema-only virtual
+    /// tables and the real rows are generated once, after it (`false`, the
+    /// schema-only catalog). But an uncorrelated subquery is run while the
+    /// statement is still being planned (`EvalSubqueryFirstRow`), and its
+    /// memory-table retriever reads real rows then: when one scanned a
+    /// virtual table, the tables are generated for every scan the plans
+    /// read, the planning warnings are dropped (`TruncateWarnings`), and the
+    /// statement is planned again over those rows (`true`, the generated
+    /// catalog the plan runs on). A replanned statement whose scans read
+    /// more than was generated -- a subquery's value can change which scans
+    /// remain -- is generated and planned once more.
+    pub(crate) fn plan_information_schema_query(
+        &mut self,
+        query: &tidb_ast::QueryStmt,
+        table_names: &[String],
+        current_db: &str,
+        ctx: &tidb_executor::StmtContext,
+        written_db: Option<String>,
+    ) -> Result<(tidb_planner::physical::PhysicalPlan, Catalog, bool), DriverError> {
+        let mut table_names = table_names.to_vec();
+        table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
+        table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        let planning_catalog =
+            self.information_schema_planning_catalog(&table_names, written_db)?;
+        let warnings_start = ctx.warning_count();
+        let (mut physical, mut subqueries) = tidb_executor::plan_query_meta_stmt_with_subqueries(
+            query,
+            &planning_catalog,
+            current_db,
+            ctx,
+        )?;
+        if subqueries
+            .iter()
+            .all(|subquery| InformationSchemaReads::of(&[subquery]).columns.is_empty())
+        {
+            return Ok((physical, planning_catalog, false));
+        }
+        let mut generated = InformationSchemaReads::default();
+        let mut catalog = None;
+        loop {
+            let plans: Vec<_> = std::iter::once(&physical)
+                .chain(subqueries.iter())
+                .collect();
+            let reads = InformationSchemaReads::of(&plans);
+            if let Some(catalog) = catalog.take().filter(|_| generated.covers(&reads)) {
+                return Ok((physical, catalog, true));
+            }
+            // Each pass reads strictly more than the last generated, so the
+            // finite set of virtual-table columns bounds the loop.
+            generated.extend(reads);
+            let next =
+                self.materialize_information_schema_catalog(table_names.clone(), ctx, &generated)?;
+            ctx.truncate_warnings(warnings_start);
+            (physical, subqueries) =
+                tidb_executor::plan_query_meta_stmt_with_subqueries(query, &next, current_db, ctx)?;
+            catalog = Some(next);
+        }
     }
 
     pub(crate) fn information_schema_planning_catalog(
@@ -723,12 +860,17 @@ impl Session {
         &mut self,
         mut table_names: Vec<String>,
         ctx: &tidb_executor::StmtContext,
-        needs_storage_stats: bool,
-        needs_column_lengths: bool,
-        required_columns: &std::collections::HashMap<String, std::collections::HashSet<String>>,
-        cluster_config_filters: &[tidb_planner::memtable_predicate_extractor::ClusterTableFilter],
-        cluster_log_extractors: &[tidb_planner::memtable_predicate_extractor::ClusterLogTableExtractor],
+        reads: &InformationSchemaReads,
     ) -> Result<Catalog, DriverError> {
+        let InformationSchemaReads {
+            columns: required_columns,
+            needs_storage_stats,
+            needs_column_lengths,
+            cluster_config_filters,
+            cluster_log_extractors,
+        } = reads;
+        let (needs_storage_stats, needs_column_lengths) =
+            (*needs_storage_stats, *needs_column_lengths);
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
         let mut storage_statistics = None;

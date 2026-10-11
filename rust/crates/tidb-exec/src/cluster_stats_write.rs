@@ -64,7 +64,7 @@ use tidb_model::TableItemID;
 use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
 use tidb_stats::{JsonPredicateColumn, JsonTable};
 use tidb_txnkv::transaction::BufferMutation;
-use tidb_util::sqlescape::{must_escape_sql, SqlArg};
+use tidb_util::sqlescape::{must_escape_sql, must_escape_sql_text, SqlArg};
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_predicate_column::ColumnStatsTimeInfo;
@@ -894,6 +894,169 @@ pub enum LoadedStatsItemStatement {
     BucketsDelete,
     /// One `INSERT mysql.stats_buckets` batch.
     BucketsInsert(Range<usize>),
+}
+
+/// Go `saveTopNToStorage`'s `INSERT mysql.stats_top_n` statements for one
+/// histogram, in its batches (ten rows, the escaped 1 MiB boundary), as
+/// text for this tier's parser (`must_escape_sql_text`).
+pub fn save_topn_sql(table_id: i64, item: &ClusterStatsItem) -> Vec<String> {
+    let Some(topn) = &item.topn else {
+        return Vec::new();
+    };
+    let entries = topn.entries();
+    loaded_topn_batches(table_id, item)
+        .into_iter()
+        .map(|range| {
+            let mut sql = String::from(
+                "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ",
+            );
+            for (offset, entry) in entries[range].iter().enumerate() {
+                if offset > 0 {
+                    sql.push(',');
+                }
+                sql.push_str(&must_escape_sql_text(
+                    "(%?, %?, %?, %?, %?)",
+                    &[
+                        SqlArg::Signed(table_id),
+                        SqlArg::Signed(i64::from(item.is_index)),
+                        SqlArg::Signed(item.id),
+                        SqlArg::Bytes(Some(&entry.encoded)),
+                        SqlArg::Unsigned(entry.count),
+                    ],
+                ));
+            }
+            sql
+        })
+        .collect()
+}
+
+/// Go `saveBucketsToStorage`'s `INSERT mysql.stats_buckets` statements for
+/// one histogram: each bucket's own count (the stored counts are
+/// cumulative) and its bounds as blobs (`convertBoundToBlob`).
+pub fn save_buckets_sql(
+    table_id: i64,
+    item: &ClusterStatsItem,
+) -> Result<Vec<String>, StatsWriteError> {
+    let buckets = &item.histogram.buckets;
+    let mut statements = Vec::new();
+    for range in loaded_bucket_batches(table_id, item)? {
+        let mut sql = String::from("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ");
+        for index in range.clone() {
+            let bucket = &buckets[index];
+            let lower = bound_blob(&bucket.lower_bound)?;
+            let upper = bound_blob(&bucket.upper_bound)?;
+            let blob = |value: &Datum| match value {
+                Datum::Bytes(bytes) => Some(bytes.clone()),
+                _ => None,
+            };
+            let (lower, upper) = (blob(&lower), blob(&upper));
+            let previous_count = index
+                .checked_sub(1)
+                .map_or(0, |previous| buckets[previous].count);
+            if index > range.start {
+                sql.push(',');
+            }
+            sql.push_str(&must_escape_sql_text(
+                "(%?, %?, %?, %?, %?, %?, %?, %?, %?)",
+                &[
+                    SqlArg::Signed(table_id),
+                    SqlArg::Signed(i64::from(item.is_index)),
+                    SqlArg::Signed(item.id),
+                    SqlArg::Signed(index as i64),
+                    SqlArg::Signed(bucket.count - previous_count),
+                    SqlArg::Signed(bucket.repeat),
+                    SqlArg::Bytes(lower.as_deref()),
+                    SqlArg::Bytes(upper.as_deref()),
+                    SqlArg::Signed(bucket.ndv),
+                ],
+            ));
+        }
+        statements.push(sql);
+    }
+    Ok(statements)
+}
+
+/// The statements Go's `SaveAnalyzeResultToStorage` (`analyze = true`) or
+/// `SaveColOrIdxStatsToStorage` runs for one histogram after the
+/// `stats_meta` write, in their order: TopN replaced, the FM sketch
+/// deleted (and, for an analyze result whose table is a partition, stored),
+/// the histogram row replaced, buckets replaced, and a column's
+/// `column_stats_usage.last_analyzed_at` stamped.
+pub fn save_stats_item_sql(
+    table_id: i64,
+    item: &ClusterStatsItem,
+    version: u64,
+    stats_ver: i64,
+    dump_fm_sketch: bool,
+    analyze: bool,
+) -> Result<Vec<String>, StatsWriteError> {
+    let key = [
+        SqlArg::Signed(table_id),
+        SqlArg::Signed(i64::from(item.is_index)),
+        SqlArg::Signed(item.id),
+    ];
+    let mut statements = vec![must_escape_sql_text(
+        "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?",
+        &key,
+    )];
+    statements.extend(save_topn_sql(table_id, item));
+    statements.push(must_escape_sql_text(
+        "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?",
+        &key,
+    ));
+    if dump_fm_sketch {
+        if let Some(fm_sketch) =
+            tidb_stats::fmsketch_codec::encode_fm_sketch(item.fm_sketch.as_ref())
+        {
+            statements.push(must_escape_sql_text(
+                "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)",
+                &[
+                    SqlArg::Signed(table_id),
+                    SqlArg::Signed(i64::from(item.is_index)),
+                    SqlArg::Signed(item.id),
+                    SqlArg::Bytes(Some(&fm_sketch)),
+                ],
+            ));
+        }
+    }
+    // Analyze v2 keeps no CMSketch; Go's encoder turns the nil one into NULL.
+    let cm_sketch = if stats_ver == 2 {
+        None
+    } else {
+        tidb_stats::cmsketch::encode_cmsketch_without_topn(item.cms.as_ref())
+            .map_err(|error| StatsWriteError::Cms(error.to_string()))?
+    };
+    statements.push(must_escape_sql_text(
+        "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?)",
+        &[
+            SqlArg::Signed(table_id),
+            SqlArg::Signed(i64::from(item.is_index)),
+            SqlArg::Signed(item.id),
+            SqlArg::Signed(item.histogram.ndv),
+            SqlArg::Unsigned(version),
+            SqlArg::Signed(item.histogram.null_count),
+            SqlArg::Bytes(cm_sketch.as_deref()),
+            SqlArg::Signed(item.histogram.tot_col_size),
+            SqlArg::Signed(stats_ver),
+            SqlArg::Float64(item.histogram.correlation),
+        ],
+    ));
+    statements.push(must_escape_sql_text(
+        "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?",
+        &key,
+    ));
+    statements.extend(save_buckets_sql(table_id, item)?);
+    if !item.is_index {
+        statements.push(must_escape_sql_text(
+            if analyze {
+                "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)"
+            } else {
+                "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()"
+            },
+            &[SqlArg::Signed(table_id), SqlArg::Signed(item.id)],
+        ));
+    }
+    Ok(statements)
 }
 
 /// Returns pinned Go's exact SQL statement sequence for one loaded item.

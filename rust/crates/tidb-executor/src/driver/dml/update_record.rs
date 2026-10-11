@@ -167,7 +167,7 @@ impl<'a> UpdateRecords<'a> {
             }
         }
         let entry = catalog
-            .get_mut_in(database, name)
+            .get_rows_mut_in(database, name)
             .expect("the update target still exists");
         let result = match entry {
             TableEntry::Kv(kv) => {

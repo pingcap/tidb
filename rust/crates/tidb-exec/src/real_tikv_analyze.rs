@@ -348,29 +348,12 @@ impl ResolvedClusterAnalyze {
                 .then(|| index.name.original().to_owned())
             })
             .collect::<Vec<_>>();
-        let mut job_info = if self.statement.auto_analyze {
-            "auto analyze table".to_owned()
-        } else {
-            "analyze table".to_owned()
-        };
-        if !indexes.is_empty() {
-            let public_count = self
-                .table
-                .indices
-                .iter_deref()
-                .filter(|index| index.read().state == tidb_model::SchemaState::PUBLIC)
-                .count();
-            if indexes.len() == public_count {
-                job_info.push_str(" all indexes");
-            } else {
-                job_info.push_str(if indexes.len() == 1 {
-                    " index "
-                } else {
-                    " indexes "
-                });
-                job_info.push_str(&indexes.join(", "));
-            }
-        }
+        let public_index_count = self
+            .table
+            .indices
+            .iter_deref()
+            .filter(|index| index.read().state == tidb_model::SchemaState::PUBLIC)
+            .count();
         let columns = self
             .selected_columns
             .get(&options.physical_id)
@@ -388,32 +371,14 @@ impl ResolvedClusterAnalyze {
                     })
                     .collect::<Vec<_>>()
             });
-        if !indexes.is_empty() {
-            job_info.push(',');
-        }
-        match columns {
-            Some(columns) if columns.len() < self.table.get_non_temp_columns().len() => {
-                job_info.push_str(if columns.len() == 1 {
-                    " column "
-                } else {
-                    " columns "
-                });
-                job_info.push_str(&columns.join(", "));
-            }
-            _ => job_info.push_str(" all columns"),
-        }
-        job_info.push_str(&format!(
-            " with {} buckets, {} topn, ",
-            options.effective.num_buckets, options.effective.num_topn
-        ));
-        if options.effective.num_samples > 0 {
-            job_info.push_str(&format!("{} samples", options.effective.num_samples));
-        } else {
-            job_info.push_str(&format!(
-                "{} samplerate",
-                options.effective.sample_rate.unwrap_or(1.0)
-            ));
-        }
+        let job_info = analyze_table_job_info(
+            self.statement.auto_analyze,
+            &indexes,
+            public_index_count,
+            columns.as_deref(),
+            self.table.get_non_temp_columns().len(),
+            options,
+        );
         AnalyzeJobSpec {
             schema: self.statement.schema.clone(),
             table: self.statement.table.clone(),
@@ -2721,6 +2686,63 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
         )),
         Err(error) => Err(ClusterAnalyzeError::Commit(error)),
     }
+}
+
+/// Go's analyze `JobInfo` for a table task: `[auto ]analyze table`, then
+/// `all indexes` / `index[es] <names>` over the public indexes, then
+/// `all columns` or the selected columns, then the bucket, TopN and sample
+/// settings.
+#[must_use]
+pub fn analyze_table_job_info(
+    auto_analyze: bool,
+    indexes: &[String],
+    public_index_count: usize,
+    columns: Option<&[String]>,
+    non_temp_columns: usize,
+    options: &tidb_executor::analyze::PhysicalAnalyzeOptions,
+) -> String {
+    let mut job_info = if auto_analyze {
+        "auto analyze table".to_owned()
+    } else {
+        "analyze table".to_owned()
+    };
+    if !indexes.is_empty() {
+        if indexes.len() == public_index_count {
+            job_info.push_str(" all indexes");
+        } else {
+            job_info.push_str(if indexes.len() == 1 {
+                " index "
+            } else {
+                " indexes "
+            });
+            job_info.push_str(&indexes.join(", "));
+        }
+        job_info.push(',');
+    }
+    match columns {
+        Some(columns) if columns.len() < non_temp_columns => {
+            job_info.push_str(if columns.len() == 1 {
+                " column "
+            } else {
+                " columns "
+            });
+            job_info.push_str(&columns.join(", "));
+        }
+        _ => job_info.push_str(" all columns"),
+    }
+    job_info.push_str(&format!(
+        " with {} buckets, {} topn, ",
+        options.effective.num_buckets, options.effective.num_topn
+    ));
+    if options.effective.num_samples > 0 {
+        job_info.push_str(&format!("{} samples", options.effective.num_samples));
+    } else {
+        job_info.push_str(&format!(
+            "{} samplerate",
+            options.effective.sample_rate.unwrap_or(1.0)
+        ));
+    }
+    job_info
 }
 
 #[cfg(test)]
