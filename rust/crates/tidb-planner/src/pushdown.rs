@@ -93,15 +93,36 @@ fn can_expr_push_down_tiflash(expr: &Expression) -> bool {
     )
 }
 
+/// [`can_exprs_push_down`] that also reports, as Go's `canScalarFuncPushDown`
+/// does through its `PushDownContext`, the outermost scalar function that
+/// cannot be pushed: `report` receives Go's warning text. Go checks a
+/// function before its arguments and stops at the first refusal.
+pub fn can_exprs_push_down_reporting(
+    exprs: &[Expression],
+    store: tidb_expr::infer_pushdown::PushDownStore,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
+) -> bool {
+    exprs
+        .iter()
+        .all(|expr| can_expr_push_down_reported(expr, store, blacklist, Some(report)))
+}
+
 fn can_expr_push_down(
     expr: &Expression,
     store: tidb_expr::infer_pushdown::PushDownStore,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> bool {
-    use tidb_expr::infer_pushdown::{
-        can_function_be_pushed, is_push_down_enabled, PushDownPolicy, PushDownStore,
-    };
-    use tidb_expr::pushdown_catalog::{PbScalar, ScalarFuncSig};
+    can_expr_push_down_reported(expr, store, blacklist, None)
+}
+
+fn can_expr_push_down_reported(
+    expr: &Expression,
+    store: tidb_expr::infer_pushdown::PushDownStore,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: Option<&dyn Fn(String)>,
+) -> bool {
+    use tidb_expr::infer_pushdown::{is_push_down_enabled, PushDownStore};
 
     let Expression::ScalarFunction(function) = expr else {
         // Go PbConverter.columnToPBExpr checks column types independently of
@@ -128,23 +149,55 @@ fn can_expr_push_down(
         }
         return true;
     };
-    if !function
-        .args
-        .iter()
-        .all(|arg| can_expr_push_down(arg, store, blacklist))
-    {
+    // Go `canScalarFuncPushDown`: the function itself first, with the
+    // refusal warning, then each argument.
+    let signature = match tidb_expr::pushdown_catalog::from_expression(expr) {
+        Some(tidb_expr::pushdown_catalog::PbScalar::Call { signature, .. }) => signature.sig,
+        _ => tidb_expr::pushdown_catalog::ScalarFuncSig::Unspecified,
+    };
+    if !scalar_function_can_be_pushed(expr, function, signature, store, blacklist) {
+        if let Some(report) = report {
+            let storage = match store {
+                PushDownStore::TiKv => "tikv",
+                PushDownStore::TiFlash => "tiflash",
+                PushDownStore::TiDb => "tidb",
+                _ => "storage layer",
+            };
+            report(format!(
+                "Scalar function '{}'(signature: {}, return type: {}) is not supported to push down to {storage} now.",
+                function.func_name.lowercase(),
+                signature.as_str_name(),
+                expr.static_type().map_or_else(String::new, |field_type| {
+                    field_type.compact_str(tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH)
+                }),
+            ));
+        }
         return false;
     }
+    function
+        .args
+        .iter()
+        .all(|arg| can_expr_push_down_reported(arg, store, blacklist, report))
+}
+
+/// Go `canFuncBePushed` and the PbCode check of `canScalarFuncPushDown`, for
+/// the function alone.
+fn scalar_function_can_be_pushed(
+    expr: &Expression,
+    function: &tidb_expr::scalar_function::ScalarFunction,
+    signature: tidb_expr::pushdown_catalog::ScalarFuncSig,
+    store: tidb_expr::infer_pushdown::PushDownStore,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+) -> bool {
+    use tidb_expr::infer_pushdown::{can_function_be_pushed, PushDownPolicy, PushDownStore};
+    use tidb_expr::pushdown_catalog::ScalarFuncSig;
+
     let name = function.func_name.lowercase();
     // Dedicated Rust casts represent Go's single ast.Cast function family.
     let policy_name = if name.starts_with("cast_") {
         "cast"
     } else {
         name.as_ref()
-    };
-    let signature = match tidb_expr::pushdown_catalog::from_expression(expr) {
-        Some(PbScalar::Call { signature, .. }) => signature.sig,
-        _ => ScalarFuncSig::Unspecified,
     };
     if store == PushDownStore::TiKv
         && signature == ScalarFuncSig::Unspecified
@@ -192,6 +245,41 @@ mod tests {
         sf.func_name = tidb_ast::CiString::new(name.to_owned());
         sf.args = args;
         Expression::ScalarFunction(sf)
+    }
+
+    /// Go `canScalarFuncPushDown` checks a function before its arguments:
+    /// a refused outer function is the one reported, and the walk stops
+    /// there. A pushable outer function reports its refused argument.
+    #[test]
+    fn a_refused_outer_function_is_reported_before_its_arguments() {
+        use tidb_expr::infer_pushdown::PushDownStore;
+        let column = Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::LongLong)));
+        let reported = std::cell::RefCell::new(Vec::new());
+        let report = |message: String| reported.borrow_mut().push(message);
+        let inner = func("json_overlaps", vec![column.clone(), column.clone()]);
+        let outer = func("json_overlaps", vec![inner.clone(), column.clone()]);
+        assert!(!can_exprs_push_down_reporting(
+            &[outer],
+            PushDownStore::Unspecified,
+            &Default::default(),
+            &report,
+        ));
+        assert_eq!(reported.borrow().len(), 1);
+        reported.borrow_mut().clear();
+        let pushable = func("isnull", vec![inner]);
+        assert!(!can_exprs_push_down_reporting(
+            &[pushable],
+            PushDownStore::Unspecified,
+            &Default::default(),
+            &report,
+        ));
+        let messages = reported.borrow();
+        assert_eq!(messages.len(), 1);
+        assert!(
+            messages[0].starts_with("Scalar function 'json_overlaps'(signature: Unspecified"),
+            "{messages:?}"
+        );
+        assert!(messages[0].ends_with("is not supported to push down to storage layer now."));
     }
 
     #[test]

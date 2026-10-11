@@ -638,6 +638,7 @@ impl DataSource {
         &mut self,
         predicates: Vec<Expression>,
         blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+        warnings: Option<&dyn tidb_expr::Columns>,
     ) -> Vec<Expression> {
         self.derived_access_paths = None;
         if predicates.is_empty() && !self.pushed_down_conds.is_empty() {
@@ -649,12 +650,21 @@ impl DataSource {
             return Vec::new();
         }
         self.all_conds = predicates;
+        // Go's `PushDownExprs` reports each refused scalar function through
+        // the session's `PushDownContext`: the statement's warnings under
+        // EXPLAIN (`warnings`), the extra warnings otherwise.
+        let report = |message: String| {
+            if let Some(warnings) = warnings {
+                warnings.append_warning(1105, &message);
+            }
+        };
         let (pushable, not_pushable): (Vec<_>, Vec<_>) =
             self.all_conds.iter().cloned().partition(|predicate| {
-                crate::pushdown::can_exprs_push_down(
+                crate::pushdown::can_exprs_push_down_reporting(
                     std::slice::from_ref(predicate),
                     tidb_expr::infer_pushdown::PushDownStore::Unspecified,
                     blacklist,
+                    &report,
                 )
             });
         self.pushed_down_conds = pushable;

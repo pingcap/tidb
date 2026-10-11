@@ -5903,3 +5903,30 @@ fn in_lists_drop_constants_their_signature_hashes_alike() {
                 .any(|cell| cell.contains(r#"in(test.s.c, "a", "b")"#)))
     );
 }
+
+/// Go's `DataSource.PredicatePushDown` asks `PushDownExprs` with the
+/// session's `PushDownContext`, which warns about a scalar function that
+/// cannot reach storage only under EXPLAIN (the extra warnings otherwise).
+/// Captured from `planner/core/casetest/physicalplantest/physical_plan`.
+#[test]
+fn explain_warns_once_for_a_predicate_storage_cannot_evaluate() {
+    let mut session = Session::new();
+    session
+        .run("create table t(a int, j json, index kj((cast(j as signed array))))")
+        .unwrap();
+    let sql = "select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') limit 1";
+    session
+        .run(&format!("explain format = 'plan_tree' {sql}"))
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        [[
+            "Warning",
+            "1105",
+            "Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) \
+             is not supported to push down to storage layer now."
+        ]]
+    );
+    session.run(sql).unwrap();
+    assert!(row_text(session.run("show warnings")).is_empty());
+}

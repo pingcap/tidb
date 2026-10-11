@@ -1105,6 +1105,7 @@ fn data_source_records_all_conds_and_returns_the_remainder() {
     let remaining = source.predicate_push_down_local(
         vec![pushable.clone(), kept.clone()],
         &Default::default(),
+        None,
     );
     assert_eq!(source.all_conds.len(), 2);
     assert_eq!(source.pushed_down_conds.len(), 1);

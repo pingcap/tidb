@@ -860,6 +860,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 Descend::Stop(op.predicate_push_down_local(
                     predicates,
                     &self.ctx.expr_pushdown_blacklist,
+                    self.ctx.in_explain_stmt.then_some(self.ctx.eval_context),
                 ))
             }
             // Go `LogicalTableDual.PredicatePushDown`

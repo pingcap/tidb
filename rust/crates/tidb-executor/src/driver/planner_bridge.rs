@@ -3507,6 +3507,7 @@ fn optimize_built_logical(
         opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
         index_merge_enabled: ctx.index_merge(),
         no_index_merge_hint: ctx.no_index_merge_hint(),
+        in_explain_stmt: ctx.in_explain_stmt(),
         range_max_size: ctx.range_max_size(),
         selectivity_factor: ctx.selectivity_factor(),
         range_fallback_handler: Some(ctx.range_fallback_handler()),

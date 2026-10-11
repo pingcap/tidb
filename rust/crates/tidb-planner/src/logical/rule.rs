@@ -624,6 +624,10 @@ pub struct RuleContext<'a> {
     pub index_merge_enabled: bool,
     /// Go `StmtCtx.NoIndexMergeHint`, which overrides `USE_INDEX_MERGE`.
     pub no_index_merge_hint: bool,
+    /// Go `StmtCtx.InExplainStmt`: a `PushDownContext` built from the session
+    /// sends its warnings to the statement only under EXPLAIN (the extra
+    /// warnings otherwise).
+    pub in_explain_stmt: bool,
     /// Go `SessionVars.RangeMaxSize`; zero means unlimited.
     pub range_max_size: i64,
     /// Go SessionVars.SelectivityFactor for uncovered or partially covered predicates.

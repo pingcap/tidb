@@ -91,6 +91,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         opt_prefix_index_single_scan: true,
         index_merge_enabled: true,
         no_index_merge_hint: false,
+        in_explain_stmt: false,
         range_max_size: 0,
         selectivity_factor: tidb_planner::cost_factors::SELECTION_FACTOR,
         range_fallback_handler: None,

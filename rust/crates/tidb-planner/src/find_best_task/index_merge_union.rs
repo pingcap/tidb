@@ -1126,7 +1126,7 @@ mod tests {
             "each datasource clone owns its candidates"
         );
         let mut rewritten_source = derived_source.clone_shallow();
-        rewritten_source.predicate_push_down_local(vec![eq(3)], &Default::default());
+        rewritten_source.predicate_push_down_local(vec![eq(3)], &Default::default(), None);
         assert!(
             rewritten_source.derived_access_paths.is_none(),
             "a new predicate set invalidates retained candidates"

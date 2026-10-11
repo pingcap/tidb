@@ -80,6 +80,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         opt_prefix_index_single_scan: true,
         index_merge_enabled: true,
         no_index_merge_hint: false,
+        in_explain_stmt: false,
         range_max_size: 0,
         selectivity_factor: crate::cost_factors::SELECTION_FACTOR,
         range_fallback_handler: None,
