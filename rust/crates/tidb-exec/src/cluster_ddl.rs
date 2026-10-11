@@ -206,8 +206,12 @@ pub enum AlterColumnAction {    /// `ADD COLUMN`, at its written position.
     AddIndex {
         /// Whether an existing index of the same name is a no-op.
         if_not_exists: bool,
-        /// The index, complete except for id and column offsets.
+        /// The index, complete except for id and column offsets; an empty
+        /// name is anonymous (Go `GetName4AnonymousIndex` names it).
         index: Box<IndexInfo>,
+        /// Per key part, the expression of an expression part, whose hidden
+        /// column the plan builds (Go `buildHiddenColumnInfoWithCheck`).
+        expressions: Vec<Option<tidb_ast::Expr>>,
         /// SQL mode and location captured for existing-row evaluation.
         context: DdlStatementContext,
     },
@@ -626,8 +630,12 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         if_not_exists: bool,
         /// The index to add, complete except for the ID and the column
         /// offsets the publishing transaction resolves against the stored
-        /// table.
+        /// table; an empty name is anonymous (Go `GetName4AnonymousIndex`
+        /// names it against the stored table).
         index: Box<IndexInfo>,
+        /// Per key part, the expression of an expression part, whose hidden
+        /// column the plan builds (Go `buildHiddenColumnInfoWithCheck`).
+        expressions: Vec<Option<tidb_ast::Expr>>,
         /// SQL mode and location captured for existing-row evaluation.
         context: DdlStatementContext,
     },
@@ -1344,11 +1352,13 @@ fn lower_alter_table_catalog(
                         DdlStatement::CreateIndex {
                             if_not_exists,
                             index,
+                            expressions,
                             context,
                             ..
                         } => actions.push(AlterColumnAction::AddIndex {
                             if_not_exists,
                             index,
+                            expressions,
                             context,
                         }),
                         other => {
@@ -1861,11 +1871,13 @@ fn lower_alter_table_catalog(
                             DdlStatement::CreateIndex {
                                 if_not_exists,
                                 index,
+                                expressions,
                                 context,
                                 ..
                             } => actions.push(AlterColumnAction::AddIndex {
                                 if_not_exists,
                                 index,
+                                expressions,
                                 context,
                             }),
                             other => unreachable!(
@@ -2099,7 +2111,6 @@ fn lower_alter_add_index(
     // NOT NULL), so it lowers through the same CreateIndex statement the
     // other index kinds use.
     let primary = index.kind == IndexConstraintKind::PrimaryKey;
-    let mut name: Option<String> = None;
     let kind = match index.kind {
         IndexConstraintKind::Key | IndexConstraintKind::Index => tidb_ast::IndexKind::Ordinary,
         IndexConstraintKind::Unique
@@ -2127,26 +2138,14 @@ fn lower_alter_add_index(
             ))
         }
     };
-    // go's `ADD PRIMARY KEY` has a FIXED reserved name (`PRIMARY`), unlike
-    // the ordinary anonymous index forms, whose collision resolution needs
-    // the loaded table — so a PK admits an anonymous name here where the
-    // others still refuse one.
-    let name = index
-        .name
-        .as_ref()
-        .filter(|name| !name.is_empty())
-        .map_or_else(
-            || primary.then(|| "PRIMARY".to_owned()),
-            |name| Some(name.clone()),
-        );
-    let Some(name) = name else {
-        // Go resolves anonymous names only after it has loaded the current
-        // table and can avoid an existing name. This catalog lowerer is
-        // intentionally stateless, so admitting it here would create a
-        // different collision contract from standalone CREATE INDEX.
-        return Err(DdlAdmissionError::unsupported(
-            "ALTER TABLE ADD INDEX needs an explicit index name on this node",
-        ));
+    // go's `ADD PRIMARY KEY` has a FIXED reserved name (`PRIMARY`); any
+    // other anonymous index stays unnamed here, and the plan names it with
+    // `GetName4AnonymousIndex` against the loaded table, as Go's
+    // `checkIndexNameAndColumns` does.
+    let name = match index.name.as_ref().filter(|name| !name.is_empty()) {
+        Some(name) => name.clone(),
+        None if primary => "PRIMARY".to_owned(),
+        None => String::new(),
     };
     lower_create_index(
         &CreateIndexStmt {
@@ -2491,25 +2490,29 @@ fn prepare_cluster_columns(
             AlterColumnAction::AddIndex {
                 if_not_exists,
                 index,
+                expressions,
                 ..
             } => {
-                if find_index(stored, index.name.original()).is_some() {
+                let name = settle_added_index_name(stored, index, expressions);
+                if find_index(stored, &name).is_some() {
                     if !if_not_exists {
-                        return Err(DdlPlanError::DuplicateKeyName(
-                            index.name.original().to_owned(),
-                        ));
+                        return Err(DdlPlanError::DuplicateKeyName(name));
                     }
                     warnings.push((
                         DdlWarningLevel::Note,
                         1061,
-                        format!("Duplicate key name '{}'", index.name.original()),
+                        format!("Duplicate key name '{name}'"),
                     ));
                     skipped = Some(format!(
-                        "index `{}` already exists on `{schema}`.`{table}`",
-                        index.name.original()
+                        "index `{name}` already exists on `{schema}`.`{table}`"
                     ));
                 } else {
-                    for indexed in index.columns.iter_deref() {
+                    for (indexed, expression) in index.columns.iter_deref().zip(expressions) {
+                        // An expression part's hidden column does not exist
+                        // until the plan builds it.
+                        if expression.is_some() {
+                            continue;
+                        }
                         let indexed = indexed.read();
                         if tidb_model::column::find_column_info(
                             &stored.columns,
@@ -2519,12 +2522,12 @@ fn prepare_cluster_columns(
                         {
                             return Err(DdlPlanError::UnknownIndexColumn {
                                 column: indexed.name.original().to_owned(),
-                                index: index.name.original().to_owned(),
+                                index: name.clone(),
                             });
                         }
                         relative_columns.push(indexed.name.clone());
                     }
-                    add_indexes.push(index.name.clone());
+                    add_indexes.push(CiString::new(name));
                 }
             }
             AlterColumnAction::DropIndex { if_exists, name } => {
@@ -3026,25 +3029,35 @@ fn lower_create_index(
         ));
     }
     let mut columns = Vec::with_capacity(create.parts.len());
+    let mut expressions = Vec::with_capacity(create.parts.len());
     for part in &create.parts {
-        let tidb_ast::IndexPart::Column {
-            name, prefix_len, ..
-        } = part
-        else {
-            return Err(DdlAdmissionError::unsupported(
-                "an expression index is not supported by this node: it is stored as a \
-                 hidden GENERATED column, which this node's catalog loader refuses",
-            ));
-        };
-        columns.push(IndexColumn {
-            name: CiString::new(name.clone()),
-            // Resolved against the stored table when the change is planned;
-            // the declared prefix travels in `length` and is validated (and
-            // normalized) there, where the column's type is known.
-            offset: 0,
-            length: prefix_len.unwrap_or(-1),
-            ..IndexColumn::default()
-        });
+        match part {
+            tidb_ast::IndexPart::Column {
+                name, prefix_len, ..
+            } => {
+                columns.push(IndexColumn {
+                    name: CiString::new(name.clone()),
+                    // Resolved against the stored table when the change is
+                    // planned; the declared prefix travels in `length` and is
+                    // validated (and normalized) there, where the column's
+                    // type is known.
+                    offset: 0,
+                    length: prefix_len.unwrap_or(-1),
+                    ..IndexColumn::default()
+                });
+                expressions.push(None);
+            }
+            // An expression part indexes a hidden generated column the plan
+            // builds once the index has its name (`_V$_<index>_<part>`).
+            tidb_ast::IndexPart::Expr { expr, .. } => {
+                columns.push(IndexColumn {
+                    offset: 0,
+                    length: -1,
+                    ..IndexColumn::default()
+                });
+                expressions.push(Some(expr.clone()));
+            }
+        }
     }
     if columns.is_empty() {
         return Err(DdlAdmissionError::with_code(
@@ -3056,6 +3069,7 @@ fn lower_create_index(
         schema,
         table,
         if_not_exists: create.if_not_exists,
+        expressions,
         context: DdlStatementContext(context.clone()),
         index: Box::new(IndexInfo {
             // The publishing transaction allocates it from the table's own
@@ -8210,27 +8224,22 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         );
                         outcome
                     }
-                    AlterColumnAction::AddIndex { index, context, .. } => {
-                        let mut added = index.clone_like_go();
-                        // Original names were admitted before execution;
-                        // offsets now account for preceding disjoint jobs.
-                        for column in added.columns.iter_deref() {
-                            let mut column = column.write();
-                            let Some(stored_column) = info.columns.iter_deref().find(|candidate| {
-                                candidate.read().name.lowercase() == column.name.lowercase()
-                            }) else {
-                                return Err(DdlPlanError::UnknownIndexColumn {
-                                    column: column.name.original().to_owned(),
-                                    index: index.name.original().to_owned(),
-                                });
-                            };
-                            let stored_column = stored_column.read();
-                            column.name = stored_column.name.clone();
-                            column.offset = stored_column.offset;
-                        }
+                    AlterColumnAction::AddIndex {
+                        index,
+                        expressions,
+                        context,
+                        ..
+                    } => {
+                        // Names were admitted against the original table, as
+                        // Go builds every sub-job from it; offsets now account
+                        // for preceding disjoint jobs.
+                        let name = settle_added_index_name(stored, index, expressions);
+                        let mut added =
+                            plan_added_index(&mut info, index, expressions, &name, &context.0)?;
                         // The backfill decodes EXISTING rows against the
                         // evolved columns (a bundle-added column reads its
-                        // origin default) but must not walk the new index.
+                        // origin default, an expression part its hidden
+                        // column) but must not walk the new index.
                         let backfill_table = Box::new(info.clone_like_go());
                         info.max_index_id += 1;
                         added.id = info.max_index_id;
@@ -8616,6 +8625,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             table,
             if_not_exists,
             index,
+            expressions,
             context,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
@@ -8631,7 +8641,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     ),
                 ));
             }
-            if let Some(existing) = find_index(stored, index.name.original()) {
+            let name = settle_added_index_name(stored, index, expressions);
+            if let Some(existing) = find_index(stored, &name) {
                 let existing = existing.read();
                 if *if_not_exists {
                     return Ok(already(format!(
@@ -8639,101 +8650,13 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         existing.name.original()
                     )));
                 }
-                return Err(DdlPlanError::DuplicateKeyName(
-                    index.name.original().to_owned(),
-                ));
+                return Err(DdlPlanError::DuplicateKeyName(name));
             }
-            let mut added = index.clone_like_go();
-            // Go's `IndexColumn.Offset` is a position in `TableInfo.Columns`,
-            // and the loader reads it back that way, so it is resolved against
-            // the stored table rather than trusted from the statement.
-            for column in added.columns.iter_deref() {
-                let mut column = column.write();
-                let Some(stored_column) = stored
-                    .columns
-                    .iter_deref()
-                    .find(|candidate| candidate.read().name.lowercase() == column.name.lowercase())
-                else {
-                    return Err(DdlPlanError::UnknownIndexColumn {
-                        column: column.name.original().to_owned(),
-                        index: index.name.original().to_owned(),
-                    });
-                };
-                let stored_column = stored_column.read();
-                column.name = stored_column.name.clone();
-                column.offset = stored_column.offset;
-                if column.length != -1 {
-                    // go `buildIndexColumns` -> `checkIndexColumn`: the
-                    // declared prefix is validated against the column's type
-                    // and normalized (a prefix covering the whole column is
-                    // the same as no prefix). The WRITE path cuts entries by
-                    // this length, so it must be the declared one that
-                    // survived the checks.
-                    use tidb_executor::ddl::index_prefix::{
-                        stored_index_length, IndexedColumn, PrefixError,
-                    };
-                    let declared = (column.length != -1).then_some(column.length);
-                    match stored_index_length(
-                        &stored_column.field_type,
-                        IndexedColumn::Named(column.name.original()),
-                        declared,
-                        true,
-                    ) {
-                        Ok(normalized) => column.length = normalized,
-                        Err(PrefixError::IncorrectPrefixKey) => {
-                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                                tidb_error::tidb::errcode::ErrWrongSubKey,
-                                "Incorrect prefix key; the used key part isn't a string, \
-                                     the used length is longer than the key part, or the storage \
-                                     engine doesn't support unique prefix keys",
-                            )));
-                        }
-                        Err(PrefixError::BlobKeyWithoutLength(name)) => {
-                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                                tidb_error::tidb::errcode::ErrBlobKeyWithoutLength,
-                                format!(
-                                    "BLOB/TEXT column '{name}' used in key specification \
-                                         without a key length"
-                                ),
-                            )));
-                        }
-                        Err(PrefixError::KeyPart0(name)) => {
-                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                                tidb_error::tidb::errcode::ErrKeyPart0,
-                                format!("Key part '{name}' length cannot be 0"),
-                            )));
-                        }
-                        Err(PrefixError::WrongKeyColumn(name)) => {
-                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                                tidb_error::tidb::errcode::ErrWrongKeyColumn,
-                                format!("The used storage engine can't index column '{name}'"),
-                            )));
-                        }
-                        Err(PrefixError::JsonUsedAsKey(name)) => {
-                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                                tidb_error::tidb::errcode::ErrJSONUsedAsKey,
-                                format!(
-                                    "JSON column '{name}' cannot be used in key specification."
-                                ),
-                            )));
-                        }
-                        Err(PrefixError::TooLongKey { length, max }) => {
-                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                                tidb_error::tidb::errcode::ErrTooLongKey,
-                                format!(
-                                    "Specified key was too long ({length} bytes); \
-                                         max key length is {max} bytes"
-                                ),
-                            )));
-                        }
-                        Err(other) => {
-                            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
-                                format!("{other:?}"),
-                            )));
-                        }
-                    }
-                }
-            }
+            let mut info = stored.clone_like_go();
+            let mut added = plan_added_index(&mut info, index, expressions, &name, &context.0)?;
+            // The backfill decodes the EXISTING rows: the table with any hidden
+            // column the index adds, without the index itself.
+            let backfill_table = Box::new(info.clone_like_go());
             // go's `ADD PRIMARY KEY` stamps every key column NOT NULL+PRI
             // (oracle: after `ALTER TABLE pf ADD PRIMARY KEY(b(2))`, SHOW
             // CREATE prints `b` varchar(8) NOT NULL and SHOW INDEX adds the
@@ -8747,7 +8670,6 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             } else {
                 Vec::new()
             };
-            let mut info = stored.clone_like_go();
             info.max_index_id += 1;
             added.id = info.max_index_id;
             added.table = info.name.clone();
@@ -8775,7 +8697,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 encoded,
             )?);
             backfill.push(IndexBackfill {
-                table: Box::new(stored.clone_like_go()),
+                table: backfill_table,
                 index: added.clone(),
                 use_new_collation,
                 operation: IndexBackfillOperation::Add(context.clone()),
@@ -10257,6 +10179,235 @@ fn locate_table<'catalog>(
 
 /// The table's index of that name, matched the way MySQL matches one:
 /// case-insensitively.
+/// The name an added index takes: as written, or Go `GetName4AnonymousIndex`
+/// against `stored`'s indexes, after the first key column -- or
+/// `expression_index` when the first part is an expression
+/// (`checkIndexNameAndColumns`). Go names every sub-job of an ALTER against
+/// the table as it was before the statement.
+fn settle_added_index_name(
+    stored: &TableInfo,
+    index: &IndexInfo,
+    expressions: &[Option<tidb_ast::Expr>],
+) -> String {
+    if !index.name.original().is_empty() {
+        return index.name.original().to_owned();
+    }
+    let first_column = index.columns.iter_deref().next();
+    let prefix = match (expressions.first(), first_column) {
+        (Some(Some(_)), _) | (_, None) => "expression_index".to_owned(),
+        (_, Some(column)) => column.read().name.original().to_owned(),
+    };
+    let existing = stored
+        .indices
+        .iter_deref()
+        .map(|index| index.read().name.original().to_owned())
+        .collect::<Vec<_>>();
+    let existing = existing.iter().map(String::as_str).collect::<Vec<_>>();
+    tidb_executor::ddl::get_name_for_anonymous_index(&existing, &prefix, "")
+}
+
+/// The rest of Go `createIndex` for one added index named `name`, planned
+/// against `info`, through the checks the in-process builder runs too:
+/// `checkTooLongIndex`; `BuildHiddenColumnInfo` for each expression part, its
+/// column appended to `info` with a fresh id as the job worker's
+/// `createColumnInfoWithPosition` does, and `checkExpressionIndexAutoIncrement`;
+/// `buildIndexColumns`, which resolves and validates every key part;
+/// `checkCreateGlobalIndex`; and `validateCommentLength`. Returns the index,
+/// complete except for its id.
+fn plan_added_index(
+    info: &mut TableInfo,
+    index: &IndexInfo,
+    expressions: &[Option<tidb_ast::Expr>],
+    name: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<IndexInfo, DdlPlanError> {
+    use tidb_executor::ddl::{IndexedTableColumn, ResolvedKeyPart};
+    let admission = |error: tidb_executor::DriverError| {
+        let error = error.to_mysql_error();
+        DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+    };
+    tidb_executor::ddl::check_too_long_identifier(name).map_err(admission)?;
+    let mut added = index.clone_like_go();
+    added.name = CiString::new(name.to_owned());
+    if expressions.iter().any(Option::is_some) {
+        let parts = added
+            .columns
+            .iter_deref()
+            .zip(expressions)
+            .map(|(column, expression)| match expression {
+                Some(expr) => tidb_ast::IndexPart::Expr {
+                    expr: expr.clone(),
+                    desc: false,
+                },
+                None => {
+                    let column = column.read();
+                    tidb_ast::IndexPart::Column {
+                        name: column.name.original().to_owned(),
+                        prefix_len: (column.length != -1).then_some(column.length),
+                        desc: false,
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        // Built against the VISIBLE columns, as in process: an expression can
+        // never name an earlier index's hidden column.
+        let visible = info
+            .columns
+            .iter_deref()
+            .filter(|column| !column.read().hidden)
+            .map(|column| {
+                let column = column.read();
+                (column.name.original().to_owned(), column.field_type.clone())
+            })
+            .collect::<Vec<_>>();
+        let (names, types): (Vec<_>, Vec<_>) = visible.into_iter().unzip();
+        let hidden =
+            tidb_executor::expression_index::build_hidden_columns_with_like_default_escape(
+                name,
+                &parts,
+                &names,
+                &types,
+                &context.session_zone(),
+                context.like_default_escape(),
+            )
+            .map_err(admission)?;
+        let auto_increment = info.columns.iter_deref().find_map(|column| {
+            let column = column.read();
+            column
+                .field_type
+                .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT)
+                .then(|| column.name.original().to_owned())
+        });
+        tidb_executor::ddl::check_expression_index_auto_increment(
+            name,
+            &hidden,
+            auto_increment.as_deref(),
+            context,
+        )
+        .map_err(admission)?;
+        for (position, hidden) in hidden {
+            let mut column =
+                crate::table_info_build::hidden_index_column_info(hidden, info.columns.len());
+            info.max_column_id += 1;
+            column.id = info.max_column_id;
+            let part = added
+                .columns
+                .get(position)
+                .expect("a hidden column belongs to a key part");
+            {
+                let mut part = part.write();
+                part.name = column.name.clone();
+                part.length = -1;
+            }
+            info.columns.push_go(column);
+        }
+    }
+    // Go's `IndexColumn.Offset` is a position in `TableInfo.Columns`, and the
+    // loader reads it back that way, so it is resolved against the table
+    // rather than trusted from the statement.
+    let columns = info
+        .columns
+        .iter_deref()
+        .map(|column| column.read().clone_like_go())
+        .collect::<Vec<_>>();
+    let mut offsets = Vec::with_capacity(added.columns.len());
+    let mut resolved = Vec::with_capacity(added.columns.len());
+    for (part, expression) in added.columns.iter_deref().zip(
+        expressions
+            .iter()
+            .map(Option::is_some)
+            .chain(std::iter::repeat(false)),
+    ) {
+        let part = part.read();
+        let Some(offset) = columns
+            .iter()
+            .position(|column| column.name.lowercase() == part.name.lowercase())
+        else {
+            return Err(DdlPlanError::UnknownIndexColumn {
+                column: part.name.original().to_owned(),
+                index: name.to_owned(),
+            });
+        };
+        offsets.push(offset);
+        resolved.push(ResolvedKeyPart {
+            offset,
+            declared: (part.length != -1).then_some(part.length),
+            expression,
+        });
+    }
+    let indexed = columns
+        .iter()
+        .map(|column| IndexedTableColumn {
+            name: column.name.original(),
+            field_type: &column.field_type,
+            virtual_generated: !column.generated_expr_string.is_empty() && !column.generated_stored,
+        })
+        .collect::<Vec<_>>();
+    let (prefix_lengths, _) = tidb_executor::ddl::build_index_columns(
+        &indexed,
+        &resolved,
+        added.unique,
+        tidb_executor::ddl::index_prefix::MAX_INDEX_LENGTH,
+    )
+    .map_err(admission)?;
+    for ((part, offset), length) in added
+        .columns
+        .iter_deref()
+        .zip(&offsets)
+        .zip(&prefix_lengths)
+    {
+        let mut part = part.write();
+        part.name = columns[*offset].name.clone();
+        part.offset = columns[*offset].offset;
+        // The WRITE path cuts entries by this length, so it must be the
+        // normalized one `checkIndexColumn` settled.
+        part.length = *length;
+    }
+    let partition_offsets = match info.partition.as_ref() {
+        Some(_) => {
+            let spec = stored_partition_spec(info)?;
+            let mut partition_offsets = Vec::with_capacity(spec.dependencies.len());
+            for dependency in &spec.dependencies {
+                let Some(offset) = columns
+                    .iter()
+                    .position(|column| column.name.original().eq_ignore_ascii_case(dependency))
+                else {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        format!(
+                            "the partition expression of `{}` reads column `{dependency}`, \
+                             which the table does not define",
+                            info.name.original()
+                        ),
+                    )));
+                };
+                partition_offsets.push(offset);
+            }
+            Some(partition_offsets)
+        }
+        None => None,
+    };
+    tidb_executor::ddl::check_create_global_index(
+        name,
+        added.unique,
+        added.global,
+        partition_offsets.as_deref(),
+        &indexed,
+        &offsets,
+        &prefix_lengths,
+        context,
+    )
+    .map_err(admission)?;
+    added.comment = tidb_executor::ddl::validate_comment_length(
+        &added.comment,
+        name,
+        tidb_executor::ddl::CommentOwner::Index,
+        context,
+    )
+    .map_err(admission)?;
+    Ok(added)
+}
+
 fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
     table
         .indices

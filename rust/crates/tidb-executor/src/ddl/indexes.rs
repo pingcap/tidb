@@ -32,27 +32,66 @@
 use super::{Catalog, DdlStmt, DriverError, KvColumn, KvIndex, Stmt};
 use tidb_hack::GoToLower;
 
-/// Go `GetName4AnonymousIndex` (`pkg/ddl/executor.go`): choose a free name
-/// for an index whose statement omitted one. The first key column supplies
-/// the base name; collisions are resolved by trying `_2`, `_3`, ... until the
-/// name is not present on the table. `PRIMARY` is reserved, so a column with
-/// that name starts at `primary_2`.
+/// Go `GetName4AnonymousIndex` over an in-process table's indexes; see
+/// [`get_name_for_anonymous_index`].
 pub(crate) fn anonymous_index_name(existing: &[KvIndex], first_column: &str) -> String {
-    let mut suffix = 2;
-    let mut name = if first_column.eq_ignore_ascii_case("primary") {
-        suffix = 3;
-        format!("{first_column}_2")
-    } else {
-        first_column.to_owned()
-    };
-    while existing
+    let names = existing
         .iter()
-        .any(|index| index.name.eq_ignore_ascii_case(&name))
-    {
-        name = format!("{first_column}_{suffix}");
-        suffix += 1;
+        .map(|index| index.name.as_str())
+        .collect::<Vec<_>>();
+    get_name_for_anonymous_index(&names, first_column, "")
+}
+
+/// Go `GetName4AnonymousIndex` (`pkg/ddl/executor.go`): the name an `ADD INDEX`
+/// or `CREATE INDEX` written without one takes, given the names of the
+/// table's existing indexes.
+///
+/// The base is `column_name` (the first key column, or `expression_index`),
+/// or `index_name` when the caller passes a truncated retry. `PRIMARY` is
+/// reserved, so a column of that name starts at `primary_2`. A collision
+/// (compared lowercased) tries `<column>_2`, `<column>_3`, ... from the first
+/// index again; a candidate longer than 64 characters restarts from the
+/// column's first 30 bytes, exactly as Go recurses.
+pub fn get_name_for_anonymous_index(
+    existing: &[&str],
+    column_name: &str,
+    index_name: &str,
+) -> String {
+    let mut id = 2;
+    let mut name = column_name.to_owned();
+    if !index_name.is_empty() {
+        name = index_name.to_owned();
+        id = 3;
+    }
+    if name.eq_ignore_ascii_case("PRIMARY") {
+        name = format!("{column_name}_{id}");
+        id = 3;
+    }
+    let mut position = 0;
+    while position < existing.len() {
+        if existing[position].go_to_lower() == name.go_to_lower() {
+            name = format!("{column_name}_{id}");
+            if super::check_too_long_identifier(&name).is_err() {
+                let truncated = go_byte_prefix(column_name, 30);
+                name = get_name_for_anonymous_index(existing, truncated, &format!("{truncated}_2"));
+            }
+            position = 0;
+            id += 1;
+            continue;
+        }
+        position += 1;
     }
     name
+}
+
+/// Go `s[:n]` on a string: the first `n` bytes, here stopped at a character
+/// boundary so the result stays a `str`.
+fn go_byte_prefix(text: &str, bytes: usize) -> &str {
+    let mut end = bytes.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 /// Runs a `CREATE INDEX`, backfilling the existing rows.
@@ -458,31 +497,18 @@ fn build_index_definition(
         &ctx.session_zone(),
         ctx.like_default_escape(),
     )?;
-    // Go `checkExpressionIndexAutoIncrement` (3754), which
-    // `tidb_enable_auto_increment_in_generated` turns off.
-    if let Some(auto) = table
-        .auto_increment_offset()
-        .filter(|_| !ctx.auto_increment_in_generated())
-    {
-        let auto_name = table.columns[auto].name.clone();
-        if hidden.iter().any(|(_, column)| {
-            column
-                .generated
-                .dependencies
-                .iter()
-                .any(|dependency| dependency.eq_ignore_ascii_case(&auto_name))
-        }) {
-            return Err(DriverError::ExpressionIndexCanNotRefer(
-                index_name.to_owned(),
-            ));
-        }
-    }
+    check_expression_index_auto_increment(
+        index_name,
+        &hidden,
+        table
+            .auto_increment_offset()
+            .map(|auto| table.columns[auto].name.as_str()),
+        ctx,
+    )?;
     let mut offsets = Vec::with_capacity(parts.len());
-    let mut prefix_lengths = Vec::with_capacity(parts.len());
-    let mut part_types: Vec<tidb_datatype::FieldType> = Vec::with_capacity(parts.len());
+    let mut resolved = Vec::with_capacity(parts.len());
     let mut built = hidden.into_iter();
     let mut pending = Vec::new();
-    let mut mv_index = false;
     for part in parts {
         match part {
             tidb_ast::IndexPart::Column {
@@ -496,100 +522,73 @@ fn build_index_definition(
                         errno: 1072,
                         message: format!("column does not exist: {name}"),
                     })?;
-                // Go re-runs `buildIndexColumns` in the DDL job worker with a
-                // NIL context (`checkAndBuildIndexInfo` -> `BuildIndexInfo(nil,
-                // ...)`), which reads as strict whatever the session's mode
-                // is -- captured: under `sql_mode=''` a CREATE TABLE truncates
-                // the key with a warning but `ALTER TABLE ... ADD KEY` on the
-                // same column still fails 1071.
-                prefix_lengths.push(crate::ddl::index_prefix::key_part_length_with_max(
-                    &table.columns[offset].field_type,
-                    crate::ddl::index_prefix::IndexedColumn::Named(name),
-                    *prefix_len,
-                    true,
-                    max_index_length,
-                )?);
-                part_types.push(table.columns[offset].field_type.clone());
                 offsets.push(offset);
+                resolved.push(ResolvedKeyPart {
+                    offset,
+                    declared: *prefix_len,
+                    expression: false,
+                });
             }
             tidb_ast::IndexPart::Expr { .. } => {
                 let (_, column) = built.next().expect("one hidden column per expression part");
-                offsets.push(table.columns.len() + pending.len());
-                prefix_lengths.push(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
-                part_types.push(column.field_type.clone());
+                let offset = table.columns.len() + pending.len();
+                offsets.push(offset);
+                resolved.push(ResolvedKeyPart {
+                    offset,
+                    declared: None,
+                    expression: true,
+                });
                 pending.push(column);
             }
         }
-        crate::ddl::index_prefix::note_multi_valued_part(
-            &mut mv_index,
-            part_types.last().expect("this part's type was just pushed"),
-        )
-        .map_err(|feature| DriverError::NotSupportedYet(feature.into()))?;
     }
-    // Go `buildIndexColumns` runs the same running sum for ADD INDEX as for
-    // CREATE TABLE: each part may be legal and their total still refused.
-    crate::ddl::index_prefix::check_index_key_length_with_max(
-        part_types.iter().zip(prefix_lengths.iter().copied()),
-        parts.len(),
+    // The table's columns with the hidden ones this index adds after them.
+    let indexed_columns = table
+        .columns
+        .iter()
+        .map(|column| IndexedTableColumn {
+            name: &column.name,
+            field_type: &column.field_type,
+            virtual_generated: column
+                .generated
+                .as_ref()
+                .is_some_and(|generated| !generated.stored),
+        })
+        .chain(pending.iter().map(|column| IndexedTableColumn {
+            name: &column.name,
+            field_type: &column.field_type,
+            virtual_generated: true,
+        }))
+        .collect::<Vec<_>>();
+    let (prefix_lengths, part_types) =
+        build_index_columns(&indexed_columns, &resolved, unique, max_index_length)?;
+    let partition_offsets = match table.partition() {
+        // A name the partition expression reads that no column has is a
+        // catalog bug, not a statement error -- DDL refuses to drop or rename
+        // such a column (3855). It must not fall back to an empty list,
+        // because an empty list covers every key and the 8264 refusal would
+        // silently turn into an ACCEPT.
+        Some(partition) => Some(
+            crate::generated_column::dependency_offsets(&table.columns, &partition.dependencies)
+                .map_err(|missing| {
+                    DriverError::Parse(format!(
+                        "partition expression of `{index_name}`'s table reads column \
+                         `{missing}`, which the table does not define"
+                    ))
+                })?,
+        ),
+        None => None,
+    };
+    check_create_global_index(
+        index_name,
         unique,
-        true,
-        max_index_length,
-    )
-    .map_err(crate::ddl::index_prefix::driver_error)?;
-    // Go `checkCreateGlobalIndex`: GLOBAL needs a partitioned table, a
-    // unique index on one must cover the partition columns unless it is
-    // GLOBAL, and a global index over a prefix or virtual part warns.
-    if global && table.partition().is_none() {
-        return Err(global_index_on_non_partitioned_table());
-    }
-    if global {
-        warn_global_index_needs_manual_analyze(
-            ctx,
-            index_name,
-            offsets.iter().zip(&prefix_lengths).map(|(offset, prefix)| {
-                let virtual_generated = table.columns.get(*offset).map_or(true, |column| {
-                    column
-                        .generated
-                        .as_ref()
-                        .is_some_and(|generated| !generated.stored)
-                });
-                virtual_generated || *prefix != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
-            }),
-        );
-    }
-    // Go `checkPartitionKeysConstraint` reaches ADD INDEX too: a unique index
-    // on a partitioned table must include every partitioning column unless it
-    // is GLOBAL (8264). It is not merely a rule to copy -- this tier keys
-    // index entries by the TABLE id rather than by the partition id, and that
-    // is sound only while this holds. See `crate::ddl::table_partition`.
-    if unique {
-        if let Some(partition) = table.partition() {
-            // A name the partition expression reads that no column has is a
-            // catalog bug, not a statement error -- DDL refuses to drop or
-            // rename such a column (3855). It must not fall back to an empty
-            // list here, because `all()` over an empty list is TRUE and the
-            // 8264 refusal below would silently turn into an ACCEPT.
-            let partition_offsets = crate::generated_column::dependency_offsets(
-                &table.columns,
-                &partition.dependencies,
-            )
-            .map_err(|missing| {
-                DriverError::Parse(format!(
-                    "partition expression of `{index_name}`'s table reads column `{missing}`, \
-                     which the table does not define"
-                ))
-            })?;
-            if !global
-                && !partition_offsets.iter().all(|offset| {
-                    super::table_partition::key_part_covers(&offsets, &prefix_lengths, *offset)
-                })
-            {
-                return Err(DriverError::PartitionGlobalIndexNeeded(
-                    index_name.to_owned(),
-                ));
-            }
-        }
-    }
+        global,
+        partition_offsets.as_deref(),
+        &indexed_columns,
+        &offsets,
+        &prefix_lengths,
+        ctx,
+    )?;
     let comment =
         super::validate_comment_length(comment, index_name, super::CommentOwner::Index, ctx)?;
     Ok(IndexAdmission::Change(BuiltIndex {
@@ -612,6 +611,159 @@ fn build_index_definition(
         },
         hidden: pending,
     }))
+}
+
+/// One column of the table an index is built over, as Go `buildIndexColumns`
+/// and `checkCreateGlobalIndex` read it.
+pub struct IndexedTableColumn<'a> {
+    /// The column's name.
+    pub name: &'a str,
+    /// The column's type.
+    pub field_type: &'a tidb_datatype::FieldType,
+    /// Whether it is a VIRTUAL generated column (an expression part's hidden
+    /// column is one).
+    pub virtual_generated: bool,
+}
+
+/// One key part resolved to its column: Go's `IndexPartSpecification` after
+/// `BuildHiddenColumnInfo` has pointed an expression part at its hidden column.
+pub struct ResolvedKeyPart {
+    /// The column's offset in the [`IndexedTableColumn`] list.
+    pub offset: usize,
+    /// The declared prefix length, if any.
+    pub declared: Option<i64>,
+    /// Whether the part is an expression, whose hidden column is indexed
+    /// whole.
+    pub expression: bool,
+}
+
+/// Go `buildIndexColumns` for an ADD INDEX: each column part's stored length
+/// (`checkIndexColumn`, run strict because the job worker re-runs it with a
+/// nil context), the multi-valued rule, and the key's running byte total.
+/// Returns each part's stored prefix length and type.
+///
+/// # Errors
+///
+/// Go's key-part errors (1089, 1167, 1170, 1391, 3152, 1071, ...).
+pub fn build_index_columns(
+    columns: &[IndexedTableColumn<'_>],
+    parts: &[ResolvedKeyPart],
+    unique: bool,
+    max_index_length: i64,
+) -> Result<(Vec<i64>, Vec<tidb_datatype::FieldType>), DriverError> {
+    let mut prefix_lengths = Vec::with_capacity(parts.len());
+    let mut part_types: Vec<tidb_datatype::FieldType> = Vec::with_capacity(parts.len());
+    let mut mv_index = false;
+    for part in parts {
+        let column = &columns[part.offset];
+        if part.expression {
+            prefix_lengths.push(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
+        } else {
+            prefix_lengths.push(crate::ddl::index_prefix::key_part_length_with_max(
+                column.field_type,
+                crate::ddl::index_prefix::IndexedColumn::Named(column.name),
+                part.declared,
+                true,
+                max_index_length,
+            )?);
+        }
+        part_types.push(column.field_type.clone());
+        crate::ddl::index_prefix::note_multi_valued_part(
+            &mut mv_index,
+            part_types.last().expect("this part's type was just pushed"),
+        )
+        .map_err(|feature| DriverError::NotSupportedYet(feature.into()))?;
+    }
+    // Go runs the same running sum for ADD INDEX as for CREATE TABLE: each
+    // part may be legal and their total still refused.
+    crate::ddl::index_prefix::check_index_key_length_with_max(
+        part_types.iter().zip(prefix_lengths.iter().copied()),
+        parts.len(),
+        unique,
+        true,
+        max_index_length,
+    )
+    .map_err(crate::ddl::index_prefix::driver_error)?;
+    Ok((prefix_lengths, part_types))
+}
+
+/// Go `checkCreateGlobalIndex`: GLOBAL needs a partitioned table; a unique
+/// index on one must cover every column the partition expression reads
+/// unless it is GLOBAL (`checkPartitionKeysConstraint`, 8264); and a global
+/// index over a prefix or virtual part warns that auto analyze skips it.
+/// `partition_offsets` is `None` for an unpartitioned table.
+///
+/// # Errors
+///
+/// 8200 for GLOBAL on an unpartitioned table, 8264 for an uncovered unique
+/// key.
+#[allow(clippy::too_many_arguments)]
+pub fn check_create_global_index(
+    index_name: &str,
+    unique: bool,
+    global: bool,
+    partition_offsets: Option<&[usize]>,
+    columns: &[IndexedTableColumn<'_>],
+    offsets: &[usize],
+    prefix_lengths: &[i64],
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    if global && partition_offsets.is_none() {
+        return Err(global_index_on_non_partitioned_table());
+    }
+    if global {
+        warn_global_index_needs_manual_analyze(
+            ctx,
+            index_name,
+            offsets.iter().zip(prefix_lengths).map(|(offset, prefix)| {
+                columns
+                    .get(*offset)
+                    .is_none_or(|column| column.virtual_generated)
+                    || *prefix != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+            }),
+        );
+    }
+    if let Some(partition_offsets) = partition_offsets.filter(|_| unique && !global) {
+        if !partition_offsets
+            .iter()
+            .all(|offset| super::table_partition::key_part_covers(offsets, prefix_lengths, *offset))
+        {
+            return Err(DriverError::PartitionGlobalIndexNeeded(
+                index_name.to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Go `checkExpressionIndexAutoIncrement` (3754): an expression index may not
+/// read the AUTO_INCREMENT column unless
+/// `tidb_enable_auto_increment_in_generated` allows it.
+///
+/// # Errors
+///
+/// 3754 naming the index.
+pub fn check_expression_index_auto_increment(
+    index_name: &str,
+    hidden: &[(usize, crate::expression_index::HiddenIndexColumn)],
+    auto_increment_column: Option<&str>,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let Some(auto) = auto_increment_column.filter(|_| !ctx.auto_increment_in_generated()) else {
+        return Ok(());
+    };
+    if hidden.iter().any(|(_, column)| {
+        column
+            .generated
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.eq_ignore_ascii_case(auto))
+    }) {
+        return Err(DriverError::ExpressionIndexCanNotRefer(
+            index_name.to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Go `checkInvisibleIndexOnPK` over `indexes`, the table's indexes as the
@@ -1176,4 +1328,47 @@ pub(super) fn add_primary_key_to_table(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_name_for_anonymous_index;
+
+    /// Go `GetName4AnonymousIndex`: the first column names the index, a
+    /// collision (compared lowercased) restarts the scan with `_2`, `_3`, ...,
+    /// and `PRIMARY` is never taken.
+    #[test]
+    fn an_anonymous_index_is_named_as_go_names_it() {
+        assert_eq!(get_name_for_anonymous_index(&[], "a", ""), "a");
+        assert_eq!(get_name_for_anonymous_index(&["a_2", "A"], "a", ""), "a_3");
+        assert_eq!(
+            get_name_for_anonymous_index(&["x"], "primary", ""),
+            "primary_2"
+        );
+        assert_eq!(
+            get_name_for_anonymous_index(&["primary_2"], "Primary", ""),
+            "Primary_3"
+        );
+        assert_eq!(
+            get_name_for_anonymous_index(&["expression_index"], "expression_index", ""),
+            "expression_index_2"
+        );
+    }
+
+    /// A candidate past 64 characters restarts from the column's first 30
+    /// bytes, with `<prefix>_2` as the first try.
+    #[test]
+    fn a_too_long_candidate_restarts_from_a_thirty_byte_prefix() {
+        let column = "c".repeat(64);
+        let prefix = "c".repeat(30);
+        assert_eq!(
+            get_name_for_anonymous_index(&[column.as_str()], &column, ""),
+            format!("{prefix}_2")
+        );
+        let taken = format!("{prefix}_2");
+        assert_eq!(
+            get_name_for_anonymous_index(&[column.as_str(), taken.as_str()], &column, ""),
+            format!("{prefix}_3")
+        );
+    }
 }

@@ -329,6 +329,10 @@ mod generated_modify;
 mod index_changes;
 pub mod index_prefix;
 mod indexes;
+pub use indexes::{
+    build_index_columns, check_create_global_index, check_expression_index_auto_increment,
+    get_name_for_anonymous_index, IndexedTableColumn, ResolvedKeyPart,
+};
 pub mod job_history;
 pub mod label_rules;
 mod partition_interval;
@@ -562,7 +566,7 @@ pub(crate) fn column_comment_option(options: &[tidb_ast::ColumnOption]) -> Optio
 
 /// What a comment is attached to, for Go `validateCommentLength`'s error.
 #[derive(Clone, Copy)]
-pub(crate) enum CommentOwner {
+pub enum CommentOwner {
     /// A column: `ErrTooLongFieldComment` (1629).
     Field,
     /// An index: `ErrTooLongIndexComment` (1688).
@@ -572,7 +576,7 @@ pub(crate) enum CommentOwner {
 /// Go `validateCommentLength` for a column or index comment, which holds at
 /// most 1024 bytes: strict mode refuses a longer one, otherwise it warns and
 /// keeps the first 1024 bytes.
-pub(crate) fn validate_comment_length(
+pub fn validate_comment_length(
     comment: &str,
     name: &str,
     owner: CommentOwner,

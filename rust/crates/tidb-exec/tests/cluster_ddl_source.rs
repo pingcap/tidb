@@ -5369,6 +5369,66 @@ fn create_index_stores_the_index_and_owes_a_backfill() {
     );
 }
 
+/// Go `createIndex` builds an expression part's hidden VIRTUAL column
+/// (`BuildHiddenColumnInfo`), and the job worker appends it with the next
+/// column id before the index points at it. The backfill walks the rows with
+/// that column present, so it can compute each entry.
+#[test]
+fn an_expression_index_adds_its_hidden_column() {
+    let mut store = bootstrapped();
+    let table_id = table_with_two_columns(&mut store);
+    let write = plan(
+        &mut store,
+        "CREATE INDEX ei ON u6.minimal ((v + 1))",
+        470_000_000,
+    );
+    let stored = stored_table(&write, table_id);
+
+    let hidden = &stored["cols"][2];
+    assert_eq!(hidden["name"]["O"], "_V$_ei_0");
+    assert_eq!(hidden["hidden"], true);
+    assert_eq!(hidden["generated_expr_string"], "`v` + 1");
+    assert_eq!(hidden["generated_stored"], false);
+    assert_eq!(hidden["id"], 3, "the next column id");
+    assert_eq!(stored["max_col_id"], 3);
+    let index = &stored["index_info"][0];
+    assert_eq!(index["idx_name"]["O"], "ei");
+    assert_eq!(index["idx_cols"][0]["name"]["O"], "_V$_ei_0");
+    assert_eq!(index["idx_cols"][0]["offset"], 2);
+    assert_eq!(index["idx_cols"][0]["length"], -1);
+
+    let backfill = write.backfill.first().expect("entries are owed");
+    assert_eq!(
+        backfill.table.columns.len(),
+        3,
+        "the hidden column is there"
+    );
+    assert_eq!(backfill.table.indices.len(), 0, "the index is not");
+}
+
+/// Go `checkIndexNameAndColumns`: `ALTER TABLE ... ADD INDEX` without a name
+/// takes `GetName4AnonymousIndex`'s, after the first key column, against the
+/// stored table's indexes.
+#[test]
+fn an_anonymous_added_index_is_named_against_the_stored_table() {
+    let mut store = bootstrapped();
+    let table_id = table_with_two_columns(&mut store);
+    let first = plan(
+        &mut store,
+        "ALTER TABLE u6.minimal ADD INDEX (v)",
+        470_000_000,
+    );
+    apply(&mut store, &first);
+    let second = plan(
+        &mut store,
+        "ALTER TABLE u6.minimal ADD INDEX (v)",
+        470_000_003,
+    );
+    let stored = stored_table(&second, table_id);
+    assert_eq!(stored["index_info"][0]["idx_name"]["O"], "v");
+    assert_eq!(stored["index_info"][1]["idx_name"]["O"], "v_2");
+}
+
 /// Go captures `collate.NewCollationEnabled()` in `DDLReorgMeta` when the job
 /// is built. The backfill must carry that snapshot rather than re-read the
 /// runtime switch after the catalog mutation has already been planned.
@@ -5440,16 +5500,10 @@ fn a_duplicate_index_name_is_refused_and_if_not_exists_is_a_no_op() {
 /// connection that indexed it.
 #[test]
 fn index_shapes_this_node_cannot_maintain_are_refused_at_admission() {
-    for (sql, expected) in [
-        (
-            "CREATE INDEX ei ON u6.minimal ((v + 1))",
-            "an expression index",
-        ),
-        (
-            "CREATE FULLTEXT INDEX fi ON u6.minimal (c)",
-            "CREATE FULLTEXT INDEX",
-        ),
-    ] {
+    for (sql, expected) in [(
+        "CREATE FULLTEXT INDEX fi ON u6.minimal (c)",
+        "CREATE FULLTEXT INDEX",
+    )] {
         let reason = refusal(sql);
         assert!(
             reason.contains(expected),

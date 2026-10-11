@@ -243,6 +243,59 @@ fn session_activation_controls_the_native_commit_protocol() {
     }
 }
 
+/// Go `checkIndexNameAndColumns`: an ADD INDEX written without a name takes
+/// `GetName4AnonymousIndex`'s name against the stored table, and an expression
+/// part indexes a hidden generated column backfilled over the existing rows.
+/// This node refused both ("needs an explicit index name", "an expression
+/// index is not supported by this node"). The names are the Go oracle's.
+#[test]
+fn an_added_index_takes_gos_anonymous_name_and_indexes_expressions() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(135)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.ai (a INT, b VARCHAR(10), KEY (a))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.ai VALUES (1, 'X'), (2, 'y')",
+    );
+    for sql in [
+        "ALTER TABLE test.ai ADD INDEX (a)",
+        "ALTER TABLE test.ai ADD INDEX ((a + 1))",
+        "CREATE INDEX ei ON test.ai ((LOWER(b)))",
+        "ALTER TABLE test.ai ADD INDEX (b), ADD INDEX ((a * 2))",
+    ] {
+        rows(&mut session, sql);
+    }
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.ai"));
+    assert!(
+        created[0][1].contains(
+            "  KEY `a` (`a`),\n  KEY `a_2` (`a`),\n  KEY `expression_index` ((`a` + 1)),\n  \
+             KEY `ei` ((lower(`b`))),\n  KEY `b` (`b`),\n  KEY `expression_index_2` ((`a` * 2))\n"
+        ),
+        "{}",
+        created[0][1]
+    );
+    for (sql, expected) in [
+        (
+            "SELECT a FROM test.ai USE INDEX(expression_index) WHERE a + 1 = 2",
+            "1",
+        ),
+        (
+            "SELECT a FROM test.ai USE INDEX(ei) WHERE LOWER(b) = 'x'",
+            "1",
+        ),
+        (
+            "SELECT a FROM test.ai USE INDEX(expression_index_2) WHERE a * 2 = 4",
+            "2",
+        ),
+    ] {
+        assert_eq!(displayed(rows(&mut session, sql)), [[expected]], "{sql}");
+    }
+    rows(&mut session, "ADMIN CHECK TABLE test.ai");
+}
+
 #[test]
 fn shared_session_serves_ranges_joins_and_locking_reads_without_table_selection() {
     let (stack, _users) = cop_backed_stack();

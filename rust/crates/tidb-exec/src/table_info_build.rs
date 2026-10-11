@@ -1003,39 +1003,49 @@ fn synthesize_expression_index_columns(
             )
             .map_err(default_admission_error)?;
         for (position, hidden) in hidden {
-            let hidden_name = hidden.name;
-            let generated = hidden.generated;
-            let mut dependences = GoStringSet::default();
-            for dependency in generated.dependencies {
-                dependences.insert(dependency);
-            }
-            columns.push(ColumnInfo {
-                id: 0,
-                name: CiString::new(hidden_name.clone()),
-                offset: i64::try_from(columns.len()).expect("a column offset fits in i64"),
-                origin_default_value: GoAny::nil(),
-                origin_default_value_bit: Default::default(),
-                default_value: GoAny::nil(),
-                default_value_bit: Default::default(),
-                default_is_expr: false,
-                generated_expr_string: generated.expr_text,
-                generated_stored: false,
-                dependences,
-                field_type: hidden.field_type,
-                changing_field_type: None,
-                state: SchemaState::PUBLIC,
-                comment: String::new(),
-                hidden: true,
-                change_state_info: None,
-                version: CURR_LATEST_COLUMN_INFO_VERSION,
-            });
+            let column = hidden_index_column_info(hidden, columns.len());
             let part = &mut constraint.parts[position];
-            part.name = hidden_name;
+            part.name = column.name.original().to_owned();
             // go resets the length of an expression part to Unspecified.
             part.prefix_len = UNSPECIFIED_LENGTH;
+            columns.push(column);
         }
     }
     Ok(())
+}
+
+/// Go `BuildHiddenColumnInfo`'s `ColumnInfo` for one expression key part: a
+/// hidden, public, VIRTUAL generated column at `offset`. The id is the
+/// caller's to allocate (`AllocateColumnID`).
+pub(crate) fn hidden_index_column_info(
+    hidden: tidb_executor::expression_index::HiddenIndexColumn,
+    offset: usize,
+) -> ColumnInfo {
+    let generated = hidden.generated;
+    let mut dependences = GoStringSet::default();
+    for dependency in generated.dependencies {
+        dependences.insert(dependency);
+    }
+    ColumnInfo {
+        id: 0,
+        name: CiString::new(hidden.name),
+        offset: i64::try_from(offset).expect("a column offset fits in i64"),
+        origin_default_value: GoAny::nil(),
+        origin_default_value_bit: Default::default(),
+        default_value: GoAny::nil(),
+        default_value_bit: Default::default(),
+        default_is_expr: false,
+        generated_expr_string: generated.expr_text,
+        generated_stored: false,
+        dependences,
+        field_type: hidden.field_type,
+        changing_field_type: None,
+        state: SchemaState::PUBLIC,
+        comment: String::new(),
+        hidden: true,
+        change_state_info: None,
+        version: CURR_LATEST_COLUMN_INFO_VERSION,
+    }
 }
 
 /// Builds the one column an `ALTER TABLE ... ADD COLUMN` appends, against the
