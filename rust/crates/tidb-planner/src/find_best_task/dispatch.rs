@@ -844,11 +844,27 @@ fn exhaust_physical_plans(
             };
             // Burn/construct hash candidates first (`getHashJoins` runs before
             // `tryToEnumerateIndexJoin` in Go), then the merge/index family.
+            // Go `ShouldSkipHashJoin`, which `GetMergeJoin` reads whatever the
+            // required property.
+            let skip_hash_join =
+                op.prefer_any(&[join_hint_flags::NO_HASH_JOIN]) || ctx.disable_hash_join;
+            if reduced.no_merge
+                && reduced.force_merge
+                && prop.index_join_prop.is_none()
+                && !reduced.has_na_keys
+            {
+                if let Some(sink) = ctx.mpp_warning_sink {
+                    sink.set_hint_warning(
+                        "Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored",
+                    );
+                }
+            }
             let all_join_candidates = crate::find_best_task::exhaust_join(
                 &reduced,
                 prop,
                 ctx.use_hash_join_v2,
                 (hash_hints.force_left, hash_hints.force_right),
+                skip_hash_join,
             );
             let (hash_candidates, other_candidates): (Vec<_>, Vec<_>) = all_join_candidates
                 .into_iter()
@@ -882,7 +898,8 @@ fn exhaust_physical_plans(
                 let filtered = match &strategy {
                     // Go: `if !forced && shouldSkipHashJoin { return nil }`.
                     JoinStrategy::Hash(_) => !hash_hints.forced && hash_hints.skip,
-                    JoinStrategy::Merge { .. } => op.prefer_any(&[join_hint_flags::NO_MERGE_JOIN]),
+                    // NO_MERGE_JOIN was applied by `exhaust_join`.
+                    JoinStrategy::Merge { .. } => false,
                     JoinStrategy::Index { kind, .. } => match kind {
                         crate::plan_cost_ver2::IndexJoinKind::IndexJoin => {
                             op.prefer_any(&[join_hint_flags::NO_INDEX_JOIN])

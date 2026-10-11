@@ -1868,10 +1868,16 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 "uncorrelated subquery evaluation requires the executor hook",
             ));
         };
-        let schema = inner
-            .schema()
-            .ok_or_else(|| PlanError::internal("uncorrelated subquery has no schema"))?
-            .clone();
+        // Go `popExistsSubPlan` replaces an EXISTS over an ungrouped
+        // aggregate with `LogicalTableDual{RowCount: 1}`, which carries no
+        // schema at all; only the row's existence is read from it.
+        let schema = match (inner.schema(), kind) {
+            (Some(schema), _) => schema.clone(),
+            (None, SubqueryKind::Exists) => Schema::default(),
+            (None, _) => {
+                return Err(PlanError::internal("uncorrelated subquery has no schema"));
+            }
+        };
         let evaluated = evaluator(inner, kind, self.get_opt_flag())?;
         if evaluated.column_ids.len() != schema.len() {
             return Err(PlanError::internal(
@@ -3569,6 +3575,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         items: &[tidb_ast::OrderItem],
         fields: &mut Vec<ProjectionField>,
         source_names: &[FieldName],
+        source_full_names: Option<&[FieldName]>,
     ) -> Result<Vec<Expr>, PlanError> {
         let old_len = fields.len();
         let mut resolved = Vec::with_capacity(items.len());
@@ -3611,7 +3618,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     // column the select list does not project becomes an
                     // auxiliary field (GO :2841 resolveFromPlan) -- that is
                     // what widens the schema for q99's order-by substr.
-                    let Some(source) = find_field_name(source_names, path) else {
+                    // Go `resolveFromPlan` (`:2689`): a name the source's
+                    // own output lacks may be the redundant side of a
+                    // USING/NATURAL join, which only `FullNames` carries.
+                    let Some(source) = find_field_name(source_names, path)
+                        .map(|index| &source_names[index])
+                        .or_else(|| {
+                            let full = source_full_names?;
+                            find_field_name(full, path).map(|index| &full[index])
+                        })
+                    else {
                         return true;
                     };
                     // Go `resolveFromPlan`: reuse a select field only when its
@@ -3620,9 +3636,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     // sorts by the source `a`), and never a same-named column
                     // of another table (`order by r.id` over `select l.id,
                     // r.id` is `r.id`).
-                    if let Some(index) =
-                        Self::find_column_field(&source_names[source], &fields[..old_len])
-                    {
+                    if let Some(index) = Self::find_column_field(source, &fields[..old_len]) {
                         marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
                         return true;
                     }
@@ -4617,7 +4631,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         // `:4370` "checkOnlyFullGroupBy should be executed before rewrite
         // gbyExprs, because the field type of the fields may change."
-        self.check_only_full_group_by(select, &gby_exprs, &source_names)?;
+        self.check_only_full_group_by(select, &fields, &gby_exprs, &source_names)?;
 
         let mut markers: BTreeMap<MarkerKind, Vec<Column>> = BTreeMap::new();
         let group_by_items = self.rewrite_gby_exprs_with_plan(&gby_exprs, &plan, &markers)?;
@@ -4649,7 +4663,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // select list. Go resolves them with `orderByResolver`, so record the
         // slice they occupy and build it with the OrderBy clause.
         let order_by_from = fields.len();
-        let order_by = Self::resolve_order_by(&order_items, &mut fields, &source_names)?;
+        let source_full_names = from::find_join_full_schema(&plan).map(|(_, names)| names.to_vec());
+        let order_by = Self::resolve_order_by(
+            &order_items,
+            &mut fields,
+            &source_names,
+            source_full_names.as_deref(),
+        )?;
         let order_by_to = fields.len();
         // `:4397` `resolveWindowFunction`'s column half, which appends one
         // auxiliary field per column a window specification names; see

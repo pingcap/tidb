@@ -379,3 +379,28 @@ fn a_correlated_scalar_aggregate_answers_tidbs_rows_through_an_apply() {
         ["1", "1", "1"]
     );
 }
+
+/// Go `OuterJoinEliminator` drops a LEFT JOIN under a duplicate-insensitive
+/// aggregate, after which `AggregationPushDownSolver` eliminates the
+/// aggregate grouped by the primary key into a projection that renames
+/// `t1.b` to the aggregate's output column. Folding that column-only
+/// projection into the table reader must keep the projection's column
+/// identities, or the select list above no longer resolves. Recorded in
+/// `tests/integrationtest/r/planner/cascades/integration.result`.
+#[test]
+fn an_eliminated_aggregate_over_an_eliminated_outer_join_still_answers() {
+    let mut session = Session::new();
+    session
+        .run("create table t (a int primary key, b int)")
+        .unwrap();
+    session
+        .run("insert into t values (1, 11), (2, 22)")
+        .unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run(
+            "select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 \
+             left join t as t2 on t1.b = t2.b) t3 group by t3.a order by a"
+        )),
+        [["1", "11"], ["2", "22"]]
+    );
+}

@@ -1481,3 +1481,34 @@ fn an_unread_scalar_subquery_s_apply_is_eliminated() {
         "└─HashJoin CARTESIAN left outer join, left side:TableReader"
     );
 }
+
+/// Go `popExistsSubPlan`: an EXISTS over an ungrouped aggregate always has a
+/// row, so it becomes `LogicalTableDual{RowCount: 1}` -- a plan with no schema,
+/// whose evaluation must only report that the row exists. A correlated one
+/// loses its correlation with the aggregate. Captured from Go TiDB.
+#[test]
+fn exists_over_an_ungrouped_aggregate_is_true() {
+    let mut session = Session::new();
+    session.run("create table t (a int)").unwrap();
+    session.run("create table t1 (a1 int)").unwrap();
+    session.run("create table t2 (a2 int)").unwrap();
+    session.run("insert into t1 values (1), (6)").unwrap();
+    assert_eq!(
+        row_text(session.run("select exists(select count(*) from t)")),
+        [["1"]]
+    );
+    assert_eq!(
+        row_text(session.run("select not exists(select count(*) from t)")),
+        [["0"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select count(*) from t1 where a1 > 5 or exists(select count(*) from t2 where a2 = a1)"
+        )),
+        [["2"]]
+    );
+    assert_eq!(
+        row_text(session.run("select exists(select a from t group by a)")),
+        [["0"]]
+    );
+}

@@ -905,6 +905,34 @@ pub enum GetFormatSelector {
     Datetime,
 }
 
+/// Go `ExpressionDeepEqual` (`pkg/parser/ast/expressions.go:1723`): whether
+/// two expressions are the same tree once Go's `exprCleaner` has cleared every
+/// node's source position and made each function name compare by its lower
+/// case spelling (`FnName.O = FnName.L`).
+#[must_use]
+pub fn expression_deep_equal(a: &Expr, b: &Expr) -> bool {
+    struct ExprCleaner;
+    impl crate::Visitor for ExprCleaner {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(expr) = node.downcast_mut::<Expr>() {
+                expr.set_origin_text_position(0);
+                if let Expr::Func { name, .. } | Expr::GenericFuncCall { name, .. } = expr {
+                    *name = identifier_to_lower(name);
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let (mut a, mut b) = (a.clone(), b.clone());
+    crate::Visitable::accept(&mut a, &mut ExprCleaner);
+    crate::Visitable::accept(&mut b, &mut ExprCleaner);
+    a == b
+}
+
 impl Expr {
     /// Returns the source byte offset retained for ordinary function calls.
     pub const fn origin_text_position(&self) -> usize {

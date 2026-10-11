@@ -588,10 +588,11 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
 
     // Recorded snapshot, not complete join parity. Every count moved the
     // right way when it was last re-recorded (more plans compared, all merge
-    // pairs reproduced, none extra); the five disagreements left are the
-    // TIDB_SMJ hint over a cross or other-condition join (four statements)
-    // and rule_constant_propagation's `update t1 set value = (select
-    // count(*) ...)`, whose subquery Go decorrelates into a HashJoin. The
+    // pairs reproduced, none extra); the one disagreement left is
+    // rule_constant_propagation's `update t1 set value = (select count(*)
+    // ...)`, whose subquery Go decorrelates into a HashJoin. The four TIDB_SMJ
+    // hints over a cross or other-condition join agree since the enforced
+    // merge join may be keyless (`getEnforcedMergeJoin`). The
     // other decorrelated subquery that disagreed now agrees. The 757th plan is push_down's
     // `t4a8656d1 join tld47bc815`, reachable once its multi-valued index
     // could be created: TiDB records an inner HashJoin with no keep order
@@ -603,11 +604,18 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // statements, reachable once an inlined CTE reference takes its alias:
     // TiDB records MergeJoins on both sides of the CTE's Projection
     // (join_reorder_through_projection.result:62), which the port
-    // reproduces. Inspect recorded witnesses before updating these counts.
-    const COMPARED: usize = 785;
-    const BOTH_AGREE: usize = 780;
-    const RECORDED_MERGE_PAIRS: usize = 119;
-    const AGREED_MERGE_PAIRS: usize = 119;
+    // reproduces. Plans 786-794 (merge pairs 120-121) are casetest/rule/
+    // rule_join_reorder's NO_HASH_JOIN / NO_MERGE_JOIN statements, which
+    // failed with "Can't find a proper physical plan" until hash join hinted
+    // away enumerated the enforced merge join: TiDB records a keyless
+    // MergeJoin for the cross joins (rule_join_reorder.result:533) and an
+    // ordered IndexFullScan MergeJoin for MERGE_JOIN overriding
+    // NO_MERGE_JOIN (:658), which the port reproduces. Inspect recorded
+    // witnesses before updating these counts.
+    const COMPARED: usize = 794;
+    const BOTH_AGREE: usize = 793;
+    const RECORDED_MERGE_PAIRS: usize = 121;
+    const AGREED_MERGE_PAIRS: usize = 121;
     const EXTRA_MERGE_PAIRS: usize = 0;
 
     assert_eq!(

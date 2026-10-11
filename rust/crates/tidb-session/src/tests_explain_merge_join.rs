@@ -610,3 +610,42 @@ fn shuffled_join_and_stream_aggregate_match_serial_results() {
         assert_eq!(actual, expected, "{sql}");
     }
 }
+
+/// Go `GetMergeJoin`: with hash join hinted away (`ShouldSkipHashJoin`) the
+/// enforced merge join is a candidate even with no join keys, so a cartesian
+/// `NO_HASH_JOIN` query plans (and answers) instead of failing with "Can't find
+/// a proper physical plan"; MERGE_JOIN overrides NO_MERGE_JOIN on the same
+/// join, with a warning. Captured in
+/// `tests/integrationtest/r/planner/core/casetest/rule/rule_join_reorder.result`.
+#[test]
+fn hinted_away_hash_join_falls_back_to_an_enforced_merge_join() {
+    let mut session = Session::new();
+    session.run("create table t1(a int, key(a))").unwrap();
+    session.run("create table t2(a int, key(a))").unwrap();
+    session.run("insert into t1 values (1), (2)").unwrap();
+    session.run("insert into t2 values (1), (3)").unwrap();
+    let cross = plan(
+        &mut session,
+        "explain format='plan_tree' select /*+ no_hash_join(t1) */ * from t1, t2",
+    );
+    assert!(
+        cross[0].starts_with("MergeJoin|root||inner join"),
+        "{cross:?}"
+    );
+    assert_eq!(
+        row_text(session.run("select /*+ no_hash_join(t1) */ * from t1, t2")).len(),
+        4
+    );
+    let conflict = plan(
+        &mut session,
+        "explain format='plan_tree' select /*+ no_merge_join(t1), merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+    );
+    assert!(conflict[0].starts_with("MergeJoin|"), "{conflict:?}");
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1815,
+            "Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored".to_owned()
+        )]
+    );
+}

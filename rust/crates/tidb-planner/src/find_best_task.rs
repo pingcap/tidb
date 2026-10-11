@@ -168,6 +168,9 @@ pub struct LogicalJoin {
     /// how `getEnforcedMergeJoin` remains buildable when neither access path
     /// already provides the join-key order.
     pub force_merge: bool,
+    /// `p.PreferJoinType&PreferNoMergeJoin > 0`: NO_MERGE_JOIN, which vetoes
+    /// every merge candidate unless MERGE_JOIN names the same join.
+    pub no_merge: bool,
     /// `GetJoinKeys()`'s `hasNullEQ`: some key is `<=>`.
     ///
     /// Go refuses BOTH merge-join forms for it — `GetMergeJoin`
@@ -427,6 +430,7 @@ pub fn exhaust_join(
     prop: &PhysicalProperty,
     use_hash_join_v2: bool,
     hash_force: (bool, bool),
+    skip_hash_join: bool,
 ) -> Vec<EnumeratedJoin> {
     // Go `exhaustPhysicalPlans4LogicalJoin`: `if !p.IsNAAJ() && prop.IndexJoinProp
     // == nil { ...generate merge join and index join... }` -- merge join and
@@ -439,13 +443,20 @@ pub fn exhaust_join(
     if prop.index_join_prop.is_some() || join.has_na_keys {
         return hash_join_candidates(join, prop, use_hash_join_v2, hash_force);
     }
+    // Go `GetMergeJoin`: the naturally ordered candidates; then NO_MERGE_JOIN
+    // vetoes them all unless MERGE_JOIN names the same join (the caller warns
+    // that NO_MERGE_JOIN is ignored); then the enforced candidate under
+    // MERGE_JOIN, or when `ShouldSkipHashJoin` ("generate as many other types
+    // of join as possible to avoid 'cant-find-plan' error").
     let mut out = Vec::new();
-    out.extend(merge_join_candidates(join, prop));
-    if join.force_merge {
-        out.extend(enforced_merge_join_candidates(join, prop));
-        if !out.is_empty() {
-            return out;
+    if !join.no_merge || join.force_merge {
+        out.extend(merge_join_candidates(join, prop));
+        if join.force_merge || skip_hash_join {
+            out.extend(enforced_merge_join_candidates(join, prop));
         }
+    }
+    if join.force_merge && !out.is_empty() {
+        return out;
     }
     out.extend(index_join_candidates(join, prop));
     out.extend(hash_join_candidates(join, prop, use_hash_join_v2, hash_force));
@@ -463,7 +474,9 @@ fn enforced_merge_join_candidates(
     if join.has_null_eq {
         return Vec::new();
     }
-    if join.left_keys.is_empty() || join.left_keys.len() != join.right_keys.len() {
+    // No keys at all is still a candidate: Go builds the keyless (cartesian)
+    // merge join a hint leaves as the only choice.
+    if join.left_keys.len() != join.right_keys.len() {
         return Vec::new();
     }
     let (all, desc) = prop.all_same_order();
@@ -796,6 +809,8 @@ pub(crate) fn project_one_join(
         left_properties: join.left_properties.iter().map(|p| ids(p)).collect(),
         right_properties: join.right_properties.iter().map(|p| ids(p)).collect(),
         force_merge: join.prefer_join_type & PREFER_MERGE_JOIN != 0,
+        no_merge: join.prefer_join_type & crate::plan_builder::from::join_hint_flags::NO_MERGE_JOIN
+            != 0,
         has_null_eq,
         keys_contain_enum_or_set,
         has_na_keys: !left_na_keys.is_empty(),
@@ -827,6 +842,7 @@ mod tests {
             left_properties: vec![vec![1]],
             right_properties: vec![vec![2]],
             force_merge: false,
+            no_merge: false,
             has_null_eq: false,
             keys_contain_enum_or_set: false,
             has_na_keys: false,
@@ -857,6 +873,7 @@ mod tests {
             left_properties: Vec::new(),
             right_properties: Vec::new(),
             force_merge: false,
+            no_merge: false,
             has_null_eq: false,
             keys_contain_enum_or_set: false,
             has_na_keys: false,
@@ -867,7 +884,7 @@ mod tests {
             no_cop_push_down: true,
             ..PhysicalProperty::default()
         };
-        let candidates = exhaust_join(&join, &prop, true, (false, false));
+        let candidates = exhaust_join(&join, &prop, true, (false, false), false);
         assert!(!candidates.is_empty());
         // Go enumerates both probe paths and join families before the inner
         // datasource checks available access paths; sort properties are not

@@ -602,3 +602,59 @@ fn a_qualified_star_loses_the_coalesced_copy_under_an_inner_join_with_on() {
         ["1"]
     );
 }
+
+/// Go `buildAggregation` reports a USING join's redundant columns through
+/// their own `firstrow()` (`findJoinFullSchema`), and `resolveFromPlan` falls
+/// back to the join's `FullNames` for ORDER BY, so `n2.a` still resolves
+/// above an aggregate. Captured from Go TiDB with `sql_mode = ''`; under
+/// ONLY_FULL_GROUP_BY the bare `n2.a` beside an aggregate is 8123, because
+/// the check finds no visible `n2.a`.
+#[test]
+fn the_redundant_side_of_using_resolves_above_an_aggregate() {
+    let mut session = natural_session();
+    session.run("SET sql_mode = ''").unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT n1.a, n2.a FROM n1 JOIN n2 USING (a) GROUP BY n1.a"
+        ),
+        ["1|1"]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT n2.a FROM n1 JOIN n2 USING (a) GROUP BY a"
+        ),
+        ["1"]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT count(n2.c) FROM n1 JOIN n2 USING (a) ORDER BY n2.a"
+        ),
+        ["1"]
+    );
+    session.run("SET sql_mode = 'ONLY_FULL_GROUP_BY'").unwrap();
+    let error = session
+        .run("SELECT n2.a, count(n2.c) FROM n1 JOIN n2 USING (a) WHERE n1.a = 1")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8123, "{}", error.message);
+}
+
+/// Go `havingWindowAndOrderbyExprResolver`: an unqualified HAVING name that no
+/// select alias names still matches a select field's own column, the alias
+/// ignored (`resolveFromSelectFields(v, fields, true)`).
+#[test]
+fn a_having_name_matches_an_aliased_select_column() {
+    let mut session = natural_session();
+    assert_eq!(
+        rows(&mut session, "SELECT b AS x FROM n1 HAVING b = 10"),
+        ["10"]
+    );
+    let error = session
+        .run("SELECT b + 1 AS x FROM n1 HAVING b = 10")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1054, "{}", error.message);
+}

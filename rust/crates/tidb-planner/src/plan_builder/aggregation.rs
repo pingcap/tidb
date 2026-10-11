@@ -1072,6 +1072,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     return true;
                 }
             }
+            // `:2861` an UNQUALIFIED name the select list does not name by
+            // alias matches a field's own column, the alias ignored
+            // (`resolveFromSelectFields(v, a.selectFields, true)`): `select c1
+            // as a from t having c1 = 1` compares the selected `c1`.
+            if path.len() == 1 {
+                match resolve_from_select_fields(&path, &fields[..old_len], true) {
+                    Ok(Some(index)) => {
+                        marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
+                        return true;
+                    }
+                    Ok(None) => {}
+                    Err(ambiguous) => {
+                        error = Some(ambiguous);
+                        return true;
+                    }
+                }
+            }
             // `:2887` a name no scope knows may still be a CORRELATED column,
             // which the rewriter resolves against `outer_names`; only a name
             // NO scope knows is an error.
@@ -1286,6 +1303,30 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             schema_columns.push(output);
             output_names.push(names.get(index).cloned().unwrap_or_default());
             descriptors.push(descriptor);
+        }
+        // `:378` `findJoinFullSchema`: a USING/NATURAL join keeps its
+        // redundant columns only in `FullSchema`, so each one the child
+        // schema lacks is reported through its own `firstrow()` as well, and
+        // `t2.a` still resolves above the aggregate.
+        if let Some((full_schema, full_names)) = super::from::find_join_full_schema(&plan) {
+            for (index, column) in full_schema.columns.iter().enumerate() {
+                if schema.contains(column) {
+                    continue;
+                }
+                let descriptor = AggFuncDesc::new(
+                    self.ctx,
+                    agg_names::FIRST_ROW,
+                    vec![Expression::Column(column.clone())],
+                    false,
+                )
+                .map_err(|error| PlanError::internal(format!("{error}")))?;
+                let mut output = column.clone();
+                output.ret_type = Some(descriptor.ret_type().clone());
+                output.index = schema_columns.len() as i64;
+                schema_columns.push(output);
+                output_names.push(full_names.get(index).cloned().unwrap_or_default());
+                descriptors.push(descriptor);
+            }
         }
 
         // `:401` `UpdateNotNullFlag4RetType`: an aggregate over a possibly

@@ -5473,9 +5473,10 @@ fn build_with_state(
                 })
                 .collect::<Option<Vec<usize>>>();
             if let Some(offsets) = direct_offsets {
+                let output = plan_schema(plan)?;
                 if child
                     .table_access()
-                    .is_some_and(|access| access.accept_post_filter_projection(&offsets))
+                    .is_some_and(|access| access.accept_post_filter_projection(&offsets, &output))
                 {
                     return Ok(child);
                 }

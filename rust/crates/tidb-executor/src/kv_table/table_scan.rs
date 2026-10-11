@@ -5273,7 +5273,11 @@ impl crate::table_access::TableAccess for TableScanExec {
         true
     }
 
-    fn accept_post_filter_projection(&mut self, keep: &[usize]) -> bool {
+    fn accept_post_filter_projection(
+        &mut self,
+        keep: &[usize],
+        output: &tidb_expr::schema::Schema,
+    ) -> bool {
         // DAGRequest.output_offsets is safe for either clustered-handle
         // family while the table is clean: no UnionScan row needs a handle
         // reconstructed from the narrowed response. Local fallback applies
@@ -5294,11 +5298,19 @@ impl crate::table_access::TableAccess for TableScanExec {
         {
             return false;
         }
-        let columns: Vec<tidb_expr::column::Column> = keep
+        // The folded projection's OUTPUT columns are what its parent reads:
+        // an eliminated aggregate's projection renames `t.b` to the
+        // aggregate's column, so the scan's own column identities would not
+        // resolve above it.
+        if output.len() != keep.len() {
+            return false;
+        }
+        let columns: Vec<tidb_expr::column::Column> = output
+            .columns
             .iter()
             .enumerate()
-            .map(|(index, offset)| {
-                let mut column = self.meta.schema().columns[*offset].clone();
+            .map(|(index, column)| {
+                let mut column = column.clone();
                 column.index = index as i64;
                 column
             })

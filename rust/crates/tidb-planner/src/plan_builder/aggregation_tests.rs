@@ -903,6 +903,39 @@ fn test_an_aggregate_and_a_grouped_column_are_both_justified() {
 }
 
 #[test]
+fn test_a_group_by_expression_justifies_the_same_expression_written_again() {
+    // Go `ExpressionDeepEqual` clears every node's source position and
+    // compares function names by their lower-case spelling, so the select
+    // item matches the GROUP BY item although it sits elsewhere in the text.
+    build("SELECT DATE_FORMAT(c, '%Y'), count(a) FROM t GROUP BY date_format(c, '%Y')");
+    build("SELECT DISTINCT upper(b), lower(b) FROM t ORDER BY upper(b)");
+}
+
+#[test]
+fn test_a_cte_column_is_not_reported() {
+    // Go `tblInfoFromCol` resolves no table for a CTE reference, so its
+    // column owes the grouping nothing.
+    build("WITH qn AS (SELECT a, b FROM t) SELECT b FROM qn GROUP BY a");
+}
+
+#[test]
+fn test_a_wildcard_is_checked_column_by_column_without_the_extra_handle() {
+    // Go checks the select list after `unfoldWildStar`, which expands to the
+    // visible columns only (no `_tidb_rowid`), each owing its own
+    // justification.
+    let message = build_err("SELECT * FROM t GROUP BY b");
+    assert!(
+        message.contains("of SELECT list is not in GROUP BY clause"),
+        "{message}"
+    );
+    let message = build_err("SELECT *, count(a) FROM t");
+    assert!(
+        message.contains("In aggregated query without GROUP BY, expression #1"),
+        "{message}"
+    );
+}
+
+#[test]
 fn test_clearing_the_sql_mode_restores_the_permissive_behaviour() {
     // The whole rule is gated on `SQLMode.HasOnlyFullGroupBy()`, which is what
     // clearing the mode turns off.
@@ -1120,6 +1153,7 @@ fn test_an_aggregate_order_by_term_is_appended_as_a_hidden_field() {
         &select.order_by,
         &mut fields,
         &names,
+        None,
     )
     .expect("ORDER BY resolves");
     assert_eq!(

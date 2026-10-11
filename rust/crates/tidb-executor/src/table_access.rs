@@ -159,9 +159,14 @@ pub trait TableAccess {
     /// Returning `true` promises two equivalent paths: a local scan filters
     /// the wider row before projecting it, while a remote scan returns the
     /// narrow row only when every predicate was evaluated in the coprocessor.
-    /// The source schema must immediately describe the projected row.
-    fn accept_post_filter_projection(&mut self, keep: &[usize]) -> bool {
-        let _ = keep;
+    /// The source schema must immediately describe the projected row, with
+    /// `output`'s column identities.
+    fn accept_post_filter_projection(
+        &mut self,
+        keep: &[usize],
+        output: &tidb_expr::schema::Schema,
+    ) -> bool {
+        let _ = (keep, output);
         false
     }
 

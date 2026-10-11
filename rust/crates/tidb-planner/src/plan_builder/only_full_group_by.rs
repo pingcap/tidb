@@ -72,11 +72,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use tidb_ast::{BinaryOp, Expr, Join, JoinNode, JoinType, SelectField, SelectStmt, UnaryOp};
+use tidb_ast::{
+    expression_deep_equal, BinaryOp, Expr, Join, JoinNode, JoinType, SelectField, SelectStmt,
+    UnaryOp,
+};
 use tidb_datatype::{FieldName, FieldTypeFlags};
 
 use super::catalog::TableSource;
-use super::{find_field_name, PlanBuilder};
+use super::{find_field_name, PlanBuilder, ProjectionField};
 use crate::plan_base::PlanError;
 use tidb_expr::Columns;
 
@@ -100,8 +103,9 @@ impl Clause {
 /// Go `ErrExprLoc`: an expression that reports a column the grouping does not
 /// justify.
 struct Offender {
-    /// The column's index into the plan's output names.
-    offset: usize,
+    /// The column's index into the plan's output names; `None` for a name
+    /// they do not resolve, which only the no-`GROUP BY` check reports.
+    offset: Option<usize>,
     /// The column's bare written name, which the no-`GROUP BY` error quotes.
     name: String,
     /// The offending expression's 1-based position in its clause.
@@ -150,6 +154,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn check_only_full_group_by(
         &self,
         select: &SelectStmt,
+        fields: &[ProjectionField],
         group_by: &[Expr],
         names: &[FieldName],
     ) -> Result<(), PlanError> {
@@ -157,9 +162,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             return Ok(());
         }
         if group_by.is_empty() {
-            self.check_only_full_group_by_without_group_clause(select, names)
+            self.check_only_full_group_by_without_group_clause(select, fields, names)
         } else {
-            self.check_only_full_group_by_with_group_clause(select, group_by, names)
+            self.check_only_full_group_by_with_group_clause(select, fields, group_by, names)
         }
     }
 
@@ -173,6 +178,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn check_only_full_group_by_with_group_clause(
         &self,
         select: &SelectStmt,
+        fields: &[ProjectionField],
         group_by: &[Expr],
         names: &[FieldName],
     ) -> Result<(), PlanError> {
@@ -203,51 +209,31 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
 
         let mut offenders = Vec::new();
-        // go `unfoldWildStar` (`logical_plan_builder.go:4348`): the wildcard
-        // expands to every source column it covers BEFORE the check — each
-        // expanded column owes the grouping its own justification (oracle:
-        // `EXPLAIN SELECT * FROM ex1 GROUP BY b` answers 1055 on the first
-        // expanded column, `fdq.ex1.a`).
-        let group_offsets: std::collections::HashSet<usize> =
-            group_exprs.iter().filter_map(|expr| column_offset(expr, names)).collect();
-        for (index, field) in select.fields.fields().iter().enumerate() {
-            match field {
-                SelectField::Expr { expr, .. } => {
-                    collect_offenders(
-                        expr,
-                        index + 1,
-                        Clause::Select,
-                        &group_exprs,
-                        &pinned,
-                        names,
-                        &mut offenders,
-                    );
-                }
-                SelectField::Wildcard(qualifier) => {
-                    let mut position = index + 1;
-                    for (offset, name) in names.iter().enumerate() {
-                        if !qualifier_covers(qualifier, name) {
-                            continue;
-                        }
-                        let justified =
-                            pinned.contains(&offset) || group_offsets.contains(&offset);
-                        if !justified {
-                            offenders.push(Offender {
-                                offset,
-                                name: name.names.column.original.clone(),
-                                position,
-                                clause: Clause::Select,
-                            });
-                        }
-                        position += 1;
-                    }
-                }
+        // Go checks `sel.Fields.Fields` after `unfoldWildStar`
+        // (`logical_plan_builder.go:4348`): each column a wildcard expands to
+        // owes the grouping its own justification (oracle: `EXPLAIN SELECT *
+        // FROM ex1 GROUP BY b` answers 1055 on the first expanded column,
+        // `fdq.ex1.a`), and the hidden and extra-handle columns it skips owe
+        // nothing.
+        for (index, field) in fields.iter().enumerate() {
+            if field.hidden {
+                continue;
             }
+            collect_offenders(
+                &field.expr,
+                index + 1,
+                Clause::Select,
+                &group_exprs,
+                &pinned,
+                names,
+                false,
+                &mut offenders,
+            );
         }
         // `:3820` ORDER BY. An item that merely names a select field was
         // checked as that field.
         for (index, item) in select.order_by.iter().enumerate() {
-            if names_a_select_field(&item.expr, select.fields.fields()) {
+            if names_a_select_field(&item.expr, fields) {
                 continue;
             }
             collect_offenders(
@@ -257,6 +243,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 &group_exprs,
                 &pinned,
                 names,
+                false,
                 &mut offenders,
             );
         }
@@ -277,9 +264,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .map(|from| build_join_func_depend(from, names))
             .unwrap_or_default();
         for offender in offenders {
+            let Some(offset) = offender.offset else {
+                continue;
+            };
+            // Go `tblInfoFromCol` finds no table for a CTE's column, and such
+            // a column is not reported.
+            let Some(table) = self.tbl_info_from_col(select.from.as_ref(), &names[offset]) else {
+                continue;
+            };
             if self.check_col_func_depend(
-                offender.offset,
+                offset,
                 names,
+                table,
                 &pinned,
                 &where_depend,
                 &join_depend,
@@ -299,7 +295,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             return Err(err_field_not_in_group_by(
                 offender.position,
                 offender.clause,
-                &qualified_name(offender.offset, names),
+                &qualified_name(offset, names),
             ));
         }
         Ok(())
@@ -318,24 +314,27 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn check_only_full_group_by_without_group_clause(
         &self,
         select: &SelectStmt,
+        fields: &[ProjectionField],
         names: &[FieldName],
     ) -> Result<(), PlanError> {
         let no_pins = HashSet::new();
         let mut offenders = Vec::new();
         let mut has_aggregate = false;
-        for (index, field) in select.fields.fields().iter().enumerate() {
-            if let SelectField::Expr { expr, .. } = field {
-                has_aggregate |= aggregates_anywhere(expr);
-                collect_offenders(
-                    expr,
-                    index + 1,
-                    Clause::Select,
-                    &[],
-                    &no_pins,
-                    names,
-                    &mut offenders,
-                );
+        for (index, field) in fields.iter().enumerate() {
+            if field.hidden {
+                continue;
             }
+            has_aggregate |= aggregates_anywhere(&field.expr);
+            collect_offenders(
+                &field.expr,
+                index + 1,
+                Clause::Select,
+                &[],
+                &no_pins,
+                names,
+                true,
+                &mut offenders,
+            );
         }
         // Go's resolver walks HAVING and ORDER BY only once the field list
         // named a column. HAVING keeps the last field's `exprIdx`; each ORDER
@@ -346,11 +345,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 has_aggregate |= aggregates_anywhere(having);
                 collect_offenders(
                     having,
-                    select.fields.fields().len(),
+                    fields.len(),
                     Clause::Select,
                     &[],
                     &no_pins,
                     names,
+                    true,
                     &mut offenders,
                 );
             }
@@ -366,6 +366,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     &[],
                     &no_pins,
                     names,
+                    true,
                     &mut offenders,
                 );
             }
@@ -398,23 +399,24 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .map(|from| build_join_func_depend(from, names))
             .unwrap_or_default();
         for offender in offenders {
-            // Go `tblInfoFromCol` finds no table for a derived table's
-            // column, and such a column is not reported.
-            let from_table = names.get(offender.offset).is_some_and(|name| {
-                let (db, table) = (
-                    &name.names.database.original,
-                    &name.names.original_table.original,
-                );
-                self.source.find_table(db, table).is_some()
-                    || self.source.find_view(db, table).is_some()
-            });
-            if !from_table {
+            // Go: `FindFieldName(p.OutputNames(), colName)` failing is itself
+            // 8123 -- a USING join's redundant `t2.a` included.
+            let Some(offset) = offender.offset else {
+                return Err(err_field_not_in_aggregated_query(
+                    offender.position,
+                    &offender.name,
+                ));
+            };
+            // Go `tblInfoFromCol` finds no table for a CTE's column, and such
+            // a column is not reported.
+            let Some(table) = self.tbl_info_from_col(select.from.as_ref(), &names[offset]) else {
                 continue;
-            }
-            if pinned.contains(&offender.offset)
+            };
+            if pinned.contains(&offset)
                 || self.check_col_func_depend(
-                    offender.offset,
+                    offset,
                     names,
+                    table,
                     &pinned,
                     &where_depend,
                     &join_depend,
@@ -428,6 +430,38 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ));
         }
         Ok(())
+    }
+
+    /// Go `tblInfoFromCol(sel.From.TableRefs, name)`
+    /// (`logical_plan_builder.go:3467`): the table registered under the
+    /// column's visible table name in `ExtractTableList(from, true)`. A base
+    /// table answers for its alias, an aliased derived table for its FIRST
+    /// inner table, and a name the resolve context does not know (a CTE)
+    /// falls back to the schema lookup of `DBName.TblName`.
+    ///
+    /// `None` is Go's nil: the column is not reported. `Some(None)` is a view,
+    /// whose `TableInfo` has no key to determine anything.
+    fn tbl_info_from_col(
+        &self,
+        from: Option<&Join>,
+        name: &FieldName,
+    ) -> Option<Option<&super::catalog::SourceTable>> {
+        let mut listed = Vec::new();
+        extract_table_list(from?, &mut listed);
+        let entry = listed
+            .iter()
+            .find(|entry| entry.visible == name.names.table.lower)?;
+        let resolve = |database: &str, table: &str| {
+            if let Some(found) = self.source.find_table(database, table) {
+                return Some(Some(found));
+            }
+            self.source.find_view(database, table).map(|_| None)
+        };
+        let database = entry
+            .database
+            .unwrap_or_else(|| self.source.current_database());
+        resolve(database, entry.table)
+            .or_else(|| resolve(&name.names.database.original, &name.names.table.original))
     }
 
     /// Go `checkColFuncDepend(p, name, tblInfo, gbyOrSingleValueColNames,
@@ -444,6 +478,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         &self,
         offset: usize,
         names: &[FieldName],
+        table: Option<&super::catalog::SourceTable>,
         pinned: &HashSet<usize>,
         where_depend: &HashMap<usize, usize>,
         join_depend: &HashMap<usize, usize>,
@@ -451,12 +486,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let Some(name) = names.get(offset) else {
             return false;
         };
-        let Some(table) = self.source.find_table(
-            &name.names.database.original,
-            &name.names.original_table.original,
-        ) else {
-            // Go reaches `tblInfoFromCol`'s nil arm and reports the column;
-            // a derived table or a CTE has no `TableInfo` and so no index.
+        // A view's `TableInfo` carries no index and no key column.
+        let Some(table) = table else {
             return false;
         };
         // The column must be justified through a key OF ITS OWN TABLE, which
@@ -582,7 +613,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .is_some_and(|offset| reported_offsets.contains(&offset))
                         || names_a_reported_field(path)
                 }
-                other => reported_exprs.contains(&other),
+                other => reported_exprs
+                    .iter()
+                    .any(|reported| expression_deep_equal(reported, other)),
             };
             if whole_item_is_reported {
                 continue;
@@ -689,6 +722,68 @@ fn join_side_of(join: &Join, offset: usize, names: &[FieldName]) -> Option<bool>
         .then_some(false)
 }
 
+/// One entry of Go `ExtractTableList(from, asName=true)`: the lower-case name
+/// a column's `TblName` matches, and the base table the resolve context
+/// registered under it.
+struct ListedTable<'a> {
+    visible: String,
+    database: Option<&'a str>,
+    table: &'a str,
+}
+
+/// Go `tableListExtractor.Enter`'s `*ast.TableSource` arm, over a FROM clause.
+fn extract_table_list<'a>(join: &'a Join, out: &mut Vec<ListedTable<'a>>) {
+    extract_table_list_node(&join.left, out);
+    if let Some(right) = &join.right {
+        extract_table_list_node(right, out);
+    }
+}
+
+fn extract_table_list_node<'a>(node: &'a JoinNode, out: &mut Vec<ListedTable<'a>>) {
+    match node {
+        JoinNode::Table(table_ref) => {
+            let (database, table) = match table_ref.name.as_slice() {
+                [database, table] => (Some(database.as_str()), table.as_str()),
+                [table] => (None, table.as_str()),
+                _ => return,
+            };
+            let visible = table_ref
+                .alias
+                .as_deref()
+                .filter(|alias| !alias.is_empty())
+                .unwrap_or(table);
+            out.push(ListedTable {
+                visible: tidb_mysql::to_lowercase(visible),
+                database,
+                table,
+            });
+        }
+        // Go: "why the first inner table is used to represent the table
+        // source???" -- a plain SELECT's first inner table, renamed to the
+        // alias when there is one.
+        JoinNode::Derived {
+            subquery, alias, ..
+        } => {
+            let tidb_ast::QueryStmt::Select(select) = &**subquery else {
+                return;
+            };
+            let Some(from) = &select.from else {
+                return;
+            };
+            let mut inner = Vec::new();
+            extract_table_list(from, &mut inner);
+            let Some(mut first) = inner.into_iter().next() else {
+                return;
+            };
+            if let Some(alias) = alias.as_deref().filter(|alias| !alias.is_empty()) {
+                first.visible = tidb_mysql::to_lowercase(alias);
+            }
+            out.push(first);
+        }
+        JoinNode::Join(join) => extract_table_list(join, out),
+    }
+}
+
 fn collect_table_names(node: &JoinNode, out: &mut Vec<String>) {
     match node {
         JoinNode::Table(table_ref) => {
@@ -790,23 +885,28 @@ fn collect_offenders(
     group_exprs: &[&Expr],
     pinned: &HashSet<usize>,
     names: &[FieldName],
+    report_unresolved: bool,
     out: &mut Vec<Offender>,
 ) {
     let expr = inner_from_parentheses_and_unary_plus(expr);
     if is_exempt(expr) {
         return;
     }
-    if !matches!(expr, Expr::Column(_)) && group_exprs.contains(&expr) {
+    if !matches!(expr, Expr::Column(_))
+        && group_exprs
+            .iter()
+            .any(|group_expr| expression_deep_equal(group_expr, expr))
+    {
         return;
     }
     for path in bare_columns(expr) {
-        let Some(offset) = find_field_name(names, &path) else {
-            // An unresolvable name is reported by the ordinary column
-            // resolver, with its own error; this rule has nothing to say.
-            continue;
-        };
-        if pinned.contains(&offset) {
-            continue;
+        let offset = find_field_name(names, &path);
+        match offset {
+            // Go's GROUP BY check (`allColFromExprNode`) skips a name the
+            // plan does not resolve; the ordinary column resolver reports it.
+            None if !report_unresolved => continue,
+            Some(offset) if pinned.contains(&offset) => continue,
+            _ => {}
         }
         out.push(Offender {
             offset,
@@ -822,16 +922,6 @@ fn column_offset(expr: &Expr, names: &[FieldName]) -> Option<usize> {
     match inner_from_parentheses_and_unary_plus(expr) {
         Expr::Column(path) => find_field_name(names, path),
         _ => None,
-    }
-}
-
-/// Whether a `SELECT t.*`-style qualifier covers this source column: an
-/// empty qualifier (`SELECT *`) covers everything; a qualified wildcard
-/// matches its last part (the table name).
-fn qualifier_covers(qualifier: &[String], name: &FieldName) -> bool {
-    match qualifier.last() {
-        Some(table) => name.names.table.original.eq_ignore_ascii_case(table),
-        None => true,
     }
 }
 
@@ -941,19 +1031,16 @@ fn collect_bare_columns(expr: &Expr, out: &mut Vec<Vec<String>>) {
 
 /// Whether an ORDER BY item merely names a select field, which was already
 /// checked in its own right (Go skips such an item explicitly).
-fn names_a_select_field(expr: &Expr, fields: &[SelectField]) -> bool {
+fn names_a_select_field(expr: &Expr, fields: &[ProjectionField]) -> bool {
     let Expr::Column(path) = inner_from_parentheses_and_unary_plus(expr) else {
         return false;
     };
     let [name] = path.as_slice() else {
         return false;
     };
-    fields.iter().any(|field| match field {
-        SelectField::Expr { expr, alias } => match alias {
-            Some(alias) => alias.eq_ignore_ascii_case(name),
-            None => matches!(expr, Expr::Column(path)
-                if path.last().is_some_and(|last| last.eq_ignore_ascii_case(name))),
-        },
-        SelectField::Wildcard(_) => false,
+    fields.iter().any(|field| match &field.alias {
+        Some(alias) => alias.eq_ignore_ascii_case(name),
+        None => matches!(&field.expr, Expr::Column(path)
+            if path.last().is_some_and(|last| last.eq_ignore_ascii_case(name))),
     })
 }
