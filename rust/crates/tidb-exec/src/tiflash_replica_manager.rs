@@ -1163,6 +1163,9 @@ mod tests {
                     }
                     Err(error) => panic!("accept: {error}"),
                 };
+                // An accepted socket inherits the listener's non-blocking
+                // mode on BSD/macOS; the request reads below must block.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();

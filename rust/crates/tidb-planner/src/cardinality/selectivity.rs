@@ -208,7 +208,12 @@ pub fn selectivity(
         if index_columns.len() > declared {
             lengths.push(crate::ranger::checker::UNSPECIFIED_LENGTH);
         }
-        let detached = detach_index_range(ctx, &remained, &index_columns, &lengths)?;
+        // Go `getMaskAndRanges` takes a filled access path's own ranges
+        // (`cachedPath`) instead of building them again; this port derives
+        // them again here, before the path is filled, so only an index
+        // without a path converts points under the statement's warnings.
+        let cached_path = filled_paths.is_some_and(|paths| paths.contains_key(&index_id));
+        let detached = detach_index_range(ctx, &remained, &index_columns, &lengths, cached_path)?;
         let (mask, partial_cover, min_access_conditions_for_dnf) =
             if detached.is_dnf_cond && !detached.access_conds.is_empty() {
                 (
@@ -480,7 +485,11 @@ fn detach_index_range(
     exprs: &[Expression],
     columns: &[Column],
     lengths: &[i64],
+    cached_path: bool,
 ) -> Result<crate::ranger::detacher::DetachRangeResult, PointBuilderError> {
+    let quiet = crate::ranger::points::QuietRangerEvaluator(ctx.evaluate);
+    let evaluate: &crate::ranger::points::ExpressionEvaluator<'_> =
+        if cached_path { &quiet } else { ctx.evaluate };
     let detached = match ctx.range_fallback_handler {
         Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler_in(
             exprs,
@@ -488,7 +497,7 @@ fn detach_index_range(
             lengths,
             ctx.options.range_max_size,
             handler,
-            ctx.evaluate,
+            evaluate,
             ctx.options.ranger_options(),
         ),
         None => crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
@@ -496,7 +505,7 @@ fn detach_index_range(
             columns,
             lengths,
             ctx.options.range_max_size,
-            ctx.evaluate,
+            evaluate,
             ctx.options.ranger_options(),
         ),
     }?;
@@ -531,7 +540,7 @@ fn mask_and_selectivity_for_mv_index(
     for filters in filter_sets {
         // Go `buildPartialPath4MVIndex`: every filter must become an access
         // condition.
-        let detached = detach_index_range(ctx, &filters, cols, &lengths).ok()?;
+        let detached = detach_index_range(ctx, &filters, cols, &lengths, false).ok()?;
         if detached.access_conds.len() != filters.len() || !detached.remained_conds.is_empty() {
             return None;
         }

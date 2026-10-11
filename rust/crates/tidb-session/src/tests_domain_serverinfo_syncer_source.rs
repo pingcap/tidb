@@ -865,6 +865,9 @@ fn cluster_config_live_http_filters_roles_warnings_and_prepared_reads() {
                 }
                 Err(error) => panic!("{error}"),
             };
+            // An accepted socket inherits the listener's non-blocking mode on
+            // BSD/macOS; the request read below must block.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();

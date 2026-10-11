@@ -549,6 +549,23 @@ where
     }
 }
 
+/// A ranger context that evaluates and converts as `inner` does but
+/// publishes no warnings: for a range set Go builds once and reuses -- an
+/// access path's ranges, which `fillIndexPath` builds (and warns for) and
+/// `getMaskAndRanges` takes from the cached path -- where this port derives
+/// the same ranges a second time.
+pub struct QuietRangerEvaluator<'a>(pub &'a ExpressionEvaluator<'a>);
+
+impl RangerEvaluator for QuietRangerEvaluator<'_> {
+    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+        self.0.eval(expression)
+    }
+
+    fn location(&self) -> tidb_datatype::SessionTimeZone {
+        self.0.location()
+    }
+}
+
 /// The ranger context of one statement: its expressions evaluate, and its
 /// points convert, under the statement's own evaluation context (session
 /// location and warnings).

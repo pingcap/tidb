@@ -305,13 +305,27 @@ fn a_dst_gap_range_point_is_adjusted_and_warned() {
     assert!(row_text(session.run("SELECT * FROM t2 WHERE ts = '2025-03-30 02:00:00'")).is_empty());
     let warning = "Timestamp is not valid, since it is in Daylight Saving Time transition \
                    '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'";
-    let warnings = row_text(session.run("SHOW WARNINGS"));
-    assert!(!warnings.is_empty());
-    for row in &warnings {
-        assert_eq!(row, &["Warning", "8179", warning]);
-    }
+    // Go warns once per converted endpoint: the index path's ranges
+    // (`fillIndexPath`) and `Selectivity`'s column ranges.
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![["Warning", "8179", warning]; 4]
+    );
     let plan = row_text(session.run("EXPLAIN SELECT * FROM t2 WHERE ts = '2025-03-30 02:00:00'"));
     assert!(plan[0][0].starts_with("TableDual"), "{plan:?}");
+    assert_eq!(plan[0][1], "1.00", "{plan:?}");
+    // Without an index only the estimate converts: two warnings, and the
+    // empty column range estimates one row.
+    session
+        .run("CREATE TABLE t3 (id INT PRIMARY KEY, ts TIMESTAMP)")
+        .expect("create");
+    assert!(row_text(session.run("SELECT * FROM t3 WHERE ts = '2025-03-30 02:00:00'")).is_empty());
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![["Warning", "8179", warning]; 2]
+    );
+    let plan = row_text(session.run("EXPLAIN SELECT * FROM t3 WHERE ts = '2025-03-30 02:00:00'"));
+    assert_eq!(plan[0][1], "1.00", "{plan:?}");
     assert_eq!(
         row_text(session.run("SELECT * FROM t2 WHERE ts < '2025-03-30 02:00:00'")),
         [["2025-03-30 01:59:59"]]

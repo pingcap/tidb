@@ -2383,9 +2383,7 @@ impl InitStats<'_> {
                         is_index,
                     );
                 };
-                let evaluate = |expression: &tidb_expr::expression::Expression| {
-                    tidb_expr::eval_expression_once(expression, self.context)
-                };
+                let evaluate = tidb_planner::ranger::points::StatementRangerEvaluator(self.context);
                 let options = self.context.optimizer_cost_env().session.estimator_options.clone();
                 let filled_paths = source.derive_stats_filled_paths();
                 let selectivity_context = tidb_planner::cardinality::selectivity::SelectivityContext {
@@ -2468,9 +2466,13 @@ impl InitStats<'_> {
                         continue;
                     }
                     let (columns, lengths): (Vec<_>, Vec<_>) = prefix.into_iter().unzip();
-                    let evaluate = |expression: &tidb_expr::expression::Expression| {
-                        tidb_expr::eval_expression_once(expression, self.context)
-                    };
+                    // Go's `fillIndexPath` builds a path's ranges and row
+                    // count in one pass; the logical derivation's port of it
+                    // converts the points under the statement's warnings, so
+                    // this row-count pass over the same ranges stays quiet.
+                    let statement =
+                        tidb_planner::ranger::points::StatementRangerEvaluator(self.context);
+                    let evaluate = tidb_planner::ranger::points::QuietRangerEvaluator(&statement);
                     let built =
                         tidb_planner::ranger::detacher::detach_index_range_with_fallback_handler_in(
                             &source.pushed_down_conds,
@@ -2666,9 +2668,7 @@ pub(crate) fn physical_plan_for_logical(
 ) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
     let optimizer_cost_env = ctx.optimizer_cost_env();
     let coster = Ver2Coster::from_env(optimizer_cost_env);
-    let evaluate = |expression: &tidb_expr::expression::Expression| {
-        tidb_expr::eval_expression_once(expression, ctx)
-    };
+    let evaluate = tidb_planner::ranger::points::StatementRangerEvaluator(ctx);
     let mut dispatch = DispatchContext::new(plan_ids, &coster, optimizer_cost_env.session.scale_ndv_skew_ratio)
         .with_estimator_options(optimizer_cost_env.session.estimator_options.clone())
         .with_group_ndv_skew_ratio(optimizer_cost_env.session.group_ndv_skew_ratio)

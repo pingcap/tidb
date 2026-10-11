@@ -35,6 +35,9 @@ fn http_batch(
         while streams.len() < count && Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    // An accepted socket inherits the listener's non-blocking
+                    // mode on BSD/macOS; the request read below must block.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(2)))
                         .unwrap();

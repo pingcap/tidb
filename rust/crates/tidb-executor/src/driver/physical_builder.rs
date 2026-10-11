@@ -734,7 +734,7 @@ fn correlated_table_range_rebuilder(
     let ctx = ctx.clone();
     Some(std::sync::Arc::new(move || {
         let access = substitute_correlated_access(&rebuild.access_conditions, &ctx)?;
-        let evaluate = |expression: &Expression| tidb_expr::eval_expression_once(expression, &ctx);
+        let evaluate = tidb_planner::ranger::points::StatementRangerEvaluator(&ctx);
         let ranges = match &rebuild.handle_type {
             Some(handle_type) => {
                 tidb_planner::ranger::ranger::build_table_range_in(&access, handle_type, 0, &evaluate)
