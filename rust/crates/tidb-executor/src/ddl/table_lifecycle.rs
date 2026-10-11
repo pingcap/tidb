@@ -310,6 +310,18 @@ pub fn run_rename_table_in(
         )?;
     }
     for rename in &staged {
+        // Go `checkAndRenameTables`: the label rules named for the table's
+        // old names move to its new ones. (A view has no rules of its own:
+        // ALTER TABLE ... ATTRIBUTES refuses one.)
+        let old_label_rules = match catalog.table_in(&rename.from_db, &rename.from_name) {
+            Some(crate::TableEntry::Kv(table)) => Some(super::label_rules::get_old_label_rules(
+                catalog,
+                table,
+                &rename.from_db,
+                &rename.from_name,
+            )?),
+            _ => None,
+        };
         crate::foreign_key::rewrite_table_references(
             catalog,
             &rename.from_db,
@@ -323,6 +335,19 @@ pub fn run_rename_table_in(
             &rename.to_db,
             &rename.written_to_name,
         );
+        if let (Some(old_label_rules), Some(crate::TableEntry::Kv(table))) = (
+            old_label_rules,
+            catalog.table_in(&rename.to_db, &rename.to_name),
+        ) {
+            super::label_rules::update_label_rules(
+                catalog,
+                &rename.to_db,
+                table,
+                &old_label_rules,
+                old_label_rules.old_rule_ids(),
+                table.table_id,
+            )?;
+        }
     }
     Ok(())
 }
@@ -441,6 +466,25 @@ pub fn run_truncate_table_in_with_foreign_key_checks(
     std::sync::Arc::make_mut(table)
         .truncate()
         .map_err(|error| DriverError::AutoIdUnavailable(error.0))?;
+    // Go `onTruncateTable`: the table's label rules re-range over the IDs
+    // the truncated table and its partitions now have.
+    let schema_name = database.go_to_lower();
+    if let Some(crate::TableEntry::Kv(table)) = catalog.table_in(&database, &name) {
+        let old_label_rules = super::label_rules::get_old_label_rules(
+            catalog,
+            table,
+            &schema_name,
+            &table.name().go_to_lower(),
+        )?;
+        super::label_rules::update_label_rules(
+            catalog,
+            &schema_name,
+            table,
+            &old_label_rules,
+            &[],
+            table.table_id,
+        )?;
+    }
     Ok(())
 }
 

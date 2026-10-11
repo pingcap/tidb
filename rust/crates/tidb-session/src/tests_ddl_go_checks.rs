@@ -531,3 +531,249 @@ fn enum_set_binary_literal_members_decode_in_the_column_charset() {
         )
     );
 }
+
+/// Go `ALTER TABLE ... [PARTITION p] ATTRIBUTES` over the mock store's label
+/// manager, read back through `information_schema.ATTRIBUTES`, and the rule
+/// upkeep of the jobs that rename, re-ID, add, drop or exchange what a rule
+/// names. Captured from Go TiDB (rule ranges are each ID's mem-comparable
+/// table prefix, up to the next ID's).
+#[test]
+fn attributes_label_rules_follow_go() {
+    fn key_range(id: i64) -> String {
+        let prefix = |id: i64| {
+            let mut encoded = Vec::new();
+            tidb_codec::encode_bytes(&mut encoded, &tidb_codec::table_key::gen_table_prefix(id));
+            encoded
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        format!("[{}, {}]", prefix(id), prefix(id + 1))
+    }
+    fn ranges(ids: &[i64]) -> String {
+        let mut ids = ids.to_vec();
+        ids.sort_unstable();
+        ids.iter()
+            .map(|id| key_range(*id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+    fn attributes(session: &mut Session) -> Vec<Vec<String>> {
+        row_text(session.run("select * from information_schema.attributes order by id"))
+    }
+    fn table_id(session: &mut Session, table: &str) -> i64 {
+        row_text(session.run(&format!(
+            "select tidb_table_id from information_schema.tables where table_name = '{table}'"
+        )))[0][0]
+            .parse()
+            .unwrap()
+    }
+    fn partition_ids(session: &mut Session, table: &str) -> Vec<(String, i64)> {
+        row_text(session.run(&format!(
+            "select partition_name, tidb_partition_id from information_schema.partitions \
+             where table_name = '{table}' order by partition_ordinal_position"
+        )))
+        .into_iter()
+        .map(|row| (row[0].clone(), row[1].parse().unwrap()))
+        .collect()
+    }
+    fn row(id: &str, labels: &str, ids: &[i64]) -> Vec<String> {
+        vec![
+            id.to_owned(),
+            "key-range".to_owned(),
+            labels.to_owned(),
+            ranges(ids),
+        ]
+    }
+
+    let mut session = Session::new();
+    session.run("use test").unwrap();
+    session
+        .run(
+            "create table t (c int) partition by range (c) \
+             (partition p0 values less than (6), partition p1 values less than (11))",
+        )
+        .unwrap();
+    session
+        .run("alter table t attributes=\"key=value\"")
+        .unwrap();
+    session
+        .run("alter table t partition p0 attributes=\"key1=value1\"")
+        .unwrap();
+    let t = table_id(&mut session, "t");
+    let parts = partition_ids(&mut session, "t");
+    let (p0, p1) = (parts[0].1, parts[1].1);
+    assert_eq!(
+        attributes(&mut session),
+        [
+            row("schema/test/t", "\"key=value\"", &[t, p0, p1]),
+            row("schema/test/t/p0", "\"key1=value1\"", &[p0]),
+        ]
+    );
+
+    // RENAME moves both rules to the new name.
+    session.run("rename table t to t2").unwrap();
+    assert_eq!(
+        attributes(&mut session),
+        [
+            row("schema/test/t2", "\"key=value\"", &[t, p0, p1]),
+            row("schema/test/t2/p0", "\"key1=value1\"", &[p0]),
+        ]
+    );
+
+    // TRUNCATE PARTITION follows the partition's new ID.
+    session.run("alter table t2 truncate partition p0").unwrap();
+    let p0 = partition_ids(&mut session, "t2")[0].1;
+    assert_eq!(
+        attributes(&mut session),
+        [
+            row("schema/test/t2", "\"key=value\"", &[t, p0, p1]),
+            row("schema/test/t2/p0", "\"key1=value1\"", &[p0]),
+        ]
+    );
+
+    // ADD widens the table's rule; DROP removes the dropped partition's.
+    session
+        .run("alter table t2 add partition (partition p2 values less than (20))")
+        .unwrap();
+    let p2 = partition_ids(&mut session, "t2")[2].1;
+    session.run("alter table t2 drop partition p0").unwrap();
+    assert_eq!(
+        attributes(&mut session),
+        [row("schema/test/t2", "\"key=value\"", &[t, p1, p2])]
+    );
+
+    // REORGANIZE spans the reorganized partition as well as its successors.
+    session
+        .run(
+            "alter table t2 reorganize partition p1 into \
+             (partition p1a values less than (8), partition p1b values less than (11))",
+        )
+        .unwrap();
+    let parts = partition_ids(&mut session, "t2");
+    let (p1a, p1b) = (parts[0].1, parts[1].1);
+    assert_eq!(
+        attributes(&mut session),
+        [row(
+            "schema/test/t2",
+            "\"key=value\"",
+            &[t, p1, p2, p1a, p1b]
+        )]
+    );
+
+    assert_eq!(
+        code(&mut session, "alter table t2 attributes=\"a=b,c\""),
+        (
+            8237,
+            "Invalid attributes: attributes should be in format 'key=value': c".to_owned()
+        )
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "alter table t2 attributes=\"merge_option=allow,merge_option=deny\""
+        ),
+        (
+            8237,
+            "Invalid attributes: 'merge_option=deny' and 'merge_option=allow' are conflicted"
+                .to_owned()
+        )
+    );
+    // An empty list clears the rule, as DEFAULT does.
+    session.run("alter table t2 attributes=\"\"").unwrap();
+    assert_eq!(attributes(&mut session), Vec::<Vec<String>>::new());
+    session
+        .run("alter table t2 attributes=\"key=value,key2=value2\"")
+        .unwrap();
+    assert_eq!(
+        attributes(&mut session),
+        [row(
+            "schema/test/t2",
+            "\"key=value\",\"key2=value2\"",
+            &[t, p1a, p1b, p2]
+        )]
+    );
+
+    session.run("create table n (c int)").unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "alter table n partition p0 attributes=\"k=v\""
+        )
+        .0,
+        1505
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "alter table t2 partition px attributes=\"k=v\""
+        ),
+        (1735, "Unknown partition 'px' in table 't2'".to_owned())
+    );
+    session.run("create temporary table tt (c int)").unwrap();
+    assert_eq!(
+        code(&mut session, "alter table tt attributes=\"k=v\""),
+        (
+            8200,
+            "TiDB doesn't support ALTER TABLE for local temporary table".to_owned()
+        )
+    );
+    session.run("create view v as select 1").unwrap();
+    assert_eq!(
+        code(&mut session, "alter table v attributes=\"k=v\"").0,
+        1347
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "alter table t2 attributes=\"x=y\", add column d int"
+        ),
+        (
+            8200,
+            "Unsupported multi schema change for alter table attributes".to_owned()
+        )
+    );
+
+    // EXCHANGE swaps the standalone table's rule and the partition's.
+    session.run("create table nt (c int)").unwrap();
+    session.run("alter table nt attributes=\"n=t\"").unwrap();
+    session
+        .run("alter table t2 partition p2 attributes=\"p=two\"")
+        .unwrap();
+    session
+        .run("alter table t2 exchange partition p2 with table nt")
+        .unwrap();
+    let nt = table_id(&mut session, "nt");
+    let p2 = partition_ids(&mut session, "t2")[2].1;
+    session.run("alter table t2 attributes=default").unwrap();
+    assert_eq!(
+        attributes(&mut session),
+        [
+            row("schema/test/nt", "\"p=two\"", &[nt]),
+            row("schema/test/t2/p2", "\"n=t\"", &[p2]),
+        ]
+    );
+
+    // A dropped table's rule stays in the manager but is not shown, and a
+    // dropped schema's rules go with it.
+    session.run("drop table nt").unwrap();
+    session.run("create database adb").unwrap();
+    session.run("create table adb.a (c int)").unwrap();
+    session.run("alter table adb.a attributes=\"k=v\"").unwrap();
+    session.run("rename table adb.a to adb.a2").unwrap();
+    let a2 = table_id(&mut session, "a2");
+    assert_eq!(
+        attributes(&mut session),
+        [
+            row("schema/adb/a2", "\"k=v\"", &[a2]),
+            row("schema/test/t2/p2", "\"n=t\"", &[p2]),
+        ]
+    );
+    session.run("drop database adb").unwrap();
+    session.run("create database adb").unwrap();
+    session.run("create table adb.a2 (c int)").unwrap();
+    assert_eq!(
+        attributes(&mut session),
+        [row("schema/test/t2/p2", "\"n=t\"", &[p2])]
+    );
+}

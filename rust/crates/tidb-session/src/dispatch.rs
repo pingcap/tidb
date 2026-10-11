@@ -644,6 +644,11 @@ impl Session {
                                 name,
                                 tidb_model::ActionType::ACTION_DROP_SCHEMA,
                             )?;
+                            // Go `onDropSchema` deletes the tables' label
+                            // rules as the schema leaves the public state.
+                            tidb_executor::ddl::label_rules::drop_schema_label_rules(
+                                catalog, name,
+                            )?;
                         }
                         Ok(catalog.drop_database(name))
                     })?;
@@ -1035,6 +1040,8 @@ impl Session {
                 self.user_attributes_table_rows(&scratch, ctx)
             } else if table_name.eq_ignore_ascii_case("VARIABLES_INFO") {
                 self.variables_info_table_rows()
+            } else if table_name.eq_ignore_ascii_case("ATTRIBUTES") {
+                infoschema::attributes_rows(&scratch, &self.schema_visibility())?
             } else if serving_schema_of(&table_name)
                 == tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA
                 && table_name.eq_ignore_ascii_case("SESSION_VARIABLES")

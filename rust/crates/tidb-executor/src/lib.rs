@@ -107,6 +107,7 @@ pub mod join;
 pub mod joiner;
 pub mod keydecoder;
 pub mod kv_table;
+pub mod label_manager;
 pub mod limit;
 pub mod load_stats;
 pub mod max_one_row;

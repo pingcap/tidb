@@ -167,6 +167,15 @@ impl std::fmt::Debug for StatisticsCache {
     }
 }
 
+/// A label-manager failure, which Go reports as the PD call's plain error
+/// (1105). The in-memory manager fails only to encode or decode a rule.
+fn label_manager_error(error: serde_json::Error) -> DriverError {
+    DriverError::DdlCoded {
+        errno: 1105,
+        message: error.to_string(),
+    }
+}
+
 fn enqueue_sync_load_failures(
     requested_items: &[tidb_model::StatsLoadItem],
     remaining_items: &std::collections::HashSet<tidb_model::TableItemID>,
@@ -204,6 +213,12 @@ pub struct Catalog {
     /// cluster catalog has no SplitRegion RPC behind it yet, so its splits
     /// and sampled ranges come from the same map rather than TiKV's regions.
     regions: Arc<std::sync::RwLock<crate::region_map::RegionMap>>,
+    /// Go `infosync`'s label-rule manager. A store without PD gets the
+    /// in-memory `mockLabelManager`; like the BDR role it is store-global,
+    /// so every snapshot and staged copy of this catalog shares it, and a
+    /// DDL job's label writes are not undone by a rolled-back transaction
+    /// (Go writes them to PD, outside the job's transaction).
+    label_rules: Arc<std::sync::RwLock<crate::label_manager::MockLabelManager>>,
     /// Go's process-global `pdhelper.GlobalPDHelper` approximate-count
     /// cache, scoped to this in-process catalog and shared by its snapshots.
     pd_helper_cache: Arc<std::sync::Mutex<crate::pd_helper::ApproximateTableCountCache>>,
@@ -580,6 +595,7 @@ impl CatalogSnapshot {
             plan_cache_epoch: Arc::clone(&owner.plan_cache_epoch),
             bdr_role: Arc::clone(&owner.bdr_role),
             regions: Arc::clone(&owner.regions),
+            label_rules: Arc::clone(&owner.label_rules),
             pd_helper_cache: Arc::clone(&owner.pd_helper_cache),
             local_temporary_ids: owner.local_temporary_ids.clone(),
             databases: Arc::clone(&self.databases),
@@ -765,6 +781,7 @@ impl Default for Catalog {
             plan_cache_epoch: Arc::default(),
             bdr_role: Arc::default(),
             regions: Arc::default(),
+            label_rules: Arc::default(),
             // Go `defaultPDHelper`'s capacity and TTL.
             pd_helper_cache: Arc::new(std::sync::Mutex::new(
                 crate::pd_helper::ApproximateTableCountCache::new(
@@ -1284,6 +1301,49 @@ impl Catalog {
             .ranges_in(start, end)
     }
 
+    /// Go `infosync.PutLabelRule` against this store's label manager.
+    pub fn put_label_rule(&self, rule: &crate::ddl_label::Rule) -> Result<(), DriverError> {
+        self.label_rules
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .put_label_rule(rule)
+            .map_err(label_manager_error)
+    }
+
+    /// Go `infosync.UpdateLabelRules` against this store's label manager.
+    pub fn update_label_rules(
+        &self,
+        patch: &crate::ddl_label::LabelRulePatch,
+    ) -> Result<(), DriverError> {
+        self.label_rules
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .update_label_rules(patch)
+            .map_err(label_manager_error)
+    }
+
+    /// Go `infosync.GetAllLabelRules` against this store's label manager,
+    /// under the store's (classic, keyspace-less) codec.
+    pub fn get_all_label_rules(&self) -> Result<Vec<crate::ddl_label::Rule>, DriverError> {
+        self.label_rules
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_all_label_rules(&crate::ddl_label::CodecV1)
+            .map_err(label_manager_error)
+    }
+
+    /// Go `infosync.GetLabelRules` against this store's label manager.
+    pub fn get_label_rules(
+        &self,
+        rule_ids: &[String],
+    ) -> Result<std::collections::BTreeMap<String, crate::ddl_label::Rule>, DriverError> {
+        self.label_rules
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_label_rules(rule_ids)
+            .map_err(label_manager_error)
+    }
+
     /// Go `meta.Mutator.SetBDRRole` / `ClearBDRRole` (the empty role).
     pub fn set_bdr_role(&self, role: &str) {
         *self
@@ -1761,6 +1821,27 @@ impl Catalog {
         let schema = self.databases.get(&key.database)?;
         match schema.tables.get(&key.table)?.as_ref() {
             TableEntry::Kv(table) if table.table_id == table_id => {
+                Some((schema.name.clone(), table.name.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Go `infoschema.FindTableByPartitionID`: the schema and table that own
+    /// partition `partition_id`, or `None` when no table has a partition by
+    /// that ID (a table's own ID is not a partition's).
+    pub fn find_table_by_partition_id(&self, partition_id: i64) -> Option<(String, String)> {
+        let key = self.table_id_names().get(&partition_id)?;
+        let schema = self.databases.get(&key.database)?;
+        match schema.tables.get(&key.table)?.as_ref() {
+            TableEntry::Kv(table)
+                if table.partition().is_some_and(|partition| {
+                    partition
+                        .definitions
+                        .iter()
+                        .any(|definition| definition.id == partition_id)
+                }) =>
+            {
                 Some((schema.name.clone(), table.name.clone()))
             }
             _ => None,

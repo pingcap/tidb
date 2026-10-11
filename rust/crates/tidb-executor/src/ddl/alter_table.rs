@@ -39,6 +39,7 @@ use super::column_changes::{self, PreparedColumnChange};
 use super::column_types::{field_type_of, NOT_NULL_FLAG};
 use super::constraint_changes::{self, PreparedConstraintChange};
 use super::index_changes::{self, PreparedIndexChange};
+use super::label_rules::PartitionLabelJob;
 use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset};
 use crate::partition_routing::{PartitionDef, PartitionKind, RangeBound};
@@ -502,10 +503,21 @@ fn run_alter_table_in_inner(
 ) -> Result<(), DriverError> {
     let (database, name) = crate::driver::split_table_path_pub(&alter.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
-    if catalog.table_in(&database, &name).is_none() {
-        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
-            format!("{database}.{name}"),
-        )));
+    match catalog.table_in(&database, &name) {
+        None => {
+            return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+                format!("{database}.{name}"),
+            )))
+        }
+        // Go `executor.AlterTable` refuses a view or a sequence before it
+        // looks at any specification.
+        Some(crate::TableEntry::View(_) | crate::TableEntry::Sequence(_)) => {
+            return Err(DriverError::Schema(crate::SchemaErrorKind::WrongObject {
+                name: format!("{database}.{name}"),
+                expected: "BASE TABLE",
+            }))
+        }
+        Some(_) => {}
     }
     super::refuse_local_temporary_table_ddl(catalog, &database, &name, "ALTER TABLE")?;
     // Go's ALTER path checks the two guards in THIS order, and the corpus
@@ -655,75 +667,155 @@ fn run_alter_table_in_inner(
             tidb_ast::AlterTableAction::Cache(mode) => {
                 super::table_cache::alter_cache_action(catalog, &database, &name, *mode)?
             }
+            tidb_ast::AlterTableAction::SetAttributes(spec) => {
+                super::label_rules::alter_table_attributes_action(catalog, &database, &name, spec)?
+            }
+            tidb_ast::AlterTableAction::Partition(
+                tidb_ast::AlterPartitionAction::SetAttributes {
+                    partition,
+                    attributes,
+                },
+            ) => super::label_rules::alter_table_partition_attributes_action(
+                catalog, &database, &name, partition, attributes,
+            )?,
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Truncate {
                 all,
                 names,
-            }) => truncate_partition_action(catalog, &database, &name, *all, names, ctx)?,
+            }) => super::label_rules::with_partition_label_rules(
+                catalog,
+                &database,
+                &name,
+                PartitionLabelJob::Truncate,
+                |catalog| truncate_partition_action(catalog, &database, &name, *all, names, ctx),
+            )?,
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Drop {
                 if_exists,
                 names,
-            }) => drop_partition_action(catalog, &database, &name, *if_exists, names, ctx)?,
+            }) => super::label_rules::with_partition_label_rules(
+                catalog,
+                &database,
+                &name,
+                PartitionLabelJob::Drop,
+                |catalog| drop_partition_action(catalog, &database, &name, *if_exists, names, ctx),
+            )?,
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Add {
                 if_not_exists,
                 spec,
                 ..
-            }) => add_partition_action(catalog, &database, &name, *if_not_exists, spec, ctx)?,
-            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Coalesce {
-                count,
-                ..
-            }) => hash_partition_management(
+            }) => super::label_rules::with_partition_label_rules(
                 catalog,
                 &database,
                 &name,
-                HashManagement::Coalesce(*count),
-                ctx,
+                PartitionLabelJob::AddOrReorganize,
+                |catalog| {
+                    add_partition_action(catalog, &database, &name, *if_not_exists, spec, ctx)
+                },
+            )?,
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Coalesce {
+                count,
+                ..
+            }) => super::label_rules::with_partition_label_rules(
+                catalog,
+                &database,
+                &name,
+                PartitionLabelJob::AddOrReorganize,
+                |catalog| {
+                    hash_partition_management(
+                        catalog,
+                        &database,
+                        &name,
+                        HashManagement::Coalesce(*count),
+                        ctx,
+                    )
+                },
             )?,
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Exchange {
                 partition,
                 table,
                 with_validation,
-            }) => super::exchange_partition::exchange_partition_action(
-                catalog,
-                &database,
-                &name,
-                partition,
-                table,
-                *with_validation,
-                current_db,
-                ctx,
-            )?,
+            }) => {
+                super::exchange_partition::exchange_partition_action(
+                    catalog,
+                    &database,
+                    &name,
+                    partition,
+                    table,
+                    *with_validation,
+                    current_db,
+                    ctx,
+                )?;
+                super::label_rules::exchanged_partition_label_rules(
+                    catalog, &database, &name, partition, table, current_db,
+                )?
+            }
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Reorganize {
                 names,
                 definitions,
                 ..
-            }) => super::partition_reorg::reorganize_partition_action(
+            }) => super::label_rules::with_partition_label_rules(
                 catalog,
                 &database,
                 &name,
-                names,
-                definitions,
-                ctx,
+                PartitionLabelJob::AddOrReorganize,
+                |catalog| {
+                    super::partition_reorg::reorganize_partition_action(
+                        catalog,
+                        &database,
+                        &name,
+                        names,
+                        definitions,
+                        ctx,
+                    )
+                },
             )?,
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Repartition(
                 partitioning,
-            )) => super::partition_reorg::alter_table_partitioning_action(
+            )) => super::label_rules::with_partition_label_rules(
                 catalog,
                 &database,
                 &name,
-                partitioning,
-                ctx,
+                PartitionLabelJob::AddOrReorganize,
+                |catalog| {
+                    super::partition_reorg::alter_table_partitioning_action(
+                        catalog,
+                        &database,
+                        &name,
+                        partitioning,
+                        ctx,
+                    )
+                },
             )?,
             tidb_ast::AlterTableAction::Partition(
                 tidb_ast::AlterPartitionAction::RemovePartitioning,
-            ) => {
-                super::partition_reorg::remove_partitioning_action(catalog, &database, &name, ctx)?
-            }
+            ) => super::label_rules::with_partition_label_rules(
+                catalog,
+                &database,
+                &name,
+                PartitionLabelJob::AddOrReorganize,
+                |catalog| {
+                    super::partition_reorg::remove_partitioning_action(
+                        catalog, &database, &name, ctx,
+                    )
+                },
+            )?,
             tidb_ast::AlterTableAction::Partition(
                 tidb_ast::AlterPartitionAction::FirstPartitionLessThan { expr, .. },
-            ) => first_partition_less_than_action(catalog, &database, &name, expr, ctx)?,
+            ) => super::label_rules::with_partition_label_rules(
+                catalog,
+                &database,
+                &name,
+                PartitionLabelJob::Drop,
+                |catalog| first_partition_less_than_action(catalog, &database, &name, expr, ctx),
+            )?,
             tidb_ast::AlterTableAction::Partition(
                 tidb_ast::AlterPartitionAction::LastPartitionLessThan { expr, .. },
-            ) => last_partition_less_than_action(catalog, &database, &name, expr, ctx)?,
+            ) => super::label_rules::with_partition_label_rules(
+                catalog,
+                &database,
+                &name,
+                PartitionLabelJob::AddOrReorganize,
+                |catalog| last_partition_less_than_action(catalog, &database, &name, expr, ctx),
+            )?,
             // Go `executor.AlterTable` (`pkg/ddl/executor.go:1763`) refuses
             // these partition specs outright; the tablespace ones are not in
             // its switch at all and reach `ErrUnsupportedAlterTableSpec`.
@@ -826,6 +918,7 @@ fn submitted_jobs(
     // job unless Go's builder returns early: CACHE on a cached table and
     // NOCACHE on an uncached one do nothing.
     let unprepared = match action {
+        Action::SetAttributes(_) | Action::Partition(Partition::SetAttributes { .. }) => true,
         Action::Cache(mode) => {
             let cached = matches!(
                 catalog.table_in(database, name),

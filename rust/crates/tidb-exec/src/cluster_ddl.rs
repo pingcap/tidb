@@ -5772,86 +5772,8 @@ impl MdlInfoUpdate {
 }
 
 /// The names and post-exchange physical IDs Go uses to swap the standalone
-/// table and partition label rules in PD.
-#[derive(Clone, Debug)]
-pub struct ExchangePartitionLabelSwap {
-    /// Partitioned-table database name.
-    pub partitioned_schema: String,
-    /// Partitioned-table name.
-    pub partitioned_table: String,
-    /// Exchanged partition name.
-    pub partition: String,
-    /// Standalone-table database name.
-    pub standalone_schema: String,
-    /// Standalone-table name.
-    pub standalone_table: String,
-    /// Physical ID now owned by the named partition.
-    pub partition_id: i64,
-    /// Physical ID now owned by the standalone table.
-    pub standalone_id: i64,
-}
-
-impl ExchangePartitionLabelSwap {
-    /// The two existing rule IDs Go fetches before constructing its patch.
-    pub fn rule_ids(&self, codec: &dyn tidb_executor::ddl_label::LabelCodec) -> [String; 2] {
-        [
-            tidb_executor::ddl_label::new_rule_id(
-                codec,
-                &self.standalone_schema,
-                &self.standalone_table,
-                "",
-            ),
-            tidb_executor::ddl_label::new_rule_id(
-                codec,
-                &self.partitioned_schema,
-                &self.partitioned_table,
-                &self.partition,
-            ),
-        ]
-    }
-
-    /// Pinned Go `onExchangeTablePartition`'s four-way label-rule patch.
-    pub fn patch(
-        &self,
-        codec: &dyn tidb_executor::ddl_label::LabelCodec,
-        rules: &[tidb_executor::ddl_label::Rule],
-    ) -> tidb_executor::ddl_label::LabelRulePatch {
-        let [standalone_rule_id, partition_rule_id] = self.rule_ids(codec);
-        let standalone_rule = rules.iter().find(|rule| rule.id == standalone_rule_id);
-        let partition_rule = rules.iter().find(|rule| rule.id == partition_rule_id);
-        let mut set_rules = Vec::with_capacity(2);
-        let mut delete_rules = Vec::with_capacity(1);
-        if let Some(rule) = standalone_rule {
-            let mut rule = rule.clone_rule();
-            rule.reset(
-                codec,
-                &self.partitioned_schema,
-                &self.partitioned_table,
-                &self.partition,
-                &[self.partition_id],
-            );
-            set_rules.push(rule);
-            if partition_rule.is_none() {
-                delete_rules.push(standalone_rule_id);
-            }
-        }
-        if let Some(rule) = partition_rule {
-            let mut rule = rule.clone_rule();
-            rule.reset(
-                codec,
-                &self.standalone_schema,
-                &self.standalone_table,
-                "",
-                &[self.standalone_id],
-            );
-            set_rules.push(rule);
-            if standalone_rule.is_none() {
-                delete_rules.push(partition_rule_id);
-            }
-        }
-        tidb_executor::ddl_label::new_rule_patch(set_rules, delete_rules)
-    }
-}
+/// table and partition label rules in PD; shared with the in-process tier.
+pub use tidb_executor::ddl::label_rules::ExchangePartitionLabelSwap;
 
 /// The data half of an index change: which table's rows to walk, and what to
 /// do with the entries.

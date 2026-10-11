@@ -2234,6 +2234,42 @@ const USER_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
 /// The rows are read from the real `mysql.user` table by the session layer,
 /// then filtered using MySQL's account-visibility rules. `ATTRIBUTE` is the
 /// JSON `metadata` object unquoted by Go's `setDataForUserAttributes`.
+/// Go `tableAttributesCols`.
+const ATTRIBUTES_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "ID",
+        tp: FieldTypeCode::Varchar,
+        size: UNSPECIFIED_LENGTH,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "TYPE",
+        tp: FieldTypeCode::Varchar,
+        size: 16,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "ATTRIBUTES",
+        tp: FieldTypeCode::Varchar,
+        size: UNSPECIFIED_LENGTH,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "RANGES",
+        tp: FieldTypeCode::Blob,
+        size: UNSPECIFIED_LENGTH,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+];
+
 const USER_ATTRIBUTES_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
         name: "USER",
@@ -4628,6 +4664,7 @@ const STATEMENTS_SUMMARY_EVICTED_COLUMNS: &[InfoColumn] = &[
 ];
 
 const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
+    ("ATTRIBUTES", ATTRIBUTES_COLUMNS),
     ("CHARACTER_SETS", CHARACTER_SETS_COLUMNS),
     (
         "CLIENT_ERRORS_SUMMARY_BY_HOST",

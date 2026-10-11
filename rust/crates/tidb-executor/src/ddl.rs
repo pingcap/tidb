@@ -328,6 +328,7 @@ mod generated_modify;
 mod index_changes;
 pub mod index_prefix;
 mod indexes;
+pub mod label_rules;
 mod partition_interval;
 mod partition_reorg;
 pub mod placement_policy;

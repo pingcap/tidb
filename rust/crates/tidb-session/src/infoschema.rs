@@ -1946,6 +1946,166 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("uptime", 4611686018427408546),
 ];
 
+/// Go `memtableRetriever.setDataForAttributes`: each label rule naming a
+/// table or partition that still exists, and whose table the session may
+/// SELECT from. A malformed rule is skipped (Go logs it).
+pub(crate) fn attributes_rows(
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+) -> Result<Vec<Vec<Datum>>, tidb_executor::DriverError> {
+    use tidb_executor::ddl_label;
+    let rules =
+        catalog
+            .get_all_label_rules()
+            .map_err(|error| tidb_executor::DriverError::DdlCoded {
+                errno: 1105,
+                message: format!("get the label rules failed: {error}"),
+            })?;
+    let mut rows = Vec::with_capacity(rules.len());
+    for rule in rules {
+        let Ok((db_name, table_name, partition_name)) = check_label_rule(&rule) else {
+            continue;
+        };
+        let Some(table_id) = decode_table_id_from_rule(&rule) else {
+            continue;
+        };
+        if table_or_partition_not_exist(catalog, &db_name, &table_name, &partition_name, table_id) {
+            continue;
+        }
+        if table_name.is_empty()
+            || db_name.is_empty()
+            || !visibility.allows(&db_name, &table_name, PrivMask::Select)
+        {
+            continue;
+        }
+        let labels = ddl_label::restore_region_labels(&rule.labels.snapshot());
+        let ranges = rule
+            .data
+            .as_ref()
+            .map(|data| match &*data.read() {
+                serde_json::Value::Array(items) => items
+                    .iter()
+                    .filter_map(serde_json::Value::as_object)
+                    .map(|range| {
+                        format!(
+                            "[{}, {}]",
+                            go_sprint_any(range.get("start_key")),
+                            go_sprint_any(range.get("end_key"))
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                _ => String::new(),
+            })
+            .unwrap_or_default();
+        rows.push(vec![
+            text(&ddl_label::restore_rule_id(&rule.id)),
+            text(&rule.rule_type),
+            text(&labels),
+            text(&ranges),
+        ]);
+    }
+    Ok(rows)
+}
+
+/// Go's `%s` of a decoded JSON value: a string prints as itself, a missing
+/// key as `%!s(<nil>)`.
+fn go_sprint_any(value: Option<&serde_json::Value>) -> String {
+    match value {
+        None | Some(serde_json::Value::Null) => "%!s(<nil>)".to_owned(),
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(other) => format!("%!s({other})"),
+    }
+}
+
+/// Go `checkRule`: the schema, table and (possibly empty) partition a rule
+/// ID names, or why the rule is malformed.
+fn check_label_rule(
+    rule: &tidb_executor::ddl_label::Rule,
+) -> Result<(String, String, String), String> {
+    use tidb_executor::ddl_label::{ID_PREFIX, KEYSPACE_PREFIX};
+    let parts = rule.id.split('/').collect::<Vec<_>>();
+    if parts.len() < 3 {
+        return Err(format!("invalid label rule ID: {}", rule.id));
+    }
+    if rule.rule_type.is_empty() {
+        return Err("empty label rule type".to_owned());
+    }
+    if rule.labels.with_visible(<[_]>::is_empty) {
+        return Err("the label rule has no label".to_owned());
+    }
+    if rule.data.is_none() {
+        return Err("the label rule has no data".to_owned());
+    }
+    let mut id_offset = 0;
+    if tidb_config::kerneltype::is_next_gen() && parts[0] == KEYSPACE_PREFIX {
+        if parts.len() < 5 {
+            return Err(format!("invalid keyspace label rule ID: {}", rule.id));
+        }
+        id_offset = 2;
+    }
+    if parts[id_offset] != ID_PREFIX || parts.len() < id_offset + 3 {
+        return Err(format!("invalid label rule ID: {}", rule.id));
+    }
+    Ok((
+        parts[id_offset + 1].to_owned(),
+        parts[id_offset + 2].to_owned(),
+        parts
+            .get(id_offset + 3)
+            .copied()
+            .unwrap_or_default()
+            .to_owned(),
+    ))
+}
+
+/// Go `decodeTableIDFromRule`: the table ID the first key range's start key
+/// encodes, or `None` (Go's error) when there is none.
+fn decode_table_id_from_rule(rule: &tidb_executor::ddl_label::Rule) -> Option<i64> {
+    let data = rule.data.as_ref()?;
+    let data = data.read();
+    let first = data.as_array()?.first()?.as_object()?;
+    let mut key = go_hex_decode_string(&go_sprint_any(first.get("start_key")))?;
+    if let Ok((_, decoded)) = tidb_codec::decode_bytes(&key) {
+        key = decoded;
+    }
+    match tidb_codec::decode_table_id(&key) {
+        0 => None,
+        table_id => Some(table_id),
+    }
+}
+
+/// Go `hex.DecodeString`, `None` for its errors (an odd length or a byte
+/// that is not a hex digit).
+fn go_hex_decode_string(text: &str) -> Option<Vec<u8>> {
+    let digits = text.as_bytes();
+    if digits.len() % 2 != 0 {
+        return None;
+    }
+    let nibble = |digit: u8| char::from(digit).to_digit(16).map(|value| value as u8);
+    digits
+        .chunks_exact(2)
+        .map(|pair| Some(nibble(pair[0])? << 4 | nibble(pair[1])?))
+        .collect()
+}
+
+/// Go `tableOrPartitionNotExist`.
+fn table_or_partition_not_exist(
+    catalog: &Catalog,
+    db_name: &str,
+    table_name: &str,
+    partition_name: &str,
+    table_id: i64,
+) -> bool {
+    if partition_name.is_empty() {
+        !matches!(
+            catalog.table_in(db_name, table_name),
+            Some(TableEntry::Kv(table)) if table.table_id == table_id
+        )
+    } else {
+        catalog.find_table_by_partition_id(table_id).is_none()
+    }
+}
+
 pub const SYS_TABLES: &[(&str, i64)] = &[("schema_unused_indexes", 122)];
 
 fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
