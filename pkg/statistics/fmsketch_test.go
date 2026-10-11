@@ -146,7 +146,49 @@ func SubTestSampledNDV() func(*testing.T) {
 			require.Equal(t, int64(8), merged.NDV())
 			require.Equal(t, int64(20), merged.ndvCounts.nulls)
 			require.Equal(t, int64(80+30*4+24), merged.MemoryUsage())
+			data, err := EncodeFMSketch(merged)
+			require.NoError(t, err)
+			require.Error(t, new(tipb.FMSketch).Unmarshal(data))
+			restored, err := DecodeFMSketch(data)
+			require.NoError(t, err)
+			require.Equal(t, merged, restored)
+			// Use an unsupported format version to verify that decoding fails.
+			data[1] = sampledFMSketchVersion + 1
+			_, err = DecodeFMSketch(data)
+			require.Error(t, err)
 		}
+
+		t.Run("decode invalid payload", func(t *testing.T) {
+			zero := int64(0)
+			cases := []struct {
+				name      string
+				collector *tipb.RowSampleCollector
+			}{
+				{"header only", nil},
+				{"missing sketch", &tipb.RowSampleCollector{NdvSampleCount: &zero, NullCounts: []int64{0}}},
+				{"missing sample count", &tipb.RowSampleCollector{NullCounts: []int64{0}, FmSketch: []*tipb.FMSketch{{}}}},
+				{"missing NULL count", &tipb.RowSampleCollector{NdvSampleCount: &zero, FmSketch: []*tipb.FMSketch{{}}}},
+				{"extra sketches", &tipb.RowSampleCollector{NdvSampleCount: &zero, NullCounts: []int64{0}, FmSketch: []*tipb.FMSketch{{}, {}}}},
+				{"extra NULL counts", &tipb.RowSampleCollector{NdvSampleCount: &zero, NullCounts: []int64{0, 0}, FmSketch: []*tipb.FMSketch{{}}}},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					data := []byte{sampledFMSketchMarker, sampledFMSketchVersion}
+					if tc.collector != nil {
+						payload, err := tc.collector.Marshal()
+						require.NoError(t, err)
+						data = append(data, payload...)
+					}
+					var sketch *FMSketch
+					var err error
+					require.NotPanics(t, func() {
+						sketch, err = DecodeFMSketch(data)
+					})
+					require.EqualError(t, err, "invalid sampled NDV sketch payload")
+					require.Nil(t, sketch)
+				})
+			}
+		})
 
 		// ANALYZE merges the responses into sketches it allocated beforehand.
 		// A worker that got no response returns such a sketch unchanged.
@@ -176,8 +218,14 @@ func SubTestSampledNDV() func(*testing.T) {
 		require.Equal(t, int64(8), empty.NDV())
 
 		// Without sampled rows or non-NULL rows, NDV is zero.
-		for _, counts := range []ndvCounts{{rows: 200}, {rows: 10, samples: 2, nulls: 10}} {
-			require.Zero(t, newSampledFMSketch(&tipb.FMSketch{}, counts).NDV())
+		for _, counts := range []ndvCounts{{}, {rows: 200}, {rows: 10, samples: 2, nulls: 10}} {
+			sketch := newSampledFMSketch(&tipb.FMSketch{}, counts)
+			require.Zero(t, sketch.NDV())
+			data, err := EncodeFMSketch(sketch)
+			require.NoError(t, err)
+			restored, err := DecodeFMSketch(data)
+			require.NoError(t, err)
+			require.Equal(t, sketch, restored)
 		}
 
 		// Values the schema keeps unique need no estimate.
