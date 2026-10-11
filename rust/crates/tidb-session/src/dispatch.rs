@@ -257,14 +257,19 @@ fn serving_schema_of(table_name: &str) -> &'static str {
     }
 }
 
-fn information_schema_tables_in_join(
-    node: &tidb_ast::JoinNode,
+/// The virtual tables a query reads, in every scope Go's `buildDataSource`
+/// reaches: FROM clauses, derived tables, CTE bodies and the subqueries of
+/// any expression. A subquery-only reference used to be missed, sending the
+/// statement down the stored-table path with no memory table to plan.
+pub(crate) fn information_schema_tables_in_query(
+    query: &tidb_ast::QueryStmt,
     current_db: &str,
     out: &mut Vec<String>,
     written_db: &mut Option<String>,
 ) {
-    match node {
-        tidb_ast::JoinNode::Table(table) => match table.name.as_slice() {
+    let stmt = Stmt::Query(tidb_ast::NodeBox::new(query.clone()));
+    for path in crate::binding::collect_physical_table_refs(&stmt) {
+        match path.as_slice() {
             [name] if infoschema::is_information_schema(current_db) => out.push(name.clone()),
             [schema, name]
                 if infoschema::is_information_schema(schema)
@@ -279,71 +284,6 @@ fn information_schema_tables_in_join(
                 out.push(name.clone());
             }
             _ => {}
-        },
-        tidb_ast::JoinNode::Join(join) => {
-            information_schema_tables_in_join(&join.left, current_db, out, written_db);
-            if let Some(right) = &join.right {
-                information_schema_tables_in_join(right, current_db, out, written_db);
-            }
-        }
-        tidb_ast::JoinNode::Derived { subquery, .. } => {
-            information_schema_tables_in_query(subquery, current_db, out, written_db);
-        }
-    }
-}
-
-/// Continues [`information_schema_tables_in_join`] across a derived query's
-/// SELECT or nested set-operation terms.
-pub(crate) fn information_schema_tables_in_query(
-    query: &tidb_ast::QueryStmt,
-    current_db: &str,
-    out: &mut Vec<String>,
-    written_db: &mut Option<String>,
-) {
-    match query {
-        tidb_ast::QueryStmt::Select(select) => {
-            if let Some(with) = &select.with {
-                for cte in &with.ctes {
-                    information_schema_tables_in_query(&cte.query, current_db, out, written_db);
-                }
-            }
-            if let Some(join) = &select.from {
-                information_schema_tables_in_join(&join.left, current_db, out, written_db);
-                if let Some(right) = &join.right {
-                    information_schema_tables_in_join(right, current_db, out, written_db);
-                }
-            }
-        }
-        tidb_ast::QueryStmt::SetOpr(set_opr) => {
-            if let Some(with) = &set_opr.with {
-                for cte in &with.ctes {
-                    information_schema_tables_in_query(&cte.query, current_db, out, written_db);
-                }
-            }
-            for term in &set_opr.terms {
-                match &term.body {
-                    tidb_ast::SetOprTermBody::Select(select) => {
-                        if let Some(join) = &select.from {
-                            information_schema_tables_in_join(
-                                &join.left, current_db, out, written_db,
-                            );
-                            if let Some(right) = &join.right {
-                                information_schema_tables_in_join(
-                                    right, current_db, out, written_db,
-                                );
-                            }
-                        }
-                    }
-                    tidb_ast::SetOprTermBody::Nested(nested) => {
-                        information_schema_tables_in_query(
-                            &tidb_ast::QueryStmt::SetOpr(nested.clone()),
-                            current_db,
-                            out,
-                            written_db,
-                        );
-                    }
-                }
-            }
         }
     }
 }

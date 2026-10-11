@@ -1810,7 +1810,32 @@ impl Catalog {
         let databases = self.databases.keys().cloned().collect();
         let mut tables = HashMap::new();
         let mut views = HashMap::new();
-        let mut synthetic_table_id = -1_i64;
+        // A memory table's ID is Go's `TableInfo.ID` where the schema has one
+        // (`information_schema`'s `tableIDMap`), and otherwise a negative id
+        // fixed by its schema and name: two views of one catalog must agree
+        // on which table an id names, so it cannot follow hash-map order.
+        let mut memory_tables: Vec<(String, String)> = self
+            .databases
+            .values()
+            .flat_map(|database| {
+                database.tables.iter().filter_map(move |(name, entry)| {
+                    matches!(**entry, TableEntry::Mem(_))
+                        .then(|| (database.name.go_to_lower(), name.go_to_lower()))
+                })
+            })
+            .collect();
+        memory_tables.sort_unstable();
+        let memory_table_id = |database: &str, name: &str| {
+            if database.eq_ignore_ascii_case(crate::driver::infoschema_meta::INFORMATION_SCHEMA) {
+                if let Some(id) = crate::driver::infoschema_meta::memory_table_id(name) {
+                    return id;
+                }
+            }
+            let key = (database.go_to_lower(), name.go_to_lower());
+            -1 - memory_tables
+                .binary_search(&key)
+                .map_or(0, |index| index as i64)
+        };
         for (database_key, database) in self.databases.iter() {
             let resolve_db_info = tidb_model::GoShared::new(tidb_model::DBInfo {
                 id: database.id,
@@ -1984,12 +2009,13 @@ impl Catalog {
                         } else {
                             entry_name.clone()
                         };
+                        let table_id = memory_table_id(&database.name, entry_name);
                         let mut source_table = SourceTable {
                             is_memory_table: true,
-                            table_id: synthetic_table_id,
+                            table_id,
                             table_name,
                             db_name: database.name.clone(),
-                            physical_table_id: synthetic_table_id,
+                            physical_table_id: table_id,
                             columns: table
                                 .columns
                                 .iter()
@@ -2006,7 +2032,6 @@ impl Catalog {
                         };
                         source_table.attach_resolve_metadata(resolve_db_info.clone());
                         tables.insert(key(), source_table);
-                        synthetic_table_id -= 1;
                     }
                     TableEntry::View(view) => {
                         views.insert(

@@ -1480,3 +1480,28 @@ fn transaction_observation_batch_summary_completion_visibility_and_physical_iden
                 .to_string()
         )));
 }
+
+/// Go's `buildDataSource` makes a virtual table a `LogicalMemTable` in every
+/// scope, so a stored table filtered by a subquery over
+/// `information_schema` reads the memory table there too, and the memory
+/// table's id is Go's own (`tableIDMap`), the same in every catalog view.
+#[test]
+fn a_subquery_over_information_schema_reads_the_memory_table() {
+    let mut session = Session::new();
+    session
+        .run("create table t (a bigint primary key)")
+        .unwrap();
+    session
+        .run("insert into t values (4611686018427387907), (5)")
+        .unwrap();
+    let sql = "select a from t where a in (select tidb_table_id from \
+               information_schema.tables where table_schema = 'information_schema' \
+               and table_name = 'TABLES')";
+    assert_eq!(row_text(session.run(sql)), [["4611686018427387907"]]);
+    let plan = row_text(session.run(&format!("explain {sql}")));
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("MemTableScan") && row[3] == "table:TABLES"),
+        "{plan:?}"
+    );
+}
