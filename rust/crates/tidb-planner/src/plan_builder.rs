@@ -2254,14 +2254,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 let mut rewriter = self.expression_rewriter();
                 rewriter.as_scalar = false;
                 rewriter.ctx_stack_append(left.clone(), FieldName::default());
-                let plan = rewriter.handle_compare_subquery(
-                    outer,
-                    &left,
-                    inner,
-                    op,
-                    *all,
-                    self.sub_query_hint_flags,
-                )?;
+                let plan =
+                    rewriter.handle_compare_subquery(outer, &left, inner, op, *all, hint_flags)?;
                 // Go's = ANY / != ALL handlers force scalar mode and publish
                 // an auxiliary boolean. buildSelection must still filter it.
                 if rewriter.as_scalar {

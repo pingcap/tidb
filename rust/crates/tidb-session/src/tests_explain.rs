@@ -5930,3 +5930,71 @@ fn explain_warns_once_for_a_predicate_storage_cannot_evaluate() {
     session.run(sql).unwrap();
     assert!(row_text(session.run("show warnings")).is_empty());
 }
+
+/// `NO_DECORRELATE()` inside an `= ANY` subquery keeps the Apply: Go's
+/// `buildSubquery` hands the comparison handler the inner block's own hint
+/// flags. The inner scan then reads its integer handle by the correlated
+/// equality (`range: decided by`). Captured from
+/// `planner/core/casetest/physicalplantest/physical_plan`.
+#[test]
+fn no_decorrelate_in_an_any_subquery_keeps_the_apply() {
+    let mut session = Session::new();
+    session.run("create table t1(a int, b int)").unwrap();
+    session
+        .run("create table t2(a int primary key, b int)")
+        .unwrap();
+    session.run("insert into t1 values (1, 1), (2, 2)").unwrap();
+    session.run("insert into t2 values (1, 1), (2, 1)").unwrap();
+    let sql = "select t1.a from t1 where t1.a = any \
+               (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b)";
+    let plan = row_text(session.run(&format!("explain format = 'plan_tree' {sql}")));
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("Apply")
+                && row[3].starts_with("CARTESIAN left outer semi join")),
+        "{plan:?}"
+    );
+    assert!(
+        plan.iter().any(|row| row[0].contains("TableRangeScan")
+            && row[3].starts_with("range: decided by [eq(test.t2.a, test.t1.b)]")),
+        "{plan:?}"
+    );
+    assert_eq!(row_text(session.run(sql)), [["1"]]);
+}
+
+/// Go `skylinePruning` compares every path before `convertToIndexScan`
+/// refuses a lookup for a single-read COP property; under pseudo statistics
+/// the preferRange filter then drops the full table scan for every property,
+/// so a pushed aggregate lands on the lookup's table side instead of over a
+/// full-scan TableReader. Captured from Go on this branch.
+#[test]
+fn prefer_range_pruning_sees_paths_a_cop_property_refuses() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table tc(id int, code int, name varchar(20), \
+             index idx_tc_id(id), index idx_tc_name(name))",
+        )
+        .unwrap();
+    let plan = row_text(
+        session.run("explain select max(id) from tc where tc.name like 'chad99%' group by name"),
+    );
+    assert!(plan[0][0].starts_with("StreamAgg"), "{plan:?}");
+    assert!(
+        plan.iter().any(|row| row[0].contains("IndexLookUp")),
+        "{plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|row| row[0].contains("TableFullScan")),
+        "{plan:?}"
+    );
+    let plan = row_text(session.run(
+        "explain select max(id) from tc use index (idx_tc_name) \
+         where tc.name like 'chad99%' group by name, code",
+    ));
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("HashAgg") && row[0].contains("(Probe)")),
+        "{plan:?}"
+    );
+}

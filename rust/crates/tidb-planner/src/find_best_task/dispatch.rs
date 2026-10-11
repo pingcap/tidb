@@ -2754,6 +2754,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         let mut cur_always_kept = false;
         let mut candidate_metrics = None;
         let mut heuristic = None;
+        // Go `convertToTableScan` / `convertToIndexScan` refuse a path whose
+        // single or double read does not fit a COP property only after
+        // `skylinePruning` compared it: the refused path still takes part in
+        // the pruning and the preferRange filter.
+        let mut read_type_refused = false;
         let cop = match path {
             crate::access_path::PossiblePath::Table { primary_index, .. } => {
                 if partial_order.is_some() {
@@ -2767,9 +2772,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 {
                     continue 'paths;
                 }
-                if cop_multi_read {
-                    continue 'paths;
-                }
+                read_type_refused = cop_multi_read;
                 let keep_order = ordered;
                 if keep_order && !table_path_matches_order(ds, prop) {
                     continue 'paths;
@@ -2832,12 +2835,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         ),
                     },
                 };
-                let mut base = crate::physical::BasePhysicalPlan::new(
-                    ctx.allocator,
-                    "TableScan",
-                    ds.base.base.query_block_offset(),
-                );
-                base.base.set_schema(ds.base.base.schema().cloned());
                 // Go marks every table path `IsSingleScan`, and a table
                 // candidate here already serves the required order, so a
                 // table range is a preferred range scan. With USE/FORCE INDEX
@@ -2935,6 +2932,24 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         },
                     );
                 }
+                if read_type_refused {
+                    if prop.index_join_prop.is_none() {
+                        ordinary_candidates.push((
+                            Task::invalid_task(),
+                            candidate_metrics,
+                            cur_preferred_range,
+                            cur_always_kept,
+                            heuristic,
+                        ));
+                    }
+                    continue 'paths;
+                }
+                let mut base = crate::physical::BasePhysicalPlan::new(
+                    ctx.allocator,
+                    "TableScan",
+                    ds.base.base.query_block_offset(),
+                );
+                base.base.set_schema(ds.base.base.schema().cloned());
                 let mut stats = table_stats.as_ref().map(|stats| {
                     stats.scale_by_expect_cnt(
                         count_after_access.unwrap_or_else(|| stats.row_count()),
@@ -3580,11 +3595,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     });
                 // The two COP property kinds are disjoint: a covering index
                 // is single-read, while a lookup is multi-read.
-                if (prop.task_tp == TaskType::CopSingleRead && !single_scan)
-                    || (cop_multi_read && single_scan)
-                {
-                    continue 'paths;
-                }
+                read_type_refused = (prop.task_tp == TaskType::CopSingleRead && !single_scan)
+                    || (cop_multi_read && single_scan);
                 // Go `skylinePruning` keepIndex (`find_best_task.go:1812`):
                 // an index path with no access conditions, no order match, no
                 // force hint, and no single-scan coverage is pruned before
@@ -3617,19 +3629,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             )
                         });
                 }
-                let mut base = crate::physical::BasePhysicalPlan::new(
-                    ctx.allocator,
-                    "IndexScan",
-                    ds.base.base.query_block_offset(),
-                );
-                let index_schema = super::index_merge_union::index_scan_schema(
-                    ds, source_index, ctx, !single_scan,
-                )?;
-                if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
-                    base.base
-                        .set_noncacheable_reason("IndexScan of partial index is uncacheable");
-                }
-                base.base.set_schema(Some(tidb_expr::schema::Schema::new(index_schema)));
                 let cur_is_full_range = crate::ranger::types::has_full_range(&ranges, false);
                 let remained_conds = match index_join_probe {
                     Some(result) => result.core.chosen_remained.clone(),
@@ -3715,6 +3714,31 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         ),
                     }
                 });
+                if read_type_refused {
+                    if prop.index_join_prop.is_none() {
+                        ordinary_candidates.push((
+                            Task::invalid_task(),
+                            candidate_metrics,
+                            cur_preferred_range,
+                            cur_always_kept,
+                            heuristic,
+                        ));
+                    }
+                    continue 'paths;
+                }
+                let mut base = crate::physical::BasePhysicalPlan::new(
+                    ctx.allocator,
+                    "IndexScan",
+                    ds.base.base.query_block_offset(),
+                );
+                let index_schema = super::index_merge_union::index_scan_schema(
+                    ds, source_index, ctx, !single_scan,
+                )?;
+                if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
+                    base.base
+                        .set_noncacheable_reason("IndexScan of partial index is uncacheable");
+                }
+                base.base.set_schema(Some(tidb_expr::schema::Schema::new(index_schema)));
                 // Go `tryConvertToPointGet`: a complete non-NULL point range
                 // on a unique index is a complete root point plan, not an
                 // IndexReader/IndexLookUp candidate. Residual conditions stay
