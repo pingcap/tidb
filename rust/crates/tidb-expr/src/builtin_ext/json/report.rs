@@ -27,13 +27,8 @@
 
 use serde_json::{Number, Value as Json};
 
-use super::path::{extract, parse_path};
-use super::value::{
-    binary_json_datum, json_document_string, json_sql_string, parse_json,
-    parse_json_document_argument,
-};
+use super::value::parse_json_document_argument;
 use crate::builtin_ext::BuiltinFuncCache;
-use crate::coerce::coerce_str;
 use crate::expression::{ConstLevel, Expression};
 use crate::{Columns, Datum, EvalError, JsonError};
 use tidb_chunk::row::Row;
@@ -187,14 +182,15 @@ pub(super) fn json_schema_valid(values: &[Datum]) -> Result<Datum, EvalError> {
 pub(super) fn json_valid(v: &Datum) -> Result<Datum, EvalError> {
     match v {
         Datum::Null => Ok(Datum::Null),
-        // Non-UTF-8 bytes are simply not a JSON document, which is the zero
-        // this signature reports rather than a statement error.
-        Datum::String(_) | Datum::Bytes(_) => Ok(Datum::Int(i64::from(
-            json_sql_string(v)
-                .ok()
-                .flatten()
-                .is_some_and(|text| parse_json(text).is_ok()),
-        ))),
+        // Go `builtinJSONValidStringSig`: `json.Valid` over the string's
+        // bytes -- syntax only, at any depth up to 10000, with no UTF-8 or
+        // surrogate check inside strings.
+        Datum::String(text) => Ok(Datum::Int(i64::from(tidb_datatype::json_scanner::valid(
+            text.bytes(),
+        )))),
+        Datum::Bytes(bytes) => Ok(Datum::Int(i64::from(tidb_datatype::json_scanner::valid(
+            bytes,
+        )))),
         Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) => Ok(Datum::Int(0)),
         Datum::Float32(_)
         | Datum::BinaryLiteral(_)
@@ -210,115 +206,6 @@ pub(super) fn json_valid(v: &Datum) -> Result<Datum, EvalError> {
             Err(EvalError::Unsupported("range sentinel JSON_VALID argument"))
         }
     }
-}
-
-/// `JSON_TYPE(json_doc)`, port of `builtinJSONTypeSig.evalString` and
-/// `types.BinaryJSON.Type` (`pkg/types/json_binary_functions.go`).
-pub(super) fn json_type(v: &Datum) -> Result<Datum, EvalError> {
-    if v.is_null() {
-        return Ok(Datum::Null);
-    }
-    // A binary JSON value carries its own type code, and Go answers straight
-    // from it (`BinaryJSON.Type()`). Rendering to text first would collapse
-    // the typed codes -- DATE/DATETIME/TIME and the Opaque family -- into
-    // STRING, which is exactly the names `CAST(.. AS JSON)` now preserves.
-    if let Datum::Json(document) = v {
-        return document
-            .type_name()
-            .map(|name| Datum::new_string(name.to_owned()))
-            .map_err(|_| EvalError::Json(JsonError::InvalidText));
-    }
-    let Some(s) = json_document_string(v)?.map(std::borrow::Cow::into_owned) else {
-        return Err(crate::EvalError::Json(
-            crate::JsonError::InvalidTypeForJson {
-                argument: 1,
-                function: "json_type",
-            },
-        ));
-    };
-    let json = parse_json(&s)?;
-    let ty = match json {
-        Json::Null => "NULL",
-        Json::Bool(_) => "BOOLEAN",
-        Json::Number(n) if n.is_i64() => "INTEGER",
-        Json::Number(n) if n.is_u64() => "UNSIGNED INTEGER",
-        Json::Number(_) => "DOUBLE",
-        Json::String(_) => "STRING",
-        Json::Array(_) => "ARRAY",
-        Json::Object(_) => "OBJECT",
-    };
-    Ok(Datum::new_string(ty.to_string()))
-}
-
-/// `JSON_LENGTH(json_doc [, path])`, port of `builtinJSONLengthSig.evalInt`.
-/// As in TiDB, a wildcard/range path is a true SQL error rather than a length
-/// of an implicitly auto-wrapped selection.
-pub(super) fn json_length(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let Some(document) = parse_json_document_argument(&vals[0])? else {
-        return Ok(Datum::Null);
-    };
-    let target = if let Some(path_value) = vals.get(1) {
-        let Some(path) = coerce_str(path_value)? else {
-            return Ok(Datum::Null);
-        };
-        let path = parse_path(&path)?;
-        if path.could_match_multiple {
-            return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
-        }
-        let Some(extracted) = extract(&document, &[path]) else {
-            return Ok(Datum::Null);
-        };
-        extracted
-    } else {
-        document
-    };
-    let len = match target {
-        Json::Array(values) => values.len(),
-        Json::Object(values) => values.len(),
-        Json::Null | Json::Bool(_) | Json::Number(_) | Json::String(_) => 1,
-    };
-    Ok(Datum::Int(len as i64))
-}
-
-/// `JSON_KEYS(json_doc [, path])`, port of
-/// `builtinJSONKeys{Sig,2ArgsSig}.evalJSON`.  The result is an array of the
-/// selected object's keys, in BinaryJSON's byte-sorted object order.  A
-/// scalar, array, missing path, or selected non-object is SQL NULL; a path
-/// that could select more than one value is an error.
-pub(super) fn json_keys(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let Some(document) = parse_json_document_argument(&vals[0])? else {
-        return Ok(Datum::Null);
-    };
-    let target = if let Some(path_value) = vals.get(1) {
-        let Some(path) = coerce_str(path_value)? else {
-            return Ok(Datum::Null);
-        };
-        let path = parse_path(&path)?;
-        if path.could_match_multiple {
-            return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
-        }
-        let Some(extracted) = extract(&document, &[path]) else {
-            return Ok(Datum::Null);
-        };
-        extracted
-    } else {
-        document
-    };
-    let Json::Object(object) = target else {
-        return Ok(Datum::Null);
-    };
-
-    // BinaryJSON objects are encoded with keys sorted by their UTF-8 bytes;
-    // serde_json may preserve insertion order, so sort explicitly before
-    // constructing the result array.
-    let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
-    keys.sort_unstable();
-    let keys = Json::Array(
-        keys.into_iter()
-            .map(|key| Json::String(key.to_owned()))
-            .collect(),
-    );
-    binary_json_datum(keys)
 }
 
 /// `JSON_SUM_CRC32(json_doc)`, port of `builtinJSONSumCRC32Sig.evalInt` in

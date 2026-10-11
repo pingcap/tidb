@@ -11,107 +11,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! JSON depth/storage leaves. They deliberately share `json`'s one textual
-//! ETJson boundary rather than creating a second coercion rule.
+//! The untyped entry to `JSON_DEPTH`, `JSON_STORAGE_FREE` and
+//! `JSON_STORAGE_SIZE`, which `json`'s `BinaryJSON` readers implement.
 
-use serde_json::Value as Json;
-
-use super::json::parse_json_document_argument;
+use super::json::{json_depth, json_storage_free, json_storage_size};
 use crate::{Datum, EvalError};
 
 /// Dispatches this leaf's builtins; `None` if `name` isn't one of them.
 pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
     match (name, vals) {
-        ("JSON_DEPTH", [value]) => Some(json_depth(value)),
-        ("JSON_STORAGE_FREE", [value]) => Some(json_storage_free(value)),
-        ("JSON_STORAGE_SIZE", [value]) => Some(json_storage_size(value)),
+        ("JSON_DEPTH", [value]) => Some(json_depth(value, None)),
+        ("JSON_STORAGE_FREE", [value]) => Some(json_storage_free(value, None)),
+        ("JSON_STORAGE_SIZE", [value]) => Some(json_storage_size(value, None)),
         _ => None,
-    }
-}
-
-/// `JSON_DEPTH(json_doc)`, ported from `builtinJSONDepthSig.evalInt` in
-/// `pkg/expression/builtin_json.go`. TiDB's `BinaryJSON.GetElemDepth` gives
-/// every scalar and empty container depth one; an array/object is one plus
-/// the greatest depth of any child.
-fn json_depth(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(document) = parse_json_document_argument(value)? else {
-        return Ok(Datum::Null);
-    };
-    Ok(Datum::Int(depth(&document)))
-}
-
-/// `JSON_STORAGE_FREE(json_doc)`, ported from `builtinJSONStorageFreeSig` in
-/// `pkg/expression/builtin_json.go`. TiDB's binary JSON representation does
-/// not reserve free space for a parsed document, so every valid document
-/// returns zero; SQL NULL propagates and malformed/non-document arguments
-/// remain errors at the shared document boundary.
-fn json_storage_free(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(_) = parse_json_document_argument(value)? else {
-        return Ok(Datum::Null);
-    };
-    Ok(Datum::Int(0))
-}
-
-/// `JSON_STORAGE_SIZE(json_doc)`, ported from `builtinJSONStorageSizeSig` in
-/// `pkg/expression/builtin_json.go`. The Go implementation returns the
-/// binary JSON value payload length plus its one-byte root type code. This
-/// helper mirrors the source encoder's fixed headers, value entries, inline
-/// literal entries, varint string lengths, and recursive payload sizes for
-/// the textual JSON domain.
-fn json_storage_size(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(document) = parse_json_document_argument(value)? else {
-        return Ok(Datum::Null);
-    };
-    Ok(Datum::Int((binary_json_value_size(&document) + 1) as i64))
-}
-
-fn binary_json_value_size(value: &Json) -> usize {
-    match value {
-        // Root scalar literal values occupy their one-byte literal payload.
-        Json::Null | Json::Bool(_) => 1,
-        // All JSON numbers use the fixed eight-byte binary representation.
-        Json::Number(_) => 8,
-        // Binary JSON strings store a uvarint byte length followed by UTF-8.
-        Json::String(text) => uvarint_size(text.len() as u64) + text.len(),
-        // Arrays have an eight-byte header and five-byte value entries. Null
-        // and boolean children are inlined in their entries and therefore do
-        // not add a recursive payload.
-        Json::Array(values) => {
-            8 + values.len() * 5
-                + values
-                    .iter()
-                    .filter(|value| !matches!(value, Json::Null | Json::Bool(_)))
-                    .map(binary_json_value_size)
-                    .sum::<usize>()
-        }
-        // Objects add six-byte key entries, five-byte value entries, and raw
-        // UTF-8 key bytes before the non-literal value payloads.
-        Json::Object(values) => {
-            8 + values.len() * (6 + 5)
-                + values.keys().map(|key| key.len()).sum::<usize>()
-                + values
-                    .values()
-                    .filter(|value| !matches!(value, Json::Null | Json::Bool(_)))
-                    .map(binary_json_value_size)
-                    .sum::<usize>()
-        }
-    }
-}
-
-fn uvarint_size(mut value: u64) -> usize {
-    let mut size = 1;
-    while value >= 0x80 {
-        value >>= 7;
-        size += 1;
-    }
-    size
-}
-
-fn depth(value: &Json) -> i64 {
-    match value {
-        Json::Array(values) => values.iter().map(depth).max().map_or(1, |max| max + 1),
-        Json::Object(values) => values.values().map(depth).max().map_or(1, |max| max + 1),
-        Json::Null | Json::Bool(_) | Json::Number(_) | Json::String(_) => 1,
     }
 }
 

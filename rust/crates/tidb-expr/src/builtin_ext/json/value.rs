@@ -24,7 +24,6 @@
 
 use serde_json::{Number, Value as Json};
 
-use super::text::format_json;
 use crate::{Datum, EvalError, JsonError};
 use tidb_datatype::{BinaryJSON, EvalType, FieldType, FieldTypeFlags};
 
@@ -231,9 +230,9 @@ fn typed_cast_json(value: &Datum) -> Option<Result<Datum, EvalError>> {
 }
 
 pub(super) fn binary_json_datum(json: Json) -> Result<Datum, EvalError> {
-    BinaryJSON::parse(&format_json(&json))
+    BinaryJSON::from_value(&json)
         .map(Datum::Json)
-        .map_err(|_| EvalError::Json(JsonError::InvalidText))
+        .map_err(super::modify::binary_json_error)
 }
 
 /// [`cast_as_json`] with the source argument's static `FieldType`, when the
@@ -441,13 +440,11 @@ fn datum_json_scalar(value: &Datum) -> Result<Json, EvalError> {
     parse_json(&binary.to_string())
 }
 
-/// Known deviation: serde_json's default 128-level nesting limit rejects
-/// documents Go's unbounded recursive parser accepts. Disabling the limit
-/// would turn hostile deep input into a process-fatal stack overflow, so the
-/// limit stays as a defensive boundary.
+/// Go `types.ParseBinaryJSONFromString`, as a tree: an empty or malformed
+/// text is 3140, and a valid document nested deeper than 100 is 3157 (see
+/// [`BinaryJSON::parse`] for the text `serde_json` stops at).
 pub(super) fn parse_json(s: &str) -> Result<Json, EvalError> {
-    if s.trim().is_empty() {
-        return Err(EvalError::Json(JsonError::EmptyText));
-    }
-    serde_json::from_str(s).map_err(|_| EvalError::Json(JsonError::InvalidText))
+    BinaryJSON::parse(s)
+        .and_then(|json| json.to_value())
+        .map_err(super::modify::binary_json_error)
 }

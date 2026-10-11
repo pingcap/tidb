@@ -265,6 +265,16 @@ impl BinaryJSON {
                 if error.to_string().contains("trailing characters") {
                     return Err(BinaryJSONError::TrailingValues);
                 }
+                // Go decodes any document `json.Valid` accepts (nesting up to
+                // 10000) and only then refuses one deeper than 100;
+                // `serde_json` stops at 128 levels instead.
+                if error.to_string().contains("recursion limit exceeded") {
+                    return Err(if crate::json_scanner::valid(text.as_bytes()) {
+                        BinaryJSONError::TooDeep
+                    } else {
+                        BinaryJSONError::InvalidText
+                    });
+                }
                 // Go `json.Valid` accepts lone `\uXXXX` surrogate escapes and
                 // `encoding/json` decodes them to U+FFFD; serde_json refuses
                 // them. Rewrite those escapes the way Go's decoder would and

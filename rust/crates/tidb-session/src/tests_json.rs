@@ -1515,3 +1515,229 @@ fn approx_count_distinct_merges_partial_sketches_across_a_partition_union() {
         vec![vec!["1", "2"], vec!["3", "1"]]
     );
 }
+
+/// One cell, or the MySQL error code the statement fails with.
+fn json_answer(session: &mut Session, sql: &str) -> String {
+    match session.run(sql) {
+        Ok(_) => row_text(session.run(sql))[0][0].clone(),
+        Err(error) => format!("ERR {}", error.to_mysql_error().code),
+    }
+}
+
+fn json_args_session() -> Session {
+    let mut session = Session::new();
+    session
+        .run("create table t (a int, b varbinary(10), c varchar(10), j json)")
+        .unwrap();
+    session
+        .run("insert into t values (1, 'x', '{}', '{}')")
+        .unwrap();
+    session
+}
+
+/// Go's build-time `verifyJSONArgsType`, for the 13 function classes that
+/// call it, and `json_object`'s binary-key refusal; every answer captured
+/// from Go on this branch. Only those classes refuse a non-JSON argument:
+/// the modify family casts an integer document to a JSON number.
+#[test]
+fn json_argument_types_are_verified_like_go() {
+    let mut session = json_args_session();
+    for (sql, want) in [
+        ("select json_set(1, '$', 2)", "2"),
+        ("select json_remove(1, '$[0]')", "1"),
+        ("select json_insert(1, '$.a', 2)", "1"),
+        ("select json_length(1)", "1"),
+        ("select json_extract(1, '$')", "ERR 3146"),
+        ("select json_extract(a, '$') from t", "ERR 3146"),
+        ("select a->'$' from t", "ERR 3146"),
+        ("select json_type(1)", "ERR 3146"),
+        ("select json_unquote(1)", "ERR 3064"),
+        ("select json_unquote(b) from t", "ERR 3144"),
+        ("select json_contains_path(1, 'one', '$.a')", "ERR 3146"),
+        (
+            "select json_contains_path(b, 'one', '$.a') from t",
+            "ERR 3144",
+        ),
+        ("select json_search(1, 'one', '$.a')", "ERR 3146"),
+        ("select json_keys(b) from t", "ERR 3144"),
+        ("select json_contains('{}', 123)", "ERR 3146"),
+        ("select json_overlaps('[]', b) from t", "ERR 3144"),
+        ("select 1 member of (1)", "ERR 3146"),
+        ("select 1 member of (b) from t", "ERR 3144"),
+        ("select json_schema_valid('{}', 1)", "ERR 3146"),
+        ("select json_merge_preserve('{}', 1)", "ERR 3146"),
+        ("select json_merge('{}', b) from t", "ERR 3144"),
+        ("select json_object(b, a) from t", "ERR 3144"),
+        (
+            r#"select json_object('k', b) from t"#,
+            r#"{"k": "base64:type15:eA=="}"#,
+        ),
+        ("select json_schema_valid(NULL, concat('x', 1 / 0))", "NULL"),
+    ] {
+        assert_eq!(json_answer(&mut session, sql), want, "{sql}");
+    }
+    // The NULL schema has taken the DECIMAL document's type
+    // (`typeInferForNull`) before the check, so Go names argument 1.
+    let error = session
+        .run("select json_schema_valid(NULL, 1 / 0)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 3146);
+    assert!(error.message.contains("argument 1"), "{}", error.message);
+}
+
+/// A binary-string document is Go's opaque JSON value (`WrapWithCastAsJSON`),
+/// and the readers and modifiers run on `BinaryJSON` as Go's do.
+#[test]
+fn binary_documents_and_modifiers_answer_like_go() {
+    let mut session = json_args_session();
+    for (sql, want) in [
+        ("select json_length(b) from t", "1"),
+        ("select json_depth(b) from t", "1"),
+        ("select json_pretty(b) from t", r#""base64:type15:eA==""#),
+        ("select json_storage_size(b) from t", "4"),
+        ("select json_valid(b) from t", "0"),
+        ("select json_set(b, '$', 1) from t", "1"),
+        (
+            "select json_set(b, '$.a', 2) from t",
+            r#""base64:type15:eA==""#,
+        ),
+        ("select json_replace(b, '$', 2) from t", "2"),
+        (
+            "select json_array_append(b, '$', 1) from t",
+            r#"["base64:type15:eA==", 1]"#,
+        ),
+        (
+            "select json_array_insert(b, '$[0]', 1) from t",
+            r#""base64:type15:eA==""#,
+        ),
+        (
+            "select json_remove(b, '$[0]') from t",
+            r#""base64:type15:eA==""#,
+        ),
+        (
+            "select cast(binary 'aa' as json)",
+            r#""base64:type254:YWE=""#,
+        ),
+        ("select json_type(cast(binary 'aa' as json))", "BLOB"),
+        (
+            "select json_objectagg('a', b'010101')",
+            r#"{"a": "base64:type253:FQ=="}"#,
+        ),
+        (
+            "select json_type(json_extract(json_objectagg('a', b'010101'), '$.a'))",
+            "BLOB",
+        ),
+        (
+            "select json_array_append('[1]', '$', json_array(2, 3))",
+            "[1, [2, 3]]",
+        ),
+        (
+            "select json_array_append('[1]', '$', '[2]')",
+            r#"[1, "[2]"]"#,
+        ),
+        (
+            r#"select json_array_append('{"a":1}', '$', 2)"#,
+            r#"[{"a": 1}, 2]"#,
+        ),
+        ("select json_insert('[1]', '$[5]', 2)", "[1, 2]"),
+        ("select json_remove('[1,2,3]', '$[0]', '$[0]')", "[3]"),
+        (r#"select json_remove('{"a":1}', '$', '$[')"#, "ERR 3143"),
+        ("select json_set('{}', '$.a', 1, '$.*', 2)", "ERR 3149"),
+        ("select json_array_insert('[1]', '$.a', 2)", "ERR 3165"),
+        (
+            "select json_array_insert('[1,2]', '$[last-1]', 9)",
+            "[9, 1, 2]",
+        ),
+        (
+            "select json_set('[1]', concat('$', repeat('[0]', 101)), 1)",
+            "[1]",
+        ),
+        (r#"select json_storage_size('{"a": 1}')"#, "29"),
+        (
+            r#"select json_extract('{"*": 1, "a": 2}', '$."*"')"#,
+            "[1, 2]",
+        ),
+        ("select json_extract('[1,2]', '$[0 to]')", "1"),
+        ("select json_extract('[1,2,3]', '$[1')", "ERR 3143"),
+    ] {
+        assert_eq!(json_answer(&mut session, sql), want, "{sql}");
+    }
+}
+
+/// Go refuses a document nested deeper than 100 with 3157, whether it was
+/// built or parsed, and decides validity with `encoding/json`'s scanner, which
+/// has no 128-level limit.
+#[test]
+fn json_depth_limits_answer_like_go() {
+    let mut session = Session::new();
+    for (sql, want) in [
+        (
+            "select json_valid(concat(repeat('[', 200), repeat(']', 200)))",
+            "1",
+        ),
+        (
+            "select cast(concat(repeat('[', 200), repeat(']', 200)) as json)",
+            "ERR 3157",
+        ),
+        (
+            "select cast(concat(repeat('[', 200), repeat(']', 199)) as json)",
+            "ERR 3140",
+        ),
+        (
+            "select json_depth(cast(concat(repeat('[', 101), repeat(']', 101)) as json))",
+            "101",
+        ),
+        (
+            r#"select json_schema_valid(concat('{"foo": ', repeat('[', 1000), repeat(']', 1000), '}'), json_object())"#,
+            "ERR 3157",
+        ),
+        (r#"select json_valid('"\ud800"')"#, "1"),
+    ] {
+        assert_eq!(json_answer(&mut session, sql), want, "{sql}");
+    }
+    session.run("create table t (a json)").unwrap();
+    let cte = |depth: usize| {
+        format!(
+            "insert into t with recursive c1 as (select cast(1 as signed) c, json_array(1) as a \
+             union select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1)) \
+             from c1 where c < {depth}) select a from c1 where c > {}",
+            depth - 1
+        )
+    };
+    assert_eq!(json_answer(&mut session, &cte(101)), "ERR 3157");
+    session.run(&cte(100)).unwrap();
+    assert_eq!(
+        json_answer(&mut session, "select json_depth(a) from t"),
+        "101"
+    );
+}
+
+/// A malformed path is `ErrInvalidJSONPath` (3143) where Go evaluates the
+/// function itself, and the coprocessor's generic 1105 where the function
+/// runs in TiKV -- a pushed-down `json_extract` projection or predicate over
+/// a JSON column. Every code captured from Go on this branch.
+#[test]
+fn json_path_errors_carry_the_code_of_where_they_are_evaluated() {
+    let mut session = Session::new();
+    session
+        .run("create table t (a json, c varchar(10))")
+        .unwrap();
+    session
+        .run(r#"insert into t values ('{"a":1}', '[1]')"#)
+        .unwrap();
+    for (sql, want) in [
+        ("select json_extract(a, 1) from t", "ERR 1105"),
+        ("select json_extract(a, '$[') from t", "ERR 1105"),
+        (
+            "select * from t where json_extract(a, '$[') is null",
+            "ERR 1105",
+        ),
+        ("select json_extract(c, '$[') from t", "ERR 3143"),
+        ("select json_remove(a, '$[') from t", "ERR 3143"),
+        ("select json_set(a, '$[', 1) from t", "ERR 3143"),
+        (r#"select json_remove('{"a":1}', '$', '$[')"#, "ERR 3143"),
+    ] {
+        assert_eq!(json_answer(&mut session, sql), want, "{sql}");
+    }
+}

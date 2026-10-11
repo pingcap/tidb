@@ -143,7 +143,17 @@ fn json_schema_valid_rewrites_and_short_circuits_like_go() {
     );
     // Go returns as soon as the schema argument is NULL, before evaluating
     // or converting the document argument.
-    assert_eq!(chunk_e("json_schema_valid(NULL, 1 / 0)"), "NULL");
+    assert_eq!(
+        chunk_e("json_schema_valid(NULL, concat('x', 1 / 0))"),
+        "NULL"
+    );
+    // A DECIMAL document fails `verifyJSONArgsType` at build time, and the
+    // NULL schema has already taken its type (`typeInferForNull`), so Go
+    // names argument 1.
+    assert_eq!(
+        chunk_e("json_schema_valid(NULL, 1 / 0)"),
+        r#"Json(InvalidTypeForJson { argument: 1, function: "json_schema_valid" })"#
+    );
 }
 
 #[test]

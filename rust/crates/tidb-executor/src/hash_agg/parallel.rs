@@ -2979,13 +2979,22 @@ mod tests {
         FieldType::new(FieldTypeCode::NewDecimal)
     }
 
+    /// A utf8mb4 VARCHAR: Go's `getRealJSONValue` makes a string datum of a
+    /// binary-charset type (every numeric type's charset) an opaque value, so
+    /// a string row needs a character type.
+    fn varchar() -> FieldType {
+        FieldType::new(FieldTypeCode::Varchar).with_collation(tidb_datatype::Collation::Utf8Mb4Bin)
+    }
+
     #[test]
     fn json_and_percentile_merge_spill_reset_follow_go() {
         // Go aggfuncs' JSON and percentile merge tests, through the same
         // partial states, merge and spill owners used by parallel HashAgg.
         let cases = [
             (
-                AggKind::JsonArrayAgg { value_type: long() },
+                AggKind::JsonArrayAgg {
+                    value_type: varchar(),
+                },
                 vec![
                     (Datum::Null, vec![]),
                     (Datum::UInt(u64::MAX), vec![]),

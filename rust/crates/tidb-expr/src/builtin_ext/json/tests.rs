@@ -17,7 +17,6 @@
 
 use super::dispatch;
 use super::path::parse_path;
-use super::text::format_json;
 use crate::Datum;
 use serde_json::json;
 
@@ -76,7 +75,11 @@ fn json_scalar_source_wave_boundaries() {
     // Keep the four source-owned scalar leaves' non-text and byte
     // boundaries explicit without pretending this value domain carries
     // typed BinaryJSON or charset/session warning state.
-    assert!(call_result("JSON_TYPE", &[Datum::Int(3)]).is_err());
+    // Go refuses a non-JSON, non-string document while building the
+    // function (`verifyJSONArgsType`, see `verify_json_function_args`); one
+    // reaching the evaluator untyped takes the document cast, as Go's
+    // `WrapWithCastAsJSON` would.
+    assert_eq!(call("JSON_TYPE", &[Datum::Int(3)]), s("INTEGER"));
     assert!(call_result("JSON_TYPE", &[s("a")]).is_err());
     assert!(dispatch("JSON_TYPE", &[]).is_none());
 
@@ -429,8 +432,12 @@ fn containers_paths_and_binary_json_format_match_go() {
         ),
         j("[3, [5, 6]]")
     );
+    // Results print through `BinaryJSON`'s `MarshalJSON` port: keys
+    // byte-sorted, `, ` and `: ` separators.
     assert_eq!(
-        format_json(&json!({"b": 2, "a": 1})),
+        tidb_datatype::BinaryJSON::from_value(&json!({"b": 2, "a": 1}))
+            .unwrap()
+            .to_string(),
         "{\"a\": 1, \"b\": 2}"
     );
     assert!(parse_path("$**").is_err());
@@ -1811,7 +1818,8 @@ fn json_errors_carry_go_codes() {
     assert_eq!(code("JSON_EXTRACT", &[s(r#"{"a":1}"#), s("xx")]), 3143);
     assert_eq!(code("JSON_LENGTH", &[s("[1,2]"), s("$[*]")]), 3149);
     assert_eq!(code("JSON_KEYS", &[s(r#"{"a":1}"#), s("$[*]")]), 3149);
-    assert_eq!(code("JSON_TYPE", &[Datum::Int(1)]), 3146);
+    // `JSON_TYPE(1)`'s 3146 is a build-time refusal, asserted at the SQL
+    // level in `tidb-session`'s `json_argument_types_are_verified_like_go`.
     assert_eq!(code("JSON_QUOTE", &[Datum::Int(1)]), 3064);
     assert_eq!(code("JSON_OBJECT", &[Datum::Null, Datum::Int(1)]), 3158);
     assert_eq!(
@@ -1918,7 +1926,10 @@ fn dispatch_typed_renders_binary_charset_arguments_as_opaque() {
     )
     .expect("JSON_INSERT is owned")
     .expect("valid vector");
-    assert_eq!(inserted, j(r#"{"a": "base64:type15:YWI="}"#));
+    // Go stores the cast's opaque value itself (`json_type` of the member
+    // answers BLOB), which only renders like the string.
+    assert_eq!(rendered(inserted.clone()), r#"{"a": "base64:type15:YWI="}"#);
+    assert_ne!(inserted, j(r#"{"a": "base64:type15:YWI="}"#));
 }
 
 /// [`cast_as_json_typed`]'s BINARY-charset rendering, the same capture as

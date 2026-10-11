@@ -190,17 +190,7 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             format!("Incorrect {value_class} value: '{value}' for function {function}"),
         ),
         EvalError::Json(json) => {
-            // go's EXEC-tier wrap answers the generic 1105 for a path-parse
-            // failure on column-sourced calls (`JSON_EXTRACT(a, 1)` answers
-            // 1105), while the plan-tier classed terror keeps MySQL's
-            // nominal 3143 (`JSON_EXTRACT('[1,2,3]', '$[1 TO 2]')` folded at
-            // planning). The conversion tier the statement surfaces through
-            // decides which identity applies; this is the execution one.
-            let code = match json {
-                tidb_expr::JsonError::InvalidPath(_) => 1105,
-                _ => json.code(),
-            };
-            let error = MysqlError::coded(code, json.message());
+            let error = MysqlError::coded(json.code(), json.message());
             // Every error here is evaluation-origin: go's warning buffer
             // never records a FATAL evaluation error as its own row beside
             // the statement error (the column-sourced `JSON_EXTRACT(a, 1)`

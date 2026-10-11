@@ -360,7 +360,7 @@ pub struct ScalarFunction {
     in_string_has_null: bool,
     json_schema_cache: crate::builtin_ext::JsonSchemaCache,
     json_modify_path_cache:
-        crate::builtin_ext::BuiltinFuncCache<Option<Vec<crate::builtin_ext::JsonPath>>>,
+        crate::builtin_ext::BuiltinFuncCache<Option<Vec<tidb_datatype::JSONPathExpression>>>,
     find_in_set_cache: crate::builtin_ext::BuiltinFuncCache<crate::builtin_ext::FindInSetLookup>,
     regexp_cache: crate::builtin_ext::BuiltinFuncCache<crate::regexp::CachedRegexp>,
     regexp_replace_instruction_cache:
@@ -3150,7 +3150,9 @@ impl ScalarFunction {
                         .all(|argument| argument.const_level() >= ConstLevel::ONLY_IN_CONTEXT)
             })
         {
-            let Some(document) = crate::builtin_ext::parse_json_document_argument(&vals[0])? else {
+            let Some(document) =
+                crate::builtin_ext::json_document(&vals[0], arg_types[0].as_ref())?
+            else {
                 return Ok(Datum::Null);
             };
             let paths = self

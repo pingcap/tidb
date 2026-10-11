@@ -51,6 +51,7 @@ pub mod go_runtime;
 pub mod go_strconv;
 mod go_string;
 mod json_path;
+pub mod json_scanner;
 mod multibyte_encoding;
 mod mydecimal;
 mod mysql_time;

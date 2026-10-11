@@ -203,10 +203,19 @@ pub fn parse_json_path_expr(path: &str) -> Result<JSONPathExpression, JSONPathEr
     Ok(expression)
 }
 
+/// Go `jsonPathStream` and the `parseJSONPath*` functions
+/// (`pkg/types/json_path_expr.go`), step for step: the position an error
+/// reports is where Go's stream stands when it gives up, including its
+/// rewinds (`tryReadIndexNumber`, `tryParseArrayIndex`, `tryReadString`)
+/// and the rune `read()` consumes before comparing it. Where Go would
+/// `peek()` an exhausted stream (and panic) the peek answers "not a space".
 struct Parser {
     chars: Vec<char>,
     position: usize,
 }
+
+const LAST: [char; 4] = ['l', 'a', 's', 't'];
+const TO: [char; 2] = ['t', 'o'];
 
 impl Parser {
     fn new(input: &str) -> Self {
@@ -218,18 +227,21 @@ impl Parser {
 
     fn parse(mut self) -> Result<JSONPathExpression, JSONPathError> {
         self.skip_whitespace();
-        if !self.consume('$') {
-            return self.invalid();
+        if self.exhausted() || self.read() != '$' {
+            return Err(JSONPathError { position: 1 });
         }
         self.skip_whitespace();
 
         let mut expression = JSONPathExpression::default();
         while !self.exhausted() {
-            match self.peek() {
-                Some('.') => self.parse_member(&mut expression)?,
-                Some('[') => self.parse_array(&mut expression)?,
-                Some('*') => self.parse_double_asterisk(&mut expression)?,
-                _ => return self.invalid(),
+            let ok = match self.peek() {
+                Some('.') => self.parse_member(&mut expression),
+                Some('[') => self.parse_array(&mut expression),
+                Some('*') => self.parse_wildcard(&mut expression),
+                _ => false,
+            };
+            if !ok {
+                return self.invalid();
             }
             self.skip_whitespace();
         }
@@ -239,41 +251,99 @@ impl Parser {
         Ok(expression)
     }
 
-    fn parse_member(&mut self, expression: &mut JSONPathExpression) -> Result<(), JSONPathError> {
+    /// Go `parseJSONPathWildcard`.
+    fn parse_wildcard(&mut self, expression: &mut JSONPathExpression) -> bool {
+        self.position += 1;
+        if self.exhausted() || self.read() != '*' {
+            return false;
+        }
+        if self.exhausted() || self.peek() == Some('*') {
+            return false;
+        }
+        expression.flags |= CONTAINS_DOUBLE_ASTERISK;
+        expression.legs.push(JSONPathLeg::DoubleAsterisk);
+        true
+    }
+
+    /// Go `parseJSONPathArray`.
+    fn parse_array(&mut self, expression: &mut JSONPathExpression) -> bool {
         self.position += 1;
         self.skip_whitespace();
         if self.exhausted() {
-            return self.invalid();
+            return false;
         }
-        if self.consume('*') {
+        if self.peek() == Some('*') {
+            self.position += 1;
             expression.flags |= CONTAINS_ASTERISK;
-            expression.legs.push(JSONPathLeg::Key("*".to_owned()));
-            return Ok(());
-        }
-
-        let (encoded_key, quoted) = if self.consume('"') {
-            let start = self.position;
-            let mut escaped = false;
-            loop {
-                let Some(ch) = self.peek() else {
-                    return self.invalid();
-                };
-                if ch == '"' && !escaped {
-                    let key: String = self.chars[start..self.position].iter().collect();
-                    self.position += 1;
-                    break (key, true);
-                }
-                self.position += 1;
-                escaped = ch == '\\' && !escaped;
-                if ch != '\\' {
-                    escaped = false;
+            expression
+                .legs
+                .push(JSONPathLeg::Array(JSONPathArraySelection::Asterisk));
+        } else {
+            let Some(start) = self.try_parse_array_index() else {
+                return false;
+            };
+            let mut selection = JSONPathArraySelection::Index(start);
+            if self.peek_is_space() {
+                self.skip_whitespace();
+                if self.try_read_string(&TO) && self.peek_is_space() {
+                    self.skip_whitespace();
+                    if self.exhausted() {
+                        return false;
+                    }
+                    let Some(end) = self.try_parse_array_index() else {
+                        return false;
+                    };
+                    // Go `validateIndexRange`.
+                    if ((start >= 0 && end >= 0) || (start < 0 && end < 0)) && start > end {
+                        return false;
+                    }
+                    expression.flags |= CONTAINS_RANGE;
+                    selection = JSONPathArraySelection::Range { start, end };
                 }
             }
+            expression.legs.push(JSONPathLeg::Array(selection));
+        }
+        self.skip_whitespace();
+        !self.exhausted() && self.read() == ']'
+    }
+
+    /// Go `parseJSONPathMember`.
+    fn parse_member(&mut self, expression: &mut JSONPathExpression) -> bool {
+        self.position += 1;
+        self.skip_whitespace();
+        if self.exhausted() {
+            return false;
+        }
+        if self.peek() == Some('*') {
+            self.position += 1;
+            expression.flags |= CONTAINS_ASTERISK;
+            expression.legs.push(JSONPathLeg::Key("*".to_owned()));
+            return true;
+        }
+        let (raw_key, quoted) = if self.peek() == Some('"') {
+            self.position += 1;
+            // Go's `readWhile` callback skips the rune after a backslash,
+            // and the loop then steps past the current one.
+            let start = self.position;
+            loop {
+                let Some(ch) = self.peek() else {
+                    return false;
+                };
+                if ch == '\\' {
+                    self.position += 1;
+                } else if ch == '"' {
+                    break;
+                }
+                self.position += 1;
+            }
+            let key: String = self.chars[start..self.position].iter().collect();
+            self.position += 1;
+            (key, true)
         } else {
             let start = self.position;
             while self
                 .peek()
-                .is_some_and(|ch| !ch.is_whitespace() && ch != '.' && ch != '[' && ch != '*')
+                .is_some_and(|ch| !(ch.is_whitespace() || ch == '.' || ch == '[' || ch == '*'))
             {
                 self.position += 1;
             }
@@ -282,128 +352,101 @@ impl Parser {
                 false,
             )
         };
-
-        let wrapped = format!("\"{encoded_key}\"");
-        let key: String = serde_json::from_str(&wrapped).map_err(|_| self.error())?;
+        let wrapped = format!("\"{raw_key}\"");
+        if !crate::json_scanner::valid(wrapped.as_bytes()) {
+            return false;
+        }
+        let Ok(key) = crate::binary_json::unquote_json_string(&raw_key) else {
+            return false;
+        };
         if !quoted && !is_ecmascript_identifier(&key) {
-            return self.invalid();
+            return false;
         }
         expression.legs.push(JSONPathLeg::Key(key));
-        Ok(())
+        true
     }
 
-    fn parse_array(&mut self, expression: &mut JSONPathExpression) -> Result<(), JSONPathError> {
-        self.position += 1;
+    /// Go `tryParseArrayIndex`: a number, `last` or `last - number`; a
+    /// failure rewinds to where it started, except after the leading
+    /// whitespace when no index begins there.
+    fn try_parse_array_index(&mut self) -> Option<i64> {
+        let record = self.position;
         self.skip_whitespace();
-        if self.exhausted() {
-            return self.invalid();
-        }
-
-        let selection = if self.consume('*') {
-            expression.flags |= CONTAINS_ASTERISK;
-            JSONPathArraySelection::Asterisk
-        } else {
-            let start = self.parse_index()?;
-            let after_start = self.position;
-            let had_space = self.skip_whitespace();
-            if had_space && self.consume_word("to") {
-                // Go `tryReadString(toStr)` (`json_path_expr.go:462-480`)
-                // consumes `to` and only rewinds on failure, so when the
-                // following character is NOT whitespace the stream stays
-                // PAST `to` and the selection degrades to a plain index —
-                // `$[0 to]` parses as `$[0]`. Only whitespace after `to`
-                // opens a range.
-                if self.peek().is_some_and(char::is_whitespace) {
-                    self.skip_whitespace();
-                    let end = self.parse_index()?;
-                    if ((start >= 0 && end >= 0) || (start < 0 && end < 0)) && start > end {
-                        return self.invalid();
-                    }
-                    expression.flags |= CONTAINS_RANGE;
-                    JSONPathArraySelection::Range { start, end }
-                } else {
-                    JSONPathArraySelection::Index(start)
+        match self.peek()? {
+            '0'..='9' => {
+                let Some(index) = self.try_read_index_number() else {
+                    self.position = record;
+                    return None;
+                };
+                Some(index)
+            }
+            'l' => {
+                if !self.try_read_string(&LAST) {
+                    self.position = record;
+                    return None;
                 }
-            } else {
-                self.position = after_start;
-                JSONPathArraySelection::Index(start)
+                self.skip_whitespace();
+                if self.exhausted() || self.peek() != Some('-') {
+                    return Some(-1);
+                }
+                self.position += 1;
+                self.skip_whitespace();
+                let Some(index) = self.try_read_index_number() else {
+                    self.position = record;
+                    return None;
+                };
+                Some(-1 - index)
             }
-        };
-
-        self.skip_whitespace();
-        if !self.consume(']') {
-            return self.invalid();
+            _ => None,
         }
-        expression.legs.push(JSONPathLeg::Array(selection));
-        Ok(())
     }
 
-    fn parse_double_asterisk(
-        &mut self,
-        expression: &mut JSONPathExpression,
-    ) -> Result<(), JSONPathError> {
-        self.position += 1;
-        if !self.consume('*') || self.peek() == Some('*') || self.exhausted() {
-            return self.invalid();
-        }
-        expression.flags |= CONTAINS_DOUBLE_ASTERISK;
-        expression.legs.push(JSONPathLeg::DoubleAsterisk);
-        Ok(())
-    }
-
-    fn parse_index(&mut self) -> Result<i64, JSONPathError> {
-        self.skip_whitespace();
-        if self.consume_word("last") {
-            self.skip_whitespace();
-            if !self.consume('-') {
-                return Ok(-1);
-            }
-            self.skip_whitespace();
-            return Ok(-1 - i64::from(self.parse_u32()?));
-        }
-        Ok(i64::from(self.parse_u32()?))
-    }
-
-    fn parse_u32(&mut self) -> Result<u32, JSONPathError> {
-        let start = self.position;
+    /// Go `tryReadIndexNumber`: digits that do not run to the end of the
+    /// path and fit in a uint32.
+    fn try_read_index_number(&mut self) -> Option<i64> {
+        let record = self.position;
         while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
             self.position += 1;
         }
-        if start == self.position {
-            return self.invalid();
-        }
-        self.chars[start..self.position]
-            .iter()
-            .collect::<String>()
-            .parse()
-            .map_err(|_| self.error())
-    }
-
-    fn consume_word(&mut self, word: &str) -> bool {
-        let start = self.position;
-        for expected in word.chars() {
-            if !self.consume(expected) {
-                self.position = start;
-                return false;
+        let parsed = (!self.exhausted())
+            .then(|| self.chars[record..self.position].iter().collect::<String>())
+            .and_then(|digits| digits.parse::<u64>().ok())
+            .filter(|&index| index <= u64::from(u32::MAX));
+        match parsed {
+            Some(index) => Some(index as i64),
+            None => {
+                self.position = record;
+                None
             }
         }
-        true
     }
 
-    fn consume(&mut self, expected: char) -> bool {
-        if self.peek() != Some(expected) {
-            return false;
+    /// Go `tryReadString`: the next runes are exactly `expected` and the
+    /// path continues after them; otherwise nothing is consumed.
+    fn try_read_string(&mut self, expected: &[char]) -> bool {
+        let end = self.position + expected.len();
+        if end < self.chars.len() && self.chars[self.position..end] == *expected {
+            self.position = end;
+            true
+        } else {
+            false
         }
-        self.position += 1;
-        true
     }
 
-    fn skip_whitespace(&mut self) -> bool {
-        let start = self.position;
+    fn read(&mut self) -> char {
+        let ch = self.chars[self.position];
+        self.position += 1;
+        ch
+    }
+
+    fn peek_is_space(&self) -> bool {
+        self.peek().is_some_and(char::is_whitespace)
+    }
+
+    fn skip_whitespace(&mut self) {
         while self.peek().is_some_and(char::is_whitespace) {
             self.position += 1;
         }
-        start != self.position
     }
 
     fn peek(&self) -> Option<char> {
@@ -411,17 +454,13 @@ impl Parser {
     }
 
     fn exhausted(&self) -> bool {
-        self.position == self.chars.len()
-    }
-
-    fn error(&self) -> JSONPathError {
-        JSONPathError {
-            position: self.position,
-        }
+        self.position >= self.chars.len()
     }
 
     fn invalid<T>(&self) -> Result<T, JSONPathError> {
-        Err(self.error())
+        Err(JSONPathError {
+            position: self.position,
+        })
     }
 }
 
@@ -590,5 +629,46 @@ mod tests {
             assert_eq!(expression.to_string(), expected);
             assert_eq!(expression.could_match_multiple_values(), multiple);
         }
+    }
+}
+
+#[cfg(test)]
+mod go_position_tests {
+    use super::parse_json_path_expr;
+
+    /// Every position was answered by Go on this branch
+    /// (`json_extract(c, path)` reporting ErrInvalidJSONPath 3143).
+    #[test]
+    fn invalid_paths_report_go_s_positions() {
+        for (path, position) in [
+            ("$[1", 2),
+            ("$[", 2),
+            ("$.", 2),
+            ("a", 1),
+            ("$.a b", 4),
+            ("$[1 to", 5),
+            ("$[last-", 2),
+            ("$**", 3),
+            ("$.**", 4),
+            ("$[*", 3),
+            ("$.\"a", 4),
+            ("$[ 1", 3),
+            (" $[1", 3),
+            ("$[1]x", 4),
+            ("$.a.", 4),
+            ("$[-1]", 2),
+            ("$[1 to 0]", 8),
+            ("$[last-a]", 2),
+            ("$.*.", 4),
+            ("$.\"a\"b", 5),
+        ] {
+            assert_eq!(
+                parse_json_path_expr(path).map_err(|error| error.position),
+                Err(position),
+                "{path}"
+            );
+        }
+        assert!(parse_json_path_expr("$[0 to]").is_ok());
+        assert!(parse_json_path_expr("$.\"*\"").is_ok());
     }
 }

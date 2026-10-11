@@ -2557,10 +2557,36 @@ impl Partial {
 /// through unchanged, and a BINARY-charset string (`value_type`'s charset is
 /// `binary`) wraps into a JSON `Opaque` tagged with `value_type`'s own MySQL
 /// type code rather than becoming a JSON string.
+/// Go `getRealJSONValue` (`aggfuncs/func_json_objectagg.go`), shared by
+/// `JSON_ARRAYAGG` and `JSON_OBJECTAGG`: a binary literal, BIT or bytes datum
+/// becomes an opaque value carrying the argument's MySQL type; so does a
+/// binary-charset string, resized to `flen` for `BINARY(n)` (its trailing
+/// zeros included); any other datum is its JSON value.
 fn json_value(value: &Datum, value_type: &FieldType) -> Result<BinaryJSON, ExecError> {
-    value
-        .to_mysql_json_with_source_type(value_type)
-        .map_err(|_| ExecError::unsupported("this datum kind is not a JSON value"))
+    let bytes = match value {
+        Datum::BinaryLiteral(literal) | Datum::Bit(literal) => Some(literal.as_bytes().to_vec()),
+        Datum::Bytes(bytes) => Some(bytes.clone()),
+        Datum::String(text) if value_type.charset_name() == "binary" => {
+            let mut bytes = text.bytes().to_vec();
+            if value_type.code() == tidb_datatype::FieldTypeCode::String {
+                bytes.resize(usize::try_from(value_type.flen()).unwrap_or(0), 0);
+            }
+            Some(bytes)
+        }
+        _ => None,
+    };
+    let converted = match bytes {
+        Some(bytes) => {
+            BinaryJSON::from_typed_value(&BinaryJSONValue::Opaque(tidb_datatype::Opaque {
+                type_code: value_type.code().mysql_type(),
+                bytes,
+            }))
+        }
+        None => value
+            .to_mysql_json()
+            .map_err(|_| tidb_datatype::BinaryJSONError::InvalidBinary),
+    };
+    converted.map_err(|_| ExecError::unsupported("this datum kind is not a JSON value"))
 }
 
 /// `JSON_OBJECTAGG`'s member name: Go reads the key argument with

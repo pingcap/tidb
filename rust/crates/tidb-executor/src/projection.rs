@@ -115,6 +115,9 @@ pub struct ProjectionExec<C: Columns> {
     /// Go `numWorkers`: the projection workers, zero for the serial path.
     num_workers: usize,
     parallel: Option<ParallelProjection<C>>,
+    /// A projection inside a reader's coprocessor plan, which Go runs in
+    /// TiKV: an evaluation failure reaches TiDB as a coprocessor error.
+    in_coprocessor: bool,
 }
 
 impl<C: Columns> ProjectionExec<C> {
@@ -150,7 +153,17 @@ impl<C: Columns> ProjectionExec<C> {
             child_chunk,
             num_workers: 0,
             parallel: None,
+            in_coprocessor: false,
         }
+    }
+
+    /// Marks a projection of a reader's coprocessor plan: its evaluation
+    /// failures surface as Go's coprocessor errors
+    /// ([`crate::driver::coprocessor_evaluation_error`]).
+    #[must_use]
+    pub fn in_coprocessor(mut self, in_coprocessor: bool) -> Self {
+        self.in_coprocessor = in_coprocessor;
+        self
     }
 
     /// Go `newProjectionExec`'s `numWorkers`: the builder passes
@@ -388,9 +401,15 @@ impl<C: ProjectionContext> Executor for ProjectionExec<C> {
             req.set_num_virtual_rows(child_rows);
             return Ok(());
         }
+        let in_coprocessor = self.in_coprocessor;
         self.evaluator_suite
             .run(&self.ctx, &mut self.child_chunk, req)
-            .map_err(Self::evaluator_error)
+            .map_err(|error| match error {
+                EvaluatorError::Eval(error) if in_coprocessor => {
+                    crate::driver::coprocessor_evaluation_error(error)
+                }
+                error => Self::evaluator_error(error),
+            })
     }
 
     fn close(&mut self) -> Result<(), ExecError> {

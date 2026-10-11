@@ -5487,6 +5487,7 @@ fn build_with_state(
             // reduce the goroutine overhead"), inside a writing statement or
             // above a lock.
             let workers = if state.projection_workers_allowed
+                && !state.in_reader
                 && !state.has_lock
                 && plan
                     .stats_count()
@@ -5497,7 +5498,9 @@ fn build_with_state(
                 0
             };
             let executor: Box<dyn Executor> = Box::new(
-                ProjectionExec::new(meta, expressions, child, ctx.clone()).with_workers(workers),
+                ProjectionExec::new(meta, expressions, child, ctx.clone())
+                    .with_workers(workers)
+                    .in_coprocessor(state.in_reader),
             );
             Ok(executor)
         }
