@@ -1,7 +1,7 @@
 # TiDB Design Documents
 
 - Author(s): [takaidohigasi](https://github.com/takaidohigasi)
-- Discussion PR: https://github.com/pingcap/tidb/pull/XXX
+- Discussion PR: https://github.com/pingcap/tidb/pull/69783
 - Tracking Issue: https://github.com/pingcap/tidb/issues/18207
 
 ## Table of Contents
