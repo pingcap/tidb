@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -3706,4 +3707,83 @@ func TestAuditPluginRetrying(t *testing.T) {
 		resetTestResults()
 		runExplicitTransactionRetry(db, true)
 	})
+}
+
+func TestIssue57531(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	processlistCount := func(dbt *testkit.DBTestKit) int {
+		rsCnt := 0
+		rs := dbt.MustQuery("show processlist")
+		for rs.Next() {
+			rsCnt++
+		}
+		require.NoError(t, rs.Err())
+		require.NoError(t, rs.Close())
+		return rsCnt
+	}
+
+	for i := range 2 {
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			var netConn net.Conn
+			conn, err := dbt.GetDB().Conn(context.Background())
+			require.NoError(t, err)
+			defer func() {
+				_ = conn.Close()
+			}()
+
+			// get the TCP connection
+			err = conn.Raw(func(driverConn any) error {
+				v := reflect.ValueOf(driverConn)
+				if v.Kind() == reflect.Ptr {
+					v = v.Elem()
+				}
+				f := v.FieldByName("netConn")
+				if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+					netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+				}
+				return nil
+			})
+			require.NoError(t, err)
+			require.NotNil(t, netConn)
+
+			// execute `select sleep(300)`
+			queryDone := make(chan struct{})
+			go func() {
+				defer close(queryDone)
+				if i == 0 {
+					rows, err := conn.QueryContext(context.Background(), "select sleep(300)")
+					if err == nil {
+						_ = rows.Close()
+					}
+				} else {
+					stmt, err := conn.PrepareContext(context.Background(), "select sleep(?)")
+					if err == nil {
+						defer stmt.Close()
+						_, _ = stmt.Exec(300)
+					}
+				}
+			}()
+
+			// have two sessions
+			require.Eventually(t, func() bool {
+				return processlistCount(dbt) == 2
+			}, time.Second, time.Millisecond*10)
+
+			// close tcp connection
+			require.NoError(t, netConn.Close())
+
+			select {
+			case <-queryDone:
+			case <-time.After(time.Second * 3):
+				require.Fail(t, "query did not exit after closing the TCP connection")
+			}
+			_ = conn.Close()
+
+			// the `select sleep(300)` is killed
+			require.Eventually(t, func() bool {
+				return processlistCount(dbt) == 1
+			}, time.Second*3, time.Millisecond*10)
+		})
+	}
 }
