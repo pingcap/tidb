@@ -17,9 +17,12 @@ use tidb_ast::{CiString, CreateTableStmt, IndexPart, ReferentialAction, TableCon
 use tidb_datatype::FieldTypeFlags;
 use tidb_executor::DriverError;
 use tidb_model::column::find_column_info;
-use tidb_model::index::{find_index_by_columns_for_foreign_key, IndexColumn, IndexInfo};
+use tidb_model::index::{
+    find_index_by_columns_for_foreign_key, is_index_prefix_covered_for_foreign_key, IndexColumn,
+    IndexInfo,
+};
 use tidb_model::schema_state::SchemaState;
-use tidb_model::table::{FKInfo, FK_VERSION1};
+use tidb_model::table::{FKInfo, ReferredFKInfo, FK_VERSION1};
 use tidb_model::table_info::TableInfo;
 use tidb_model::TempTableType;
 
@@ -81,7 +84,7 @@ fn cannot_add() -> DdlAdmissionError {
 }
 
 /// Go `buildFKInfo` (`executor.go:5897`) over the table's finished columns.
-fn build_fk_info(
+pub(crate) fn build_fk_info(
     fk_name: &str,
     keys: &[IndexPart],
     refer: &tidb_ast::ForeignKeyReference,
@@ -327,6 +330,59 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
     Ok(())
 }
 
+/// Go `checkTableForeignKeyValid` (submitter) and, with `in_owner`,
+/// `checkTableForeignKeyValidInOwner` for one key of `table`: the key against
+/// the table it references, which may be `table` itself.
+pub(crate) fn check_foreign_key_valid(
+    catalog: &ClusterCatalog,
+    schema: &str,
+    table: &TableInfo,
+    fk: &FKInfo,
+    fk_check: bool,
+    in_owner: bool,
+) -> Refusal<()> {
+    if fk.version < FK_VERSION1 {
+        return Ok(());
+    }
+    let refer = if fk.ref_schema.lowercase() == schema.to_lowercase()
+        && fk.ref_table.lowercase() == table.name.lowercase()
+    {
+        if !in_owner {
+            let cols = fk.cols.snapshot();
+            let ref_cols = fk.ref_cols.snapshot();
+            if cols
+                .iter()
+                .zip(&ref_cols)
+                .all(|(a, b)| a.lowercase() == b.lowercase())
+            {
+                return Err(cannot_add());
+            }
+        }
+        table
+    } else {
+        match lookup(catalog, fk.ref_schema.original(), fk.ref_table.original()) {
+            Some(refer) => refer,
+            None if !fk_check => return Ok(()),
+            None if in_owner => {
+                return Err(coded(
+                    tidb_error::tidb::errcode::ErrNoSuchTable,
+                    format!(
+                        "Table '{}.{}' doesn't exist",
+                        fk.ref_schema.original(),
+                        fk.ref_table.original()
+                    ),
+                ))
+            }
+            None => {
+                return Err(refusal(DriverError::ForeignKeyReferencedTableMissing(
+                    fk.ref_table.original().to_owned(),
+                )))
+            }
+        }
+    };
+    check_table_foreign_key(refer, table, fk)
+}
+
 fn lookup<'c>(catalog: &'c ClusterCatalog, schema: &str, table: &str) -> Option<&'c TableInfo> {
     catalog
         .find_table(schema, table)
@@ -351,42 +407,7 @@ fn check_valid(
     let schema_l = schema.to_lowercase();
     for fk in table.foreign_keys.iter_deref() {
         let fk = fk.read();
-        if fk.version < FK_VERSION1 {
-            continue;
-        }
-        let refer = if fk.ref_schema.lowercase() == schema_l
-            && fk.ref_table.lowercase() == table.name.lowercase()
-        {
-            if !in_owner {
-                let cols = fk.cols.snapshot();
-                let ref_cols = fk.ref_cols.snapshot();
-                if cols.iter().zip(&ref_cols).all(|(a, b)| a.lowercase() == b.lowercase()) {
-                    return Err(cannot_add());
-                }
-            }
-            table
-        } else {
-            match lookup(catalog, fk.ref_schema.original(), fk.ref_table.original()) {
-                Some(refer) => refer,
-                None if !fk_check => continue,
-                None if in_owner => {
-                    return Err(coded(
-                        tidb_error::tidb::errcode::ErrNoSuchTable,
-                        format!(
-                            "Table '{}.{}' doesn't exist",
-                            fk.ref_schema.original(),
-                            fk.ref_table.original()
-                        ),
-                    ))
-                }
-                None => {
-                    return Err(refusal(DriverError::ForeignKeyReferencedTableMissing(
-                        fk.ref_table.original().to_owned(),
-                    )))
-                }
-            }
-        };
-        check_table_foreign_key(refer, table, &fk)?;
+        check_foreign_key_valid(catalog, schema, table, &fk, fk_check, in_owner)?;
     }
     // Go `is.GetTableReferredForeignKeys`: children created earlier with
     // `foreign_key_checks=0` that reference this (new) table.
@@ -430,6 +451,153 @@ pub fn check_table_foreign_keys_valid_in_owner(
         let mut fk = fk.write();
         fk.id = table.max_foreign_key_id;
         fk.state = SchemaState::PUBLIC;
+    }
+    Ok(())
+}
+
+/// Go `InfoSchema.GetTableReferredForeignKeys`: the foreign keys of every
+/// table that cite `schema`.`table`, as `addReferredForeignKeys` builds the
+/// `referredForeignKeyMap` entry -- version-1 keys only, ordered by child
+/// schema, child table and key name.
+pub(crate) fn get_table_referred_foreign_keys(
+    catalog: &ClusterCatalog,
+    schema: &str,
+    table: &str,
+) -> Vec<ReferredFKInfo> {
+    let (schema, table) = (
+        tidb_hack::go_to_lower(schema),
+        tidb_hack::go_to_lower(table),
+    );
+    let mut referred = Vec::new();
+    for database in &catalog.databases {
+        for child in &database.tables {
+            for fk in child.foreign_keys.iter_deref() {
+                let fk = fk.read();
+                if fk.version < FK_VERSION1
+                    || fk.ref_schema.lowercase() != schema
+                    || fk.ref_table.lowercase() != table
+                {
+                    continue;
+                }
+                referred.push(ReferredFKInfo {
+                    cols: tidb_model::serde_helpers::GoValueSlice::allocated(
+                        fk.ref_cols.snapshot(),
+                    ),
+                    child_schema: database.info.name.clone(),
+                    child_table: child.name.clone(),
+                    child_fk_name: fk.name.clone(),
+                });
+            }
+        }
+    }
+    referred.sort_by(|left, right| {
+        (
+            left.child_schema.lowercase(),
+            left.child_table.lowercase(),
+            left.child_fk_name.lowercase(),
+        )
+            .cmp(&(
+                right.child_schema.lowercase(),
+                right.child_table.lowercase(),
+                right.child_fk_name.lowercase(),
+            ))
+    });
+    referred
+}
+
+/// Go `checkIndexNeededInForeignKey` (`foreign_key.go:443`): an index a key
+/// of this table, or a key citing it, needs cannot be dropped unless another
+/// index (or the integer primary key) still covers the key's columns.
+pub(crate) fn check_index_needed_in_foreign_key(
+    catalog: &ClusterCatalog,
+    db_name: &str,
+    tb_info: &TableInfo,
+    idx_info: &IndexInfo,
+) -> Refusal<()> {
+    let referred_fks = get_table_referred_foreign_keys(catalog, db_name, tb_info.name.original());
+    if tb_info.foreign_keys.is_empty() && referred_fks.is_empty() {
+        return Ok(());
+    }
+    let check_fn = |cols: &[CiString]| -> Refusal<()> {
+        if !is_index_prefix_covered_for_foreign_key(tb_info, idx_info, cols) {
+            return Ok(());
+        }
+        if tb_info.pk_is_handle && cols.len() == 1 {
+            if let Some(ref_col) = find_column_info(&tb_info.columns, cols[0].lowercase()) {
+                if ref_col.read().get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0 {
+                    return Ok(());
+                }
+            }
+        }
+        let remains_covered = tb_info.indices.iter_deref().any(|index| {
+            let index = index.read();
+            index.id != idx_info.id
+                && is_index_prefix_covered_for_foreign_key(tb_info, &index, cols)
+        });
+        if remains_covered {
+            return Ok(());
+        }
+        Err(coded(
+            tidb_error::mysql::errcode::ErrDropIndexNeededInForeignKey,
+            format!(
+                "Cannot drop index '{}': needed in a foreign key constraint",
+                idx_info.name
+            ),
+        ))
+    };
+    for fk in tb_info.foreign_keys.iter_deref() {
+        let fk = fk.read();
+        if fk.version < FK_VERSION1 {
+            continue;
+        }
+        check_fn(&fk.cols.snapshot())?;
+    }
+    for referred_fk in &referred_fks {
+        check_fn(&referred_fk.cols.iter().cloned().collect::<Vec<_>>())?;
+    }
+    Ok(())
+}
+
+/// Go `checkDropColumnWithForeignKeyConstraint` (`foreign_key.go:503`):
+/// `col_name` is lowercase, as Go passes `colName.L`.
+pub(crate) fn check_drop_column_with_foreign_key_constraint(
+    catalog: &ClusterCatalog,
+    db_name: &str,
+    tb_info: &TableInfo,
+    col_name: &str,
+) -> Refusal<()> {
+    for fk in tb_info.foreign_keys.iter_deref() {
+        let fk = fk.read();
+        if fk
+            .cols
+            .snapshot()
+            .iter()
+            .any(|col| col.lowercase() == col_name)
+        {
+            return Err(coded(
+                tidb_error::tidb::errcode::ErrFkColumnCannotDrop,
+                format!(
+                    "Cannot drop column '{col_name}': needed in a foreign key constraint '{}'",
+                    fk.name
+                ),
+            ));
+        }
+    }
+    for referred_fk in get_table_referred_foreign_keys(catalog, db_name, tb_info.name.original()) {
+        if referred_fk
+            .cols
+            .iter()
+            .any(|col| col.lowercase() == col_name)
+        {
+            return Err(coded(
+                tidb_error::tidb::errcode::ErrFkColumnCannotDropChild,
+                format!(
+                    "Cannot drop column '{col_name}': needed in a foreign key constraint '{}' \
+                     of table '{}'",
+                    referred_fk.child_fk_name, referred_fk.child_table
+                ),
+            ));
+        }
     }
     Ok(())
 }

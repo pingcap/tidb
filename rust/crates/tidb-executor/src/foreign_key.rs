@@ -336,6 +336,35 @@ fn check_child_row_changes(
     Ok(())
 }
 
+/// Go `checkForeignKeyConstrain` for a foreign key named `name` that
+/// `database`.`table` in `catalog` already carries: the production node's
+/// DDL transaction builds `catalog` from the child and its parent over the
+/// transaction's storage and checks the child's existing rows here.
+///
+/// # Errors
+///
+/// 1452 naming the constraint, or a read failure.
+pub fn check_foreign_key_constrain(
+    catalog: &mut Catalog,
+    database: &str,
+    table: &str,
+    name: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let Some(TableEntry::Kv(child)) = catalog.table_in(database, table) else {
+        return Ok(());
+    };
+    let Some(foreign_key) = child
+        .foreign_keys()
+        .iter()
+        .find(|key| key.name.eq_ignore_ascii_case(name))
+        .cloned()
+    else {
+        return Ok(());
+    };
+    require_existing_rows(catalog, database, table, &foreign_key, ctx)
+}
+
 /// Go `checkForeignKeyConstrain`: the rows a table ALREADY holds, checked
 /// against a constraint that is being ADDED to it.
 ///

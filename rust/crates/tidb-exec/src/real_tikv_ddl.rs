@@ -263,6 +263,14 @@ pub enum ClusterDdlError {
     /// Go `precheckForVarcharToChar` found a row that does not fit; the
     /// statement is planned again as a reorganization.
     ColumnPrecheckFailed,
+    /// Go `checkForeignKeyConstrain` refused an `ADD FOREIGN KEY`; the job
+    /// is rolled back with `rollback`, then answers with `error`.
+    ForeignKeyCheckFailed {
+        /// The check's error.
+        error: LockSqlError,
+        /// The rolled-back job's catalog write.
+        rollback: Box<DdlStatement>,
+    },
     /// The change needs an index backfill and this path has no backfiller.
     ///
     /// Publishing the meta half alone would create an index that exists and is
@@ -319,6 +327,7 @@ impl fmt::Display for ClusterDdlError {
             ),
             Self::IndexBackfill(error)
             | Self::ColumnReorg(error)
+            | Self::ForeignKeyCheckFailed { error, .. }
             | Self::ExchangeValidation(error) => formatter.write_str(&error.message),
             Self::ColumnPrecheckFailed => {
                 formatter.write_str("a VARCHAR -> CHAR precheck found a row that does not fit")
@@ -355,6 +364,7 @@ impl std::error::Error for ClusterDdlError {
             | Self::IndexBackfill(_)
             | Self::ColumnReorg(_)
             | Self::ColumnPrecheckFailed
+            | Self::ForeignKeyCheckFailed { .. }
             | Self::BackfillUnavailable
             | Self::ExchangeValidation(_)
             | Self::ExchangeValidationUnavailable
@@ -512,7 +522,7 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::CheckConstraintValidationUnavailable);
     }
-    if write.column_reorg.is_some() {
+    if write.column_reorg.is_some() || !write.foreign_key_checks.is_empty() {
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::BackfillUnavailable);
     }
@@ -650,6 +660,27 @@ pub trait IndexBackfiller {
             state: *b"HY000",
             message: "this path cannot check or rewrite a column's rows".to_owned(),
         })
+    }
+
+    /// Go `checkForeignKeyConstrain` for an `ADD FOREIGN KEY`: the child's
+    /// existing rows against its parent, through the same snapshot and
+    /// buffer as [`Self::stage`].
+    fn stage_foreign_key_check(
+        &self,
+        _plan: &crate::cluster_ddl::ForeignKeyCheck,
+        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        _buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError> {
+        Err(foreign_key_check_unavailable())
+    }
+}
+
+/// The default for a backfiller that cannot read a child and its parent.
+fn foreign_key_check_unavailable() -> LockSqlError {
+    LockSqlError {
+        code: 1105,
+        state: *b"HY000",
+        message: "this path cannot check a foreign key's existing rows".to_owned(),
     }
 }
 
@@ -874,6 +905,12 @@ pub fn commit_cluster_ddl_with_backfill<
                     Some(tidb_executor::ddl::modify_column_type::ModifyColumnType::Reorg);
             }
             phase(&reorganized)
+        }
+        // Go `onCreateForeignKey`: the refused check rolls the job back, and
+        // the statement answers with the check's error once that is done.
+        Err(ClusterDdlError::ForeignKeyCheckFailed { error, rollback }) => {
+            phase(&rollback)?;
+            return Err(ClusterDdlError::IndexBackfill(error));
         }
         outcome => outcome,
     };
@@ -1476,6 +1513,7 @@ fn commit_cluster_ddl_with_backfill_once<
     let mut buffer = MutationBuffer::new();
     if !write.backfill.is_empty()
         || write.column_reorg.is_some()
+        || !write.foreign_key_checks.is_empty()
         || write.exchange_partition_validation.is_some()
         || write.check_constraint_validation.is_some()
     {
@@ -1506,6 +1544,22 @@ fn commit_cluster_ddl_with_backfill_once<
                         backfiller
                             .stage(backfill, Arc::clone(&handle), &buffer)
                             .map_err(ClusterDdlError::IndexBackfill)?;
+                    }
+                    // After the key columns' index exists (Go runs its
+                    // `createIndex` job before the foreign-key job).
+                    for check in &write.foreign_key_checks {
+                        backfiller
+                            .stage_foreign_key_check(check, Arc::clone(&handle), &buffer)
+                            .map_err(|error| ClusterDdlError::ForeignKeyCheckFailed {
+                                error,
+                                rollback: Box::new(DdlStatement::AddForeignKeyRollback {
+                                    schema: check.schema.clone(),
+                                    table: check.child.name.original().to_owned(),
+                                    max_column_id: check.child.max_column_id,
+                                    max_index_id: check.child.max_index_id,
+                                    max_foreign_key_id: check.child.max_foreign_key_id,
+                                }),
+                            })?;
                     }
                     if let Some(validation) = &write.exchange_partition_validation {
                         exchange_validator

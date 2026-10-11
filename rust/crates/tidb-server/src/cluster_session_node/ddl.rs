@@ -2491,6 +2491,49 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         }
         Ok(ColumnStageOutcome::Staged)
     }
+    /// Go `checkForeignKeyConstrain`: the child's existing rows against its
+    /// parent, both read through the DDL transaction's snapshot and buffer,
+    /// by the same check the in-process `ADD FOREIGN KEY` runs.
+    fn stage_foreign_key_check(
+        &self,
+        plan: &tidb_exec::cluster_ddl::ForeignKeyCheck,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError> {
+        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        let mut catalog = tidb_executor::Catalog::default();
+        let child = cluster_table(&plan.child, &storage, &AutoIdSource::Unavailable)
+            .map_err(exchange_validation_internal)?
+            .with_new_collation_mode(plan.use_new_collation);
+        catalog.create_database(&plan.schema);
+        catalog
+            .register_kv_in(&plan.schema, plan.child.name.original(), child)
+            .map_err(|error| exchange_validation_internal(format!("{error:?}")))?;
+        if let Some((schema, parent)) = &plan.parent {
+            let table = cluster_table(parent, &storage, &AutoIdSource::Unavailable)
+                .map_err(exchange_validation_internal)?
+                .with_new_collation_mode(plan.use_new_collation);
+            catalog.create_database(schema);
+            catalog
+                .register_kv_in(schema, parent.name.original(), table)
+                .map_err(|error| exchange_validation_internal(format!("{error:?}")))?;
+        }
+        tidb_executor::check_foreign_key_constrain(
+            &mut catalog,
+            &plan.schema,
+            plan.child.name.original(),
+            &plan.name,
+            &plan.context.0,
+        )
+        .map_err(|error| {
+            let error = error.to_mysql_error();
+            LockSqlError {
+                code: error.code,
+                state: error.state,
+                message: error.message,
+            }
+        })
+    }
 }
 
 impl ExchangePartitionValidator for KvTableIndexBackfiller {

@@ -1035,9 +1035,10 @@ pub(crate) fn hidden_index_column_info(
     offset: usize,
 ) -> ColumnInfo {
     let generated = hidden.generated;
+    // Go keys `Dependences` by `Name.L`.
     let mut dependences = GoStringSet::default();
     for dependency in generated.dependencies {
-        dependences.insert(dependency);
+        dependences.insert(tidb_hack::go_to_lower(&dependency));
     }
     ColumnInfo {
         id: 0,
@@ -1587,8 +1588,9 @@ fn build_column(
                 .map_err(generated_column_admission_error)?;
                 info.generated_expr_string = generated.expr_text;
                 info.generated_stored = generated.stored;
+                // Go `findDependedColumnNames` keys the set by `Name.L`.
                 for dependency in generated.dependencies {
-                    info.dependences.insert(dependency);
+                    info.dependences.insert(tidb_hack::go_to_lower(&dependency));
                 }
             }
             // Already folded into the charset/collation resolution above.
@@ -1684,9 +1686,14 @@ fn generated_column_admission_error(
 ) -> DdlAdmissionError {
     use tidb_executor::generated_column::GeneratedDdlError;
     match error {
+        // Go `checkDependedColExist` reports a key of `findDependedColumnNames`'s
+        // map, which is the name's lowercase form.
         GeneratedDdlError::UnknownDependency(name) => DdlAdmissionError::with_code(
             1054,
-            format!("Unknown column '{name}' in 'generated column function'"),
+            format!(
+                "Unknown column '{}' in 'generated column function'",
+                tidb_hack::go_to_lower(&name)
+            ),
         ),
         GeneratedDdlError::NonPrior => DdlAdmissionError::with_code(
             tidb_error::tidb::errcode::ErrGeneratedColumnNonPrior,

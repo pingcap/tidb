@@ -694,6 +694,33 @@ pub fn build_added_generated_column_with_like_default_escape(
         expression,
     )
     .map_err(GeneratedDdlError::IllegalFunction)?;
+    resolve_generated_expr(expression, stored, names, types, zone, like_default_escape)
+}
+
+/// Go `buildGeneratedExpr` (`pkg/table/tables/tables.go`), which
+/// `TableFromMeta` runs over a stored column's `GeneratedExprString`. The
+/// expression was admitted when its DDL ran, so it is only resolved against
+/// the table's columns -- no `checkIllegalFn4Generated` -- and a
+/// `CAST(... AS ... ARRAY)` builds (`WithAllowCastArray`), as the hidden
+/// column of a multi-valued index needs.
+pub fn build_generated_expr(
+    expression: &tidb_ast::Expr,
+    stored: bool,
+    names: &[String],
+    types: &[FieldType],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<GeneratedColumn, GeneratedDdlError> {
+    resolve_generated_expr(expression, stored, names, types, zone, b'\\')
+}
+
+fn resolve_generated_expr(
+    expression: &tidb_ast::Expr,
+    stored: bool,
+    names: &[String],
+    types: &[FieldType],
+    zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
+) -> Result<GeneratedColumn, GeneratedDdlError> {
     let resolver = TableColumnResolver::with_like_default_escape(
         names,
         types,

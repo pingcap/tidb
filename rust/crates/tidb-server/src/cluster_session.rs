@@ -732,8 +732,7 @@ pub(crate) fn cluster_table(
                 .as_ref()
                 .expect("generated schema collected");
             Some(
-                tidb_executor::generated_column::build_added_generated_column(
-                    &name,
+                tidb_executor::generated_column::build_generated_expr(
                     &expression,
                     column.generated_stored,
                     names,

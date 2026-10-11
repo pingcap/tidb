@@ -201,6 +201,8 @@ pub enum AlterColumnAction {    /// `ADD COLUMN`, at its written position.
         if_exists: bool,
         /// The column name as written.
         column: String,
+        /// The session's `tidb_allow_remove_auto_inc`.
+        allow_remove_auto_inc: bool,
     },
     /// `ADD INDEX`/`ADD KEY`, admitted against the original table metadata.
     AddIndex {
@@ -220,6 +222,19 @@ pub enum AlterColumnAction {    /// `ADD COLUMN`, at its written position.
         /// Whether a missing index is a no-op.
         if_exists: bool,
         /// The index name as written.
+        name: String,
+    },
+    /// `ADD FOREIGN KEY` (Go `CreateForeignKey`).
+    AddForeignKey {
+        /// The constraint as written.
+        definition: Box<tidb_ast::ForeignKeyConstraintDefinition>,
+        /// The session's `foreign_key_checks` and the context the existing
+        /// rows are checked under.
+        context: DdlStatementContext,
+    },
+    /// `DROP FOREIGN KEY name` (Go `DropForeignKey`).
+    DropForeignKey {
+        /// The constraint name as written.
         name: String,
     },
     /// A table-level CHECK split out of grouped `ADD COLUMN (...)` by Go's
@@ -480,6 +495,8 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         if_exists: bool,
         /// The column name as written.
         column: String,
+        /// The session's `tidb_allow_remove_auto_inc`.
+        allow_remove_auto_inc: bool,
     },
     /// The meta-only `ALTER TABLE ... MODIFY COLUMN` this node serves:
     /// Go `noReorgDataStrict`'s same-type widening, committed as a
@@ -494,11 +511,11 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         table: String,
         /// The column as re-declared.
         column: Box<tidb_ast::ColumnDef>,
-        /// The statement context the plan-time build resolves under.
         /// Go's `ast.ColumnPosition`: a MODIFY/CHANGE may also MOVE the
         /// column, and Go locates the destination against the column's
         /// CURRENT offset (unlike ADD, which appends first).
         position: tidb_ast::ColumnPosition,
+        /// The statement context the plan-time build resolves under.
         context: DdlStatementContext,
         /// `CHANGE COLUMN`'s old name; `None` is a plain MODIFY. Go gives
         /// both spellings the one ActionModifyColumn job, the rename riding
@@ -508,6 +525,44 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// computes it (`getModifyColumnType`); a failed VARCHAR -> CHAR
         /// precheck plans the statement again with `Reorg`.
         modify_column_type: Option<tidb_executor::ddl::modify_column_type::ModifyColumnType>,
+    },
+    /// `ALTER TABLE ... ADD FOREIGN KEY` (Go `CreateForeignKey`).
+    AddForeignKey {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The constraint as written.
+        definition: Box<tidb_ast::ForeignKeyConstraintDefinition>,
+        /// The session's `foreign_key_checks` and the context the existing
+        /// rows are checked under.
+        context: DdlStatementContext,
+    },
+    /// `ALTER TABLE ... DROP FOREIGN KEY name` (Go `DropForeignKey`).
+    DropForeignKey {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The constraint name as written.
+        name: String,
+    },
+    /// Go `onCreateForeignKey` rolling back after `checkForeignKeyConstrain`
+    /// refused the existing rows: `dropForeignKey` removes the key, and the
+    /// rollback of every earlier sub-job of the same ALTER (the key's
+    /// `createIndex` among them) what it added, but the ids those jobs
+    /// allocated stay taken.
+    AddForeignKeyRollback {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// `MaxColumnID` when the key's job ran.
+        max_column_id: i64,
+        /// `MaxIndexID` when the key's job ran.
+        max_index_id: i64,
+        /// `MaxForeignKeyID` after `allocateFKIndexID`.
+        max_foreign_key_id: i64,
     },
     /// `ALTER TABLE ... RENAME COLUMN from TO to` — `renameColumnTo` alone,
     /// no type change, still Go's ActionModifyColumn.
@@ -1347,6 +1402,7 @@ fn lower_alter_table_catalog(
                     actions.push(AlterColumnAction::Drop {
                         if_exists: *if_exists,
                         column: name.clone(),
+                        allow_remove_auto_inc: context.allow_remove_auto_inc(),
                     });
                 }
                 tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
@@ -1376,6 +1432,17 @@ fn lower_alter_table_catalog(
                     actions.push(AlterColumnAction::DropIndex {
                         if_exists: *if_exists,
                         name: name.clone(),
+                    });
+                }
+                tidb_ast::AlterTableAction::AddForeignKey(definition) => {
+                    actions.push(AlterColumnAction::AddForeignKey {
+                        definition: Box::new(definition.clone()),
+                        context: DdlStatementContext(context.clone()),
+                    });
+                }
+                tidb_ast::AlterTableAction::DropForeignKey(drop) => {
+                    actions.push(AlterColumnAction::DropForeignKey {
+                        name: drop.name.clone(),
                     });
                 }
                 tidb_ast::AlterTableAction::Lock(_) => {
@@ -1489,6 +1556,23 @@ fn lower_alter_table_catalog(
     match action {
         tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
             lower_alter_add_index(alter, index, default_schema, context).map(Some)
+        }
+        tidb_ast::AlterTableAction::AddForeignKey(definition) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AddForeignKey {
+                schema,
+                table,
+                definition: Box::new(definition.clone()),
+                context: DdlStatementContext(context.clone()),
+            }))
+        }
+        tidb_ast::AlterTableAction::DropForeignKey(drop) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::DropForeignKey {
+                schema,
+                table,
+                name: drop.name.clone(),
+            }))
         }
         tidb_ast::AlterTableAction::DropIndex { if_exists, name } => lower_drop_index(
             &DropIndexStmt {
@@ -1753,6 +1837,7 @@ fn lower_alter_table_catalog(
                 table,
                 if_exists: *if_exists,
                 column: name.clone(),
+                allow_remove_auto_inc: context.allow_remove_auto_inc(),
             }))
         }
         tidb_ast::AlterTableAction::ConvertCharacterSet { charset, collation } => {
@@ -2156,11 +2241,11 @@ fn prepare_rename_column(
     to: &str,
 ) -> Result<Option<tidb_model::ColumnInfo>, DdlPlanError> {
     let wanted = from.go_to_lower();
-    let Some(position) = stored
-        .columns
-        .iter_deref()
-        .position(|candidate| candidate.read().name.lowercase() == wanted)
-    else {
+    // Go `table.FindCol(tbl.VisibleCols(), oldColName.L)`.
+    let Some(position) = stored.columns.iter_deref().position(|candidate| {
+        let candidate = candidate.read();
+        !candidate.hidden && candidate.name.lowercase() == wanted
+    }) else {
         return Err(DdlPlanError::UnknownColumn {
             column: from.to_owned(),
             table: table.to_owned(),
@@ -2185,14 +2270,40 @@ fn prepare_rename_column(
         return Ok(None);
     }
     let new_name = to.go_to_lower();
-    if new_name != wanted
-        && stored
-            .columns
-            .iter_deref()
-            .any(|candidate| candidate.read().name.lowercase() == new_name)
+    if new_name == "_tidb_rowid" {
+        return Err(coded_refusal(
+            tidb_error::mysql::errcode::ErrWrongColumnName,
+            format!("Incorrect column name '{new_name}'"),
+        ));
+    }
+    if stored
+        .columns
+        .iter_deref()
+        .any(|candidate| candidate.read().name.lowercase() == new_name)
     {
         return Err(DdlPlanError::DuplicateColumnName(to.to_owned()));
     }
+    // Go `checkModifyColumnWithGeneratedColumnsConstraint`.
+    if let Some(dependent) = stored.columns.iter_deref().find(|candidate| {
+        let candidate = candidate.read();
+        candidate.is_generated() && candidate.dependences.contains(&wanted)
+    }) {
+        return Err(if dependent.read().hidden {
+            coded_refusal(
+                tidb_error::mysql::errcode::ErrDependentByFunctionalIndex,
+                format!(
+                    "Column '{from}' has an expression index dependency and cannot be dropped \
+                     or renamed"
+                ),
+            )
+        } else {
+            coded_refusal(
+                tidb_error::mysql::errcode::ErrDependentByGeneratedColumn,
+                format!("Column '{from}' has a generated column dependency."),
+            )
+        });
+    }
+    check_drop_column_with_partition_constraint(stored, &wanted)?;
     let mut column = stored
         .columns
         .get(position)
@@ -2419,10 +2530,12 @@ fn apply_prepared_column(
 /// table. Index execution keeps its existing backfill owner after admission.
 struct PreparedClusterColumns {
     columns: BTreeMap<usize, (tidb_model::ColumnInfo, tidb_ast::ColumnPosition, bool)>,
+    foreign_keys: BTreeMap<usize, CreatedForeignKey>,
     skipped: BTreeMap<usize, String>,
 }
 
 fn prepare_cluster_columns(
+    catalog: &ClusterCatalog,
     stored: &TableInfo,
     schema: &str,
     table: &str,
@@ -2431,8 +2544,12 @@ fn prepare_cluster_columns(
 ) -> Result<PreparedClusterColumns, DdlPlanError> {
     let mut prepared = PreparedClusterColumns {
         columns: BTreeMap::new(),
+        foreign_keys: BTreeMap::new(),
         skipped: BTreeMap::new(),
     };
+    // Go `AlterTable` names every anonymous key before any spec runs.
+    let mut max_foreign_key_id = stored.max_foreign_key_id;
+    let mut add_foreign_keys = Vec::new();
     let mut add_columns = Vec::new();
     let mut drop_columns = Vec::new();
     let mut modify_columns = Vec::new();
@@ -2531,18 +2648,31 @@ fn prepare_cluster_columns(
                     skipped = Some(format!("column `{from}` already has the requested name"));
                 }
             }
-            AlterColumnAction::Drop { if_exists, column } => {
-                let mut candidate = stored.clone_like_go();
-                match apply_drop_column(&mut candidate, schema, table, column, *if_exists)? {
-                    AlterColumnOutcome::Applied => drop_columns.push(CiString::new(column.clone())),
-                    AlterColumnOutcome::AlreadySatisfied(detail) => {
-                        warnings.push((
-                            DdlWarningLevel::Note,
-                            1091,
-                            format!("Can't DROP '{column}'; check that column/key exists"),
-                        ));
-                        skipped = Some(detail);
-                    }
+            AlterColumnAction::Drop {
+                if_exists,
+                column,
+                allow_remove_auto_inc,
+            } => {
+                // Go `DropColumn` for each spec, against the original table.
+                if check_is_droppable_column(
+                    catalog,
+                    schema,
+                    stored,
+                    column,
+                    *if_exists,
+                    *allow_remove_auto_inc,
+                )? {
+                    check_visible_column_cnt(stored, 0, 1)?;
+                    drop_columns.push(CiString::new(column.clone()));
+                } else {
+                    warnings.push((
+                        DdlWarningLevel::Note,
+                        1091,
+                        format!("Can't DROP '{column}'; check that column/key exists"),
+                    ));
+                    skipped = Some(format!(
+                        "column `{column}` does not exist on `{schema}`.`{table}`"
+                    ));
                 }
             }
             AlterColumnAction::AddIndex {
@@ -2589,6 +2719,15 @@ fn prepare_cluster_columns(
                 }
             }
             AlterColumnAction::DropIndex { if_exists, name } => {
+                if let Some(index) = find_index(stored, name) {
+                    crate::foreign_key_build::check_index_needed_in_foreign_key(
+                        catalog,
+                        schema,
+                        stored,
+                        &index.read(),
+                    )
+                    .map_err(DdlPlanError::Admission)?;
+                }
                 if find_index(stored, name).is_none() {
                     if !if_exists {
                         return Err(DdlPlanError::UnknownIndex(name.clone()));
@@ -2603,6 +2742,39 @@ fn prepare_cluster_columns(
                     ));
                 } else {
                     drop_indexes.push(CiString::new(name.clone()));
+                }
+            }
+            AlterColumnAction::AddForeignKey {
+                definition,
+                context,
+            } => {
+                let name = match definition.name.as_deref() {
+                    Some(name) if !name.is_empty() => name.to_owned(),
+                    _ => {
+                        max_foreign_key_id += 1;
+                        format!("fk_{max_foreign_key_id}")
+                    }
+                };
+                let created =
+                    create_foreign_key(catalog, schema, stored, &name, definition, context)?;
+                // Go `fillMultiSchemaInfo`: the queued `createIndex` adds an
+                // index over the key's columns, the key an `AddForeignKeys`
+                // entry.
+                if created.needs_index {
+                    add_indexes.push(created.fk.name.clone());
+                    relative_columns.extend(created.fk.cols.snapshot());
+                }
+                add_foreign_keys.push(created.fk.cols.snapshot());
+                prepared.foreign_keys.insert(offset, created);
+            }
+            AlterColumnAction::DropForeignKey { name } => {
+                // Go `DropForeignKey`.
+                if !stored
+                    .foreign_keys
+                    .iter_deref()
+                    .any(|fk| fk.read().name.lowercase() == name.go_to_lower())
+                {
+                    return Err(foreign_key_not_exists(name));
                 }
             }
             AlterColumnAction::AddCheck {
@@ -2647,12 +2819,19 @@ fn prepare_cluster_columns(
         drop_indexes: GoSharedSlice::from_vec(drop_indexes),
         ..Default::default()
     };
+    // Go `checkMultiSchemaInfo`.
     tidb_executor::ddl::check_multi_schema_names(&names).map_err(|error| match error {
         tidb_executor::DriverError::DdlCoded { errno, message } => {
             DdlPlanError::Admission(DdlAdmissionError::with_code(errno, message))
         }
         other => DdlPlanError::Encode(other.to_string()),
     })?;
+    check_visible_column_cnt(stored, names.add_columns.len(), names.drop_columns.len())?;
+    check_operate_drop_index_use_by_foreign_key(
+        stored,
+        &names.drop_indexes.snapshot(),
+        &add_foreign_keys,
+    )?;
     Ok(prepared)
 }
 
@@ -2697,20 +2876,37 @@ fn apply_add_column(
     // statement never reached.
     let appended = info.columns.len();
     let destination = locate_offset_to_move(appended, position, info)?;
-    let generated_preceding = info
+    // Go `checkDependedColExist`: a generated column reads only visible
+    // columns.
+    let generated_namespace = info
         .columns
         .iter_deref()
-        .take(destination)
         .map(|column| column.read().clone_like_go())
+        .filter(|column| !column.hidden)
         .collect::<Vec<_>>();
     let mut added = crate::table_info_build::build_added_column(
         column,
         &info.charset,
         &info.collate,
         context,
-        Some(&generated_preceding),
+        Some(&generated_namespace),
     )
     .map_err(DdlPlanError::Admission)?;
+    // Go `verifyColumnGenerationSingle`: a generated column it reads must
+    // come before the new column's position.
+    if added.is_generated()
+        && info.columns.iter_deref().any(|existing| {
+            let existing = existing.read();
+            existing.is_generated()
+                && usize::try_from(existing.offset).is_ok_and(|offset| offset >= destination)
+                && added.dependences.contains(existing.name.lowercase())
+        })
+    {
+        return Err(coded_refusal(
+            tidb_error::tidb::errcode::ErrGeneratedColumnNonPrior,
+            "Generated column can refer only to generated columns defined prior to it.",
+        ));
+    }
     // Go `AllocateColumnID`: ids only ever grow, so a dropped column's id is
     // never reused.
     info.max_column_id += 1;
@@ -2818,66 +3014,149 @@ fn move_column_info(info: &mut TableInfo, from: usize, to: usize) {
     }
 }
 
-/// Go `isDroppableColumn` + `onDropColumn` over the same evolving info.
-fn apply_drop_column(
-    info: &mut TableInfo,
+fn coded_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
+    DdlPlanError::Admission(DdlAdmissionError::with_code(code, message.into()))
+}
+
+/// Go `checkIsDroppableColumn` (`pkg/ddl/executor.go`): one DROP COLUMN as
+/// its submitter checks it against the table as it stands. `Ok(false)` is
+/// IF EXISTS over a column that is not there, which Go skips with a 1091
+/// note.
+fn check_is_droppable_column(
+    catalog: &ClusterCatalog,
     schema: &str,
-    table: &str,
+    info: &TableInfo,
     column: &str,
     if_exists: bool,
-) -> Result<AlterColumnOutcome, DdlPlanError> {
-    let wanted = column.go_to_lower();
-    let Some(dropped_offset) = info
+    allow_remove_auto_inc: bool,
+) -> Result<bool, DdlPlanError> {
+    let col_name = column.go_to_lower();
+    // Go `table.FindCol(t.VisibleCols(), colName.L)`: a hidden
+    // expression-index column cannot be named.
+    let Some(col) = info
         .columns
         .iter_deref()
-        .position(|candidate| candidate.read().name.lowercase() == wanted)
+        .map(|candidate| candidate.read().clone_like_go())
+        .find(|candidate| !candidate.hidden && candidate.name.lowercase() == col_name)
     else {
         if if_exists {
-            return Ok(AlterColumnOutcome::AlreadySatisfied(format!(
-                "column `{column}` does not exist on `{schema}`.`{table}`"
-            )));
+            return Ok(false);
         }
-        // Go 1091 ErrCantDropFieldOrKey.
         return Err(DdlPlanError::CantDropFieldOrKey(column.to_owned()));
     };
-    if info.columns.len() == 1 {
-        // Go 1090 ErrCantRemoveAllFields.
-        return Err(DdlPlanError::Encode(format!(
-            "can't drop only column {column} in table {}",
-            info.name.original()
-        )));
+    is_droppable_column(info, column)?;
+    check_drop_column_with_partition_constraint(info, &col_name)?;
+    crate::foreign_key_build::check_drop_column_with_foreign_key_constraint(
+        catalog, schema, info, &col_name,
+    )
+    .map_err(DdlPlanError::Admission)?;
+    check_drop_column_with_ttl_config(info, &col_name)?;
+    // Go `ErrUnsupportedPKHandle`.
+    if col.is_pk_handle_column(info) {
+        return Err(coded_refusal(8200, "Unsupported drop integer primary key"));
     }
-    let dropped = info
-        .columns
-        .iter_deref()
-        .nth(dropped_offset)
-        .expect("the position was just found")
-        .read()
-        .clone_like_go();
-    if dropped.is_pk_handle_column(info) {
-        // Go 8200 via checkModifyPKColumn's drop arm.
-        return Err(DdlPlanError::Encode(
-            "Unsupported drop integer primary key".to_owned(),
+    // Go `ErrCantDropColWithAutoInc`.
+    if col.get_flag() & u64::from(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT) != 0
+        && !allow_remove_auto_inc
+    {
+        return Err(coded_refusal(
+            8200,
+            "Unsupported can't remove column with auto_increment when \
+             @@tidb_allow_remove_auto_inc disabled",
         ));
     }
+    check_column_referenced_by_partial_condition(info, col.name.original())?;
+    Ok(true)
+}
+
+/// Go `checkDropColumn` (`pkg/ddl/column.go`): the owner's checks of one
+/// DROP COLUMN sub-job against the table the earlier sub-jobs left.
+fn check_drop_column(
+    catalog: &ClusterCatalog,
+    schema: &str,
+    info: &TableInfo,
+    column: &str,
+) -> Result<(), DdlPlanError> {
+    let col_name = column.go_to_lower();
+    if !info.columns.iter_deref().any(|candidate| {
+        let candidate = candidate.read();
+        !candidate.hidden && candidate.name.lowercase() == col_name
+    }) {
+        return Err(coded_refusal(
+            tidb_error::mysql::errcode::ErrCantDropFieldOrKey,
+            format!("column {column} doesn't exist"),
+        ));
+    }
+    is_droppable_column(info, column)?;
+    // Go `checkDropColumnWithForeignKeyConstraintInOwner`.
+    if tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::foreign_key_build::check_drop_column_with_foreign_key_constraint(
+            catalog, schema, info, &col_name,
+        )
+        .map_err(DdlPlanError::Admission)?;
+    }
+    check_drop_column_with_ttl_config(info, &col_name)
+}
+
+/// Go `isDroppableColumn` (`pkg/ddl/column.go`).
+fn is_droppable_column(info: &TableInfo, column: &str) -> Result<(), DdlPlanError> {
+    let col_name = column.go_to_lower();
+    // Go `hasDependentByGeneratedColumn`, whose `dep` is `colName.L`.
+    if let Some(dependent) = info
+        .columns
+        .iter_deref()
+        .find(|candidate| candidate.read().dependences.contains(&col_name))
+    {
+        return Err(if dependent.read().hidden {
+            coded_refusal(
+                tidb_error::mysql::errcode::ErrDependentByFunctionalIndex,
+                format!(
+                    "Column '{col_name}' has an expression index dependency and cannot be \
+                     dropped or renamed"
+                ),
+            )
+        } else {
+            coded_refusal(
+                tidb_error::mysql::errcode::ErrDependentByGeneratedColumn,
+                format!("Column '{col_name}' has a generated column dependency."),
+            )
+        });
+    }
+    if info.columns.len() == 1 {
+        return Err(coded_refusal(
+            tidb_error::mysql::errcode::ErrCantRemoveAllFields,
+            format!(
+                "can't drop only column {column} in table {}",
+                info.name.original()
+            ),
+        ));
+    }
+    // Go `isColumnCanDropWithIndex`: `ErrCantDropColWithIndex`.
     for index in info.indices.iter_deref() {
         let index = index.read();
-        let covers = index
+        if !(index.primary || index.columns.len() > 1 || index.is_columnar_index()) {
+            continue;
+        }
+        if index
             .columns
             .iter_deref()
-            .any(|col| col.read().name.lowercase() == wanted);
-        if covers && (index.primary || index.columns.len() > 1) {
-            // Go 8200 ErrCantDropColWithIndex, message verbatim.
-            return Err(DdlPlanError::Encode(format!(
-                "can't drop column {column} with composite index covered or \
-                 Primary Key covered now"
-            )));
+            .any(|indexed| indexed.read().name.lowercase() == col_name)
+        {
+            let covered = if index.is_columnar_index() {
+                "with Columnar Index covered now"
+            } else {
+                "with composite index covered or Primary Key covered now"
+            };
+            return Err(coded_refusal(
+                8200,
+                format!("can't drop column {col_name} {covered}"),
+            ));
         }
     }
     // Go `IsColumnDroppableWithCheckConstraint`: a CHECK that also names
-    // another column cannot survive this DROP, so refuse it with 3959. A
-    // single-column CHECK is allowed; `table.LoadCheckConstraint` removes
-    // that now-invalid metadata lazily when the post-DDL table is loaded.
+    // another column cannot survive this DROP (3959). A single-column CHECK
+    // is allowed; `table.LoadCheckConstraint` removes that now-invalid
+    // metadata lazily when the post-DDL table is loaded.
     if let Some(constraint) = info.constraints.iter_deref().find(|constraint| {
         let constraint = constraint.read();
         constraint.constraint_cols.len() > 1
@@ -2888,11 +3167,191 @@ fn apply_drop_column(
             constraint.name.original(),
             column,
         );
-        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-            error.code,
-            error.message,
-        )));
+        return Err(coded_refusal(error.code, error.message));
     }
+    check_column_referenced_by_partial_condition(info, column)
+}
+
+/// Go `checkDropColumnWithPartitionConstraint` (`pkg/ddl/executor.go`): a
+/// column the partitioning reads (`GetPartitionColumnNames`) cannot go.
+fn check_drop_column_with_partition_constraint(
+    info: &TableInfo,
+    col_name: &str,
+) -> Result<(), DdlPlanError> {
+    if info.partition.is_none() {
+        return Ok(());
+    }
+    let spec = stored_partition_spec(info)?;
+    if spec
+        .dependencies
+        .iter()
+        .any(|name| name.go_to_lower() == col_name)
+    {
+        return Err(coded_refusal(
+            tidb_error::tidb::errcode::ErrDependentByPartitionFunctional,
+            format!(
+                "Column '{col_name}' has a partitioning function dependency and cannot be \
+                 dropped or renamed"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Go `checkDropColumnWithTTLConfig` (`pkg/ddl/ttl.go`).
+fn check_drop_column_with_ttl_config(info: &TableInfo, col_name: &str) -> Result<(), DdlPlanError> {
+    if let Some(ttl) = &info.ttl_info {
+        if ttl.read().column_name.lowercase() == col_name {
+            return Err(coded_refusal(
+                tidb_error::tidb::errcode::ErrTTLColumnCannotDrop,
+                format!("Cannot drop column '{col_name}': needed in TTL config"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Go `checkColumnReferencedByPartialCondition` (`pkg/ddl/executor.go`).
+fn check_column_referenced_by_partial_condition(
+    info: &TableInfo,
+    column: &str,
+) -> Result<(), DdlPlanError> {
+    let col_name = column.go_to_lower();
+    for index in info.indices.iter_deref() {
+        let index = index.read();
+        if index
+            .affect_column
+            .iter_deref()
+            .any(|affected| affected.read().name.lowercase() == col_name)
+        {
+            return Err(coded_refusal(
+                tidb_error::tidb::errcode::ErrModifyColumnReferencedByPartialCondition,
+                format!(
+                    "Cannot drop, change or modify column '{column}': it is referenced in \
+                     partial index '{}'",
+                    index.name.original()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Go `checkVisibleColumnCnt` (`pkg/ddl/executor.go`).
+fn check_visible_column_cnt(
+    info: &TableInfo,
+    add_cnt: usize,
+    drop_cnt: usize,
+) -> Result<(), DdlPlanError> {
+    let visible_column_cnt = info
+        .columns
+        .iter_deref()
+        .filter(|column| !column.read().hidden)
+        .count();
+    if visible_column_cnt + add_cnt > drop_cnt {
+        return Ok(());
+    }
+    if info.columns.len() > visible_column_cnt {
+        // There are only invisible columns.
+        return Err(coded_refusal(
+            tidb_error::mysql::errcode::ErrTableMustHaveColumns,
+            "A table must have at least 1 column",
+        ));
+    }
+    Err(coded_refusal(
+        tidb_error::mysql::errcode::ErrCantRemoveAllFields,
+        "You can't delete all columns with ALTER TABLE; use DROP TABLE instead",
+    ))
+}
+
+/// Go `checkOperateDropIndexUseByForeignKey` (`multi_schema_change.go`): an
+/// index this ALTER drops cannot be the only one covering a key it adds.
+fn check_operate_drop_index_use_by_foreign_key(
+    tb_info: &TableInfo,
+    drop_indexes: &[CiString],
+    add_foreign_keys: &[Vec<CiString>],
+) -> Result<(), DdlPlanError> {
+    let (dropping_indexes, remain_indexes): (Vec<_>, Vec<_>) =
+        tb_info.indices.iter_handles().partition(|index| {
+            let index = index.as_ref().expect("nil *IndexInfo in TableInfo.Indices");
+            let name = index.read().name.lowercase().to_owned();
+            drop_indexes
+                .iter()
+                .any(|dropped| dropped.lowercase() == name)
+        });
+    let dropping_indexes = tidb_model::GoSharedPointerSlice::from_handles(dropping_indexes);
+    let remain_indexes = tidb_model::GoSharedPointerSlice::from_handles(remain_indexes);
+    for cols in add_foreign_keys {
+        if let Some(dropping_idx) = tidb_model::index::find_index_by_columns_for_foreign_key(
+            tb_info,
+            &dropping_indexes,
+            cols,
+        ) {
+            if tidb_model::index::find_index_by_columns_for_foreign_key(
+                tb_info,
+                &remain_indexes,
+                cols,
+            )
+            .is_none()
+            {
+                return Err(coded_refusal(
+                    tidb_error::mysql::errcode::ErrDropIndexNeededInForeignKey,
+                    format!(
+                        "Cannot drop index '{}': needed in a foreign key constraint",
+                        dropping_idx.read().name
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Go `infoschema.ErrForeignKeyNotExists` (1091).
+fn foreign_key_not_exists(name: &str) -> DdlPlanError {
+    coded_refusal(
+        tidb_error::mysql::errcode::ErrCantDropFieldOrKey,
+        format!("Can't DROP '{name}'; check that column/key exists"),
+    )
+}
+
+/// Go `dropForeignKey` (`foreign_key.go`) over an evolving `TableInfo`.
+fn drop_foreign_key(info: &mut TableInfo, name: &str) -> Result<(), DdlPlanError> {
+    let Some(position) = info
+        .foreign_keys
+        .iter_deref()
+        .position(|fk| fk.read().name.lowercase() == name.go_to_lower())
+    else {
+        return Err(foreign_key_not_exists(name));
+    };
+    let kept = info
+        .foreign_keys
+        .iter_deref()
+        .enumerate()
+        .filter(|(offset, _)| *offset != position)
+        .map(|(_, fk)| fk.read().clone())
+        .collect::<Vec<_>>();
+    info.foreign_keys = kept.into();
+    Ok(())
+}
+
+/// Go `onDropColumn`'s metadata over an evolving `TableInfo`, once the
+/// checks above have passed: the column goes, and so does every
+/// single-column index on it (`listIndicesWithColumn`).
+fn apply_drop_column(info: &mut TableInfo, column: &str) {
+    let wanted = column.go_to_lower();
+    let dropped_offset = info
+        .columns
+        .iter_deref()
+        .position(|candidate| candidate.read().name.lowercase() == wanted)
+        .expect("a checked DROP COLUMN names a column");
+    let dropped = info
+        .columns
+        .iter_deref()
+        .nth(dropped_offset)
+        .expect("the position was just found")
+        .read()
+        .clone_like_go();
     // Go `listIndicesWithColumn`: a single-column secondary index on the
     // dropped column goes with it.
     let surviving: Vec<_> = (0..info.indices.len())
@@ -2939,7 +3398,6 @@ fn apply_drop_column(
             }
         }
     }
-    Ok(AlterColumnOutcome::Applied)
 }
 
 fn split_name(
@@ -4458,6 +4916,7 @@ fn plan_persisted_check_constraint_job_step(
             exchange_partition_validation: None,
             check_constraint_validation: validation,
             column_reorg: None,
+            foreign_key_checks: Vec::new(),
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -4566,6 +5025,7 @@ fn plan_persisted_create_schema_job_step(
             exchange_partition_validation: None,
             check_constraint_validation: None,
             column_reorg: None,
+            foreign_key_checks: Vec::new(),
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -4695,6 +5155,7 @@ fn plan_persisted_create_table_job_step(
             exchange_partition_validation: None,
             check_constraint_validation: None,
             column_reorg: None,
+            foreign_key_checks: Vec::new(),
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -4870,6 +5331,7 @@ fn plan_persisted_create_tables_job_step(
             exchange_partition_validation: None,
             check_constraint_validation: None,
             column_reorg: None,
+            foreign_key_checks: Vec::new(),
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5086,6 +5548,7 @@ fn plan_persisted_rename_tables_job_step(
                 exchange_partition_validation: None,
                 check_constraint_validation: None,
                 column_reorg: None,
+                foreign_key_checks: Vec::new(),
                 mdl_info_update: None,
                 exchange_partition_label_swap: None,
                 warnings: Vec::new(),
@@ -5156,6 +5619,7 @@ fn plan_persisted_rename_tables_job_step(
             exchange_partition_validation: None,
             check_constraint_validation: None,
             column_reorg: None,
+            foreign_key_checks: Vec::new(),
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5251,6 +5715,7 @@ fn plan_persisted_drop_schema_job_step(
             exchange_partition_validation: None,
             check_constraint_validation: None,
             column_reorg: None,
+            foreign_key_checks: Vec::new(),
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5343,6 +5808,7 @@ fn plan_persisted_drop_table_job_step(
             exchange_partition_validation: None,
             check_constraint_validation: None,
             column_reorg: None,
+            foreign_key_checks: Vec::new(),
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5374,6 +5840,7 @@ fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWrite {
         exchange_partition_validation: None,
         check_constraint_validation: None,
         column_reorg: None,
+        foreign_key_checks: Vec::new(),
         mdl_info_update: None,
         exchange_partition_label_swap: None,
         warnings: Vec::new(),
@@ -5702,6 +6169,8 @@ pub struct DdlWrite {
     pub check_constraint_validation: Option<CheckConstraintValidation>,
     /// The row check or rewrite a MODIFY / CHANGE COLUMN owes, if any.
     pub column_reorg: Option<ColumnReorg>,
+    /// The existing-row checks the `ADD FOREIGN KEY`s owe, in job order.
+    pub foreign_key_checks: Vec<ForeignKeyCheck>,
     /// The `mysql.tidb_mdl_info` row that must be replaced atomically with
     /// this schema phase before the owner waits for acknowledgements.
     pub mdl_info_update: Option<MdlInfoUpdate>,
@@ -5913,6 +6382,25 @@ pub struct ColumnReorg {
     /// The persisted collation mode captured when this DDL was planned.
     pub use_new_collation: bool,
     /// SQL mode and location the rows are checked and converted under.
+    pub context: DdlStatementContext,
+}
+
+/// Go `checkForeignKeyConstrain`, owed by an `ADD FOREIGN KEY` under
+/// `foreign_key_checks = ON` before the key becomes public: the child's
+/// existing rows against the parent, in the same transaction.
+#[derive(Clone, Debug)]
+pub struct ForeignKeyCheck {
+    /// The child's database.
+    pub schema: String,
+    /// The child as the change leaves it, carrying the new key.
+    pub child: Box<TableInfo>,
+    /// The parent's database and table, `None` for a self reference.
+    pub parent: Option<(String, Box<TableInfo>)>,
+    /// The new key's name.
+    pub name: String,
+    /// The persisted collation mode captured when this DDL was planned.
+    pub use_new_collation: bool,
+    /// The context the rows are read under.
     pub context: DdlStatementContext,
 }
 
@@ -6416,6 +6904,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
     let mut exchange_partition_validation = None;
     let mut check_constraint_validation = None;
     let mut column_reorg: Option<ColumnReorg> = None;
+    let mut foreign_key_checks: Vec<ForeignKeyCheck> = Vec::new();
     let mut exchange_partition_label_swap = None;
     let mut warnings: Vec<(DdlWarningLevel, u16, String)> = Vec::new();
     let mut schema_change_events: Vec<(i64, SchemaChangeEvent)> = Vec::new();
@@ -6653,6 +7142,10 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 return Err(DdlPlanError::UnknownIndex("PRIMARY".to_owned()));
             };
             let dropped = primary.read().clone_like_go();
+            crate::foreign_key_build::check_index_needed_in_foreign_key(
+                &catalog, schema, stored, &dropped,
+            )
+            .map_err(DdlPlanError::Admission)?;
             let mut info = stored.clone_like_go();
             if let Some(offset) = info.indices.iter_handles().position(|candidate| {
                 candidate
@@ -8122,25 +8615,32 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             table,
             if_exists,
             column,
+            allow_remove_auto_inc,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let mut info = stored.clone_like_go();
-            match apply_drop_column(&mut info, schema, table, column, *if_exists)? {
-                AlterColumnOutcome::AlreadySatisfied(detail) => {
-                    // go's drop-column IF EXISTS no-op carries the 1091 note
-                    // (oracle g-alter: `Note:1091:Can't DROP 'no_such';
-                    // check that column/key exists`).
-                    return Ok(already_with_warnings(
-                        detail,
-                        vec![(
-                            crate::real_tikv_ddl::DdlWarningLevel::Note,
-                            1091,
-                            format!("Can't DROP '{column}'; check that column/key exists"),
-                        )],
-                    ));
-                }
-                AlterColumnOutcome::Applied => {}
+            if !check_is_droppable_column(
+                &catalog,
+                schema,
+                stored,
+                column,
+                *if_exists,
+                *allow_remove_auto_inc,
+            )? {
+                // go's drop-column IF EXISTS no-op carries the 1091 note
+                // (oracle g-alter: `Note:1091:Can't DROP 'no_such';
+                // check that column/key exists`).
+                return Ok(already_with_warnings(
+                    format!("column `{column}` does not exist on `{schema}`.`{table}`"),
+                    vec![(
+                        crate::real_tikv_ddl::DdlWarningLevel::Note,
+                        1091,
+                        format!("Can't DROP '{column}'; check that column/key exists"),
+                    )],
+                ));
             }
+            check_visible_column_cnt(stored, 0, 1)?;
+            let mut info = stored.clone_like_go();
+            apply_drop_column(&mut info, column);
             plan_removed_column_indexes(stored, &info, use_new_collation, &mut backfill);
             info.update_ts = start_ts;
             let table_id = info.id;
@@ -8319,7 +8819,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             actions,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let mut prepared = prepare_cluster_columns(stored, schema, table, actions, &mut warnings)?;
+            let mut prepared =
+                prepare_cluster_columns(&catalog, stored, schema, table, actions, &mut warnings)?;
             let mut info = stored.clone_like_go();
             let mut applied = 0usize;
             let mut satisfied = Vec::new();
@@ -8331,8 +8832,14 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             let add_index_count = actions.iter().enumerate()
                 .filter(|(offset, action)| !prepared.skipped.contains_key(offset) && matches!(action, AlterColumnAction::AddIndex { .. }))
                 .count();
+            // Go `mergeAddIndex` keeps the order when a key is added: the key
+            // needs the index queued for it to come first.
+            let merge_add_index = add_index_count > 1
+                && !actions
+                    .iter()
+                    .any(|action| matches!(action, AlterColumnAction::AddForeignKey { .. }));
             let mut action_order: Vec<_> = (0..actions.len()).filter(|offset| !prepared.skipped.contains_key(offset)).collect();
-            if add_index_count > 1 {
+            if merge_add_index {
                 action_order.sort_by_key(|offset| {
                     usize::from(matches!(
                         actions[*offset],
@@ -8389,17 +8896,17 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         }
                         AlterColumnOutcome::Applied
                     }
-                    AlterColumnAction::Drop { if_exists, column } => {
+                    AlterColumnAction::Drop { column, .. } => {
+                        check_drop_column(&catalog, schema, &info, column)?;
                         let before = info.clone_like_go();
-                        let outcome =
-                            apply_drop_column(&mut info, schema, table, column, *if_exists)?;
+                        apply_drop_column(&mut info, column);
                         plan_removed_column_indexes(
                             &before,
                             &info,
                             use_new_collation,
                             &mut backfill,
                         );
-                        outcome
+                        AlterColumnOutcome::Applied
                     }
                     AlterColumnAction::AddIndex {
                         index,
@@ -8429,7 +8936,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                             use_new_collation,
                             operation: IndexBackfillOperation::Add(context.clone()),
                         });
-                        if add_index_count > 1 {
+                        if merge_add_index {
                             merged_added_indexes.push(added.read().clone_like_go());
                         } else if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                             schema_change_events.push((
@@ -8455,6 +8962,14 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                             return Err(DdlPlanError::UnknownIndex(name.clone()));
                         };
                         let dropped = dropped.read().clone_like_go();
+                        // Go `checkIndexNeededInForeignKeyInOwner`.
+                        if tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst)
+                        {
+                            crate::foreign_key_build::check_index_needed_in_foreign_key(
+                                &catalog, schema, &info, &dropped,
+                            )
+                            .map_err(DdlPlanError::Admission)?;
+                        }
                         // The removal walk rebuilds the dropped index's entry
                         // keys, so its table must still CARRY the index —
                         // snapshot before the delete, evolved columns and all.
@@ -8475,6 +8990,28 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                             use_new_collation,
                             operation: IndexBackfillOperation::Drop,
                         });
+                        applied += 1;
+                        continue;
+                    }
+                    AlterColumnAction::AddForeignKey { .. } => {
+                        let created = prepared
+                            .foreign_keys
+                            .remove(&action_offset)
+                            .expect("every ADD FOREIGN KEY was prepared");
+                        foreign_key_checks.extend(on_create_foreign_key(
+                            &catalog,
+                            schema,
+                            &mut info,
+                            &created,
+                            use_new_collation,
+                            &mut backfill,
+                        )?);
+                        applied += 1;
+                        continue;
+                    }
+                    AlterColumnAction::DropForeignKey { name } => {
+                        // Go `onDropForeignKey`.
+                        drop_foreign_key(&mut info, name)?;
                         applied += 1;
                         continue;
                     }
@@ -8893,6 +9430,85 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 ));
             }
         }
+        DdlStatement::AddForeignKey {
+            schema,
+            table,
+            definition,
+            context,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // Go `AlterTable` names an anonymous key before any spec runs.
+            let name = match definition.name.as_deref() {
+                Some(name) if !name.is_empty() => name.to_owned(),
+                _ => format!("fk_{}", stored.max_foreign_key_id + 1),
+            };
+            let created = create_foreign_key(&catalog, schema, stored, &name, definition, context)?;
+            let mut info = stored.clone_like_go();
+            foreign_key_checks.extend(on_create_foreign_key(
+                &catalog,
+                schema,
+                &mut info,
+                &created,
+                use_new_collation,
+                &mut backfill,
+            )?);
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_ADD_FOREIGN_KEY;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::DropForeignKey {
+            schema,
+            table,
+            name,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let mut info = stored.clone_like_go();
+            drop_foreign_key(&mut info, name)?;
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_DROP_FOREIGN_KEY;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::AddForeignKeyRollback {
+            schema,
+            table,
+            max_column_id,
+            max_index_id,
+            max_foreign_key_id,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let mut info = stored.clone_like_go();
+            info.max_column_id = info.max_column_id.max(*max_column_id);
+            info.max_index_id = info.max_index_id.max(*max_index_id);
+            info.max_foreign_key_id = info.max_foreign_key_id.max(*max_foreign_key_id);
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            // The rolled-back job keeps its own type.
+            diff.action_type = ActionType::ACTION_ADD_FOREIGN_KEY;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
         DdlStatement::ModifyEngineAttribute {
             schema,
             table,
@@ -9110,6 +9726,10 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 return Err(DdlPlanError::UnknownIndex(index.clone()));
             };
             let dropped = dropped.read().clone_like_go();
+            crate::foreign_key_build::check_index_needed_in_foreign_key(
+                &catalog, schema, stored, &dropped,
+            )
+            .map_err(DdlPlanError::Admission)?;
             let mut info = stored.clone_like_go();
             if let Some(offset) = info.indices.iter_handles().position(|candidate| {
                 candidate
@@ -9748,6 +10368,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         exchange_partition_validation,
         check_constraint_validation,
         column_reorg,
+        foreign_key_checks,
         mdl_info_update,
         exchange_partition_label_swap,
         warnings,
@@ -10288,6 +10909,172 @@ fn settle_added_index_name(
         .collect::<Vec<_>>();
     let existing = existing.iter().map(String::as_str).collect::<Vec<_>>();
     tidb_executor::ddl::get_name_for_anonymous_index(&existing, &prefix, "")
+}
+
+/// Go `CreateForeignKey` (`executor.go`) for one ADD FOREIGN KEY, as its
+/// submitter checks it against the original table.
+struct CreatedForeignKey {
+    fk: tidb_model::table::FKInfo,
+    /// The parent's database and table, `None` for a self reference.
+    parent: Option<(String, String)>,
+    /// No index covers the key's columns, so `CreateForeignKey` queues a
+    /// `createIndex` named after the key ahead of the key's own job.
+    needs_index: bool,
+    context: DdlStatementContext,
+}
+
+/// Go `CreateForeignKey`: `name` is already settled, as `AlterTable` names
+/// an anonymous key `fk_{MaxForeignKeyID+n}` before any spec runs.
+fn create_foreign_key(
+    catalog: &ClusterCatalog,
+    schema: &str,
+    stored: &TableInfo,
+    name: &str,
+    definition: &tidb_ast::ForeignKeyConstraintDefinition,
+    context: &DdlStatementContext,
+) -> Result<CreatedForeignKey, DdlPlanError> {
+    let admission = DdlPlanError::Admission;
+    // A temporary table takes no foreign key.
+    if stored.temp_table_type != tidb_model::TempTableType::NONE {
+        return Err(coded_refusal(
+            tidb_error::tidb::errcode::ErrCannotAddForeign,
+            "Cannot add foreign key constraint",
+        ));
+    }
+    if definition.reference.match_type == tidb_ast::ForeignKeyMatch::Partial {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "MATCH PARTIAL is not supported yet",
+        )));
+    }
+    // Go `checkFKDupName`.
+    if stored
+        .foreign_keys
+        .iter_deref()
+        .any(|fk| fk.read().name.lowercase() == name.go_to_lower())
+    {
+        return Err(coded_refusal(
+            tidb_error::tidb::errcode::ErrFkDupName,
+            format!("Duplicate foreign key constraint name '{name}'"),
+        ));
+    }
+    let (ref_schema, ref_table) = match definition.reference.table.as_deref() {
+        Some([ref_schema, ref_table]) => (ref_schema.clone(), ref_table.clone()),
+        Some([ref_table]) => (schema.to_owned(), ref_table.clone()),
+        _ => (schema.to_owned(), String::new()),
+    };
+    let fk = crate::foreign_key_build::build_fk_info(
+        name,
+        &definition.parts,
+        &definition.reference,
+        &ref_schema,
+        stored,
+    )
+    .map_err(admission)?;
+    // Go `checkAddForeignKeyValid`.
+    crate::foreign_key_build::check_foreign_key_valid(
+        catalog,
+        schema,
+        stored,
+        &fk,
+        context.0.foreign_key_checks(),
+        false,
+    )
+    .map_err(admission)?;
+    let needs_index = tidb_model::index::find_index_by_columns_for_foreign_key(
+        stored,
+        &stored.indices,
+        &fk.cols.snapshot(),
+    )
+    .is_none();
+    // Go `createIndex`'s duplicate-name check for the key's index.
+    if needs_index && find_index(stored, fk.name.original()).is_some() {
+        return Err(DdlPlanError::DuplicateKeyName(
+            fk.name.original().to_owned(),
+        ));
+    }
+    let self_reference = ref_schema.go_to_lower() == schema.go_to_lower()
+        && ref_table.go_to_lower() == stored.name.lowercase();
+    Ok(CreatedForeignKey {
+        fk,
+        parent: (!self_reference).then_some((ref_schema, ref_table)),
+        needs_index,
+        context: context.clone(),
+    })
+}
+
+/// Go `onCreateForeignKey` (`foreign_key.go`), after the `createIndex`
+/// sub-job `CreateForeignKey` queued when no index covers the key: the key
+/// joins the evolving table (`allocateFKIndexID`), and under
+/// `foreign_key_checks` the existing rows owe `checkForeignKeyConstrain`
+/// before it is public.
+fn on_create_foreign_key(
+    catalog: &ClusterCatalog,
+    schema: &str,
+    info: &mut TableInfo,
+    created: &CreatedForeignKey,
+    use_new_collation: bool,
+    backfill: &mut Vec<IndexBackfill>,
+) -> Result<Option<ForeignKeyCheck>, DdlPlanError> {
+    let mut fk = created.fk.clone();
+    if created.needs_index {
+        let index = IndexInfo {
+            name: fk.name.clone(),
+            columns: fk
+                .cols
+                .snapshot()
+                .iter()
+                .map(|name| IndexColumn {
+                    name: name.clone(),
+                    offset: 0,
+                    length: -1,
+                    ..IndexColumn::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            state: SchemaState::PUBLIC,
+            tp: tidb_ast::IndexType::BTREE,
+            ..IndexInfo::default()
+        };
+        let mut added =
+            plan_added_index(info, &index, &[], fk.name.original(), &created.context.0)?;
+        let backfill_table = Box::new(info.clone_like_go());
+        info.max_index_id += 1;
+        added.id = info.max_index_id;
+        added.table = info.name.clone();
+        let added = GoShared::new(added);
+        info.indices.push_handle_go(Some(added.clone()));
+        backfill.push(IndexBackfill {
+            table: backfill_table,
+            index: added,
+            use_new_collation,
+            operation: IndexBackfillOperation::Add(created.context.clone()),
+        });
+    }
+    let fk_check = created.context.0.foreign_key_checks();
+    // Go `checkAddForeignKeyValidInOwner`.
+    crate::foreign_key_build::check_foreign_key_valid(catalog, schema, info, &fk, fk_check, true)
+        .map_err(DdlPlanError::Admission)?;
+    info.max_foreign_key_id += 1;
+    fk.id = info.max_foreign_key_id;
+    fk.state = SchemaState::PUBLIC;
+    let name = fk.name.original().to_owned();
+    info.foreign_keys.push_go(fk);
+    if !(fk_check && tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst)) {
+        return Ok(None);
+    }
+    let parent = created.parent.as_ref().and_then(|(ref_schema, ref_table)| {
+        catalog
+            .find_table(ref_schema, ref_table)
+            .map(|(_, parent)| (ref_schema.clone(), Box::new(parent.clone_like_go())))
+    });
+    Ok(Some(ForeignKeyCheck {
+        schema: schema.to_owned(),
+        child: Box::new(info.clone_like_go()),
+        parent,
+        name,
+        use_new_collation,
+        context: created.context.clone(),
+    }))
 }
 
 /// The rest of Go `createIndex` for one added index named `name`, planned

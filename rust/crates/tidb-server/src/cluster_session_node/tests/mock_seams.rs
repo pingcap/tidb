@@ -497,6 +497,9 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::IgnoredCheckConstraint { .. }
             | DdlStatement::AddColumn { .. }
             | DdlStatement::ModifyColumn { .. }
+            | DdlStatement::AddForeignKey { .. }
+            | DdlStatement::DropForeignKey { .. }
+            | DdlStatement::AddForeignKeyRollback { .. }
             | DdlStatement::RenameColumn { .. }
             | DdlStatement::DropColumn { .. }
             | DdlStatement::MultiSchemaChange { .. }

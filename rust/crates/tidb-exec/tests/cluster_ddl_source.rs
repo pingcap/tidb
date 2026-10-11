@@ -6136,6 +6136,76 @@ fn a_modify_column_plans_the_kind_go_gives_it() {
     assert_eq!(index_id(&write, "iname"), 1);
 }
 
+/// Go `CreateForeignKey`: an anonymous key is `fk_{MaxForeignKeyID+1}`; when
+/// no index covers its columns, `createIndex` adds one named after the key;
+/// and under `foreign_key_checks` the existing rows are checked before the
+/// key is public. A refused check rolls the job back (`dropForeignKey`): the
+/// table is as it was but for the ids the write-only steps took.
+#[test]
+fn an_added_foreign_key_plans_gos_name_index_check_and_rollback() {
+    let mut store = bootstrapped();
+    let parent = plan(
+        &mut store,
+        "CREATE TABLE fkp (id INT PRIMARY KEY, c INT, INDEX (c))",
+        300,
+    );
+    apply(&mut store, &parent);
+    let child = plan(
+        &mut store,
+        "CREATE TABLE fkc (id INT PRIMARY KEY, cc INT)",
+        301,
+    );
+    let child_id = child.created_id.expect("a table id");
+    apply(&mut store, &child);
+    let before = committed_table(&store, child_id);
+
+    let write = plan(
+        &mut store,
+        "ALTER TABLE fkc ADD FOREIGN KEY (cc) REFERENCES fkp (c)",
+        302,
+    );
+    assert_eq!(write.backfill.len(), 1);
+    let index = write.backfill[0].index.read().clone();
+    assert_eq!(index.name.original(), "fk_1");
+    assert_eq!(index.id, before.max_index_id + 1);
+    let [check] = write.foreign_key_checks.as_slice() else {
+        panic!("one key's rows are checked");
+    };
+    assert_eq!(check.name, "fk_1");
+    assert_eq!(check.child.max_foreign_key_id, 1);
+    let stored = stored_table(&write, child_id);
+    assert_eq!(stored["fk_info"][0]["fk_name"]["O"], "fk_1");
+    assert_eq!(stored["fk_info"][0]["id"], 1);
+    assert_eq!(stored["max_fk_id"], 1);
+
+    let rollback = DdlStatement::AddForeignKeyRollback {
+        schema: check.schema.clone(),
+        table: check.child.name.original().to_owned(),
+        max_column_id: check.child.max_column_id,
+        max_index_id: check.child.max_index_id,
+        max_foreign_key_id: check.child.max_foreign_key_id,
+    };
+    let DdlPlan::Write(rolled_back) = plan_ddl(&mut store, &rollback, 303).expect("plans") else {
+        panic!("the rollback writes the table");
+    };
+    assert!(rolled_back.backfill.is_empty() && rolled_back.foreign_key_checks.is_empty());
+    apply(&mut store, &rolled_back);
+    let after = committed_table(&store, child_id);
+    assert_eq!(after.foreign_keys.len(), 0);
+    assert_eq!(after.indices.len(), before.indices.len());
+    assert_eq!(after.max_foreign_key_id, 1);
+    assert_eq!(after.max_index_id, before.max_index_id + 1);
+
+    // The next anonymous key takes the id after the rolled-back one.
+    let write = plan(
+        &mut store,
+        "ALTER TABLE fkc ADD FOREIGN KEY (cc) REFERENCES fkp (c)",
+        304,
+    );
+    assert_eq!(write.backfill[0].index.read().name.original(), "fk_2");
+    assert_eq!(write.backfill[0].index.read().id, before.max_index_id + 2);
+}
+
 /// All prefix-index spellings retain their key-part lengths in published metadata.
 #[test]
 fn prefix_index_spellings_preserve_key_part_lengths() {

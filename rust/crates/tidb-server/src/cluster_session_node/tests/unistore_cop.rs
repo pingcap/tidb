@@ -320,6 +320,233 @@ fn a_modify_column_checks_or_rewrites_rows_as_go_does() {
     rows(&mut session, "ADMIN CHECK TABLE test.mc");
 }
 
+/// Go `CreateForeignKey` / `onCreateForeignKey` / `DropForeignKey` on the
+/// production node; every answer is the Go oracle's for the same script. A
+/// refused `checkForeignKeyConstrain` rolls the job back but keeps the id
+/// `allocateFKIndexID` took, so the next anonymous key is `fk_3`, not `fk_2`.
+/// This node refused both statements as unsupported.
+#[test]
+fn an_added_foreign_key_checks_rows_and_keeps_gos_ids_on_rollback() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(137)).unwrap();
+    rows(&mut session, "SET @@foreign_key_checks = 1");
+    rows(
+        &mut session,
+        "CREATE TABLE test.parent (id INT KEY, c INT, INDEX (c))",
+    );
+    rows(&mut session, "CREATE TABLE test.child (id INT KEY, cc INT)");
+    rows(
+        &mut session,
+        "INSERT INTO test.parent VALUES (1, 1), (2, 2)",
+    );
+    rows(&mut session, "INSERT INTO test.child VALUES (1, 1), (2, 3)");
+    let add = "ALTER TABLE test.child ADD FOREIGN KEY fk_2 (cc) REFERENCES test.parent (c)";
+    let violation = "Cannot add or update a child row: a foreign key constraint fails \
+                     (`test`.`child`, CONSTRAINT `fk_2` FOREIGN KEY (`cc`) REFERENCES \
+                     `parent` (`c`))";
+    let error = session.execute_write(add).unwrap_err();
+    assert_eq!((error.code, error.message.as_str()), (1452, violation));
+    rows(&mut session, "DELETE FROM test.child WHERE id = 2");
+    session.execute_write(add).unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.child"));
+    assert!(
+        created[0][1].contains(
+            "  KEY `fk_2` (`cc`),\n  \
+             CONSTRAINT `fk_2` FOREIGN KEY (`cc`) REFERENCES `parent` (`c`)\n"
+        ),
+        "{}",
+        created[0][1]
+    );
+    let error = session
+        .execute_write("INSERT INTO test.child VALUES (3, 9)")
+        .unwrap_err();
+    assert_eq!((error.code, error.message.as_str()), (1452, violation));
+    let error = session.execute_write(add).unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1826, "Duplicate foreign key constraint name 'fk_2'")
+    );
+    let drop = "ALTER TABLE test.child DROP FOREIGN KEY fk_2";
+    session.execute_write(drop).unwrap();
+    let error = session.execute_write(drop).unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1091, "Can't DROP 'fk_2'; check that column/key exists")
+    );
+    session
+        .execute_write("ALTER TABLE test.child ADD FOREIGN KEY (cc) REFERENCES test.parent (c)")
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.child"));
+    assert!(
+        created[0][1].contains(
+            "  KEY `fk_2` (`cc`),\n  \
+             CONSTRAINT `fk_3` FOREIGN KEY (`cc`) REFERENCES `parent` (`c`)\n"
+        ),
+        "{}",
+        created[0][1]
+    );
+    rows(&mut session, "ADMIN CHECK TABLE test.child");
+}
+
+/// Go's foreign-key guards on the production node, answers from the Go
+/// oracle for the same script: `AlterTable` names every anonymous key of one
+/// ALTER before any spec runs (`fk_1`, `fk_2`); `checkDropColumnWithForeignKeyConstraint`
+/// keeps a key's columns, on either side (1828, 1829); and
+/// `checkIndexNeededInForeignKey` / `checkOperateDropIndexUseByForeignKey`
+/// keep the index a key needs, however the ALTER is bundled (1553). This node
+/// refused the bundled ALTER and accepted every drop.
+#[test]
+fn foreign_keys_guard_their_columns_and_indexes_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(138)).unwrap();
+    rows(&mut session, "SET @@foreign_key_checks = 1");
+    rows(
+        &mut session,
+        "CREATE TABLE test.p (id INT KEY, b INT, INDEX ib (b))",
+    );
+    rows(&mut session, "CREATE TABLE test.c (a INT, b INT)");
+    session
+        .execute_write(
+            "ALTER TABLE test.c ADD FOREIGN KEY (a) REFERENCES test.p (id), \
+             ADD FOREIGN KEY (b) REFERENCES test.p (b)",
+        )
+        .unwrap();
+    let keys = "  KEY `fk_1` (`a`),\n  KEY `fk_2` (`b`),\n  \
+                CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `p` (`id`),\n  \
+                CONSTRAINT `fk_2` FOREIGN KEY (`b`) REFERENCES `p` (`b`)\n";
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.c"));
+    assert!(created[0][1].contains(keys), "{}", created[0][1]);
+    for (sql, code, message) in [
+        (
+            "ALTER TABLE test.c DROP COLUMN a",
+            1828,
+            "Cannot drop column 'a': needed in a foreign key constraint 'fk_1'",
+        ),
+        (
+            "ALTER TABLE test.p DROP COLUMN b",
+            1829,
+            "Cannot drop column 'b': needed in a foreign key constraint 'fk_2' of table 'c'",
+        ),
+        (
+            "ALTER TABLE test.p DROP INDEX ib",
+            1553,
+            "Cannot drop index 'ib': needed in a foreign key constraint",
+        ),
+        (
+            "ALTER TABLE test.c DROP INDEX fk_1",
+            1553,
+            "Cannot drop index 'fk_1': needed in a foreign key constraint",
+        ),
+        (
+            "ALTER TABLE test.c ADD INDEX ia (a), DROP INDEX fk_1",
+            1553,
+            "Cannot drop index 'fk_1': needed in a foreign key constraint",
+        ),
+        (
+            "ALTER TABLE test.c DROP FOREIGN KEY fk_1, DROP INDEX fk_1",
+            1553,
+            "Cannot drop index 'fk_1': needed in a foreign key constraint",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.c"));
+    assert!(created[0][1].contains(keys), "{}", created[0][1]);
+    session
+        .execute_write(
+            "ALTER TABLE test.c DROP FOREIGN KEY fk_2, ADD FOREIGN KEY (b) REFERENCES test.p (b)",
+        )
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.c"));
+    assert!(
+        created[0][1].contains(
+            "  KEY `fk_2` (`b`),\n  CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `p` (`id`),\n  \
+             CONSTRAINT `fk_3` FOREIGN KEY (`b`) REFERENCES `p` (`b`)\n"
+        ),
+        "{}",
+        created[0][1]
+    );
+}
+
+/// Go `checkIsDroppableColumn`, `RenameColumn` and `AddColumn`'s generated
+/// checks on the production node, answers from the Go oracle: a column a
+/// generated column, an expression index or the partitioning reads stays
+/// (3108, 3837), a hidden column can be neither read nor dropped (1054, 1091),
+/// and an added generated column may read only generated columns before it
+/// (3107). This node accepted every one of these. The table with a
+/// multi-valued index is the loader's: it rebuilt the hidden
+/// `CAST(... AS ... ARRAY)` column with the DDL checks and dropped the table.
+#[test]
+fn a_column_others_depend_on_stays_as_go_keeps_it() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(139)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.h (a INT, b INT AS (a + 1), c INT, KEY ((a + c))) \
+         PARTITION BY HASH (c) PARTITIONS 2",
+    );
+    for (sql, code, message) in [
+        (
+            "ALTER TABLE test.h DROP COLUMN a",
+            3108,
+            "Column 'a' has a generated column dependency.",
+        ),
+        (
+            "ALTER TABLE test.h DROP COLUMN c",
+            3837,
+            "Column 'c' has an expression index dependency and cannot be dropped or renamed",
+        ),
+        (
+            "ALTER TABLE test.h RENAME COLUMN c TO cc",
+            3837,
+            "Column 'c' has an expression index dependency and cannot be dropped or renamed",
+        ),
+        (
+            "ALTER TABLE test.h ADD COLUMN d INT AS (_V$_expression_index_0 + 1)",
+            1054,
+            "Unknown column '_v$_expression_index_0' in 'generated column function'",
+        ),
+        (
+            "ALTER TABLE test.h ADD COLUMN e INT AS (b + 1) FIRST",
+            3107,
+            "Generated column can refer only to generated columns defined prior to it.",
+        ),
+        (
+            "ALTER TABLE test.h DROP COLUMN _V$_expression_index_0",
+            1091,
+            "Can't DROP '_V$_expression_index_0'; check that column/key exists",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    rows(
+        &mut session,
+        "CREATE TABLE test.m (id INT PRIMARY KEY, a JSON, \
+         INDEX idx ((CAST(a->'$.d' AS SIGNED ARRAY))))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.m VALUES (1, '{\"d\": [1, 2]}')",
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id FROM test.m WHERE 1 MEMBER OF (a->'$.d')"
+        )),
+        [["1"]]
+    );
+}
+
 /// Go `checkIndexNameAndColumns`: an ADD INDEX written without a name takes
 /// `GetName4AnonymousIndex`'s name against the stored table, and an expression
 /// part indexes a hidden generated column backfilled over the existing rows.

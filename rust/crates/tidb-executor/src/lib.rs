@@ -94,6 +94,7 @@ pub mod explain;
 pub mod expression_index;
 mod farmhash;
 pub(crate) mod foreign_key;
+pub use foreign_key::check_foreign_key_constrain;
 pub mod generated_column;
 pub(crate) mod handle_range;
 pub mod hash_agg;
