@@ -480,3 +480,60 @@ fn a_partitioned_unique_index_batch_reads_each_keys_partition() {
         [["1", "x"], ["2", "b"], ["3", "x"], ["4", "x"]]
     );
 }
+
+/// Go `buildDataSource`: under dynamic pruning a partitioned table with no
+/// global statistics turns the statement's pruning static -- partition
+/// processor, `PartitionUnion`, an inapplicable index-join hint -- with
+/// warning 1105, unless `tidb_skip_missing_partition_stats` (or fix control
+/// 44262) allows dynamic pruning without them. Captured from Go
+/// (`planner/core/casetest/integration`, TestFixControl44262).
+#[test]
+fn dynamic_pruning_falls_back_without_global_statistics() {
+    let mut session = Session::new();
+    for sql in [
+        "set tidb_partition_prune_mode = 'dynamic'",
+        "create table t1 (a int, b int)",
+        "create table t2_part (a int, b int, key(a)) partition by hash(a) partitions 4",
+        "set @@tidb_skip_missing_partition_stats = off",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let plan = row_text(session.run(
+        "explain format='plan_tree' select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 \
+         where t1.b < 10 and not exists \
+         (select 1 from t2_part where t1.a = t2_part.a and t2_part.b < 20)",
+    ));
+    assert!(plan[0][0].starts_with("HashJoin"), "{plan:?}");
+    assert!(
+        plan.iter().any(|row| row[0].contains("PartitionUnion")),
+        "{plan:?}"
+    );
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        [
+            [
+                "Warning",
+                "1105",
+                "disable dynamic pruning due to t2_part has no global stats"
+            ],
+            [
+                "Warning",
+                "1815",
+                "Optimizer Hint /*+ INL_JOIN(t2_part) */ or /*+ TIDB_INLJ(t2_part) */ is inapplicable"
+            ],
+        ]
+    );
+    for allow in [
+        "set @@tidb_skip_missing_partition_stats = on",
+        "set @@tidb_opt_fix_control = '44262:ON'",
+    ] {
+        session.run(allow).unwrap();
+        let plan =
+            row_text(session.run("explain format='plan_tree' select * from t2_part where a = 1"));
+        assert_eq!(plan[0][2], "partition:p1", "{allow}: {plan:?}");
+        assert!(row_text(session.run("show warnings")).is_empty(), "{allow}");
+        session
+            .run("set @@tidb_skip_missing_partition_stats = off")
+            .unwrap();
+    }
+}

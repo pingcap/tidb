@@ -101,6 +101,7 @@ pub(crate) struct StatementVarSnapshot {
     outer_join_reorder: bool,
     index_merge: bool,
     static_partition_prune: bool,
+    skip_missing_partition_stats: bool,
     select_limit: u64,
     new_only_full_group_by_check: bool,
     auto_increment_in_generated: bool,
@@ -983,6 +984,9 @@ impl Session {
                 .vars
                 .get_system("tidb_partition_prune_mode")
                 .is_ok_and(|value| value.eq_ignore_ascii_case("static")),
+            skip_missing_partition_stats: not_off(
+                tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS,
+            ),
             new_only_full_group_by_check: on(
                 tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_NEW_ONLY_FULL_GROUP_BY_CHECK,
             ),
@@ -1225,6 +1229,7 @@ impl Session {
         let outer_join_reorder = snapshot.outer_join_reorder;
         let index_merge = snapshot.index_merge && !self.stmt_hints.no_index_merge_hint;
         let static_partition_prune = snapshot.static_partition_prune;
+        let skip_missing_partition_stats = snapshot.skip_missing_partition_stats;
         let new_only_full_group_by_check = snapshot.new_only_full_group_by_check;
         let remove_orderby_in_subquery = snapshot.remove_orderby_in_subquery;
         let mem_quota = if self.stmt_hints.has_mem_quota_hint {
@@ -1387,6 +1392,7 @@ impl Session {
                     .with_brief_binary_plan(!self.binary_prepared_execution)
                     .with_allow_write_row_id(allow_write_row_id)
                     .with_static_partition_prune(static_partition_prune)
+                    .with_skip_missing_partition_stats(skip_missing_partition_stats)
                     .with_only_full_group_by(sql_mode.has_only_full_group_by())
                     .with_new_only_full_group_by_check(new_only_full_group_by_check)
                     .with_auto_increment_in_generated(snapshot.auto_increment_in_generated)
@@ -1635,7 +1641,8 @@ impl Session {
                 .with_outer_join_reorder(outer_join_reorder)
                 .with_index_merge(index_merge)
                 .with_no_index_merge_hint(self.stmt_hints.no_index_merge_hint)
-                .with_static_partition_prune(static_partition_prune);
+                .with_static_partition_prune(static_partition_prune)
+                .with_skip_missing_partition_stats(skip_missing_partition_stats);
             if let Some(parameters) = &self.prepared_params {
                 let _ = ctx.with_prepared_params(Arc::clone(parameters));
             }

@@ -612,6 +612,12 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub rewriter_opt_flags: std::cell::Cell<u64>,
     /// Whether Go's static `FlagPartitionProcessor` is active for this build.
     partition_processor_enabled: bool,
+    /// Go `buildDataSource`'s dynamic-mode check for a partitioned table
+    /// (`logical_plan_builder.go:4997`): answers, for a table's id and name,
+    /// whether the statement must fall back to static pruning because the
+    /// table has no global statistics -- having already cleared the
+    /// statement's `UseDynamicPruneMode` and warned.
+    dynamic_prune_fallback: Option<&'a dyn Fn(i64, &str) -> bool>,
     /// Go `SessionVars.EnableAdvancedJoinHint` (`tidb_opt_advanced_join_hint`).
     pub advanced_join_hint: bool,
     /// Go `SessionVars.PlannerSelectBlockAsName`: each derived table's alias
@@ -1390,6 +1396,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             opt_flag: 0,
             rewriter_opt_flags: std::cell::Cell::new(0),
             partition_processor_enabled: true,
+            dynamic_prune_fallback: None,
             advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
             select_block_as_names: Rc::default(),
             allow_build_cast_array: std::cell::Cell::new(false),
@@ -1523,6 +1530,12 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     /// enumerated. Global indexes remain available in dynamic mode, as in Go.
     pub const fn set_partition_processor_enabled(&mut self, enabled: bool) {
         self.partition_processor_enabled = enabled;
+    }
+
+    /// Installs Go's dynamic-prune fallback check for partitioned tables
+    /// ([`Self::dynamic_prune_fallback`]).
+    pub fn set_dynamic_prune_fallback(&mut self, fallback: &'a dyn Fn(i64, &str) -> bool) {
+        self.dynamic_prune_fallback = Some(fallback);
     }
 
     fn begin_hint_build(&mut self, query: &tidb_ast::QueryStmt) -> bool {
@@ -2459,6 +2472,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             return Ok(self.build_mem_table(&db_name, &table, table_ref.alias.as_deref()));
         }
 
+        // Go: under dynamic pruning, a partitioned table without global
+        // statistics turns the statement's pruning static (unless missing
+        // partition statistics are skipped), and every later table follows.
+        if table.is_partitioned && !self.partition_processor_enabled {
+            if let Some(fallback) = self.dynamic_prune_fallback {
+                if fallback(table.table_id, &table.table_name) {
+                    self.partition_processor_enabled = true;
+                }
+            }
+        }
         // `b.optFlag |= rule.FlagPartitionProcessor` is enabled only for
         // static pruning. Dynamic pruning must retain global-index paths.
         if table.is_partitioned && self.partition_processor_enabled {

@@ -870,6 +870,7 @@ pub(super) fn logical_from_plan(
     let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
+    let prune_fallback = dynamic_prune_fallback(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
@@ -881,6 +882,7 @@ pub(super) fn logical_from_plan(
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
+    builder.set_dynamic_prune_fallback(&prune_fallback);
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
@@ -3096,6 +3098,37 @@ fn subquery_evaluator<'a>(
     }
 }
 
+/// Go `buildDataSource`'s dynamic-mode check for a partitioned table
+/// (`logical_plan_builder.go:4997`): a table whose global statistics were
+/// never analyzed (`Table.IsAnalyzed`) turns this statement's pruning static
+/// -- `UseDynamicPruneMode = false` and the 1105 warning -- unless missing
+/// partition statistics may be skipped (`tidb_skip_missing_partition_stats`,
+/// which fix control 44262 overrides).
+fn dynamic_prune_fallback<'a>(
+    catalog: &'a Catalog,
+    ctx: &'a crate::StmtContext,
+) -> impl Fn(i64, &str) -> bool + 'a {
+    move |table_id, table_name| {
+        let global_stats_ready = catalog
+            .table_statistics(table_id)
+            .is_some_and(|statistics| statistics.last_analyze_version > 0);
+        let allow_dynamic_without_stats = ctx.optimizer_fix_control().get_bool_with_default(
+            tidb_planner::fix_control::FIX_44262,
+            ctx.skip_missing_partition_stats(),
+        );
+        if global_stats_ready || allow_dynamic_without_stats {
+            return false;
+        }
+        ctx.disable_dynamic_prune();
+        tidb_expr::Columns::append_warning(
+            ctx,
+            1105,
+            &format!("disable dynamic pruning due to {table_name} has no global stats"),
+        );
+        true
+    }
+}
+
 fn planner_optimized_query(
     query: &tidb_ast::QueryStmt,
     select_hint: Option<&tidb_ast::SelectStmt>,
@@ -3144,6 +3177,7 @@ fn planner_optimized_query_with_allocators(
         &session_zone,
         registry,
     );
+    let prune_fallback = dynamic_prune_fallback(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
         .with_subquery_evaluator(&evaluator);
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
@@ -3158,6 +3192,7 @@ fn planner_optimized_query_with_allocators(
     builder.set_partition_processor_enabled(
         ctx.static_partition_prune() && !static_global_index_point_lookup(query, &source, ctx),
     );
+    builder.set_dynamic_prune_fallback(&prune_fallback);
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
@@ -3255,6 +3290,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         &session_zone,
         &registry,
     );
+    let prune_fallback = dynamic_prune_fallback(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
         .with_subquery_evaluator(&evaluator);
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
@@ -3267,6 +3303,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
+    builder.set_dynamic_prune_fallback(&prune_fallback);
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
@@ -3844,6 +3881,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let column_ids = ColumnIdAllocator::new();
     let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let session_zone = ctx.session_zone();
+    let prune_fallback = dynamic_prune_fallback(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
@@ -3855,6 +3893,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
+    builder.set_dynamic_prune_fallback(&prune_fallback);
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();

@@ -925,6 +925,13 @@ pub struct StmtContextData {
     /// Go `SessionVars.PartitionPruneMode == Static`: see
     /// [`StmtContext::static_partition_prune`].
     static_partition_prune: bool,
+    /// Go `StmtCtx.UseDynamicPruneMode = false`, set while building a data
+    /// source when a partitioned table has no global statistics: the rest of
+    /// this statement prunes statically.
+    dynamic_prune_disabled: Arc<AtomicBool>,
+    /// Go `SessionVars.SkipMissingPartitionStats`
+    /// (`tidb_skip_missing_partition_stats`).
+    skip_missing_partition_stats: bool,
     /// The sequences reachable from this statement, keyed by lowercase
     /// `db.name`, plus the session's per-sequence `LASTVAL` record.
     ///
@@ -1755,6 +1762,14 @@ context_configuration! {
         self
     }
 
+    /// Sets Go `SessionVars.SkipMissingPartitionStats`.
+    #[must_use]
+    pub fn with_skip_missing_partition_stats(mut self, skip: bool) -> Self {
+        self.skip_missing_partition_stats = skip;
+        self
+    }
+
+
     /// Sets whether `ONLY_FULL_GROUP_BY` is in effect, which a session reads
     /// off its `sql_mode`.
     #[must_use]
@@ -2283,6 +2298,9 @@ impl StmtContext {
             disabled_logical_rules: std::sync::Arc::default(),
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
+            dynamic_prune_disabled: Arc::new(AtomicBool::new(false)),
+            skip_missing_partition_stats:
+                tidb_vardef::defaults::DEF_TIDB_SKIP_MISSING_PARTITION_STATS,
             sequences: session.sequences,
             memory,
             executor_chunk_sizes: ExecutorChunkSizes::default(),
@@ -3591,9 +3609,24 @@ impl StmtContext {
     /// `DataSource` reading all of them and names the set once, on the
     /// reader above (`partition:all`). This tier's read is the same either
     /// way, so this is consulted only where the shape is PRINTED.
+    ///
+    /// Go reads `StmtCtx.UseDynamicPruneMode`, which starts from the session
+    /// mode and is cleared for the rest of the statement when a partitioned
+    /// table has no global statistics ([`Self::disable_dynamic_prune`]).
     #[must_use]
     pub fn static_partition_prune(&self) -> bool {
-        self.static_partition_prune
+        self.static_partition_prune || self.dynamic_prune_disabled.load(Ordering::Acquire)
+    }
+    /// Go `SessionVars.SkipMissingPartitionStats`.
+    #[must_use]
+    pub fn skip_missing_partition_stats(&self) -> bool {
+        self.skip_missing_partition_stats
+    }
+
+    /// Go `StmtCtx.UseDynamicPruneMode = false`: the statement falls back to
+    /// static pruning (a partitioned table without global statistics).
+    pub fn disable_dynamic_prune(&self) {
+        self.dynamic_prune_disabled.store(true, Ordering::Release);
     }
 
     /// Go `SessionVars.SelectLimit`; `u64::MAX` means no session-level cap.
