@@ -760,6 +760,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go fix control 52869, consumed by index pruning through the built
     /// `DataSource`.
     pub prefer_index_merge_by_fix_control: bool,
+    /// Go fix control 52869 under `generateOtherIndexMerge`'s default
+    /// (`skipRangeScanCheck`, true when unset).
+    pub index_merge_skip_range_scan_check: bool,
     /// Session/transaction facts used by Go's index-lookup-pushdown gates.
     pub index_lookup_push_down_session: crate::access_path::IndexLookupPushDownSession,
     /// Go `b.ctx.GetSessionVars().EnableSkewDistinctAgg`
@@ -1453,6 +1456,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             tidb_in_isolation_read: true,
             isolation_read_engines_value: "tikv,tiflash,tidb".to_owned(),
             prefer_index_merge_by_fix_control: false,
+            index_merge_skip_range_scan_check: true,
             index_lookup_push_down_session: Default::default(),
             enable_skew_distinct_agg: false,
             enable_force_inline_cte: false,
@@ -2784,6 +2788,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             has_tiflash_replica: table.has_tiflash_replica,
             is_for_update_read: self.is_for_update_read,
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
+            index_merge_skip_range_scan_check: self.index_merge_skip_range_scan_check,
             ast_index_hints: table_ref.hints.clone(),
             index_hints,
             index_merge_hints,

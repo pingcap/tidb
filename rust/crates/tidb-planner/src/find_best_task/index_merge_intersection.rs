@@ -130,11 +130,10 @@ pub(super) fn build_prepared_index_merge_task(
             crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
         )),
     });
-    // Go addPushedDownSelectionToTableScan separates root conditions before
-    // sealing the cop table phase. Rejected residuals must survive conversion.
-    let (table_filters, root_task_conds) = crate::pushdown::split_scan_filters(
+    // Go `BuildIndexMergeTableScan` separates root conditions before sealing
+    // the cop table phase.
+    let (table_filters, root_task_conds) = crate::pushdown::split_index_merge_table_filters(
         path.table_filters.clone(),
-        tidb_expr::infer_pushdown::PushDownStore::TiKv,
         &ctx.expr_pushdown_blacklist,
     );
     let table_plan = if table_filters.is_empty() {

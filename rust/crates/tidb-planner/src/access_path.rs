@@ -246,6 +246,71 @@ pub(crate) fn derive_access_paths(
         {
             merges.push(DerivedAccessPath::IndexMerge(path));
         }
+        // Go `generateOtherIndexMerge`'s `needConsiderIndexMerge`: without
+        // index-merge hints, the merges just built are kept only when every
+        // condition can be pushed down and, with fix control 52869 OFF, no
+        // other path has access conditions.
+        if source.index_merge_hints.is_empty() {
+            let mut need_consider_index_merge = true;
+            if !source.index_merge_skip_range_scan_check {
+                need_consider_index_merge =
+                    !source
+                        .enumerated_paths
+                        .iter()
+                        .skip(1)
+                        .any(|path| match path {
+                            PossiblePath::Table { .. } | PossiblePath::TiFlashTable => table_path
+                                .as_ref()
+                                .is_some_and(|path| !path.detached.access_conds.is_empty()),
+                            PossiblePath::Index { index } => source
+                                .indexes
+                                .get(*index)
+                                .and_then(|index| source.derived_index_paths.get(&index.id))
+                                .and_then(|path| path.filled.as_ref())
+                                .is_some_and(|filled| !filled.detached.access_conds.is_empty()),
+                        });
+            }
+            if need_consider_index_merge
+                && !crate::pushdown::can_exprs_push_down(
+                    &source.all_conds,
+                    tidb_expr::infer_pushdown::PushDownStore::Unspecified,
+                    context.expr_pushdown_blacklist,
+                )
+            {
+                need_consider_index_merge = false;
+            }
+            if !need_consider_index_merge {
+                // Go deletes a merge in place and still advances its index,
+                // so the merge after each deleted one is never examined and
+                // survives; `containMVPath` is never reset, so every merge
+                // after the first one over an MV index survives too.
+                let mut contain_mv_path = false;
+                let mut i = 0;
+                while i < merges.len() {
+                    contain_mv_path |= match &merges[i] {
+                        DerivedAccessPath::Union(path) => {
+                            path.alternatives
+                                .iter()
+                                .flatten()
+                                .any(|partial| match partial {
+                                    index_merge::Partial::MvIndex { paths, .. } => {
+                                        !paths.is_empty()
+                                    }
+                                    _ => false,
+                                })
+                        }
+                        _ => false,
+                    };
+                    if !contain_mv_path {
+                        merges.remove(i);
+                    }
+                    i += 1;
+                }
+                if merges.is_empty() && index_merge_warning.is_none() {
+                    index_merge_warning = Some("IndexMerge is inapplicable or disabled. ");
+                }
+            }
+        }
         // Go's second and third entry points read `AllConds`: an IndexMerge
         // over one MV index, then an intersection composing MV and ordinary
         // indexes.

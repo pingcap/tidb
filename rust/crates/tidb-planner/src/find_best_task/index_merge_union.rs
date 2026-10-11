@@ -583,9 +583,8 @@ pub(super) fn build_converged_union_index_merge_task(
         ))
     });
 
-    let (pushed_filters, root_task_conds) = crate::pushdown::split_scan_filters(
+    let (pushed_filters, root_task_conds) = crate::pushdown::split_index_merge_table_filters(
         table_filters.clone(),
-        tidb_expr::infer_pushdown::PushDownStore::TiKv,
         &ctx.expr_pushdown_blacklist,
     );
     let mut table_plan = table_plan;

@@ -247,6 +247,9 @@ pub struct DataSource {
     pub index_merge_hints: Vec<DataSourceIndexMergeHint>,
     /// Go fix control 52869 after session-variable resolution.
     pub prefer_index_merge_by_fix_control: bool,
+    /// Go `generateOtherIndexMerge`'s `skipRangeScanCheck`: fix control
+    /// 52869, true when unset.
+    pub index_merge_skip_range_scan_check: bool,
     /// Go `TableStats`: the table-level profile before any filtering.
     pub table_stats: Option<StatsInfo>,
     /// Go table access path's already-derived `CountAfterAccess`.
@@ -1130,6 +1133,7 @@ impl DataSource {
             force_no_index_lookup_push_down: self.force_no_index_lookup_push_down,
             index_merge_hints: self.index_merge_hints.clone(),
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
+            index_merge_skip_range_scan_check: self.index_merge_skip_range_scan_check,
             table_stats: self.table_stats.clone(),
             table_path_count_after_access: self.table_path_count_after_access,
             derived_index_paths: self.derived_index_paths.clone(),

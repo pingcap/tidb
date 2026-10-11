@@ -3200,6 +3200,9 @@ fn planner_optimized_query_with_allocators(
     builder.prefer_index_merge_by_fix_control = ctx
         .optimizer_fix_control()
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
+    builder.index_merge_skip_range_scan_check = ctx
+        .optimizer_fix_control()
+        .get_bool_with_default(tidb_planner::fix_control::FIX_52869, true);
     let node = tidb_resolve::NodeW::new(query.clone());
     let plan = builder.build_query_node(&node, false)?;
     optimize_built_logical(
@@ -3311,6 +3314,9 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.prefer_index_merge_by_fix_control = ctx
         .optimizer_fix_control()
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
+    builder.index_merge_skip_range_scan_check = ctx
+        .optimizer_fix_control()
+        .get_bool_with_default(tidb_planner::fix_control::FIX_52869, true);
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
     // Go `buildUpdate`/`buildDelete` lock the read only for a single-table
     // source (`TableRefs.Right == nil` / `!IsMultiTable`); a multi-table

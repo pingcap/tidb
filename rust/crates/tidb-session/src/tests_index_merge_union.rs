@@ -143,3 +143,88 @@ fn a_table_partial_wins_a_tie_against_an_index() {
         Some("└─TableFullScan table:t keep order:false, stats:pseudo")
     );
 }
+
+/// `planner/core/casetest/integration.test`'s `t1`, plans captured from Go on
+/// this branch. Without an index-merge hint Go's `generateOtherIndexMerge`
+/// keeps its merges only when every condition can be pushed down, deleting
+/// them in place while advancing its index, so of two (or three) OR merges
+/// only the second survives. The `from_base64` no engine can evaluate stays
+/// in the Selection above the DataSource, and Go's
+/// `extractFiltersForIndexMerge` drops it from the merge's table filters
+/// rather than adding a second root Selection.
+#[test]
+fn an_unpushable_condition_keeps_only_go_s_surviving_merges() {
+    let mut session = Session::new();
+    session
+        .run("create table t1(c1 varchar(100), c2 varchar(100), key(c1), key(c2), c3 varchar(100))")
+        .unwrap();
+    session
+        .run("insert into t1 values('ab', '10', '10')")
+        .unwrap();
+    assert_eq!(
+        plan_tree(
+            &mut session,
+            "select 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab'"
+        )[2..],
+        [
+            "└─TableReader  data:TableFullScan",
+            "└─TableFullScan table:t1 keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        plan_tree(
+            &mut session,
+            "select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab'"
+        )[2],
+        "└─IndexMerge  type: union"
+    );
+    let survivor = [
+        "Projection  1->Column",
+        r#"└─Selection  eq(from_base64(test.t1.c3), "ab")"#,
+        "└─IndexMerge  type: union",
+        r#"├─IndexRangeScan(Build) table:t1, index:c1(c1) range:["x","x"], keep order:false, stats:pseudo"#,
+        r#"├─IndexRangeScan(Build) table:t1, index:c2(c2) range:["y","y"], keep order:false, stats:pseudo"#,
+    ];
+    assert_eq!(
+        plan_tree(
+            &mut session,
+            "select 1 from t1 where (c1 = 'de' or c2 = '10') and (c1 = 'x' or c2 = 'y') and from_base64(c3) = 'ab'"
+        )[..5],
+        survivor
+    );
+    assert_eq!(
+        plan_tree(
+            &mut session,
+            "select 1 from t1 where (c1 = 'de' or c2 = '10') and (c1 = 'x' or c2 = 'y') and (c1 = 'p' or c2 = 'q') and from_base64(c3) = 'ab'"
+        )[..5],
+        survivor
+    );
+    // The dropped table filter is still evaluated by the Selection above.
+    let filtered = |value: &str| {
+        format!(
+            "select c1 from t1 where (c1 = 'ab' or c2 = 'x') and (c1 = 'y' or c2 = '10') \
+             and from_base64(to_base64(c3)) = '{value}'"
+        )
+    };
+    assert_eq!(row_text(session.run(&filtered("10"))), vec![vec!["ab"]]);
+    assert!(row_text(session.run(&filtered("ab"))).is_empty());
+    // Fix control 52869 OFF: an index path with access conditions turns the
+    // merges off too.
+    session
+        .run("set @@tidb_opt_fix_control = '52869:OFF'")
+        .unwrap();
+    assert_eq!(
+        plan_tree(
+            &mut session,
+            "select 1 from t1 where (c1 = 'de' or c2 = '10') and c1 > 'a'"
+        )[1],
+        "└─TableReader  data:Selection"
+    );
+    assert_eq!(
+        plan_tree(
+            &mut session,
+            "select 1 from t1 where (c1 = 'de' or c2 = '10') and c3 = 'a'"
+        )[1],
+        "└─IndexMerge  type: union"
+    );
+}

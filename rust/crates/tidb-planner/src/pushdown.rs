@@ -66,6 +66,45 @@ pub fn split_scan_filters(
     (pushed, root)
 }
 
+/// Go `extractFiltersForIndexMerge`: a filter TiKV can evaluate is pushed,
+/// one only another engine can evaluate stays for the root task, and one no
+/// engine can evaluate is dropped -- predicate push-down's `kv.UnSpecified`
+/// split left it in the Selection above the DataSource, which evaluates it.
+pub fn extract_filters_for_index_merge(
+    filters: Vec<Expression>,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+) -> (Vec<Expression>, Vec<Expression>) {
+    use tidb_expr::infer_pushdown::PushDownStore;
+
+    let mut pushed = Vec::new();
+    let mut remaining = Vec::new();
+    for expr in filters {
+        if can_exprs_push_down(std::slice::from_ref(&expr), PushDownStore::TiKv, blacklist) {
+            pushed.push(expr);
+        } else if can_exprs_push_down(
+            std::slice::from_ref(&expr),
+            PushDownStore::Unspecified,
+            blacklist,
+        ) {
+            remaining.push(expr);
+        }
+    }
+    (pushed, remaining)
+}
+
+/// Go `BuildIndexMergeTableScan`'s filter split: `extractFiltersForIndexMerge`,
+/// then `SplitSelCondsWithVirtualColumn` over the pushed filters, whose
+/// virtual-column conditions join the root ones after the engine residue.
+pub fn split_index_merge_table_filters(
+    filters: Vec<Expression>,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+) -> (Vec<Expression>, Vec<Expression>) {
+    let (pushed, mut remaining) = extract_filters_for_index_merge(filters, blacklist);
+    let (pushed, virtual_remaining) = split_virtual_column_filters(pushed);
+    remaining.extend(virtual_remaining);
+    (pushed, remaining)
+}
+
 /// Go SplitSelCondsWithVirtualColumn, kept separate for index/table phase order.
 pub fn split_virtual_column_filters(
     filters: Vec<Expression>,
