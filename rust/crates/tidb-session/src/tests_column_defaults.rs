@@ -2017,3 +2017,26 @@ fn a_query_reads_column_defaults_with_default_of_column() {
         [["2", "-1"]]
     );
 }
+
+/// Go refuses `NOW()` only as a column's LAST default
+/// (`isInvalidDefaultValue`, 1067); an earlier `DEFAULT now()` on a
+/// non-temporal column is evaluated by `getDefaultValue` and overwritten
+/// (oracle-captured, `ddl/table_modify`).
+#[test]
+fn only_a_columns_last_default_is_checked_for_now() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1 (a int default now())",
+        "create table t2 (a double default (now()))",
+        "create table t3 (a varchar(30) default current_timestamp)",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1067, "{sql}: {}", error.message);
+    }
+    session
+        .run("create table t4 (a double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0)")
+        .unwrap();
+    assert!(
+        crate::tests_support::show_create(&mut session, "t4").contains("`a` double DEFAULT '2'")
+    );
+}

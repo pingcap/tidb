@@ -471,14 +471,16 @@ impl PhysicalPlan {
                 }
             }
             Self::Lock(op) => {
+                // Go `PhysicalLock.ResolveIndices` binds the handles only.
+                // `buildSelectLock` gives EVERY partitioned DataSource below
+                // the lock a physical-table-ID column, a subquery's included,
+                // and a semi join drops that one; `SelectLockExec.Open` finds
+                // the ones its schema still carries by unique ID.
                 let input = child_schema(&op.base, 0)?;
                 for columns in op.tbl_id_to_handle_cols.values_mut() {
                     for column in columns {
                         bind_column(column, input)?;
                     }
-                }
-                for column in op.tbl_id_to_phys_tbl_id_col.values_mut() {
-                    bind_column(column, input)?;
                 }
             }
             Self::TableReader(op) => {

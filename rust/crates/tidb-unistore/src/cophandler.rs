@@ -624,10 +624,20 @@ fn exec_table_scan(
         None => None,
     };
     use tidb_datatype::Datum;
+    const EXTRA_PHYSICAL_TABLE_ID: i64 = -3;
     let mut column_types = std::collections::BTreeMap::new();
     for column in &tbl_scan.columns {
         column_types.insert(column.column_id(), field_type_from_pb_column(column));
     }
+    // Go `tableScanProcessor.Process`: "Add ExtraPhysTblID if requested.
+    // Assumes it is always last!" -- the row's physical table ID comes from
+    // its key, which is what SelectLock builds a partitioned row's lock key
+    // from.
+    let physical_id_offset = tbl_scan
+        .columns
+        .last()
+        .filter(|column| column.column_id() == EXTRA_PHYSICAL_TABLE_ID)
+        .map(|_| tbl_scan.columns.len() - 1);
     let mut chunks: Vec<tipb::Chunk> = Vec::new();
     let mut current = Vec::new();
     let mut current_rows = 0_usize;
@@ -697,8 +707,10 @@ fn exec_table_scan(
                 Err(err) => return other_error(&format!("decode row failed: {err:?}")),
             };
             let mut row_datums = Vec::with_capacity(tbl_scan.columns.len());
-            for column in &tbl_scan.columns {
-                if column.pk_handle() {
+            for (offset, column) in tbl_scan.columns.iter().enumerate() {
+                if physical_id_offset == Some(offset) {
+                    row_datums.push(Datum::Int(tidb_codec::decode_table_id(&pair.key)));
+                } else if column.pk_handle() {
                     row_datums.push(Datum::Int(handle));
                 } else if let Some(datum) = common_handle.as_ref().and_then(|datums| {
                     // Go matches `PrimaryColumnIds` positionally against the

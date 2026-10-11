@@ -9529,6 +9529,75 @@ fn locking_queries_retain_unprojected_record_handles() {
     );
 }
 
+/// A SELECT's FOR UPDATE locks its own rows, under the same keys a point
+/// lock takes:
+/// - Go `buildSubquery` pops the handle map a WHERE subquery leaves, so the
+///   lock still sees the outer table's handles through an IN or `<> ANY`
+///   semi join;
+/// - a partitioned row's lock key names its partition, from the
+///   `ExtraPhysTblID` storage fills in from the row's key (Go's TableScan
+///   requests that column last);
+/// - the subquery's own partitioned table carries that column too, and the
+///   semi join drops it (`PhysicalLock.ResolveIndices` binds handles only).
+#[test]
+fn a_where_subquery_keeps_the_select_lock_on_its_rows() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(993))
+        .expect("session opens");
+    for sql in [
+        "CREATE TABLE test.sublock_t (id int primary key, v int)",
+        "CREATE TABLE test.sublock_p (id int primary key, v int) PARTITION BY HASH(id) PARTITIONS 2",
+        "CREATE TABLE test.sublock_u (id int primary key, v int) PARTITION BY HASH(id) PARTITIONS 2",
+        "INSERT INTO test.sublock_t VALUES (1,10)",
+        "INSERT INTO test.sublock_p VALUES (1,10)",
+        "INSERT INTO test.sublock_u VALUES (1,10),(2,20)",
+    ] {
+        rows(&mut session, sql);
+    }
+    let mut contender = stack
+        .factory
+        .open_session(session_context(994))
+        .expect("contender opens");
+    for (locking, contended) in [
+        (
+            "SELECT id FROM test.sublock_t WHERE v IN (SELECT v FROM test.sublock_u) FOR UPDATE",
+            "SELECT v FROM test.sublock_t WHERE id=1 FOR UPDATE NOWAIT",
+        ),
+        (
+            "SELECT id FROM test.sublock_p WHERE v > 0 FOR UPDATE",
+            "SELECT v FROM test.sublock_p WHERE id=1 FOR UPDATE NOWAIT",
+        ),
+        (
+            "SELECT id FROM test.sublock_p WHERE v IN (SELECT v FROM test.sublock_u) FOR UPDATE",
+            "SELECT v FROM test.sublock_p WHERE id=1 FOR UPDATE NOWAIT",
+        ),
+        (
+            "SELECT id FROM test.sublock_t WHERE v <> ANY (SELECT v FROM test.sublock_u) FOR UPDATE",
+            "SELECT v FROM test.sublock_t WHERE id=1 FOR UPDATE NOWAIT",
+        ),
+        (
+            "SELECT id FROM test.sublock_p WHERE v <> ANY (SELECT v FROM test.sublock_u) FOR UPDATE",
+            "SELECT v FROM test.sublock_p WHERE id=1 FOR UPDATE NOWAIT",
+        ),
+    ] {
+        session
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin");
+        assert_eq!(displayed(rows(&mut session, locking)), [["1"]], "{locking}");
+        contender
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("contender begins");
+        assert!(
+            matches!(contender.execute(contended), Err(error) if error.code == 3572),
+            "{locking} left the row unlocked"
+        );
+        contender.control_transaction("ROLLBACK").unwrap();
+        session.control_transaction("ROLLBACK").unwrap();
+    }
+}
+
 #[test]
 fn a_locking_range_sees_rows_committed_after_begin() {
     let (stack, _users) = cop_backed_stack();

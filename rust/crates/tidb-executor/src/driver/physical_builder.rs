@@ -2382,15 +2382,14 @@ fn index_join_probe_shape(
         .enumerate()
         .filter_map(|(key, index)| usize::try_from(index).ok().map(|index| (index, key)))
         .collect::<Vec<_>>();
-    dynamic.sort_unstable_by_key(|(index, _)| *index);
+    // Go `buildIndexJoinInner2TableScan` maps every join key on the handle
+    // to it but looks up by the first one only ("Add to newOuterJoinKeys
+    // only once"); the join still compares every key pair.
+    dynamic.sort_unstable();
+    dynamic.dedup_by_key(|(index, _)| *index);
     if dynamic.is_empty() {
         return Err(DriverError::unsupported(
             "a physical index join retained no usable lookup key",
-        ));
-    }
-    if dynamic.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-        return Err(DriverError::unsupported(
-            "a physical index join maps two join keys to one lookup column",
         ));
     }
     // Go's template width covers the join keys and the EQ/IN columns; a

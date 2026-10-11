@@ -700,13 +700,11 @@ fn build_with_current_database(
         if let Some(default) = func_call_default(&name, args, expr, field_type, current_database)? {
             return Ok(default);
         }
-        // Go falls through to `EvalSimpleAst` here, freezing the clock into a
-        // literal on a non-temporal column. Storing a frozen timestamp is a
-        // silently WRONG table rather than a missing feature, so it is
-        // refused by name.
-        return Err(DefaultError::Unsupported(
-            "a DEFAULT CURRENT_TIMESTAMP on a column that is not TIMESTAMP or DATETIME",
-        ));
+        // Go `getDefaultValue`: "If the function call is
+        // ast.CurrentTimestamp, it needs to be continuously processed" -- on
+        // a non-temporal column it is evaluated like any other default.
+        // Preprocess has already refused it as a column's LAST default
+        // (`isInvalidDefaultValue`, 1067); an earlier one is overwritten.
     }
     fold(expr).map(ColumnDefault::Value)
 }

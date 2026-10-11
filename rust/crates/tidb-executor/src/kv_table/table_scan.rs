@@ -491,6 +491,48 @@ impl KvTable {
         read_engine: crate::remote_scan::PushdownReadEngine,
         schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
+        self.pushdown_row_cursor_with_physical_id(
+            keep,
+            predicates,
+            output_offsets,
+            topn,
+            limit,
+            handle_ranges,
+            range_hints,
+            descending,
+            keep_order,
+            retain_identity,
+            false,
+            context,
+            statement,
+            read_engine,
+            schema_version,
+        )
+    }
+
+    /// [`Self::pushdown_row_cursor_with_context`] for a scan whose schema
+    /// carries Go's `ExtraPhysTblID`: a partitioned read then requests that
+    /// column LAST, as Go's TableScan does, and storage fills it from each
+    /// row's key, so a row's record key names its partition.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pushdown_row_cursor_with_physical_id(
+        &mut self,
+        keep: &[usize],
+        predicates: &[ScanPredicate],
+        output_offsets: Option<&[usize]>,
+        topn: Option<&PushdownTopN>,
+        limit: Option<u64>,
+        handle_ranges: Option<&[IndexRange]>,
+        range_hints: Option<&[usize]>,
+        descending: bool,
+        keep_order: bool,
+        retain_identity: bool,
+        physical_id: bool,
+        context: &RowDecodeContext,
+        statement: &PushdownStatementContext,
+        read_engine: crate::remote_scan::PushdownReadEngine,
+        schema_version: u64,
+    ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         self.pushdown_row_cursor_with_context_and_key_ranges(
             keep,
             predicates,
@@ -502,6 +544,7 @@ impl KvTable {
             descending,
             keep_order,
             retain_identity,
+            physical_id,
             context,
             statement,
             read_engine,
@@ -522,6 +565,7 @@ impl KvTable {
         descending: bool,
         keep_order: bool,
         retain_identity: bool,
+        physical_id: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
         read_engine: crate::remote_scan::PushdownReadEngine,
@@ -676,6 +720,22 @@ impl KvTable {
         } else {
             handle_index
         };
+        let response_physical_id_index = (physical_id && self.partition.is_some()).then(|| {
+            columns.push(PushdownScanColumn {
+                id: tidb_model::column::EXTRA_PHYS_TBL_ID,
+                field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                is_handle: false,
+                origin_default: None,
+            });
+            let position = columns.len() - 1;
+            match &mut response_offsets {
+                Some(offsets) => {
+                    offsets.push(position);
+                    offsets.len() - 1
+                }
+                None => position,
+            }
+        });
         let primary_column_ids: Vec<i64> = common_primary
             .as_ref()
             .into_iter()
@@ -939,6 +999,7 @@ impl KvTable {
             handle_index: response_handle_index,
             common_identity,
             table_id: self.table_id,
+            physical_id_index: response_physical_id_index,
             merge_staged,
             unordered_shadowed,
             unsigned_handle_order: self.unsigned_pk_handle() && (keep_order || descending),
@@ -1074,6 +1135,7 @@ impl KvTable {
             false,
             false,
             true,
+            false,
             context,
             &statement,
             crate::remote_scan::PushdownReadEngine::TiKv,
@@ -3138,6 +3200,10 @@ pub struct RemoteRowCursor {
     handle_index: Option<usize>,
     common_identity: Option<RemoteCommonHandle>,
     table_id: i64,
+    /// Where the storage-filled `ExtraPhysTblID` sits in a remote row, when
+    /// it was requested: the row's record key then names that partition
+    /// instead of the logical table.
+    physical_id_index: Option<usize>,
     /// Whether the cursor must merge staged rows into the snapshot stream.
     /// Clean reads can consume projected remote rows directly without
     /// reconstructing an encoded record key for every row.
@@ -3303,8 +3369,12 @@ impl RemoteRowCursor {
             self.common_identity.as_ref(),
             |position| row.get(position).cloned(),
         )?;
+        let table_id = match self.physical_id_index.and_then(|index| row.get(index)) {
+            Some(Datum::Int(id)) => *id,
+            _ => self.table_id,
+        };
         row.truncate(self.width);
-        let key = encode_row_key_with_handle(self.table_id, &handle.record_handle());
+        let key = encode_row_key_with_handle(table_id, &handle.record_handle());
         Ok(Some((key, row)))
     }
 
@@ -4862,7 +4932,7 @@ impl Executor for TableScanExec {
         };
         self.remote = self
             .table
-            .pushdown_row_cursor_with_context(
+            .pushdown_row_cursor_with_physical_id(
                 remote_keep,
                 remote_predicates,
                 self.post_filter_projection.as_deref(),
@@ -4877,6 +4947,7 @@ impl Executor for TableScanExec {
                 self.table.has_dirty_content(&self.statement.staged_writes)
                     || self.extra_handle_slot.is_some()
                     || self.physical_table_id_slot.is_some(),
+                self.physical_table_id_slot.is_some(),
                 &self.decode_context,
                 &self.statement,
                 self.read_engine,
@@ -7117,6 +7188,7 @@ mod remote_cursor_tests {
             width: 1,
             handle_index: None,
             table_id: 0,
+            physical_id_index: None,
             common_identity: None,
             merge_staged: false,
             unordered_shadowed: None,
@@ -7356,6 +7428,7 @@ mod remote_cursor_tests {
             handle_index: Some(0),
             common_identity: None,
             table_id: 0,
+            physical_id_index: None,
             merge_staged: false,
             unordered_shadowed: None,
             unsigned_handle_order: false,
@@ -7395,6 +7468,7 @@ mod remote_cursor_tests {
             handle_index: Some(1),
             common_identity: None,
             table_id: 0,
+            physical_id_index: None,
             merge_staged: false,
             unordered_shadowed: None,
             unsigned_handle_order: false,
@@ -7533,6 +7607,7 @@ mod remote_cursor_tests {
             handle_index: Some(1),
             common_identity: identity,
             table_id: 0,
+            physical_id_index: None,
             merge_staged: false,
             unordered_shadowed: None,
             unsigned_handle_order: false,
@@ -7767,6 +7842,7 @@ mod remote_cursor_tests {
             handle_index: None,
             common_identity: None,
             table_id: 0,
+            physical_id_index: None,
             merge_staged: false,
             unordered_shadowed: None,
             unsigned_handle_order: false,
@@ -7820,6 +7896,7 @@ mod remote_cursor_tests {
             handle_index: None,
             common_identity: None,
             table_id: 0,
+            physical_id_index: None,
             merge_staged: false,
             unordered_shadowed: None,
             unsigned_handle_order: false,
@@ -7890,6 +7967,7 @@ mod remote_cursor_tests {
             width: 1,
             handle_index: None,
             table_id: 0,
+            physical_id_index: None,
             common_identity: None,
             merge_staged: false,
             unordered_shadowed: None,
@@ -7933,6 +8011,7 @@ mod remote_cursor_tests {
             handle_index: None,
             common_identity: None,
             table_id: 0,
+            physical_id_index: None,
             merge_staged: false,
             unordered_shadowed: None,
             unsigned_handle_order: false,

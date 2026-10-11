@@ -5731,3 +5731,62 @@ fn agg_pushdown_across_union_all_reads_through_an_eliminated_projection() {
         "{plan:?}"
     );
 }
+
+/// Go `buildIndexJoinInner2TableScan` maps every join key on the handle to it
+/// but looks the inner rows up by the first one only; the join still checks
+/// every key pair (oracle-captured, `executor/jointest/hash_join`).
+#[test]
+fn an_index_join_with_two_keys_on_the_handle_looks_up_by_the_first() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1(id int primary key)",
+        "create table t2(a int, b int)",
+        "insert into t1 values(1)",
+        "insert into t2 values(1,1),(2,1)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for hint in ["inl_join", "inl_hash_join", "inl_merge_join"] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "select /*+ {hint}(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id"
+            ))),
+            [["1", "1", "1"]],
+            "{hint}"
+        );
+    }
+}
+
+/// A WHERE subquery leaves the enclosing SELECT's handles for its FOR UPDATE
+/// (Go `buildSubquery` pops the subquery's handle map), so the lock widens
+/// its child by the partition ID and the select list's Projection stays above
+/// it; the subquery's own partition ID, which the semi join drops, is not
+/// bound (`PhysicalLock.ResolveIndices`). Captured from `executor/issues`.
+#[test]
+fn a_locking_select_over_a_subquery_keeps_its_projection() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1 (c_int int, c_str varchar(40), c_decimal decimal(12, 6), \
+         primary key (c_int), key(c_str(2)), key(c_decimal)) \
+         partition by list (c_int) (partition p0 values IN (1, 5, 9), \
+         partition p1 values IN (2, 6, 10), partition p2 values IN (3, 7), \
+         partition p3 values IN (4, 8))",
+        "create table t2 (c_int int, c_str varchar(40), c_decimal decimal(12, 6), \
+         primary key (c_int), key(c_str), key(c_decimal)) partition by hash (c_int) partitions 4",
+        "insert into t1 values (6, 'musing mayer', 1.280), (7, 'wizardly heisenberg', 6.589), \
+         (8, 'optimistic swirles', 9.633), (9, 'hungry haslett', 2.659), (10, 'stupefied wiles', 2.336)",
+        "insert into t2 select * from t1",
+        "begin",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let query =
+        "select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update";
+    let mut rows = row_text(session.run(query));
+    rows.sort();
+    assert_eq!(rows.len(), 5, "{rows:?}");
+    let plan = row_text(session.run(&format!("explain format = 'plan_tree' {query}")));
+    assert!(plan[0][0].starts_with("Projection"), "{plan:?}");
+    assert!(plan[1][0].contains("SelectLock"), "{plan:?}");
+    session.run("commit").unwrap();
+}
