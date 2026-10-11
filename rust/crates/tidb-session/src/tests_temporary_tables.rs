@@ -46,6 +46,19 @@ fn refusal(session: &mut Session, sql: &str) -> (u16, String) {
     (reported.code, reported.message)
 }
 
+/// Go `TestSameNameObjectWithLocalTemporaryTable`: `preprocess.go` detaches
+/// the LOCAL temporary tables for `SHOW CREATE VIEW` and `SHOW CREATE
+/// SEQUENCE`, so a temporary table of the same name shadows neither.
+#[test]
+fn show_create_view_reads_past_a_local_temporary_table() {
+    let mut session = temporary_session();
+    session.run("create view v1 as select 1").unwrap();
+    session.run("create temporary table v1 (cv1 int)").unwrap();
+    let rows = row_text(session.run("show create view v1"));
+    assert_eq!(rows[0][0], "v1");
+    assert!(rows[0][1].contains("VIEW `v1`"), "{rows:?}");
+}
+
 /// Go `setTemporaryType` accepts `ON COMMIT DELETE ROWS`, and
 /// `ConstructResultOfShowCreateTable` (`pkg/executor/show.go:1073`, `:1421`)
 /// prints the kind back in the header and the clause back after the comment.

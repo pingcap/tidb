@@ -258,6 +258,12 @@ fn scalar_function_can_be_pushed(
         return false;
     }
     let mut policy = PushDownPolicy::new(policy_name, signature);
+    if policy_name == "conv" {
+        policy.conv_casts_hybrid_or_binary_literal = function
+            .args
+            .first()
+            .is_some_and(tidb_expr::scalar_function::conv_reads_bits);
+    }
     if policy_name == "cast" {
         policy.source_type = function.args.first().and_then(Expression::static_type);
         policy.return_type = expr.static_type();

@@ -71,7 +71,7 @@ fn dedicated_cast(arg: Expression, target: FieldType) -> Result<Expression, Func
 }
 
 /// Native cast signatures share Go's single ast.Cast rewrite contract.
-pub(super) fn is_cast_name(name: &str) -> bool {
+pub(crate) fn is_cast_name(name: &str) -> bool {
     name == "cast" || name.starts_with("cast_")
 }
 

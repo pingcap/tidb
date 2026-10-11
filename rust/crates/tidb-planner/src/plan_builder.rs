@@ -2312,24 +2312,54 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     self.changed = true;
                     return true;
                 }
-                let Some(Expression::Column(column)) = rewriter.ctx_stack.pop() else {
-                    self.error = Some(PlanError::internal(
-                        "subquery lowering did not publish its result column",
-                    ));
-                    return true;
+                // Go `handleScalarSubquery` publishes the Apply's last column,
+                // or -- for a subquery of several columns -- `row(...)` over
+                // the inner columns, which the enclosing predicate compares
+                // as a row.
+                let columns = match rewriter.ctx_stack.pop() {
+                    Some(Expression::Column(column)) => vec![column],
+                    Some(Expression::ScalarFunction(row))
+                        if row.func_name.lowercase() == "row"
+                            && row
+                                .args
+                                .iter()
+                                .all(|arg| matches!(arg, Expression::Column(_))) =>
+                    {
+                        row.args
+                            .into_iter()
+                            .filter_map(|arg| match arg {
+                                Expression::Column(column) => Some(column),
+                                _ => None,
+                            })
+                            .collect()
+                    }
+                    _ => {
+                        self.error = Some(PlanError::internal(
+                            "subquery lowering did not publish its result column",
+                        ));
+                        return true;
+                    }
                 };
-                let Some(index) = applied.schema().and_then(|schema| {
-                    schema
-                        .columns
-                        .iter()
-                        .position(|candidate| candidate.unique_id == column.unique_id)
-                }) else {
-                    self.error = Some(PlanError::internal(
-                        "subquery result is absent from its schema",
-                    ));
-                    return true;
+                let mut markers = Vec::with_capacity(columns.len());
+                for column in &columns {
+                    let Some(index) = applied.schema().and_then(|schema| {
+                        schema
+                            .columns
+                            .iter()
+                            .position(|candidate| candidate.unique_id == column.unique_id)
+                    }) else {
+                        self.error = Some(PlanError::internal(
+                            "subquery result is absent from its schema",
+                        ));
+                        return true;
+                    };
+                    markers.push(PlanMarker::new(MarkerKind::Column, index).as_expr());
+                }
+                *expr = if markers.len() == 1 {
+                    markers.pop().expect("one marker")
+                } else {
+                    tidb_ast::Expr::Row(markers)
                 };
-                *expr = PlanMarker::new(MarkerKind::Column, index).as_expr();
                 self.plan = Some(applied);
                 self.changed = true;
                 true
@@ -4040,13 +4070,20 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .static_type()
                         .cloned()
                         .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-                    let column = Column::new(self.column_ids.alloc(), ret_type);
+                    let mut column = Column::new(self.column_ids.alloc(), ret_type);
                     // Go `buildProjectionField`:
                     // `newCol.SetCoercibility(expr.Coercibility())`, so a
                     // `COLLATE`d field stays EXPLICIT for a UNION above.
                     column
                         .collation
                         .set_coercibility(tidb_expr::collation_derive::coercibility_of(&built));
+                    // Go `buildProjectionField`'s `CorrelatedColUniqueID`: a
+                    // projected outer column remembers which one it is, so the
+                    // Apply above can equate the two for functional
+                    // dependencies (`select (select t1.a from t2) from t1`).
+                    if let Expression::CorrelatedColumn(correlated) = &built {
+                        column.correlated_col_unique_id = correlated.column.unique_id;
+                    }
                     column
                 }
             };
@@ -4184,6 +4221,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // alias lives on the `FieldName` only, so `EXPLAIN` renders
             // `expr->Column#N` instead of the user alias.
             let mut output = Column::new(self.column_ids.alloc(), ret_type);
+            if let Expression::CorrelatedColumn(correlated) = &built {
+                output.correlated_col_unique_id = correlated.column.unique_id;
+            }
             output.is_hidden = field.hidden;
             projection_columns.push(output);
             projection_names.push(name);

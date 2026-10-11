@@ -97,3 +97,32 @@ fn a_group_concat_order_position_names_its_arguments() {
         (1054, "Unknown column '3' in 'order clause'".to_owned())
     );
 }
+
+/// Go `buildProjectionField` records a projected outer column's
+/// `CorrelatedColUniqueID`, and `LogicalApply.ExtractFD` equates it with the
+/// outer column, so the new ONLY_FULL_GROUP_BY check sees
+/// `(select t1.a from t1 as t2 limit 1)` determined by `t1.pk`
+/// (planner/funcdep/only_full_group_by).
+#[test]
+fn a_projected_outer_column_is_determined_by_the_group_key() {
+    let mut session = Session::new();
+    session
+        .run("set @@sql_mode = 'ONLY_FULL_GROUP_BY'")
+        .unwrap();
+    session
+        .run("set @@tidb_enable_new_only_full_group_by_check = 'on'")
+        .unwrap();
+    session
+        .run("create table t1 (pk int primary key, a int)")
+        .unwrap();
+    session
+        .run("insert into t1 values (1, 10), (2, 20)")
+        .unwrap();
+    assert_eq!(
+        row_text(
+            session
+                .run("select (select t1.a from t1 as t2 limit 1) from t1 group by pk order by pk")
+        ),
+        [["10"], ["20"]]
+    );
+}

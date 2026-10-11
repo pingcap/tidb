@@ -1634,3 +1634,22 @@ fn a_correlated_aggregate_nested_in_an_inner_aggregate_is_lifted_alone() {
         .to_mysql_error();
     assert_eq!(error.code, 1111, "{}", error.message);
 }
+
+/// Go `handleScalarSubquery` publishes a correlated subquery of several
+/// columns as `row(...)` over the Apply's inner columns, which the outer
+/// predicate compares as a row (executor/executor's
+/// `(c, d) = (select * from t k where (t.c,t.d) = (c,d))`).
+#[test]
+fn a_correlated_row_subquery_compares_as_a_row() {
+    let mut session = Session::new();
+    session.run("create table t (c int, d int)").unwrap();
+    session
+        .run("insert into t values (1, 1), (1, 3), (2, 1), (2, 3)")
+        .unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run(
+            "select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d)) order by c, d"
+        )),
+        [["1", "1"], ["1", "3"], ["2", "1"], ["2", "3"]]
+    );
+}

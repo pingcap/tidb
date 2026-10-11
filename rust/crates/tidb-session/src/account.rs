@@ -1326,17 +1326,52 @@ impl Session {
                 "RENAME USER requires a server front end with a privilege registry",
             ));
         };
+        let mut resolved = Vec::with_capacity(pairs.len());
         for pair in pairs {
-            let (old_user, old_host) = self.resolve_account(&pair.old_user)?;
-            let (new_user, new_host) = self.resolve_account(&pair.new_user)?;
-            let old_missing = !registry.user_exists(&old_user, &old_host);
+            resolved.push((
+                self.resolve_account(&pair.old_user)?,
+                self.resolve_account(&pair.new_user)?,
+            ));
+        }
+        // Go renames every pair inside ONE transaction and rolls all of them
+        // back at the first pair whose source is missing or whose target is
+        // taken -- each pair seeing the renames before it. Walk the pairs
+        // over that running view first, so a failing statement renames
+        // nothing.
+        {
+            let mut gone: Vec<(String, String)> = Vec::new();
+            let mut added: Vec<(String, String)> = Vec::new();
+            let exists = |account: &(String, String),
+                          gone: &[(String, String)],
+                          added: &[(String, String)]| {
+                added.contains(account)
+                    || (!gone.contains(account) && registry.user_exists(&account.0, &account.1))
+            };
+            for (old, new) in &resolved {
+                let old_missing = !exists(old, &gone, &added);
+                if old_missing || exists(new, &gone, &added) {
+                    return Err(DriverError::RenameUserFailed {
+                        old_user: old.0.clone(),
+                        old_host: old.1.clone(),
+                        new_user: new.0.clone(),
+                        new_host: new.1.clone(),
+                        old_missing,
+                    });
+                }
+                added.retain(|account| account != old);
+                gone.push(old.clone());
+                gone.retain(|account| account != new);
+                added.push(new.clone());
+            }
+        }
+        for ((old_user, old_host), (new_user, new_host)) in resolved {
             if !registry.rename_user(&old_user, &old_host, &new_user, &new_host) {
                 return Err(DriverError::RenameUserFailed {
+                    old_missing: !registry.user_exists(&old_user, &old_host),
                     old_user,
                     old_host,
                     new_user,
                     new_host,
-                    old_missing,
                 });
             }
             // Go `renameUserHostInSystemTable` on `mysql.user`: the row moves
@@ -1693,6 +1728,23 @@ impl Session {
                 "REVOKE requires a server front end with a privilege registry",
             ));
         };
+        // Go `RevokeExec.Next` names the session's own account for
+        // `CURRENT_USER` (`sessVars.User.AuthUsername`/`AuthHostname`) before
+        // it checks the account exists.
+        if revoke.users.iter().any(|spec| spec.user.current_user) {
+            let mut resolved = revoke.clone();
+            for spec in &mut resolved.users {
+                if spec.user.current_user {
+                    let (user, host) = self.own_account()?;
+                    spec.user = tidb_ast::UserSpec {
+                        current_user: false,
+                        user,
+                        host,
+                    };
+                }
+            }
+            return self.revoke_stmt(&resolved);
+        }
         // Go's `checkDynamicPrivilegeUsage` runs before any row is touched
         // and names EVERY dynamic privilege in the statement, comma-joined,
         // in the one 3619 it raises.

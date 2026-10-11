@@ -227,6 +227,57 @@ fn rename_user_moves_the_whole_account_row() {
     }
 }
 
+/// Go `executeRenameUser` renames every pair in one transaction: each pair
+/// sees the renames before it, and a failing pair rolls back the ones that
+/// succeeded (`TestRenameUser`'s swap through a temporary name).
+#[test]
+fn rename_user_is_one_transaction() {
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut session = Session::new();
+    session.attach_privileges(registry.clone());
+    session.run("CREATE USER ru3, ru4, ru6@localhost").unwrap();
+
+    match session.run("RENAME USER ru3 TO ru5@localhost, nosuch TO ru7") {
+        Err(DriverError::RenameUserFailed { old_missing, .. }) => assert!(old_missing),
+        other => panic!("expected RenameUserFailed, got {other:?}"),
+    }
+    assert!(
+        registry.user_exists("ru3", "%"),
+        "the first pair rolled back"
+    );
+    assert!(!registry.user_exists("ru5", "localhost"));
+
+    session
+        .run("RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
+        .unwrap();
+    assert!(registry.user_exists("ru3", "%"));
+    assert!(registry.user_exists("ru6", "localhost"));
+    assert!(!registry.user_exists("ru3_tmp", "%"));
+}
+
+/// Go `RevokeExec.Next` names the session's own account for `CURRENT_USER`.
+#[test]
+fn revoke_from_current_user_names_the_session_account() {
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut session = Session::new();
+    session.attach_privileges(registry.clone());
+    session.run("CREATE USER u4").unwrap();
+    session
+        .run("GRANT ALL ON *.* TO u4 WITH GRANT OPTION")
+        .unwrap();
+    let mut u4 = Session::with_catalog(session.shared_catalog());
+    u4.attach_privileges(registry.clone());
+    u4.set_user("u4@%".to_owned(), "u4@localhost".to_owned());
+    u4.run("REVOKE ALL ON *.* FROM CURRENT_USER()").unwrap();
+    let grants = row_text(session.run("SHOW GRANTS FOR u4"));
+    assert!(
+        grants
+            .iter()
+            .all(|row| !row[0].starts_with("GRANT ALL PRIVILEGES")),
+        "{grants:?}"
+    );
+}
+
 /// CAPTURED: `RENAME USER` also moves `mysql.role_edges` (both directions)
 /// and `mysql.default_roles` rows, so a renamed grantee keeps every role it
 /// held, a renamed role keeps every grantee it was granted to (and those

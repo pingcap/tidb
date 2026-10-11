@@ -3141,6 +3141,19 @@ impl ScalarFunction {
         // argument eval types are imposed. Only this tier has the static
         // types Go's `WrapWithCastAsTime` reads, so only here can a `YEAR`
         // argument take Go's `ParseTimeFromYear`.
+        let mut vals = vals;
+        if upper == "CONV" && vals.len() == 3 && conv_reads_bits(&self.args[0]) {
+            // Go `builtinConvSig.evalString`: the argument's string is taken
+            // as a binary literal and read by its bits.
+            vals[0] = match std::mem::replace(&mut vals[0], Datum::Null) {
+                Datum::Bit(literal) | Datum::BinaryLiteral(literal) => {
+                    Datum::BinaryLiteral(literal)
+                }
+                Datum::Bytes(bytes) => Datum::BinaryLiteral(bytes.into()),
+                Datum::String(text) => Datum::BinaryLiteral(text.bytes().into()),
+                other => other,
+            };
+        }
         let vals = crate::arg_eval_type::wrap_datetime_args(&upper, vals, &arg_types, ctx)?;
         let vals = crate::arg_eval_type::wrap_int_args(&upper, vals, &arg_types, ctx)?;
         let vals = crate::arg_eval_type::wrap_string_args(&upper, vals, &arg_types, ctx)?;
@@ -6201,4 +6214,37 @@ mod tests {
             Err(EvalError::WrongParameterCount("tidb_is_ddl_owner"))
         );
     }
+}
+
+/// Go `builtinConvSig.evalString`'s argument test, which
+/// `scalarExprSupportedByTiKV` repeats to keep such a CONV in TiDB: when the
+/// digit-string argument is a cast to a string over a hybrid (BIT, ENUM, SET)
+/// value or a binary literal, CONV reads the value's bits rather than its
+/// text.
+///
+/// Go wraps an argument that is not already a string in that cast
+/// (`WrapWithCastAsString`); this tier imposes the cast while evaluating
+/// instead, so for such an argument the argument itself is the cast's
+/// operand. A string-typed argument is tested as Go tests it: a cast whose
+/// operand is hybrid or a binary literal. An explicit `CAST(b AS CHAR)` of a
+/// BIT is not one -- `castAsStringFunctionClass` casts the BIT to binary
+/// first.
+#[must_use]
+pub fn conv_reads_bits(argument: &Expression) -> bool {
+    fn hybrid_or_binary_literal(operand: &Expression) -> bool {
+        operand.static_type().is_some_and(FieldType::is_hybrid)
+            || matches!(operand, Expression::Constant(constant)
+                if matches!(constant.value, Datum::BinaryLiteral(_)))
+    }
+    let string_typed = argument
+        .static_type()
+        .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::String);
+    if !string_typed {
+        return hybrid_or_binary_literal(argument);
+    }
+    let Expression::ScalarFunction(function) = argument else {
+        return false;
+    };
+    crate::expr_util::builder::is_cast_name(&function.func_name.lowercase())
+        && function.args.first().is_some_and(hybrid_or_binary_literal)
 }

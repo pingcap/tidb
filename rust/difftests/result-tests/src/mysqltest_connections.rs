@@ -217,6 +217,12 @@ impl Connections {
         // connection instead would reseed it after mysql-tester's DSN
         // settings (`tidb_hash_join_concurrency=1`, the chunk sizes) were
         // applied, losing them.
+        // The server's process zone is part of the recording's environment
+        // (run-tests.sh exports TZ=Asia/Shanghai), and Go reads it where a
+        // session zone does not apply -- `getValidTime` formats the password
+        // history cutoff with `time.Unix`. Install it before the bootstrap
+        // session first touches the local clock.
+        recording_server_time_zone();
         let mut bootstrap = Session::with_catalog(SharedCatalog::clone(&pool.catalog));
         bootstrap
             .attach_globals(pool.globals.clone())

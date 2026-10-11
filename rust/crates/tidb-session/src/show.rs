@@ -2076,7 +2076,10 @@ impl Session {
                         Some(tidb_executor::TableEntry::Sequence(_))
                     ))
                 })?;
-                let include_local = !want_sequence;
+                // Go `preprocess.go` detaches the LOCAL temporary tables for
+                // `SHOW CREATE VIEW` as for `SHOW CREATE SEQUENCE`: a
+                // temporary table of the same name does not shadow either.
+                let include_local = !want_sequence && !want_view;
                 let shown = self.with_catalog_scope(include_local, |catalog| {
                     let Some(entry) = catalog.table_in(&database, &table_name) else {
                         return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(

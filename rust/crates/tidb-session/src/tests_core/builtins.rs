@@ -2196,3 +2196,29 @@ fn sysdate_is_now_uses_the_statement_clock() {
     session.run("SET tidb_sysdate_is_now = OFF").unwrap();
     assert_eq!(row_text(session.run("SELECT SYSDATE() = NOW()")), [["0"]]);
 }
+
+/// Go `builtinConvSig.evalString`: a BIT argument -- which
+/// `convFunctionClass` casts to a (binary) string -- is read by its bits
+/// (expression/builtin's `conv(b, 2, 2)`), as is an explicit binary cast of
+/// one; `CAST(b AS CHAR)` first casts the BIT to binary
+/// (`castAsStringFunctionClass`), so CONV reads its text.
+#[test]
+fn conv_reads_a_bit_argument_by_its_bits() {
+    let mut session = Session::new();
+    session.run("create table bit(b bit(10))").unwrap();
+    session
+        .run("insert into bit values (0b0000010101), (NULL), (0b1111111111), (0b0000100000)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("select conv(b, 2, 2) from `bit`")),
+        [["10101"], ["NULL"], ["1111111111"], ["100000"]]
+    );
+    assert_eq!(
+        row_text(session.run("select conv(cast(b as binary), 2, 10) from `bit` limit 1")),
+        [["21"]]
+    );
+    assert_eq!(
+        row_text(session.run("select conv(cast(b as char), 2, 10) from `bit` limit 1")),
+        [["0"]]
+    );
+}
