@@ -315,11 +315,13 @@ pub fn is_retryable_ddl_cancel_err(error: &(dyn std::error::Error + 'static)) ->
 
 mod alter_metadata;
 mod alter_table;
+pub use alter_table::{check_modifiable_column, check_modify_types};
 /// AUTO_RANDOM declaration validation shared by local and cluster DDL.
 pub mod auto_random;
 pub(crate) mod bdr;
 pub mod check_constraint;
 mod column_changes;
+pub use column_changes::modify_column_error;
 pub mod column_field_type;
 mod column_types;
 mod constraint_changes;
@@ -329,6 +331,7 @@ mod generated_modify;
 mod index_changes;
 pub mod index_prefix;
 mod indexes;
+pub mod modify_column_type;
 pub use indexes::{
     build_index_columns, check_create_global_index, check_expression_index_auto_increment,
     get_name_for_anonymous_index, IndexedTableColumn, ResolvedKeyPart,

@@ -2383,6 +2383,114 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         }
         Ok(())
     }
+    /// Go `onModifyColumn`'s data work for every kind but `ModifyTypeNoReorg`,
+    /// over the table as its rows are stored, through the DDL transaction's
+    /// snapshot and buffer:
+    ///
+    /// 1. `GetModifiableColumnJob`'s `checkForNullValue` for a NULL -> NOT
+    ///    NULL change (1265 at row 1), which Go's executor runs before it
+    ///    submits the job;
+    /// 2. `precheckForVarcharToChar`, whose failing row sends the statement
+    ///    back to be planned as a reorganization;
+    /// 3. `checkModifyColumnData` for the checked kinds and the index-only
+    ///    reorganization (1138 / 1265);
+    /// 4. the row and index rewrite for the reorganizing kinds, which leaves
+    ///    the rows under the after-table's column id and the entries under
+    ///    its index ids.
+    fn stage_column(
+        &self,
+        plan: &tidb_exec::cluster_ddl::ColumnReorg,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<tidb_exec::real_tikv_ddl::ColumnStageOutcome, LockSqlError> {
+        use tidb_exec::real_tikv_ddl::ColumnStageOutcome;
+        use tidb_executor::ddl::modify_column_type::{
+            is_null_to_not_null_change, ModifyColumnType,
+        };
+        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        let ctx = &plan.context.0;
+        let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)
+            .map_err(exchange_validation_internal)?
+            .with_new_collation_mode(plan.use_new_collation);
+        let after = cluster_table(&plan.after, &storage, &AutoIdSource::Unavailable)
+            .map_err(exchange_validation_internal)?;
+        let offset = table
+            .columns
+            .iter()
+            .position(|column| column.id == plan.column_id)
+            .ok_or_else(|| {
+                exchange_validation_internal("the modified column is absent".to_owned())
+            })?;
+        let new_offset = after
+            .columns
+            .iter()
+            .position(|column| column.id == plan.new_column_id)
+            .ok_or_else(|| {
+                exchange_validation_internal("the changed column is absent".to_owned())
+            })?;
+        let new_column = after.columns[new_offset].clone();
+        let failure = |error: tidb_executor::DriverError| {
+            let error = error.to_mysql_error();
+            LockSqlError {
+                code: error.code,
+                state: error.state,
+                message: error.message,
+            }
+        };
+        let old_type = table.columns[offset].field_type.clone();
+        if is_null_to_not_null_change(&old_type, &new_column.field_type)
+            && !(old_type.code() != tidb_datatype::FieldTypeCode::Timestamp
+                && new_column.field_type.code() == tidb_datatype::FieldTypeCode::Timestamp)
+            && table
+                .check_modify_column_data(offset, &new_column.field_type, false, ctx)
+                .map_err(backfill_failure)?
+                .is_some()
+        {
+            return Err(failure(tidb_executor::DriverError::DataTruncatedAtRow {
+                column: tidb_hack::go_to_lower(&new_column.name),
+                row: 1,
+            }));
+        }
+        if plan.precheck
+            && table
+                .check_modify_column_data(offset, &new_column.field_type, true, ctx)
+                .map_err(backfill_failure)?
+                .is_some()
+        {
+            return Ok(ColumnStageOutcome::PrecheckFailed);
+        }
+        if matches!(
+            plan.kind,
+            ModifyColumnType::NoReorgWithCheck | ModifyColumnType::IndexReorg
+        ) {
+            if let Some(error) = table
+                .check_modify_column_data(
+                    offset,
+                    &new_column.field_type,
+                    plan.check_value_range,
+                    ctx,
+                )
+                .map_err(backfill_failure)?
+            {
+                return Err(failure(tidb_executor::ddl::modify_column_error(error)));
+            }
+        }
+        if matches!(
+            plan.kind,
+            ModifyColumnType::IndexReorg | ModifyColumnType::Reorg
+        ) {
+            table
+                .reorganize_column_with_context(
+                    offset,
+                    new_column,
+                    Some(new_offset),
+                    &plan.renumbered_indexes,
+                    ctx,
+                )
+                .map_err(|error| failure(tidb_executor::ddl::modify_column_error(error)))?;
+        }
+        Ok(ColumnStageOutcome::Staged)
+    }
 }
 
 impl ExchangePartitionValidator for KvTableIndexBackfiller {

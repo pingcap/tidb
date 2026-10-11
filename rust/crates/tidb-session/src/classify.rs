@@ -582,8 +582,56 @@ impl Session {
     ) -> Result<(), DriverError> {
         use tidb_exec::cluster_ddl::DdlStatement;
         // Use the shared persistent image, never a local temporary overlay.
-        let catalog = self.lock_catalog()?;
+        let ctx = self.statement_context(false);
+        let mut catalog = self.lock_catalog()?;
         match statement {
+            // Go `GetModifiableColumnJob` admits the change before it submits
+            // the job; the rows are checked in the DDL transaction.
+            DdlStatement::ModifyColumn {
+                schema,
+                table,
+                column,
+                position,
+                rename_from,
+                ..
+            } => {
+                tidb_executor::ddl::check_modifiable_column(
+                    &mut catalog,
+                    schema,
+                    table,
+                    rename_from.as_deref().unwrap_or(&column.name),
+                    column,
+                    position,
+                    &ctx,
+                )?;
+            }
+            // Each MODIFY / CHANGE of a multi-schema change is admitted
+            // against the original table, as Go builds every sub-job from it.
+            DdlStatement::MultiSchemaChange {
+                schema,
+                table,
+                actions,
+            } => {
+                for action in actions {
+                    if let tidb_exec::cluster_ddl::AlterColumnAction::Modify {
+                        column,
+                        position,
+                        rename_from,
+                        ..
+                    } = action
+                    {
+                        tidb_executor::ddl::check_modifiable_column(
+                            &mut catalog,
+                            schema,
+                            table,
+                            rename_from.as_deref().unwrap_or(&column.name),
+                            column,
+                            position,
+                            &ctx,
+                        )?;
+                    }
+                }
+            }
             DdlStatement::DropIndex { schema, table, index, .. } => {
                 tidb_executor::check_index_needed(&catalog, schema, table, index)?;
             }

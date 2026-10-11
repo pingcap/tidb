@@ -1096,7 +1096,9 @@ pub fn build_added_column(
             ColumnOption::Null
             | ColumnOption::Comment(_)
             | ColumnOption::NotNull
-            | ColumnOption::Default(_) => {}
+            | ColumnOption::Default(_)
+            // Go `getCharsetAndCollateInColumnDef` resolves it with the type.
+            | ColumnOption::Collate(_) => {}
             // `build_column` below owns Go's single OFF warning and returns
             // the inline constraint that `CreateNewColumn` discards.
             ColumnOption::Check(_) => {}
@@ -1128,6 +1130,30 @@ pub fn build_added_column(
     // Go ignores every constraint returned here. Unsupported key/FK options
     // were refused above; the only possible result is the inline CHECK that
     // pinned `ALTER TABLE ... ADD COLUMN` does not persist.
+    stamp_origin_default(&mut info)?;
+    Ok(info)
+}
+
+/// The column a MODIFY / CHANGE COLUMN declares, as Go's
+/// `GetModifiableColumnJob` builds it from the definition (`ToColumn` then
+/// `ProcessModifyColumnOptions`), with the origin default
+/// `generateOriginDefaultValue` gives it. The session has already refused the
+/// options a MODIFY may not carry (Go's admission); the caller keeps the old
+/// column's identity.
+pub fn build_modified_column(
+    column: &ColumnDef,
+    table_charset: &str,
+    table_collate: &str,
+    context: &tidb_executor::StmtContext,
+) -> Refusal<ColumnInfo> {
+    let (mut info, _constraints) =
+        build_column(0, column, None, table_charset, table_collate, context, None)?;
+    stamp_origin_default(&mut info)?;
+    Ok(info)
+}
+
+/// Go `generateOriginDefaultValue` over a column just built.
+fn stamp_origin_default(info: &mut ColumnInfo) -> Refusal<()> {
     // Go `generateOriginDefaultValue`: the value a row written BEFORE this
     // column reports. The declared default when there is one; the type's
     // zero value for NOT NULL without one; nothing for a nullable
@@ -1225,7 +1251,7 @@ pub fn build_added_column(
         info.set_origin_default_value(ColumnDefaultValue::str(&origin))
             .map_err(|error| DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()))?;
     }
-    Ok(info)
+    Ok(())
 }
 
 /// Go `buildColumnAndConstraint` + `columnDefToCol` for one column.

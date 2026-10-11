@@ -849,7 +849,37 @@ pub fn literal_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnc
 /// evaluated any expression once, at that moment, and stored the result.
 pub fn origin_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEncodeError> {
     let default = column.get_origin_default_value();
-    materialise(column, &default, table, None)
+    let datum = materialise(column, &default, table, None)?;
+    // Go `GetColOriginDefaultValueWithoutStrictSQLMode` casts the stored text
+    // to the column's type (`CastColumnValue`, non-strict), so a region fills
+    // a DATE column with a date and a DECIMAL column with a decimal -- not
+    // with the bytes of their printed form, which no reader of that column
+    // can hold.
+    let Datum::Bytes(_) = &datum else {
+        return Ok(datum);
+    };
+    if !matches!(
+        column.get_type(),
+        FieldTypeCode::Date
+            | FieldTypeCode::NewDate
+            | FieldTypeCode::Datetime
+            | FieldTypeCode::Timestamp
+            | FieldTypeCode::Duration
+            | FieldTypeCode::NewDecimal
+            | FieldTypeCode::Float
+            | FieldTypeCode::Double
+    ) {
+        return Ok(datum);
+    }
+    let flags = tidb_datatype::ConversionFlags::from_bits(
+        tidb_datatype::ConversionFlags::IGNORE_TRUNCATE_ERR
+            | tidb_datatype::ConversionFlags::ALLOW_NEGATIVE_TO_UNSIGNED
+            | tidb_datatype::ConversionFlags::IGNORE_ZERO_DATE_ERR,
+    );
+    datum
+        .convert_to(&column.field_type, flags)
+        .map(|converted| converted.value)
+        .map_err(|_| unmaterialisable(column, table))
 }
 
 fn unmaterialisable(column: &ColumnInfo, table: &str) -> RowEncodeError {
@@ -1070,6 +1100,42 @@ pub fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
 mod tests {
     use super::*;
     use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+
+    /// Go `GetColOriginDefaultValueWithoutStrictSQLMode` casts the stored text
+    /// to the column's type. A DATE origin default reached the coprocessor as
+    /// the bytes of its printed form, and reading a row written before the
+    /// column existed panicked appending bytes to a fixed-length column.
+    #[test]
+    fn an_origin_default_is_cast_to_its_column_type() {
+        for (code, text, expected) in [
+            (FieldTypeCode::Date, "2020-03-27", "2020-03-27"),
+            (
+                FieldTypeCode::Datetime,
+                "2020-03-27 20:20:20",
+                "2020-03-27 20:20:20",
+            ),
+            (FieldTypeCode::Duration, "12:23:23", "12:23:23"),
+            (FieldTypeCode::NewDecimal, "1.5", "1.5"),
+            (FieldTypeCode::Double, "2.25", "2.25"),
+        ] {
+            let mut column = ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("c"),
+                field_type: FieldType::new(code),
+                ..Default::default()
+            };
+            column
+                .set_origin_default_value(tidb_model::column::ColumnDefaultValue::str(text))
+                .expect("a string origin default");
+            let datum = origin_default(&column, "t").expect("the default materialises");
+            assert!(!matches!(datum, Datum::Bytes(_)), "{code:?}: {datum:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&datum.sql_bytes().expect("printable")),
+                expected,
+                "{code:?}"
+            );
+        }
+    }
 
     fn indexed_fixture(unique: bool, nullable: bool) -> (TableInfo, RowValues) {
         use tidb_model::index::{IndexColumn, IndexInfo};

@@ -3444,6 +3444,90 @@ impl KvTable {
             offset,
             new_column,
             new_position,
+            &[],
+            &zone,
+            &RowDecodeContext::for_ddl(ctx),
+            substitute,
+            ctx,
+        )
+    }
+
+    /// Go `checkModifyColumnData`: the first row, in handle order, whose old
+    /// value Go's check query matches
+    /// ([`crate::ddl::modify_column_type::modify_column_data_violation`]).
+    /// `Ok(Some(..))` carries Go's verdict on that row -- 1138 for a NULL,
+    /// 1265 naming the value otherwise -- and `Ok(None)` means every row
+    /// passed or there was nothing to check.
+    pub fn check_modify_column_data(
+        &mut self,
+        offset: usize,
+        new_type: &tidb_datatype::FieldType,
+        check_value_range: bool,
+        ctx: &crate::StmtContext,
+    ) -> Result<Option<KvTableError>, KvTableError> {
+        let old_type = self.columns[offset].field_type.clone();
+        let column = tidb_hack::go_to_lower(&self.columns[offset].name);
+        if crate::ddl::modify_column_type::modify_column_data_violation(
+            &old_type,
+            new_type,
+            check_value_range,
+            &Datum::Null,
+        )
+        .is_none()
+        {
+            return Ok(None);
+        }
+        let mut cursor = self.row_cursor_projected_with_context(
+            Some(&[offset]),
+            None,
+            &RowDecodeContext::for_query(ctx),
+        )?;
+        while let Some((_, row)) = cursor.next_row()? {
+            let value = &row[0];
+            if crate::ddl::modify_column_type::modify_column_data_violation(
+                &old_type,
+                new_type,
+                check_value_range,
+                value,
+            ) != Some(true)
+            {
+                continue;
+            }
+            if value.is_null() {
+                return Ok(Some(KvTableError::InvalidUseOfNull));
+            }
+            let shown = value.sql_bytes().unwrap_or_default();
+            return Ok(Some(KvTableError::DataTruncatedValue {
+                column,
+                value: String::from_utf8_lossy(&shown).into_owned(),
+            }));
+        }
+        Ok(None)
+    }
+
+    /// [`Self::modify_column_with_context`] for a change Go reorganizes:
+    /// every index in `renumbered` (old id, new id) takes its new id first,
+    /// so the rewrite leaves the rows under `new_column`'s id and the entries
+    /// under the new index ids -- Go's final state after its changing column
+    /// and changing indexes replace the old ones.
+    pub fn reorganize_column_with_context(
+        &mut self,
+        offset: usize,
+        new_column: KvColumn,
+        new_position: Option<usize>,
+        renumbered: &[(i64, i64)],
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
+        let zone = ctx.session_zone();
+        let substitute = (self.columns[offset].field_type.code()
+            != tidb_datatype::FieldTypeCode::Timestamp)
+            .then(|| null_timestamp_substitute(&new_column.field_type, ctx))
+            .flatten();
+        self.modify_column_in(
+            offset,
+            new_column,
+            new_position,
+            renumbered,
             &zone,
             &RowDecodeContext::for_ddl(ctx),
             substitute,
@@ -3457,6 +3541,7 @@ impl KvTable {
         offset: usize,
         new_column: KvColumn,
         new_position: Option<usize>,
+        renumbered: &[(i64, i64)],
         zone: &SessionTimeZone,
         decode_context: &RowDecodeContext,
         null_substitute: Option<Datum>,
@@ -3504,8 +3589,10 @@ impl KvTable {
         let flags = ctx.reorg_default_conversion_flags();
         let mut reorg_warnings = ReorgWarnings::default();
         let mut converted_rows = Vec::with_capacity(rows.len());
+        let mut old_rows = Vec::with_capacity(rows.len());
         let mut failure = None;
         for (physical_id, handle, row) in rows {
+            old_rows.push(row.clone());
             let mut row = row;
             let mut value = row[offset].clone();
             // Go `updateColumnWorker.getRowRecord`: "convert null value to
@@ -3579,6 +3666,16 @@ impl KvTable {
             }
         }
 
+        // Every value converted, so the old entries go now, keyed as the old
+        // metadata files them; the rows are overwritten in place below.
+        for ((physical_id, handle, _), old_row) in converted_rows.iter().zip(&old_rows) {
+            self.delete_index_entries(old_row, handle, *physical_id, zone)?;
+        }
+        for index in self.indexes_mut() {
+            if let Some((_, new_id)) = renumbered.iter().find(|(old_id, _)| *old_id == index.id) {
+                index.id = *new_id;
+            }
+        }
         self.max_column_id = self.max_column_id.max(new_column.id);
         self.columns_mut()[offset] = new_column;
         if let Some(partition) = &mut self.partition {
@@ -3618,8 +3715,7 @@ impl KvTable {
         }
 
         // The value bytes encode the column's type, so every row is written
-        // again; the handles and index ids are unchanged.
-        self.store.clear();
+        // again under its unchanged handle.
         for (physical_id, handle, row) in &converted_rows {
             let value = self.encode_row_value(row, zone)?;
             let key = Key::from_bytes(encode_row_key_with_handle(

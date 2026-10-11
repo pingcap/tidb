@@ -243,6 +243,83 @@ fn session_activation_controls_the_native_commit_protocol() {
     }
 }
 
+/// Go `onModifyColumn` on the production node: each kind checks or rewrites
+/// the rows in the DDL transaction, and the answers -- values, errors and the
+/// final definitions -- are the Go oracle's for the same script. This node
+/// refused every one of these changes ("Unsupported modify column: ...").
+#[test]
+fn a_modify_column_checks_or_rewrites_rows_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(136)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.mc (a BIGINT, b VARCHAR(20), c INT, d VARCHAR(10), \
+         KEY ib (b), KEY ic (c))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.mc VALUES (1, 'x  ', 5, 'p'), (2, 'yy', NULL, 'q ')",
+    );
+    for sql in [
+        // A checked narrowing.
+        "ALTER TABLE test.mc MODIFY COLUMN a INT",
+        // A sign change: a rewrite under a new column id.
+        "ALTER TABLE test.mc MODIFY COLUMN a INT UNSIGNED",
+        // VARCHAR -> CHAR over trailing spaces: the precheck fails, and the
+        // statement is reorganized, which strips them.
+        "ALTER TABLE test.mc MODIFY COLUMN b CHAR(10)",
+        "ALTER TABLE test.mc MODIFY COLUMN d CHAR(5)",
+    ] {
+        session
+            .execute_write(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    // Go `checkForNullValue`: a NULL row refuses NOT NULL.
+    let error = session
+        .execute_write("ALTER TABLE test.mc MODIFY COLUMN c INT NOT NULL")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1265, "Data truncated for column 'c' at row 1")
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT a, CONCAT('[', b, ']'), c, CONCAT('[', d, ']') FROM test.mc ORDER BY a"
+        )),
+        [["1", "[x]", "5", "[p]"], ["2", "[yy]", "NULL", "[q]"]]
+    );
+    rows(&mut session, "UPDATE test.mc SET c = 0 WHERE c IS NULL");
+    session
+        .execute_write("ALTER TABLE test.mc MODIFY COLUMN c INT NOT NULL DEFAULT 7 COMMENT 'cc'")
+        .unwrap();
+    // Go `checkModifyColumnData`: the first row the new length cannot hold.
+    let error = session
+        .execute_write("ALTER TABLE test.mc MODIFY COLUMN b VARCHAR(1)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1265, "Data truncated for column 'b', value is 'yy'")
+    );
+    session
+        .execute_write("ALTER TABLE test.mc CHANGE COLUMN a aa BIGINT FIRST")
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.mc"));
+    assert!(
+        created[0][1].contains(
+            "  `aa` bigint DEFAULT NULL,\n  `b` char(10) DEFAULT NULL,\n  \
+             `c` int NOT NULL DEFAULT '7' COMMENT 'cc',\n  `d` char(5) DEFAULT NULL,\n"
+        ),
+        "{}",
+        created[0][1]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM test.mc ORDER BY aa")),
+        [["1", "x", "5", "p"], ["2", "yy", "0", "q"]]
+    );
+    rows(&mut session, "ADMIN CHECK TABLE test.mc");
+}
+
 /// Go `checkIndexNameAndColumns`: an ADD INDEX written without a name takes
 /// `GetName4AnonymousIndex`'s name against the stored table, and an expression
 /// part indexes a hidden generated column backfilled over the existing rows.

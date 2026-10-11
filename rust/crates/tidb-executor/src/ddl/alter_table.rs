@@ -3660,6 +3660,30 @@ fn check_auto_random(
     Ok(())
 }
 
+/// Go `checkModifyTypes` (`pkg/ddl/modify_column.go:2262`): the type
+/// changes Go refuses outright (`checkTypeChangeSupported`), a reorganizing
+/// change on a primary-key column, and the charset / collation moves the
+/// change cannot make. `indexed` is whether an index covers the column.
+///
+/// # Errors
+///
+/// Go's 8200 / collation errors.
+pub fn check_modify_types(
+    origin: &FieldType,
+    to: &FieldType,
+    column_name: &str,
+    indexed: bool,
+) -> Result<(), DriverError> {
+    check_type_change_supported(origin, to)?;
+    let can_reorganize = modify_type_needs_reorganization(origin, to);
+    if can_reorganize && origin.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
+        return Err(DriverError::UnsupportedModifyColumn(
+            "this column has primary key flag",
+        ));
+    }
+    check_modify_charset_and_collation(origin, to, can_reorganize, column_name, indexed)
+}
+
 /// Go `types.CheckModifyTypeCompatible`'s `canReorg` result for a supported
 /// type pair. `checkModifyTypes` uses this bit to distinguish an unsupported
 /// metadata-only charset change from a charset change that the row rewrite
@@ -3943,6 +3967,44 @@ pub(super) struct ModifyColumnRequest<'a> {
     pub(super) if_exists: bool,
     /// `@@tidb_allow_remove_auto_inc`.
     pub(super) allow_remove_auto_inc: bool,
+    /// Whether the existing rows are read for Go's NULL precheck here. The
+    /// production node checks them in its DDL transaction instead.
+    pub(super) scan_null_values: bool,
+}
+
+/// Go `GetModifiableColumnJob`'s admission of a MODIFY / CHANGE COLUMN
+/// against `catalog`, without reading rows: the checks the executor runs
+/// before it submits the job, in Go's order. The production node runs it
+/// against its session catalog and checks the rows in the DDL transaction.
+///
+/// # Errors
+///
+/// Go's admission error.
+#[allow(clippy::too_many_arguments)]
+pub fn check_modifiable_column(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    old_name: &str,
+    def: &ColumnDef,
+    position: &tidb_ast::ColumnPosition,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    prepare_modify_column(
+        catalog,
+        &ModifyColumnRequest {
+            database,
+            table_name,
+            old_name,
+            def,
+            position,
+            if_exists: false,
+            allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
+            scan_null_values: false,
+        },
+        ctx,
+    )
+    .map(|_| ())
 }
 
 pub(super) fn prepare_modify_column(
@@ -3958,6 +4020,7 @@ pub(super) fn prepare_modify_column(
         position,
         if_exists,
         allow_remove_auto_inc,
+        scan_null_values,
     } = request;
     let max_index_length = catalog.max_index_length();
     let enum_length_limit = catalog.enable_enum_length_limit();
@@ -4196,24 +4259,9 @@ pub(super) fn prepare_modify_column(
     // below never runs when there are zero rows, so without this table-level
     // check every one of Go's five outright refusals would be silently
     // accepted on an empty table.
-    check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
-    let can_reorganize =
-        modify_type_needs_reorganization(&table.columns[offset].field_type, &field_type);
-    // Go `checkModifyTypes`: a change that needs reorganization is refused
-    // for any primary key column.
-    if can_reorganize
-        && table.columns[offset]
-            .field_type
-            .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
-    {
-        return Err(DriverError::UnsupportedModifyColumn(
-            "this column has primary key flag",
-        ));
-    }
-    check_modify_charset_and_collation(
+    check_modify_types(
         &table.columns[offset].field_type,
         &field_type,
-        can_reorganize,
         old_name,
         table
             .indexes()
@@ -4298,7 +4346,8 @@ pub(super) fn prepare_modify_column(
     // Go GetModifiableColumnJob/checkForNullValue: reject existing NULLs
     // before index validation or metadata changes. Only non-TIMESTAMP to
     // TIMESTAMP skips this check (the rewrite substitutes the statement time).
-    if old_flags & NOT_NULL_FLAG == 0
+    if scan_null_values
+        && old_flags & NOT_NULL_FLAG == 0
         && field_type.flags() & NOT_NULL_FLAG != 0
         && !(original_type.code() != FieldTypeCode::Timestamp
             && field_type.code() == FieldTypeCode::Timestamp)

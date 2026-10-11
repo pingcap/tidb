@@ -504,6 +504,10 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// both spellings the one ActionModifyColumn job, the rename riding
         /// `renameColumnTo` over the column and every index column naming it.
         rename_from: Option<String>,
+        /// Go `ModifyColumnArgs.ModifyColumnType`: `None` until the plan
+        /// computes it (`getModifyColumnType`); a failed VARCHAR -> CHAR
+        /// precheck plans the statement again with `Reorg`.
+        modify_column_type: Option<tidb_executor::ddl::modify_column_type::ModifyColumnType>,
     },
     /// `ALTER TABLE ... RENAME COLUMN from TO to` — `renameColumnTo` alone,
     /// no type change, still Go's ActionModifyColumn.
@@ -1675,20 +1679,9 @@ fn lower_alter_table_catalog(
                 tidb_ast::ColumnOption::AutoRandom(option) => Some(option),
                 _ => None,
             }) else {
-                // No AUTO_RANDOM: the ordinary MODIFY. The meta-only subset
-                // takes an option-free redeclaration (an explicit NULL is the
-                // default nullability, so it carries no change).
-                if column.options.iter().any(|option| {
-                    !matches!(
-                        option,
-                        tidb_ast::ColumnOption::Null | tidb_ast::ColumnOption::Default(_)
-                    )
-                }) {
-                    return Err(DdlAdmissionError::unsupported(
-                        "MODIFY COLUMN with options changes more than the type and default; \
-                         this node serves the widening-with-default subset only",
-                    ));
-                }
+                // No AUTO_RANDOM: the ordinary MODIFY. Its options are
+                // admitted by the session (Go `GetModifiableColumnJob`) and
+                // built by the plan.
                 let (schema, table) = split_name(&alter.name, default_schema, "table")?;
                 return Ok(Some(DdlStatement::ModifyColumn {
                     schema,
@@ -1697,6 +1690,7 @@ fn lower_alter_table_catalog(
                     position: position.clone(),
                     context: DdlStatementContext(context.clone()),
                     rename_from: None,
+                    modify_column_type: None,
                 }));
             };
             if column.options.iter().any(|option| {
@@ -1726,17 +1720,6 @@ fn lower_alter_table_catalog(
             if *if_exists {
                 return Ok(None);
             }
-            if column.options.iter().any(|option| {
-                !matches!(
-                    option,
-                    tidb_ast::ColumnOption::Null | tidb_ast::ColumnOption::Default(_)
-                )
-            }) {
-                return Err(DdlAdmissionError::unsupported(
-                    "CHANGE COLUMN with options changes more than the name, type and default; \
-                     this node serves the rename-with-default subset only",
-                ));
-            }
             let [old] = old_name.as_slice() else {
                 return Err(DdlAdmissionError::with_code(
                     GENERIC_ERROR_CODE,
@@ -1751,6 +1734,7 @@ fn lower_alter_table_catalog(
                 position: position.clone(),
                 context: DdlStatementContext(context.clone()),
                 rename_from: Some(old.clone()),
+                modify_column_type: None,
             }));
         }
         tidb_ast::AlterTableAction::RenameColumn(rename) => {
@@ -2219,6 +2203,21 @@ fn prepare_rename_column(
     Ok(Some(column))
 }
 
+/// One MODIFY / CHANGE COLUMN as Go's `GetModifiableColumnJob` builds it,
+/// with the kind `getModifyColumnType` gives the change.
+struct PreparedModifyColumn {
+    /// The column as the change leaves it, under the old column's id.
+    column: tidb_model::ColumnInfo,
+    /// How the stored data changes: Go `getModifyColumnType`, before the
+    /// VARCHAR -> CHAR adjustment, which [`Self::precheck`] records.
+    kind: tidb_executor::ddl::modify_column_type::ModifyColumnType,
+    /// Whether Go routes the change through `ModifyTypePrecheck`: the rows
+    /// are checked first, and a row that fails makes it a reorganization.
+    precheck: bool,
+    /// Go `!noReorgDataStrict`: whether the row check covers the value range.
+    check_value_range: bool,
+}
+
 fn prepare_modify_column(
     stored: &TableInfo,
     table: &str,
@@ -2226,7 +2225,12 @@ fn prepare_modify_column(
     requested_position: &tidb_ast::ColumnPosition,
     context: &DdlStatementContext,
     rename_from: Option<&str>,
-) -> Result<tidb_model::ColumnInfo, DdlPlanError> {
+    modify_column_type: Option<tidb_executor::ddl::modify_column_type::ModifyColumnType>,
+) -> Result<PreparedModifyColumn, DdlPlanError> {
+    use tidb_executor::ddl::modify_column_type::{
+        get_modify_column_type, modify_column_type as adjust, no_reorg_data_strict,
+        ModifyColumnFacts, ModifyColumnType,
+    };
     // A CHANGE locates by the OLD name; a MODIFY by the (unchanged)
     // declared name.
     let wanted = rename_from.unwrap_or(column.name.as_str()).go_to_lower();
@@ -2257,60 +2261,55 @@ fn prepare_modify_column(
         .expect("the position was just found")
         .read()
         .clone_like_go();
-    let built = crate::table_info_build::build_added_column(
+    // Go `GetModifiableColumnJob` builds the new column from the definition
+    // alone, keeping only the old column's id, offset, state, origin default
+    // and version: an omitted DEFAULT or COMMENT is gone afterwards.
+    let built = crate::table_info_build::build_modified_column(
         column,
         &stored.charset,
         &stored.collate,
         &context.0,
-        None,
     )
     .map_err(DdlPlanError::Admission)?;
-    // Go `dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)`
-    // renders exactly "Unsupported modify column: <reason>", and the
-    // reason strings below are Go's own.
-    let refuse = |what: &str| {
-        DdlPlanError::Admission(DdlAdmissionError::with_code(
-            8200,
-            format!("Unsupported modify column: {what}"),
-        ))
+    let admission = |error: tidb_executor::DriverError| {
+        let error = error.to_mysql_error();
+        DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
     };
-    // Metadata-only execution must never reinterpret a change for
-    // which Go requires row reorganization.
-    if let Some(reason) = modify_type_reorg_reason(&old.field_type, &built.field_type) {
-        return Err(refuse(&reason));
-    }
-    let old_not_null = old.field_type.has_flag(FieldTypeFlags::NOT_NULL);
-    let new_not_null = built.field_type.has_flag(FieldTypeFlags::NOT_NULL);
-    if old_not_null != new_not_null {
-        return Err(refuse(
-            "changing nullability needs a data reorganization this node does not run",
-        ));
-    }
-    let mut stored_column = old;
-    // The identity, ordering, and state are the stored column's
-    // own; the declared type widens, and a MODIFY/CHANGE-carried
-    // DEFAULT restages the column default (go
-    // `updateColumnDefaultValue`, metadata-only alongside the
-    // widen).
+    // Go: "Copy index related options to the new spec", and a primary key
+    // column stays NOT NULL.
     let mut field_type = built.field_type.clone();
-    field_type.set_flags(stored_column.field_type.flags());
-    stored_column.field_type = field_type;
-    if let Some(default_expr) = column.options.iter().find_map(|option| match option {
-        tidb_ast::ColumnOption::Default(expr) => Some(expr),
-        _ => None,
-    }) {
-        crate::table_info_build::set_column_default(
-            column.name.as_str(),
-            &mut stored_column,
-            Some(default_expr),
-            &context.0,
-        )
-        .map_err(DdlPlanError::Admission)?;
+    let index_flags = old.field_type.flags()
+        & (FieldTypeFlags::PRI_KEY | FieldTypeFlags::UNIQUE_KEY | FieldTypeFlags::MULTIPLE_KEY);
+    field_type.add_flags(index_flags);
+    if old.field_type.has_flag(FieldTypeFlags::PRI_KEY) {
+        field_type.add_flags(FieldTypeFlags::NOT_NULL);
     }
-    if new_name != wanted {
-        // Go `renameColumnTo`: the column and every index column
-        // naming it take the new name together.
-        stored_column.name = CiString::new(column.name.clone());
+    let indexed = stored.indices.iter_deref().any(|index| {
+        index
+            .read()
+            .columns
+            .iter_deref()
+            .any(|part| part.read().name.lowercase() == wanted)
+    });
+    tidb_executor::ddl::check_modify_types(
+        &old.field_type,
+        &field_type,
+        old.name.lowercase(),
+        indexed,
+    )
+    .map_err(admission)?;
+    let check_value_range = !no_reorg_data_strict(&old.field_type, &field_type, indexed);
+    let mut changed = built;
+    changed.id = old.id;
+    changed.offset = old.offset;
+    changed.state = old.state;
+    changed.version = old.version;
+    changed.field_type = field_type;
+    // Go: "new col's origin default value be the same as the new default
+    // value" once the data may change; otherwise the old one stands.
+    if !check_value_range {
+        changed.origin_default_value = old.origin_default_value.clone();
+        changed.origin_default_value_bit = old.origin_default_value_bit.clone();
     }
     // Go `modify_column.go:700`: `MODIFY COLUMN b AFTER b` names
     // the column as its own anchor, which Go answers as
@@ -2327,7 +2326,28 @@ fn prepare_modify_column(
     // destination is located against that rather than against an
     // appended tail (Go `modify_column.go:704`).
     locate_offset_to_move(position, requested_position, stored)?;
-    Ok(stored_column)
+    let facts = ModifyColumnFacts {
+        column_indexed: indexed,
+        partitioned: stored.partition.is_some(),
+        tiflash_replica: stored
+            .tiflash_replica
+            .as_ref()
+            .is_some_and(|replica| replica.read().count > 0),
+        strict_sql_mode: context.0.strict(),
+    };
+    let (kind, precheck) = match modify_column_type {
+        Some(kind) => (kind, false),
+        None => (
+            get_modify_column_type(&old.field_type, &changed.field_type, facts),
+            adjust(&old.field_type, &changed.field_type, facts) == ModifyColumnType::Precheck,
+        ),
+    };
+    Ok(PreparedModifyColumn {
+        column: changed,
+        kind,
+        precheck,
+        check_value_range,
+    })
 }
 
 /// Apply an already admitted column by stable ID, preserving offsets shifted
@@ -2446,14 +2466,26 @@ fn prepare_cluster_columns(
                 context,
                 rename_from,
             } => {
-                let built = prepare_modify_column(
+                let prepared = prepare_modify_column(
                     stored,
                     table,
                     column,
                     position,
                     context,
                     rename_from.as_deref(),
+                    None,
                 )?;
+                // The bundled form does not stage a column's data step yet.
+                if prepared.kind
+                    != tidb_executor::ddl::modify_column_type::ModifyColumnType::NoReorg
+                {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        8200,
+                        "Unsupported modify column: this node checks or rewrites a column's \
+                         rows in a single-column ALTER only",
+                    )));
+                }
+                let built = prepared.column;
                 let old_name =
                     CiString::new(rename_from.as_deref().unwrap_or(&column.name).to_owned());
                 if built.name.lowercase() == old_name.lowercase() {
@@ -4399,6 +4431,7 @@ fn plan_persisted_check_constraint_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: validation,
+            column_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -4506,6 +4539,7 @@ fn plan_persisted_create_schema_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
+            column_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -4634,6 +4668,7 @@ fn plan_persisted_create_table_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
+            column_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -4808,6 +4843,7 @@ fn plan_persisted_create_tables_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
+            column_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5023,6 +5059,7 @@ fn plan_persisted_rename_tables_job_step(
                 backfill: Vec::new(),
                 exchange_partition_validation: None,
                 check_constraint_validation: None,
+                column_reorg: None,
                 mdl_info_update: None,
                 exchange_partition_label_swap: None,
                 warnings: Vec::new(),
@@ -5092,6 +5129,7 @@ fn plan_persisted_rename_tables_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
+            column_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5186,6 +5224,7 @@ fn plan_persisted_drop_schema_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
+            column_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5277,6 +5316,7 @@ fn plan_persisted_drop_table_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
+            column_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5307,6 +5347,7 @@ fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWrite {
         backfill: Vec::new(),
         exchange_partition_validation: None,
         check_constraint_validation: None,
+        column_reorg: None,
         mdl_info_update: None,
         exchange_partition_label_swap: None,
         warnings: Vec::new(),
@@ -5633,6 +5674,8 @@ pub struct DdlWrite {
     pub exchange_partition_validation: Option<ExchangePartitionValidation>,
     /// Existing-row validation owed before an enforced CHECK becomes public.
     pub check_constraint_validation: Option<CheckConstraintValidation>,
+    /// The row check or rewrite a MODIFY / CHANGE COLUMN owes, if any.
+    pub column_reorg: Option<ColumnReorg>,
     /// The `mysql.tidb_mdl_info` row that must be replaced atomically with
     /// this schema phase before the owner waits for acknowledgements.
     pub mdl_info_update: Option<MdlInfoUpdate>,
@@ -5814,6 +5857,37 @@ pub struct IndexBackfill {
     pub use_new_collation: bool,
     /// The operation; only creation evaluates rows.
     pub operation: IndexBackfillOperation,
+}
+
+/// The data step of a MODIFY / CHANGE COLUMN Go does not finish in metadata
+/// (`onModifyColumn` for every kind but `ModifyTypeNoReorg`), staged in the
+/// same transaction as the new `TableInfo`.
+#[derive(Clone, Debug)]
+pub struct ColumnReorg {
+    /// The table as its stored rows have it, before the change.
+    pub table: Box<TableInfo>,
+    /// The id of the column being changed, in [`Self::table`].
+    pub column_id: i64,
+    /// The table as the change leaves it: the column's new definition and
+    /// place, and under
+    /// [`tidb_executor::ddl::modify_column_type::ModifyColumnType::Reorg`]
+    /// its new id.
+    pub after: Box<TableInfo>,
+    /// The changed column's id in [`Self::after`].
+    pub new_column_id: i64,
+    /// Each index rebuilt under a new id: (old id, new id).
+    pub renumbered_indexes: Vec<(i64, i64)>,
+    /// How the stored data changes, once any precheck has passed.
+    pub kind: tidb_executor::ddl::modify_column_type::ModifyColumnType,
+    /// Go `ModifyTypePrecheck`: check the rows first, and report a row that
+    /// fails so the statement is reorganized instead.
+    pub precheck: bool,
+    /// Go `!noReorgDataStrict`: whether the row check covers the value range.
+    pub check_value_range: bool,
+    /// The persisted collation mode captured when this DDL was planned.
+    pub use_new_collation: bool,
+    /// SQL mode and location the rows are checked and converted under.
+    pub context: DdlStatementContext,
 }
 
 /// Existing-row evaluation belongs only to index creation. Removal uses the
@@ -6315,6 +6389,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
     let mut backfill = Vec::new();
     let mut exchange_partition_validation = None;
     let mut check_constraint_validation = None;
+    let mut column_reorg: Option<ColumnReorg> = None;
     let mut exchange_partition_label_swap = None;
     let mut warnings: Vec<(DdlWarningLevel, u16, String)> = Vec::new();
     let mut schema_change_events: Vec<(i64, SchemaChangeEvent)> = Vec::new();
@@ -8097,11 +8172,73 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             position: requested_position,
             context,
             rename_from,
+            modify_column_type,
         } => {
+            use tidb_executor::ddl::modify_column_type::ModifyColumnType;
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let prepared = prepare_modify_column(stored, table, column, requested_position, context, rename_from.as_deref())?;
+            let PreparedModifyColumn {
+                column: prepared,
+                kind,
+                precheck,
+                check_value_range,
+            } = prepare_modify_column(
+                stored,
+                table,
+                column,
+                requested_position,
+                context,
+                rename_from.as_deref(),
+                *modify_column_type,
+            )?;
+            let old_id = prepared.id;
             let mut info = stored.clone_like_go();
             apply_prepared_column(&mut info, prepared, requested_position, false)?;
+            // Go's final state after a changing column / changing indexes
+            // replace the old ones: every index on the column under a new id
+            // (`initializeChangingIndexes`, `AllocateIndexID`), and under
+            // `ModifyTypeReorg` the column under a new id too
+            // (`AllocateColumnID`).
+            let mut renumbered_indexes = Vec::new();
+            if matches!(kind, ModifyColumnType::IndexReorg | ModifyColumnType::Reorg) {
+                let changed_name = column.name.go_to_lower();
+                let related = info
+                    .indices
+                    .iter_deref()
+                    .filter(|index| {
+                        index
+                            .read()
+                            .columns
+                            .iter_deref()
+                            .any(|part| part.read().name.lowercase() == changed_name)
+                    })
+                    .collect::<Vec<_>>();
+                for index in related {
+                    info.max_index_id += 1;
+                    let mut index = index.write();
+                    renumbered_indexes.push((index.id, info.max_index_id));
+                    index.id = info.max_index_id;
+                }
+            }
+            let offset = info
+                .columns
+                .iter_deref()
+                .position(|candidate| candidate.read().id == old_id)
+                .expect("the modified column keeps its place in the table");
+            if kind == ModifyColumnType::Reorg {
+                info.max_column_id += 1;
+                let new_id = info.max_column_id;
+                info.columns
+                    .get(offset)
+                    .expect("the modified column is present")
+                    .write()
+                    .id = new_id;
+            }
+            let new_column_id = info
+                .columns
+                .get(offset)
+                .expect("the modified column is present")
+                .read()
+                .id;
             admit_modified_column_bdr(
                 &bdr_role,
                 schema,
@@ -8112,6 +8249,20 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             )?;
             let new_name = column.name.go_to_lower();
             info.update_ts = start_ts;
+            if kind != ModifyColumnType::NoReorg {
+                column_reorg = Some(ColumnReorg {
+                    table: Box::new(stored.clone_like_go()),
+                    column_id: old_id,
+                    after: Box::new(info.clone_like_go()),
+                    new_column_id,
+                    renumbered_indexes,
+                    kind,
+                    precheck,
+                    check_value_range,
+                    use_new_collation,
+                    context: context.clone(),
+                });
+            }
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -9570,6 +9721,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         backfill,
         exchange_partition_validation,
         check_constraint_validation,
+        column_reorg,
         mdl_info_update,
         exchange_partition_label_swap,
         warnings,
@@ -9599,98 +9751,6 @@ fn admit_modified_column_bdr(
         return Ok(());
     };
     crate::cluster_bdr::admit_modify_column(bdr_role, schema, &new, &old, &column.options)
-}
-
-/// Go `types.needReorgToChange` (`field_type.go:1535`): `None` when the new
-/// type can replace the old as pure metadata, otherwise Go's own reason for
-/// why the stored rows must be rewritten.
-///
-/// The integer arm is the load-bearing one: Go compares the types' DEFAULT
-/// display widths, not the declared ones, so `INT` -> `BIGINT` is a widening
-/// that costs nothing while `BIGINT` -> `INT` is a narrowing that does.
-fn need_reorg_to_change(old: &FieldType, new: &FieldType) -> Option<String> {
-    let (mut old_flen, mut new_flen) = (old.flen(), new.flen());
-    if new.code().is_integer_type() && old.code().is_integer_type() {
-        old_flen = i64::from(old.code().default_field_length_and_decimal().0);
-        new_flen = i64::from(new.code().default_field_length_and_decimal().0);
-    }
-    if old.code().converts_between_char_and_varchar(new.code()) {
-        return Some("conversion between char and varchar string".to_owned());
-    }
-    if new_flen > 0 && new_flen != old_flen {
-        if new_flen < old_flen {
-            return Some(format!("length {new_flen} is less than origin {old_flen}"));
-        }
-        // Go: a binary column pads with \x00, so any length change rewrites.
-        let is_binary = |field: &FieldType| {
-            field.code() == FieldTypeCode::String && field.collation_name() == "binary"
-        };
-        if is_binary(old) && is_binary(new) {
-            return Some("can't change binary types of different length".to_owned());
-        }
-    }
-    if new.decimal() > 0 && new.decimal() < old.decimal() {
-        return Some(format!(
-            "decimal {} is less than origin {}",
-            new.decimal(),
-            old.decimal()
-        ));
-    }
-    if old.has_flag(FieldTypeFlags::UNSIGNED) != new.has_flag(FieldTypeFlags::UNSIGNED) {
-        return Some("can't change unsigned integer to signed or vice versa".to_owned());
-    }
-    None
-}
-
-/// Go `types.CheckModifyTypeCompatible` (`field_type.go:1476`), answering
-/// only what this node needs: `None` when the modification is metadata-only,
-/// otherwise the reason it cannot be.
-///
-/// Go's `checkTypeChangeSupported` list — the conversions it refuses OUTRIGHT
-/// rather than reorganizing — is folded into the same answer here, because
-/// this node refuses both classes with the same message; the reason text
-/// distinguishes them.
-fn modify_type_reorg_reason(old: &FieldType, new: &FieldType) -> Option<String> {
-    if old.code() == new.code() {
-        return match old.code() {
-            // Go compares the element lists; this node has no element list on
-            // a stored column to compare, so any enum/set modify is refused.
-            FieldTypeCode::Enum | FieldTypeCode::Set => {
-                Some("changing enum or set elements".to_owned())
-            }
-            // Go: a decimal must match in flen, decimal AND sign exactly.
-            FieldTypeCode::NewDecimal => {
-                if new.flen() != old.flen()
-                    || new.decimal() != old.decimal()
-                    || old.has_flag(FieldTypeFlags::UNSIGNED)
-                        != new.has_flag(FieldTypeFlags::UNSIGNED)
-                {
-                    Some(format!(
-                        "decimal change from decimal({}, {}) to decimal({}, {})",
-                        old.flen(),
-                        old.decimal(),
-                        new.flen(),
-                        new.decimal()
-                    ))
-                } else {
-                    need_reorg_to_change(old, new)
-                }
-            }
-            _ => need_reorg_to_change(old, new),
-        };
-    }
-    // Go's different-type arm: only string->string and integer->integer can
-    // ever be free, and then only when nothing narrows.
-    let string_to_string = old.code().is_string() && new.code().is_string();
-    let integer_to_integer = old.code().is_integer_type() && new.code().is_integer_type();
-    if string_to_string || integer_to_integer {
-        return need_reorg_to_change(old, new);
-    }
-    Some(format!(
-        "type {:?} not match origin {:?}",
-        new.code(),
-        old.code()
-    ))
 }
 
 /// Go `collate.CompatibleCollate`: the pairs whose sort orders agree, so

@@ -6003,102 +6003,137 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
     assert_eq!(write.backfill[1].index.read().name.original(), "i2");
 }
 
-/// Go's type-compatibility decision distinguishes metadata changes from row
-/// reorganization. This catalog planner only owns the former; refusing the
-/// latter protects stored rows until the durable MODIFY worker is implemented.
+/// Go `getModifyColumnType` decides what a MODIFY leaves behind: a widening is
+/// metadata only; every other admitted change owes a data step in the same
+/// transaction; and a reorganization gives the column -- and every index on
+/// it -- a new id (`AllocateColumnID`, `AllocateIndexID`), as Go's changing
+/// column and changing indexes replace the old ones.
 #[test]
-fn a_modify_column_reorganizes_exactly_where_go_says_it_must() {
-    fn refuse(store: &mut MetaStore, sql: &str, start_ts: u64) -> String {
-        plan_ddl(store, &statement(sql), start_ts)
-            .expect_err("a reorganizing modify must be refused")
-            .to_string()
-    }
-
+fn a_modify_column_plans_the_kind_go_gives_it() {
+    use tidb_executor::ddl::modify_column_type::ModifyColumnType;
     let mut store = bootstrapped();
     let create = plan(
         &mut store,
         "CREATE TABLE widen (id BIGINT PRIMARY KEY, small INT, big BIGINT, \
-         name VARCHAR(10), money DECIMAL(10,2))",
+         name VARCHAR(10), money DECIMAL(10,2), code CHAR(20) COLLATE utf8mb4_bin, \
+         INDEX iname (name), INDEX icode (code))",
         200,
     );
+    let table_id = create.created_id.expect("a table id");
     apply(&mut store, &create);
+    let column = |write: &tidb_exec::cluster_ddl::DdlWrite, name: &str| {
+        let stored = stored_table(write, table_id);
+        stored["cols"]
+            .as_array()
+            .expect("columns")
+            .iter()
+            .find(|column| column["name"]["O"] == name)
+            .expect("the column")
+            .clone()
+    };
+    let index_id = |write: &tidb_exec::cluster_ddl::DdlWrite, name: &str| {
+        let stored = stored_table(write, table_id);
+        stored["index_info"]
+            .as_array()
+            .expect("indexes")
+            .iter()
+            .find(|index| index["idx_name"]["O"] == name)
+            .expect("the index")["id"]
+            .clone()
+    };
 
-    // Integer widening is metadata only: Go compares the types' DEFAULT
-    // display widths, so INT(11) -> BIGINT(20) grows and costs nothing.
-    let widened = plan(
-        &mut store,
+    // Metadata only: the column keeps its id and nothing reads the rows.
+    for sql in [
         "ALTER TABLE widen MODIFY COLUMN small BIGINT",
-        201,
-    );
-    assert!(!widened.mutations.is_empty(), "the widening is planned");
-
-    // The reverse narrows, and carries Go's own reason verbatim.
-    let narrowed = refuse(&mut store, "ALTER TABLE widen MODIFY COLUMN big INT", 202);
-    assert!(
-        narrowed.contains("length 11 is less than origin 20"),
-        "{narrowed}"
-    );
-
-    // A string widening is free; a shortening is not.
-    let longer = plan(
-        &mut store,
         "ALTER TABLE widen MODIFY COLUMN name VARCHAR(40)",
+    ] {
+        let write = plan(&mut store, sql, 201);
+        assert!(write.column_reorg.is_none(), "{sql}");
+    }
+
+    // (statement, kind, VARCHAR -> CHAR precheck, the column renumbered).
+    for (sql, kind, precheck, renumbered) in [
+        (
+            "ALTER TABLE widen MODIFY COLUMN big INT",
+            ModifyColumnType::NoReorgWithCheck,
+            false,
+            false,
+        ),
+        (
+            "ALTER TABLE widen MODIFY COLUMN name VARCHAR(4)",
+            ModifyColumnType::NoReorgWithCheck,
+            false,
+            false,
+        ),
+        // Go's own case: an indexed VARCHAR -> CHAR under utf8mb4_bin is an
+        // index reorganization (CHAR restores its padding), via the precheck.
+        (
+            "ALTER TABLE widen MODIFY COLUMN name CHAR(40)",
+            ModifyColumnType::IndexReorg,
+            true,
+            false,
+        ),
+        (
+            "ALTER TABLE widen MODIFY COLUMN code VARCHAR(10) COLLATE utf8mb4_bin",
+            ModifyColumnType::IndexReorg,
+            false,
+            false,
+        ),
+        (
+            "ALTER TABLE widen MODIFY COLUMN small DATETIME",
+            ModifyColumnType::Reorg,
+            false,
+            true,
+        ),
+        (
+            "ALTER TABLE widen MODIFY COLUMN small INT UNSIGNED",
+            ModifyColumnType::Reorg,
+            false,
+            true,
+        ),
+        (
+            "ALTER TABLE widen MODIFY COLUMN money DECIMAL(10,3)",
+            ModifyColumnType::Reorg,
+            false,
+            true,
+        ),
+    ] {
+        let write = plan(&mut store, sql, 202);
+        let reorg = write.column_reorg.as_ref().expect("a data step is owed");
+        assert_eq!(reorg.kind, kind, "{sql}");
+        assert_eq!(reorg.precheck, precheck, "{sql}");
+        assert_eq!(reorg.new_column_id != reorg.column_id, renumbered, "{sql}");
+        let changed = reorg
+            .after
+            .columns
+            .iter_deref()
+            .find(|column| column.read().id == reorg.new_column_id)
+            .expect("the changed column")
+            .read()
+            .name
+            .original()
+            .to_owned();
+        assert_eq!(column(&write, &changed)["id"], reorg.new_column_id, "{sql}");
+        if renumbered {
+            assert_eq!(
+                stored_table(&write, table_id)["max_col_id"],
+                reorg.new_column_id,
+                "{sql}: the next column id"
+            );
+        }
+    }
+
+    // An index on a reorganized column is rebuilt under a new id; the others
+    // keep theirs.
+    let write = plan(
+        &mut store,
+        "ALTER TABLE widen MODIFY COLUMN code VARCHAR(10) COLLATE utf8mb4_bin",
         203,
     );
-    assert!(
-        !longer.mutations.is_empty(),
-        "the longer varchar is planned"
-    );
-    let shorter = refuse(
-        &mut store,
-        "ALTER TABLE widen MODIFY COLUMN name VARCHAR(4)",
-        204,
-    );
-    assert!(
-        shorter.contains("length 4 is less than origin 10"),
-        "{shorter}"
-    );
-
-    // Crossing families is never free.
-    let crossed = refuse(
-        &mut store,
-        "ALTER TABLE widen MODIFY COLUMN small DATETIME",
-        205,
-    );
-    assert!(crossed.contains("not match origin"), "{crossed}");
-
-    // Go: char <-> varchar always reorganizes, in either direction.
-    let recast = refuse(
-        &mut store,
-        "ALTER TABLE widen MODIFY COLUMN name CHAR(40)",
-        206,
-    );
-    assert!(
-        recast.contains("conversion between char and varchar string"),
-        "{recast}"
-    );
-
-    // Sign is a rewrite of every stored row.
-    let resigned = refuse(
-        &mut store,
-        "ALTER TABLE widen MODIFY COLUMN small INT UNSIGNED",
-        207,
-    );
-    assert!(
-        resigned.contains("can't change unsigned integer to signed or vice versa"),
-        "{resigned}"
-    );
-
-    // A decimal must match exactly in flen, scale and sign.
-    let rescaled = refuse(
-        &mut store,
-        "ALTER TABLE widen MODIFY COLUMN money DECIMAL(10,3)",
-        208,
-    );
-    assert!(
-        rescaled.contains("decimal change from decimal(10, 2) to decimal(10, 3)"),
-        "{rescaled}"
-    );
+    let reorg = write.column_reorg.as_ref().expect("a data step is owed");
+    assert_eq!(reorg.renumbered_indexes, [(2, 3)]);
+    assert_eq!(index_id(&write, "icode"), 3);
+    assert_eq!(index_id(&write, "iname"), 1);
 }
 
 /// All prefix-index spellings retain their key-part lengths in published metadata.

@@ -258,6 +258,11 @@ pub enum ClusterDdlError {
     Backfill(String),
     /// An index value failed evaluation or violated a SQL constraint.
     IndexBackfill(LockSqlError),
+    /// A MODIFY / CHANGE COLUMN found a row the new type cannot hold.
+    ColumnReorg(LockSqlError),
+    /// Go `precheckForVarcharToChar` found a row that does not fit; the
+    /// statement is planned again as a reorganization.
+    ColumnPrecheckFailed,
     /// The change needs an index backfill and this path has no backfiller.
     ///
     /// Publishing the meta half alone would create an index that exists and is
@@ -312,8 +317,11 @@ impl fmt::Display for ClusterDdlError {
                 "this path cannot perform an index change: it would publish an index \
                  that exists but holds no entry for any row the table already has"
             ),
-            Self::IndexBackfill(error) | Self::ExchangeValidation(error) => {
-                formatter.write_str(&error.message)
+            Self::IndexBackfill(error)
+            | Self::ColumnReorg(error)
+            | Self::ExchangeValidation(error) => formatter.write_str(&error.message),
+            Self::ColumnPrecheckFailed => {
+                formatter.write_str("a VARCHAR -> CHAR precheck found a row that does not fit")
             }
             Self::ExchangeValidationUnavailable => write!(
                 formatter,
@@ -345,6 +353,8 @@ impl std::error::Error for ClusterDdlError {
             | Self::Undetermined(_)
             | Self::Backfill(_)
             | Self::IndexBackfill(_)
+            | Self::ColumnReorg(_)
+            | Self::ColumnPrecheckFailed
             | Self::BackfillUnavailable
             | Self::ExchangeValidation(_)
             | Self::ExchangeValidationUnavailable
@@ -502,6 +512,10 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::CheckConstraintValidationUnavailable);
     }
+    if write.column_reorg.is_some() {
+        transaction.finish_without_writes()?;
+        return Err(ClusterDdlError::BackfillUnavailable);
+    }
     // Go sends the placement bundles INSIDE the DDL job, before the schema
     // version is published, and fails the job when PD refuses
     // (`PutRuleBundlesWithDefaultRetry`). Delivering before the commit is the
@@ -620,6 +634,33 @@ pub trait IndexBackfiller {
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError>;
+
+    /// Checks or rewrites the rows a MODIFY / CHANGE COLUMN owes, through the
+    /// same snapshot and buffer as [`Self::stage`]. Returns
+    /// [`ColumnStageOutcome::PrecheckFailed`] when a VARCHAR -> CHAR precheck
+    /// found a row that does not fit, which Go answers by reorganizing.
+    fn stage_column(
+        &self,
+        _plan: &crate::cluster_ddl::ColumnReorg,
+        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        _buffer: &MutationBuffer,
+    ) -> Result<ColumnStageOutcome, LockSqlError> {
+        Err(LockSqlError {
+            code: 1105,
+            state: *b"HY000",
+            message: "this path cannot check or rewrite a column's rows".to_owned(),
+        })
+    }
+}
+
+/// What staging a column's data step found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnStageOutcome {
+    /// The rows were checked or rewritten into the buffer.
+    Staged,
+    /// Go `precheckForVarcharToChar` found a row the checked kinds cannot
+    /// keep; the change must be reorganized instead.
+    PrecheckFailed,
 }
 
 /// Executes Go's `checkExchangePartitionRecordValidation` from the DDL
@@ -799,17 +840,44 @@ pub fn commit_cluster_ddl_with_backfill<
         return Err(ClusterDdlError::PersistedJobRequired);
     }
 
-    match commit_cluster_ddl_phase_with_retry(
-        opener,
-        DdlPhase::Initial(statement, cdc_write_source),
-        timeout,
-        notifier,
-        backfiller,
-        exchange_validator,
-        check_constraint_validator,
-        schema_sync.owner_id(),
-        auto_ids,
-    )? {
+    let phase = |statement| {
+        commit_cluster_ddl_phase_with_retry(
+            Arc::clone(&opener),
+            DdlPhase::Initial(statement, cdc_write_source),
+            timeout,
+            notifier,
+            backfiller,
+            exchange_validator,
+            check_constraint_validator,
+            schema_sync.owner_id(),
+            auto_ids,
+        )
+    };
+    let outcome = match phase(statement) {
+        // Go `precheckForVarcharToChar`: a row that does not fit sends the
+        // job on as `ModifyTypeReorg` (`modify_column.go`), here a second plan
+        // of the same statement with that kind fixed.
+        Err(ClusterDdlError::ColumnPrecheckFailed) => {
+            let DdlStatement::ModifyColumn {
+                modify_column_type, ..
+            } = statement
+            else {
+                unreachable!("only a MODIFY / CHANGE COLUMN prechecks its rows");
+            };
+            debug_assert!(modify_column_type.is_none());
+            let mut reorganized = statement.clone();
+            if let DdlStatement::ModifyColumn {
+                modify_column_type, ..
+            } = &mut reorganized
+            {
+                *modify_column_type =
+                    Some(tidb_executor::ddl::modify_column_type::ModifyColumnType::Reorg);
+            }
+            phase(&reorganized)
+        }
+        outcome => outcome,
+    };
+    match outcome? {
         DdlPhaseOutcome::SchemaSync { .. } | DdlPhaseOutcome::Paused => {
             unreachable!("direct DDL has no persisted job")
         }
@@ -1407,6 +1475,7 @@ fn commit_cluster_ddl_with_backfill_once<
     };
     let mut buffer = MutationBuffer::new();
     if !write.backfill.is_empty()
+        || write.column_reorg.is_some()
         || write.exchange_partition_validation.is_some()
         || write.check_constraint_validation.is_some()
     {
@@ -1422,6 +1491,17 @@ fn commit_cluster_ddl_with_backfill_once<
                         })?
                         .bind(snapshot);
                     let handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
+                    if let Some(reorg) = &write.column_reorg {
+                        match backfiller
+                            .stage_column(reorg, Arc::clone(&handle), &buffer)
+                            .map_err(ClusterDdlError::ColumnReorg)?
+                        {
+                            ColumnStageOutcome::Staged => {}
+                            ColumnStageOutcome::PrecheckFailed => {
+                                return Err(ClusterDdlError::ColumnPrecheckFailed)
+                            }
+                        }
+                    }
                     for backfill in &write.backfill {
                         backfiller
                             .stage(backfill, Arc::clone(&handle), &buffer)

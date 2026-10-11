@@ -36,8 +36,8 @@
 //! settled here.
 
 use tidb_ast::{
-    ColumnOption, CreateTableStmt, IndexConstraintDefinition, IndexPart, IndexType,
-    InlineKeyKind, TableConstraint,
+    ColumnOption, CreateTableStmt, IndexConstraintDefinition, IndexPart, IndexType, InlineKeyKind,
+    TableConstraint,
 };
 
 /// The names `checkConstraintNames` settles for a CREATE TABLE's key
@@ -308,7 +308,9 @@ mod tests {
     #[test]
     fn an_anonymous_primary_key_spends_its_columns_name() {
         assert_eq!(
-            table_names("create table t (k char(20), v int, primary key (k(4)) clustered, key (k))"),
+            table_names(
+                "create table t (k char(20), v int, primary key (k(4)) clustered, key (k))"
+            ),
             [Some("k".to_owned()), Some("k_2".to_owned())]
         );
     }

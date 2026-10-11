@@ -161,6 +161,7 @@ pub(super) fn prepare(
                     position,
                     if_exists: *if_exists,
                     allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
+                    scan_null_values: true,
                 },
                 ctx,
             )
@@ -190,6 +191,7 @@ pub(super) fn prepare(
                     position,
                     if_exists: *if_exists,
                     allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
+                    scan_null_values: true,
                 },
                 ctx,
             )
@@ -386,33 +388,7 @@ impl PreparedColumnChange {
                 }
                 table
                     .modify_column_with_context(at, column, destination, ctx)
-                    .map_err(|error| match error {
-                        crate::kv_table::KvTableError::TruncatedIncorrectValue { kind, value } => {
-                            DriverError::TruncatedIncorrectValue {
-                                kind: kind.to_owned(),
-                                value,
-                            }
-                        }
-                        crate::kv_table::KvTableError::DataTruncatedValue { column, value } => {
-                            DriverError::DataTruncatedValue { column, value }
-                        }
-                        crate::kv_table::KvTableError::InvalidUseOfNull => {
-                            DriverError::InvalidUseOfNull
-                        }
-                        crate::kv_table::KvTableError::Vector(message) => {
-                            DriverError::unsupported(message)
-                        }
-                        crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
-                            DriverError::DuplicateEntry { value, key }
-                        }
-                        // Go `updateColumnWorker.reformatErrors`' text and code.
-                        crate::kv_table::KvTableError::ColumnCast(error) => {
-                            DriverError::Mysql(error)
-                        }
-                        other => {
-                            DriverError::Parse(format!("column modification failed: {other:?}"))
-                        }
-                    })?;
+                    .map_err(modify_column_error)?;
             }
             Self::Rename { id, from, to } => {
                 let at = offset_of(table, id, &from)?;
@@ -433,5 +409,30 @@ impl PreparedColumnChange {
             }
         }
         Ok(())
+    }
+}
+
+/// The client error for a failed MODIFY / CHANGE COLUMN data step: Go's own
+/// code and text for a value the new type cannot hold, a NULL under NOT NULL,
+/// or a duplicate the rewritten entries collide on.
+pub fn modify_column_error(error: crate::kv_table::KvTableError) -> DriverError {
+    match error {
+        crate::kv_table::KvTableError::TruncatedIncorrectValue { kind, value } => {
+            DriverError::TruncatedIncorrectValue {
+                kind: kind.to_owned(),
+                value,
+            }
+        }
+        crate::kv_table::KvTableError::DataTruncatedValue { column, value } => {
+            DriverError::DataTruncatedValue { column, value }
+        }
+        crate::kv_table::KvTableError::InvalidUseOfNull => DriverError::InvalidUseOfNull,
+        crate::kv_table::KvTableError::Vector(message) => DriverError::unsupported(message),
+        crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
+            DriverError::DuplicateEntry { value, key }
+        }
+        // Go `updateColumnWorker.reformatErrors`' text and code.
+        crate::kv_table::KvTableError::ColumnCast(error) => DriverError::Mysql(error),
+        other => DriverError::Parse(format!("column modification failed: {other:?}")),
     }
 }
