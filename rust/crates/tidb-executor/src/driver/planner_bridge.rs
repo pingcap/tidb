@@ -3559,6 +3559,9 @@ fn optimize_built_logical(
         enable_semi_join_rewrite: ctx.enable_semi_join_rewrite(),
         enable_null_aware_anti_join: ctx.enable_null_aware_anti_join(),
         enable_no_decorrelate_in_select: ctx.enable_no_decorrelate_in_select(),
+        allow_eliminate_apply: ctx
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_planner::fix_control::FIX_45822, true),
         join_reorder_threshold: ctx.join_reorder_threshold(),
         group_ndv_skew_ratio: optimizer_cost_env.session.group_ndv_skew_ratio,
         scale_ndv_skew_ratio: optimizer_cost_env.session.scale_ndv_skew_ratio,

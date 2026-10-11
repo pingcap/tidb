@@ -101,6 +101,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         // Go's `OptimizerEnableNAAJ` defaults ON.
         enable_null_aware_anti_join: true,
         enable_no_decorrelate_in_select: false,
+        allow_eliminate_apply: true,
         join_reorder_threshold: 0,
         group_ndv_skew_ratio: 0.0,
         scale_ndv_skew_ratio: tidb_planner::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,

@@ -90,6 +90,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         // Go's `OptimizerEnableNAAJ` defaults ON in `sessionVars`.
         enable_null_aware_anti_join: true,
         enable_no_decorrelate_in_select: false,
+        allow_eliminate_apply: true,
         join_reorder_threshold: 0,
         group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
         scale_ndv_skew_ratio: crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,

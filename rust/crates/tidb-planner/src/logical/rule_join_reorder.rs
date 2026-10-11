@@ -213,6 +213,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         enable_semi_join_rewrite: context.enable_semi_join_rewrite,
         enable_null_aware_anti_join: context.enable_null_aware_anti_join,
         enable_no_decorrelate_in_select: context.enable_no_decorrelate_in_select,
+        allow_eliminate_apply: context.allow_eliminate_apply,
         join_reorder_threshold: context.join_reorder_threshold,
         group_ndv_skew_ratio: context.group_ndv_skew_ratio,
         scale_ndv_skew_ratio: context.scale_ndv_skew_ratio,

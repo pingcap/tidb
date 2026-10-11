@@ -1418,3 +1418,66 @@ fn correlated_access_conditions_rebuild_inner_ranges_per_outer_row() {
         ]
     );
 }
+
+/// `planner/core/casetest/integration.test`'s scalar subquery in a derived
+/// table nothing reads, plans captured from Go on this branch. Go's
+/// `LogicalApply.PruneColumns` drops a left outer apply whose inner columns
+/// nothing uses (fix control 45822, default on) and prunes its outer child
+/// in its place, so `t1` is never planned; with 45822 OFF the apply stays and
+/// is decorrelated into the CARTESIAN join over `MaxOneRow`.
+#[test]
+fn an_unread_scalar_subquery_s_apply_is_eliminated() {
+    let mut session = Session::new();
+    session.run("create table t(a int, b int)").unwrap();
+    session.run("insert into t values(1, 2), (3, 4)").unwrap();
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
+        row_text(session.run(&format!("explain format='plan_tree' {sql}")))
+            .into_iter()
+            .map(|row| format!("{} {}", row[0].trim(), row[3]))
+            .collect()
+    };
+    let derived = "select 1 from (select t.a < (select t.a from t t1 limit 1) from t) t";
+    assert_eq!(
+        plan(&mut session, derived),
+        vec![
+            "Projection 1->Column",
+            "└─TableReader data:TableFullScan",
+            "└─TableFullScan keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        plan(
+            &mut session,
+            "select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t"
+        ),
+        vec![
+            "HashJoin CARTESIAN left outer semi join, left side:TableReader, other cond:eq(2, test.t.b)",
+            "├─TableReader(Build) data:TableFullScan",
+            "│ └─TableFullScan keep order:false, stats:pseudo",
+            "└─TableReader(Probe) data:TableFullScan",
+            "└─TableFullScan keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        plan(
+            &mut session,
+            "select count(*) from (select a, (select t1.b from t t1 where t1.a = t.a) from t) x"
+        )
+        .last()
+        .map(String::as_str),
+        Some("└─TableFullScan keep order:false, stats:pseudo")
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select count(*) from (select a, (select t1.b from t t1 where t1.a = t.a) from t) x"
+        )),
+        vec![vec!["2"]]
+    );
+    session
+        .run("set @@tidb_opt_fix_control = '45822:OFF'")
+        .unwrap();
+    assert_eq!(
+        plan(&mut session, derived)[1],
+        "└─HashJoin CARTESIAN left outer join, left side:TableReader"
+    );
+}

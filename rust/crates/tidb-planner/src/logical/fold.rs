@@ -109,6 +109,11 @@ pub enum Descend<D, U> {
     /// Answer without touching the children at all. Go's `DataSource`,
     /// `LogicalCTE` and `LogicalTableDual` bodies do this.
     Stop(U),
+    /// The node was replaced in place by one of its children, which is
+    /// entered with this `Down` and whose result stands for the node. Go's
+    /// `LogicalApply.PruneColumns` does this when it drops the apply:
+    /// `return la.Children()[0].PruneColumns(parentUsedCols)`.
+    Reenter(D),
 }
 
 /// A post-order owned rewrite of a [`LogicalPlan`] tree.
@@ -199,6 +204,7 @@ where
             Task::Enter(mut node, down) => {
                 match rewrite.descend(&mut node, down) {
                     Descend::Stop(up) => done.push((node, up)),
+                    Descend::Reenter(down) => work.push(Task::Enter(node, down)),
                     Descend::Children(mut downs) => {
                         // Park the parent WITHOUT its children; the children
                         // are pushed as their own work items. This is the step

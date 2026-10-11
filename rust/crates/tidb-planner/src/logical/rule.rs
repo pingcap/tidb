@@ -645,6 +645,9 @@ pub struct RuleContext<'a> {
     pub enable_null_aware_anti_join: bool,
     /// Go `SessionVars.EnableNoDecorrelateInSelect`.
     pub enable_no_decorrelate_in_select: bool,
+    /// Go fix control 45822 (default true): `LogicalApply.PruneColumns` may
+    /// drop a left outer apply whose inner columns nothing uses.
+    pub allow_eliminate_apply: bool,
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
     pub join_reorder_threshold: i32,
     /// Go `SessionVars.RiskGroupNDVSkewRatio` for join and aggregation stats.

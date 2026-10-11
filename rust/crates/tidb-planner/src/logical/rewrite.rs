@@ -1106,6 +1106,32 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
         let schemas = child_schemas(node);
         let mut own_schema = effective_schema(node);
         let empty = Schema::default();
+        // Go `LogicalApply.PruneColumns` (`logical_apply.go:112`) drops a
+        // scalar subquery's left outer apply whose inner columns nothing
+        // uses, and prunes the outer child in its place with the parent's
+        // columns; the inner child is never pruned.
+        let eliminate_apply = matches!(
+            &*node,
+            LogicalPlan::Apply(op) if op.can_eliminate_apply(
+                self.ctx.allow_eliminate_apply,
+                op.prune_columns_local(
+                    &parent_used_cols,
+                    schemas.first().unwrap_or(&empty),
+                    schemas.get(1).unwrap_or(&empty),
+                )
+                .1
+                .is_empty(),
+            )
+        );
+        if eliminate_apply {
+            let mut children = node.base_mut().take_children();
+            let outer = children.remove(0);
+            std::mem::replace(node, outer).dismantle();
+            for inner in children {
+                inner.dismantle();
+            }
+            return Descend::Reenter(parent_used_cols);
+        }
         match node {
             // Go `LogicalSelection.PruneColumns` (`logical_selection.go:127`).
             LogicalPlan::Selection(op) => {
