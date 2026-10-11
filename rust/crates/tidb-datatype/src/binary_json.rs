@@ -189,6 +189,17 @@ impl BinaryJSON {
         Self::from_encoded_parts(type_code, value)
     }
 
+    /// Go's zero `types.BinaryJSON{}`: no type code and no payload. It is not
+    /// a JSON document; Go renders it as the empty string, as
+    /// [`fmt::Display`] does here.
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self {
+            type_code: 0,
+            value: Vec::new(),
+        }
+    }
+
     /// Constructs from an exact source type code and value payload.
     pub fn from_raw(type_code: u8, value: Vec<u8>) -> Result<Self, BinaryJSONError> {
         let json = Self { type_code, value };
@@ -1582,6 +1593,14 @@ fn format_node(value: &JSONNode) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go's zero `types.BinaryJSON{}` renders as the empty string
+    /// (`String()` swallows its marshal error).
+    #[test]
+    fn zero_value_renders_empty() {
+        assert_eq!(BinaryJSON::zero().to_string(), "");
+        assert_eq!(BinaryJSON::zero().type_code(), 0);
+    }
 
     /// `expression/json.test`'s 100-deep documents. Each decoded element was
     /// validated by fully decoding it and then decoded again, doubling the

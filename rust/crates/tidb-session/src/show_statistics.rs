@@ -125,6 +125,37 @@ impl Session {
             }
             Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
         };
+        let result_rows = self.analyze_status_rows()?;
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
+        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let double = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Table_schema".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Job_info".to_owned(), varchar()),
+                ("Processed_rows".to_owned(), longlong()),
+                ("Start_time".to_owned(), datetime()),
+                ("End_time".to_owned(), datetime()),
+                ("State".to_owned(), varchar()),
+                ("Fail_reason".to_owned(), varchar()),
+                ("Instance".to_owned(), varchar()),
+                ("Process_ID".to_owned(), longlong()),
+                ("Remaining_seconds".to_owned(), varchar()),
+                ("Progress".to_owned(), double()),
+                ("Estimated_total_rows".to_owned(), longlong()),
+            ],
+            rows: result_rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
+    /// Go `dataForAnalyzeStatusHelper`, which both `SHOW ANALYZE STATUS` and
+    /// `information_schema.ANALYZE_STATUS` answer with: the recorded analyze
+    /// jobs the session may see, with a running job's progress estimate.
+    pub(crate) fn analyze_status_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
         let jobs = match self.analyze_status.clone() {
             Some(provider) => provider
                 .load_analyze_status(&self.active_resource_group)
@@ -254,30 +285,7 @@ impl Session {
                 estimated,
             ]);
         }
-        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
-        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let double = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
-        let output = StmtOutput::Rows {
-            columns: vec![
-                ("Table_schema".to_owned(), varchar()),
-                ("Table_name".to_owned(), varchar()),
-                ("Partition_name".to_owned(), varchar()),
-                ("Job_info".to_owned(), varchar()),
-                ("Processed_rows".to_owned(), longlong()),
-                ("Start_time".to_owned(), datetime()),
-                ("End_time".to_owned(), datetime()),
-                ("State".to_owned(), varchar()),
-                ("Fail_reason".to_owned(), varchar()),
-                ("Instance".to_owned(), varchar()),
-                ("Process_ID".to_owned(), longlong()),
-                ("Remaining_seconds".to_owned(), varchar()),
-                ("Progress".to_owned(), double()),
-                ("Estimated_total_rows".to_owned(), longlong()),
-            ],
-            rows: result_rows,
-        };
-        filter_show_output(output, like_pattern, where_clause)
+        Ok(result_rows)
     }
 
     /// Go `ShowExec.fetchShowStatsMeta` (`pkg/executor/show_stats.go:36`):

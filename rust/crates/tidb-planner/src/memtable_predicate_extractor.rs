@@ -2234,44 +2234,42 @@ fn mem_table_extractors<'a>(
     out.extend(scans.into_iter().map(|scan| scan.extractor.as_ref()));
 }
 
-/// Each `INSPECTION_SUMMARY` scan's extractor and Go `QueryTimeRange`, which
-/// its retriever queries the metrics tables with.
-#[must_use]
-pub fn inspection_summary_scans(
-    plan: &PhysicalPlan,
-) -> Vec<(
-    InspectionSummaryTableExtractor,
-    crate::logical::mem_table::QueryTimeRange,
-)> {
-    let mut scans = Vec::new();
-    mem_table_scans(plan, "INSPECTION_SUMMARY", &mut scans);
-    scans
-        .into_iter()
-        .map(|scan| {
-            let extractor = match &scan.extractor {
-                Some(MemTablePredicateExtractor::InspectionSummaryTable(extractor)) => {
-                    extractor.clone()
-                }
-                _ => InspectionSummaryTableExtractor::default(),
-            };
-            (extractor, scan.query_time_range.clone())
-        })
-        .collect()
+/// What one memory-table scan hands its retriever: Go's
+/// `PhysicalMemTable.Extractor` and `QueryTimeRange`.
+#[derive(Clone, Debug)]
+pub struct MemTableScanRead {
+    /// The scanned table's name, upper-cased.
+    pub table: String,
+    /// The scan's extractor, `None` for a table that has none.
+    pub extractor: Option<MemTablePredicateExtractor>,
+    /// The summary tables' time window (empty for the others).
+    pub query_time_range: crate::logical::mem_table::QueryTimeRange,
 }
 
-/// Each `TABLE_STORAGE_STATS` scan's extractor, which its retriever
-/// resolves tables from.
+/// Every memory-table scan in `plan`, CTE bodies included.
 #[must_use]
-pub fn table_storage_stats_extractors(plan: &PhysicalPlan) -> Vec<TableStorageStatsExtractor> {
-    let mut extractors = Vec::new();
-    mem_table_extractors(plan, "TABLE_STORAGE_STATS", &mut extractors);
-    extractors
-        .into_iter()
-        .map(|extractor| match extractor {
-            Some(MemTablePredicateExtractor::TableStorageStats(extractor)) => extractor.clone(),
-            _ => TableStorageStatsExtractor::default(),
-        })
-        .collect()
+pub fn mem_table_scan_reads(plan: &PhysicalPlan) -> Vec<MemTableScanRead> {
+    fn visit(plan: &PhysicalPlan, out: &mut Vec<MemTableScanRead>) {
+        if let PhysicalPlan::MemTable(scan) = plan {
+            out.push(MemTableScanRead {
+                table: scan.table_name.to_ascii_uppercase(),
+                extractor: scan.extractor.clone(),
+                query_time_range: scan.query_time_range.clone(),
+            });
+        }
+        if let PhysicalPlan::CTE(cte) = plan {
+            visit(&cte.seed_plan, out);
+            if let Some(recursive) = &cte.recursive_plan {
+                visit(recursive, out);
+            }
+        }
+        for child in plan.children() {
+            visit(child, out);
+        }
+    }
+    let mut reads = Vec::new();
+    visit(plan, &mut reads);
+    reads
 }
 
 /// Each `table` scan's routing needs, from its `ClusterTableExtractor`. A

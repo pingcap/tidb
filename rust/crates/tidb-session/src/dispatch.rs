@@ -367,14 +367,9 @@ pub(crate) struct InformationSchemaReads {
     cluster_config_filters: Vec<tidb_planner::memtable_predicate_extractor::ClusterTableFilter>,
     cluster_log_extractors:
         Vec<tidb_planner::memtable_predicate_extractor::ClusterLogTableExtractor>,
-    /// Each `INSPECTION_SUMMARY` scan's extractor and time range.
-    inspection_summary_scans: Vec<(
-        tidb_planner::memtable_predicate_extractor::InspectionSummaryTableExtractor,
-        tidb_planner::logical::mem_table::QueryTimeRange,
-    )>,
-    /// Each `TABLE_STORAGE_STATS` scan's extractor.
-    table_storage_stats_extractors:
-        Vec<tidb_planner::memtable_predicate_extractor::TableStorageStatsExtractor>,
+    /// Every memory-table scan's extractor and time range, which the
+    /// retrievers that request by them (Go `memtableRetriever` per scan) read.
+    scans: Vec<tidb_planner::memtable_predicate_extractor::MemTableScanRead>,
 }
 
 impl InformationSchemaReads {
@@ -421,11 +416,8 @@ impl InformationSchemaReads {
                 .cluster_log_extractors
                 .extend(tidb_planner::memtable_predicate_extractor::cluster_log_extractors(plan));
             reads
-                .inspection_summary_scans
-                .extend(tidb_planner::memtable_predicate_extractor::inspection_summary_scans(plan));
-            reads.table_storage_stats_extractors.extend(
-                tidb_planner::memtable_predicate_extractor::table_storage_stats_extractors(plan),
-            );
+                .scans
+                .extend(tidb_planner::memtable_predicate_extractor::mem_table_scan_reads(plan));
         }
         reads
     }
@@ -461,16 +453,8 @@ impl InformationSchemaReads {
                     .all(|want| contains(&have, want))
             }
             && {
-                let have = logs(&self.inspection_summary_scans);
-                logs(&reads.inspection_summary_scans)
-                    .iter()
-                    .all(|want| contains(&have, want))
-            }
-            && {
-                let have = logs(&self.table_storage_stats_extractors);
-                logs(&reads.table_storage_stats_extractors)
-                    .iter()
-                    .all(|want| contains(&have, want))
+                let have = logs(&self.scans);
+                logs(&reads.scans).iter().all(|want| contains(&have, want))
             }
     }
 
@@ -484,10 +468,7 @@ impl InformationSchemaReads {
             .extend(reads.cluster_config_filters);
         self.cluster_log_extractors
             .extend(reads.cluster_log_extractors);
-        self.inspection_summary_scans
-            .extend(reads.inspection_summary_scans);
-        self.table_storage_stats_extractors
-            .extend(reads.table_storage_stats_extractors);
+        self.scans.extend(reads.scans);
     }
 }
 
@@ -948,8 +929,7 @@ impl Session {
             needs_column_lengths,
             cluster_config_filters,
             cluster_log_extractors,
-            inspection_summary_scans,
-            table_storage_stats_extractors,
+            scans,
         } = reads;
         let (needs_storage_stats, needs_column_lengths) =
             (*needs_storage_stats, *needs_column_lengths);
@@ -1009,6 +989,17 @@ impl Session {
             }
         }
         let mut materialized = Vec::with_capacity(table_names.len());
+        use tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor;
+        let scans_of = |table: &str| {
+            let table = table.to_owned();
+            scans.iter().filter(move |scan| scan.table == table)
+        };
+        // Go's retrievers query the metrics tables through the restricted SQL
+        // executor.
+        let query_metrics = |sql: &str| {
+            tidb_executor::run_select_meta_in(sql, &scratch, "metrics_schema", ctx)
+                .map(|(_, rows)| rows)
+        };
         for table_name in table_names {
             let Some(columns) = self.virtual_table_schema(&table_name) else {
                 return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
@@ -1078,20 +1069,114 @@ impl Session {
                 crate::inspection::inspection_rules_rows()
             } else if table_name.eq_ignore_ascii_case("INSPECTION_SUMMARY") {
                 let mut rows = Vec::new();
-                for (extractor, time_range) in inspection_summary_scans {
+                for scan in scans_of("INSPECTION_SUMMARY") {
+                    let Some(MemTablePredicateExtractor::InspectionSummaryTable(extractor)) =
+                        &scan.extractor
+                    else {
+                        continue;
+                    };
                     rows.extend(crate::inspection::inspection_summary_rows(
                         extractor,
-                        time_range,
-                        |sql| {
-                            tidb_executor::run_select_meta_in(sql, &scratch, "metrics_schema", ctx)
-                                .map(|(_, rows)| rows)
-                        },
+                        &scan.query_time_range,
+                        query_metrics,
                         |warning| ctx.append_warning_parts(1105, &warning),
                     )?);
                 }
                 rows
+            } else if table_name.eq_ignore_ascii_case("METRICS_SUMMARY")
+                || table_name.eq_ignore_ascii_case("METRICS_SUMMARY_BY_LABEL")
+            {
+                let by_label = table_name.eq_ignore_ascii_case("METRICS_SUMMARY_BY_LABEL");
+                let mut rows = Vec::new();
+                for scan in scans_of(&table_name.to_ascii_uppercase()) {
+                    // Go checks PROCESS before it looks at the extractor.
+                    if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Process) {
+                        return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+                    }
+                    let Some(MemTablePredicateExtractor::MetricSummaryTable(extractor)) =
+                        &scan.extractor
+                    else {
+                        continue;
+                    };
+                    rows.extend(crate::memtable_retrievers::metrics_summary_rows(
+                        extractor,
+                        &scan.query_time_range,
+                        by_label,
+                        query_metrics,
+                    )?);
+                }
+                rows
             } else if table_name.eq_ignore_ascii_case("TABLE_STORAGE_STATS") {
-                table_storage_stats_rows(table_storage_stats_extractors)?
+                let mut rows = Vec::new();
+                for scan in scans_of("TABLE_STORAGE_STATS") {
+                    if let Some(MemTablePredicateExtractor::TableStorageStats(extractor)) =
+                        &scan.extractor
+                    {
+                        rows.extend(crate::memtable_retrievers::table_storage_stats_rows(
+                            extractor,
+                        )?);
+                    }
+                }
+                rows
+            } else if table_name.eq_ignore_ascii_case("TIKV_REGION_PEERS") {
+                let mut rows = Vec::new();
+                for scan in scans_of("TIKV_REGION_PEERS") {
+                    if let Some(MemTablePredicateExtractor::TikvRegionPeers(extractor)) =
+                        &scan.extractor
+                    {
+                        rows.extend(crate::memtable_retrievers::tikv_region_peers_rows(
+                            extractor,
+                        )?);
+                    }
+                }
+                rows
+            } else if table_name.eq_ignore_ascii_case("TIKV_REGION_STATUS") {
+                let mut rows = Vec::new();
+                for scan in scans_of("TIKV_REGION_STATUS") {
+                    let extractor = match &scan.extractor {
+                        Some(MemTablePredicateExtractor::TiKVRegionStatus(extractor)) => {
+                            Some(extractor)
+                        }
+                        _ => None,
+                    };
+                    rows.extend(crate::memtable_retrievers::tikv_region_status_rows(
+                        extractor, &scratch,
+                    )?);
+                }
+                rows
+            } else if table_name.eq_ignore_ascii_case("TIDB_HOT_REGIONS") {
+                crate::memtable_retrievers::tidb_hot_regions_rows()?
+            } else if table_name.eq_ignore_ascii_case("TIDB_HOT_REGIONS_HISTORY") {
+                let mut rows = Vec::new();
+                for scan in scans_of("TIDB_HOT_REGIONS_HISTORY") {
+                    let Some(MemTablePredicateExtractor::HotRegionsHistoryTable(extractor)) =
+                        &scan.extractor
+                    else {
+                        continue;
+                    };
+                    if extractor.skip_request {
+                        continue;
+                    }
+                    if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Process) {
+                        return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+                    }
+                    rows.extend(crate::memtable_retrievers::tidb_hot_regions_history_rows(
+                        extractor,
+                    )?);
+                }
+                rows
+            } else if table_name.eq_ignore_ascii_case("PROFILING") {
+                crate::memtable_retrievers::pseudo_profiling_rows(
+                    tidb_vardef::option_values::tidb_opt_on(
+                        &self.vars.get_system("profiling").unwrap_or_default(),
+                    ),
+                )
+            } else if table_name.eq_ignore_ascii_case("KEYSPACE_META") {
+                crate::memtable_retrievers::keyspace_meta_rows()
+            } else if table_name.eq_ignore_ascii_case("PLACEMENT_POLICIES") {
+                crate::memtable_retrievers::placement_policies_rows(&scratch)
+            } else if table_name.eq_ignore_ascii_case("ANALYZE_STATUS") {
+                self.analyze_status_rows()?
             } else if serving_schema_of(&table_name)
                 == tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA
                 && table_name.eq_ignore_ascii_case("SESSION_VARIABLES")
@@ -1387,6 +1472,15 @@ impl Session {
                     ))
                 })?
             }
+            // NOT MODELLED (documented): Go's `slowQueryRetriever` parses the
+            // instance's slow-log file, which this tier never writes (its slow
+            // statements go to the domain's in-memory record ADMIN SHOW SLOW
+            // reads), so there is nothing to read.
+            "SLOW_QUERY" => Vec::new(),
+            // Go `setDataFromPlanCache` lists the instance plan cache, which
+            // is off by default (`tidb_enable_instance_plan_cache`) and not
+            // modelled here.
+            "TIDB_PLAN_CACHE" => Vec::new(),
             _ => {
                 return Err(DriverError::unsupported(
                     "unsupported local diagnostic table",
@@ -4094,30 +4188,4 @@ impl Session {
         // clamped to now, the current read. Any other statement ignores it.
         Ok(())
     }
-}
-
-/// Go `tableStorageStatsRetriever.initialize` for the scans of one statement:
-/// a scan that names no `TABLE_SCHEMA` is refused, and any other needs PD's
-/// region statistics, which a store without PD cannot answer (Go's
-/// `helper.GetPDAddr` fails with `pd unavailable`). A scan whose predicates
-/// contradict each other (`SkipRequest`) reads nothing.
-fn table_storage_stats_rows(
-    extractors: &[tidb_planner::memtable_predicate_extractor::TableStorageStatsExtractor],
-) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-    for extractor in extractors
-        .iter()
-        .filter(|extractor| !extractor.skip_request)
-    {
-        let message = if extractor.table_schema.is_empty() {
-            "Please add where clause to filter the column TABLE_SCHEMA. \
-             For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')"
-        } else {
-            "pd unavailable"
-        };
-        return Err(DriverError::DdlCoded {
-            errno: 1105,
-            message: message.to_owned(),
-        });
-    }
-    Ok(Vec::new())
 }

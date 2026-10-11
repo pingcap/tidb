@@ -1239,6 +1239,7 @@ mod identity;
 pub mod infoschema;
 mod inspection;
 mod load_stats_arm;
+mod memtable_retrievers;
 mod non_prepared_plan_cache;
 mod nontransactional;
 mod noop;

@@ -1997,14 +1997,22 @@ fn every_information_schema_cell_matches_its_declared_column_type() {
         // An embedded session has no process HTTP owner for live config
         // retrieval (the boundary `cluster_metadata_config_refuses_captured_
         // runtime_rows` pins), and Go itself answers TIKV_STORE_STATUS with
-        // "pd http client unavailable" when there is no PD, INSPECTION_SUMMARY
-        // with its metrics query's "pd unavailable", and an unfiltered
-        // TABLE_STORAGE_STATS by asking for a TABLE_SCHEMA filter.
+        // "pd http client unavailable" when there is no PD (as it does the
+        // hot-region and region tables), the summary tables with their
+        // metrics queries' "pd unavailable", an unfiltered TABLE_STORAGE_STATS
+        // by asking for a TABLE_SCHEMA filter and an unbounded
+        // TIDB_HOT_REGIONS_HISTORY by asking for a time range.
         if [
             "CLUSTER_CONFIG",
             "TIKV_STORE_STATUS",
             "INSPECTION_SUMMARY",
             "TABLE_STORAGE_STATS",
+            "METRICS_SUMMARY",
+            "METRICS_SUMMARY_BY_LABEL",
+            "TIDB_HOT_REGIONS",
+            "TIDB_HOT_REGIONS_HISTORY",
+            "TIKV_REGION_PEERS",
+            "TIKV_REGION_STATUS",
         ]
         .iter()
         .any(|refusing| name.eq_ignore_ascii_case(refusing))
@@ -2054,6 +2062,12 @@ fn every_information_schema_cell_matches_its_declared_column_type() {
                     Datum::Time(_) => assert!(
                         field_type.code() == tidb_datatype::FieldTypeCode::Datetime,
                         "{name}.{column_name} is declared {:?} but a row holds a Time",
+                        field_type.code()
+                    ),
+                    // Go `types.NewJSONDatum`, as KEYSPACE_META's CONFIG.
+                    Datum::Json(_) => assert!(
+                        field_type.code() == tidb_datatype::FieldTypeCode::Json,
+                        "{name}.{column_name} is declared {:?} but a row holds JSON",
                         field_type.code()
                     ),
                     other => panic!("{name}.{column_name} holds an unexpected {other:?}"),
@@ -2969,5 +2983,179 @@ fn inspection_and_storage_stats_tables_answer_as_go() {
     assert_eq!(
         rows(&mut session, "desc information_schema.inspection_summary")[5],
         ["AVG_VALUE", "double(22,6)", "YES", "", "NULL", ""]
+    );
+}
+
+/// The `information_schema` tables Go serves that this tier now serves too,
+/// as Go answers them in a store without PD. Captured from Go TiDB.
+#[test]
+fn remaining_information_schema_tables_answer_as_go() {
+    let mut session = Session::new();
+    let rows = |session: &mut Session, sql: &str| crate::tests_support::row_text(session.run(sql));
+    let error = |session: &mut Session, sql: &str| {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        (error.code, error.message)
+    };
+    for empty in [
+        "CLUSTER_HARDWARE",
+        "CLUSTER_LOAD",
+        "CLUSTER_SYSTEMINFO",
+        "COLUMN_STATISTICS",
+        "FILES",
+        "OPTIMIZER_TRACE",
+        "PROFILING",
+        "SLOW_QUERY",
+        "CLUSTER_SLOW_QUERY",
+        "TABLESPACES",
+        "TIDB_PLAN_CACHE",
+        "CLUSTER_TIDB_PLAN_CACHE",
+        "TIFLASH_INDEXES",
+    ] {
+        assert!(
+            rows(
+                &mut session,
+                &format!("select * from information_schema.{empty}")
+            )
+            .is_empty(),
+            "{empty}"
+        );
+    }
+    for table in [
+        "TIDB_HOT_REGIONS",
+        "TIKV_REGION_PEERS",
+        "TIKV_REGION_STATUS",
+    ] {
+        assert_eq!(
+            error(
+                &mut session,
+                &format!("select count(*) from information_schema.{table}")
+            ),
+            (1105, "pd http client unavailable".to_owned()),
+            "{table}"
+        );
+    }
+    assert!(rows(
+        &mut session,
+        "select * from information_schema.tikv_region_peers where region_id=1 and region_id=2"
+    )
+    .is_empty());
+    assert_eq!(
+        error(
+            &mut session,
+            "select count(*) from information_schema.tidb_hot_regions_history"
+        ),
+        (
+            1105,
+            "denied to scan hot regions, please specified the start time, such as \
+             `update_time > '2020-01-01 00:00:00'`"
+                .to_owned()
+        )
+    );
+    assert_eq!(
+        error(
+            &mut session,
+            "select * from information_schema.tidb_hot_regions_history \
+             where update_time > '2020-01-01 00:00:00'"
+        ),
+        (
+            1105,
+            "denied to scan hot regions, please specified the end time, such as \
+             `update_time < '2020-01-01 00:00:00'`"
+                .to_owned()
+        )
+    );
+    assert!(rows(
+        &mut session,
+        "select * from information_schema.tidb_hot_regions_history \
+         where update_time > '2020-01-01 00:00:00' and update_time < '2020-01-02 00:00:00'"
+    )
+    .is_empty());
+    let (code, message) = error(
+        &mut session,
+        "select count(*) from information_schema.metrics_summary",
+    );
+    assert_eq!(code, 1105);
+    assert!(
+        message.starts_with(
+            "execute 'select sum(value),avg(value),min(value),max(value) from \
+             `metrics_schema`.`abnormal_stores` where time>='"
+        ) && message.ends_with("' failed: query metric error: pd unavailable"),
+        "{message}"
+    );
+    assert!(rows(
+        &mut session,
+        "select * from information_schema.metrics_summary where metrics_name='abc'"
+    )
+    .is_empty());
+    assert_eq!(
+        rows(
+            &mut session,
+            "select * from information_schema.keyspace_meta"
+        ),
+        [["", "", ""]]
+    );
+
+    session
+        .run("create placement policy zz followers=3 primary_region='r1' regions='r1,r2'")
+        .unwrap();
+    session
+        .run("create placement policy aa learners=1 constraints='[+disk=ssd]'")
+        .unwrap();
+    let zz = rows(
+        &mut session,
+        "select policy_id from information_schema.placement_policies where policy_name='zz'",
+    )[0][0]
+        .clone();
+    let aa = rows(
+        &mut session,
+        "select policy_id from information_schema.placement_policies where policy_name='aa'",
+    )[0][0]
+        .clone();
+    assert_eq!(
+        rows(
+            &mut session,
+            "select * from information_schema.placement_policies"
+        ),
+        [
+            vec![
+                aa,
+                "def".into(),
+                "aa".into(),
+                "".into(),
+                "".into(),
+                "[+disk=ssd]".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "2".into(),
+                "1".into()
+            ],
+            vec![
+                zz,
+                "def".into(),
+                "zz".into(),
+                "r1".into(),
+                "r1,r2".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "3".into(),
+                "0".into()
+            ],
+        ]
+    );
+
+    session.run("set @@profiling=1").unwrap();
+    assert_eq!(
+        rows(&mut session, "select * from information_schema.profiling"),
+        [
+            [
+                "0", "0", "", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "", "",
+                "0"
+            ]
+        ]
     );
 }
