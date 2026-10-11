@@ -867,6 +867,13 @@ fn check_constraint_name_exists_in_schema(
         .filter(|name| !excluding_table.is_some_and(|excluded| name.eq_ignore_ascii_case(excluded)))
         .filter_map(|name| catalog.table_in(database, &name))
         .any(|entry| match entry {
+            // Go `checkConstraintNamesNotExists` lists the schema's tables
+            // from meta, where a session's local temporary table never is.
+            crate::TableEntry::Kv(table)
+                if table.temp_table_type() == tidb_model::TempTableType::LOCAL =>
+            {
+                false
+            }
             crate::TableEntry::Kv(table) => table
                 .check_constraint_infos()
                 .iter()
@@ -2090,8 +2097,17 @@ fn create_table_in(
             errno: error.code,
             message: error.message,
         })?;
+        // Go checks the schema in `onCreateTable`, the DDL job a local
+        // temporary table never runs.
+        let local_temporary = table.temp_table_type() == tidb_model::TempTableType::LOCAL;
         if let Some(info) = infos.iter().find(|info| {
-            check_constraint_name_exists_in_schema(catalog, &database, None, info.name.original())
+            !local_temporary
+                && check_constraint_name_exists_in_schema(
+                    catalog,
+                    &database,
+                    None,
+                    info.name.original(),
+                )
         }) {
             return Err(DriverError::DdlCoded {
                 errno: tidb_error::tidb::errcode::ErrCheckConstraintDupName,

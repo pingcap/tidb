@@ -446,6 +446,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         from: Option<&Join>,
         name: &FieldName,
     ) -> Option<Option<&super::catalog::SourceTable>> {
+        // "when the Select is inside a view, it's not pre-processed, tnW is
+        // nil. if b.isCreateView { // Ignore during create; return nil }":
+        // a CREATE VIEW body's ungrouped columns are never reported.
+        if self.is_create_view {
+            return None;
+        }
         let mut listed = Vec::new();
         extract_table_list(from?, &mut listed);
         let entry = listed

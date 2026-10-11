@@ -165,6 +165,18 @@ impl PrivilegeRegistry {
         }
     }
 
+    /// Replace one account's history with the rows its stored table holds.
+    pub fn replace_account_password_history(
+        &self,
+        user: &str,
+        host: &str,
+        rows: Vec<LoadedPasswordHistory>,
+    ) {
+        let mut history = self.password_history.lock().unwrap();
+        history.retain(|row| row.user != user || row.host != host);
+        history.extend(rows);
+    }
+
     /// Remove this account's history on DROP or successful plugin changes.
     pub fn clear_password_history(&self, user: &str, host: &str) {
         self.password_history

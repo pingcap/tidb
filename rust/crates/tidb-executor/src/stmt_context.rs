@@ -753,6 +753,9 @@ pub struct StmtContextData {
     /// is in TiDB's DEFAULT `sql_mode`, so a session leaves this on; a context
     /// with no session behind it (a test, a DDL-time fold) is permissive.
     only_full_group_by: bool,
+    /// The statement builds a `CREATE VIEW` body: Go's `PlanBuilder` then
+    /// sets `isCreateView` and `capFlag |= canExpandAST`.
+    create_view: bool,
     auto_increment_in_generated: bool,
     /// Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck`
     /// (`@@tidb_enable_new_only_full_group_by_check`, default OFF): the
@@ -1796,6 +1799,13 @@ context_configuration! {
         self
     }
 
+    /// Marks the statement as building a `CREATE VIEW` body.
+    #[must_use]
+    pub fn with_create_view(mut self, create_view: bool) -> Self {
+        self.create_view = create_view;
+        self
+    }
+
     /// Sets Go EnableAutoIncrementInGenerated for DDL validation.
     #[must_use]
     pub fn with_auto_increment_in_generated(mut self, enabled: bool) -> Self {
@@ -2241,6 +2251,7 @@ impl StmtContext {
             allow_auto_random_explicit_insert: false,
             shard_allocate_step: i64::MAX as u64,
             only_full_group_by: false,
+            create_view: false,
             auto_increment_in_generated: false,
             new_only_full_group_by_check: false,
             // Go `DefTiDBRemoveOrderbyInSubquery = true`.
@@ -3647,6 +3658,12 @@ impl StmtContext {
     #[must_use]
     pub fn only_full_group_by(&self) -> bool {
         self.only_full_group_by
+    }
+
+    /// Whether the statement builds a `CREATE VIEW` body.
+    #[must_use]
+    pub fn create_view(&self) -> bool {
+        self.create_view
     }
 
     /// Whether generated expressions may reference AUTO_INCREMENT columns.

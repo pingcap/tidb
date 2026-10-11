@@ -3159,3 +3159,81 @@ fn remaining_information_schema_tables_answer_as_go() {
         ]
     );
 }
+
+/// Go `TestShowSubquery` (`planner/core/integration.test`): a SHOW's `WHERE`
+/// is a `LogicalSelection` over the SHOW result, so it may read a subquery --
+/// uncorrelated (`IN`, `< ALL`) or correlated to the SHOW's own columns --
+/// on every SHOW form that takes one.
+#[test]
+fn show_where_reads_subqueries_as_a_selection() {
+    let mut session = Session::new();
+    session
+        .run("create table t(a varchar(20), b int, c int)")
+        .unwrap();
+    let fields = |session: &mut Session, sql: &str| {
+        row_text(session.run(sql))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        fields(
+            &mut session,
+            "show columns from t where field in (select 'b')"
+        ),
+        ["b"]
+    );
+    assert!(fields(
+        &mut session,
+        "show columns from t where field in (select 'b') and false"
+    )
+    .is_empty());
+    session.run("insert into t values('c', 0, 0)").unwrap();
+    assert_eq!(
+        fields(
+            &mut session,
+            "show columns from t where field < all (select a from t)"
+        ),
+        ["a", "b"]
+    );
+    session.run("insert into t values('b', 0, 0)").unwrap();
+    assert_eq!(
+        fields(
+            &mut session,
+            "show columns from t where field < all (select a from t)"
+        ),
+        ["a"]
+    );
+    assert_eq!(
+        fields(
+            &mut session,
+            "show columns from t where field in (select a from t where a = field)"
+        ),
+        ["b", "c"]
+    );
+    session
+        .run("insert into t values ('t', 0, 0), ('autocommit', 0, 0)")
+        .unwrap();
+    assert_eq!(
+        fields(
+            &mut session,
+            "show tables where tables_in_test in (select a from t)"
+        ),
+        ["t"]
+    );
+    assert_eq!(
+        fields(
+            &mut session,
+            "show variables where variable_name in (select a from t)"
+        ),
+        ["autocommit"]
+    );
+    let error = session
+        .run("show columns from t where nosuch in (select 'b')")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1054, "Unknown column 'nosuch' in 'where clause'")
+    );
+}

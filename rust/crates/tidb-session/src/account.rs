@@ -327,7 +327,7 @@ pub(crate) fn tls_policy_of(
 impl Session {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn maintain_password_history(
-        &self,
+        &mut self,
         registry: &privilege::PrivilegeRegistry,
         user: &str,
         host: &str,
@@ -338,6 +338,7 @@ impl Session {
         creating: bool,
         plugin_changed: bool,
     ) -> Result<(), DriverError> {
+        self.reload_password_history(registry, user, host)?;
         let (count, days) = registry.password_reuse_policy(user, host);
         let global = |name| {
             self.vars
@@ -370,6 +371,61 @@ impl Session {
             plugin_changed,
             &self.vars.session_time_zone(),
         )
+    }
+
+    /// Go `checkPasswordReusePolicy` reads `mysql.password_history` itself
+    /// on every statement (`passwordVerification`'s SELECT), so the stored
+    /// rows -- an `UPDATE` of their timestamps included -- are what the check
+    /// sees. The registry's copy of the account's history is replaced from
+    /// the table first; without the table there is only the registry.
+    fn reload_password_history(
+        &mut self,
+        registry: &privilege::PrivilegeRegistry,
+        user: &str,
+        host: &str,
+    ) -> Result<(), DriverError> {
+        if !self.user_table_present() || self.account_storage_delegated {
+            return Ok(());
+        }
+        // The registry keeps UTC timestamps, which is how the TIMESTAMP
+        // column is stored.
+        let ctx = self
+            .statement_context(false)
+            .with_time_zone(tidb_datatype::SessionTimeZone::utc());
+        let decode_context = tidb_executor::RowDecodeContext::for_query(&ctx);
+        let rows = self.with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) =
+                catalog.table_mut_in("mysql", "password_history")
+            else {
+                return Ok(Vec::new());
+            };
+            let table = std::sync::Arc::make_mut(table);
+            let text = |datum: &Datum| crate::datum_text(datum).unwrap_or_default();
+            let rows = table
+                .scan_rows_with_context(&decode_context)
+                .map_err(tidb_executor::ddl::index_backfill_error)?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|row| {
+                    let [stored_host, stored_user, timestamp, password] = row.as_slice() else {
+                        return None;
+                    };
+                    let Datum::Time(timestamp) = timestamp else {
+                        return None;
+                    };
+                    (text(stored_user) == user && text(stored_host) == host).then(|| {
+                        tidb_exec::cluster_privilege_load::LoadedPasswordHistory {
+                            host: host.to_owned(),
+                            user: user.to_owned(),
+                            timestamp: timestamp.clone(),
+                            password: (!password.is_null()).then(|| text(password)),
+                        }
+                    })
+                })
+                .collect::<Vec<_>>())
+        })?;
+        registry.replace_account_password_history(user, host, rows);
+        Ok(())
     }
 
     pub(crate) fn validate_password_if_enabled(&self, password: &str) -> Result<(), DriverError> {

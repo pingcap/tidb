@@ -207,26 +207,34 @@ fn show_create_reports_a_sequence_under_either_keyword() {
     let expected_text = "CREATE SEQUENCE `s1` start with 1 minvalue 1 \
                          maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle \
                          ENGINE=InnoDB";
-    // `SHOW CREATE SEQUENCE` prints the sequence text. `SHOW CREATE TABLE`
-    // looks the name up with `TableByName`, which does not see sequences, so
-    // Go master answers ERROR 1146 there (the recorded oracle output for
-    // `show create table seq1` over the sequence `seq1`).
+    // Both keywords print the sequence text under `Sequence | Create
+    // Sequence` (`executor/show`: `show create table seq` over a sequence):
+    // Go's `fetchShowCreateTable` prints a sequence's own DDL and
+    // `buildShow` names the columns from the object.
+    for sql in ["show create sequence s1", "show create table s1"] {
+        let (columns, rows) = query_text(&mut session, sql);
+        assert_eq!(columns, ["Sequence", "Create Sequence"], "{sql}");
+        assert_eq!(
+            rows,
+            vec![vec!["s1".to_owned(), expected_text.to_owned()]],
+            "{sql}"
+        );
+    }
+    // `SHOW CREATE SEQUENCE` reads the persistent sequence past a local
+    // temporary table of its name, under the header of the table the
+    // session sees, and refuses a table (`fetchShowCreateSequence`).
+    session.run("create temporary table s1 (a int)").unwrap();
     let (columns, rows) = query_text(&mut session, "show create sequence s1");
-    assert_eq!(columns, ["Sequence", "Create Sequence"]);
+    assert_eq!(columns, ["Table", "Create Table"]);
     assert_eq!(rows, vec![vec!["s1".to_owned(), expected_text.to_owned()]]);
+    session.run("create table t (a int)").unwrap();
     let error = session
-        .run("show create table s1")
-        .expect_err("show create table s1");
-    let mysql = error.to_mysql_error();
-    assert_eq!(mysql.code, 1146, "{mysql:?}");
+        .run("show create sequence t")
+        .unwrap_err()
+        .to_mysql_error();
     assert_eq!(
-        std::str::from_utf8(&mysql.state).unwrap_or("?"),
-        "42S02",
-        "{mysql:?}"
-    );
-    assert!(
-        mysql.message.contains("Table 'test.s1' doesn't exist"),
-        "{mysql:?}"
+        (error.code, error.message.as_str()),
+        (1347, "'test.t' is not SEQUENCE")
     );
 }
 

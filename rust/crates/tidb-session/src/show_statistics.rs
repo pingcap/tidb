@@ -106,7 +106,7 @@ impl Session {
             ],
             rows,
         };
-        filter_show_output(output, like_pattern, where_clause)
+        self.filter_show_output(output, like_pattern, where_clause)
     }
 
     /// Pinned Go `fetchShowAnalyzeStatus` and
@@ -149,7 +149,7 @@ impl Session {
             ],
             rows: result_rows,
         };
-        filter_show_output(output, like_pattern, where_clause)
+        self.filter_show_output(output, like_pattern, where_clause)
     }
 
     /// Go `dataForAnalyzeStatusHelper`, which both `SHOW ANALYZE STATUS` and
@@ -392,7 +392,7 @@ impl Session {
             ],
             rows,
         };
-        filter_show_output(output, like_pattern, where_clause)
+        self.filter_show_output(output, like_pattern, where_clause)
     }
 
     /// Go `ShowExec.fetchShowStatsLocked`: enumerate every physical table in
@@ -473,7 +473,7 @@ impl Session {
             ],
             rows,
         };
-        filter_show_output(output, like_pattern, where_clause)
+        self.filter_show_output(output, like_pattern, where_clause)
     }
 
     /// Go `ShowExec.fetchShowStatsHealthy`: one health percentage for every
@@ -557,7 +557,7 @@ impl Session {
             ],
             rows,
         };
-        filter_show_output(output, like_pattern, where_clause)
+        self.filter_show_output(output, like_pattern, where_clause)
     }
 
     /// Go `ShowExec.fetchShowStatsHistogram`: expose every initialized
@@ -714,7 +714,7 @@ impl Session {
             ],
             rows,
         };
-        filter_show_output(output, like_pattern, where_clause)
+        self.filter_show_output(output, like_pattern, where_clause)
     }
 
     /// Go `ShowExec.fetchShowStatsTopN`: render every resident TopN value
@@ -870,7 +870,7 @@ impl Session {
             ],
             rows,
         };
-        filter_show_output(output, like_pattern, where_clause)
+        self.filter_show_output(output, like_pattern, where_clause)
     }
 
     /// Go `ShowExec.fetchShowStatsBuckets`: expose the resident cumulative
@@ -1027,6 +1027,6 @@ impl Session {
             ],
             rows,
         };
-        filter_show_output(output, like_pattern, where_clause)
+        self.filter_show_output(output, like_pattern, where_clause)
     }
 }

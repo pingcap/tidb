@@ -880,6 +880,8 @@ pub(super) fn logical_from_plan(
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.can_expand_ast = ctx.create_view();
+    builder.is_create_view = ctx.create_view();
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.set_dynamic_prune_fallback(&prune_fallback);
@@ -3239,6 +3241,8 @@ fn planner_optimized_query_with_allocators(
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.can_expand_ast = ctx.create_view();
+    builder.is_create_view = ctx.create_view();
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(
         ctx.static_partition_prune() && !static_global_index_point_lookup(query, &source, ctx),
@@ -3359,6 +3363,8 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.can_expand_ast = ctx.create_view();
+    builder.is_create_view = ctx.create_view();
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.set_dynamic_prune_fallback(&prune_fallback);
@@ -3955,6 +3961,8 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.can_expand_ast = ctx.create_view();
+    builder.is_create_view = ctx.create_view();
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.set_dynamic_prune_fallback(&prune_fallback);

@@ -202,7 +202,8 @@ pub fn resolve_view_definition(
         ctx.clone().with_only_full_group_by(false)
     } else {
         ctx.clone()
-    };
+    }
+    .with_create_view(true);
     let body_columns =
         crate::driver::plan_select_meta_in(&select_sql, resolving, current_db, &definition_ctx)?;
     let columns = match create.columns.len() {

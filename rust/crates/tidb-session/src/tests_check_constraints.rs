@@ -497,3 +497,36 @@ fn alter_check_name_scope_excludes_existing_indexes() {
         .to_mysql_error();
     assert_eq!(error.code, 3819);
 }
+
+/// Go checks a new table's constraint names against the schema in
+/// `onCreateTable` (`checkConstraintNamesNotExists`, over meta's tables): a
+/// local temporary table runs no DDL job and is never in meta, so it may
+/// reuse the name of a permanent table's constraint -- `ddl/constraint`:
+/// `create temporary table t(a int, CHECK (a > 0))` over a permanent `t`
+/// whose constraint is `t_chk_1` -- and its own constraint still enforces.
+#[test]
+fn a_local_temporary_table_reuses_a_permanent_constraint_name() {
+    let mut session = Session::new();
+    session
+        .run("set @@global.tidb_enable_check_constraint = 1")
+        .unwrap();
+    session
+        .run("create table t(a int, CHECK (a < -999))")
+        .unwrap();
+    session
+        .run("create temporary table t(a int, CHECK (a > 0))")
+        .unwrap();
+    session.run("insert into t(a) values(1)").unwrap();
+    let error = session
+        .run("insert into t(a) values(-2)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (3819, "Check constraint 't_chk_1' is violated.")
+    );
+    session.run("drop temporary table t").unwrap();
+    session
+        .run("set @@global.tidb_enable_check_constraint = default")
+        .unwrap();
+}

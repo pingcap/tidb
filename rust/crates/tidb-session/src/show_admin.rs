@@ -759,7 +759,7 @@ impl crate::Session {
             None => Ok(output),
             Some(expr) => {
                 let (like_pattern, where_clause) = (None, Some(expr));
-                crate::show::filter_show_output(output, like_pattern, where_clause)
+                self.filter_show_output(output, like_pattern, where_clause)
             }
         }
     }

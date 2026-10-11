@@ -702,8 +702,69 @@ impl ShowLikePattern {
     }
 }
 
-/// Applies the `LIKE`/`WHERE` layer Go builds over a virtual SHOW result.
-pub(crate) fn filter_show_output(
+/// The SHOW result Go's `buildShow` hands its `LogicalSelection` when a
+/// `WHERE` reads a subquery: the rows as a table the planner reads, under a
+/// schema name no statement can write.
+const SHOW_SELECTION_SCHEMA: &str = "__tidb_show_selection";
+const SHOW_SELECTION_TABLE: &str = "show_rows";
+
+impl Session {
+    /// Go `buildShow`'s selections over a virtual SHOW result: `LIKE`
+    /// matches the first column and `WHERE` is a `LogicalSelection` over the
+    /// result's own columns. A `WHERE` that reads a subquery is planned as
+    /// that selection, which builds the subquery the way any SELECT's does
+    /// (`field IN (SELECT ...)`, `field < ALL (SELECT ...)`); any other
+    /// predicate evaluates row by row against the same columns.
+    pub(crate) fn filter_show_output(
+        &mut self,
+        output: StmtOutput,
+        like_pattern: Option<ShowLikePattern>,
+        where_clause: Option<&tidb_ast::Expr>,
+    ) -> Result<StmtOutput, DriverError> {
+        let Some(predicate) =
+            where_clause.filter(|predicate| predicate.flags() & tidb_ast::FLAG_HAS_SUBQUERY != 0)
+        else {
+            return filter_show_rows(output, like_pattern, where_clause);
+        };
+        let StmtOutput::Rows { columns, rows } = filter_show_rows(output, like_pattern, None)?
+        else {
+            unreachable!("filtering keeps a row result a row result")
+        };
+        let mut query = match tidb_parser::parse(&format!(
+            "SELECT * FROM `{SHOW_SELECTION_SCHEMA}`.`{SHOW_SELECTION_TABLE}`"
+        )) {
+            Ok(Stmt::Query(query)) => query,
+            _ => unreachable!("the selection template parses as a query"),
+        };
+        let tidb_ast::QueryStmt::Select(select) = &mut *query else {
+            unreachable!("the selection template is a SELECT")
+        };
+        select.where_clause = Some(predicate.clone());
+        let current_db = self.current_db.clone();
+        let ctx = self.statement_context(false);
+        let table = tidb_executor::MemTable {
+            columns: columns.clone(),
+            rows,
+        };
+        let (_, rows) = self.with_catalog_mut(|catalog| {
+            let mut scratch = catalog.clone();
+            scratch.register_mem_in(SHOW_SELECTION_SCHEMA, SHOW_SELECTION_TABLE, table);
+            tidb_executor::driver::open_query_meta_stmt_with_physical(
+                &query,
+                None,
+                &scratch,
+                &current_db,
+                &ctx,
+            )?
+            .collect()
+        })?;
+        Ok(StmtOutput::Rows { columns, rows })
+    }
+}
+
+/// Applies the `LIKE`/`WHERE` layer Go builds over a virtual SHOW result,
+/// evaluating the predicate row by row against the result's columns.
+pub(crate) fn filter_show_rows(
     output: StmtOutput,
     like_pattern: Option<ShowLikePattern>,
     where_clause: Option<&tidb_ast::Expr>,
@@ -758,7 +819,7 @@ impl Session {
             }
             None => None,
         };
-        filter_show_output(output, like_pattern, where_clause)
+        self.filter_show_output(output, like_pattern, where_clause)
     }
 
     /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
@@ -983,7 +1044,8 @@ impl Session {
                     }
                     Some(tidb_ast::ShowBindingsFilter::Where(expr)) => (None, Some(expr)),
                 };
-                filter_show_output(output, like_pattern, where_clause).map(Some)
+                self.filter_show_output(output, like_pattern, where_clause)
+                    .map(Some)
             }
             // `ANALYZE TABLE`, over this session's own catalog. See
             // `crate::analyze_arm` for why an in-process session runs it here
@@ -1168,7 +1230,8 @@ impl Session {
                     |pattern| pattern.column_name("Database"),
                 );
                 let output = string_column_output(&column_name, names);
-                filter_show_output(output, like_pattern, where_clause).map(Some)
+                self.filter_show_output(output, like_pattern, where_clause)
+                    .map(Some)
             }
             // Go `fetchShowTableStatus`: one row per table in the
             // schema, with the columns MySQL's own SHOW TABLE STATUS
@@ -1251,7 +1314,8 @@ impl Session {
                     })
                     .collect();
                 let output = StmtOutput::Rows { columns, rows };
-                filter_show_output(output, like_pattern, where_clause).map(Some)
+                self.filter_show_output(output, like_pattern, where_clause)
+                    .map(Some)
             }
             // Go `fetchShowIndex`: one row per index COLUMN, ordered
             // with the clustered primary key first, then the table's own
@@ -1305,7 +1369,8 @@ impl Session {
                     })
                     .collect();
                 let output = StmtOutput::Rows { columns, rows };
-                filter_show_output(output, like_pattern, where_clause).map(Some)
+                self.filter_show_output(output, like_pattern, where_clause)
+                    .map(Some)
             }
             // Go `ShowExec` with `ShowVariables`: one row per variable,
             // as `Variable_name` and `Value`, filtered by LIKE.
@@ -1371,22 +1436,20 @@ impl Session {
                         Datum::Bytes(definition.name.as_bytes().to_vec()),
                         Datum::Bytes(value.into_bytes()),
                     ];
-                    // Go plans the WHERE as a selection over the same
-                    // virtual rows, which is what this filter is.
-                    if let Some(predicate) = predicate {
-                        if !show_row_matches(predicate, SHOW_VARIABLE_COLUMNS, &row)? {
-                            continue;
-                        }
-                    }
                     rows.push(row);
                 }
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        (SHOW_VARIABLE_COLUMNS[0].to_owned(), text()),
-                        (SHOW_VARIABLE_COLUMNS[1].to_owned(), text()),
-                    ],
-                    rows,
-                }))
+                self.filter_show_output(
+                    StmtOutput::Rows {
+                        columns: vec![
+                            (SHOW_VARIABLE_COLUMNS[0].to_owned(), text()),
+                            (SHOW_VARIABLE_COLUMNS[1].to_owned(), text()),
+                        ],
+                        rows,
+                    },
+                    None,
+                    predicate,
+                )
+                .map(Some)
             }
             // Go `fetchShowStatus`: one `Variable_name | Value` row per
             // status variable that `variable.GetStatusVars` collects from
@@ -1469,22 +1532,20 @@ impl Session {
                         Datum::Bytes(name.as_bytes().to_vec()),
                         Datum::Bytes(value.as_bytes().to_vec()),
                     ];
-                    // Go plans the WHERE as a selection over the same
-                    // virtual rows, which is what this filter is.
-                    if let Some(predicate) = predicate {
-                        if !show_row_matches(predicate, SHOW_VARIABLE_COLUMNS, &row)? {
-                            continue;
-                        }
-                    }
                     rows.push(row);
                 }
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        (SHOW_VARIABLE_COLUMNS[0].to_owned(), text()),
-                        (SHOW_VARIABLE_COLUMNS[1].to_owned(), text()),
-                    ],
-                    rows,
-                }))
+                self.filter_show_output(
+                    StmtOutput::Rows {
+                        columns: vec![
+                            (SHOW_VARIABLE_COLUMNS[0].to_owned(), text()),
+                            (SHOW_VARIABLE_COLUMNS[1].to_owned(), text()),
+                        ],
+                        rows,
+                    },
+                    None,
+                    predicate,
+                )
+                .map(Some)
             }
             // Go `fetchShowCharset`: one row per charset in the parser's
             // registry, captured from mock TiDB (`Charset | Description |
@@ -1546,22 +1607,22 @@ impl Session {
                         Datum::Bytes(default_collation.into_bytes()),
                         Datum::Int(info.maxlen as i64),
                     ];
-                    if let Some(predicate) = predicate {
-                        if !show_row_matches(predicate, SHOW_CHARSET_COLUMNS, &row)? {
-                            continue;
-                        }
-                    }
                     rows.push(row);
                 }
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        ("Charset".to_owned(), text()),
-                        ("Description".to_owned(), text()),
-                        ("Default collation".to_owned(), text()),
-                        ("Maxlen".to_owned(), number()),
-                    ],
-                    rows,
-                }))
+                self.filter_show_output(
+                    StmtOutput::Rows {
+                        columns: vec![
+                            ("Charset".to_owned(), text()),
+                            ("Description".to_owned(), text()),
+                            ("Default collation".to_owned(), text()),
+                            ("Maxlen".to_owned(), number()),
+                        ],
+                        rows,
+                    },
+                    None,
+                    predicate,
+                )
+                .map(Some)
             }
             // Go `fetchShowEngines`: this tier is the mock/embedded
             // single-engine server, so the table is always the single
@@ -1604,21 +1665,23 @@ impl Session {
                         None,
                         tidb_datatype::Collation::Utf8Mb4Bin,
                     )
-                }) && predicate
-                    .map(|predicate| show_row_matches(predicate, SHOW_ENGINES_COLUMNS, &row))
-                    .transpose()?
-                    .unwrap_or(true);
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        ("Engine".to_owned(), text()),
-                        ("Support".to_owned(), text()),
-                        ("Comment".to_owned(), text()),
-                        ("Transactions".to_owned(), text()),
-                        ("XA".to_owned(), text()),
-                        ("Savepoints".to_owned(), text()),
-                    ],
-                    rows: included.then_some(row).into_iter().collect(),
-                }))
+                });
+                self.filter_show_output(
+                    StmtOutput::Rows {
+                        columns: vec![
+                            ("Engine".to_owned(), text()),
+                            ("Support".to_owned(), text()),
+                            ("Comment".to_owned(), text()),
+                            ("Transactions".to_owned(), text()),
+                            ("XA".to_owned(), text()),
+                            ("Savepoints".to_owned(), text()),
+                        ],
+                        rows: included.then_some(row).into_iter().collect(),
+                    },
+                    None,
+                    predicate,
+                )
+                .map(Some)
             }
             tidb_ast::AdminStmt::ShowStatsTopN(show) => self.stats_topn_stmt(show).map(Some),
             tidb_ast::AdminStmt::ShowStatsBuckets(show) => {
@@ -1706,25 +1769,25 @@ impl Session {
                         Datum::Int(sortlen),
                         Datum::Bytes(pad_attribute.as_bytes().to_vec()),
                     ];
-                    if let Some(predicate) = predicate {
-                        if !show_row_matches(predicate, SHOW_COLLATION_COLUMNS, &row)? {
-                            continue;
-                        }
-                    }
                     rows.push(row);
                 }
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        ("Collation".to_owned(), text()),
-                        ("Charset".to_owned(), text()),
-                        ("Id".to_owned(), number()),
-                        ("Default".to_owned(), text()),
-                        ("Compiled".to_owned(), text()),
-                        ("Sortlen".to_owned(), number()),
-                        ("Pad_attribute".to_owned(), text()),
-                    ],
-                    rows,
-                }))
+                self.filter_show_output(
+                    StmtOutput::Rows {
+                        columns: vec![
+                            ("Collation".to_owned(), text()),
+                            ("Charset".to_owned(), text()),
+                            ("Id".to_owned(), number()),
+                            ("Default".to_owned(), text()),
+                            ("Compiled".to_owned(), text()),
+                            ("Sortlen".to_owned(), number()),
+                            ("Pad_attribute".to_owned(), text()),
+                        ],
+                        rows,
+                    },
+                    None,
+                    predicate,
+                )
+                .map(Some)
             }
             // Go `SimpleExec.executeFlush`, `ShowDDLExec` and
             // `fetchShowMasterStatus` live in `crate::show_admin`: they
@@ -1832,7 +1895,13 @@ impl Session {
                         }
                         Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
                     };
-                    return filter_show_output(StmtOutput::Rows { columns, rows }, like_pattern, where_clause).map(Some);
+                    return self
+                        .filter_show_output(
+                            StmtOutput::Rows { columns, rows },
+                            like_pattern,
+                            where_clause,
+                        )
+                        .map(Some);
                 }
                 if let Some(output) = crate::show_admin::inspection_output(show.kind) {
                     return Ok(Some(output));
@@ -1866,7 +1935,9 @@ impl Session {
                         )],
                         rows: vec![tidb_executor::show_stats::histograms_in_flight_row(count)],
                     };
-                    return filter_show_output(output, like_pattern, where_clause).map(Some);
+                    return self
+                        .filter_show_output(output, like_pattern, where_clause)
+                        .map(Some);
                 }
                 if show.kind == tidb_ast::ShowInspectionKind::AnalyzeStatus {
                     return self.analyze_status_stmt(show.filter.as_ref()).map(Some);
@@ -1966,13 +2037,14 @@ impl Session {
                     )));
                 }
                 // `SHOW CREATE SEQUENCE` and `SHOW CREATE TABLE` take the
-                // SAME path for VIEWS: Go's `buildShow` picks the column names
-                // from whether the object IS a sequence, not from the keyword
-                // written. A SEQUENCE object under `SHOW CREATE TABLE` is
-                // different: Go looks the name up with `TableByName`, which
-                // does not see sequences, and answers ERROR 1146 — the
-                // recorded oracle output for `show create sequence seq1`'s
-                // `SHOW CREATE TABLE seq1` sibling.
+                // SAME path: Go's `buildShow` picks the column names from
+                // whether the session-visible object IS a sequence, not from
+                // the keyword written, and `fetchShowCreateTable` prints a
+                // sequence's own DDL (`constructResultOfShowCreateTable`'s
+                // `IsSequence` arm). `SHOW CREATE SEQUENCE` reads the
+                // persistent object, which a local temporary table of the
+                // same name does not shadow, and refuses anything that is not
+                // a sequence (`fetchShowCreateSequence`'s ErrWrongObject).
                 let want_view = match kind {
                     tidb_ast::ShowCreateKind::Table | tidb_ast::ShowCreateKind::Sequence => false,
                     tidb_ast::ShowCreateKind::View => true,
@@ -1994,7 +2066,15 @@ impl Session {
                 // is Go's own behaviour; only `SHOW CREATE VIEW` on a base
                 // table is refused.
                 let ansi_quotes = self.vars.sql_mode().has_ansi_quotes_mode();
-                let shown = self.with_catalog_mut(|catalog| {
+                // The header follows the object the session sees.
+                let visible_is_sequence = self.with_catalog_mut(|catalog| {
+                    Ok(matches!(
+                        catalog.table_in(&database, &table_name),
+                        Some(tidb_executor::TableEntry::Sequence(_))
+                    ))
+                })?;
+                let include_local = !want_sequence;
+                let shown = self.with_catalog_scope(include_local, |catalog| {
                     let Some(entry) = catalog.table_in(&database, &table_name) else {
                         return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
                             "{database}.{table_name}"
@@ -2010,22 +2090,23 @@ impl Session {
                                 view.character_set_client.clone(),
                                 view.collation_connection.clone(),
                             )),
-                            false,
                         )),
                         _ if want_view => Err(DriverError::Schema(SchemaErrorKind::WrongObject {
                             name: format!("{database}.{table_name}"),
                             expected: "VIEW",
                         })),
-                        tidb_executor::TableEntry::Sequence(sequence) if want_sequence => Ok((
+                        tidb_executor::TableEntry::Sequence(sequence) => Ok((
                             tidb_executor::show_create_sequence(sequence),
                             sequence.name.clone(),
                             None,
-                            true,
                         )),
-                        tidb_executor::TableEntry::Sequence(_) => Err(DriverError::Schema(
-                            SchemaErrorKind::UnknownTable(format!("{database}.{table_name}")),
-                        )),
-                        tidb_executor::TableEntry::Kv(table) if !want_sequence => {
+                        _ if want_sequence => {
+                            Err(DriverError::Schema(SchemaErrorKind::WrongObject {
+                                name: format!("{database}.{table_name}"),
+                                expected: "SEQUENCE",
+                            }))
+                        }
+                        tidb_executor::TableEntry::Kv(table) => {
                             let stored = if table.name().is_empty() {
                                 table_name.as_str()
                             } else {
@@ -2035,18 +2116,14 @@ impl Session {
                                 show_create_table_text(&database, stored, table, &ctx)?,
                                 stored.to_owned(),
                                 None,
-                                false,
                             ))
                         }
-                        tidb_executor::TableEntry::Kv(_) => Err(DriverError::Schema(
-                            SchemaErrorKind::UnknownTable(format!("{database}.{table_name}")),
-                        )),
                         tidb_executor::TableEntry::Mem(_) => Err(DriverError::unsupported(
                             "SHOW CREATE TABLE needs a storage-backed table",
                         )),
                     }
                 });
-                let (text, reported, view_charset, is_sequence) = shown?;
+                let (text, reported, view_charset) = shown?;
                 let field_type =
                     tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 // Go's view form carries its own header and the session's
@@ -2070,7 +2147,7 @@ impl Session {
                 // Go `buildShow` names these columns from `isSequence`, so a
                 // sequence reports `Sequence | Create Sequence` whichever
                 // keyword was written.
-                let (name_column, text_column) = if is_sequence {
+                let (name_column, text_column) = if visible_is_sequence {
                     ("Sequence", "Create Sequence")
                 } else {
                     ("Table", "Create Table")
@@ -2160,7 +2237,8 @@ impl Session {
                     None => self.require_current_database()?.into(),
                 };
                 let output = self.show_columns(&database, &show.table, None, show.full)?;
-                filter_show_output(output, like_pattern, where_clause).map(Some)
+                self.filter_show_output(output, like_pattern, where_clause)
+                    .map(Some)
             }
             // Go's parser rewrites `DESCRIBE tbl [col]` into a SHOW
             // COLUMNS statement; this parser keeps a node of its own, so
@@ -2261,11 +2339,6 @@ impl Session {
                             continue;
                         }
                     }
-                    if let Some(predicate) = where_clause {
-                        if !show_row_matches(predicate, &column_names, &row)? {
-                            continue;
-                        }
-                    }
                     rows.push(row);
                 }
                 let columns = if full {
@@ -2276,7 +2349,8 @@ impl Session {
                 } else {
                     vec![(name_column, field_type)]
                 };
-                Ok(Some(StmtOutput::Rows { columns, rows }))
+                self.filter_show_output(StmtOutput::Rows { columns, rows }, None, where_clause)
+                    .map(Some)
             }
             // Go `SimpleExec.executeShutdown` + `asyncDelayShutdown`
             // (pkg/executor/simple.go:3584-3611): the statement answers

@@ -629,3 +629,58 @@ fn password_history_cutoff_follows_go_local_text_and_session_timestamp_conversio
         .run("SET PASSWORD FOR history_zone = 'first'")
         .unwrap();
 }
+
+/// Go `checkPasswordReusePolicy` reads `mysql.password_history` on every
+/// statement, so the stored rows are what it checks -- captured in
+/// `executor/password_management`: after `UPDATE mysql.password_history SET
+/// Password_timestamp = date_sub(...)` ages every row past the one-day reuse
+/// interval, the old password is accepted and the table keeps only the new
+/// row. The check read the registry's own copy, which the UPDATE never
+/// reached, and refused it.
+#[test]
+fn password_history_checks_the_stored_rows() {
+    let privs = privilege::PrivilegeRegistry::default();
+    let mut session = bootstrap_session(&privs);
+    session.bootstrap_fresh_store();
+    session
+        .run("set global password_reuse_interval = 1")
+        .unwrap();
+    session
+        .run("CREATE USER history_stored IDENTIFIED BY 'test'")
+        .unwrap();
+    for password in ["test1", "test2", "test3"] {
+        session
+            .run(&format!(
+                "ALTER USER history_stored IDENTIFIED BY '{password}'"
+            ))
+            .unwrap();
+    }
+    let count = |session: &mut Session| {
+        row_text(
+            session
+                .run("SELECT count(*) FROM mysql.password_history WHERE user = 'history_stored'"),
+        )
+    };
+    assert_eq!(count(&mut session), [["4"]]);
+    assert_eq!(
+        session
+            .run("ALTER USER history_stored IDENTIFIED BY 'test'")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        3638
+    );
+    session
+        .run(
+            "update mysql.password_history set Password_timestamp = \
+             date_sub(Password_timestamp, interval '1 0:0:1' DAY_SECOND)",
+        )
+        .unwrap();
+    session
+        .run("ALTER USER history_stored IDENTIFIED BY 'test'")
+        .unwrap();
+    assert_eq!(count(&mut session), [["1"]]);
+    session
+        .run("set global password_reuse_interval = 0")
+        .unwrap();
+}

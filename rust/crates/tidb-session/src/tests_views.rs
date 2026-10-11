@@ -1683,3 +1683,32 @@ fn a_view_over_an_information_schema_table_reads_its_rows() {
         [["2"]]
     );
 }
+
+/// Go builds a `CREATE VIEW` body with `isCreateView` and `canExpandAST`
+/// set: the storage-engine check is skipped ("Skip storage engine check for
+/// CreateView"), and `tblInfoFromCol` ignores the body's tables, so an
+/// ungrouped column is not reported -- oracle-captured: the view is created
+/// where the same SELECT is 1055, and `planner/core/integration`'s view under
+/// `tidb_isolation_read_engines = 'tiflash,tidb'` is created.
+#[test]
+fn a_create_view_body_skips_engine_and_group_by_checks() {
+    let mut session = Session::new();
+    session.run("create table t1(a int, b int)").unwrap();
+    let error = session
+        .run("select avg(a), t1.* from t1 group by a")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1055, "{error:?}");
+    session
+        .run("create view v1 as select avg(a), t1.* from t1 group by a")
+        .unwrap();
+    session
+        .run("create view v2 as select avg(a), b from t1 group by a")
+        .unwrap();
+    session
+        .run("set @@session.tidb_isolation_read_engines = 'tiflash,tidb'")
+        .unwrap();
+    session
+        .run("create view v3 (a, avg_b) as select a, avg(b) from t1 group by a")
+        .unwrap();
+}

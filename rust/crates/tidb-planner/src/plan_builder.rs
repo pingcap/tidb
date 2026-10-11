@@ -759,6 +759,12 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `SessionVars.OptimizerUseInvisibleIndexes` (default OFF): whether
     /// `getPossibleAccessPaths` may enumerate invisible indexes.
     pub optimizer_use_invisible_indexes: bool,
+    /// Go `capFlag & canExpandAST`: building a `CREATE VIEW` body, which
+    /// skips the storage-engine check.
+    pub can_expand_ast: bool,
+    /// Go `isCreateView`: building a `CREATE VIEW` body, whose ungrouped
+    /// columns `tblInfoFromCol` ignores.
+    pub is_create_view: bool,
     /// Whether `SessionVars.IsolationReadEngines` contains TiKV.
     pub tikv_in_isolation_read: bool,
     /// Whether `SessionVars.IsolationReadEngines` contains TiFlash.
@@ -1481,6 +1487,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             remove_orderby_in_subquery: true,
             // Go `DefTiDBOptimizerUseInvisibleIndexes = false`.
             optimizer_use_invisible_indexes: false,
+            can_expand_ast: false,
+            is_create_view: false,
             tikv_in_isolation_read: true,
             tiflash_in_isolation_read: true,
             tidb_in_isolation_read: true,
@@ -3075,10 +3083,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         }
         data_source.index_merge_hints = kept_index_merge_hints;
-        if !matches!(
-            data_source.db_name.to_ascii_lowercase().as_str(),
-            "mysql" | "sys" | "workload_schema"
-        ) {
+        // "Skip storage engine check for CreateView."
+        if !self.can_expand_ast
+            && !matches!(
+                data_source.db_name.to_ascii_lowercase().as_str(),
+                "mysql" | "sys" | "workload_schema"
+            )
+        {
             let available_engines =
                 public_paths
                     .iter()
