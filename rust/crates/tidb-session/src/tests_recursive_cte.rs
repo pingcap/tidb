@@ -600,3 +600,45 @@ fn with_clause_scopes_the_whole_update_and_delete() {
         .unwrap();
     assert_eq!(column(session.run("select * from t1")), vec!["1"]);
 }
+
+/// Three recursive-part rules Go applies (oracle-captured, `cte`,
+/// `planner/core/lateral_join`, `physical_plan`):
+/// - ORDER BY / LIMIT is allowed inside a LATERAL body
+///   (`buildingLateralSubquery`);
+/// - a CTE whose body holds a LIMIT, ORDER BY, DISTINCT, aggregation or window
+///   is not inlined into a recursive part (`containRecursiveForbiddenOperator`),
+///   so its own LIMIT is not judged as the recursive part's;
+/// - the recursive self-reference takes its alias (`FROM cte M ... M.col`).
+#[test]
+fn recursive_parts_follow_gos_lateral_inline_and_alias_rules() {
+    let mut session = Session::new();
+    for sql in [
+        "create table c (id int, parent_id int, sort_order int)",
+        "insert into c values (1, null, 1), (2, 1, 1), (3, 1, 2), (4, 1, 3), (5, 2, 1)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let mut rows = row_text(session.run(
+        "with recursive tree as (select id, 1 as depth from c where parent_id is null \
+         union all select l.id, tree.depth + 1 from tree cross join lateral \
+         (select id from c where parent_id = tree.id order by sort_order limit 2) as l \
+         where tree.depth < 3) select id, depth from tree",
+    ));
+    rows.sort();
+    assert_eq!(rows, [["1", "1"], ["2", "2"], ["3", "2"], ["5", "3"]]);
+
+    let rows = row_text(session.run(
+        "with recursive top1 (x) as (select id from c order by id limit 1), \
+         walk (x) as (select id from c where id = 1 union all \
+         select top1.x from top1 join walk on top1.x = walk.x + 100) select * from walk",
+    ));
+    assert_eq!(rows, [["1"]]);
+
+    let mut rows = row_text(session.run(
+        "with recursive up as (select id, parent_id from c where id = 5 \
+         union all select p.id, p.parent_id from up m join c p on m.parent_id = p.id) \
+         select id from up",
+    ));
+    rows.sort();
+    assert_eq!(rows, [["1"], ["2"], ["5"]]);
+}

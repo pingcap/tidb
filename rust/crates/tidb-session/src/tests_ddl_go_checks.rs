@@ -777,3 +777,58 @@ fn attributes_label_rules_follow_go() {
         [row("schema/test/t2/p2", "\"n=t\"", &[p2])]
     );
 }
+
+/// Go `CompactTableStmt` (`executor/compact_table`): the replica kind and
+/// partition list are checked by the executor builder, a table with no
+/// TiFlash replica is skipped with a warning, and the statement keeps the
+/// open transaction, as it is not a DDL node.
+#[test]
+fn compact_table_follows_gos_checks() {
+    let mut session = Session::new();
+    session.run("create table t(a int)").unwrap();
+    session
+        .run("create table pt(a int) partition by range(a) (partition p0 values less than (5), partition p1 values less than (10))")
+        .unwrap();
+    for sql in [
+        "alter table t compact tiflash replica",
+        "alter table t compact",
+        "alter table pt compact partition p1 tiflash replica",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+        let warnings = session.warnings();
+        assert_eq!(warnings.len(), 1, "{sql}");
+        assert_eq!(warnings[0].code, 1105, "{sql}");
+        assert_eq!(
+            warnings[0].message, "compact skipped: no tiflash replica in the table",
+            "{sql}"
+        );
+    }
+    let error = session
+        .run("alter table t compact partition p1,p2 tiflash replica")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "table:t is not a partition table, but user specify partition name list:[p1 p2]"
+    );
+    let error = session
+        .run("alter table pt compact partition p1,p4 tiflash replica")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1735, "{}", error.message);
+    assert_eq!(error.message, "Unknown partition 'p4' in table 'pt'");
+    let error = session
+        .run("alter table t compact tikv replica")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.message, "compact tikv replica is not supported");
+    // Not a DDL node: the transaction's row is not committed by it.
+    session.run("begin").unwrap();
+    session.run("insert into t values (1)").unwrap();
+    session.run("alter table t compact").unwrap();
+    session.run("rollback").unwrap();
+    assert!(row_text(session.run("select * from t")).is_empty());
+}

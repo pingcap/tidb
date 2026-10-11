@@ -1380,21 +1380,38 @@ fn create_table_in(
     // already raises 1061, so without this the two entry points disagreed.
     // Captured: `create table a2(a int, b int, key i(a), key i(b))` answers
     // `Error|1061|Duplicate key name 'i'`.
+    // Go `checkConstraintNames` keeps foreign-key names in their own set, so
+    // a duplicate one is 1826 in the same ordered pass.
     let mut seen_indexes: Vec<&str> = Vec::new();
+    let mut seen_foreign_keys: Vec<&str> = Vec::new();
     for constraint in &create.table_constraints {
-        let tidb_ast::TableConstraint::Index(index) = constraint else {
-            continue;
-        };
-        let Some(name) = index.name.as_deref().filter(|name| !name.is_empty()) else {
-            continue;
-        };
-        if let Some(previous) = seen_indexes
-            .iter()
-            .find(|seen| seen.eq_ignore_ascii_case(name))
-        {
-            return Err(DriverError::DuplicateKeyName((*previous).to_owned()));
+        match constraint {
+            tidb_ast::TableConstraint::Index(index) => {
+                let Some(name) = index.name.as_deref().filter(|name| !name.is_empty()) else {
+                    continue;
+                };
+                if let Some(previous) = seen_indexes
+                    .iter()
+                    .find(|seen| seen.eq_ignore_ascii_case(name))
+                {
+                    return Err(DriverError::DuplicateKeyName((*previous).to_owned()));
+                }
+                seen_indexes.push(name);
+            }
+            tidb_ast::TableConstraint::ForeignKey(foreign_key) => {
+                let Some(name) = foreign_key.name.as_deref().filter(|name| !name.is_empty()) else {
+                    continue;
+                };
+                if seen_foreign_keys
+                    .iter()
+                    .any(|seen| seen.eq_ignore_ascii_case(name))
+                {
+                    return Err(DriverError::FkDupName(name.to_owned()));
+                }
+                seen_foreign_keys.push(name);
+            }
+            tidb_ast::TableConstraint::Check(_) => {}
         }
-        seen_indexes.push(name);
     }
 
     // Go `checkTooManyColumns` (`pkg/ddl/create_table.go:719`) runs after

@@ -654,6 +654,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// entries `buildJoin` pushed for a `LATERAL` derived table, which a
     /// NON-lateral derived table must not see.
     pub lateral_outer_count: usize,
+    /// Go `buildingLateralSubquery`: a `LATERAL` derived table's body is
+    /// being built, where a recursive CTE part may use ORDER BY / LIMIT.
+    pub building_lateral_subquery: bool,
     /// Go `outerCTEs`.
     pub outer_ctes: Vec<OuterCte>,
     /// Go `outerBlockExpand`.
@@ -1447,6 +1450,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             outer_schemas: Vec::new(),
             outer_names: Vec::new(),
             lateral_outer_count: 0,
+            building_lateral_subquery: false,
             outer_ctes: Vec::new(),
             outer_block_expand: Vec::new(),
             current_block_expand: None,
@@ -4390,11 +4394,26 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// `extractLimitCountOffset` raises `ErrWrongArguments` there, and a
     /// parameter marker needs the execute-time binding this crate has no
     /// access to.
+    /// Go's `if b.buildingCTE { b.outerCTEs[len(b.outerCTEs)-1]
+    /// .containRecursiveForbiddenOperator = true }`, which aggregation,
+    /// DISTINCT, ORDER BY, LIMIT and window functions each run: a CTE whose
+    /// body has one is never inlined into a recursive part
+    /// (`computeCTEInlineFlag`).
+    pub(crate) fn mark_cte_recursive_forbidden_operator(&mut self) {
+        if self.building_cte {
+            if let Some(cte) = self.outer_ctes.last_mut() {
+                cte.contain_recursive_forbidden_operator = true;
+            }
+        }
+    }
+
     pub fn build_limit(
         &mut self,
         plan: LogicalPlan,
         limit: &Limit,
     ) -> Result<LogicalPlan, PlanError> {
+        // Go `buildLimit`: "flag it if cte contain limit".
+        self.mark_cte_recursive_forbidden_operator();
         // go pushes the TopN down and the coprocessor sorts each by-item
         // under the by-item's OWN RetType collation -- the explicit COLLATE
         // rides. The in-process cop sort reads the scan column's collation
@@ -4583,6 +4602,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             plan = self.build_select_lock(plan, crate::logical::SelectLockType::ForUpdate, 0)?;
         }
         if !select.order_by.is_empty() {
+            // Go `buildSelect`: "flag it if cte contain order by".
+            self.mark_cte_recursive_forbidden_operator();
             plan = self.build_sort(plan, &select.order_by, &markers)?;
         }
         if let Some(limit) = &select.limit {
@@ -4719,16 +4740,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         // `:4264` the recursive-query-block guards. Each is a shape whose
         // fixpoint is not defined, and Go refuses all four before building
-        // anything. `b.buildingLateralSubquery` is a 6b narrowing (see
-        // [`cte`]'s narrowings), so the ORDER BY / LIMIT arm takes the strict
-        // side unconditionally.
+        // anything -- ORDER BY / LIMIT only outside a LATERAL body.
         if self.building_recursive_part_for_cte {
             if select.distinct {
                 return Err(PlanError::not_supported_yet(
                     "SELECT DISTINCT in recursive query block of Common Table Expression",
                 ));
             }
-            if !select.order_by.is_empty() || select.limit.is_some() {
+            if (!select.order_by.is_empty() || select.limit.is_some())
+                && !self.building_lateral_subquery
+            {
                 return Err(PlanError::not_supported_yet(
                     "ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)",
                 ));
@@ -5157,6 +5178,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             plan = self.build_distinct(plan, old_len)?;
         }
         if !order_by.is_empty() {
+            // Go `buildSelect`: "flag it if cte contain order by".
+            self.mark_cte_recursive_forbidden_operator();
             // Go `buildSelect` (`logical_plan_builder.go:4583`): a derived
             // table's ORDER BY is kept only for the top-level query, when the
             // query has a LIMIT, or when `tidb_remove_orderby_in_subquery` is

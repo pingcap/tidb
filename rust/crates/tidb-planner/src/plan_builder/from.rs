@@ -887,6 +887,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         });
         let adopted = (self.lateral_outer_count > 0 && lateral)
             .then(|| std::mem::take(&mut self.lateral_outer_count));
+        // Go sets `buildingLateralSubquery` on that same LATERAL arm, scoped
+        // to this table source, so a recursive CTE part may ORDER BY / LIMIT
+        // inside it.
+        let saved_building_lateral = self.building_lateral_subquery;
+        if adopted.is_some() {
+            self.building_lateral_subquery = true;
+        }
 
         let modified_ctes = self.prepare_cte_check_for_subquery();
         let built = match subquery {
@@ -912,6 +919,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let Some(saved_count) = adopted {
             self.lateral_outer_count = saved_count;
         }
+        self.building_lateral_subquery = saved_building_lateral;
         let mut plan = built?;
 
         // `:497` The alias rename. A HIDDEN name is passed through untouched,

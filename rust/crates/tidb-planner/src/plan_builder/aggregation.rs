@@ -1270,6 +1270,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self.enable_skew_distinct_agg {
             self.opt_flag |= flags::SKEW_DISTINCT_AGG;
         }
+        // Go: "flag it if cte contain aggregation".
+        self.mark_cte_recursive_forbidden_operator();
         // Rule 3 of [`super`]: both snapshots precede every move of `plan`.
         // They are refreshed when an aggregate argument lowers a subquery,
         // because the lowering inserts an Apply into the child.
@@ -1478,6 +1480,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         length: usize,
     ) -> Result<LogicalPlan, PlanError> {
         self.opt_flag |= flags::BUILD_KEY_INFO | flags::PUSH_DOWN_AGG;
+        // Go: "flag it if cte contain distinct".
+        self.mark_cte_recursive_forbidden_operator();
         let (schema, names) = snapshot_schema_and_names(&child);
 
         let group_by_items = schema

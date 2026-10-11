@@ -110,10 +110,6 @@
 //!   [`crate::logical::fold`] rather than the recursive descent Go writes.
 //!   [`crate::logical::cte::CteClass::is_in_apply`] therefore stays `false`;
 //!   it is named here because 6b's header pointed at this batch for it.
-//! * `b.buildingLateralSubquery`. `buildSelect`'s recursive-part guard reads
-//!   it to allow `ORDER BY`/`LIMIT` inside a `LATERAL` body; 6b's
-//!   `build_lateral_join` does not set such a flag, so the guard here takes
-//!   the strict arm — which REFUSES more than Go, never less.
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -949,7 +945,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 cte_table.seed_schema = Some(seed_schema.clone());
                 let result_schema = self.get_result_cte_schema(&seed_schema);
                 cte_table.base.base.set_schema(Some(result_schema));
-                cte_table.base.base.set_output_names(seed_names);
+                // Go `buildResultSetNode`'s `*ast.TableSource` arm renames the
+                // reference's visible output names to its alias, the
+                // recursive self-reference's too: `FROM cte M ... ON
+                // M.col = ...`.
+                let mut names = seed_names;
+                if let Some(alias) = as_name.filter(|alias| !alias.is_empty()) {
+                    for name in names.iter_mut().filter(|name| !name.hidden) {
+                        name.names.table = IdentifierMetadata::new(alias);
+                    }
+                }
+                cte_table.base.base.set_output_names(names);
                 self.handle_helper.push_empty();
                 return Ok(Some(LogicalPlan::CTETable(cte_table)));
             }

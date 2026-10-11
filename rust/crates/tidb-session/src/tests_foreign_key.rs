@@ -2760,3 +2760,42 @@ fn rename_owner_batch_schema_only_move_keeps_source_fk_policy() {
         "Go skips FK adjustment when the table name is unchanged"
     );
 }
+
+/// Go `checkConstraintNames` keeps CREATE TABLE's foreign-key names in a set
+/// of their own (1826 on a repeat), and `checkOperateDropIndexUseByForeignKey`
+/// refuses an ALTER's DROP INDEX only when no remaining index covers a
+/// constraint the same statement adds (oracle-captured, `ddl/foreign_key`,
+/// `ddl/db_foreign_key`).
+#[test]
+fn foreign_key_names_and_covering_indexes_follow_go() {
+    let mut session = Session::new();
+    session.run("set @@foreign_key_checks=0").unwrap();
+    session.run("create table t (id int key)").unwrap();
+    let error = session
+        .run(
+            "create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), \
+             CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))",
+        )
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1826, "{}", error.message);
+    assert_eq!(
+        error.message,
+        "Duplicate foreign key constraint name 'fk_aaa'"
+    );
+
+    session
+        .run("create table t2 (a int, b int, index idx0(a,b), index idx1(a), index idx2(b))")
+        .unwrap();
+    session
+        .run("alter table t2 drop index idx1, add foreign key (a) references t(id), add foreign key (b) references t(id)")
+        .unwrap();
+    session
+        .run("create table t3 (a int, b int, index idx1(a))")
+        .unwrap();
+    let error = session
+        .run("alter table t3 drop index idx1, add foreign key (a) references t(id)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1553, "{}", error.message);
+}

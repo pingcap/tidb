@@ -462,6 +462,14 @@ impl Session {
         if Self::is_local_temporary_create_parsed(stmt) {
             return true;
         }
+        // Go parses `ALTER TABLE ... COMPACT` as its own `CompactTableStmt`,
+        // not a DDL node, so it runs inside the open transaction.
+        if matches!(stmt, Stmt::Ddl(ddl) if matches!(ddl.as_ref(),
+            tidb_ast::DdlStmt::AlterTable(alter)
+                if matches!(alter.actions.as_slice(), [tidb_ast::AlterTableAction::Compact { .. }])))
+        {
+            return true;
+        }
         matches!(stmt, Stmt::Ddl(ddl) if matches!(ddl.as_ref(), tidb_ast::DdlStmt::DropTable(drop)
             if drop.temporary == tidb_ast::DropTemporary::Local
                 || self.split_local_temporary_drop(drop).0.names.is_empty()))

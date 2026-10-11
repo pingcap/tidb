@@ -1623,11 +1623,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         groups: &WindowGroups,
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<(LogicalPlan, BTreeMap<usize, Column>), PlanError> {
-        if self.building_cte {
-            if let Some(cte) = self.outer_ctes.last_mut() {
-                cte.contain_recursive_forbidden_operator = true;
-            }
-        }
+        self.mark_cte_recursive_forbidden_operator();
         let ordered: Vec<SpecId> =
             sort_window_specs(arena, &groups.iter().map(|(id, _)| *id).collect::<Vec<_>>());
         let by_spec: BTreeMap<SpecId, &Vec<usize>> =

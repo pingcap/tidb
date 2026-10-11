@@ -154,6 +154,13 @@ pub fn run_alter_table_in(
             "only ALTER TABLE is supported here",
         ));
     };
+    if let [tidb_ast::AlterTableAction::Compact {
+        partitions,
+        replica_kind,
+    }] = alter.actions.as_slice()
+    {
+        return run_compact_table(alter, partitions, *replica_kind, catalog, current_db, ctx);
+    }
     // Go owns rollback for the entire multi-schema job. In this synchronous
     // owner, stage the catalog and its copy-on-write row/index storage for
     // every ALTER, including grouped specifications within a single action.
@@ -170,6 +177,68 @@ pub fn run_alter_table_in(
     }
     allocators.execute(ctx, alter.actions.len() > 1)?;
     *catalog = staged;
+    Ok(())
+}
+
+/// Go's `CompactTableStmt`, which is not an ALTER TABLE job: `buildCompactTable`
+/// resolves the table, `executorBuilder.buildCompactTable` checks the replica
+/// kind and the partition list, and `CompactTableTiFlashExec` skips a table
+/// with no TiFlash replica with a warning. A replica is compacted on every
+/// TiFlash store PD reports, and this tier has none, so there is nothing to
+/// send.
+fn run_compact_table(
+    alter: &tidb_ast::AlterTableStmt,
+    partitions: &[String],
+    replica_kind: tidb_ast::CompactReplicaKind,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let (database, name) = crate::driver::split_table_path_pub(&alter.name, current_db)?;
+    let Some(entry) = catalog.table_in(database, name) else {
+        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+            format!("{database}.{name}"),
+        )));
+    };
+    if replica_kind == tidb_ast::CompactReplicaKind::TiKv {
+        return Err(DriverError::DdlCoded {
+            errno: 1105,
+            message: "compact tikv replica is not supported".to_owned(),
+        });
+    }
+    let table = match entry {
+        crate::TableEntry::Kv(table) => Some(table),
+        _ => None,
+    };
+    let table_name = table.map_or(name, |table| table.name.as_str());
+    if !partitions.is_empty() {
+        let Some(partition) = table.and_then(|table| table.partition()) else {
+            return Err(DriverError::DdlCoded {
+                errno: 1105,
+                message: format!(
+                    "table:{table_name} is not a partition table, but user specify partition name list:[{}]",
+                    partitions.join(" ")
+                ),
+            });
+        };
+        if let Some(unknown) = partitions.iter().find(|written| {
+            !partition
+                .definitions
+                .iter()
+                .any(|definition| definition.name.eq_ignore_ascii_case(written))
+        }) {
+            return Err(DriverError::UnknownPartition {
+                partition: unknown.clone(),
+                table: table_name.to_owned(),
+            });
+        }
+    }
+    if table
+        .and_then(|table| table.tiflash_replica())
+        .is_none_or(|replica| replica.count == 0)
+    {
+        ctx.append_warning_parts(1105, "compact skipped: no tiflash replica in the table");
+    }
     Ok(())
 }
 
@@ -1959,30 +2028,44 @@ fn reject_drop_index_used_by_added_foreign_key(
             _ => None,
         })
         .collect();
-    for index_name in drops {
-        let Some(index) = table
-            .indexes()
+    // Go `checkOperateDropIndexUseByForeignKey`: a new constraint refuses the
+    // drop only when a DROPPING index covers its columns and no REMAINING one
+    // does (`FindIndexByColumnsForForeignKey` over each set).
+    let (dropping, remaining): (Vec<_>, Vec<_>) = table.indexes().iter().partition(|index| {
+        drops
             .iter()
-            .find(|index| index.name.eq_ignore_ascii_case(index_name))
+            .any(|name| index.name.eq_ignore_ascii_case(name))
+    });
+    // Go `IsIndexPrefixCoveredForForeignKey`: the leading key parts are the
+    // constraint's columns in order, each stored whole, under a partial-index
+    // predicate the checked rows all satisfy.
+    let covers = |index: &crate::kv_table::KvIndex, offsets: &[usize]| {
+        index.column_offsets.len() >= offsets.len()
+            && index.column_offsets[..offsets.len()] == *offsets
+            && offsets.iter().enumerate().all(|(position, offset)| {
+                let length = index.prefix_length(position);
+                length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+                    || length >= i64::from(table.columns[*offset].field_type.flen())
+            })
+            && table.partial_index_safe_for_columns(index, offsets)
+    };
+    for definition in &added {
+        let fk_names = super::indexes::index_part_names(&definition.parts)?;
+        let Some(fk_offsets) = fk_names
+            .iter()
+            .map(|column| {
+                table
+                    .columns
+                    .iter()
+                    .position(|candidate| candidate.name.eq_ignore_ascii_case(column))
+            })
+            .collect::<Option<Vec<usize>>>()
         else {
             continue;
         };
-        let index_offsets = &index.column_offsets;
-        for definition in &added {
-            let fk_names = super::indexes::index_part_names(&definition.parts)?;
-            let fk_offsets: Vec<usize> = fk_names
-                .iter()
-                .filter_map(|column| {
-                    table
-                        .columns
-                        .iter()
-                        .position(|candidate| candidate.name.eq_ignore_ascii_case(column))
-                })
-                .collect();
-            if !fk_offsets.is_empty() && index_offsets.starts_with(&fk_offsets) {
-                return Err(DriverError::DropIndexNeededInForeignKey(
-                    index_name.to_owned(),
-                ));
+        if let Some(index) = dropping.iter().find(|index| covers(index, &fk_offsets)) {
+            if !remaining.iter().any(|index| covers(index, &fk_offsets)) {
+                return Err(DriverError::DropIndexNeededInForeignKey(index.name.clone()));
             }
         }
     }
