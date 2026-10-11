@@ -92,12 +92,12 @@ mod overflow_tests;
 mod type_name_tests;
 
 pub use binary_json::{
-    compare_binary_json, decode_escaped_unicode, quote_json_string, unquote_json_string,
-    unquote_string, BinaryJSON, BinaryJSONError, BinaryJSONValue, Opaque, JSON_LITERAL_FALSE,
-    JSON_LITERAL_NULL, JSON_LITERAL_TRUE, JSON_TYPE_CODE_ARRAY, JSON_TYPE_CODE_DATE,
-    JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION, JSON_TYPE_CODE_FLOAT64, JSON_TYPE_CODE_INT64,
-    JSON_TYPE_CODE_LITERAL, JSON_TYPE_CODE_OBJECT, JSON_TYPE_CODE_OPAQUE, JSON_TYPE_CODE_STRING,
-    JSON_TYPE_CODE_TIMESTAMP, JSON_TYPE_CODE_UINT64,
+    compare_binary_json, decode_escaped_unicode, marshal_json_string, quote_json_string,
+    unquote_json_string, unquote_string, BinaryJSON, BinaryJSONError, BinaryJSONValue, Opaque,
+    JSON_LITERAL_FALSE, JSON_LITERAL_NULL, JSON_LITERAL_TRUE, JSON_TYPE_CODE_ARRAY,
+    JSON_TYPE_CODE_DATE, JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION, JSON_TYPE_CODE_FLOAT64,
+    JSON_TYPE_CODE_INT64, JSON_TYPE_CODE_LITERAL, JSON_TYPE_CODE_OBJECT, JSON_TYPE_CODE_OPAQUE,
+    JSON_TYPE_CODE_STRING, JSON_TYPE_CODE_TIMESTAMP, JSON_TYPE_CODE_UINT64,
 };
 pub use binary_json_ops::{
     contains_binary_json, like_matches, merge_binary_json, merge_patch_binary_json,

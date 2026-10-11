@@ -142,6 +142,9 @@ pub enum BinaryJSONError {
     LoneSurrogate,
     /// A modifying operation received a wildcard, range, recursive, or root path.
     InvalidPath,
+    /// Go `unquoteJSONString`'s plain error (a trailing backslash or a
+    /// malformed `\u` escape), carrying Go's message.
+    Unquote(String),
 }
 
 impl fmt::Display for BinaryJSONError {
@@ -159,6 +162,7 @@ impl fmt::Display for BinaryJSONError {
             ),
             Self::LoneSurrogate => formatter.write_str("invalid lone UTF-16 surrogate"),
             Self::InvalidPath => formatter.write_str("invalid JSON path for modification"),
+            Self::Unquote(message) => formatter.write_str(message),
         }
     }
 }
@@ -557,7 +561,7 @@ pub fn quote_json_string(text: &str) -> String {
 /// `serde_json` deliberately emits U+2028 and U+2029 as raw UTF-8, while Go
 /// escapes both separators so a JSON document remains safe when embedded in
 /// JSONP/JavaScript. All other escaping stays delegated to `serde_json`.
-fn marshal_json_string(text: &str) -> String {
+pub fn marshal_json_string(text: &str) -> String {
     let quoted = serde_json::to_string(text).expect("Rust string is valid JSON text");
     if !quoted
         .chars()
@@ -576,71 +580,113 @@ fn marshal_json_string(text: &str) -> String {
     escaped
 }
 
-/// Decodes MySQL's JSON_UNQUOTE escape syntax.
+/// Go `unquoteJSONString`: MySQL's JSON_UNQUOTE escapes over the string's
+/// bytes; any other escaped byte stands for itself. A trailing backslash and
+/// a malformed `\u` escape fail with Go's own messages; a `\u` surrogate
+/// combines with an adjacent `\u` escape (`utf16.DecodeRune`, U+FFFD for a
+/// bad pair).
 pub fn unquote_json_string(text: &str) -> Result<String, BinaryJSONError> {
-    let mut output = String::with_capacity(text.len());
-    let mut chars = text.char_indices().peekable();
-    while let Some((_, ch)) = chars.next() {
-        if ch != '\\' {
-            output.push(ch);
+    let s = text.as_bytes();
+    let mut ret = Vec::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        if s[i] != b'\\' {
+            ret.push(s[i]);
+            i += 1;
             continue;
         }
-        let (_, escaped) = chars.next().ok_or(BinaryJSONError::InvalidText)?;
-        match escaped {
-            '"' => output.push('"'),
-            'b' => output.push('\u{8}'),
-            'f' => output.push('\u{c}'),
-            'n' => output.push('\n'),
-            'r' => output.push('\r'),
-            't' => output.push('\t'),
-            '\\' => output.push('\\'),
-            'u' => {
-                let mut first = [0_u8; 4];
-                for byte in &mut first {
-                    *byte = chars
-                        .next()
-                        .and_then(|(_, ch)| ch.is_ascii().then_some(ch as u8))
-                        .ok_or(BinaryJSONError::InvalidText)?;
-                }
-                let first = decode_hex_u16(&first)?;
-                // Go `decodeOneEscapedUnicode`: a surrogate rune has no
-                // direct UTF-8 form, so the caller combines an ADJACENT `\u`
-                // escape via `utf16.DecodeRune`, which substitutes U+FFFD
-                // for an invalid pair
-                // (`json_binary_functions.go:136-160`). No adjacent escape
-                // means the decode error propagates.
-                let scalar = if (0xd800..=0xdbff).contains(&first)
-                    || (0xdc00..=0xdfff).contains(&first)
-                {
-                    // Go only consumes the ADJACENT `\u` escape for a
-                    // surrogate first rune (`json_binary_functions.go:140`).
-                    let adjacent_escape = chars.next().map(|(_, ch)| ch) == Some('\\')
-                        && chars.next().map(|(_, ch)| ch) == Some('u');
-                    if !adjacent_escape {
-                        return Err(BinaryJSONError::InvalidText);
-                    }
-                    let mut second = [0_u8; 4];
-                    for byte in &mut second {
-                        *byte = chars
-                            .next()
-                            .and_then(|(_, ch)| ch.is_ascii().then_some(ch as u8))
-                            .ok_or(BinaryJSONError::InvalidText)?;
-                    }
-                    let second = decode_hex_u16(&second)?;
-                    if (0xd800..=0xdbff).contains(&first) && (0xdc00..=0xdfff).contains(&second) {
-                        0x10000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(second) - 0xdc00)
-                    } else {
-                        0xFFFD
-                    }
-                } else {
-                    u32::from(first)
-                };
-                output.push(char::from_u32(scalar).ok_or(BinaryJSONError::InvalidText)?);
-            }
-            other => output.push(other),
+        i += 1;
+        if i == s.len() {
+            return Err(BinaryJSONError::Unquote(
+                "Missing a closing quotation mark in string".to_owned(),
+            ));
         }
+        match s[i] {
+            b'"' => ret.push(b'"'),
+            b'b' => ret.push(0x08),
+            b'f' => ret.push(0x0c),
+            b'n' => ret.push(b'\n'),
+            b'r' => ret.push(b'\r'),
+            b't' => ret.push(b'\t'),
+            b'\\' => ret.push(b'\\'),
+            b'u' => {
+                if i + 5 > s.len() {
+                    return Err(BinaryJSONError::Unquote(format!(
+                        "Invalid unicode: {}",
+                        String::from_utf8_lossy(&s[i + 1..])
+                    )));
+                }
+                let first = &s[i + 1..i + 5];
+                match decode_one_escaped_unicode(first) {
+                    Ok(ch) => {
+                        let mut buffer = [0; 4];
+                        ret.extend_from_slice(ch.encode_utf8(&mut buffer).as_bytes());
+                        i += 4;
+                    }
+                    Err((error, in_surrogate_range)) => {
+                        if !(in_surrogate_range
+                            && s.len() >= i + 11
+                            && s[i + 5] == b'\\'
+                            && s[i + 6] == b'u')
+                        {
+                            return Err(error);
+                        }
+                        let pair = [first, &s[i + 7..i + 11]].concat();
+                        let ch = decode_one_escaped_unicode(&pair).map_err(|(error, _)| error)?;
+                        let mut buffer = [0; 4];
+                        ret.extend_from_slice(ch.encode_utf8(&mut buffer).as_bytes());
+                        i += 10;
+                    }
+                }
+            }
+            other => ret.push(other),
+        }
+        i += 1;
     }
-    Ok(output)
+    String::from_utf8(ret).map_err(|_| BinaryJSONError::InvalidText)
+}
+
+/// Go `decodeOneEscapedUnicode` over four (or, for a surrogate pair, eight)
+/// hex digits; the flag reports a lone surrogate, which the caller may pair.
+fn decode_one_escaped_unicode(hex: &[u8]) -> Result<char, (BinaryJSONError, bool)> {
+    let mut units = [0_u16; 2];
+    for (index, digits) in hex.chunks(4).enumerate() {
+        let mut unit = 0_u16;
+        for &byte in digits {
+            let Some(nibble) = (byte as char).to_digit(16) else {
+                // Go `hex.InvalidByteError`: `encoding/hex: invalid byte: %#U`.
+                let rune = char::from(byte);
+                let shown = if rune.is_control() {
+                    format!("U+{:04X}", u32::from(rune))
+                } else {
+                    format!("U+{:04X} '{rune}'", u32::from(rune))
+                };
+                return Err((
+                    BinaryJSONError::Unquote(format!("encoding/hex: invalid byte: {shown}")),
+                    false,
+                ));
+            };
+            unit = (unit << 4) | nibble as u16;
+        }
+        units[index] = unit;
+    }
+    let scalar = if hex.len() == 8 {
+        // Go `utf16.DecodeRune`.
+        match (units[0], units[1]) {
+            (high @ 0xd800..=0xdbff, low @ 0xdc00..=0xdfff) => {
+                0x10000 + ((u32::from(high) - 0xd800) << 10) + (u32::from(low) - 0xdc00)
+            }
+            _ => 0xfffd,
+        }
+    } else {
+        u32::from(units[0])
+    };
+    char::from_u32(scalar).ok_or_else(|| {
+        (
+            BinaryJSONError::Unquote(format!("Invalid unicode: {}", String::from_utf8_lossy(hex))),
+            (0xd800..=0xdfff).contains(&scalar),
+        )
+    })
 }
 
 /// Rewrites the `\uXXXX` surrogate escapes that Go `encoding/json` decodes

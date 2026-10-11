@@ -2474,15 +2474,17 @@ fn eval_json(
                     }
                     Some(doc)
                 }
+                // Go `builtinJSONMergePatchSig`: a NULL argument is
+                // `MergePatchBinaryJSON`'s `nil`, not an early NULL.
                 SimpleSig::JsonMergePatchSig => {
                     let mut values = Vec::with_capacity(children.len());
                     for index in 0..children.len() {
-                        values.push(nullable!(eval_json(
+                        values.push(eval_json(
                             children.get(index),
                             row,
                             div_precision_increment,
                             time_zone,
-                        )?));
+                        )?);
                     }
                     nullable!(tidb_datatype::merge_patch_binary_json(&values).ok())
                 }

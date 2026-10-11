@@ -183,3 +183,144 @@ pub(super) fn json_pretty(
         "  ",
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::dispatch;
+    use crate::Datum;
+
+    fn document(text: &str) -> Datum {
+        Datum::new_string(text.to_string())
+    }
+
+    #[test]
+    fn json_depth_matches_all_go_shape_vectors() {
+        // TestJSONDepth in pkg/expression/builtin_json_test.go.
+        let cases = [
+            ("null", 1),
+            ("true", 1),
+            ("false", 1),
+            ("1", 1),
+            ("-1", 1),
+            ("1.1", 1),
+            (r#""1""#, 1),
+            ("{}", 1),
+            ("[]", 1),
+            ("[10, 20]", 2),
+            ("[[], {}]", 2),
+            (r#"{"Name": "Homer"}"#, 2),
+            (r#"[10, {"a": 20}]"#, 3),
+            (
+                r#"{"Person": {"Name": "Homer", "Age": 39, "Hobbies": ["Eating", "Sleeping"]}}"#,
+                4,
+            ),
+            (r#"{"a":1}"#, 2),
+            (r#"{"a":[1]}"#, 3),
+            (r#"{"b":2, "c":3}"#, 2),
+            ("[1]", 2),
+            ("[1,2]", 2),
+            ("[1,2,[1,3]]", 3),
+            (r#"[1,2,[1,[5,[3]]]]"#, 5),
+            (r#"[1,2,[1,[5,{"a":[2,3]}]]]"#, 6),
+            (r#"[{"a":1}]"#, 3),
+            (r#"[{"a":1,"b":2}]"#, 3),
+            (r#"[{"a":{"a":1},"b":2}]"#, 4),
+        ];
+        for (input, want) in cases {
+            assert_eq!(
+                dispatch("JSON_DEPTH", &[document(input)])
+                    .expect("JSON_DEPTH must dispatch")
+                    .expect("valid JSON must evaluate"),
+                Datum::Int(want),
+                "JSON_DEPTH({input})"
+            );
+        }
+        assert_eq!(
+            dispatch("JSON_DEPTH", &[Datum::Null])
+                .expect("JSON_DEPTH must dispatch")
+                .expect("NULL must evaluate"),
+            Datum::Null
+        );
+        assert!(dispatch("JSON_DEPTH", &[document("a")])
+            .expect("JSON_DEPTH must dispatch")
+            .is_err());
+        // go's implicit scalar→document cast: `JSON_DEPTH(1)` is 1 on the
+        // oracle (the numeric scalar coerces to the JSON number 1), not an
+        // error.
+        assert_eq!(
+            dispatch("JSON_DEPTH", &[Datum::Int(1)])
+                .expect("JSON_DEPTH must dispatch")
+                .expect("scalar depth evaluates"),
+            Datum::Int(1)
+        );
+    }
+
+    #[test]
+    fn json_storage_free_matches_go_vectors() {
+        // TestJSONStorageFree in pkg/expression/builtin_json_test.go.
+        for input in [
+            "null",
+            "true",
+            "1",
+            r#""1""#,
+            "{}",
+            r#"{"a":1}"#,
+            r#"[{"a":{"a":1},"b":2}]"#,
+            r#"{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}"#,
+        ] {
+            assert_eq!(
+                dispatch("JSON_STORAGE_FREE", &[document(input)])
+                    .expect("JSON_STORAGE_FREE must dispatch")
+                    .expect("valid JSON must evaluate"),
+                Datum::Int(0),
+                "JSON_STORAGE_FREE({input})"
+            );
+        }
+        assert_eq!(
+            dispatch("JSON_STORAGE_FREE", &[Datum::Null])
+                .expect("JSON_STORAGE_FREE must dispatch")
+                .expect("NULL must evaluate"),
+            Datum::Null
+        );
+        for input in [r#"[{"a":1]"#, r#"[{a":1]"#] {
+            assert!(dispatch("JSON_STORAGE_FREE", &[document(input)])
+                .expect("JSON_STORAGE_FREE must dispatch")
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn json_storage_size_matches_go_vectors() {
+        // TestJSONStorageSize in pkg/expression/builtin_json_test.go.
+        for (input, want) in [
+            ("null", 2),
+            ("true", 2),
+            ("1", 9),
+            (r#""1""#, 3),
+            ("{}", 9),
+            (r#"{"a":1}"#, 29),
+            (r#"[{"a":{"a":1},"b":2}]"#, 82),
+            (r#"{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}"#, 71),
+        ] {
+            assert_eq!(
+                dispatch("JSON_STORAGE_SIZE", &[document(input)])
+                    .expect("JSON_STORAGE_SIZE must dispatch")
+                    .expect("valid JSON must evaluate"),
+                Datum::Int(want),
+                "JSON_STORAGE_SIZE({input})"
+            );
+        }
+        assert_eq!(
+            dispatch("JSON_STORAGE_SIZE", &[Datum::Null])
+                .expect("JSON_STORAGE_SIZE must dispatch")
+                .expect("NULL must evaluate"),
+            Datum::Null
+        );
+        for input in [r#"[{"a":1]"#, r#"[{a":1]"#] {
+            assert!(dispatch("JSON_STORAGE_SIZE", &[document(input)])
+                .expect("JSON_STORAGE_SIZE must dispatch")
+                .is_err());
+        }
+        assert!(dispatch("JSON_STORAGE_SIZE", &[]).is_none());
+    }
+}

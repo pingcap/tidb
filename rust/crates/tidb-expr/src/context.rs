@@ -375,11 +375,9 @@ impl JsonError {
         match self {
             JsonError::InvalidText | JsonError::EmptyText => 3140,
             JsonError::InvalidCharset => 3144,
-            // The PLAN-tier code is MySQL's nominal 3143: a constant
-            // statement (`JSON_EXTRACT('[1,2,3]', '$[1 TO 2]')`) errors
-            // through the classed terror at planning. The EXEC-tier wrap for
-            // column-sourced calls answers 1105 instead -- that mapping
-            // lives in the executor's error conversion, not here.
+            // Go raises it where the function is evaluated; a function
+            // pushed to the coprocessor reaches the client as 1105 through
+            // the executor's coprocessor error conversion instead.
             JsonError::InvalidPath(_) => 3143,
             JsonError::InvalidPathMultipleSelection => 3149,
             JsonError::InvalidTypeForJson { .. } => 3146,

@@ -47,6 +47,13 @@ pub(super) fn binary_json_error(error: BinaryJSONError) -> EvalError {
         | BinaryJSONError::TrailingValues
         | BinaryJSONError::LoneSurrogate => EvalError::Json(JsonError::InvalidText),
         BinaryJSONError::InvalidPath => EvalError::Json(JsonError::InvalidPathMultipleSelection),
+        // A plain Go error, which reaches the client as 1105 with its text.
+        BinaryJSONError::Unquote(message) => {
+            EvalError::Conversion(tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(1105),
+                message,
+            ))
+        }
         BinaryJSONError::KeyTooLong | BinaryJSONError::InvalidBinary => {
             EvalError::Unsupported("binary JSON document")
         }

@@ -395,20 +395,14 @@ impl Datum {
         BinaryJSON::from_typed_value(&value).map_err(Into::into)
     }
 
-    /// As [`Self::to_mysql_json`], but a `Bytes` payload -- and a `String`
-    /// payload whose `field_type` is BINARY-charset -- embeds
-    /// `field_type`'s own MySQL type code as a JSON `Opaque` value instead
-    /// of an ordinary JSON string. Go's `getRealJSONValue`
-    /// (`pkg/executor/aggfuncs/func_json_objectagg.go`), the value rule
-    /// shared by `JSON_ARRAYAGG` and `JSON_OBJECTAGG`, wraps `KindBytes`
-    /// unconditionally (a byte datum has no other charset) and `KindString`
-    /// only when its field type's charset is `binary`.
-    ///
-    /// A fixed-length `BINARY(n)` column (`FieldTypeCode::String`) pads the
-    /// embedded buffer to `flen` bytes before encoding, matching Go's own
-    /// tailing-zero rule (captured: `BINARY(3)` holding `"ab"` renders
-    /// `base64:type254:YWIA`, the trailing NUL included). Every other datum
-    /// kind defers to `to_mysql_json` unchanged.
+    /// As [`Self::to_mysql_json`], but a string payload of a binary string
+    /// type becomes a JSON `Opaque` value carrying `field_type`'s MySQL type
+    /// code: Go's `builtinCastStringAsJSONSig` for a `types.IsBinaryStr`
+    /// argument. A fixed-length `BINARY(n)` (`FieldTypeCode::String`) pads the
+    /// buffer to `flen` bytes first (captured: `BINARY(3)` holding `"ab"`
+    /// renders `base64:type254:YWIA`). Every other datum kind defers to
+    /// `to_mysql_json`. The aggregates' rule, `getRealJSONValue`, differs
+    /// and lives with them (`tidb-executor`'s `hash_agg::json_value`).
     pub fn to_mysql_json_with_source_type(
         &self,
         field_type: &crate::FieldType,

@@ -13,36 +13,31 @@
 
 //! JSON scalar builtins, ported from `pkg/expression/builtin_json.go`.
 //!
-//! The document-reading and document-modifying builtins run on the
-//! `BinaryJSON` port of `pkg/types` (`tidb_datatype`), as Go's do, so an
-//! opaque, date or time value keeps its identity and every result prints
-//! through `BinaryJSON`'s `MarshalJSON` port. The remaining families still
-//! walk a `serde_json` tree parsed through the same `BinaryJSON` boundary;
-//! `rust/JSON_BUILTIN_GO_PARITY_EXECPLAN.md` tracks moving them.
+//! The builtins run on the `BinaryJSON` port of `pkg/types`
+//! (`tidb_datatype`), as Go's do, so an opaque, date or time value keeps its
+//! identity, paths parse with Go's `ParseJSONPathExpr` port, and every result
+//! prints through `BinaryJSON`'s `MarshalJSON` port. `JSON_SCHEMA_VALID` and
+//! `JSON_SUM_CRC32` read a decoded tree, as Go's validator and checksum do.
 //!
 //! The family is split by what a function DOES to a document, each file
 //! naming the Go file it was read from:
 //!
 //! - [`value`] -- turning a SQL argument into a JSON value, and `CAST AS
 //!   JSON`. The `ParseToJSONFlag` distinction every other file depends on.
-//! - [`path`] -- the `$`-path grammar (through `tidb_datatype`'s
-//!   `ParseJSONPathExpr` port) and the tree selection walk.
 //! - [`document`] -- `JSON_EXTRACT`/`TYPE`/`LENGTH`/`KEYS`/`DEPTH`/
 //!   `STORAGE_SIZE`/`STORAGE_FREE`/`PRETTY`.
 //! - [`construct`] -- `JSON_ARRAY`/`OBJECT`/`QUOTE`/`UNQUOTE`.
 //! - [`report`] -- `JSON_VALID`/`SCHEMA_VALID`/`SUM_CRC32`.
-//! - [`predicate`] -- `JSON_CONTAINS`/`CONTAINS_PATH`/`OVERLAPS`/`MEMBER OF`
-//!   and the value equality they share.
+//! - [`predicate`] -- `JSON_CONTAINS`/`CONTAINS_PATH`/`OVERLAPS`/`MEMBER OF`.
 //! - [`modify`] -- `JSON_SET`/`INSERT`/`REPLACE`/`REMOVE`/`ARRAY_APPEND`/
 //!   `ARRAY_INSERT`.
 //! - [`merge`] -- `JSON_MERGE`/`MERGE_PRESERVE`/`MERGE_PATCH`.
-//! - [`search`] -- `JSON_SEARCH`, the one walk that BUILDS paths.
+//! - [`search`] -- `JSON_SEARCH`.
 
 mod construct;
 mod document;
 mod merge;
 mod modify;
-mod path;
 mod predicate;
 mod report;
 mod search;
@@ -134,6 +129,24 @@ pub(crate) fn verify_json_function_args(
         "json_search" => ("json_search", true, Some(&[0])),
         "json_keys" => ("json_keys", true, Some(&[0])),
         "json_schema_valid" => ("json_schema_valid", true, Some(&[0, 1])),
+        // `jsonQuoteFunctionClass.verifyArgs`: any non-string argument,
+        // binary strings included, is accepted only as ETString.
+        "json_quote" => {
+            if args
+                .first()
+                .and_then(|arg| arg.static_type())
+                .is_some_and(|field_type| {
+                    field_type.code() != tidb_datatype::FieldTypeCode::Null
+                        && field_type.eval_type() != tidb_datatype::EvalType::String
+                })
+            {
+                return Err(EvalError::Json(crate::context::JsonError::IncorrectType {
+                    argument: 1,
+                    function: "json_quote",
+                }));
+            }
+            return Ok(());
+        }
         "json_object" => {
             for key in args.iter().step_by(2).take(args.len() / 2) {
                 if key.static_type().is_some_and(|field_type| {
@@ -149,7 +162,6 @@ pub(crate) fn verify_json_function_args(
     };
     verify_json_args_type(function, use_json_err, args, indexes)
 }
-pub(crate) use path::parse_path;
 pub(crate) use report::JsonSchemaCache;
 pub(crate) use value::{cast_as_json, cast_as_json_typed, cast_as_json_value_typed};
 
@@ -168,9 +180,9 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("JSON_OBJECT", 0..) => Some(json_object(vals, &no_arg_types(vals.len()))),
         ("JSON_LENGTH", 1 | 2) => Some(json_length(vals, &no_arg_types(vals.len()))),
         ("JSON_EXTRACT", 2..) => Some(json_extract(vals, &no_arg_types(vals.len()))),
-        ("JSON_MEMBER_OF", 2) => Some(json_member_of(vals)),
-        ("JSON_CONTAINS", 2 | 3) => Some(json_contains(vals)),
-        ("JSON_CONTAINS_PATH", 3..) => Some(json_contains_path(vals)),
+        ("JSON_MEMBER_OF", 2) => Some(json_member_of(vals, &no_arg_types(2))),
+        ("JSON_CONTAINS", 2 | 3) => Some(json_contains(vals, &no_arg_types(vals.len()))),
+        ("JSON_CONTAINS_PATH", 3..) => Some(json_contains_path(vals, &no_arg_types(vals.len()))),
         ("JSON_KEYS", 1 | 2) => Some(json_keys(vals, &no_arg_types(vals.len()))),
         ("JSON_REMOVE", 2..) => Some(json_remove(vals, &no_arg_types(vals.len()))),
         ("JSON_ARRAY_APPEND", 3..) => Some(json_array_append(vals, &no_arg_types(vals.len()))),
@@ -190,13 +202,17 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
             &no_arg_types(vals.len()),
             JsonModifyMode::Replace,
         )),
-        ("JSON_MERGE", 2..) => Some(json_merge(vals, "json_merge")),
-        ("JSON_MERGE_PRESERVE", 2..) => Some(json_merge(vals, "json_merge_preserve")),
-        ("JSON_MERGE_PATCH", 2..) => Some(json_merge_patch(vals)),
-        ("JSON_SEARCH", 3..) => Some(json_search(vals)),
+        ("JSON_MERGE" | "JSON_MERGE_PRESERVE", 2..) => {
+            Some(json_merge(vals, &no_arg_types(vals.len())))
+        }
+        ("JSON_MERGE_PATCH", 2..) => Some(json_merge_patch(vals, &no_arg_types(vals.len()))),
+        ("JSON_SEARCH", 3..) => Some(json_search(vals, &no_arg_types(vals.len()))),
         ("JSON_PRETTY", 1) => Some(json_pretty(vals, &no_arg_types(1))),
         ("JSON_SUM_CRC32", 1) => Some(json_sum_crc32(&vals[0])),
-        ("JSON_OVERLAPS", 2) => Some(json_overlaps(vals)),
+        ("JSON_DEPTH", 1) => Some(json_depth(&vals[0], None)),
+        ("JSON_STORAGE_FREE", 1) => Some(json_storage_free(&vals[0], None)),
+        ("JSON_STORAGE_SIZE", 1) => Some(json_storage_size(&vals[0], None)),
+        ("JSON_OVERLAPS", 2) => Some(json_overlaps(vals, &no_arg_types(2))),
         _ => None,
     }
 }
@@ -263,6 +279,12 @@ pub(crate) fn dispatch_typed_with_paths(
         ("JSON_DEPTH", 1) => Some(json_depth(&vals[0], arg_types[0].as_ref())),
         ("JSON_STORAGE_SIZE", 1) => Some(json_storage_size(&vals[0], arg_types[0].as_ref())),
         ("JSON_STORAGE_FREE", 1) => Some(json_storage_free(&vals[0], arg_types[0].as_ref())),
+        ("JSON_MEMBER_OF", 2) => Some(json_member_of(vals, arg_types)),
+        ("JSON_CONTAINS", 2 | 3) => Some(json_contains(vals, arg_types)),
+        ("JSON_CONTAINS_PATH", 3..) => Some(json_contains_path(vals, arg_types)),
+        ("JSON_OVERLAPS", 2) => Some(json_overlaps(vals, arg_types)),
+        ("JSON_MERGE_PATCH", 2..) => Some(json_merge_patch(vals, arg_types)),
+        ("JSON_SEARCH", 3..) => Some(json_search(vals, arg_types)),
         _ => None,
     }
 }
@@ -329,7 +351,7 @@ pub(crate) fn eval_pb(
 ) -> Result<Datum, EvalError> {
     use tidb_proto::tipb::ScalarFuncSig;
     match sig {
-        ScalarFuncSig::JsonMemberOfSig => json_member_of(vals),
+        ScalarFuncSig::JsonMemberOfSig => json_member_of(vals, arg_types),
         ScalarFuncSig::JsonReplaceSig => {
             if let Some(cache) = paths_cache {
                 let Some(document) = json_document(&vals[0], arg_types[0].as_ref())? else {
@@ -346,7 +368,7 @@ pub(crate) fn eval_pb(
             }
         }
         ScalarFuncSig::JsonArrayAppendSig => json_array_append(vals, arg_types),
-        ScalarFuncSig::JsonMergePatchSig => json_merge_patch(vals),
+        ScalarFuncSig::JsonMergePatchSig => json_merge_patch(vals, arg_types),
         _ => Err(EvalError::Unsupported("unknown JSON protobuf signature")),
     }
 }

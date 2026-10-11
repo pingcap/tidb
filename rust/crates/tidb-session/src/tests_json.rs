@@ -1737,7 +1737,53 @@ fn json_path_errors_carry_the_code_of_where_they_are_evaluated() {
         ("select json_remove(a, '$[') from t", "ERR 3143"),
         ("select json_set(a, '$[', 1) from t", "ERR 3143"),
         (r#"select json_remove('{"a":1}', '$', '$[')"#, "ERR 3143"),
+        ("select json_extract('[1,2,3]', '$[1 TO 2]')", "ERR 3143"),
     ] {
         assert_eq!(json_answer(&mut session, sql), want, "{sql}");
     }
+    // A malformed constant path fails only when the function is evaluated:
+    // EXPLAIN succeeds, and an unevaluated call (no rows) never fails.
+    session
+        .run("explain format='brief' select json_extract('[1,2,3]', '$[1')")
+        .unwrap();
+    session.run("create table e (a int)").unwrap();
+    assert!(row_text(session.run("select json_extract('[1,2,3]', '$[1') from e")).is_empty());
+}
+
+/// `JSON_QUOTE` is Go's `encoding/json` encoder (U+2028 escaped, an invalid
+/// byte read as U+FFFD) and `JSON_UNQUOTE` checks a quoted argument with
+/// `json.Valid` before `types.UnquoteString`, whose own failures are plain Go
+/// errors (1105). Every answer captured from Go on this branch.
+#[test]
+fn json_quote_and_unquote_answer_like_go() {
+    let mut session = Session::new();
+    for (sql, want) in [
+        (
+            "select hex(json_quote(concat('a', char(0xE280A8 using utf8mb4), 'b')))",
+            "22615C75323032386222",
+        ),
+        (
+            "select json_quote(concat('x', char(8), char(12), char(1), '<>&'))",
+            r#""x\b\f\u0001<>&""#,
+        ),
+        ("select hex(json_quote(x'ff41'))", "22EFBFBD4122"),
+        (r#"select json_unquote('"a" "b"')"#, "ERR 3140"),
+        (r#"select json_unquote('"\\x"')"#, "ERR 3140"),
+        (r#"select json_unquote('"abc')"#, r#""abc"#),
+        (r#"select json_unquote('"a\\tb"')"#, "a\tb"),
+        (
+            r#"select json_unquote(cast('[1, "a"]' as json))"#,
+            r#"[1, "a"]"#,
+        ),
+    ] {
+        assert_eq!(json_answer(&mut session, sql), want, "{sql}");
+    }
+    let error = session
+        .run(r#"select json_unquote('"\\ud800"')"#)
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1105, "Invalid unicode: d800")
+    );
 }

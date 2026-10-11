@@ -16,7 +16,7 @@
 //! doc comment is unchanged from its prior home inside `mod tests` there.
 
 use super::dispatch;
-use super::path::parse_path;
+use super::modify::parse_json_path as parse_path;
 use crate::Datum;
 use serde_json::json;
 
@@ -84,7 +84,12 @@ fn json_scalar_source_wave_boundaries() {
     assert!(dispatch("JSON_TYPE", &[]).is_none());
 
     assert_eq!(call("JSON_QUOTE", &[Datum::Null]), Datum::Null);
-    assert!(call_result("JSON_QUOTE", &[Datum::new_bytes([0xff])]).is_err());
+    // Go's encoder reads an invalid UTF-8 byte as U+FFFD (captured:
+    // `hex(json_quote(x'ff41'))` is `22EFBFBD4122`).
+    assert_eq!(
+        call("JSON_QUOTE", &[Datum::new_bytes([0xff, b'A'])]),
+        s("\"\u{fffd}A\"")
+    );
 
     assert_eq!(call("JSON_UNQUOTE", &[Datum::Null]), Datum::Null);
     assert!(call_result("JSON_UNQUOTE", &[Datum::Int(3)]).is_err());
@@ -1387,23 +1392,15 @@ fn json_merge_go_vectors() {
         assert!(call_result(name, &[s("{}"), s("not-json")]).is_err());
         assert!(dispatch(name, &[s("{}")]).is_none());
     }
-    // A non-string, non-JSON argument is 3146 at its own 1-based index,
-    // named for the function the user wrote.
-    for (name, function) in [
-        ("JSON_MERGE", "json_merge"),
-        ("JSON_MERGE_PRESERVE", "json_merge_preserve"),
-        ("JSON_MERGE_PATCH", "json_merge_patch"),
-    ] {
-        assert_eq!(
-            call_result(name, &[s("[1]"), Datum::Int(3)]),
-            Err(crate::EvalError::Json(
-                crate::JsonError::InvalidTypeForJson {
-                    argument: 2,
-                    function,
-                }
-            ))
-        );
+    // A non-string, non-JSON argument is 3146 while Go builds the function
+    // (`verifyJSONArgsType`; asserted at the SQL level in `tidb-session`'s
+    // `json_argument_types_are_verified_like_go`). One reaching the
+    // evaluator untyped takes the document cast, as Go's `WrapWithCastAsJSON`
+    // would: 3 is the JSON number 3.
+    for name in ["JSON_MERGE", "JSON_MERGE_PRESERVE"] {
+        assert_eq!(call(name, &[s("[1]"), Datum::Int(3)]), j("[1, 3]"));
     }
+    assert_eq!(call("JSON_MERGE_PATCH", &[s("[1]"), Datum::Int(3)]), j("3"));
 }
 
 /// The `json`-class codes the mutation family reports for a path it

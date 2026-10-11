@@ -62,11 +62,13 @@ fn evaluate(operation: &str, arguments: &[&str]) -> String {
                 .map_err(|_| ())?
                 .to_string())
         }
-        "merge_patch" => Ok(
-            merge_patch_binary_json(&[parse(arguments[0])?, parse(arguments[1])?])
-                .map_err(|_| ())?
-                .map_or_else(|| "NULL".to_owned(), |value| value.to_string()),
-        ),
+        "merge_patch" => {
+            Ok(
+                merge_patch_binary_json(&[Some(parse(arguments[0])?), Some(parse(arguments[1])?)])
+                    .map_err(|_| ())?
+                    .map_or_else(|| "NULL".to_owned(), |value| value.to_string()),
+            )
+        }
         "merge_preserve" => Ok(
             merge_binary_json(&[parse(arguments[0])?, parse(arguments[1])?])
                 .map_err(|_| ())?

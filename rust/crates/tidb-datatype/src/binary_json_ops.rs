@@ -368,18 +368,38 @@ pub fn merge_binary_json(values: &[BinaryJSON]) -> Result<BinaryJSON, BinaryJSON
     BinaryJSON::from_node(&merged)
 }
 
-/// Implements RFC 7396 JSON merge-patch.
+/// Go `MergePatchBinaryJSON` (RFC 7396), whose `nil` arguments are SQL
+/// NULL: the merge starts at the last argument that is NULL or not an
+/// object; a NULL patch makes the result NULL, and so does an object patch
+/// over a NULL target.
 pub fn merge_patch_binary_json(
-    values: &[BinaryJSON],
+    values: &[Option<BinaryJSON>],
 ) -> Result<Option<BinaryJSON>, BinaryJSONError> {
-    let Some(first) = values.first() else {
+    let start = values
+        .iter()
+        .rposition(|value| {
+            value
+                .as_ref()
+                .is_none_or(|value| value.type_code() != crate::JSON_TYPE_CODE_OBJECT)
+        })
+        .unwrap_or(0);
+    let Some((first, patches)) = values[start..].split_first() else {
         return Ok(None);
     };
-    let mut result = first.to_node()?;
-    for patch in &values[1..] {
-        result = merge_patch_node(result, patch.to_node()?);
+    let mut target = first.as_ref().map(BinaryJSON::to_node).transpose()?;
+    for patch in patches {
+        target = match (target, patch) {
+            (_, None) => None,
+            (None, Some(patch)) if patch.type_code() == crate::JSON_TYPE_CODE_OBJECT => None,
+            (target, Some(patch)) => Some(merge_patch_node(
+                target.unwrap_or_else(|| {
+                    JSONNode::Scalar(BinaryJSON::parse("null").expect("static JSON null"))
+                }),
+                patch.to_node()?,
+            )),
+        };
     }
-    BinaryJSON::from_node(&result).map(Some)
+    target.map(|node| BinaryJSON::from_node(&node)).transpose()
 }
 
 fn extract_value<'a>(
@@ -1398,7 +1418,7 @@ mod tests {
             r#"{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}"#,
         );
         assert_eq!(
-            merge_patch_binary_json(&[target, patch])
+            merge_patch_binary_json(&[Some(target), Some(patch)])
                 .unwrap()
                 .unwrap()
                 .to_string(),

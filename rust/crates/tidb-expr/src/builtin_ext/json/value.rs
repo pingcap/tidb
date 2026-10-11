@@ -24,7 +24,7 @@
 
 use serde_json::{Number, Value as Json};
 
-use crate::{Datum, EvalError, JsonError};
+use crate::{Datum, EvalError};
 use tidb_datatype::{BinaryJSON, EvalType, FieldType, FieldTypeFlags};
 
 /// The integer an argument carries when it is a boolean-flagged INT, so
@@ -116,21 +116,6 @@ pub(super) fn json_sql_string(value: &Datum) -> Result<Option<&str>, EvalError> 
     std::str::from_utf8(bytes)
         .map(Some)
         .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))
-}
-
-/// The DOCUMENT text of an argument Go types `ETJson`: a SQL string (which
-/// carries `ParseToJSONFlag`, so it is parsed) or an already-typed JSON value
-/// such as a JSON COLUMN, whose canonical text re-parses to itself.
-///
-/// This is deliberately narrower than [`json_sql_string`], which is also the
-/// gate for signatures that demand a STRING specifically (`JSON_QUOTE`).
-pub(super) fn json_document_string(
-    value: &Datum,
-) -> Result<Option<std::borrow::Cow<'_, str>>, EvalError> {
-    if let Datum::Json(document) = value {
-        return Ok(Some(std::borrow::Cow::Owned(document.to_string())));
-    }
-    Ok(json_sql_string(value)?.map(std::borrow::Cow::Borrowed))
 }
 
 /// `CAST(expr AS JSON)`, port of the `builtinCast*AsJSONSig` family in
@@ -290,48 +275,15 @@ pub(crate) fn cast_as_json_value_typed(
     if let Some(typed) = typed_cast_json(value) {
         return typed;
     }
-    binary_json_datum(json_argument(value, StringArgument::Value, field_type)?)
+    binary_json_datum(json_argument(value, field_type)?)
 }
 
-/// What a SQL STRING argument means to the signature receiving it -- Go's
-/// `ParseToJSONFlag`, the single bit that separates the JSON family's two
-/// argument kinds.
-#[derive(Clone, Copy)]
-pub(super) enum StringArgument {
-    /// The flag is SET: the string IS a JSON document, so `'1'` is the JSON
-    /// number 1 and `'{}'` the empty object. `JSON_CONTAINS`'s candidate and
-    /// `JSON_OVERLAPS`'s two arguments.
-    Document,
-    /// `DisableParseJSONFlag4Expr`: the string is a JSON string VALUE, so
-    /// `'1'` is `"1"` and `'{}'` is `"{}"`. `MEMBER OF`'s candidate and every
-    /// `JSON_SET`/`JSON_ARRAY`/`JSON_ARRAY_APPEND` value.
-    Value,
-}
-
-/// The one SQL-value to JSON-value coercion behind every non-document
-/// argument in this family, a port of `getRealJSONValue` plus the implicit
-/// `CAST(... AS JSON)` the signatures build over their arguments.
-///
-/// Exactly two things vary between call sites, and both are parameters here
-/// rather than a third copy of the datum table:
-///
-/// - `string` decides a SQL string's meaning ([`StringArgument`]). This is
-///   the whole reason `JSON_CONTAINS('[1]', '1')` is TRUE while
-///   `JSON_ARRAY('1')` is `["1"]`.
-/// - `field_type` is the argument's static type when the caller has one (see
-///   [`super::dispatch_typed`]), so a genuine BINARY-charset payload renders
-///   as the JSON `Opaque` value (`"base64:type15:..."`) Go produces instead
-///   of an ordinary JSON string. `None` is the untyped row/AST path.
-///
-/// SQL NULL becomes JSON `null`: that is what the mutation signatures store
-/// (`JSON_SET('{}', '$.a', NULL)` is `{"a": null}`). The predicate callers
-/// answer SQL NULL for a NULL argument BEFORE calling, so they never observe
-/// this arm.
-pub(super) fn json_argument(
-    value: &Datum,
-    string: StringArgument,
-    field_type: Option<&FieldType>,
-) -> Result<Json, EvalError> {
+/// The SQL-value to JSON-value coercion of a JSON function's VALUE argument:
+/// Go's implicit `CAST(... AS JSON)` with `ParseToJSONFlag` disabled
+/// (`DisableParseJSONFlag4Expr`), so a SQL string is a JSON string (`'1'` is
+/// `"1"`), a BINARY-charset payload is Go's opaque value when the caller has
+/// the argument's static type, and SQL NULL is JSON `null`.
+fn json_argument(value: &Datum, field_type: Option<&FieldType>) -> Result<Json, EvalError> {
     if let Some(field_type) = field_type {
         if is_binary_datum(value, Some(field_type)) {
             return binary_opaque_json(value, field_type);
@@ -348,10 +300,7 @@ pub(super) fn json_argument(
         if field_type.is_some_and(|ft| ft.eval_type() == EvalType::Json) {
             return parse_json(text);
         }
-        return match string {
-            StringArgument::Document => parse_json(text),
-            StringArgument::Value => Ok(Json::String(text.to_owned())),
-        };
+        return Ok(Json::String(text.to_owned()));
     }
     match value {
         Datum::Null => Ok(Json::Null),
@@ -406,31 +355,6 @@ pub(crate) fn parse_json_document_argument(v: &Datum) -> Result<Option<Json>, Ev
             "JSON document requires JSON or string",
         )),
     }
-}
-
-/// The STRICT document coercion go's `JSON_CONTAINS` / `JSON_OVERLAPS` /
-/// `JSON_EXTRACT` / `JSON_MEMBER OF` signatures observe: a NUMERIC scalar in
-/// a JSON position is `ErrInvalidTypeForJSON` (3146) naming the 1-based
-/// argument and the function — captured on the oracle:
-/// `JSON_CONTAINS(1, 2)` errors on argument 1 to `json_contains`,
-/// `JSON_EXTRACT(1, 2)` on argument 1 to `json_extract`, and
-/// `JSON_MEMBER OF(1, 2)` on argument 2 to `member of` (space spelled).
-/// Strings still parse as documents and a JSON cell passes through.
-pub(crate) fn parse_json_document_argument_strict(
-    v: &Datum,
-    argument: usize,
-    function: &'static str,
-) -> Result<Option<Json>, EvalError> {
-    if matches!(
-        v,
-        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_)
-    ) {
-        return Err(EvalError::Json(JsonError::InvalidTypeForJson {
-            argument,
-            function,
-        }));
-    }
-    parse_json_document_argument(v)
 }
 
 fn datum_json_scalar(value: &Datum) -> Result<Json, EvalError> {

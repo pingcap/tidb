@@ -22,7 +22,7 @@
 //! THREE signatures at plan-build time from the argument's EvalType, and the
 //! `Others` signature answers 0 without ever looking at the value. Every
 //! other function here demands a real document and raises rather than
-//! guessing. `JSON_DEPTH` and the storage sizes live in `super::super::json2`
+//! guessing. `JSON_DEPTH` and the storage sizes live in [`super::document`]
 //! because they read BinaryJSON's encoded layout, not its value.
 
 use serde_json::{Number, Value as Json};

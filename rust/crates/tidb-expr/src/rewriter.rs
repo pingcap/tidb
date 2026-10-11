@@ -2997,62 +2997,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             let rewritten = wrap_power_arguments(&lowered, rewritten, resolver)?;
             let rewritten = wrap_time_format_arguments(&lowered, rewritten, resolver)?;
             // Go's JSON function classes check their arguments' TYPES in
-            // `verifyArgs` before `getFunction` reads a constant path.
+            // `verifyArgs`; a malformed constant path is only an evaluation
+            // error (`EXPLAIN` succeeds, an unevaluated call never fails).
             crate::builtin_ext::json::verify_json_function_args(&lowered, &rewritten)?;
-            // go's JSON signature classes validate a CONSTANT path argument
-            // at build time (`ParseJSONPathExpr` in `getFunction`): a constant
-            // document paired with a constant path fails the BUILD with the
-            // classed 3143 (`JSON_EXTRACT('[1,2,3]', '$[1 TO 2]')` errors
-            // before any row), while a column document defers the invalid
-            // path to the execution wrap (1105) -- the doc argument's kind
-            // decides the tier.
-            if matches!(
-                lowered.as_str(),
-                "json_extract" | "json_set" | "json_insert" | "json_replace" | "json_remove"
-            ) && args.len() >= 2
-            {
-                let literal = |expression: &Expr| {
-                    matches!(
-                        expression,
-                        Expr::Int(_)
-                            | Expr::Decimal(_)
-                            | Expr::Float(_)
-                            | Expr::String(_)
-                            | Expr::RawString(_)
-                    )
-                };
-                if literal(&args[0]) && literal(&args[1]) {
-                    let path_text = match &args[1] {
-                        Expr::Int(text)
-                        | Expr::Decimal(text)
-                        | Expr::String(text)
-                        | Expr::RawString(text) => text.clone(),
-                        Expr::Float(f) => f.to_string(),
-                        _ => unreachable!("literal() gated the arm"),
-                    };
-                    if let Err(EvalError::Json(JsonError::InvalidPath(position))) =
-                        crate::builtin_ext::json::parse_path(&path_text)
-                    {
-                        // go's build-time path check surfaces the CLASSed
-                        // terror (3143) -- the statement fails before any
-                        // row -- while the execution wrap for a column doc
-                        // answers the generic 1105. The registered form
-                        // carries the types:3143 identity, so the wire keeps
-                        // 3143 instead of the shared JsonError mapping's
-                        // 1105.
-                        return Err(EvalError::Conversion(
-                            tidb_error::terror::TerrorError::registered(
-                                tidb_error::terror::TerrorClass::Types,
-                                tidb_error::terror::TerrorCode::new(3143),
-                                format!(
-                                    "Invalid JSON path expression. The error is around character \
-                                     position {position}."
-                                ),
-                            ),
-                        ));
-                    }
-                }
-            }
             let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or_else(|| {
                 crate::builtin_registry::unresolved_error(&lowered, resolver.current_database())
             })?;

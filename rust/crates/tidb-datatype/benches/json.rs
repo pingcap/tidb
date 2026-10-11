@@ -60,7 +60,7 @@ fn main() {
 
     measure("BenchmarkMergePatchBinary", || {
         black_box(
-            merge_patch_binary_json(black_box(&[left.clone(), right.clone()]))
+            merge_patch_binary_json(black_box(&[Some(left.clone()), Some(right.clone())]))
                 .expect("static merge-patch inputs"),
         );
     });

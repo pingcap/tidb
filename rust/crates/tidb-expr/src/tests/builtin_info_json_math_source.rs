@@ -18,7 +18,6 @@
 
 use super::{chunk_e, e};
 use crate::builtin_ext::json::dispatch as json_dispatch;
-use crate::builtin_ext::json2;
 use crate::constant::{Constant, ParamMarker};
 use crate::expression::Expression;
 use crate::like::like_match_with_collation;
@@ -108,9 +107,7 @@ fn eval_as(name: &str, args: Vec<Datum>, ret_type: FieldType, ctx: &impl Columns
 }
 
 fn json_call(name: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
-    json_dispatch(name, vals)
-        .or_else(|| json2::dispatch(name, vals))
-        .expect("JSON family should own name/arity")
+    json_dispatch(name, vals).expect("JSON family should own name/arity")
 }
 
 fn json_s(value: &str) -> Datum {
