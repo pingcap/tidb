@@ -31,6 +31,7 @@ fn empty_select() -> SelectStmt {
     SelectStmt {
         kind: SelectStatementKind::Select,
         is_in_braces: false,
+        with_before_braces: false,
         with: None,
         hints: Vec::new(),
         priority: StatementPriority::None,
@@ -195,13 +196,12 @@ fn union(terms: Vec<SetOprTerm>) -> Stmt {
     Stmt::Query(NodeBox::new(QueryStmt::SetOpr(Box::new(SetOprStmt {
         with: None,
         is_in_braces: false,
+        with_before_braces: false,
         terms,
         order_by: Vec::new(),
         limit: None,
-        lock: None,
         outer_order_by: Vec::new(),
         outer_limit: None,
-        outer_lock: None,
     }))))
 }
 

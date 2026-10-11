@@ -46,6 +46,7 @@ fn do_projection_query(exprs: &[tidb_ast::Expr]) -> Stmt {
         Box::new(tidb_ast::SelectStmt {
             kind: Default::default(),
             is_in_braces: false,
+            with_before_braces: false,
             with: None,
             hints: Vec::new(),
             priority: Default::default(),

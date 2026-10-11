@@ -20,9 +20,8 @@ use tidb_ast::{
     CreateTableTemporary, CreateViewStmt, DatabaseOption, DdlStmt, DropIndexAlgorithm,
     DropIndexLock, DropIndexStmt, DropTableStmt, DropTemporary, Expr, FlashbackDatabaseStmt,
     FlashbackTableStmt, FlashbackToTimestampStmt, IndexConstraintKind, OptimizeTableStmt,
-    QueryStmt, RecoverTableStmt, RenameTableStmt, RepairTableStmt, SetOprTermBody, SplitOption,
-    SplitRegionStmt, SplitTarget, Stmt, TableLock, TableLockType, UserSpec, ViewAlgorithm,
-    ViewCheckOption, ViewSecurity,
+    RecoverTableStmt, RenameTableStmt, RepairTableStmt, SplitOption, SplitRegionStmt, SplitTarget,
+    Stmt, TableLock, TableLockType, UserSpec, ViewAlgorithm, ViewCheckOption, ViewSecurity,
 };
 use tidb_lexer::{canonical_charset, canonical_collation, TokenKind};
 
@@ -823,38 +822,14 @@ impl Parser {
         }
         self.expect_kw("AS")?;
         let query_start = self.peek().offset;
-        // A sole `AS (SELECT ...)` keeps its outer braces in the view AST,
-        // while `(SELECT ...) UNION (SELECT ...)` is a set operation whose
-        // braces belong to the individual terms. Parse the first parenthesized
-        // term here so the same typed `SetOprStmt` can represent both forms
-        // without dropping or inventing a second pair of braces.
-        let (query, query_parenthesized) = if self.is_op("(") {
-            self.bump();
-            let inner = if self.is_kw("WITH") {
-                self.parse_with_select()?
-            } else {
-                self.parse_select_or_setopr()?
-            };
-            self.expect_op(")")?;
-            if self.peek_set_op().is_some() {
-                let first = match inner {
-                    QueryStmt::Select(select) => SetOprTermBody::Select(select),
-                    QueryStmt::SetOpr(setopr) => SetOprTermBody::Nested(setopr),
-                };
-                (
-                    QueryStmt::SetOpr(Box::new(self.parse_setopr_rest(true, first)?)),
-                    false,
-                )
-            } else {
-                (inner, true)
-            }
+        // Go `parseCreateViewStmt`: `parseSubquery` then `maybeParseUnion`,
+        // the path a statement-level query takes, so a parenthesized body
+        // keeps its braces on the query itself (`IsInBraces`) and folds a
+        // following `ORDER BY`/`LIMIT` the same way.
+        let query = if self.is_kw("WITH") {
+            self.parse_with_select()?
         } else {
-            let query = if self.is_kw("WITH") {
-                self.parse_with_select()?
-            } else {
-                self.parse_select_or_setopr()?
-            };
-            (query, false)
+            self.parse_select_or_setopr()?
         };
         let query_end = self.peek().offset;
         let mut query = tidb_ast::NodeBox::new(query);
@@ -867,19 +842,19 @@ impl Parser {
                     .to_vec(),
             );
         }
-        // Go's ViewCheckOption requires an explicit LOCAL or CASCADED.
-        // A bare WITH CHECK OPTION remains a syntax error at CHECK.
+        // Go `parseCreateViewStmt`: `WITH [LOCAL] [CASCADED] CHECK OPTION`;
+        // CASCADED is the default, and only LOCAL changes it.
         let check_option = if self.is_kw("WITH") {
             self.bump();
             let option = if self.is_kw("LOCAL") {
                 self.bump();
                 ViewCheckOption::LOCAL
-            } else if self.is_kw("CASCADED") {
-                self.bump();
-                ViewCheckOption::CASCADED
             } else {
-                return Err(self.err_here(""));
+                ViewCheckOption::CASCADED
             };
+            if self.is_kw("CASCADED") {
+                self.bump();
+            }
             self.expect_kw("CHECK")?;
             self.expect_kw("OPTION")?;
             option
@@ -900,7 +875,6 @@ impl Parser {
             name,
             columns,
             query,
-            query_parenthesized,
             check_option,
         })
     }

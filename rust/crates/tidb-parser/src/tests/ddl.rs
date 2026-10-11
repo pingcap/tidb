@@ -343,7 +343,11 @@ fn create_view_core_grammar_preserves_go_defaults_and_query_shape() {
     assert_eq!(view.algorithm, tidb_ast::ViewAlgorithm::TEMPTABLE);
     assert_eq!(view.name, vec!["v"]);
     assert_eq!(view.columns, vec!["c"]);
-    assert!(view.query_parenthesized);
+    // Go keeps a parenthesized body's braces on the query (`IsInBraces`).
+    assert!(matches!(
+        &*view.query,
+        tidb_ast::QueryStmt::Select(select) if select.is_in_braces
+    ));
     assert_eq!(view.check_option, tidb_ast::ViewCheckOption::CASCADED);
 
     assert_eq!(
@@ -561,4 +565,61 @@ fn drop_parser_source_boundaries() {
         let output = parse_with_warnings(sql).unwrap();
         assert_eq!(output.warnings[0].message, expected, "{sql}");
     }
+}
+
+/// Go `parseCreateViewStmt` parses the body with `parseSubquery` and
+/// `maybeParseUnion`, as a statement-level query: a parenthesized body keeps
+/// its braces on the query and folds an outer `ORDER BY`/`LIMIT` into them,
+/// one that already has its own gets a wrapper, and `WITH CHECK OPTION`
+/// needs neither LOCAL nor CASCADED (oracle-captured restores).
+#[test]
+fn a_view_body_parses_as_a_statement_level_query() {
+    let prefix =
+        "CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS ";
+    for (body, restored) in [
+        ("(select a from t)", "(SELECT `a` FROM `t`)"),
+        (
+            "(select a from t) order by a",
+            "(SELECT `a` FROM `t` ORDER BY `a`)",
+        ),
+        ("(select a from t) limit 1", "(SELECT `a` FROM `t` LIMIT 1)"),
+        (
+            "(select a from t order by a) order by a limit 1",
+            "(SELECT `a` FROM `t` ORDER BY `a`) ORDER BY `a` LIMIT 1",
+        ),
+        ("((select a from t))", "(SELECT `a` FROM `t`)"),
+        ("(select 1 union select 2)", "(SELECT 1 UNION SELECT 2)"),
+        (
+            "(select 1 union select 2) order by 1",
+            "(SELECT 1 UNION SELECT 2 ORDER BY 1)",
+        ),
+        (
+            "(select 1) union (select 2) order by 1",
+            "(SELECT 1) UNION (SELECT 2) ORDER BY 1",
+        ),
+        (
+            "(with c as (select 1) select * from c)",
+            "(WITH `c` AS (SELECT 1) SELECT * FROM `c`)",
+        ),
+        (
+            "select 1 union select 2 for update",
+            "SELECT 1 UNION SELECT 2 FOR UPDATE",
+        ),
+        ("select a from t with check option", "SELECT `a` FROM `t`"),
+        (
+            "select a from t with cascaded check option",
+            "SELECT `a` FROM `t`",
+        ),
+        (
+            "select a from t with local check option",
+            "SELECT `a` FROM `t` WITH LOCAL CHECK OPTION",
+        ),
+    ] {
+        assert_eq!(
+            r(&format!("create view v as {body}")),
+            format!("{prefix}{restored}"),
+            "{body}"
+        );
+    }
+    assert!(parse("create view v as (select a from t) for update").is_err());
 }

@@ -3301,6 +3301,7 @@ impl<'a> PointPlanStmt<'a> {
         Some(tidb_ast::SelectStmt {
             kind: Default::default(),
             is_in_braces: false,
+            with_before_braces: false,
             with: None,
             hints: Vec::new(),
             priority: Default::default(),

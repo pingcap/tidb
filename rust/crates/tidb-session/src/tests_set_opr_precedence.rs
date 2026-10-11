@@ -47,3 +47,23 @@ fn union_and_except_fold_left_to_right() {
         [["1"], ["2"]]
     );
 }
+
+/// Go keeps a set operation's trailing `FOR UPDATE` on its last SELECT
+/// (`SetOprStmt` has no lock), which `buildSelect` locks like any other; a
+/// parenthesized last term takes none, so the clause is a syntax error.
+#[test]
+fn a_set_operation_lock_reads_through_its_last_select() {
+    let mut session = Session::new();
+    session.run("create table t(a int, b int)").unwrap();
+    session.run("insert into t values (1, 1), (2, 2)").unwrap();
+    session.run("begin").unwrap();
+    let mut rows = row_text(session.run("select a from t union select b from t for update"));
+    rows.sort();
+    assert_eq!(rows, [["1"], ["2"]]);
+    session.run("commit").unwrap();
+    let error = session
+        .run("select a from t union (select b from t) for update")
+        .expect_err("a parenthesized last term takes no lock")
+        .to_mysql_error();
+    assert_eq!(error.code, 1064, "{}", error.message);
+}

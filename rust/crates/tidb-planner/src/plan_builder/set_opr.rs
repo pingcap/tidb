@@ -654,17 +654,6 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// Any stage's error.
     pub fn build_set_opr(&mut self, set_opr: &SetOprStmt) -> Result<LogicalPlan, PlanError> {
-        // boundary: `buildSelectLock` (`planbuilder.go:1610`). 6b ported it
-        // for `buildSelect`; a set operation's own `FOR UPDATE` is Go's
-        // `ast.SetOprStmt`-level lock, which `buildSetOpr` does NOT read — it
-        // is applied by `PlanBuilder.Build`'s statement wrapper, which is not
-        // in this crate. Refusing keeps a locking read from silently becoming
-        // a non-locking one.
-        if set_opr.lock.is_some() || set_opr.outer_lock.is_some() {
-            return Err(PlanError::internal(
-                "a locking clause on a set operation needs buildSelectLock's statement wrapper (planbuilder.go:1610)",
-            ));
-        }
         // `:2110` the WITH clause. `outerCTEs` is truncated back on EVERY exit
         // path, which is Go's `defer`.
         let outer_cte_depth = self.outer_ctes.len();

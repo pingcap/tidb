@@ -211,11 +211,6 @@ fn collect_noop_in_set_opr(set_opr: &tidb_ast::SetOprStmt, out: &mut Vec<&'stati
             tidb_ast::SetOprTermBody::Nested(nested) => collect_noop_in_set_opr(nested, out),
         }
     }
-    // A set operation carries its own trailing locking clause, which the
-    // grammar attaches to the whole statement rather than the last term.
-    if share_lock(&set_opr.lock) || share_lock(&set_opr.outer_lock) {
-        out.push("LOCK IN SHARE MODE");
-    }
 }
 
 /// Whether a locking clause is the shared kind, which is the gated one --

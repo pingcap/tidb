@@ -59,6 +59,10 @@ pub struct SelectStmt {
     /// needed by the EXPLAIN/VALUES corpus leaf without pretending that a
     /// one-term query is a set operation.
     pub is_in_braces: bool,
+    /// Go `WithBeforeBraces`: the `WITH` clause was written before the
+    /// query's parentheses (`WITH c AS (...) (SELECT ...)`), not inside them
+    /// (`(WITH c AS (...) SELECT ...)`); restore keeps the side.
+    pub with_before_braces: bool,
     /// A `WITH` clause, if this query is a plain `SELECT`. A leading CTE
     /// before an outer `UNION`/`EXCEPT`/`INTERSECT` belongs to
     /// [`SetOprStmt::with`] instead, matching TiDB's query ownership.
@@ -143,18 +147,11 @@ pub struct SelectStmt {
     /// restoring in the FIXED canonical order this struct's own fields
     /// are always printed in, regardless of how they were written) —
     /// `tidb_parser`'s own tail-parsing loop reflects this directly
-    /// rather than assuming a fixed grammar order. For a `UNION`/
-    /// `EXCEPT`/`INTERSECT` query, a trailing locking clause after the
-    /// LAST (unparenthesized) term is ambiguous between "this term's
-    /// own" and "the whole statement's own" — real MySQL/TiDB always
-    /// resolves it as the LATTER (confirmed via `godump restore`), so
-    /// [`SetOprStmt`] carries its OWN separate `lock` field for exactly
-    /// that position; this field here is only ever populated for a
-    /// plain `SELECT`, or for a NON-final term of a set operation
-    /// (disambiguated by a following set operator, so real MySQL/TiDB
-    /// DOES attach it to that individual term there — confirmed via
-    /// `godump restore`: `t1 FOR UPDATE UNION t2` restores with `FOR
-    /// UPDATE` immediately after `t1`, not hoisted to the end).
+    /// rather than assuming a fixed grammar order. In a `UNION`/
+    /// `EXCEPT`/`INTERSECT` query every unparenthesized term owns the
+    /// clause written after it, the LAST one included: Go's `SetOprStmt`
+    /// has no lock, and its `parseSelectStmt` keeps `LockInfo` on the
+    /// final SELECT while the statement takes only `ORDER BY`/`LIMIT`.
     pub lock: Option<SelectLock>,
     /// The complete trailing `INTO OUTFILE` payload.
     pub into_outfile: Option<SelectIntoOption>,
@@ -257,6 +254,12 @@ impl SelectStmt {
             }
             return;
         }
+        // Go `SelectStmt.Restore`: the WITH clause goes on the side of the
+        // parentheses it was written on.
+        let with_inside_braces = self.is_in_braces && !self.with_before_braces;
+        if with_inside_braces {
+            out.push('(');
+        }
         let scoped_context = self
             .with
             .as_ref()
@@ -265,7 +268,7 @@ impl SelectStmt {
             out.push(' ');
         }
         let context = scoped_context.as_ref().unwrap_or(context);
-        if self.is_in_braces {
+        if self.is_in_braces && !with_inside_braces {
             out.push('(');
         }
         out.push_str("SELECT ");
@@ -952,6 +955,7 @@ impl crate::Visitable for SelectStmt {
         let Self {
             kind,
             is_in_braces,
+            with_before_braces,
             with,
             hints,
             priority,
@@ -1052,6 +1056,7 @@ impl crate::Visitable for SelectStmt {
         }
         let _ = kind;
         let _ = is_in_braces;
+        let _ = with_before_braces;
         let _ = with;
         let _ = hints;
         let _ = priority;

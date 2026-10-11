@@ -90,6 +90,7 @@ fn empty_select() -> SelectStmt {
     SelectStmt {
         kind: SelectStatementKind::Select,
         is_in_braces: false,
+        with_before_braces: false,
         with: None,
         hints: Vec::new(),
         priority: Default::default(),

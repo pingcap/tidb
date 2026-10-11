@@ -30,6 +30,9 @@ pub struct SetOprStmt {
     /// parentheses. TiDB keeps this bit on `SetOprStmt` itself, so a
     /// statement-level ORDER BY/LIMIT restores inside the same pair.
     pub is_in_braces: bool,
+    /// Go `WithBeforeBraces`: the `WITH` clause was written before the
+    /// statement's parentheses rather than inside them.
+    pub with_before_braces: bool,
     /// The terms; the first has `op == None`, each later term carries the
     /// operator that joins it to the accumulated result.
     pub terms: Vec<SetOprTerm>,
@@ -37,20 +40,20 @@ pub struct SetOprStmt {
     pub order_by: Vec<OrderItem>,
     /// A statement-level `LIMIT`.
     pub limit: Option<Limit>,
-    /// A statement-level locking clause — see [`SelectStmt::lock`]'s own
-    /// doc for why this is a SEPARATE field from any individual term's
-    /// own `lock` rather than always attaching to the last term.
-    pub lock: Option<SelectLock>,
     /// An `ORDER BY` written outside this statement's own parentheses.
     pub outer_order_by: Vec<OrderItem>,
     /// A `LIMIT` written outside this statement's own parentheses.
     pub outer_limit: Option<Limit>,
-    /// A locking clause written outside this statement's own parentheses.
-    pub outer_lock: Option<SelectLock>,
 }
 
 impl SetOprStmt {
     pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
+        // Go `SetOprStmt.Restore`: the WITH clause goes on the side of the
+        // parentheses it was written on.
+        let with_inside_braces = self.is_in_braces && !self.with_before_braces;
+        if with_inside_braces {
+            out.push('(');
+        }
         let scoped_context = self
             .with
             .as_ref()
@@ -59,7 +62,7 @@ impl SetOprStmt {
             out.push(' ');
         }
         let context = scoped_context.as_ref().unwrap_or(context);
-        if self.is_in_braces {
+        if self.is_in_braces && !with_inside_braces {
             out.push('(');
         }
         for term in &self.terms {
@@ -76,23 +79,16 @@ impl SetOprStmt {
                 term.body.restore_into_with_context(out, context);
             }
         }
-        // A statement-level lock (see `SelectStmt::lock`'s own doc for why
-        // this is a separate field) prints BEFORE `ORDER BY`/`LIMIT` here
-        // — the OPPOSITE order from a plain `SelectStmt`'s own `lock`
-        // (see that impl's own comment) — confirmed via `godump restore`:
-        // `t1 UNION t2 LIMIT 1 FOR UPDATE` and `t1 UNION t2 FOR UPDATE
-        // LIMIT 1` both restore identically as `... FOR UPDATE ... LIMIT
-        // 1`, never the reverse.
-        restore_lock(out, &self.lock);
+        // A trailing locking clause belongs to the last SELECT (Go's
+        // `SetOprStmt` has no lock), so it restores with that term, before
+        // the statement's `ORDER BY`/`LIMIT`.
         restore_order_by(out, &self.order_by);
         restore_limit(out, &self.limit);
-        let has_inner_tail =
-            self.lock.is_some() || !self.order_by.is_empty() || self.limit.is_some();
+        let has_inner_tail = !self.order_by.is_empty() || self.limit.is_some();
         // With no inner tail, TiDB folds an outer tail into the preserved
         // parentheses. When both tails exist, the closing parenthesis remains
         // their ownership boundary and the outer tail stays outside.
         if !has_inner_tail {
-            restore_lock(out, &self.outer_lock);
             restore_order_by(out, &self.outer_order_by);
             restore_limit(out, &self.outer_limit);
         }
@@ -100,7 +96,6 @@ impl SetOprStmt {
             out.push(')');
         }
         if has_inner_tail {
-            restore_lock(out, &self.outer_lock);
             restore_order_by(out, &self.outer_order_by);
             restore_limit(out, &self.outer_limit);
         }
@@ -216,13 +211,12 @@ impl crate::Visitable for SetOprStmt {
         let Self {
             with,
             is_in_braces,
+            with_before_braces,
             terms,
             order_by,
             limit,
-            lock,
             outer_order_by,
             outer_limit,
-            outer_lock,
         } = self;
         if let Some(value) = with.as_mut() {
             if !crate::Visitable::accept(value, visitor) {
@@ -244,11 +238,6 @@ impl crate::Visitable for SetOprStmt {
                 return false;
             }
         }
-        if let Some(value) = lock.as_mut() {
-            if !crate::Visitable::accept(value, visitor) {
-                return false;
-            }
-        }
         for value in outer_order_by.iter_mut() {
             if !crate::Visitable::accept(value, visitor) {
                 return false;
@@ -259,20 +248,14 @@ impl crate::Visitable for SetOprStmt {
                 return false;
             }
         }
-        if let Some(value) = outer_lock.as_mut() {
-            if !crate::Visitable::accept(value, visitor) {
-                return false;
-            }
-        }
         let _ = with;
         let _ = is_in_braces;
+        let _ = with_before_braces;
         let _ = terms;
         let _ = order_by;
         let _ = limit;
-        let _ = lock;
         let _ = outer_order_by;
         let _ = outer_limit;
-        let _ = outer_lock;
         visitor.leave(self)
     }
 }

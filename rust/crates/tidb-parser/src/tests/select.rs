@@ -2033,3 +2033,46 @@ fn sql_calc_found_rows() {
         "SELECT SQL_CALC_FOUND_ROWS DISTINCT `a` FROM `t1`"
     );
 }
+
+/// Go's `SetOprStmt` has no locking clause: `parseSelectStmt` keeps
+/// `LockInfo` on the last SELECT and `parseSetOprRest` moves only its
+/// `ORDER BY`/`LIMIT` to the statement, while after a parenthesized term or
+/// statement `maybeParseUnion` reads no lock, so `FOR UPDATE` there is a
+/// syntax error (oracle-captured restores).
+#[test]
+fn a_set_operation_lock_belongs_to_its_last_select() {
+    let parsed = parse("select a from t union select a from t2 for update").unwrap();
+    let tidb_ast::Stmt::Query(query) = &parsed else {
+        panic!("{parsed:?}")
+    };
+    let tidb_ast::QueryStmt::SetOpr(set_opr) = &**query else {
+        panic!("{query:?}")
+    };
+    assert!(matches!(
+        &set_opr.terms[1].body,
+        tidb_ast::SetOprTermBody::Select(select) if select.lock.is_some()
+    ));
+    for (sql, restored) in [
+        (
+            "select a from t1 union select a from t2 order by a for update",
+            "SELECT `a` FROM `t1` UNION SELECT `a` FROM `t2` FOR UPDATE ORDER BY `a`",
+        ),
+        (
+            "(select a from t1) union select a from t2 for update",
+            "(SELECT `a` FROM `t1`) UNION SELECT `a` FROM `t2` FOR UPDATE",
+        ),
+        (
+            "select a from t1 union all select a from t2 for update nowait",
+            "SELECT `a` FROM `t1` UNION ALL SELECT `a` FROM `t2` FOR UPDATE NOWAIT",
+        ),
+    ] {
+        assert_eq!(r(sql), restored, "{sql}");
+    }
+    for sql in [
+        "(select 1 union select 2) for update",
+        "select 1 union (select 2) for update",
+        "select 1 union (select 2) for update union select 3",
+    ] {
+        assert!(parse(sql).is_err(), "expected parse error for: {sql}");
+    }
+}

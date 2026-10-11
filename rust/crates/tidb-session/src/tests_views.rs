@@ -964,19 +964,16 @@ fn a_view_body_may_contain_a_derived_table() {
     assert!(session.run("SELECT t.a FROM (SELECT a FROM t) x").is_err());
 }
 
-/// `WITH LOCAL|CASCADED CHECK OPTION`: stored and reported, never printed, and never
-/// reached -- writes through a view are refused before it would apply.
+/// `WITH [LOCAL|CASCADED] CHECK OPTION`: stored and reported, never printed,
+/// and never reached -- writes through a view are refused before it would
+/// apply. Go's `parseCreateViewStmt` takes a bare `WITH CHECK OPTION` as
+/// CASCADED (oracle-captured).
 #[test]
 fn a_view_check_option_is_stored_and_reported() {
     let mut session = view_session();
-    assert_eq!(
-        session
-            .run("CREATE VIEW vc AS SELECT a, b FROM t WHERE b > 10 WITH CHECK OPTION")
-            .unwrap_err()
-            .to_mysql_error()
-            .code,
-        1064
-    );
+    session
+        .run("CREATE VIEW vc AS SELECT a, b FROM t WHERE b > 10 WITH CHECK OPTION")
+        .unwrap();
     session
         .run("CREATE VIEW vcl AS SELECT a, b FROM t WHERE b > 10 WITH LOCAL CHECK OPTION")
         .unwrap();
@@ -986,7 +983,7 @@ fn a_view_check_option_is_stored_and_reported() {
 
     // Captured: SHOW CREATE VIEW prints no check option at all, whichever
     // form was written.
-    for view in ["vcl", "vcc"] {
+    for view in ["vc", "vcl", "vcc"] {
         let (_, rows) = query_text(&mut session, &format!("SHOW CREATE VIEW {view}"));
         assert_eq!(
             rows[0][1],
@@ -1003,13 +1000,14 @@ fn a_view_check_option_is_stored_and_reported() {
     let (_, rows) = query_text(
         &mut session,
         "SELECT table_name, check_option, is_updatable FROM information_schema.views \
-             WHERE table_schema = 'test' AND table_name IN ('v', 'vcl', 'vcc') \
+             WHERE table_schema = 'test' AND table_name IN ('v', 'vc', 'vcl', 'vcc') \
              ORDER BY table_name",
     );
     assert_eq!(
         rows,
         [
             ["v", "CASCADED", "NO"],
+            ["vc", "CASCADED", "NO"],
             ["vcc", "CASCADED", "NO"],
             ["vcl", "LOCAL", "NO"],
         ]
@@ -1711,4 +1709,58 @@ fn a_create_view_body_skips_engine_and_group_by_checks() {
     session
         .run("create view v3 (a, avg_b) as select a, avg(b) from t1 group by a")
         .unwrap();
+}
+
+/// Go parses a view body as a statement-level query (`parseSubquery` then
+/// `maybeParseUnion`): a parenthesized body keeps its braces, an outer
+/// `ORDER BY` folds into them, one with its own tail is wrapped, and a
+/// parenthesized `WITH` stays inside the braces (oracle-captured).
+#[test]
+fn a_parenthesized_view_body_keeps_its_braces() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1, 1), (2, 2)").unwrap();
+    for (name, body, definition, rows) in [
+        (
+            "v1",
+            "(select a from t) order by a",
+            "(SELECT `a` AS `a` FROM `test`.`t` ORDER BY `a`)",
+            vec![vec!["1"], vec!["2"]],
+        ),
+        (
+            "v2",
+            "(with c as (select 1 x) select * from c)",
+            "(WITH `c` AS (SELECT 1 AS `x`) SELECT `c`.`x` AS `x` FROM `c`)",
+            vec![vec!["1"]],
+        ),
+        (
+            "v4",
+            "(select a from t order by a desc limit 1) order by a limit 1",
+            "(SELECT `a` AS `a` FROM `test`.`t` ORDER BY `a` DESC LIMIT 1) ORDER BY `a` LIMIT 1",
+            vec![vec!["2"]],
+        ),
+    ] {
+        session
+            .run(&format!("CREATE VIEW {name} AS {body}"))
+            .unwrap_or_else(|err| panic!("{body}: {err:?}"));
+        let (_, shown) = query_text(&mut session, &format!("SHOW CREATE VIEW {name}"));
+        assert!(
+            shown[0][1].ends_with(&format!("AS {definition}")),
+            "{shown:?}"
+        );
+        assert_eq!(
+            row_text(session.run(&format!("SELECT * FROM {name}"))),
+            rows,
+            "{name}"
+        );
+    }
+    // A bare WITH CHECK OPTION is CASCADED, which SHOW CREATE VIEW omits.
+    session
+        .run("CREATE VIEW v3 AS SELECT a FROM t WITH CHECK OPTION")
+        .unwrap();
+    let (_, shown) = query_text(&mut session, "SHOW CREATE VIEW v3");
+    assert!(
+        shown[0][1].ends_with("AS SELECT `a` AS `a` FROM `test`.`t`"),
+        "{shown:?}"
+    );
 }

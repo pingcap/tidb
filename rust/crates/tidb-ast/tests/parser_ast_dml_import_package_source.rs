@@ -39,6 +39,7 @@ fn empty_select() -> SelectStmt {
     SelectStmt {
         kind: SelectStatementKind::Select,
         is_in_braces: false,
+        with_before_braces: false,
         with: None,
         hints: Vec::new(),
         priority: Default::default(),
@@ -235,6 +236,7 @@ fn import_into_restore() {
     let union_xx_yy = SetOprStmt {
         with: None,
         is_in_braces: false,
+        with_before_braces: false,
         terms: vec![
             SetOprTerm {
                 op: None,
@@ -249,15 +251,14 @@ fn import_into_restore() {
         ],
         order_by: Vec::new(),
         limit: None,
-        lock: None,
         outer_order_by: Vec::new(),
         outer_limit: None,
-        outer_lock: None,
     };
     // The CTE-scoped variant references `c` twice, per the Go row.
     let union_cc = SetOprStmt {
         with: Some(cte_c(select_star_from(&["xx"]))),
         is_in_braces: false,
+        with_before_braces: false,
         terms: vec![
             SetOprTerm {
                 op: None,
@@ -272,10 +273,8 @@ fn import_into_restore() {
         ],
         order_by: Vec::new(),
         limit: None,
-        lock: None,
         outer_order_by: Vec::new(),
         outer_limit: None,
-        outer_lock: None,
     };
 
     let cases: [(Stmt, String); 14] = [
@@ -403,6 +402,7 @@ fn import_into_restore() {
                     query: NodeBox::new(QueryStmt::SetOpr(Box::new(SetOprStmt {
                         with: Some(cte_c(select_star_from(&["xx"]))),
                         is_in_braces: false,
+                        with_before_braces: false,
                         terms: vec![SetOprTerm {
                             op: None,
                             in_braces: false,
@@ -410,10 +410,8 @@ fn import_into_restore() {
                         }],
                         order_by: Vec::new(),
                         limit: None,
-                        lock: None,
                         outer_order_by: Vec::new(),
                         outer_limit: None,
-                        outer_lock: None,
                     }))),
                     parenthesized: false,
                 },

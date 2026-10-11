@@ -1071,6 +1071,7 @@ pub(crate) fn multi_dml_select(
     tidb_ast::QueryStmt::Select(Box::new(tidb_ast::SelectStmt {
         kind: Default::default(),
         is_in_braces: false,
+        with_before_braces: false,
         with: with.cloned(),
         hints: hints.to_vec(),
         priority: Default::default(),

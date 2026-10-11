@@ -44,8 +44,6 @@ pub struct CreateViewStmt {
     /// The view query. This uses the typed query envelope so a view cannot
     /// accidentally contain a DDL/DML/session statement.
     pub query: crate::NodeBox<QueryStmt>,
-    /// Whether the whole query was enclosed in the `AS (...)` form.
-    pub query_parenthesized: bool,
     /// The optional view check option.
     pub check_option: ViewCheckOption,
 }
@@ -87,13 +85,7 @@ impl CreateViewStmt {
             out.push(')');
         }
         out.push_str(" AS ");
-        if self.query_parenthesized {
-            out.push('(');
-        }
         self.query.restore_into(out);
-        if self.query_parenthesized {
-            out.push(')');
-        }
         // Go restores the clause for anything that is not CASCADED, spelling
         // the scope with `ViewCheckOption.String()`, which answers "CASCADED"
         // for a value it has no constant for.
@@ -164,7 +156,6 @@ impl crate::Visitable for CreateViewStmt {
             name,
             columns,
             query,
-            query_parenthesized,
             check_option,
         } = self;
         if !crate::Visitable::accept(algorithm, visitor) {
@@ -189,7 +180,6 @@ impl crate::Visitable for CreateViewStmt {
         let _ = name;
         let _ = columns;
         let _ = query;
-        let _ = query_parenthesized;
         let _ = check_option;
         visitor.leave(self)
     }

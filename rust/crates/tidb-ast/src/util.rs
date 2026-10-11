@@ -53,12 +53,10 @@ impl SelectStmt {
 
 impl SetOprStmt {
     fn is_read_only(&self) -> bool {
-        self.lock.is_none()
-            && self.outer_lock.is_none()
-            && self.terms.iter().all(|term| match &term.body {
-                SetOprTermBody::Select(select) => select.is_read_only(),
-                SetOprTermBody::Nested(set_operation) => set_operation.is_read_only(),
-            })
+        self.terms.iter().all(|term| match &term.body {
+            SetOprTermBody::Select(select) => select.is_read_only(),
+            SetOprTermBody::Nested(set_operation) => set_operation.is_read_only(),
+        })
     }
 }
 

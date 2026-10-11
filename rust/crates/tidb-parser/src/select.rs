@@ -33,12 +33,14 @@
 //! - The FIRST term's own trailing `ORDER BY`/`LIMIT`/lock (disambiguated
 //!   by a following set operator) all stay together as that term's own —
 //!   `Parser::parse_select_or_setopr`'s own eager tail-parse handles this.
-//! - The LAST term's trailing tail (no following operator left to
-//!   disambiguate it) is the WHOLE statement's own, REGARDLESS of whether
-//!   that last term was parenthesized (confirmed: `(SELECT a FROM t1)
-//!   UNION ALL (SELECT a FROM t2) ORDER BY 1 LIMIT 10`, both terms
-//!   parenthesized, still has a real statement-level tail after the last
-//!   one) — `Parser::parse_setopr_rest`'s own loop handles this.
+//! - The LAST term's trailing `ORDER BY`/`LIMIT` (no following operator
+//!   left to disambiguate them) are the WHOLE statement's own, REGARDLESS
+//!   of whether that last term was parenthesized (confirmed: `(SELECT a
+//!   FROM t1) UNION ALL (SELECT a FROM t2) ORDER BY 1 LIMIT 10`, both
+//!   terms parenthesized, still has a real statement-level tail after the
+//!   last one) — `Parser::parse_setopr_rest`'s own loop handles this. Its
+//!   locking clause stays on that last SELECT (Go's `SetOprStmt` has no
+//!   lock), and after a parenthesized last term it is a syntax error.
 //! - Any MIDDLE term (non-first, non-last) can have its own locking
 //!   clause (confirmed: `t1 UNION t2 FOR UPDATE UNION t3` keeps `FOR
 //!   UPDATE` attached to `t2`) — but its `ORDER BY`/`LIMIT` NEVER attach
@@ -51,7 +53,8 @@
 //!
 //! A sole parenthesized statement folds outer `ORDER BY`/`LIMIT` into the
 //! inner query while retaining `SelectStmt::is_in_braces`. TiDB rejects a
-//! locking clause or `INTO OUTFILE` at that outer position.
+//! locking clause or `INTO OUTFILE` at that outer position: Go's
+//! `maybeParseUnion` reads only `ORDER BY`/`LIMIT` after the `)`.
 //!
 //! A SOLE parenthesized set operation (`(SELECT ... UNION SELECT ...)`) is
 //! represented separately by [`tidb_ast::SetOprStmt::is_in_braces`]. Its
@@ -178,11 +181,13 @@ impl Parser {
                 QueryStmt::Select(mut select) => {
                     select.with = Some(with);
                     select.is_in_braces = true;
+                    select.with_before_braces = true;
                     QueryStmt::Select(select)
                 }
                 QueryStmt::SetOpr(mut setopr) => {
                     setopr.with = Some(with);
                     setopr.is_in_braces = true;
+                    setopr.with_before_braces = true;
                     QueryStmt::SetOpr(setopr)
                 }
             });
@@ -232,14 +237,34 @@ impl Parser {
         match first {
             SetOprTermBody::Select(mut sel) => {
                 if first_braces {
-                    let (order_by, limit, lock) = self.parse_order_limit_lock()?;
-                    if lock.is_some() {
-                        return Err(self.err_here(
-                            "a parenthesized SELECT cannot carry an outer locking clause",
-                        ));
+                    let (order_by, limit) = self.parse_order_limit()?;
+                    // Go `maybeParseUnion`: a braced SELECT that already has
+                    // its own ORDER BY or LIMIT keeps them, and the outer ones
+                    // go to a one-term set operation wrapped around it.
+                    if (!order_by.is_empty() || limit.is_some())
+                        && (!sel.order_by.is_empty() || sel.limit.is_some())
+                    {
+                        return Ok(QueryStmt::SetOpr(Box::new(SetOprStmt {
+                            with: None,
+                            is_in_braces: false,
+                            with_before_braces: false,
+                            terms: vec![SetOprTerm {
+                                op: None,
+                                in_braces: true,
+                                body: SetOprTermBody::Select(sel),
+                            }],
+                            order_by,
+                            limit,
+                            outer_order_by: Vec::new(),
+                            outer_limit: None,
+                        })));
                     }
-                    sel.order_by = order_by;
-                    sel.limit = limit;
+                    if !order_by.is_empty() {
+                        sel.order_by = order_by;
+                    }
+                    if limit.is_some() {
+                        sel.limit = limit;
+                    }
                     sel.is_in_braces = true;
                 } else {
                     if self.is_kw("INTO") && {
@@ -261,10 +286,9 @@ impl Parser {
             // SELECT 2) ORDER BY 1` becomes `(SELECT 1 UNION SELECT 2
             // ORDER BY 1)`.
             SetOprTermBody::Nested(mut setopr) => {
-                let (order_by, limit, lock) = self.parse_order_limit_lock()?;
+                let (order_by, limit) = self.parse_order_limit()?;
                 setopr.outer_order_by = order_by;
                 setopr.outer_limit = limit;
-                setopr.outer_lock = lock;
                 setopr.is_in_braces = true;
                 Ok(QueryStmt::SetOpr(setopr))
             }
@@ -493,6 +517,7 @@ impl Parser {
         Ok(SelectStmt {
             kind: SelectStatementKind::Select,
             is_in_braces: false,
+            with_before_braces: false,
             with: None,
             hints,
             priority,
@@ -538,6 +563,7 @@ impl Parser {
         Ok(SelectStmt {
             kind: SelectStatementKind::Table,
             is_in_braces: false,
+            with_before_braces: false,
             with: None,
             hints: Vec::new(),
             priority: tidb_ast::StatementPriority::None,
@@ -620,6 +646,7 @@ impl Parser {
         Ok(SelectStmt {
             kind: SelectStatementKind::Values,
             is_in_braces: false,
+            with_before_braces: false,
             with: None,
             hints: Vec::new(),
             priority: tidb_ast::StatementPriority::None,
@@ -709,6 +736,22 @@ impl Parser {
     fn parse_order_limit_lock(
         &mut self,
     ) -> PResult<(Vec<OrderItem>, Option<Limit>, Option<tidb_ast::SelectLock>)> {
+        self.parse_order_limit_maybe_lock(true)
+    }
+
+    /// The `ORDER BY`/`LIMIT` that Go's `maybeParseUnion` folds after a
+    /// parenthesized query: no locking clause, which only a SELECT's own
+    /// `parseSelectStmt` reads, so a `FOR UPDATE` after the `)` is left
+    /// unparsed and is Go's syntax error at that token.
+    fn parse_order_limit(&mut self) -> PResult<(Vec<OrderItem>, Option<Limit>)> {
+        let (order_by, limit, _) = self.parse_order_limit_maybe_lock(false)?;
+        Ok((order_by, limit))
+    }
+
+    fn parse_order_limit_maybe_lock(
+        &mut self,
+        accept_lock: bool,
+    ) -> PResult<(Vec<OrderItem>, Option<Limit>, Option<tidb_ast::SelectLock>)> {
         let mut order_by = Vec::new();
         let mut limit = None;
         let mut lock = None;
@@ -742,7 +785,7 @@ impl Parser {
                     offset: None,
                     count,
                 });
-            } else if self.is_kw("FOR") || self.is_kw("LOCK") {
+            } else if accept_lock && (self.is_kw("FOR") || self.is_kw("LOCK")) {
                 if lock.is_some() {
                     return Err(self.err_here("duplicate locking clause"));
                 }
@@ -909,15 +952,11 @@ impl Parser {
             in_braces: first_braces,
             body: first,
         }];
-        // Statement-level ORDER BY / LIMIT / locking clause apply to the
-        // whole set operation — populated below from whichever term
-        // turns out to be the LAST one (see
-        // `Parser::parse_select_or_setopr`'s own doc for why real
-        // MySQL/TiDB attaches a trailing tail there with no term-level
-        // owner left to disambiguate it).
+        // Statement-level ORDER BY / LIMIT apply to the whole set
+        // operation -- populated below from whichever term writes them
+        // (Go's parseSetOprRest moves them off the right-hand SELECT).
         let mut order_by = Vec::new();
         let mut limit = None;
-        let mut lock = None;
         while self.peek_set_op().is_some() {
             let op = self.parse_set_op()?;
             let (in_braces, mut body) = self.parse_one_term()?;
@@ -930,7 +969,11 @@ impl Parser {
             // FROM t2) ORDER BY 1 LIMIT 10`, both terms parenthesized,
             // still has a real trailing statement-level tail after the
             // last one, not folded into it).
-            let (term_order_by, term_limit, term_lock) = self.parse_order_limit_lock()?;
+            // Only a bare SELECT reads a locking clause (Go's
+            // `parseSelectStmt`); after a parenthesized term `FOR UPDATE`
+            // is left for the caller's syntax error.
+            let (term_order_by, term_limit, term_lock) =
+                self.parse_order_limit_maybe_lock(!in_braces)?;
             if in_braces
                 && (!term_order_by.is_empty() || term_limit.is_some())
                 && self.peek_set_op().is_some()
@@ -949,27 +992,17 @@ impl Parser {
             // next to `t2`). A later occurrence overwrites an earlier
             // one, same "last one wins" rule as a single repeated
             // `LIMIT`/`ORDER BY`. The LOCKING clause does NOT share this
-            // restriction: it sticks to a specific non-first, non-last
-            // term exactly like it does for the first term (confirmed:
-            // `t1 UNION t2 FOR UPDATE UNION t3` keeps `FOR UPDATE`
-            // attached to `t2`) — but only when that term is a plain
-            // `SELECT`; a NESTED term has no term-level lock slot of its
-            // own to redirect onto (an obscure, unconfirmed-in-the-wild
-            // combination — `t1 UNION (t2 UNION t3) FOR UPDATE UNION
-            // t4` — so it deliberately falls back to the statement-level
-            // `lock` below instead of inventing one).
+            // restriction: it stays on the bare SELECT it follows, the
+            // last one included (Go keeps `LockInfo` on that SelectStmt).
             if !term_order_by.is_empty() {
                 order_by = term_order_by;
             }
             if term_limit.is_some() {
                 limit = term_limit;
             }
-            match &mut body {
-                SetOprTermBody::Select(sel) if self.peek_set_op().is_some() => {
+            if let SetOprTermBody::Select(sel) = &mut body {
+                if !in_braces {
                     sel.lock = term_lock;
-                }
-                _ => {
-                    lock = term_lock;
                 }
             }
             terms.push(SetOprTerm {
@@ -981,13 +1014,12 @@ impl Parser {
         Ok(SetOprStmt {
             with: None,
             is_in_braces: false,
+            with_before_braces: false,
             terms,
             order_by,
             limit,
-            lock,
             outer_order_by: Vec::new(),
             outer_limit: None,
-            outer_lock: None,
         })
     }
 

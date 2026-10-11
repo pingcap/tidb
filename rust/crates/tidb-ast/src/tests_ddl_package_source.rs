@@ -125,6 +125,7 @@ fn empty_select() -> crate::SelectStmt {
     crate::SelectStmt {
         kind: Default::default(),
         is_in_braces: false,
+        with_before_braces: false,
         with: None,
         hints: Vec::new(),
         priority: Default::default(),
@@ -306,7 +307,6 @@ fn ddl_visitor_cover() {
                 name: vec!["v".to_string()],
                 columns: Vec::new(),
                 query: NodeBox::new(crate::QueryStmt::Select(Box::new(empty_select()))),
-                query_parenthesized: false,
                 check_option: ViewCheckOption::default(),
             }))),
             0,

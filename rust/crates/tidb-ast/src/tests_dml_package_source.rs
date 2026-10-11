@@ -102,6 +102,7 @@ fn empty_select() -> crate::SelectStmt {
     crate::SelectStmt {
         kind: Default::default(),
         is_in_braces: false,
+        with_before_braces: false,
         with: None,
         hints: Vec::new(),
         priority: Default::default(),
@@ -365,13 +366,12 @@ fn dml_visitor_cover() {
     let set_opr = SetOprStmt {
         with: None,
         is_in_braces: false,
+        with_before_braces: false,
         terms: Vec::new(),
         order_by: Vec::new(),
         limit: None,
-        lock: None,
         outer_order_by: Vec::new(),
         outer_limit: None,
-        outer_lock: None,
     };
     check_row(
         "set operation",
