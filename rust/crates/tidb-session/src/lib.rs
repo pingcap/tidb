@@ -634,6 +634,9 @@ pub struct Session {
     /// `LOCK TABLES` lock on, by table ID ([`crate::table_lock`]).
     locked_tables: std::collections::BTreeMap<i64, tidb_model::TableLockTpInfo>,
     selected_lock_keys: Option<tidb_executor::select_lock::SelectedLockKeys>,
+    /// The running statement's read view and lock step inside an in-process
+    /// transaction ([`Session::begin_transaction_statement`]).
+    transaction_statement: Option<txn::TransactionStatement>,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
     /// which only a statement that ALLOCATED an auto value updates.
     last_insert_id: u64,
@@ -998,6 +1001,7 @@ impl Session {
             advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
             locked_tables: std::collections::BTreeMap::new(),
             selected_lock_keys: None,
+            transaction_statement: None,
             last_insert_id: 0,
             statement_insert_id: 0,
             statement_message: String::new(),

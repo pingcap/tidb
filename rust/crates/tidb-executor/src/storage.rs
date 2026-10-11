@@ -185,10 +185,11 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// Attaches the transaction's staged-write log for one table write, or
     /// detaches it with `None`. Go's membuffer remembers which keys a
     /// transaction wrote and which an INSERT presumed absent; a backend that
-    /// writes through -- the in-process store inside an optimistic
-    /// transaction -- keeps that record in the attached log, so
-    /// [`Self::get_local`] reads it and COMMIT checks the presumed keys. A
-    /// backend with staged writes of its own ignores it.
+    /// writes through -- the in-process store inside a transaction -- keeps
+    /// that record in the attached log, so COMMIT replays the written keys
+    /// and, in an optimistic transaction, [`Self::get_local`] reads it and
+    /// COMMIT checks the presumed keys. A backend with staged writes of its
+    /// own ignores it.
     fn attach_txn_staging(&mut self, staging: Option<crate::kv_table::TxnStaging>) {
         let _ = staging;
     }
@@ -412,8 +413,8 @@ impl StorageIterator for MaterializedStorageIterator {
 #[derive(Clone, Debug, Default)]
 pub struct MemTableStorage {
     inner: MemStorage,
-    /// The transaction's staged writes while a write runs inside an
-    /// optimistic transaction (see [`TableStorage::attach_txn_staging`]).
+    /// The transaction's staged writes while a write runs inside a
+    /// transaction (see [`TableStorage::attach_txn_staging`]).
     staging: Option<crate::kv_table::TxnStaging>,
 }
 
@@ -452,7 +453,7 @@ impl TableStorage for MemTableStorage {
     /// has nothing staged. Without a log every write is the statement's own
     /// and committed at once, so the ordinary read answers.
     fn get_local(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
-        let Some(staging) = &self.staging else {
+        let Some(staging) = self.staging.as_ref().filter(|staging| staging.optimistic) else {
             return self.get(key);
         };
         if !staging.writes.contains(staging.table_id, key.as_bytes()) {
@@ -465,7 +466,7 @@ impl TableStorage for MemTableStorage {
     }
 
     fn mark_presume_key_not_exists_with_hint(&mut self, key: &Key, value: &str, index: &str) {
-        if let Some(staging) = &self.staging {
+        if let Some(staging) = self.staging.as_ref().filter(|staging| staging.optimistic) {
             staging.writes.presume(crate::kv_table::PresumedKey {
                 table_id: staging.table_id,
                 key: key.as_bytes().to_vec(),

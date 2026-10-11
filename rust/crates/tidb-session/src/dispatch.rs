@@ -164,7 +164,7 @@ fn sem_stmt_view(stmt: &Stmt) -> tidb_util::sem_v2::StmtView {
 /// false for every locking read, including a lock attached to a nested query
 /// or set-operation wrapper, so those statements must populate the MDL map
 /// even under autocommit.
-fn query_has_lock(stmt: &Stmt) -> bool {
+pub(crate) fn query_has_lock(stmt: &Stmt) -> bool {
     struct LockFinder {
         found: bool,
     }
@@ -2846,8 +2846,36 @@ impl Session {
         // The jobs this statement's DDL submits are finished into the DDL
         // history once it completes, as Go's job worker finishes them.
         drop(self.ddl_job_sink.take());
-        let execution =
+        // A statement this one runs inside its own execution belongs to the
+        // outer statement's lock step, which only the outer call finishes.
+        let nested = self.transaction_statement.is_some();
+        let retry_stmt =
+            (!nested && self.transaction_statement_may_retry(&stmt)).then(|| stmt.clone());
+        let mut execution =
             self.execute_parsed_statement_inner(sql, stmt, prepared, select_plan, dml_plan);
+        let mut retries = tidb_exec::pessimistic_lock_error::PessimisticStatementRetry::default();
+        while !nested {
+            match self.finish_transaction_statement(execution) {
+                crate::txn::StatementFinish::Done(result) => {
+                    execution = result;
+                    break;
+                }
+                // Go `handlePessimisticLockError`: rerun the statement over a
+                // fresh `for_update_ts`, rebuilding its plan.
+                crate::txn::StatementFinish::Retry => {
+                    execution = match (retries.retry(), retry_stmt.clone()) {
+                        (Ok(()), Some(stmt)) => {
+                            self.execute_parsed_statement_inner(sql, stmt, prepared, None, None)
+                        }
+                        (Err(error), _) => Err(DriverError::Mysql(tidb_executor::MysqlError::new(
+                            error.code,
+                            error.message,
+                        ))),
+                        (Ok(()), None) => Err(DriverError::Txn(crate::TxnErrorKind::WriteConflict)),
+                    };
+                }
+            }
+        }
         self.finish_submitted_ddl_jobs(sql, execution.is_ok());
         let mut execution = execution?;
         if was_autocommit_statement && !self.in_transaction() {
@@ -3225,11 +3253,7 @@ impl Session {
         // no database selected (captured). The driver's own
         // `split_table_path` raises it at the resolution point, which is
         // where Go's does.
-        if matches!(stmt, Stmt::Query(_)) && self.txn.is_some() && query_has_lock(&stmt) {
-            if let Some(txn) = self.txn.as_mut() {
-                txn.locking_read = true;
-            }
-        }
+        self.begin_transaction_statement(&stmt)?;
         let output = match &stmt {
             Stmt::Query(query) => {
                 let current_db = self.current_db.clone();

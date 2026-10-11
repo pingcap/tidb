@@ -89,7 +89,13 @@ impl<'a> UpdateRecords<'a> {
             )))
         })?;
         if old == new {
-            if let (TableEntry::Kv(kv), Some(keys)) = (entry, ctx.selected_lock_keys()) {
+            // Go `addUnchangedKeysForLockByRow` locks an unchanged row only in
+            // a pessimistic transaction.
+            if let (TableEntry::Kv(kv), Some(keys), true) = (
+                entry,
+                ctx.selected_lock_keys(),
+                ctx.pessimistic_transaction(),
+            ) {
                 keys.insert(kv.row_lock_key(id, old, ctx).map_err(kv_write_error)?);
             }
             return Ok(UpdateOutcome::Unchanged);

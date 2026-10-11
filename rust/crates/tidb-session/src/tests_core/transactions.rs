@@ -141,6 +141,189 @@ fn nested_begin_commits_and_stray_commit_is_a_no_op() {
         .is_err());
 }
 
+/// Go `TestIssue21447`: a pessimistic statement that writes reads the
+/// latest committed rows (`for_update_ts`), as a locking read does, while a
+/// plain read stays on the transaction's snapshot; and the transaction
+/// commits over the peer's commit, whose row it locked after reading it.
+#[test]
+fn a_pessimistic_write_reads_the_latest_committed_row() {
+    let mut first = Session::new();
+    first
+        .run("CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(40))")
+        .unwrap();
+    first.run("INSERT INTO t1 VALUES (1, 'abc')").unwrap();
+    let mut second = Session::with_catalog(first.shared_catalog());
+
+    first.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    second.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert_eq!(
+        second
+            .run("UPDATE t1 SET name = 'xyz' WHERE id = 1")
+            .unwrap(),
+        StmtResult::Affected(1)
+    );
+    second.control_transaction("COMMIT").unwrap();
+
+    assert_eq!(
+        first
+            .run("UPDATE t1 SET name = 'xyz' WHERE id = 1")
+            .unwrap(),
+        StmtResult::Affected(0),
+        "the update reads the row the peer committed"
+    );
+    let read = |session: &mut Session, sql: &str| crate::tests_support::row_text(session.run(sql));
+    assert_eq!(
+        read(&mut first, "SELECT * FROM t1 WHERE id = 1"),
+        [["1", "abc"]]
+    );
+    assert_eq!(
+        read(&mut first, "SELECT * FROM t1 WHERE id = 1 FOR UPDATE"),
+        [["1", "xyz"]]
+    );
+    assert_eq!(
+        read(&mut first, "SELECT * FROM t1 WHERE id IN (1, 2)"),
+        [["1", "abc"]]
+    );
+    first.control_transaction("COMMIT").unwrap();
+
+    // A write over a row a peer changed builds on the peer's value, and the
+    // peer's other rows survive the commit.
+    first
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, KEY (b))")
+        .unwrap();
+    first.run("INSERT INTO t VALUES (1, 0), (2, 0)").unwrap();
+    first.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    first.run("INSERT INTO t VALUES (3, 0)").unwrap();
+    second.run("UPDATE t SET b = 10 WHERE a = 1").unwrap();
+    second.run("INSERT INTO t VALUES (4, 0)").unwrap();
+    first.run("UPDATE t SET b = b + 1 WHERE a = 1").unwrap();
+    first.control_transaction("COMMIT").unwrap();
+    assert_eq!(
+        read(&mut second, "SELECT a, b FROM t ORDER BY a"),
+        [["1", "11"], ["2", "0"], ["3", "0"], ["4", "0"]]
+    );
+    assert_eq!(
+        read(&mut second, "SELECT a FROM t USE INDEX (b) WHERE b = 11"),
+        [["1"]],
+        "the index entry follows the merged row"
+    );
+}
+
+/// Go's statement rollback discards the failed statement's staging buffer,
+/// so a key only that statement wrote is not the transaction's: a later
+/// pessimistic statement reads the row a peer committed under it.
+#[test]
+fn a_failed_statement_leaves_no_write_for_later_reads() {
+    let mut first = Session::new();
+    first
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    first.run("INSERT INTO t VALUES (1, 0)").unwrap();
+    let mut second = Session::with_catalog(first.shared_catalog());
+
+    first.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert_eq!(
+        first
+            .run("INSERT INTO t VALUES (2, 0), (1, 0)")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1062
+    );
+    second.run("INSERT INTO t VALUES (2, 5)").unwrap();
+    assert_eq!(
+        first.run("UPDATE t SET b = b + 1 WHERE a = 2").unwrap(),
+        StmtResult::Affected(1)
+    );
+    first.control_transaction("COMMIT").unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(second.run("SELECT a, b FROM t ORDER BY a")),
+        [["1", "0"], ["2", "6"]]
+    );
+}
+
+/// Go `TestSelectForUpdateOf`: a row another pessimistic transaction locked
+/// fails `FOR UPDATE NOWAIT` with 3572 until that transaction ends, and
+/// `FOR UPDATE OF t` locks only `t`'s rows.
+#[test]
+fn nowait_fails_on_a_row_another_transaction_locked() {
+    let mut first = Session::new();
+    first.run("CREATE TABLE t (i INT)").unwrap();
+    first.run("CREATE TABLE t1 (i INT)").unwrap();
+    first.run("INSERT INTO t VALUES (1)").unwrap();
+    first.run("INSERT INTO t1 VALUES (1)").unwrap();
+    let mut second = Session::with_catalog(first.shared_catalog());
+
+    first.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    first
+        .run("SELECT * FROM t, t1 WHERE t.i = t1.i FOR UPDATE OF t")
+        .unwrap();
+    second.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    second.run("SELECT * FROM t1 FOR UPDATE").unwrap();
+    assert_eq!(
+        second
+            .run("SELECT * FROM t FOR UPDATE NOWAIT")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        3572
+    );
+    assert!(
+        second.in_transaction(),
+        "a lock failure ends the statement only"
+    );
+    first.control_transaction("ROLLBACK").unwrap();
+    second.run("SELECT * FROM t FOR UPDATE NOWAIT").unwrap();
+    second.control_transaction("ROLLBACK").unwrap();
+
+    // A closed connection's transaction releases its locks too.
+    let mut third = Session::with_catalog(first.shared_catalog());
+    third.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    third.run("UPDATE t SET i = 2").unwrap();
+    second.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert_eq!(
+        second
+            .run("SELECT * FROM t FOR UPDATE NOWAIT")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        3572
+    );
+    drop(third);
+    second.run("SELECT * FROM t FOR UPDATE NOWAIT").unwrap();
+}
+
+/// Go `TestSelectForUpdate`: an optimistic transaction's locking read
+/// conflicts at COMMIT only on a row a peer committed after `BEGIN`.
+#[test]
+fn an_optimistic_locking_read_conflicts_on_its_own_rows() {
+    let mut first = Session::new();
+    first
+        .run("CREATE TABLE t (c1 INT, c2 INT, c3 INT)")
+        .unwrap();
+    first
+        .run("INSERT INTO t VALUES (11, 2, 3), (12, 2, 3), (13, 2, 3)")
+        .unwrap();
+    let mut second = Session::with_catalog(first.shared_catalog());
+
+    first.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    first
+        .run("SELECT * FROM t WHERE c1 = 11 FOR UPDATE")
+        .unwrap();
+    second.run("UPDATE t SET c2 = 211 WHERE c1 = 12").unwrap();
+    first.control_transaction("COMMIT").unwrap();
+
+    first.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    first
+        .run("SELECT * FROM t WHERE c1 = 11 FOR UPDATE")
+        .unwrap();
+    second.run("UPDATE t SET c2 = 211 WHERE c1 = 11").unwrap();
+    assert!(matches!(
+        first.control_transaction("COMMIT"),
+        Err(DriverError::Txn(TxnErrorKind::WriteConflict))
+    ));
+}
+
 /// `BEGIN PESSIMISTIC` / `BEGIN OPTIMISTIC` and `@@tidb_txn_mode` decide the
 /// mode a transaction opens in, exactly as Go's `newProviderWithRequest`
 /// does. This tier takes no row locks in either mode -- its store is one

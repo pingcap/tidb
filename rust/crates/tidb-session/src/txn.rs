@@ -27,8 +27,8 @@ use tidb_ast::{SessionStmt, Stmt};
 use tidb_datatype::Datum;
 use tidb_executor::{Catalog, DriverError};
 
+use crate::{statement_kind_of, Session, SessionTxnMode, TxnErrorKind};
 use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
-use crate::{Session, SessionTxnMode, TxnErrorKind};
 use tidb_util::stringutil::go_to_lower;
 
 /// A persisted schema image and the storage authority's retained timestamp guard.
@@ -63,12 +63,23 @@ pub(crate) struct Transaction {
     /// The in-process store writes through into `working`, so a reader that
     /// must skip the membuffer (`TABLESAMPLE`) reads this image instead.
     pub(crate) read_snapshot: std::sync::Arc<Catalog>,
-    /// Whether a locking read (`SELECT ... FOR UPDATE/SHARE`) ran in this
-    /// transaction. Go records its keys as `Op_Lock` mutations, which COMMIT
-    /// prewrites even when nothing else was written; this store keeps no
-    /// per-key record of them, so such a transaction keeps the whole-catalog
-    /// conflict check.
+    /// Whether a locking read (`SELECT ... FOR UPDATE/SHARE`) ran in a
+    /// transaction whose rows live outside its image (a cluster session's,
+    /// whose owner takes the real locks): COMMIT keeps the whole-catalog
+    /// check for it.
     pub(crate) locking_read: bool,
+    /// Whether this transaction's rows live in its catalog image -- the
+    /// in-process store -- so its statements read, lock and stage them here
+    /// rather than through an outer owner's buffer and TiKV.
+    writes_in_image: bool,
+    /// Go's `Op_Lock` mutations of an optimistic transaction: the keys its
+    /// locking reads selected. COMMIT prewrites them even when nothing else
+    /// was written, and conflicts on one a peer committed after `BEGIN`.
+    lock_keys: Vec<Vec<u8>>,
+    /// This transaction's claim on the store's pessimistic locks -- a
+    /// pessimistic transaction's `Op_Lock` mutations; dropping the
+    /// transaction releases them. A stale read takes none.
+    lock_guard: Option<tidb_executor::PessimisticLockGuard>,
     base_version: u64,
     /// The transaction's start timestamp -- Go `TxnCtx.StartTS`, which
     /// `@@tidb_current_ts` reports. For a stale transaction it IS the as-of
@@ -137,6 +148,12 @@ impl Transaction {
             working,
             read_snapshot: std::sync::Arc::new(catalog.clone()),
             locking_read: false,
+            writes_in_image: !catalog.any_table_has_external_statement_rollback(),
+            lock_keys: Vec::new(),
+            lock_guard: Some(tidb_executor::PessimisticLockGuard::new(
+                catalog.pessimistic_locks(),
+                start_ts,
+            )),
             base_version: catalog.version(),
             start_ts,
             stale_read_ts: None,
@@ -147,6 +164,38 @@ impl Transaction {
             local_temporary_at_open,
         }
     }
+}
+
+/// One statement's transactional read and lock step inside an in-process
+/// transaction -- Go `ExecStmt`'s pessimistic statement around its executor
+/// (`handlePessimisticDML`, `runPessimisticSelectForUpdate`).
+pub(crate) struct TransactionStatement {
+    /// The committed image the statement read at its `for_update_ts`, for a
+    /// statement that reads the latest committed rows; `None` for one that
+    /// reads the transaction's snapshot.
+    view_base: Option<Catalog>,
+    /// The transaction's image before the statement, set aside while the
+    /// statement runs over its view.
+    saved: Option<Catalog>,
+    /// Whether the view IS the transaction's image -- nothing committed since
+    /// `BEGIN` -- so the statement's writes need no folding back.
+    view_is_image: bool,
+    /// Whether the transaction is pessimistic, so the statement locks what
+    /// it read for writing.
+    pessimistic: bool,
+    /// Whether the statement is a locking read, whose rows are held back
+    /// until their keys are locked.
+    locking_read: bool,
+}
+
+/// How a statement's lock step ended.
+pub(crate) enum StatementFinish {
+    /// The statement's outcome, locks taken.
+    Done(Result<crate::record_set::PendingExecution, DriverError>),
+    /// A key the statement read was committed by another transaction before
+    /// the lock could be taken: Go's pessimistic write conflict, which reruns
+    /// the statement at a newer `for_update_ts`.
+    Retry,
 }
 
 /// One entry of a transaction's savepoint stack.
@@ -549,6 +598,9 @@ impl Session {
             base_version: snapshot.version(),
             read_snapshot: std::sync::Arc::new(snapshot.clone()),
             locking_read: false,
+            writes_in_image: false,
+            lock_keys: Vec::new(),
+            lock_guard: None,
             working: snapshot,
             start_ts: ts,
             stale_read_ts: Some(ts),
@@ -892,7 +944,14 @@ impl Session {
             }
             return Ok(());
         }
-        if txn.working.version() == txn.base_version && !txn.locking_read {
+        if txn.working.version() == txn.base_version
+            && txn.lock_keys.is_empty()
+            && !txn.locking_read
+            && !txn
+                .lock_guard
+                .as_ref()
+                .is_some_and(|guard| guard.locks().holds_any(guard.owner()))
+        {
             // client-go `KVTxn.Commit` returns before prewrite when the
             // membuffer holds no mutation (`committer.mutations.Len() == 0`),
             // so a transaction that wrote nothing commits whatever its peers
@@ -939,42 +998,50 @@ impl Session {
                 key: presumed.index,
             });
         }
-        if shared.version() == txn.base_version {
+        let moved = shared.version() != txn.base_version;
+        let rebased = if moved
+            && !txn.mode.is_pessimistic()
+            && !shared.raw_values_match(&txn.read_snapshot, &txn.lock_keys)
+        {
+            // Go prewrites an optimistic transaction's `Op_Lock` keys like
+            // its writes: one a peer committed after `BEGIN` is a conflict.
+            Err(tidb_executor::RebaseRefusal::WriteConflict)
+        } else if !moved {
             *shared = txn.working;
+            Ok(())
+        } else if txn.locking_read {
+            // A locking read whose keys an outer owner holds needs the
+            // unmoved image.
+            Err(tidb_executor::RebaseRefusal::NotRebasable)
         } else {
             // Go's commit fails only on a key another transaction committed
             // meanwhile, or on a touched table whose definition changed; a
-            // commit to an unrelated table is no conflict. The locking reads
-            // this store keeps no per-key record of still need the unmoved
-            // image.
-            let rebased = if txn.locking_read {
-                Err(tidb_executor::RebaseRefusal::NotRebasable)
-            } else {
-                shared.rebase_transaction(
-                    &txn.read_snapshot,
-                    &txn.working,
-                    &self.staged_writes,
-                    !txn.mode.is_pessimistic(),
-                )
+            // commit to an unrelated table is no conflict, and a key this
+            // transaction's pessimistic lock covers was read after any
+            // commit that preceded the lock.
+            let held = |key: &[u8]| {
+                txn.lock_guard
+                    .as_ref()
+                    .is_some_and(|guard| guard.locks().holds(guard.owner(), key))
             };
-            if let Err(refusal) = rebased {
-                drop(shared);
-                self.clear_table_delta();
-                if let Some(process) = &self.process {
-                    process.registry().transaction_finished(process.id());
-                }
-                return Err(match refusal {
-                    tidb_executor::RebaseRefusal::SchemaChanged => {
-                        let error =
-                            tidb_domain::schema_checker::SchemaCheckError::InfoSchemaChanged;
-                        DriverError::DdlCoded {
-                            errno: error.code(),
-                            message: error.message(),
-                        }
-                    }
-                    _ => DriverError::Txn(TxnErrorKind::WriteConflict),
-                });
+            shared.rebase_transaction(&txn.read_snapshot, &txn.working, &self.staged_writes, &held)
+        };
+        if let Err(refusal) = rebased {
+            drop(shared);
+            self.clear_table_delta();
+            if let Some(process) = &self.process {
+                process.registry().transaction_finished(process.id());
             }
+            return Err(match refusal {
+                tidb_executor::RebaseRefusal::SchemaChanged => {
+                    let error = tidb_domain::schema_checker::SchemaCheckError::InfoSchemaChanged;
+                    DriverError::DdlCoded {
+                        errno: error.code(),
+                        message: error.message(),
+                    }
+                }
+                _ => DriverError::Txn(TxnErrorKind::WriteConflict),
+            });
         }
         // The commit is durable in this store the moment the shared catalog
         // holds it; the history snapshot and Go's `LastTxnInfo` record
@@ -1243,6 +1310,221 @@ impl Session {
                 self.with_staged_catalog_for_table(database, table_name, body)
             }
             None => self.with_staged_catalog(body),
+        }
+    }
+
+    /// Opens the running statement's transactional read and lock step, Go's
+    /// `OnStmtStart` for an in-process transaction.
+    ///
+    /// Go reads an INSERT, UPDATE, DELETE or locking SELECT of a pessimistic
+    /// transaction at its `for_update_ts` (`executorBuilder.getSnapshotTS`),
+    /// the latest committed rows beneath the transaction's own writes, and
+    /// every statement of a READ-COMMITTED one at a fresh timestamp; any
+    /// other statement reads the transaction's snapshot. Such a statement
+    /// runs over a view of the shared catalog with the transaction's writes
+    /// laid over it, and its lock operators record the keys to lock. A
+    /// session whose transaction an outer owner drives (a cluster node, which
+    /// installs its own key collector) is left to that owner.
+    pub(crate) fn begin_transaction_statement(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
+        let locking_read = matches!(stmt, Stmt::Query(_)) && crate::dispatch::query_has_lock(stmt);
+        let Some(txn) = self.txn.as_mut() else {
+            return Ok(());
+        };
+        if txn.is_stale_read()
+            || self.statement_snapshot.is_some()
+            || self.selected_lock_keys.is_some()
+        {
+            return Ok(());
+        }
+        if !txn.writes_in_image {
+            txn.locking_read |= locking_read;
+            return Ok(());
+        }
+        let pessimistic = txn.mode.is_pessimistic();
+        let for_update_read = pessimistic
+            && (locking_read
+                || txn.read_committed
+                || self.statement_kind == crate::StatementKind::Dml);
+        if !for_update_read && !locking_read {
+            return Ok(());
+        }
+        let mut statement = TransactionStatement {
+            view_base: None,
+            saved: None,
+            view_is_image: true,
+            pessimistic,
+            locking_read,
+        };
+        if for_update_read {
+            self.staged_writes.begin_statement_log();
+            let view_base = self.lock_catalog()?.clone();
+            let Some(txn) = self.txn.as_mut() else {
+                return Ok(());
+            };
+            statement.view_is_image = view_base.version() == txn.base_version;
+            let view = if statement.view_is_image {
+                txn.working.clone()
+            } else {
+                view_base.clone().with_transaction_writes(
+                    &txn.read_snapshot,
+                    &txn.working,
+                    &self.staged_writes,
+                )
+            };
+            statement.saved = Some(std::mem::replace(&mut txn.working, view));
+            statement.view_base = Some(view_base);
+        }
+        self.selected_lock_keys = Some(tidb_executor::select_lock::SelectedLockKeys::new(
+            tidb_txnkv::transaction::LockWaitTime::Timeout(self.lock_wait_timeout()),
+            self.vars().shared_lock_promotion_enabled(),
+        ));
+        self.transaction_statement = Some(statement);
+        Ok(())
+    }
+
+    /// Whether a statement that fails its lock step may be run again: one
+    /// that [`Self::begin_transaction_statement`] reads at `for_update_ts`.
+    pub(crate) fn transaction_statement_may_retry(&self, stmt: &Stmt) -> bool {
+        self.txn.as_ref().is_some_and(|txn| {
+            txn.writes_in_image
+                && !txn.is_stale_read()
+                && txn.mode.is_pessimistic()
+                && (statement_kind_of(stmt) == crate::StatementKind::Dml
+                    || (matches!(stmt, Stmt::Query(_)) && crate::dispatch::query_has_lock(stmt)))
+        })
+    }
+
+    /// Ends the running statement's lock step: Go `handlePessimisticDML`
+    /// and `SelectLockExec`'s `doLockKeys`.
+    ///
+    /// A locking read's rows are drained first, so its lock operator has
+    /// published every key before any row reaches the client. A pessimistic
+    /// statement then locks those keys and every key it wrote; on success its
+    /// writes join the transaction's image, and on any failure the statement
+    /// leaves the image as it found it -- Go's statement rollback, the
+    /// transaction going on. An optimistic transaction only records a locking
+    /// read's keys for COMMIT to check.
+    pub(crate) fn finish_transaction_statement(
+        &mut self,
+        execution: Result<crate::record_set::PendingExecution, DriverError>,
+    ) -> StatementFinish {
+        let Some(statement) = self.transaction_statement.take() else {
+            return StatementFinish::Done(execution);
+        };
+        let collector = self.selected_lock_keys.take();
+        let mut execution = match execution {
+            Ok(execution) => execution,
+            Err(error) => {
+                self.restore_statement_image(statement);
+                return StatementFinish::Done(Err(error));
+            }
+        };
+        if statement.locking_read
+            && matches!(execution, crate::record_set::PendingExecution::Query(_))
+        {
+            match execution.collect(self) {
+                Ok(output) => execution = crate::record_set::PendingExecution::Complete(output),
+                Err(error) => {
+                    self.restore_statement_image(statement);
+                    return StatementFinish::Done(Err(error));
+                }
+            }
+        }
+        let written = self.staged_writes.statement_log_keys();
+        let mut requests = collector
+            .map(|collector| collector.take_requests())
+            .unwrap_or_default();
+        if !statement.pessimistic {
+            self.staged_writes.end_statement_log(true);
+            if let Some(txn) = self.txn.as_mut() {
+                txn.lock_keys
+                    .extend(requests.into_iter().flat_map(|(_, keys)| keys));
+            }
+            return StatementFinish::Done(Ok(execution));
+        }
+        if !written.is_empty() {
+            requests.push((
+                tidb_txnkv::transaction::LockWaitTime::Timeout(self.lock_wait_timeout()),
+                written.clone(),
+            ));
+        }
+        for (wait, keys) in requests {
+            if let Err(finish) = self.acquire_pessimistic_locks(&statement, wait, &keys) {
+                self.restore_statement_image(statement);
+                return finish;
+            }
+        }
+        self.staged_writes.end_statement_log(true);
+        if let (Some(saved), Some(txn)) = (statement.saved, self.txn.as_mut()) {
+            if !statement.view_is_image {
+                let view = std::mem::replace(&mut txn.working, saved);
+                txn.working.absorb_writes(&view, &written);
+            }
+        }
+        StatementFinish::Done(Ok(execution))
+    }
+
+    /// Takes `keys` for this transaction, Go `KVTxn.LockKeys` with the
+    /// statement's wait policy.
+    ///
+    /// The committed rows are checked and the lock taken under the catalog
+    /// lock, so no commit lands between them: a key committed since the
+    /// statement read it asks for the statement to be rerun at a newer
+    /// `for_update_ts`. A key another live transaction holds fails a NOWAIT
+    /// request with 3572 and otherwise waits, with the catalog released, for
+    /// that transaction to end, failing with 1205 when the wait runs out.
+    fn acquire_pessimistic_locks(
+        &self,
+        statement: &TransactionStatement,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+        keys: &[Vec<u8>],
+    ) -> Result<(), StatementFinish> {
+        use tidb_txnkv::transaction::LockWaitTime;
+        let Some(guard) = self.txn.as_ref().and_then(|txn| txn.lock_guard.as_ref()) else {
+            return Ok(());
+        };
+        let deadline = match wait {
+            LockWaitTime::Timeout(timeout) => Some(std::time::Instant::now() + timeout),
+            LockWaitTime::NoWait | LockWaitTime::AlwaysWait => None,
+        };
+        loop {
+            let shared = self
+                .lock_catalog()
+                .map_err(|error| StatementFinish::Done(Err(error)))?;
+            if let Some(base) = &statement.view_base {
+                if shared.version() != base.version() && !shared.raw_values_match(base, keys) {
+                    return Err(StatementFinish::Retry);
+                }
+            }
+            let outcome = guard.locks().try_acquire(guard.owner(), keys);
+            drop(shared);
+            let tidb_executor::LockAcquire::Blocked { holder } = outcome else {
+                return Ok(());
+            };
+            let error = match wait {
+                LockWaitTime::NoWait => (
+                    tidb_error::tidb::errcode::ErrLockAcquireFailAndNoWaitSet,
+                    tidb_error::tidb::errname::ErrLockAcquireFailAndNoWaitSet.raw,
+                ),
+                _ if guard.locks().wait_released(holder, deadline) => continue,
+                _ => (
+                    tidb_error::tidb::errcode::ErrLockWaitTimeout,
+                    tidb_error::tidb::errname::ErrLockWaitTimeout.raw,
+                ),
+            };
+            return Err(StatementFinish::Done(Err(DriverError::Mysql(
+                tidb_executor::MysqlError::new(error.0, error.1),
+            ))));
+        }
+    }
+
+    /// Puts back the transaction's image a statement ran beside, and takes
+    /// the keys only the failed statement wrote back out of the
+    /// transaction's record of its writes.
+    fn restore_statement_image(&mut self, statement: TransactionStatement) {
+        self.staged_writes.end_statement_log(false);
+        if let (Some(saved), Some(txn)) = (statement.saved, self.txn.as_mut()) {
+            txn.working = saved;
         }
     }
 
