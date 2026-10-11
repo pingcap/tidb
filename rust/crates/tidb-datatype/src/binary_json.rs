@@ -1074,13 +1074,21 @@ fn validate_scalar(value: &BinaryJSON) -> Result<(), BinaryJSONError> {
     }
 }
 
+/// Go `valEntryGet`: slices one element out of its container without
+/// validating it. Its only caller, [`decode_node`], validates the element by
+/// decoding it next; validating here too (through [`BinaryJSON::from_raw`])
+/// decoded every subtree twice per level, doubling the cost with each level
+/// of nesting.
 fn decode_binary_entry(
     type_code: u8,
     entry: &[u8],
     container: &[u8],
 ) -> Result<BinaryJSON, BinaryJSONError> {
     if type_code == JSON_TYPE_CODE_LITERAL {
-        return BinaryJSON::from_raw(type_code, vec![entry[0]]);
+        return Ok(BinaryJSON {
+            type_code,
+            value: vec![entry[0]],
+        });
     }
     let offset = u32::from_le_bytes(
         entry
@@ -1091,13 +1099,13 @@ fn decode_binary_entry(
         .get(offset..)
         .ok_or(BinaryJSONError::InvalidBinary)?;
     let length = value_length(type_code, value)?;
-    BinaryJSON::from_raw(
+    Ok(BinaryJSON {
         type_code,
-        value
+        value: value
             .get(..length)
             .ok_or(BinaryJSONError::InvalidBinary)?
             .to_vec(),
-    )
+    })
 }
 
 fn encode_binary_array(values: &[BinaryJSON]) -> Result<BinaryJSON, BinaryJSONError> {
@@ -1518,6 +1526,27 @@ fn format_node(value: &JSONNode) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `expression/json.test`'s 100-deep documents. Each decoded element was
+    /// validated by fully decoding it and then decoded again, doubling the
+    /// work per level: a 20-deep document took 0.7s and a 100-deep one never
+    /// finished, where Go's `valEntryGet` slices each element once.
+    #[test]
+    fn a_document_at_the_maximum_depth_decodes_in_linear_time() {
+        let text = format!("{}1{}", "[".repeat(100), "]".repeat(100));
+        let binary = BinaryJSON::parse(&text).unwrap();
+        assert_eq!(binary.element_depth().unwrap(), 101);
+        assert_eq!(binary.to_string(), text);
+        assert_eq!(
+            BinaryJSON::from_node(&binary.to_node().unwrap()).unwrap(),
+            binary
+        );
+        let started = std::time::Instant::now();
+        for _ in 0..100 {
+            binary.to_node().unwrap();
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
 
     #[test]
     fn test_binary_json_marshal_unmarshal() {
