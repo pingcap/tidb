@@ -352,6 +352,9 @@ pub struct RewriterEnv<'a, C: Columns> {
     /// the probe side of an `IN`-subquery join even though the join was never
     /// written in the FROM clause.
     pub join_hints: std::rc::Rc<crate::plan_builder::from::JoinHints>,
+    /// Go `b.optFlag`, for the bits these builders set
+    /// ([`crate::plan_builder::PlanBuilder::rewriter_opt_flags`]).
+    pub opt_flags: &'a std::cell::Cell<u64>,
 }
 
 impl<C: Columns> RewriterEnv<'_, C> {
@@ -1072,6 +1075,9 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         }
         if force_rewrite || self.env.flags.enable_semi_join_rewrite {
             join.prefer_join_type |= PREFER_REWRITE_SEMI_JOIN;
+            self.env
+                .opt_flags
+                .set(self.env.opt_flags.get() | crate::logical::rule::flags::SEMI_JOIN_REWRITE);
         }
         // Go `buildSemiApply`'s `ap.LogicalJoin.SetPreferredJoinTypeAndOrder(
         // b.TableHints())` (`logical_plan_builder.go:5760`): a subquery was

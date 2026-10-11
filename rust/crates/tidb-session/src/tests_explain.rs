@@ -5998,3 +5998,58 @@ fn prefer_range_pruning_sees_paths_a_cop_property_refuses() {
         "{plan:?}"
     );
 }
+
+/// `SEMI_JOIN_REWRITE()` in an EXISTS subquery: Go's `buildSemiJoin` both
+/// marks the join and raises `FlagSemiJoinRewrite`, so the rule turns the
+/// semi join into an inner join over the de-duplicated inner side, which an
+/// index join can probe. Captured from
+/// `planner/core/casetest/physicalplantest/physical_plan`.
+#[test]
+fn semi_join_rewrite_hint_runs_the_rewrite_rule() {
+    let mut session = Session::new();
+    session
+        .run("create table ta(id int, code int, name varchar(20), index idx_ta_code(code))")
+        .unwrap();
+    session
+        .run("create table tb(id int, code int, name varchar(20))")
+        .unwrap();
+    let plan = row_text(session.run(
+        "explain format = 'plan_tree' select ta.name from ta where exists \
+         (select /*+ semi_join_rewrite() */ 1 from tb where ta.code = tb.code \
+         and tb.name like 'chad9%')",
+    ));
+    assert!(plan[0][0].starts_with("IndexHashJoin"), "{plan:?}");
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("HashAgg") && row[3].starts_with("group by:test.tb.code")),
+        "{plan:?}"
+    );
+}
+
+/// Go `matchProperty` over a clustered common-handle table path matches an
+/// order on its key columns, so a union index merge's ordered partial paths
+/// keep the table path, which wins `cmpAlternatives`' tie by coming first.
+/// Captured from `planner/core/casetest/physicalplantest/physical_plan`.
+#[test]
+fn ordered_union_index_merge_keeps_a_common_handle_table_partial() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table t(c binary(20) not null, primary key (c) clustered, \
+             key k (c), unique key u (c))",
+        )
+        .unwrap();
+    let plan = row_text(session.run(
+        "explain format = 'plan_tree' select min(c) from (select /*+ use_index_merge(t) */ * \
+         from t where c < 'b' or c > 'x' order by c) x",
+    ));
+    let partials: Vec<_> = plan
+        .iter()
+        .filter(|row| row[0].contains("RangeScan"))
+        .collect();
+    assert_eq!(partials.len(), 2, "{plan:?}");
+    assert!(
+        partials.iter().all(|row| row[0].contains("TableRangeScan")),
+        "{plan:?}"
+    );
+}

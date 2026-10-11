@@ -62,13 +62,20 @@ fn partial_matches_order(
         } => paths
             .iter()
             .all(|path| index_partial_matches_order(ds, *index_pos, path.filled(), items)),
-        Partial::Table { .. } => {
-            ds.handle_is_int
-                && items.len() == 1
+        // Go `matchProperty` over a table path: the integer handle alone, or
+        // a clustered common handle's key columns (its `IdxCols`) after the
+        // prefix its ranges pin.
+        Partial::Table { .. } if ds.handle_is_int => {
+            items.len() == 1
                 && ds
                     .handle_cols
                     .first()
                     .is_some_and(|column| column.unique_id == first.col.unique_id)
+        }
+        Partial::Table { filled, .. } => {
+            ds.is_common_handle
+                && !ds.force_no_keep_order_table_path
+                && key_columns_match_order(&filled.common_columns, &filled.detached.ranges, items)
         }
         Partial::Index {
             index_pos, filled, ..
@@ -84,14 +91,23 @@ fn index_partial_matches_order(
     filled: &crate::access_path::ordinary::FilledIndexPath,
     items: &[crate::physical_property::SortItem],
 ) -> bool {
-    let ranges = &filled.detached.ranges;
     let index = &ds.indexes[index_pos];
     if ds.force_no_keep_order_index_ids.contains(&index.id) {
         return false;
     }
     // Match the same normalized key layout used by ordinary ranges,
     // including eligible appended handles after fixed declared keys.
-    let columns = &filled.columns;
+    key_columns_match_order(&filled.columns, &filled.detached.ranges, items)
+}
+
+/// Go `isMatchProp` over one partial path's key columns: each sort column
+/// is a full-length key column reached after columns every range pins to a
+/// single value.
+fn key_columns_match_order(
+    columns: &[(tidb_expr::column::Column, i64)],
+    ranges: &[crate::ranger::types::Range],
+    items: &[crate::physical_property::SortItem],
+) -> bool {
     let mut offset = 0;
     for item in items {
         let mut found = false;

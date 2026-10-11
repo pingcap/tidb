@@ -61,6 +61,7 @@ struct Fixture {
     plan_ids: PlanIdAllocator,
     column_ids: ColumnIdAllocator,
     ctx: NoColumns,
+    opt_flags: std::cell::Cell<u64>,
 }
 
 impl Fixture {
@@ -69,6 +70,7 @@ impl Fixture {
             plan_ids: PlanIdAllocator::new(),
             column_ids: ColumnIdAllocator::new(),
             ctx: NoColumns,
+            opt_flags: std::cell::Cell::new(0),
         }
     }
 
@@ -81,6 +83,7 @@ impl Fixture {
             flags,
             hints: RewriterHints::default(),
             join_hints: std::rc::Rc::new(crate::plan_builder::from::JoinHints::default()),
+            opt_flags: &self.opt_flags,
         })
     }
 

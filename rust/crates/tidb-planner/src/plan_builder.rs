@@ -605,6 +605,11 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
 
     /// Go `optFlag`; see this module's section 4.
     pub opt_flag: u64,
+    /// The `optFlag` bits the expression rewriter's builders set while the
+    /// builder is only borrowed (`buildSemiJoin`'s `FlagSemiJoinRewrite`).
+    /// [`Self::get_opt_flag`] reads them; a CTE build drains them into its
+    /// own flags first.
+    pub rewriter_opt_flags: std::cell::Cell<u64>,
     /// Whether Go's static `FlagPartitionProcessor` is active for this build.
     partition_processor_enabled: bool,
     /// Go `SessionVars.EnableAdvancedJoinHint` (`tidb_opt_advanced_join_hint`).
@@ -1383,6 +1388,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             time_zone,
             resolve_ctx: tidb_model::GoShared::new(tidb_resolve::Context::new()),
             opt_flag: 0,
+            rewriter_opt_flags: std::cell::Cell::new(0),
             partition_processor_enabled: true,
             advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
             select_block_as_names: Rc::default(),
@@ -1494,12 +1500,18 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
 
     /// Go `GetOptFlag()` (`planbuilder.go:455`).
     #[must_use]
-    pub const fn get_opt_flag(&self) -> u64 {
+    pub fn get_opt_flag(&self) -> u64 {
         if self.is_sampling {
             0
         } else {
-            self.opt_flag
+            self.opt_flag | self.rewriter_opt_flags.get()
         }
+    }
+
+    /// Moves the rewriter's flag bits into [`Self::opt_flag`], before a CTE
+    /// build saves or claims the current flags.
+    pub fn absorb_rewriter_opt_flags(&mut self) {
+        self.opt_flag |= self.rewriter_opt_flags.take();
     }
 
     /// Go's `b.optFlag |= rule.FlagXxx`, which every clause builder does.
@@ -1671,6 +1683,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             flags: self.flags,
             hints: self.hints,
             join_hints: Rc::clone(&self.join_hints),
+            opt_flags: &self.rewriter_opt_flags,
         }
     }
 

@@ -469,9 +469,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 ..super::OuterCte::default()
             });
             self.alloc_id_for_cte_storage += 1;
+            self.absorb_rewriter_opt_flags();
             let save_flag = self.opt_flag;
             self.opt_flag = flags::PRUNE_COLUMNS;
             let result = self.build_cte(cte, with.recursive, index);
+            self.absorb_rewriter_opt_flags();
             self.outer_ctes[index].opt_flag = self.opt_flag;
             self.outer_ctes[index].is_building = false;
             self.opt_flag = save_flag;
