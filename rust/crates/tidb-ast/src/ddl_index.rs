@@ -28,7 +28,6 @@ use super::{
 const FEATURE_CLUSTERED_INDEX: &str = "clustered_index";
 const FEATURE_GLOBAL_INDEX: &str = "global_index";
 const FEATURE_PRE_SPLIT: &str = "pre_split";
-const FEATURE_AUTO_PRE_SPLIT: &str = "auto_presplit";
 const FEATURE_TIDB: &str = "";
 
 /// The source index class carried by Go's `ast.IndexKeyType` and
@@ -219,10 +218,6 @@ pub struct IndexOptions {
     /// `PRE_SPLIT_REGIONS = ...`, retaining its bare-count versus
     /// parenthesized split-payload source distinction.
     pub pre_split_regions: Option<IndexPreSplitRegions>,
-    /// `PRE_SPLIT_REGIONS = AUTO` for best-effort leading-column splitting.
-    /// Explicit manual boundaries always take precedence when both forms are
-    /// constructed by a caller.
-    pub auto_pre_split: bool,
     /// `SECONDARY_ENGINE_ATTRIBUTE = 'json'`.
     pub secondary_engine_attribute: Option<String>,
     /// `ADD_COLUMNAR_REPLICA_ON_DEMAND`. Go stores an integer marker and
@@ -247,7 +242,6 @@ impl IndexOptions {
             && !self.global
             && self.visibility.is_none()
             && self.pre_split_regions.is_none()
-            && !self.auto_pre_split
             && self
                 .secondary_engine_attribute
                 .as_deref()
@@ -346,11 +340,6 @@ impl IndexOptions {
             context.write_with_tidb_special_comment(out, FEATURE_PRE_SPLIT, |out| {
                 out.push_str("PRE_SPLIT_REGIONS = ");
                 pre_split_regions.restore_into(out);
-            });
-        } else if self.auto_pre_split {
-            push_separator(out);
-            context.write_with_tidb_special_comment(out, FEATURE_AUTO_PRE_SPLIT, |out| {
-                out.push_str("PRE_SPLIT_REGIONS = AUTO");
             });
         }
         if let Some(attribute) = self
@@ -731,7 +720,6 @@ impl crate::Visitable for IndexOptions {
             primary_key_storage,
             global,
             pre_split_regions,
-            auto_pre_split,
             secondary_engine_attribute,
             add_columnar_replica_on_demand,
             condition,
@@ -769,7 +757,6 @@ impl crate::Visitable for IndexOptions {
         let _ = primary_key_storage;
         let _ = global;
         let _ = pre_split_regions;
-        let _ = auto_pre_split;
         let _ = secondary_engine_attribute;
         let _ = add_columnar_replica_on_demand;
         let _ = condition;
@@ -966,7 +953,6 @@ mod tests {
             visibility: Some(IndexVisibility::Invisible),
             primary_key_storage: Some(PrimaryKeyStorage::Clustered),
             global: true,
-            auto_pre_split: false,
             pre_split_regions: Some(IndexPreSplitRegions::Boundaries(SplitOption::By(vec![
                 vec![Expr::Int("1".to_string())],
             ]))),

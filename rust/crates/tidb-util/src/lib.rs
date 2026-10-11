@@ -74,7 +74,6 @@ pub mod mathutil;
 pub mod membuf;
 pub mod memory;
 pub mod memoryusagealarm;
-pub mod mviewutil;
 pub mod mvmap;
 pub use tidb_naming as naming;
 pub mod nocopy;

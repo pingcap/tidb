@@ -2304,10 +2304,6 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.EnableWindowFunction`, maintained by the
     /// `tidb_enable_window_function` sysvar's `SetSession` hook.
     enable_window_function: bool,
-    /// Go's typed `SessionVars.EnableMView`, maintained by the
-    /// `tidb_mview_enable` sysvar's `SetSession` hook and consumed by
-    /// materialized-view DDL statement contexts.
-    enable_mview: bool,
     /// Go's typed `SessionVars.TiFlashMaxBytesBeforeExternalJoin`, maintained
     /// by the corresponding TiFlash threshold `SetSession` hook.
     ti_flash_max_bytes_before_ext_join: i64,
@@ -2357,10 +2353,6 @@ pub struct SessionVars {
     /// [`GlobalSysvars`] is cheap (one `Arc` bump), so every session shares
     /// the same underlying map.
     globals: Arc<GlobalSysvars>,
-    /// Go `SessionVars.InMViewMaintenance`: set programmatically (not via a
-    /// sysvar) while the session executes internal MV build/refresh
-    /// statements.
-    in_mview_maintenance: bool,
 }
 
 /// Resolves the validated `time_zone` text into the statement-facing zone
@@ -2428,7 +2420,6 @@ impl Default for SessionVars {
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             shared_lock_promotion: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION,
             enable_window_function: tidb_vardef::defaults::DEF_ENABLE_WINDOW_FUNCTION,
-            enable_mview: tidb_vardef::defaults::DEF_TIDB_MVIEW_ENABLE,
             ti_flash_max_bytes_before_ext_join:
                 tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN,
             ti_flash_max_bytes_before_ext_agg:
@@ -2447,7 +2438,6 @@ impl Default for SessionVars {
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
             globals: Arc::default(),
-            in_mview_maintenance: false,
         }
     }
 }
@@ -2485,18 +2475,6 @@ impl SessionVars {
     /// The snapshot selected by SET tidb_snapshot; zero clears the pin.
     pub fn snapshot_ts(&self) -> u64 {
         self.snapshot_ts
-    }
-
-    /// Go `SessionVars.InMViewMaintenance` read: whether the session is
-    /// executing internal MV build/refresh statements.
-    #[must_use]
-    pub fn in_mview_maintenance(&self) -> bool {
-        self.in_mview_maintenance
-    }
-
-    /// Go `SessionVars.InMViewMaintenance` write.
-    pub fn set_in_mview_maintenance(&mut self, value: bool) {
-        self.in_mview_maintenance = value;
     }
 
     /// A session with every variable at its registry default and its own,
@@ -2548,7 +2526,6 @@ impl SessionVars {
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         let shared_lock_promotion = Self::shared_lock_promotion_from_systems(&systems);
         let enable_window_function = Self::enable_window_function_from_systems(&systems);
-        let enable_mview = Self::mview_enabled_from_systems(&systems);
         let ti_flash_max_bytes_before_ext_join =
             Self::ti_flash_max_bytes_before_ext_join_from_systems(&systems);
         let ti_flash_max_bytes_before_ext_agg =
@@ -2582,7 +2559,6 @@ impl SessionVars {
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.shared_lock_promotion = shared_lock_promotion;
         self.enable_window_function = enable_window_function;
-        self.enable_mview = enable_mview;
         self.ti_flash_max_bytes_before_ext_join = ti_flash_max_bytes_before_ext_join;
         self.ti_flash_max_bytes_before_ext_agg = ti_flash_max_bytes_before_ext_agg;
         self.ti_flash_max_bytes_before_ext_sort = ti_flash_max_bytes_before_ext_sort;
@@ -2775,12 +2751,6 @@ impl SessionVars {
             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE)
     }
 
-    fn mview_enabled_from_systems(systems: &HashMap<String, String>) -> bool {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE)
-            .is_some_and(|value| value.eq_ignore_ascii_case("ON"))
-    }
-
     fn query_cop_store_limit_from_systems(systems: &HashMap<String, String>) -> i64 {
         systems
             .get(tidb_vardef::tidb_vars::TIDB_QUERY_COP_STORE_LIMIT)
@@ -2950,12 +2920,6 @@ impl SessionVars {
     #[must_use]
     pub const fn analyze_store_batch_size(&self) -> i64 {
         self.analyze_store_batch_size
-    }
-
-    /// Go `SessionVars.EnableMView`, set by `tidb_mview_enable`.
-    #[must_use]
-    pub const fn mview_enabled(&self) -> bool {
-        self.enable_mview
     }
 
     /// Go `SessionVars.QueryCopStoreLimit`, where zero disables query-level
@@ -3604,9 +3568,6 @@ impl SessionVars {
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION {
             self.enable_window_function = value == "ON";
         }
-        if key == tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE {
-            self.enable_mview = value == "ON";
-        }
         if key == tidb_vardef::tidb_vars::TIDB_QUERY_COP_STORE_LIMIT {
             self.query_cop_store_limit = value
                 .parse::<i64>()
@@ -3824,506 +3785,6 @@ impl SessionVars {
     }
 }
 
-/// Go `MViewExecutionSessionVars`: the execution-scoped session variables
-/// shared by MV build, refresh, and mvservice maintenance orchestration.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MViewExecutionSessionVars {
-    /// Go `MaintainMemQuota`.
-    pub maintain_mem_quota: i64,
-    /// Go `IsolationReadEngines`.
-    pub isolation_read_engines: String,
-    /// Go `TiFlashMaxThreads`.
-    pub ti_flash_max_threads: i64,
-    /// Go `TiFlashMaxBytesBeforeExtJoin`.
-    pub ti_flash_max_bytes_before_ext_join: i64,
-    /// Go `TiFlashMaxBytesBeforeExtAgg`.
-    pub ti_flash_max_bytes_before_ext_agg: i64,
-    /// Go `TiFlashMaxBytesBeforeExtSort`.
-    pub ti_flash_max_bytes_before_ext_sort: i64,
-    /// Go `TiFlashMemQuotaQueryPerNode`.
-    pub ti_flash_mem_quota_query_per_node: i64,
-    /// Go `TiFlashQuerySpillRatio`.
-    pub ti_flash_query_spill_ratio: f64,
-    /// Go `FineGrainedStreamCount`.
-    pub fine_grained_stream_count: i64,
-    /// Go `FineGrainedBatchSize`.
-    pub fine_grained_batch_size: u64,
-    /// Go `ImportThreads` (Go `int`).
-    pub import_threads: i64,
-    /// Go `ImportDiskQuota`.
-    pub import_disk_quota: String,
-}
-
-/// Go `MViewExecutionSessionVarsApplyConfig`: describes how MV execution vars
-/// should be applied onto a session. The caller chooses which mem-quota
-/// sysvar should receive `maintain_mem_quota` and how apply / restore errors
-/// should be reported. Go's closure fields become boxed callbacks; an error
-/// callback receives the rendered error text.
-#[derive(Default)]
-pub struct MViewExecutionSessionVarsApplyConfig {
-    /// Go `MaintainMemQuotaVarName`; empty selects
-    /// `tidb_mview_maintain_mem_quota`.
-    pub maintain_mem_quota_var_name: String,
-    /// Go `MaintainIsolationReadEnginesVarName`; empty selects
-    /// `tidb_mview_maintain_isolation_read_engines`.
-    pub maintain_isolation_read_engines_var_name: String,
-    /// Go `CaptureAppliedVars`.
-    pub capture_applied_vars: Option<Box<dyn Fn(&SessionVars) -> MViewExecutionSessionVars>>,
-    /// Go `BestEffort`.
-    pub best_effort: bool,
-    /// Go `InjectApplyError`: returning `Some` simulates the named
-    /// variable's SET failing with that rendered error.
-    pub inject_apply_error: Option<Box<dyn Fn(&str) -> Option<String>>>,
-    /// Go `OnApplyError` (name, value, rendered error).
-    pub on_apply_error: Option<Box<dyn Fn(&str, &str, &str)>>,
-    /// Go `OnRestoreError` (name, origin value, current value, rendered
-    /// error).
-    pub on_restore_error: Option<Box<dyn Fn(&str, &str, &str, &str)>>,
-}
-
-/// Go's zero-value config.
-impl MViewExecutionSessionVarsApplyConfig {
-    /// Go `&MViewExecutionSessionVarsApplyConfig{}`: every knob at its
-    /// zero value, defaulting the two maintained variable names.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-struct MViewExecutionSessionVarAssignment {
-    name: String,
-    value: String,
-    failure_message: &'static str,
-}
-
-/// The undo handle Go returns as a `func()`. Go's closure captures the
-/// session implicitly; Rust requires the caller to hand the session back, so
-/// [`Self::restore`] takes `&mut SessionVars`. The handle borrows the
-/// config's `OnRestoreError` callback, as Go's closure captures it.
-pub struct MViewExecutionVarsRestore<'a> {
-    origin: MViewExecutionSessionVars,
-    applied: MViewExecutionSessionVars,
-    maintain_mem_quota_var_name: String,
-    maintain_isolation_read_engines_var_name: String,
-    on_restore_error: Option<&'a dyn Fn(&str, &str, &str, &str)>,
-    noop: bool,
-}
-
-impl MViewExecutionVarsRestore<'_> {
-    /// Runs the captured restore assignments.
-    pub fn restore(self, vars: &mut SessionVars) {
-        if self.noop {
-            return;
-        }
-        restore_m_view_execution_session_vars(
-            vars,
-            &self.origin,
-            &self.applied,
-            &self.maintain_mem_quota_var_name,
-            &self.maintain_isolation_read_engines_var_name,
-            self.on_restore_error.as_deref(),
-        );
-    }
-}
-
-/// Go `CaptureMViewExecutionSessionVars`: captures the user-facing MV
-/// execution knobs that should be inherited by a later MV build/refresh job.
-/// Go reads typed `SessionVars` fields maintained by `SetSession` hooks; the
-/// Rust carrier reads the matching typed session fields rather than reparsing
-/// the authoritative system-variable text at every capture.
-#[must_use]
-pub fn capture_m_view_execution_session_vars(vars: &SessionVars) -> MViewExecutionSessionVars {
-    MViewExecutionSessionVars {
-        maintain_mem_quota: system_i64(vars, tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA),
-        isolation_read_engines: get_isolation_read_engines_string(vars),
-        ti_flash_max_threads: system_i64(vars, tidb_vardef::tidb_vars::TIDB_MAX_TIFLASH_THREADS),
-        ti_flash_max_bytes_before_ext_join: vars.ti_flash_max_bytes_before_ext_join(),
-        ti_flash_max_bytes_before_ext_agg: vars.ti_flash_max_bytes_before_ext_agg(),
-        ti_flash_max_bytes_before_ext_sort: vars.ti_flash_max_bytes_before_ext_sort(),
-        ti_flash_mem_quota_query_per_node: vars.ti_flash_mem_quota_query_per_node(),
-        ti_flash_query_spill_ratio: vars.ti_flash_query_spill_ratio(),
-        fine_grained_stream_count: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT,
-        ),
-        fine_grained_batch_size: system_u64(
-            vars,
-            tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE,
-        ),
-        import_threads: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS,
-        ),
-        import_disk_quota: system_string(
-            vars,
-            tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA,
-        ),
-    }
-}
-
-/// Go `CaptureAppliedMViewExecutionSessionVars`: captures the
-/// execution-related values that are currently in effect on a session after
-/// MV execution vars have been applied to `tidb_mem_quota_query` and
-/// `tidb_isolation_read_engines`.
-#[must_use]
-pub fn capture_applied_m_view_execution_session_vars(
-    vars: &SessionVars,
-) -> MViewExecutionSessionVars {
-    MViewExecutionSessionVars {
-        maintain_mem_quota: system_i64(vars, tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY),
-        isolation_read_engines: get_isolation_read_engines_string(vars),
-        ti_flash_max_threads: system_i64(vars, tidb_vardef::tidb_vars::TIDB_MAX_TIFLASH_THREADS),
-        ti_flash_max_bytes_before_ext_join: vars.ti_flash_max_bytes_before_ext_join(),
-        ti_flash_max_bytes_before_ext_agg: vars.ti_flash_max_bytes_before_ext_agg(),
-        ti_flash_max_bytes_before_ext_sort: vars.ti_flash_max_bytes_before_ext_sort(),
-        ti_flash_mem_quota_query_per_node: vars.ti_flash_mem_quota_query_per_node(),
-        ti_flash_query_spill_ratio: vars.ti_flash_query_spill_ratio(),
-        fine_grained_stream_count: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT,
-        ),
-        fine_grained_batch_size: system_u64(
-            vars,
-            tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE,
-        ),
-        import_threads: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS,
-        ),
-        import_disk_quota: system_string(
-            vars,
-            tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA,
-        ),
-    }
-}
-
-/// Go `GetIsolationReadEnginesString`: returns the current session string
-/// value of `tidb_isolation_read_engines`, or its default when the session
-/// has not loaded it yet.
-#[must_use]
-pub fn get_isolation_read_engines_string(vars: &SessionVars) -> String {
-    if let Ok(value) = vars.get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES) {
-        return value;
-    }
-    if let Some(def) =
-        crate::sysvar::get_sys_var(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
-    {
-        return def.value.to_owned();
-    }
-    String::new()
-}
-
-/// Go `MViewExecutionSessionVarsFromJob`: reconstructs the MV execution
-/// variables from a job's system-variable envelope, falling back per field
-/// to the default session's captured values. A nil job yields the captured
-/// defaults untouched.
-#[must_use]
-pub fn m_view_execution_session_vars_from_job(
-    job: Option<&Job>,
-    default_vars: &SessionVars,
-) -> MViewExecutionSessionVars {
-    let mut target = capture_applied_m_view_execution_session_vars(default_vars);
-    let Some(job) = job else {
-        return target;
-    };
-    let read = |name: &str| -> Option<String> {
-        job.get_system_var(name)
-            .map(|value| value.to_utf8_lossy_go())
-    };
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA) {
-        if let Ok(parsed) = value.parse::<i64>() {
-            target.maintain_mem_quota = parsed;
-        }
-    }
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES) {
-        target.isolation_read_engines = value;
-    }
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MAX_TIFLASH_THREADS) {
-        if let Ok(parsed) = value.parse::<i64>() {
-            target.ti_flash_max_threads = parsed;
-        }
-    }
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN) {
-        if let Ok(parsed) = value.parse::<i64>() {
-            target.ti_flash_max_bytes_before_ext_join = parsed;
-        }
-    }
-    if let Some(value) =
-        read(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY)
-    {
-        if let Ok(parsed) = value.parse::<i64>() {
-            target.ti_flash_max_bytes_before_ext_agg = parsed;
-        }
-    }
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT) {
-        if let Ok(parsed) = value.parse::<i64>() {
-            target.ti_flash_max_bytes_before_ext_sort = parsed;
-        }
-    }
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE) {
-        if let Ok(parsed) = value.parse::<i64>() {
-            target.ti_flash_mem_quota_query_per_node = parsed;
-        }
-    }
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO) {
-        if let Ok(parsed) = value.parse::<f64>() {
-            target.ti_flash_query_spill_ratio = parsed;
-        }
-    }
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT) {
-        if let Ok(parsed) = value.parse::<i64>() {
-            target.fine_grained_stream_count = parsed;
-        }
-    }
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE) {
-        if let Ok(parsed) = value.parse::<u64>() {
-            target.fine_grained_batch_size = parsed;
-        }
-    }
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS) {
-        if let Ok(parsed) = value.parse::<i64>() {
-            target.import_threads = parsed;
-        }
-    }
-    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA) {
-        target.import_disk_quota = value;
-    }
-    target
-}
-
-/// Go `ApplyMViewExecutionSessionVarsWithConfig`.
-pub fn apply_m_view_execution_session_vars_with_config<'a>(
-    vars: &mut SessionVars,
-    target: &MViewExecutionSessionVars,
-    cfg: &'a MViewExecutionSessionVarsApplyConfig,
-) -> Result<MViewExecutionVarsRestore<'a>, String> {
-    let default_capture = capture_applied_m_view_execution_session_vars
-        as fn(&SessionVars) -> MViewExecutionSessionVars;
-    let capture_fn: &dyn Fn(&SessionVars) -> MViewExecutionSessionVars = cfg
-        .capture_applied_vars
-        .as_deref()
-        .unwrap_or(&default_capture);
-    let maintain_mem_quota_var_name = if cfg.maintain_mem_quota_var_name.is_empty() {
-        tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA.to_owned()
-    } else {
-        cfg.maintain_mem_quota_var_name.clone()
-    };
-    let maintain_isolation_read_engines_var_name =
-        if cfg.maintain_isolation_read_engines_var_name.is_empty() {
-            tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES.to_owned()
-        } else {
-            cfg.maintain_isolation_read_engines_var_name.clone()
-        };
-
-    let origin = capture_fn(vars);
-    if origin == *target {
-        return Ok(MViewExecutionVarsRestore {
-            origin,
-            applied: target.clone(),
-            maintain_mem_quota_var_name,
-            maintain_isolation_read_engines_var_name,
-            on_restore_error: None,
-            noop: true,
-        });
-    }
-    let assignments = build_m_view_execution_session_var_assignments(
-        target,
-        &maintain_mem_quota_var_name,
-        &maintain_isolation_read_engines_var_name,
-    );
-    for assignment in &assignments {
-        let injected = cfg
-            .inject_apply_error
-            .as_deref()
-            .and_then(|inject| inject(&assignment.name));
-        let outcome = match injected {
-            Some(error) => Err(error),
-            None => vars
-                .set_system(&assignment.name, assignment.value.clone())
-                .map(|_| String::new())
-                .map_err(|error| render_var_error(&error)),
-        };
-        let error = match outcome {
-            Ok(_) => continue,
-            Err(error) => error,
-        };
-        if !cfg.best_effort {
-            let current = capture_fn(vars);
-            restore_m_view_execution_session_vars(
-                vars,
-                &origin,
-                &current,
-                &maintain_mem_quota_var_name,
-                &maintain_isolation_read_engines_var_name,
-                cfg.on_restore_error.as_deref(),
-            );
-            return Err(format!("{}: {}", assignment.failure_message, error));
-        }
-        if let Some(on_apply_error) = cfg.on_apply_error.as_deref() {
-            on_apply_error(&assignment.name, &assignment.value, &error);
-        }
-    }
-
-    let applied = capture_fn(vars);
-    Ok(MViewExecutionVarsRestore {
-        origin,
-        applied,
-        maintain_mem_quota_var_name,
-        maintain_isolation_read_engines_var_name,
-        on_restore_error: cfg.on_restore_error.as_deref(),
-        noop: false,
-    })
-}
-
-fn build_m_view_execution_session_var_assignments(
-    target: &MViewExecutionSessionVars,
-    maintain_mem_quota_var_name: &str,
-    maintain_isolation_read_engines_var_name: &str,
-) -> Vec<MViewExecutionSessionVarAssignment> {
-    vec![
-        MViewExecutionSessionVarAssignment {
-            name: maintain_mem_quota_var_name.to_owned(),
-            value: target.maintain_mem_quota.to_string(),
-            failure_message: "mv execution: failed to apply maintain mem quota",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: maintain_isolation_read_engines_var_name.to_owned(),
-            value: target.isolation_read_engines.clone(),
-            failure_message: "mv execution: failed to apply tidb_isolation_read_engines",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: tidb_vardef::tidb_vars::TIDB_MAX_TIFLASH_THREADS.to_owned(),
-            value: target.ti_flash_max_threads.to_string(),
-            failure_message: "mv execution: failed to apply tidb_max_tiflash_threads",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN.to_owned(),
-            value: target.ti_flash_max_bytes_before_ext_join.to_string(),
-            failure_message:
-                "mv execution: failed to apply tidb_max_bytes_before_tiflash_external_join",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY
-                .to_owned(),
-            value: target.ti_flash_max_bytes_before_ext_agg.to_string(),
-            failure_message:
-                "mv execution: failed to apply tidb_max_bytes_before_tiflash_external_group_by",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT.to_owned(),
-            value: target.ti_flash_max_bytes_before_ext_sort.to_string(),
-            failure_message:
-                "mv execution: failed to apply tidb_max_bytes_before_tiflash_external_sort",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE.to_owned(),
-            value: target.ti_flash_mem_quota_query_per_node.to_string(),
-            failure_message: "mv execution: failed to apply tiflash_mem_quota_query_per_node",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO.to_owned(),
-            value: format_double(target.ti_flash_query_spill_ratio),
-            failure_message: "mv execution: failed to apply tiflash_query_spill_ratio",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT.to_owned(),
-            value: target.fine_grained_stream_count.to_string(),
-            failure_message:
-                "mv execution: failed to apply tiflash_fine_grained_shuffle_stream_count",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE.to_owned(),
-            value: target.fine_grained_batch_size.to_string(),
-            failure_message:
-                "mv execution: failed to apply tiflash_fine_grained_shuffle_batch_size",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS.to_owned(),
-            value: target.import_threads.to_string(),
-            failure_message: "mv execution: failed to apply tidb_mview_maintain_import_threads",
-        },
-        MViewExecutionSessionVarAssignment {
-            name: tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA.to_owned(),
-            value: target.import_disk_quota.clone(),
-            failure_message: "mv execution: failed to apply tidb_mview_maintain_import_disk_quota",
-        },
-    ]
-}
-
-fn restore_m_view_execution_session_vars(
-    vars: &mut SessionVars,
-    origin: &MViewExecutionSessionVars,
-    current: &MViewExecutionSessionVars,
-    maintain_mem_quota_var_name: &str,
-    maintain_isolation_read_engines_var_name: &str,
-    on_restore_error: Option<&dyn Fn(&str, &str, &str, &str)>,
-) {
-    let origin_assignments = build_m_view_execution_session_var_assignments(
-        origin,
-        maintain_mem_quota_var_name,
-        maintain_isolation_read_engines_var_name,
-    );
-    let current_assignments = build_m_view_execution_session_var_assignments(
-        current,
-        maintain_mem_quota_var_name,
-        maintain_isolation_read_engines_var_name,
-    );
-    for (index, assignment) in origin_assignments.iter().enumerate() {
-        if let Err(error) = vars.set_system(&assignment.name, assignment.value.clone()) {
-            if let Some(on_restore_error) = on_restore_error {
-                on_restore_error(
-                    &assignment.name,
-                    &assignment.value,
-                    &current_assignments[index].value,
-                    &render_var_error(&error),
-                );
-            }
-        }
-    }
-}
-
-/// Go `AddMViewExecutionSessionVarsToJob`'s capture side: the live values of
-/// the twelve MV-execution session variables as the (name, value) image the
-/// DDL job envelope snapshots. Go's job writer reads the same typed fields
-/// off `SessionVars`; the names are the canonical sysvar names Go stores in
-/// the job's system-var list (the default maintained-variable names). The
-/// session tier installs this image on every DDL statement context, so a
-/// submitted MV job inherits the creator's settings instead of the
-/// defaults.
-#[must_use]
-pub fn m_view_execution_session_vars_image(
-    vars: &SessionVars,
-) -> std::collections::BTreeMap<String, String> {
-    let captured = capture_m_view_execution_session_vars(vars);
-    build_m_view_execution_session_var_assignments(
-        &captured,
-        tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA,
-        tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES,
-    )
-    .into_iter()
-    .map(|assignment| (assignment.name, assignment.value))
-    .collect()
-}
-
-fn system_i64(vars: &SessionVars, name: &str) -> i64 {
-    vars.get_system(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0)
-}
-
-fn system_u64(vars: &SessionVars, name: &str) -> u64 {
-    vars.get_system(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0)
-}
-
-fn system_string(vars: &SessionVars, name: &str) -> String {
-    vars.get_system(name).unwrap_or_default()
-}
-
 /// Renders a [`VarError`] with Go's system-variable message text for the
 /// variants Go's `SetSystemVar` produces here; the callback payloads carry
 /// the same text Go's `errors.Annotate` would.
@@ -4376,7 +3837,7 @@ mod tests {
     }
 
     #[test]
-    fn tiflash_set_session_hooks_update_typed_state_and_mview_capture() {
+    fn tiflash_set_session_hooks_update_typed_state() {
         let mut vars = SessionVars::new();
         assert_eq!(
             vars.ti_flash_max_bytes_before_ext_join(),
@@ -4424,13 +3885,6 @@ mod tests {
         assert_eq!(vars.ti_flash_max_bytes_before_ext_sort(), 30_000);
         assert_eq!(vars.ti_flash_mem_quota_query_per_node(), 40_000);
         assert_eq!(vars.ti_flash_query_spill_ratio(), 0.75);
-
-        let captured = capture_m_view_execution_session_vars(&vars);
-        assert_eq!(captured.ti_flash_max_bytes_before_ext_join, 10_000);
-        assert_eq!(captured.ti_flash_max_bytes_before_ext_agg, 20_000);
-        assert_eq!(captured.ti_flash_max_bytes_before_ext_sort, 30_000);
-        assert_eq!(captured.ti_flash_mem_quota_query_per_node, 40_000);
-        assert_eq!(captured.ti_flash_query_spill_ratio, 0.75);
 
         vars.restore_system(join_snapshot);
         assert_eq!(
@@ -5432,43 +4886,6 @@ mod tests {
         fresh.set_system("autocommit", "ON".to_owned()).unwrap();
         assert_eq!(live.get_system("autocommit").unwrap(), "OFF");
         assert_eq!(fresh.get_system("autocommit").unwrap(), "ON");
-    }
-}
-
-#[cfg(test)]
-mod mview_from_job_tests {
-    use super::*;
-    use std::collections::BTreeMap;
-    use tidb_model::GoShared;
-
-    #[test]
-    fn mview_execution_vars_reconstruct_from_job_envelope() {
-        let mut job_vars = BTreeMap::new();
-        job_vars.insert(
-            "tidb_mview_maintain_mem_quota".to_owned(),
-            tidb_datatype::GoString::from("123"),
-        );
-        job_vars.insert(
-            "tidb_mview_maintain_isolation_read_engines".to_owned(),
-            tidb_datatype::GoString::from("tikv"),
-        );
-        job_vars.insert(
-            "tidb_max_tiflash_threads".to_owned(),
-            tidb_datatype::GoString::from("8"),
-        );
-        let mut job = Job::default();
-        job.session_vars = Some(GoShared::new(job_vars));
-        let restored = m_view_execution_session_vars_from_job(Some(&job), &SessionVars::default());
-        assert_eq!(restored.maintain_mem_quota, 123);
-        assert_eq!(restored.isolation_read_engines, "tikv");
-        assert_eq!(restored.ti_flash_max_threads, 8);
-        // Fields absent from the envelope keep the captured defaults.
-        // Fields absent from the envelope keep the captured defaults.
-        let defaults = m_view_execution_session_vars_from_job(None, &SessionVars::default());
-        assert_eq!(
-            restored.fine_grained_batch_size, defaults.fine_grained_batch_size,
-            "absent envelope fields keep the captured default"
-        );
     }
 }
 

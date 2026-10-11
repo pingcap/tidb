@@ -75,8 +75,6 @@ const BDR_ACTION_ENTRIES: &[(DDLBDRType, &[ActionType])] = &[
         &[
             ActionType::ACTION_CREATE_SCHEMA,
             ActionType::ACTION_CREATE_TABLE,
-            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
-            ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
             ActionType::ACTION_ADD_COLUMN,
             ActionType::ACTION_ADD_INDEX,
             ActionType::ACTION_DROP_INDEX,

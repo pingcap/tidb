@@ -68,11 +68,12 @@ fn test_keyword_consistent() {
         );
     }
 
-    // Go's grammar declares 821 unique keyword spellings: tokenMap plus the
-    // window-function map, less the four aliases that share token IDs.
+    // This branch's misc.go maps 815 unique keyword spellings: tokenMap
+    // plus the window-function map, less the four aliases that share token
+    // IDs.
     assert_eq!(
         GENERAL_KEYWORDS.len() + WINDOW_FUNC_KEYWORDS.len() - aliases.len(),
-        821
+        815
     );
 
     // `KEYWORDS` is generated from the grammar's ReservedKeyword,

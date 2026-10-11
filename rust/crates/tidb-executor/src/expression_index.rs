@@ -374,10 +374,9 @@ impl AdmissibilityScan {
                 //   unsafe functions without allow-expression-index in config
                 // ```
                 //
-                // The refusal is also the one this index could not survive:
-                // the literal is folded in the writing session's `@@time_zone`
-                // and stored in the key, so a reader in another zone would
-                // compute a key that no longer matches its own rows.
+                // With `allow-expression-index` (the integration tests' config)
+                // Go accepts it, and the hidden column refolds the literal in
+                // each writing session's zone.
                 if matches!(
                     cast.style,
                     tidb_ast::CastStyle::DateLiteral
@@ -666,34 +665,6 @@ pub fn build_hidden_columns_with_like_default_escape(
                 clause: "expression".to_owned(),
             });
         }
-        // Go `checkIllegalFn4GeneratedColumn`'s `hasNotGAFunc4ExprIdx` arm:
-        // an expression index may only use the functions on
-        // `variable.GAFunction4ExpressionIndex` unless the server was started
-        // with `allow-expression-index`, and everything else is 8200
-        // `Unsupported creating expression index containing unsafe functions
-        // without allow-expression-index in config`. `TIMESTAMP 'lit'` is a
-        // `FuncCallExpr` named `timestampliteral` to that walk and is not on
-        // the list, so Go refuses it -- captured:
-        //
-        // ```text
-        // create table e(a int, key idx((timestamp '2020-01-01 10:00:00+00:00')));
-        //   [ddl:8200]Unsupported creating expression index containing
-        //   unsafe functions without allow-expression-index in config
-        // create table e(a int, key idx((a+1)));  -- accepted
-        // ```
-        //
-        // Only the ZONE-READING half of that gate is ported here, because it
-        // is the half this index cannot survive: the value goes into the
-        // stored key at write time, so an expression that folds differently
-        // per session would read back rows whose key no longer matches. The
-        // rest of the allow-list is a separate unit; refusing a subset of
-        // what Go refuses can only turn an accepted statement into Go's own
-        // error, never the reverse.
-        if resolver.zone_was_read() {
-            return Err(DriverError::unsupported(
-                "an expression index over a temporal literal is not supported (Go answers 8200)",
-            ));
-        }
         // Go `BuildHiddenColumnInfo`: an expression that IS a column is 3762,
         // checked on the BUILT expression so `((a))` and `(((a)))` are both
         // caught, exactly as Go's `expr.(*expression.Column)` is.
@@ -771,10 +742,10 @@ pub fn build_hidden_columns_with_like_default_escape(
                     source: expr.clone(),
                     build_zone: zone.clone(),
                     build_like_default_escape: like_default_escape,
-                    // Unreachable by the refusal above: an index whose hidden
-                    // column re-folded a temporal literal per session would
-                    // read back rows its stored key no longer matches.
-                    zone_sensitive: false,
+                    // Go rebuilds the hidden column from its text in each
+                    // writing session (`resolveGeneratedColumns`), so a
+                    // temporal literal folds in that session's zone.
+                    zone_sensitive: resolver.zone_was_read(),
                     like_default_escape_sensitive: resolver.like_default_escape_was_read(),
                 },
             },

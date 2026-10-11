@@ -361,23 +361,6 @@ impl Parser {
                 Box::new(self.parse_create_index()?),
             ))))
         } else if self.is_kw("CREATE")
-            && self.is_kw_at(1, "MATERIALIZED")
-            && self.is_kw_at(2, "VIEW")
-            && self.is_kw_at(3, "LOG")
-        {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
-                DdlStmt::CreateMaterializedViewLog(Box::new(
-                    self.parse_create_materialized_view_log()?,
-                )),
-            )))
-        } else if self.is_kw("CREATE")
-            && self.is_kw_at(1, "MATERIALIZED")
-            && self.is_kw_at(2, "VIEW")
-        {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
-                DdlStmt::CreateMaterializedView(Box::new(self.parse_create_materialized_view()?)),
-            )))
-        } else if self.is_kw("CREATE")
             && (self.is_kw_at(1, "VIEW")
                 || self.is_kw_at(1, "ALGORITHM")
                 || self.is_kw_at(1, "DEFINER")
@@ -407,23 +390,6 @@ impl Parser {
         {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
                 AdminStmt::CreateBinding(Box::new(self.parse_create_binding()?)),
-            )))
-        } else if self.is_kw("ALTER")
-            && self.is_kw_at(1, "MATERIALIZED")
-            && self.is_kw_at(2, "VIEW")
-            && self.is_kw_at(3, "LOG")
-        {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
-                DdlStmt::AlterMaterializedViewLog(Box::new(
-                    self.parse_alter_materialized_view_log()?,
-                )),
-            )))
-        } else if self.is_kw("ALTER")
-            && self.is_kw_at(1, "MATERIALIZED")
-            && self.is_kw_at(2, "VIEW")
-        {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
-                DdlStmt::AlterMaterializedView(Box::new(self.parse_alter_materialized_view()?)),
             )))
         } else if self.is_kw("ALTER")
             && (self.is_kw_at(1, "DATABASE") || self.is_kw_at(1, "SCHEMA"))
@@ -461,19 +427,6 @@ impl Parser {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::RenameTable(
                 Box::new(self.parse_rename_table()?),
             ))))
-        } else if self.is_kw("DROP")
-            && self.is_kw_at(1, "MATERIALIZED")
-            && self.is_kw_at(2, "VIEW")
-            && self.is_kw_at(3, "LOG")
-        {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
-                self.parse_drop_materialized_view_log()?,
-            )))
-        } else if self.is_kw("DROP") && self.is_kw_at(1, "MATERIALIZED") && self.is_kw_at(2, "VIEW")
-        {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
-                self.parse_drop_materialized_view()?,
-            )))
         } else if self.is_kw("DROP")
             && ((self.is_kw_at(1, "TABLE") || self.is_kw_at(1, "TABLES"))
                 || (self.is_kw_at(1, "TEMPORARY")

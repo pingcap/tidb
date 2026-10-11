@@ -173,16 +173,6 @@ impl Parser {
                 if self.is_op("=") {
                     self.bump();
                 }
-                if self.is_kw("AUTO") {
-                    // Go stores AUTO separately from manual boundaries.  If
-                    // callers repeat the option, manual boundaries win
-                    // regardless of source order.
-                    self.bump();
-                    if options.pre_split_regions.is_none() {
-                        options.auto_pre_split = true;
-                    }
-                    continue;
-                }
                 options.pre_split_regions = Some(if self.is_op("(") {
                     self.bump();
                     let split = self.parse_split_option()?;
@@ -201,7 +191,6 @@ impl Parser {
                             .map_err(|_| self.err_here("PRE_SPLIT_REGIONS out of range"))?,
                     )
                 });
-                options.auto_pre_split = false;
             } else if self.is_kw("WHERE") {
                 self.bump();
                 options.condition = Some(self.parse_expr(prec::NONE)?);

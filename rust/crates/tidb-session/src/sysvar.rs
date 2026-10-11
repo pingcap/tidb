@@ -1048,9 +1048,8 @@ pub(crate) fn normalize_time_value(
     ))
 }
 
-/// Go `normalizeIsolationReadEnginesValue` (shared by
-/// `tidb_isolation_read_engines` and
-/// `tidb_mview_maintain_isolation_read_engines`): comma-split engines trim,
+/// Go `normalizeIsolationReadEnginesValue` (`tidb_isolation_read_engines`):
+/// comma-split engines trim,
 /// canonicalize case-insensitively to tikv/tiflash/tidb, and an empty or
 /// unknown engine refuses the SET with `ErrWrongValueForVar`.
 pub(crate) fn normalize_isolation_read_engines_value(normalized: &str) -> Result<String, ()> {
@@ -1694,14 +1693,10 @@ impl SysVarDef {
                 })
                 .map_err(ValidationError::Refused);
         }
-        // Go's `tidb_isolation_read_engines` and
-        // `tidb_mview_maintain_isolation_read_engines` validations share Go
-        // master's `normalizeIsolationReadEnginesValue` helper: comma-split
-        // engines trim, canonicalize case-insensitively to tikv/tiflash/tidb,
-        // and an empty or unknown engine is `ErrWrongValueForVar`.
-        if self.name == tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES
-            || self.name == tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES
-        {
+        // Go's `tidb_isolation_read_engines` validation: comma-split engines
+        // trim, canonicalize case-insensitively to tikv/tiflash/tidb, and an
+        // empty or unknown engine is `ErrWrongValueForVar`.
+        if self.name == tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES {
             return normalize_isolation_read_engines_value(&validated.value)
                 .map(|value| Validated {
                     value,
@@ -1753,32 +1748,6 @@ impl SysVarDef {
                 "invalid value for '{}', it should be either '', 'table' or 'global'",
                 lowered
             )));
-        }
-        // Go's `tidb_mview_maintain_mem_quota` validation: a positive value
-        // below 128 is clamped to 128 with Go's `ErrTruncatedWrongValue`
-        // warning riding the SET.
-        if self.name == tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA {
-            if let Ok(int_val) = validated.value.parse::<i64>() {
-                if (0..128).contains(&int_val) {
-                    return Ok(Validated {
-                        value: "128".to_owned(),
-                        truncated: true,
-                    });
-                }
-            }
-        }
-        // Go's `tidb_mview_maintain_import_disk_quota` validation: empty is
-        // accepted; anything that is not a positive go-units size is
-        // `ErrWrongValueForVar`.
-        if self.name == tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA
-            && !validated.value.is_empty()
-        {
-            let ok = tidb_config::configtypes::ram_in_bytes(&validated.value)
-                .map(|bytes| bytes > 0)
-                .unwrap_or(false);
-            if !ok {
-                return Err(ValidationError::WrongValue);
-            }
         }
         // Go's `tidb_enable_table_partition` validation: partitioning is
         // ALWAYS on, so the closure returns `vardef.On` whatever was assigned

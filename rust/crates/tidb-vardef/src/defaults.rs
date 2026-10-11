@@ -516,13 +516,6 @@ pub const DEF_TIDB_ENABLE_BATCH_DML: bool = false;
 /// Go `DefTiDBMemQuotaQuery` (= `memory.DefMemQuotaQuery`).
 /// Resolved from memory.DefMemQuotaQuery (1GB).
 pub const DEF_TIDB_MEM_QUOTA_QUERY: i64 = 1073741824;
-/// Go `DefTiDBMViewMaintainMemQuota` (= `int64(2 * size.GB)`).
-/// Resolved from 2 * size.GB.
-pub const DEF_TIDB_MVIEW_MAINTAIN_MEM_QUOTA: i64 = 2147483648;
-/// Go `DefTiDBMViewMaintainImportThreads` (= `0`).
-pub const DEF_TIDB_MVIEW_MAINTAIN_IMPORT_THREADS: i64 = 0;
-/// Go `DefTiDBMViewMaintainImportDiskQuota` (= `""`).
-pub const DEF_TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA: &str = "";
 /// Go `DefTiDBStatsCacheMemQuota` (= `0`).
 pub const DEF_TIDB_STATS_CACHE_MEM_QUOTA: i64 = 0;
 /// Go `DefTiDBQueryLogMaxLen` (= `4096`).
@@ -793,8 +786,6 @@ pub const DEF_RUNTIME_FILTER_MODE: &str = "OFF";
 pub const DEF_TIDB_LOCK_UNCHANGED_KEYS: bool = true;
 /// Go `DefTiDBEnableCheckConstraint` (= `false`).
 pub const DEF_TIDB_ENABLE_CHECK_CONSTRAINT: bool = false;
-/// Go `DefTiDBMViewEnable` (= `false`).
-pub const DEF_TIDB_MVIEW_ENABLE: bool = false;
 /// Go `DefTiDBSkipMissingPartitionStats` (= `true`).
 pub const DEF_TIDB_SKIP_MISSING_PARTITION_STATS: bool = true;
 /// Go `DefTiDBOptEnableHashJoin` (= `true`).

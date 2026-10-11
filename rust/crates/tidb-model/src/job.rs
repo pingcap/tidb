@@ -1234,7 +1234,6 @@ impl Job {
         match self.type_ {
             ActionType::ACTION_ADD_INDEX
             | ActionType::ACTION_ADD_PRIMARY_KEY
-            | ActionType::ACTION_CREATE_MATERIALIZED_VIEW
             | ActionType::ACTION_REORGANIZE_PARTITION
             | ActionType::ACTION_REMOVE_PARTITIONING
             | ActionType::ACTION_ALTER_TABLE_PARTITIONING => true,
@@ -1269,10 +1268,6 @@ impl Job {
                     | SchemaState::WRITE_ONLY
             ),
             ActionType::ACTION_MODIFY_COLUMN => self.schema_state != SchemaState::PUBLIC,
-            ActionType::ACTION_CREATE_MATERIALIZED_VIEW => matches!(
-                self.schema_state,
-                SchemaState::NONE | SchemaState::WRITE_REORGANIZATION
-            ),
             ActionType::ACTION_ADD_TABLE_PARTITION => matches!(
                 self.schema_state,
                 SchemaState::NONE | SchemaState::REPLICA_ONLY

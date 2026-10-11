@@ -1285,10 +1285,7 @@ mod show_index;
 mod stats_lock_arm;
 pub mod sysvar;
 pub mod vars;
-pub use vars::{
-    capture_m_view_execution_session_vars, m_view_execution_session_vars_from_job, GlobalSysvars,
-    SessionVars, VarError,
-};
+pub use vars::{GlobalSysvars, SessionVars, VarError};
 
 impl Session {
     /// Starts the cancellation lifetime for the next wire command.
@@ -3046,8 +3043,6 @@ mod tests_mixed_sign_index_join;
 mod tests_modify_column_null;
 #[cfg(test)]
 mod tests_multi_table_dml;
-#[cfg(test)]
-mod tests_mview_session_vars;
 #[cfg(test)]
 mod tests_non_prepared_plan_cache;
 #[cfg(test)]

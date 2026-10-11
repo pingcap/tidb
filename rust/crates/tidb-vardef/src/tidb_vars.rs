@@ -119,19 +119,6 @@ pub const MAX_CONFIGURABLE_CONCURRENCY: u64 = 256;
 /// TiDBMemQuotaQuery controls the memory quota of a query.
 /// Go `TiDBMemQuotaQuery`.
 pub const TIDB_MEM_QUOTA_QUERY: &str = "tidb_mem_quota_query";
-/// TiDBMViewMaintainMemQuota controls the memory quota used by MV maintenance sessions.
-/// Go `TiDBMViewMaintainMemQuota`.
-pub const TIDB_MVIEW_MAINTAIN_MEM_QUOTA: &str = "tidb_mview_maintain_mem_quota";
-/// TiDBMViewMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance sessions.
-/// Go `TiDBMViewMaintainIsolationReadEngines`.
-pub const TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES: &str =
-    "tidb_mview_maintain_isolation_read_engines";
-/// TiDBMViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
-/// Go `TiDBMViewMaintainImportThreads`.
-pub const TIDB_MVIEW_MAINTAIN_IMPORT_THREADS: &str = "tidb_mview_maintain_import_threads";
-/// TiDBMViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
-/// Go `TiDBMViewMaintainImportDiskQuota`.
-pub const TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA: &str = "tidb_mview_maintain_import_disk_quota";
 /// TiDBMemQuotaApplyCache controls the memory quota of a query.
 /// Go `TiDBMemQuotaApplyCache`.
 pub const TIDB_MEM_QUOTA_APPLY_CACHE: &str = "tidb_mem_quota_apply_cache";
@@ -1182,9 +1169,6 @@ pub const TIDB_ENABLE_CHECK_CONSTRAINT: &str = "tidb_enable_check_constraint";
 /// TiDBOptEnableHashJoin indicates whether to enable hash join.
 /// Go `TiDBOptEnableHashJoin`.
 pub const TIDB_OPT_ENABLE_HASH_JOIN: &str = "tidb_opt_enable_hash_join";
-/// TiDBMViewEnable indicates whether to enable materialized view DDL.
-/// Go `TiDBMViewEnable`.
-pub const TIDB_MVIEW_ENABLE: &str = "tidb_mview_enable";
 /// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 /// Go `TiDBHashJoinVersion`.
 pub const TIDB_HASH_JOIN_VERSION: &str = "tidb_hash_join_version";

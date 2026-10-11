@@ -328,7 +328,6 @@ mod generated_modify;
 mod index_changes;
 pub mod index_prefix;
 mod indexes;
-pub mod mview_schedule_expr;
 mod partition_interval;
 mod partition_reorg;
 pub mod placement_policy;

@@ -274,16 +274,6 @@ impl_go_json_merge_object!(TableInfo, destination, map, key, {
         map.next_value_seed(NullNoopSeed(&mut destination.compression))?;
     } else if go_json_field_matches(&key, "view") {
         map.next_value_seed(OptionSharedMergeSeed(&mut destination.view))?;
-    } else if go_json_field_matches(&key, "materialized_view_base") {
-        map.next_value_seed(OptionSharedMergeSeed(
-            &mut destination.materialized_view_base,
-        ))?;
-    } else if go_json_field_matches(&key, "materialized_view") {
-        map.next_value_seed(OptionSharedMergeSeed(&mut destination.materialized_view))?;
-    } else if go_json_field_matches(&key, "materialized_view_log") {
-        map.next_value_seed(OptionSharedMergeSeed(
-            &mut destination.materialized_view_log,
-        ))?;
     } else if go_json_field_matches(&key, "sequence") {
         map.next_value_seed(OptionSharedMergeSeed(&mut destination.sequence))?;
     } else if go_json_field_matches(&key, "Lock") {

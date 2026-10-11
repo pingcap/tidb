@@ -47,6 +47,47 @@ fn assert_token(sql: &str, kind: TokenKind, text: &str) {
     assert_eq!(token.text, text, "input={sql:?}");
 }
 
+/// The three keyword tables are this branch's `pkg/parser/misc.go` token
+/// maps (`tokenMap`, `btFuncTokenMap`, `windowFuncTokenMap`), read from the
+/// source: a word Go-master adds is an identifier to this branch's lexer.
+#[test]
+fn keyword_tables_are_this_branchs_misc_go_token_maps() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../pkg/parser/misc.go");
+    let source = std::fs::read_to_string(&path).expect("read pkg/parser/misc.go");
+    let go_map = |name: &str| {
+        let start = source
+            .find(&format!("var {name} = map[string]int{{"))
+            .unwrap_or_else(|| panic!("misc.go declares {name}"));
+        let body = &source[start..];
+        let body = &body[..body.find("\n}").expect("map literal closes")];
+        body.lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                let word = line.strip_prefix('"')?.split('"').next()?;
+                line[word.len() + 2..]
+                    .trim_start()
+                    .starts_with(':')
+                    .then(|| word.to_owned())
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let table = |words: &[&str]| {
+        words
+            .iter()
+            .map(|word| (*word).to_owned())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(table(crate::keywords::GENERAL_KEYWORDS), go_map("tokenMap"));
+    assert_eq!(
+        table(crate::keywords::BUILTIN_FUNC_KEYWORDS),
+        go_map("btFuncTokenMap")
+    );
+    assert_eq!(
+        table(crate::keywords::WINDOW_FUNC_KEYWORDS),
+        go_map("windowFuncTokenMap")
+    );
+}
+
 #[test]
 fn test_token_id() {
     // The Go test iterates every generated tokenMap entry.  Rust carries the

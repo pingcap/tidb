@@ -116,38 +116,6 @@ fn go_parser_alter_index_options_rows_match() {
     ], 23);
 }
 
-/// `pkg/parser/parser_test.go` rows added with automatic add-index
-/// pre-splitting. AUTO is a distinct option from manual boundaries and keeps
-/// its marker through the AST restore path.
-#[test]
-fn go_parser_auto_pre_split_index_rows_match() {
-    assert_source_cases(
-        &[
-            (
-                "ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO",
-                true,
-                "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO",
-            ),
-            (
-                "CREATE INDEX idx ON t (a) PRE_SPLIT_REGIONS AUTO",
-                true,
-                "CREATE INDEX `idx` ON `t` (`a`) PRE_SPLIT_REGIONS = AUTO",
-            ),
-            (
-                "ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO PRE_SPLIT_REGIONS = 4",
-                true,
-                "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4",
-            ),
-            (
-                "ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4 PRE_SPLIT_REGIONS = AUTO",
-                true,
-                "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4",
-            ),
-        ],
-        4,
-    );
-}
-
 /// `pkg/parser/parser_test.go:3311-3334`: vector and columnar ALTER INDEX
 /// grammar, including the rejected shorthand spellings.
 #[test]
@@ -193,4 +161,29 @@ fn go_parser_alter_foreign_key_and_reference_rows_match() {
         ("alter table d_n.t_n add foreign key ident (ident, ident(1) asc) references t_n match partial on delete cascade remove partitioning", true, "ALTER TABLE `d_n`.`t_n` ADD CONSTRAINT `ident` FOREIGN KEY (`ident`, `ident`(1)) REFERENCES `t_n` MATCH PARTIAL ON DELETE CASCADE REMOVE PARTITIONING"),
         ("alter table d_n.t_n add constraint foreign key (ident asc) references d_n.t_n match simple on update cascade on delete cascade", true, "ALTER TABLE `d_n`.`t_n` ADD CONSTRAINT FOREIGN KEY (`ident`) REFERENCES `d_n`.`t_n` MATCH SIMPLE ON DELETE CASCADE ON UPDATE CASCADE"),
     ], 7);
+}
+
+/// This branch's parser has none of Go master's materialized-view grammar or
+/// AUTO index pre-split, and its lexer does not tokenize the words those add:
+/// the statements are 1064 and the words are identifiers (oracle-captured).
+#[test]
+fn go_master_only_syntax_is_rejected_and_its_words_are_identifiers() {
+    assert_source_cases(
+        &[
+            ("create materialized view mv as select 1", false, ""),
+            ("create materialized view log on t", false, ""),
+            ("drop materialized view mv", false, ""),
+            ("create table pk (a int primary key) pre_split_regions = auto", false, ""),
+            ("create table pk2 (a int, primary key (a) pre_split_regions = auto)", false, ""),
+            ("ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO", false, ""),
+            (
+                "create table auto (fast int, immediate int, alert int, operate int, materialized int)",
+                true,
+                "CREATE TABLE `auto` (`fast` INT,`immediate` INT,`alert` INT,`operate` INT,`materialized` INT)",
+            ),
+            ("select 1 materialized", true, "SELECT 1 AS `materialized`"),
+            ("grant operate view on *.* to root", true, "GRANT OPERATE VIEW ON *.* TO `root`@`%`"),
+        ],
+        9,
+    );
 }

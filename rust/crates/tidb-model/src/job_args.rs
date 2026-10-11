@@ -404,10 +404,6 @@ pub enum JobArgsValue {
     ModifySchema(Option<GoShared<ModifySchemaArgs>>),
     /// `*model.CreateTableArgs`, including a typed nil pointer.
     CreateTable(Option<GoShared<CreateTableArgs>>),
-    /// `*model.CreateMaterializedViewLogArgs`, including a typed nil pointer.
-    CreateMaterializedViewLog(Option<GoShared<CreateMaterializedViewLogArgs>>),
-    /// `*model.CreateMaterializedViewArgs`, including a typed nil pointer.
-    CreateMaterializedView(Option<GoShared<CreateMaterializedViewArgs>>),
     /// `*model.BatchCreateTableArgs`, including a typed nil pointer.
     BatchCreateTable(Option<GoShared<BatchCreateTableArgs>>),
     /// `*model.TruncateTableArgs`, including a typed nil pointer.
@@ -460,8 +456,6 @@ impl JobArgsValue {
             Self::DropSchema(value) => job.fill_args(value.clone()),
             Self::ModifySchema(value) => job.fill_args(value.clone()),
             Self::CreateTable(value) => job.fill_args(value.clone()),
-            Self::CreateMaterializedViewLog(value) => job.fill_args(value.clone()),
-            Self::CreateMaterializedView(value) => job.fill_args(value.clone()),
             Self::BatchCreateTable(value) => job.fill_args(value.clone()),
             Self::TruncateTable(value) => job.fill_args(value.clone()),
             Self::TablePartition(value) => job.fill_args(value.clone()),
@@ -494,8 +488,6 @@ impl JobArgsValue {
             Self::DropSchema(_) => "DropSchemaArgs",
             Self::ModifySchema(_) => "ModifySchemaArgs",
             Self::CreateTable(_) => "CreateTableArgs",
-            Self::CreateMaterializedViewLog(_) => "CreateMaterializedViewLogArgs",
-            Self::CreateMaterializedView(_) => "CreateMaterializedViewArgs",
             Self::BatchCreateTable(_) => "BatchCreateTableArgs",
             Self::TruncateTable(_) => "TruncateTableArgs",
             Self::TablePartition(_) => "TablePartitionArgs",
@@ -529,10 +521,6 @@ impl JobArgsValue {
             Self::DropSchema(value) => value.as_ref().map(GoShared::identity_address),
             Self::ModifySchema(value) => value.as_ref().map(GoShared::identity_address),
             Self::CreateTable(value) => value.as_ref().map(GoShared::identity_address),
-            Self::CreateMaterializedViewLog(value) => {
-                value.as_ref().map(GoShared::identity_address)
-            }
-            Self::CreateMaterializedView(value) => value.as_ref().map(GoShared::identity_address),
             Self::BatchCreateTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::TruncateTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::TablePartition(value) => value.as_ref().map(GoShared::identity_address),
@@ -597,16 +585,6 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::CreateTable(value) => GoTypedPointer::new(
                 model_type("CreateTableArgs", GoTypeKind::Struct),
-                value.clone(),
-            )
-            .go_json_projection(),
-            Self::CreateMaterializedViewLog(value) => GoTypedPointer::new(
-                model_type("CreateMaterializedViewLogArgs", GoTypeKind::Struct),
-                value.clone(),
-            )
-            .go_json_projection(),
-            Self::CreateMaterializedView(value) => GoTypedPointer::new(
-                model_type("CreateMaterializedViewArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),

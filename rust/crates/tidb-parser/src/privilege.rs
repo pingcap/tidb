@@ -445,9 +445,15 @@ impl Parser {
             } else {
                 return Err(self.err_here("expected DATABASES or VIEW after SHOW"));
             }
-        } else if self.is_kw("OPERATE") {
+        } else if self.peek().kind == TokenKind::Ident
+            && self.peek().text.eq_ignore_ascii_case("OPERATE")
+            && self.is_kw_at(1, "VIEW")
+        {
+            // Go's `identifier` arm: OPERATE is no keyword on this branch, so
+            // the static `Operate View` privilege is an identifier followed by
+            // VIEW (`IsKeyword` compares the literal).
             self.bump();
-            self.expect_kw("VIEW")?;
+            self.bump();
             ("OPERATE VIEW".to_string(), false)
         } else if self.is_kw("LOCK") {
             self.bump();

@@ -729,28 +729,51 @@ fn a_virtual_generated_columns_literal_folds_in_the_reading_sessions_zone() {
     }
 }
 
-/// The same expression in an expression INDEX is refused, because its value
-/// goes into the stored key: an index whose hidden column re-folded per
-/// session would read back rows whose key no longer matches it.
-///
-/// Go refuses it too, and refuses it earlier -- captured
-/// (`create table e(a int, key idx((timestamp '2020-01-01 10:00:00+00:00')))`):
-///
-/// ```text
-/// [ddl:8200]Unsupported creating expression index containing unsafe
-/// functions without allow-expression-index in config
-/// ```
-///
-/// `key idx((a+1))` stays accepted, which is the control: only the
-/// ZONE-READING half of Go's allow-list is ported here.
+/// Go's parser builds `TIMESTAMP 'lit'` as a `timestampliteral` function
+/// call, which is not on `GAFunction4ExpressionIndex`: without
+/// `allow-expression-index` the index is 8200 (captured,
+/// `create table e(a int, key idx((timestamp '2020-01-01 10:00:00+00:00')))`),
+/// while `key idx((a+1))` is accepted.
 #[test]
-fn an_expression_index_over_a_temporal_literal_is_refused() {
+fn an_expression_index_over_a_temporal_literal_needs_allow_expression_index() {
+    let _serialised = crate::tests_support::process_switch_tests();
     let mut session = session();
     set_zone(&mut session, "+05:00");
     session
         .run("CREATE TABLE ok(a int, key idx((a + 1)))")
-        .expect("a zone-free expression index is accepted");
-    session
+        .expect("a GA expression index is accepted");
+    let error = session
         .run("CREATE TABLE bad(a int, key idx((timestamp '2020-01-01 10:00:00+00:00')))")
-        .expect_err("a temporal literal in an expression index is refused");
+        .expect_err("a temporal literal is not a GA expression-index function");
+    assert_eq!(error.to_mysql_error().code, 8200);
+}
+
+/// With `allow-expression-index` (the integration tests' config) Go builds
+/// the index over a temporal literal and answers through it; the hidden
+/// column refolds the literal in the writing session. Captured from Go
+/// (`explain_generate_column_substitute`).
+#[test]
+fn an_allowed_expression_index_over_a_temporal_literal_answers_through_the_index() {
+    let _serialised = crate::tests_support::process_switch_tests();
+    let previous = tidb_config::config_tree::config::get_global_config();
+    let mut allowed = (*previous).clone();
+    allowed.experimental.allows_expression_index = true;
+    tidb_config::config_tree::config::store_global_config(allowed);
+    let mut session = session();
+    let answer = (|| {
+        session.run(
+            "CREATE TABLE t (d timestamp NULL DEFAULT NULL, \
+             KEY k ((d + timestamp'0000-00-00 00:00:00.00001')))",
+        )?;
+        session.run("INSERT INTO t VALUES ('2021-08-13 04:10:44')")?;
+        session.run(
+            "SELECT d FROM t USE INDEX(k) WHERE d + timestamp'0000-00-00 00:00:00.00001' \
+             = timestamp'2021-08-13 04:10:44' + timestamp'0000-00-00 00:00:00.00001'",
+        )
+    })();
+    tidb_config::config_tree::config::store_global_config((*previous).clone());
+    assert_eq!(
+        crate::tests_support::row_text(answer),
+        [["2021-08-13 04:10:44"]]
+    );
 }

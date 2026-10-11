@@ -83,7 +83,6 @@ pub(crate) struct StatementVarSnapshot {
     allow_in_subq_to_join_and_agg: bool,
     enable_no_decorrelate_in_select: bool,
     enable_skew_distinct_agg: bool,
-    enable_mview: bool,
     max_execution_time_ms: u64,
     advanced_join_reorder: bool,
     constraint_check_in_place: bool,
@@ -608,18 +607,10 @@ impl Session {
     /// while its default checks still consult the captured strict/date modes
     /// and session time zone.
     pub fn ddl_statement_context(&self) -> tidb_executor::StmtContext {
-        // The MV-execution session variables ride every DDL context: Go's
-        // `AddMViewExecutionSessionVarsToJob` snapshots them into the job
-        // envelope at submission, and a context without the image would
-        // record the defaults instead of the creator's settings.
         // Go DDL reads `SessionVars.ForeignKeyChecks` (`checkTableForeignKeysValid`,
         // `CreateTableArgs.FKCheck`); the read-shaped context leaves it at ON.
-        let mut context = self
-            .statement_context(false)
-            .with_foreign_key_checks(self.foreign_key_checks());
-        context
-            .set_session_vars_image(crate::vars::m_view_execution_session_vars_image(&self.vars));
-        context
+        self.statement_context(false)
+            .with_foreign_key_checks(self.foreign_key_checks())
     }
 
     /// Shares evaluation policy and warnings with server-owned ANALYZE sampling.
@@ -938,7 +929,6 @@ impl Session {
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
             ),
             enable_skew_distinct_agg: on(tidb_vardef::tidb_vars::TIDB_OPT_SKEW_DISTINCT_AGG),
-            enable_mview: self.vars.mview_enabled(),
             max_execution_time_ms: self.vars.max_execution_time(),
             advanced_join_reorder: not_off(
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
@@ -1195,7 +1185,6 @@ impl Session {
             };
         let enable_no_decorrelate_in_select = snapshot.enable_no_decorrelate_in_select;
         let enable_skew_distinct_agg = snapshot.enable_skew_distinct_agg;
-        let enable_mview = snapshot.enable_mview;
         let max_execution_time_ms = if self.stmt_hints.has_max_execution_time {
             self.stmt_hints.max_execution_time
         } else {
@@ -1459,7 +1448,6 @@ impl Session {
                     .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
                     .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
                     .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
-                    .with_enable_mview(enable_mview)
                     .with_query_cop_store_limiter(tidb_txnkv::new_query_cop_store_limiter(
                         self.vars.query_cop_store_limit() as isize,
                     ))
@@ -1581,7 +1569,6 @@ impl Session {
                 .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
                 .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
                 .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
-                .with_enable_mview(enable_mview)
                 .with_query_cop_store_limiter(tidb_txnkv::new_query_cop_store_limiter(
                     self.vars.query_cop_store_limit() as isize,
                 ))

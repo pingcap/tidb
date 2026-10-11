@@ -110,36 +110,6 @@ impl ClusterDdl for MockDdl {
         };
         let mut created_id = None;
         match statement {
-            // Go master 94a9cbedab plans these parser-only statements as the
-            // generic DDL and its executor no-ops them: OK, nothing written.
-            DdlStatement::AlterMaterializedViewNoOp { schema, view } => {
-                return Ok(ClusterDdlReport::AlreadySatisfied {
-                    warnings: Vec::new(),
-                    detail: format!("ALTER MATERIALIZED VIEW on `{schema}`.{view} changes nothing"),
-                });
-            }
-            DdlStatement::AlterMaterializedViewLogNoOp { schema, table } => {
-                return Ok(ClusterDdlReport::AlreadySatisfied {
-                    warnings: Vec::new(),
-                    detail: format!(
-                        "ALTER MATERIALIZED VIEW LOG on `{schema}`.{table} changes nothing"
-                    ),
-                });
-            }
-            DdlStatement::DropMaterializedViewNoOp { schema, view } => {
-                return Ok(ClusterDdlReport::AlreadySatisfied {
-                    warnings: Vec::new(),
-                    detail: format!("DROP MATERIALIZED VIEW on `{schema}`.{view} changes nothing"),
-                });
-            }
-            DdlStatement::DropMaterializedViewLogNoOp { schema, table } => {
-                return Ok(ClusterDdlReport::AlreadySatisfied {
-                    warnings: Vec::new(),
-                    detail: format!(
-                        "DROP MATERIALIZED VIEW LOG on `{schema}`.{table} changes nothing"
-                    ),
-                });
-            }
             DdlStatement::CreateDatabase {
                 name,
                 if_not_exists,
@@ -494,16 +464,6 @@ impl ClusterDdl for MockDdl {
                 return Err(SqlQueryError::unknown(
                     "the mock catalog writer holds no rows, so it cannot model an index \
                      change's backfill"
-                        .to_owned(),
-                ))
-            }
-            // The materialized-view submissions are cluster jobs this mock
-            // cannot model (their worker batches own the real submission
-            // path); refuse like the other unmodeled schema changes.
-            DdlStatement::CreateMaterializedView { .. }
-            | DdlStatement::CreateMaterializedViewLog { .. } => {
-                return Err(SqlQueryError::unknown(
-                    "the mock catalog writer cannot model a materialized view submission"
                         .to_owned(),
                 ))
             }
