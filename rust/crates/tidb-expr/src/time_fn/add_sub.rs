@@ -565,6 +565,46 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
     // Go: `fsp := types.DefaultFsp`, raised to `MaxFsp` when the result
     // carries a microsecond.
     let fsp = if result.micros == 0 { MIN_FSP } else { MAX_FSP };
+    // Go `resolveType` keeps a TIMESTAMP argument's type, and `r.Check`
+    // validates that TIMESTAMP in the session zone: a wall clock in a DST
+    // gap is `ErrTimestampInDSTTransition`, which `handleInvalidTimeError`
+    // does not downgrade; one outside TIMESTAMP's range is `ErrWrongValue`,
+    // which it does.
+    if let Datum::Time(argument) = &vals[2] {
+        if argument.kind() == tidb_datatype::TimeType::Timestamp {
+            let core = tidb_datatype::CoreTime::from_date(
+                result.year as u16,
+                result.month as u8,
+                result.day as u8,
+                result.hour as u8,
+                result.minute as u8,
+                result.second as u8,
+                result.micros,
+            );
+            let zone = cols.time_zone();
+            match core.to_datetime(&zone) {
+                Ok(local) => {
+                    let seconds = local.timestamp();
+                    if !(1..=2_147_483_647).contains(&seconds) {
+                        cols.append_warning(1292, &format!("Incorrect time value: '{core:?}'"));
+                        return Ok(Datum::Null);
+                    }
+                }
+                Err(_) if core.adjusted_datetime(&zone).is_ok() => {
+                    return Err(EvalError::Conversion(
+                        tidb_datatype::ERR_TIMESTAMP_IN_DST_TRANSITION.generate(format!(
+                            "Timestamp is not valid, since it is in Daylight Saving Time transition '{core:?}' for time zone '{}'",
+                            zone.dag_zone().0
+                        )),
+                    ));
+                }
+                Err(_) => {
+                    cols.append_warning(1292, &format!("Incorrect time value: '{core:?}'"));
+                    return Ok(Datum::Null);
+                }
+            }
+        }
+    }
     Ok(Datum::new_string(GoDateTime { fsp, ..result }.format()))
 }
 

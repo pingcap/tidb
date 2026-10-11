@@ -2600,10 +2600,19 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
                 start: point.start,
             })
             .collect();
+        let statement_evaluator = context
+            .eval_ctx
+            .map(tidb_planner::ranger::points::StatementRangerEvaluator);
+        let evaluator: &tidb_planner::ranger::points::ExpressionEvaluator<'_> =
+            match &statement_evaluator {
+                Some(evaluator) => evaluator,
+                None => &tidb_planner::ranger::points::evaluate_static,
+            };
         let native = tidb_planner::ranger::ranger::points_to_ranges(
             native_points,
             &range_field_type,
             context.max_size,
+            evaluator,
             &mut None,
         );
         let (built, fallback) = match native {

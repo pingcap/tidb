@@ -840,7 +840,7 @@ fn rebuild_table_scan(
             &rebuild.access_conditions,
             handle_type,
             0,
-            &|expr| context.evaluate(expr),
+            &|expr: &Expression| context.evaluate(expr),
         )
         .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
         note_skipped(context, &result.skip_plan_cache_reason);
@@ -877,7 +877,7 @@ fn rebuild_table_scan(
         &rebuild.common_handle_columns,
         &rebuild.common_handle_lengths,
         0,
-        &|expr| context.evaluate(expr),
+        &|expr: &Expression| context.evaluate(expr),
         context.ranger_options,
     )
     .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
@@ -919,7 +919,7 @@ fn rebuild_index_scan(
         &rebuild.index_columns,
         &rebuild.index_column_lengths,
         0,
-        &|expr| context.evaluate(expr),
+        &|expr: &Expression| context.evaluate(expr),
         context.ranger_options,
     )
     .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
@@ -962,7 +962,7 @@ fn rebuild_point_ranges(
                     &rebuild.access_conditions,
                     handle_type,
                     0,
-                    &|expr| context.evaluate(expr),
+                    &|expr: &Expression| context.evaluate(expr),
                 )
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
                 note_skipped(context, &result.skip_plan_cache_reason);
@@ -994,7 +994,7 @@ fn rebuild_point_ranges(
                     &rebuild.common_handle_columns,
                     &rebuild.common_handle_lengths,
                     0,
-                    &|expr| context.evaluate(expr),
+                    &|expr: &Expression| context.evaluate(expr),
                     context.ranger_options,
                 )
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
@@ -1019,7 +1019,7 @@ fn rebuild_point_ranges(
             // Go `mutableIndexJoinRange.Rebuild`: an empty or no-longer-built
             // range, or one whose count or width changed, is refused.
             let (rebuilt, skip_plan_cache) = rebuild
-                .rebuild(&|expr| context.evaluate(expr))
+                .rebuild(&|expr: &Expression| context.evaluate(expr))
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
             note_skipped(context, &skip_plan_cache);
             let rebuilt = rebuilt.ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
@@ -1048,7 +1048,7 @@ fn rebuild_point_ranges(
                 &rebuild.index_columns,
                 &rebuild.index_column_lengths,
                 0,
-                &|expr| context.evaluate(expr),
+                &|expr: &Expression| context.evaluate(expr),
                 context.ranger_options,
             )
             .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;

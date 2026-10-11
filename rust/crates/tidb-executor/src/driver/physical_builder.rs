@@ -712,7 +712,7 @@ fn correlated_index_range_rebuilder(
                 &rebuild.index_columns,
                 &rebuild.index_column_lengths,
                 0,
-                &|expression| tidb_expr::eval_expression_once(expression, &ctx),
+                &tidb_planner::ranger::points::StatementRangerEvaluator(&ctx),
                 ctx.ranger_options(),
             )
             .map_err(|error| crate::executor::ExecError::internal(format!("{error:?}")))?;
@@ -4213,7 +4213,7 @@ fn point_partition_id(
             &rebuild.common_handle_columns,
             &rebuild.common_handle_lengths,
             0,
-            &|expr| expr.eval(ctx, tidb_chunk::row::Row::empty()),
+            &tidb_planner::ranger::points::StatementRangerEvaluator(ctx),
             ctx.ranger_options(),
         )
         .map_err(|error| DriverError::unsupported(format!("point partition range: {error:?}")))?;

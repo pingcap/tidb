@@ -166,7 +166,7 @@ fn prepared_range_shapes_preserve_current_values_and_residuals() {
             &native_columns,
             &lengths,
             0,
-            &|expression| resolver.eval_constant(expression),
+            &|expression: &tidb_expr::expression::Expression| resolver.eval_constant(expression),
             Default::default(),
         )
         .unwrap();

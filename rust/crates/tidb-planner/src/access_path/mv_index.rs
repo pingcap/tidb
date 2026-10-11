@@ -141,7 +141,7 @@ fn json_array_expr_to_exprs(
     {
         return None;
     }
-    let Ok(Datum::Json(json)) = evaluate(&wrapped) else {
+    let Ok(Datum::Json(json)) = evaluate.eval(&wrapped) else {
         return None;
     };
     if json.type_code() != tidb_datatype::JSON_TYPE_CODE_ARRAY {

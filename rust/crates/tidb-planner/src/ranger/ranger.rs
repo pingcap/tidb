@@ -36,7 +36,8 @@ use tidb_expr::expression::Expression;
 
 use super::checker::UNSPECIFIED_LENGTH;
 use super::points::{
-    convert_point_in_place, get_full_range, Point, PointBuilder, PointBuilderError,
+    convert_point_in_place, get_full_range, ExpressionEvaluator, Point, PointBuilder,
+    PointBuilderError,
 };
 use super::types::{Range, Ranges};
 
@@ -80,6 +81,7 @@ fn convert_points_in_place(
     new_tp: &FieldType,
     skip_null: bool,
     table_range: bool,
+    evaluator: &ExpressionEvaluator<'_>,
     skip_plan_cache_reason: &mut Option<String>,
 ) -> Result<Vec<Point>, PointBuilderError> {
     let (min_value, max_value) = if new_tp.is_unsigned() {
@@ -91,7 +93,7 @@ fn convert_points_in_place(
     let mut j = 0;
     while j + 1 < range_points.len() {
         let mut start_point = range_points[j].clone();
-        convert_point_in_place(&mut start_point, new_tp, skip_plan_cache_reason)?;
+        convert_point_in_place(&mut start_point, new_tp, evaluator, skip_plan_cache_reason)?;
         if table_range {
             if matches!(start_point.value, Datum::Null) {
                 start_point.value = min_value.clone();
@@ -101,7 +103,7 @@ fn convert_points_in_place(
             }
         }
         let mut end_point = range_points[j + 1].clone();
-        convert_point_in_place(&mut end_point, new_tp, skip_plan_cache_reason)?;
+        convert_point_in_place(&mut end_point, new_tp, evaluator, skip_plan_cache_reason)?;
         if table_range && matches!(end_point.value, Datum::MaxValue) {
             end_point.value = max_value.clone();
         }
@@ -155,6 +157,7 @@ pub fn points_to_ranges(
     range_points: Vec<Point>,
     new_tp: &FieldType,
     range_max_size: i64,
+    evaluator: &ExpressionEvaluator<'_>,
     skip_plan_cache_reason: &mut Option<String>,
 ) -> Result<(Ranges, bool), PointBuilderError> {
     // Go `newFieldType` (`ranger.go:779`): the ranger never converts an
@@ -194,6 +197,7 @@ pub fn points_to_ranges(
         new_tp,
         has_not_null,
         false,
+        evaluator,
         skip_plan_cache_reason,
     )?;
     if range_max_size > 0 && estimate_mem_usage_for_points_to_ranges(&range_points) > range_max_size
@@ -227,10 +231,17 @@ pub fn points_to_table_ranges(
     range_points: Vec<Point>,
     new_tp: &FieldType,
     range_max_size: i64,
+    evaluator: &ExpressionEvaluator<'_>,
     skip_plan_cache_reason: &mut Option<String>,
 ) -> Result<(Ranges, bool), PointBuilderError> {
-    let range_points =
-        convert_points_in_place(range_points, new_tp, true, true, skip_plan_cache_reason)?;
+    let range_points = convert_points_in_place(
+        range_points,
+        new_tp,
+        true,
+        true,
+        evaluator,
+        skip_plan_cache_reason,
+    )?;
     if range_max_size > 0 && estimate_mem_usage_for_points_to_ranges(&range_points) > range_max_size
     {
         return Ok((super::points::full_int_range(new_tp.is_unsigned()), true));
@@ -395,10 +406,17 @@ pub fn append_points_to_ranges(
     new_tp: &FieldType,
     range_max_size: i64,
     regard_null_as_point: bool,
+    evaluator: &ExpressionEvaluator<'_>,
     skip_plan_cache_reason: &mut Option<String>,
 ) -> Result<(Ranges, bool), PointBuilderError> {
-    let range_points =
-        convert_points_in_place(range_points, new_tp, false, false, skip_plan_cache_reason)?;
+    let range_points = convert_points_in_place(
+        range_points,
+        new_tp,
+        false,
+        false,
+        evaluator,
+        skip_plan_cache_reason,
+    )?;
     if range_max_size > 0 {
         // Go `estimateMemUsageForAppendPoints2Ranges`.
         let len1 = origin.len() as i64;
@@ -516,9 +534,21 @@ fn build_column_range_impl<'a, E: std::borrow::Borrow<Expression>>(
     let new_tp = convert_string_ft_to_binary_collate(&new_tp);
     let mut skip_reason = builder.skip_plan_cache_reason.take();
     let (ranges, range_fallback) = if table_range {
-        points_to_table_ranges(range_points, &new_tp, range_max_size, &mut skip_reason)?
+        points_to_table_ranges(
+            range_points,
+            &new_tp,
+            range_max_size,
+            eval_expression,
+            &mut skip_reason,
+        )?
     } else {
-        points_to_ranges(range_points, &new_tp, range_max_size, &mut skip_reason)?
+        points_to_ranges(
+            range_points,
+            &new_tp,
+            range_max_size,
+            eval_expression,
+            &mut skip_reason,
+        )?
     };
     if range_fallback {
         // Go `RecordRangeFallback`: the conditions all REMAIN as filters.

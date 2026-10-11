@@ -521,7 +521,52 @@ pub struct PointBuilder<'a> {
 /// The current statement's evaluation of an already-built expression. Like
 /// Go's ranger expression context, this never rewrites an AST or captures a
 /// prepared parameter's planning-time value.
-pub type ExpressionEvaluator<'a> = dyn Fn(&Expression) -> Result<Datum, tidb_expr::EvalError> + 'a;
+pub type ExpressionEvaluator<'a> = dyn RangerEvaluator + 'a;
+
+/// Go `RangerContext`'s expression and type contexts: how the ranger
+/// evaluates a constant, and the location and warning sink of the
+/// `sctx.TypeCtx` its point conversions (`Datum.ConvertTo`) run under. A
+/// bare evaluator closure converts in UTC and drops warnings.
+pub trait RangerEvaluator {
+    /// Evaluates one constant-foldable expression.
+    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError>;
+
+    /// Go `TypeCtx.Location()`.
+    fn location(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
+    }
+
+    /// Go `TypeCtx.AppendWarning`.
+    fn append_warning(&self, _code: u16, _message: &str) {}
+}
+
+impl<F> RangerEvaluator for F
+where
+    F: Fn(&Expression) -> Result<Datum, tidb_expr::EvalError>,
+{
+    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+        self(expression)
+    }
+}
+
+/// The ranger context of one statement: its expressions evaluate, and its
+/// points convert, under the statement's own evaluation context (session
+/// location and warnings).
+pub struct StatementRangerEvaluator<'a>(pub &'a dyn tidb_expr::Columns);
+
+impl RangerEvaluator for StatementRangerEvaluator<'_> {
+    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+        tidb_expr::eval_expression_once(expression, self.0)
+    }
+
+    fn location(&self) -> tidb_datatype::SessionTimeZone {
+        self.0.time_zone()
+    }
+
+    fn append_warning(&self, code: u16, message: &str) {
+        self.0.append_warning(code, message);
+    }
+}
 
 /// Evaluate an expression without execution bindings.
 pub fn evaluate_static(expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
@@ -577,7 +622,7 @@ impl<'a> PointBuilder<'a> {
     /// Go `buildFromConstant`: NULL is an empty range, falsy is empty,
     /// truthy is full.
     fn build_from_constant(&mut self, constant: &Expression) -> Vec<Point> {
-        let dt = match (self.eval_expression)(constant) {
+        let dt = match self.eval_expression.eval(constant) {
             Ok(value) => value,
             Err(error) => {
                 self.err = Some(PointBuilderError::Eval(error));
@@ -724,7 +769,7 @@ impl<'a> PointBuilder<'a> {
         };
         // Go evaluates either non-column operand using the current statement
         // context and an empty row, including scalar functions of parameters.
-        let Ok(mut value) = (self.eval_expression)(constant) else {
+        let Ok(mut value) = self.eval_expression.eval(constant) else {
             return Vec::new();
         };
         if op != OP_NULL_EQ && matches!(value, Datum::Null) {
@@ -841,7 +886,9 @@ impl<'a> PointBuilder<'a> {
         };
         cut_prefix_for_points(&mut res, prefix_len, ft);
         if convert_to_sort_key {
-            if let Err(error) = convert_points_to_sort_key_in_place(&mut res, new_tp) {
+            if let Err(error) =
+                convert_points_to_sort_key_in_place(&mut res, new_tp, self.eval_expression)
+            {
                 self.err = Some(error);
                 return get_full_range();
             }
@@ -947,7 +994,7 @@ impl<'a> PointBuilder<'a> {
                 )));
                 return (get_full_range(), has_null);
             };
-            let mut dt = match (self.eval_expression)(e) {
+            let mut dt = match self.eval_expression.eval(e) {
                 Ok(value) => value,
                 Err(_) => {
                     // Go buildFromIn reports unsupported evaluation here,
@@ -1054,7 +1101,9 @@ impl<'a> PointBuilder<'a> {
         range_points.truncate(cur_pos);
         cut_prefix_for_points(&mut range_points, prefix_len, &ft);
         if convert_to_sort_key {
-            if let Err(error) = convert_points_to_sort_key_in_place(&mut range_points, new_tp) {
+            if let Err(error) =
+                convert_points_to_sort_key_in_place(&mut range_points, new_tp, self.eval_expression)
+            {
                 self.err = Some(error);
                 return (get_full_range(), false);
             }
@@ -1080,7 +1129,7 @@ impl<'a> PointBuilder<'a> {
         let Expression::Constant(_) = &scalar.args[1] else {
             return get_full_range();
         };
-        let pattern_value = match (self.eval_expression)(&scalar.args[1]) {
+        let pattern_value = match self.eval_expression.eval(&scalar.args[1]) {
             Ok(value) => value,
             Err(error) => {
                 self.err = Some(PointBuilderError::Eval(error));
@@ -1113,7 +1162,9 @@ impl<'a> PointBuilder<'a> {
                 },
             ];
             if convert_to_sort_key {
-                if let Err(error) = convert_points_to_sort_key_in_place(&mut res, new_tp) {
+                if let Err(error) =
+                    convert_points_to_sort_key_in_place(&mut res, new_tp, self.eval_expression)
+                {
                     self.err = Some(error);
                     return get_full_range();
                 }
@@ -1123,7 +1174,7 @@ impl<'a> PointBuilder<'a> {
         let Expression::Constant(_) = &scalar.args[2] else {
             return get_full_range();
         };
-        let escape_value = match (self.eval_expression)(&scalar.args[2]) {
+        let escape_value = match self.eval_expression.eval(&scalar.args[2]) {
             Ok(value) => value,
             Err(error) => {
                 self.err = Some(PointBuilderError::Eval(error));
@@ -1188,7 +1239,9 @@ impl<'a> PointBuilder<'a> {
             ];
             cut_prefix_for_points(&mut res, prefix_len, &tp_of_pattern);
             if convert_to_sort_key {
-                if let Err(error) = convert_points_to_sort_key_in_place(&mut res, new_tp) {
+                if let Err(error) =
+                    convert_points_to_sort_key_in_place(&mut res, new_tp, self.eval_expression)
+                {
                     self.err = Some(error);
                     return get_full_range();
                 }
@@ -1217,16 +1270,22 @@ impl<'a> PointBuilder<'a> {
         }
         let should_trim_trailing_space = tidb_datatype::is_pad_space_collation(collation);
         let mut start_point = original_start_point.clone();
-        if let Err(error) =
-            convert_point_to_sort_key_in_place(&mut start_point, new_tp, should_trim_trailing_space)
-        {
+        if let Err(error) = convert_point_to_sort_key_in_place(
+            &mut start_point,
+            new_tp,
+            should_trim_trailing_space,
+            self.eval_expression,
+        ) {
             self.err = Some(error);
             return get_full_range();
         }
         let mut sort_key_point_without_trim = original_start_point;
-        if let Err(error) =
-            convert_point_to_sort_key_in_place(&mut sort_key_point_without_trim, new_tp, false)
-        {
+        if let Err(error) = convert_point_to_sort_key_in_place(
+            &mut sort_key_point_without_trim,
+            new_tp,
+            false,
+            self.eval_expression,
+        ) {
             self.err = Some(error);
             return get_full_range();
         }
@@ -1338,7 +1397,9 @@ impl<'a> PointBuilder<'a> {
                 });
                 cut_prefix_for_points(&mut ret, prefix_len, &ft);
                 if convert_to_sort_key {
-                    if let Err(error) = convert_points_to_sort_key_in_place(&mut ret, new_tp) {
+                    if let Err(error) =
+                        convert_points_to_sort_key_in_place(&mut ret, new_tp, self.eval_expression)
+                    {
                         self.err = Some(error);
                         return get_full_range();
                     }
@@ -1506,16 +1567,36 @@ fn parse_enum_from_elements(ft: &FieldType, text: &str) -> Option<Datum> {
 pub fn convert_point_in_place(
     p: &mut Point,
     new_tp: &FieldType,
+    evaluator: &ExpressionEvaluator<'_>,
     skip_plan_cache_reason: &mut Option<String>,
 ) -> Result<(), PointBuilderError> {
     if matches!(p.value, Datum::MaxValue | Datum::MinNotNull) {
         return Ok(());
     }
-    let casted = match p
-        .value
-        .convert_to(new_tp, tidb_datatype::ConversionFlags::default())
-    {
+    let location = evaluator.location();
+    let casted = match p.value.convert_to_in(
+        new_tp,
+        tidb_datatype::ConversionFlags::default(),
+        &location,
+    ) {
         Ok(converted) => {
+            // Go `Time.Convert`: a DATETIME point moved out of a TIMESTAMP
+            // column's DST gap is adjusted, and the statement warned
+            // whatever its flags.
+            if let (
+                Datum::Time(time),
+                Some(tidb_datatype::ScalarConversionEvent::TimestampInDSTTransition),
+            ) = (&p.value, &converted.event)
+            {
+                evaluator.append_warning(
+                    8179, // Go `mysql.ErrTimeStampInDSTTransition`.
+                    &format!(
+                        "Timestamp is not valid, since it is in Daylight Saving Time transition '{:?}' for time zone '{}'",
+                        time.core_time(),
+                        tidb_datatype::ConversionLocation::from_time_zone(&location).name()
+                    ),
+                );
+            }
             if let Some(event) = &converted.event {
                 // Go reaches its tolerance ladder only through an ERROR;
                 // this port's convert reports the same conditions as
@@ -1605,6 +1686,7 @@ fn go_datum_int64_field(value: &Datum) -> i64 {
 fn convert_points_to_sort_key_in_place(
     points: &mut [Point],
     new_tp: &FieldType,
+    evaluator: &ExpressionEvaluator<'_>,
 ) -> Result<(), PointBuilderError> {
     if new_tp.eval_type() != EvalType::String
         || matches!(new_tp.code(), FieldTypeCode::Enum | FieldTypeCode::Set)
@@ -1612,7 +1694,7 @@ fn convert_points_to_sort_key_in_place(
         return Ok(());
     }
     for p in points {
-        convert_point_to_sort_key_in_place(p, new_tp, true)?;
+        convert_point_to_sort_key_in_place(p, new_tp, true, evaluator)?;
     }
     Ok(())
 }
@@ -1622,9 +1704,10 @@ fn convert_point_to_sort_key_in_place(
     p: &mut Point,
     new_tp: &FieldType,
     trim_trailing_space: bool,
+    evaluator: &ExpressionEvaluator<'_>,
 ) -> Result<(), PointBuilderError> {
     let mut skip_reason = None;
-    convert_point_in_place(p, new_tp, &mut skip_reason)?;
+    convert_point_in_place(p, new_tp, evaluator, &mut skip_reason)?;
     let Datum::String(s) = &p.value else {
         return Ok(());
     };

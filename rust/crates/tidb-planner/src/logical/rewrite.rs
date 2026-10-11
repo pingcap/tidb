@@ -2224,9 +2224,8 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 unique_key_flag: false,
                             })
                         };
-                        let evaluate = |expression: &Expression| {
-                            tidb_expr::eval_expression_once(expression, self.eval_context)
-                        };
+                        let evaluate =
+                            crate::ranger::points::StatementRangerEvaluator(self.eval_context);
                         let derivation = crate::access_path::AccessPathDerivationContext {
                             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
                             expr_pushdown_blacklist: self.expr_pushdown_blacklist,
@@ -2575,9 +2574,8 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
         if result.is_ok() {
             if let LogicalPlan::DataSource(source) = &mut node {
                 if !source_had_stats || source.derived_access_paths.is_none() {
-                    let evaluate = |expression: &Expression| {
-                        tidb_expr::eval_expression_once(expression, self.eval_context)
-                    };
+                    let evaluate =
+                        crate::ranger::points::StatementRangerEvaluator(self.eval_context);
                     let derivation = crate::access_path::AccessPathDerivationContext {
                         opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
                         expr_pushdown_blacklist: self.expr_pushdown_blacklist,

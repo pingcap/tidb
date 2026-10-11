@@ -359,7 +359,7 @@ fn get_potential_eq_or_in_col_offset_in(
             let Expression::Constant(_) = const_side else {
                 return -1;
             };
-            let Ok(val) = eval_expression(const_side) else {
+            let Ok(val) = eval_expression.eval(const_side) else {
                 return -1;
             };
             // col <=> NULL stays a range scan, not a point get (nullable
@@ -901,6 +901,7 @@ impl RangeDetacher<'_> {
                     point,
                     &tmp_new_tp,
                     self.range_max_size,
+                    self.eval_expression,
                     &mut self.skip_plan_cache_reason,
                 )?
             } else {
@@ -910,6 +911,7 @@ impl RangeDetacher<'_> {
                     &tmp_new_tp,
                     self.range_max_size,
                     self.regard_null_as_point,
+                    self.eval_expression,
                     &mut self.skip_plan_cache_reason,
                 )?
             };
@@ -951,6 +953,7 @@ impl RangeDetacher<'_> {
                     range_points,
                     &tmp_new_tp,
                     self.range_max_size,
+                    self.eval_expression,
                     &mut self.skip_plan_cache_reason,
                 )?
             } else {
@@ -960,6 +963,7 @@ impl RangeDetacher<'_> {
                     &tmp_new_tp,
                     self.range_max_size,
                     self.regard_null_as_point,
+                    self.eval_expression,
                     &mut self.skip_plan_cache_reason,
                 )?
             };
@@ -1708,6 +1712,7 @@ impl RangeDetacher<'_> {
                     points,
                     &first_new_tp,
                     self.range_max_size,
+                    self.eval_expression,
                     &mut self.skip_plan_cache_reason,
                 )?;
                 if fallback {

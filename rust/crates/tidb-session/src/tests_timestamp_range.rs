@@ -285,3 +285,83 @@ fn the_epoch_reads_back_as_a_1969_date_at_minus_eight() {
         .run("INSERT INTO r VALUES ('1969-12-31 16:00:01')")
         .expect("the epoch, spelled at -08:00, is admissible");
 }
+
+/// A range point in a DST gap converts the way Go's ranger converts it
+/// (`Time.Convert` in the session zone): the statement warns 8179 per
+/// endpoint and the point moves to the gap's end, so an equality on an
+/// indexed TIMESTAMP is the empty range (TableDual) rather than an index
+/// scan that cannot encode its key. Answers captured from Go.
+#[test]
+fn a_dst_gap_range_point_is_adjusted_and_warned() {
+    let mut session = session();
+    set_zone(&mut session, "UTC");
+    session
+        .run("CREATE TABLE t2 (ts TIMESTAMP, KEY (ts))")
+        .expect("create");
+    session
+        .run("INSERT INTO t2 VALUES ('2025-03-30 00:59:59'), ('2025-03-30 01:00:00')")
+        .expect("insert");
+    set_zone(&mut session, "Europe/Paris");
+    assert!(row_text(session.run("SELECT * FROM t2 WHERE ts = '2025-03-30 02:00:00'")).is_empty());
+    let warning = "Timestamp is not valid, since it is in Daylight Saving Time transition \
+                   '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'";
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert!(!warnings.is_empty());
+    for row in &warnings {
+        assert_eq!(row, &["Warning", "8179", warning]);
+    }
+    let plan = row_text(session.run("EXPLAIN SELECT * FROM t2 WHERE ts = '2025-03-30 02:00:00'"));
+    assert!(plan[0][0].starts_with("TableDual"), "{plan:?}");
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t2 WHERE ts < '2025-03-30 02:00:00'")),
+        [["2025-03-30 01:59:59"]]
+    );
+}
+
+/// Go `TIMESTAMPADD` keeps a TIMESTAMP argument's type and checks the result
+/// in the session zone: landing in the DST gap is error 8179, leaving the
+/// TIMESTAMP range is a 1292 warning and NULL. Answers captured from Go.
+#[test]
+fn timestampadd_checks_a_timestamp_result_in_the_session_zone() {
+    let mut session = session();
+    set_zone(&mut session, "UTC");
+    session
+        .run("CREATE TABLE t (id INT PRIMARY KEY, ts TIMESTAMP)")
+        .expect("create");
+    session
+        .run("INSERT INTO t VALUES (1, '2025-03-30 00:59:59'), (2, '2025-03-30 01:00:00')")
+        .expect("insert");
+    set_zone(&mut session, "Europe/Paris");
+    assert_eq!(
+        code(&mut session, "SELECT TIMESTAMPADD(HOUR, 1, ts) FROM t"),
+        Some(8179)
+    );
+    assert_eq!(
+        row_text(session.run("SELECT TIMESTAMPADD(HOUR, 1, ts) FROM t WHERE id = 2")),
+        [["2025-03-30 04:00:00"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT TIMESTAMPADD(YEAR, 100, ts) FROM t ORDER BY id")),
+        [["NULL"], ["NULL"]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [
+            [
+                "Warning",
+                "1292",
+                "Incorrect time value: '{2125 3 30 1 59 59 0}'"
+            ],
+            [
+                "Warning",
+                "1292",
+                "Incorrect time value: '{2125 3 30 3 0 0 0}'"
+            ],
+        ]
+    );
+    // A DATETIME argument has no zone to check.
+    assert_eq!(
+        row_text(session.run("SELECT TIMESTAMPADD(HOUR, 1, '2025-03-30 01:59:59')")),
+        [["2025-03-30 02:59:59"]]
+    );
+}

@@ -665,7 +665,10 @@ pub fn get_selectivity_by_filter(
 
     let keeps = |value: &tidb_datatype::Datum| -> Result<bool, EstimationError> {
         let substituted = substitute_column(filter, column.unique_id, value, field_type);
-        let result = (ctx.evaluate)(&substituted).map_err(PointBuilderError::Eval)?;
+        let result = ctx
+            .evaluate
+            .eval(&substituted)
+            .map_err(PointBuilderError::Eval)?;
         if result.is_null() {
             return Ok(false);
         }
