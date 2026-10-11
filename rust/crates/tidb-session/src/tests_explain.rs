@@ -5843,3 +5843,71 @@ fn a_prepared_match_against_plans_its_like_fallback() {
         assert_eq!(rows, [["1"], ["2"]], "{sql}");
     }
 }
+
+/// Four Go behaviors around DML and lookups (oracle-captured,
+/// `planner/core/cbo`, `planner/core/issuetest/planner_issue`,
+/// `globalindex/mem_index_lookup`):
+/// - an UPDATE's read plan keeps the projection naming a column its
+///   assignment reads (`buildUpdate` optimizes without projection elimination;
+///   `ColRefFromUpdatePlan` in `doPhysicalProjectionElimination`);
+/// - `FOR UPDATE OF` may name a CTE in FROM, which locks nothing;
+/// - an index join probes a non-unique index's appended handle
+///   (`fillIndexPath`);
+/// - a dirty global-index read whose partitions are all pruned reads nothing.
+#[test]
+fn update_lock_and_lookup_shapes_follow_go() {
+    let mut session = Session::new();
+    for sql in [
+        "create table tb1 (a int, b int)",
+        "create table tb2 (a int, b int, c int)",
+        "insert into tb1 values (1, 0), (2, 0)",
+        "insert into tb2 values (1, 10, 1), (1, 20, 2), (2, 30, 1)",
+        "update tb1 set tb1.b=(select tb2.b from tb2 where tb2.a=tb1.a order by c desc limit 1)",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+    }
+    assert_eq!(
+        row_text(session.run("select a, b from tb1 order by a")),
+        [["1", "20"], ["2", "30"]]
+    );
+
+    session.run("create table t (id int, v int)").unwrap();
+    session.run("insert into t values (1, 200)").unwrap();
+    assert_eq!(
+        row_text(
+            session.run("with cte_t as (select * from t) select * from cte_t for update of cte_t")
+        ),
+        [["1", "200"]]
+    );
+
+    for sql in [
+        "create table jt(a int)",
+        "create table jt1(a int primary key, b int, index idx(b))",
+        "insert into jt values(1), (2), (123)",
+        "insert into jt1 values(2, 123), (123, 2)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    assert_eq!(
+        row_text(session.run(
+            "select /*+ inl_join(jt1), use_index(jt1, idx) */ * from jt join jt1 on jt.a = jt1.a and jt1.b = 123"
+        )),
+        [["2", "2", "123"]]
+    );
+
+    for sql in [
+        "create table g (a int, b int, unique key idx1 (b) global) partition by hash (a) partitions 5",
+        "insert into g values (1, 2), (2, 3)",
+        "begin",
+        "insert into g values (5, 1)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    assert!(row_text(
+        session.run("select * from g partition(p1) use index(idx1) where b <= 2 and a = 10")
+    )
+    .is_empty());
+    session.run("rollback").unwrap();
+}

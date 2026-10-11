@@ -564,3 +564,32 @@ fn create_role_and_drop_role_are_privileges_of_their_own() {
         .message
         .contains("the CREATE USER privilege(s)"));
 }
+
+/// Go `FLUSH PRIVILEGES` rebuilds the privilege cache from `mysql.*`
+/// (`MySQLPrivilege.LoadAll`): role edges written into `mysql.role_edges`
+/// directly take effect, so `SET DEFAULT ROLE` admits them (captured,
+/// `executor/simple`).
+#[test]
+fn flush_privileges_loads_role_edges_written_directly() {
+    let mut session = session_with_privileges();
+    for sql in [
+        "CREATE ROLE r_1, r_2, r_3, u_1",
+        "insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','u_1')",
+        "insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','u_1')",
+    ] {
+        session.run(sql).unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+    }
+    // Before the flush the registry has not seen the rows.
+    assert!(session.run("SET DEFAULT ROLE r_1 TO u_1").is_err());
+    session.run("flush privileges").unwrap();
+    let error = session
+        .run("SET DEFAULT ROLE r_3 TO u_1")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 3530, "{}", error.message);
+    session.run("SET DEFAULT ROLE r_1 TO u_1").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER='u_1'")),
+        [["r_1"]]
+    );
+}

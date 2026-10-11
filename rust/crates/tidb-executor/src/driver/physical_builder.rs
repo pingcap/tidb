@@ -2497,7 +2497,7 @@ fn index_join_probe_key_domains(
             .ok_or_else(|| {
                 DriverError::unsupported("a physical index-join index ID is absent from its table")
             })?;
-        index
+        let mut types = index
             .column_offsets
             .iter()
             .map(|offset| {
@@ -2511,7 +2511,23 @@ fn index_join_probe_key_domains(
                         )
                     })
             })
-            .collect::<Result<Vec<_>, _>>()?
+            .collect::<Result<Vec<_>, _>>()?;
+        // Go `fillIndexPath`: a non-unique secondary index on a table without
+        // a common handle carries the handle after its own columns
+        // (`path.IdxCols = append(path.IdxCols, handleCol)`), which an
+        // index join may probe by.
+        if !index.unique && table.common_handle_offsets().is_empty() {
+            types.push(
+                table
+                    .pk_handle_offset()
+                    .and_then(|offset| table.logical_columns().get(offset))
+                    .map_or_else(
+                        || FieldType::new(FieldTypeCode::LongLong),
+                        |column| column.field_type.clone(),
+                    ),
+            );
+        }
+        types
     } else if !table.common_handle_offsets().is_empty() {
         table
             .common_handle_offsets()

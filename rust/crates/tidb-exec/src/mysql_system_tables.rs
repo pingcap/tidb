@@ -255,6 +255,38 @@ impl SystemTableView {
         Ok(Self::project(&qualified, info, columns))
     }
 
+    /// A view over a table this node holds itself, from its public columns as
+    /// `(name, column ID, declared type)`, projected to `columns` the way
+    /// [`Self::project`] projects a stored `TableInfo`. Its rows arrive
+    /// already decoded ([`SystemRow::from_values`]), so no key column is
+    /// split out.
+    #[must_use]
+    pub fn from_columns(
+        name: &str,
+        table_id: i64,
+        stored: impl IntoIterator<Item = (String, i64, FieldType)>,
+        columns: &[&str],
+    ) -> Self {
+        let mut ids = BTreeMap::new();
+        let mut types = BTreeMap::new();
+        for (column, id, field_type) in stored {
+            let lowercase = column.to_lowercase();
+            if !columns.contains(&lowercase.as_str()) {
+                continue;
+            }
+            ids.insert(lowercase, id);
+            types.insert(id, field_type);
+        }
+        Self {
+            name: name.to_owned(),
+            table_id,
+            ids,
+            types,
+            handle: HandleLayout::RowId,
+            indexes: BTreeMap::new(),
+        }
+    }
+
     /// Projects one already-located `TableInfo` under the given display name.
     #[must_use]
     pub fn project(name: &str, table: &TableInfo, columns: &[&str]) -> Self {
@@ -540,6 +572,12 @@ pub struct SystemRow<'view> {
 }
 
 impl<'view> SystemRow<'view> {
+    /// A row of already-decoded column values, keyed by column ID.
+    #[must_use]
+    pub fn from_values(view: &'view SystemTableView, values: BTreeMap<i64, Datum>) -> Self {
+        Self { view, values }
+    }
+
     /// Decodes one stored row's projected columns from its record key and its
     /// row value.
     ///

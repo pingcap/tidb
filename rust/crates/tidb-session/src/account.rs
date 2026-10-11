@@ -378,6 +378,32 @@ impl Session {
     /// rows -- an `UPDATE` of their timestamps included -- are what the check
     /// sees. The registry's copy of the account's history is replaced from
     /// the table first; without the table there is only the registry.
+    /// Go `FLUSH PRIVILEGES` (`domain.NotifyUpdatePrivilege`): the privilege
+    /// cache is rebuilt from the `mysql.*` tables (`MySQLPrivilege.LoadAll`),
+    /// so a row written there directly -- `INSERT INTO mysql.role_edges` --
+    /// takes effect, and the live registry every session shares is replaced
+    /// in place.
+    pub(crate) fn reload_privileges_from_tables(&mut self) -> Result<(), DriverError> {
+        let Some(registry) = self.privileges.clone() else {
+            return Ok(());
+        };
+        if !self.user_table_present() || self.account_storage_delegated {
+            return Ok(());
+        }
+        let ctx = self
+            .statement_context(false)
+            .with_time_zone(tidb_datatype::SessionTimeZone::utc());
+        let decode = tidb_executor::RowDecodeContext::for_query(&ctx);
+        let loaded = self.with_persistent_catalog_mut(|catalog| {
+            tidb_exec::cluster_privilege_load::load_privileges(
+                &mut privilege::load::SessionPrivilegeTables { catalog, decode },
+            )
+            .map_err(|error| DriverError::unsupported(format!("FLUSH PRIVILEGES: {error}")))
+        })?;
+        registry.replace_from(&privilege::load::registry_from_cluster(&loaded).registry);
+        Ok(())
+    }
+
     fn reload_password_history(
         &mut self,
         registry: &privilege::PrivilegeRegistry,

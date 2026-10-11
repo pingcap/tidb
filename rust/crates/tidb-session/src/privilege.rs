@@ -69,6 +69,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 mod export;
+pub mod load;
 mod password;
 mod password_history;
 mod password_lock;

@@ -5096,12 +5096,29 @@ pub fn rebind_correlated_columns_by_schema_4_physical_plan(
 /// reordered columns, `CalculateNoDelay`, and schema-width changes remain.
 #[must_use]
 pub fn eliminate_physical_projection(plan: PhysicalPlan) -> PhysicalPlan {
-    eliminate_projection_preserving_shuffle(plan, &mut std::collections::BTreeSet::new())
+    eliminate_physical_projection_for_update(plan, &std::collections::BTreeSet::new())
+}
+
+/// [`eliminate_physical_projection`] under Go's
+/// `StmtCtx.ColRefFromUpdatePlan`: the columns an UPDATE's assignments read.
+/// A projection that renames one of them is kept -- the assignments live
+/// outside the plan and resolve against its output.
+#[must_use]
+pub fn eliminate_physical_projection_for_update(
+    plan: PhysicalPlan,
+    col_ref_from_update_plan: &std::collections::BTreeSet<i64>,
+) -> PhysicalPlan {
+    eliminate_projection_preserving_shuffle(
+        plan,
+        &mut std::collections::BTreeSet::new(),
+        col_ref_from_update_plan,
+    )
 }
 
 fn eliminate_projection_preserving_shuffle(
     mut plan: PhysicalPlan,
     retained: &mut std::collections::BTreeSet<i32>,
+    col_ref_from_update_plan: &std::collections::BTreeSet<i64>,
 ) -> PhysicalPlan {
     if let PhysicalPlan::Shuffle(shuffle) = &plan {
         // Go's boundary pointers retain nodes even if projection elimination
@@ -5115,7 +5132,9 @@ fn eliminate_projection_preserving_shuffle(
     plan.base_mut().set_children(
         children
             .into_iter()
-            .map(|child| eliminate_projection_preserving_shuffle(child, retained))
+            .map(|child| {
+                eliminate_projection_preserving_shuffle(child, retained, col_ref_from_update_plan)
+            })
             .collect(),
     );
 
@@ -5125,6 +5144,7 @@ fn eliminate_projection_preserving_shuffle(
                 reader.table_plan = Some(Box::new(eliminate_projection_preserving_shuffle(
                     *table_plan,
                     retained,
+                    col_ref_from_update_plan,
                 )));
             }
         }
@@ -5161,6 +5181,26 @@ fn eliminate_projection_preserving_shuffle(
     };
     if !strict_identity {
         return plan;
+    }
+    // Go `doPhysicalProjectionElimination`: a column an UPDATE assignment
+    // reads, which the child carries under another identity, keeps the
+    // projection.
+    if !col_ref_from_update_plan.is_empty() {
+        let child_schema = child.schema();
+        let renames_update_column =
+            projection_schema
+                .columns
+                .iter()
+                .enumerate()
+                .any(|(i, column)| {
+                    col_ref_from_update_plan.contains(&column.unique_id)
+                        && child_schema
+                            .and_then(|schema| schema.columns.get(i))
+                            .is_none_or(|child_column| child_column.unique_id != column.unique_id)
+                });
+        if renames_update_column {
+            return plan;
+        }
     }
 
     let PhysicalPlan::Projection(mut projection) = plan else {

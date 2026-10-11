@@ -4394,6 +4394,42 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// `extractLimitCountOffset` raises `ErrWrongArguments` there, and a
     /// parameter marker needs the execute-time binding this crate has no
     /// access to.
+    /// Whether a `FOR UPDATE OF` target names a CTE reference in this
+    /// SELECT's FROM clause, by its alias or, unaliased, its name: Go's
+    /// `lockSelectCtx.collect` records each FROM `TableName`, and a derived
+    /// table is not one.
+    fn from_names_cte_reference(&self, from: Option<&tidb_ast::Join>, target: &[String]) -> bool {
+        fn table_refs<'a>(join: &'a tidb_ast::Join, out: &mut Vec<&'a tidb_ast::TableRef>) {
+            for node in std::iter::once(&join.left).chain(join.right.as_ref()) {
+                match node {
+                    tidb_ast::JoinNode::Table(table) => out.push(table),
+                    tidb_ast::JoinNode::Join(join) => table_refs(join, out),
+                    tidb_ast::JoinNode::Derived { .. } => {}
+                }
+            }
+        }
+        let ([target], Some(from)) = (target, from) else {
+            return false;
+        };
+        let mut refs = Vec::new();
+        table_refs(from, &mut refs);
+        refs.iter().any(|table| {
+            let [name] = table.name.as_slice() else {
+                return false;
+            };
+            let is_cte = self
+                .outer_ctes
+                .iter()
+                .any(|cte| cte.name.eq_ignore_ascii_case(name));
+            is_cte
+                && table
+                    .alias
+                    .as_deref()
+                    .unwrap_or(name)
+                    .eq_ignore_ascii_case(target)
+        })
+    }
+
     /// Go's `if b.buildingCTE { b.outerCTEs[len(b.outerCTEs)-1]
     /// .containRecursiveForbiddenOperator = true }`, which aggregation,
     /// DISTINCT, ORDER BY, LIMIT and window functions each run: a CTE whose
@@ -4986,6 +5022,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         })
                         .min_by_key(|(rank, position, ..)| (*rank, *position));
                     let Some((_, _, table_id, name, compatibility)) = matched else {
+                        // Go's lock context collects every FROM table name,
+                        // a CTE reference's included; a CTE target binds
+                        // and locks nothing ("CTE has no *model.HintedTable,
+                        // we need to skip it").
+                        if self.from_names_cte_reference(select.from.as_ref(), target) {
+                            continue;
+                        }
                         return Err(PlanError::unknown_table_in_clause(
                             target.join("."),
                             "locking clause",

@@ -2670,6 +2670,25 @@ pub(crate) fn physical_plan_for_logical(
     column_ids: &ColumnIdAllocator,
     ctx: &crate::StmtContext,
 ) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+    physical_plan_for_logical_with_update_refs(
+        logical,
+        plan_ids,
+        column_ids,
+        ctx,
+        &std::collections::BTreeSet::new(),
+    )
+}
+
+/// [`physical_plan_for_logical`] for an UPDATE's read plan: Go's
+/// `StmtCtx.ColRefFromUpdatePlan`, the columns its assignments read, keeps
+/// the projection that names them.
+pub(crate) fn physical_plan_for_logical_with_update_refs(
+    logical: &LogicalPlan,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+    ctx: &crate::StmtContext,
+    col_ref_from_update_plan: &std::collections::BTreeSet<i64>,
+) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
     let optimizer_cost_env = ctx.optimizer_cost_env();
     let coster = Ver2Coster::from_env(optimizer_cost_env);
     let evaluate = tidb_planner::ranger::points::StatementRangerEvaluator(ctx);
@@ -2741,7 +2760,10 @@ pub(crate) fn physical_plan_for_logical(
     }
     // Go physicalOptimize binds positions before postOptimize removes aliases.
     physical.resolve_indices()?;
-    let physical = tidb_planner::physical::eliminate_physical_projection(physical);
+    let physical = tidb_planner::physical::eliminate_physical_projection_for_update(
+        physical,
+        col_ref_from_update_plan,
+    );
     // Go postOptimize: eliminatePhysicalProjection → InjectExtraProjection.
     // The projection re-injection restores the purposeful projections
     // (scalar aggregate arguments, scalar order-by items, expression
@@ -3386,7 +3408,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         from.right.is_none() && matches!(from.left, tidb_ast::JoinNode::Table(_))
     });
     let wrap_lock = ctx.pessimistic_transaction() && single_source;
-    let (plan, mut update_expressions, plan_flags) = match update_assignment_values {
+    let (plan, mut update_expressions, mut plan_flags) = match update_assignment_values {
         Some(values) => {
             builder.build_update_dml_source(select, values, wrap_lock)?
         }
@@ -3395,6 +3417,14 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
             (plan, Vec::new(), build_flags)
         }
     };
+    // Go `buildUpdate`: "We cannot apply projection elimination when building
+    // the subplan, because columns in orderedList cannot be resolved" -- the
+    // assignments live outside the plan, so a rewrite that substitutes a
+    // projected column never reaches them (`DoOptimize(..., b.optFlag &^
+    // rule.FlagEliminateProjection, p)`).
+    if operator.eq_ignore_ascii_case("Update") {
+        plan_flags &= !tidb_planner::logical::rule::flags::ELIMINATE_PROJECTION;
+    }
     // Go `buildUpdate`/`buildDelete` allocate the `Update`/`Delete` root
     // after the logical build (which now includes `buildSelectLock` and the
     // freezing projection) and before `DoOptimize`. The optimize pass then
@@ -3442,7 +3472,21 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         column_ids,
         &session_zone,
     )?;
-    let physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
+    // Go `buildUpdateLists`: the columns a non-constant assignment reads
+    // join `StmtCtx.ColRefFromUpdatePlan`.
+    let col_ref_from_update_plan: std::collections::BTreeSet<i64> = update_expressions
+        .iter()
+        .flatten()
+        .flat_map(tidb_expr::simple_expr::extract_columns)
+        .map(|column| column.unique_id)
+        .collect();
+    let physical = physical_plan_for_logical_with_update_refs(
+        &logical,
+        plan_ids,
+        column_ids,
+        ctx,
+        &col_ref_from_update_plan,
+    )?;
     let schema = physical.schema().ok_or_else(|| {
         tidb_planner::plan_base::PlanError::internal("physical DML source has no schema")
     })?;

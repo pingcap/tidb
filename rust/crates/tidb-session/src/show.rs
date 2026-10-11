@@ -1797,6 +1797,9 @@ impl Session {
                 if matches!(flush.target, tidb_ast::FlushTarget::Status) {
                     self.flush_keys_examined();
                 }
+                if matches!(flush.target, tidb_ast::FlushTarget::Privileges) {
+                    self.reload_privileges_from_tables()?;
+                }
                 let current_db = self.current_db.clone();
                 let shared = self.shared_catalog();
                 let mut catalog = shared

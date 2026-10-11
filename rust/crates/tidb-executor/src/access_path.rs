@@ -2430,7 +2430,9 @@ impl IndexRangeSourceExec {
             }
         }
         self.batch_size = (self.batch_size * 2).min(self.max_lookup_batch_size);
-        if self.dirty_merge {
+        // An empty batch has no partition to split by: every partition can be
+        // pruned away (`partition:dual`), and Go's lookup then reads nothing.
+        if self.dirty_merge && !self.batch.is_empty() {
             // Go's UnionScan split: a handle whose record key the open
             // transaction staged belongs to the ADDED stream (`getOneRow`
             // takes it from `addedRowsIter`, which reads the membuffer) and

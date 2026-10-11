@@ -469,12 +469,76 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
 ) -> Result<ClusterPrivileges, SystemTableError> {
+    load_privileges(&mut ClusterPrivilegeTables { snapshot, catalog })
+}
+
+/// Where [`load_privileges`] reads `mysql.<table>` from: a cluster snapshot
+/// ([`load_cluster_privileges`]), or a session's own catalog.
+pub trait PrivilegeTables {
+    /// `mysql.<table>` projected to `columns`, with each row's decoded column
+    /// values keyed by column ID, or `None` when the table does not exist.
+    /// `timezone` decodes TIMESTAMP columns.
+    ///
+    /// # Errors
+    ///
+    /// A row the source cannot decode.
+    fn rows(
+        &mut self,
+        table: &str,
+        columns: &[&str],
+        timezone: Option<&tidb_datatype::SessionTimeZone>,
+    ) -> Result<Option<PrivilegeTableRows>, SystemTableError>;
+}
+
+/// One `mysql.<table>`'s projected view and its rows' column values.
+pub type PrivilegeTableRows = (
+    SystemTableView,
+    Vec<std::collections::BTreeMap<i64, tidb_datatype::Datum>>,
+);
+
+struct ClusterPrivilegeTables<'a, S> {
+    snapshot: &'a mut S,
+    catalog: &'a ClusterCatalog,
+}
+
+impl<S: MetaSnapshot> PrivilegeTables for ClusterPrivilegeTables<'_, S> {
+    fn rows(
+        &mut self,
+        table: &str,
+        columns: &[&str],
+        timezone: Option<&tidb_datatype::SessionTimeZone>,
+    ) -> Result<Option<PrivilegeTableRows>, SystemTableError> {
+        let Ok(view) = SystemTableView::locate(self.catalog, table, columns) else {
+            return Ok(None);
+        };
+        let mut rows = Vec::new();
+        for (key, value) in scan_system_table(self.snapshot, &view)? {
+            rows.push(SystemRow::parse_in_timezone(&view, &key, &value, timezone)?.into_values());
+        }
+        Ok(Some((view, rows)))
+    }
+}
+
+/// Go `MySQLPrivilege.LoadAll` over any [`PrivilegeTables`]: one read per
+/// `mysql.*` table, `mysql.user` required and every other table optional.
+///
+/// # Errors
+///
+/// A missing `mysql.user`, or a row whose stored value is not what its
+/// column declares.
+pub fn load_privileges(
+    tables: &mut impl PrivilegeTables,
+) -> Result<ClusterPrivileges, SystemTableError> {
     let mut loaded = ClusterPrivileges::default();
 
-    let users = SystemTableView::locate(catalog, "user", USER_COLUMNS)?;
     let timezone = tidb_datatype::SessionTimeZone::utc();
-    for (key, value) in scan_system_table(snapshot, &users)? {
-        let row = SystemRow::parse_in_timezone(&users, &key, &value, Some(&timezone))?;
+    let Some((users, user_rows)) = tables.rows("user", USER_COLUMNS, Some(&timezone))? else {
+        return Err(SystemTableError::Missing {
+            name: "mysql.user".to_owned(),
+        });
+    };
+    for values in user_rows {
+        let row = SystemRow::from_values(&users, values);
         let user_attributes = if row.has_column("user_attributes") {
             match row.datum("user_attributes")? {
                 Some(tidb_datatype::Datum::Json(json)) => Some(json.to_string()),
@@ -537,16 +601,9 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         });
     }
 
-    if catalog.databases.iter().any(|db| {
-        db.info.name.original().eq_ignore_ascii_case("mysql")
-            && db
-                .tables
-                .iter()
-                .any(|table| table.name.original().eq_ignore_ascii_case("global_priv"))
-    }) {
-        let view = SystemTableView::locate(catalog, "global_priv", &["host", "user", "priv"])?;
-        for (key, value) in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &key, &value)?;
+    if let Some((view, rows)) = tables.rows("global_priv", &["host", "user", "priv"], None)? {
+        for values in rows {
+            let row = SystemRow::from_values(&view, values);
             loaded.global_priv.push(LoadedGlobalPriv {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -555,13 +612,13 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         }
     }
 
-    if let Ok(view) = SystemTableView::locate(
-        catalog,
+    if let Some((view, rows)) = tables.rows(
         "password_history",
         &["host", "user", "password_timestamp", "password"],
-    ) {
-        for (key, value) in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse_in_timezone(&view, &key, &value, Some(&timezone))?;
+        Some(&timezone),
+    )? {
+        for values in rows {
+            let row = SystemRow::from_values(&view, values);
             let Some(tidb_datatype::Datum::Time(timestamp)) = row.datum("password_timestamp")?
             else {
                 return Err(SystemTableError::Decode {
@@ -578,9 +635,9 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         }
     }
 
-    if let Ok(view) = SystemTableView::locate(catalog, "db", DB_COLUMNS) {
-        for (key, value) in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &key, &value)?;
+    if let Some((view, rows)) = tables.rows("db", DB_COLUMNS, None)? {
+        for values in rows {
+            let row = SystemRow::from_values(&view, values);
             loaded.db_grants.push(LoadedDbGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -590,13 +647,13 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         }
     }
 
-    if let Ok(view) = SystemTableView::locate(
-        catalog,
+    if let Some((view, rows)) = tables.rows(
         "tables_priv",
         &["host", "user", "db", "table_name", "table_priv"],
-    ) {
-        for (key, value) in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &key, &value)?;
+        None,
+    )? {
+        for values in rows {
+            let row = SystemRow::from_values(&view, values);
             loaded.table_grants.push(LoadedTableGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -607,8 +664,7 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         }
     }
 
-    if let Ok(view) = SystemTableView::locate(
-        catalog,
+    if let Some((view, rows)) = tables.rows(
         "columns_priv",
         &[
             "host",
@@ -618,9 +674,10 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
             "column_name",
             "column_priv",
         ],
-    ) {
-        for (key, value) in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &key, &value)?;
+        None,
+    )? {
+        for values in rows {
+            let row = SystemRow::from_values(&view, values);
             loaded.column_grants.push(LoadedColumnGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -632,13 +689,13 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         }
     }
 
-    if let Ok(view) = SystemTableView::locate(
-        catalog,
+    if let Some((view, rows)) = tables.rows(
         "global_grants",
         &["host", "user", "priv", "with_grant_option"],
-    ) {
-        for (key, value) in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &key, &value)?;
+        None,
+    )? {
+        for values in rows {
+            let row = SystemRow::from_values(&view, values);
             loaded.dynamic_grants.push(LoadedDynamicGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -648,13 +705,13 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         }
     }
 
-    if let Ok(view) = SystemTableView::locate(
-        catalog,
+    if let Some((view, rows)) = tables.rows(
         "role_edges",
         &["from_host", "from_user", "to_host", "to_user"],
-    ) {
-        for (key, value) in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &key, &value)?;
+        None,
+    )? {
+        for values in rows {
+            let row = SystemRow::from_values(&view, values);
             loaded.role_edges.push(LoadedRoleEdge {
                 role_host: row.text("from_host")?.unwrap_or_default(),
                 role_user: row.text("from_user")?.unwrap_or_default(),
@@ -664,13 +721,13 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         }
     }
 
-    if let Ok(view) = SystemTableView::locate(
-        catalog,
+    if let Some((view, rows)) = tables.rows(
         "default_roles",
         &["host", "user", "default_role_host", "default_role_user"],
-    ) {
-        for (key, value) in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &key, &value)?;
+        None,
+    )? {
+        for values in rows {
+            let row = SystemRow::from_values(&view, values);
             loaded.default_roles.push(LoadedDefaultRole {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
