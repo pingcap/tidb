@@ -4782,3 +4782,44 @@ fn a_global_unique_index_takes_the_fast_point_plan_under_a_partition_clause() {
         vec![vec!["1"], vec!["2"]]
     );
 }
+
+/// Go `checkAndNormalizePlacementPolicy`: the policy name `default` removes a
+/// placement instead of naming a policy. Written on a table it still keeps
+/// the schema's default off (`BuildTableInfoWithStmt` copies that default only
+/// when the table names no policy), and written on a partition it leaves the
+/// partition with none (oracle-captured).
+#[test]
+fn placement_policy_default_names_no_policy() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE PLACEMENT POLICY p1 FOLLOWERS=2",
+        "CREATE DATABASE dp PLACEMENT POLICY = p1",
+        "USE dp",
+        "CREATE TABLE t1 (a INT) PLACEMENT POLICY = default",
+        "CREATE TABLE t2 (a INT)",
+        "CREATE TABLE t3 (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY = default, \
+         PARTITION p1 VALUES LESS THAN (20) PLACEMENT POLICY = p1)",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+    }
+    let shown = show_create(&mut session, "t1");
+    assert!(!shown.contains("PLACEMENT POLICY"), "{shown}");
+    let shown = show_create(&mut session, "t2");
+    assert!(
+        shown.contains("/*T![placement] PLACEMENT POLICY=`p1` */"),
+        "{shown}"
+    );
+    // t3 names no table policy, so it takes the schema's; only p0 has none.
+    let shown = show_create(&mut session, "t3");
+    assert!(
+        shown.contains("(PARTITION `p0` VALUES LESS THAN (10),\n"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("VALUES LESS THAN (20) /*T![placement] PLACEMENT POLICY=`p1` */"),
+        "{shown}"
+    );
+}

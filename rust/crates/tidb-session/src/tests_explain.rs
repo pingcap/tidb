@@ -5693,3 +5693,41 @@ fn ordered_union_index_merge_keeps_a_common_handle_table_partial() {
         "{plan:?}"
     );
 }
+
+/// Go's aggregation pushdown across UNION ALL gives each term a Projection
+/// that reads the union's columns through the term's own identity
+/// projection (`buildProjection4Union`). Go resolves indices before
+/// `eliminatePhysicalProjection` drops that identity projection, so the
+/// parent keeps reading the same offsets of the reader; the reader must
+/// answer under the union's column identities.
+#[test]
+fn agg_pushdown_across_union_all_reads_through_an_eliminated_projection() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t(a int, b int, primary key(a))",
+        "insert into t values (1, 1)",
+        "set session tidb_opt_agg_push_down = 1",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let union = "(select * from t ta union all select * from t tb) t";
+    for column in ["a", "b"] {
+        assert_eq!(
+            row_text(session.run(&format!("select count(distinct {column}) from {union}"))),
+            vec![vec!["1"]],
+            "{column}"
+        );
+    }
+    let plan = row_text(session.run(&format!(
+        "explain format = 'brief' select count(distinct a) from {union}"
+    )));
+    let projections: Vec<_> = plan
+        .iter()
+        .filter(|row| row[0].contains("Projection"))
+        .collect();
+    assert_eq!(projections.len(), 2, "{plan:?}");
+    assert!(
+        projections.iter().all(|row| row[4] == "Column#7, Column#7"),
+        "{plan:?}"
+    );
+}

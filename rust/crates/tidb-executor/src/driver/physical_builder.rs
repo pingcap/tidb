@@ -581,10 +581,42 @@ fn resolve_expression(
     schema: &Schema,
 ) -> Result<Expression, DriverError> {
     super::planner_bridge::materialize_physical_expression(&mut expression);
-    tidb_expr::simple_expr::resolve_indices_in_place(&mut expression, schema).map_err(
-        |_error| DriverError::unsupported("a physical expression does not resolve in its child"),
-    )?;
+    resolve_by_identity_or_bound_position(&mut expression, schema)?;
     Ok(expression)
+}
+
+/// Go evaluates a column at the `Index` that `ResolveIndices` bound before
+/// postOptimize (`physical.resolve_indices()` here). This tier rebinds each
+/// column by unique ID against the built child, whose schema may be shaped
+/// differently from its plan's. A column whose identity is no longer in the
+/// child keeps Go's position: `eliminatePhysicalProjection` drops a strict
+/// identity projection whose own columns are new identities over the same
+/// positions, as `buildProjection4Union`'s are when aggregation is pushed
+/// across UNION ALL, and its parent goes on reading those positions.
+fn resolve_by_identity_or_bound_position(
+    expression: &mut Expression,
+    schema: &Schema,
+) -> Result<(), DriverError> {
+    match expression {
+        Expression::Column(column) => {
+            let at = schema.column_index(column);
+            if at >= 0 {
+                column.index = at as i64;
+            } else if usize::try_from(column.index).map_or(true, |at| at >= schema.len()) {
+                return Err(DriverError::unsupported(
+                    "a physical expression does not resolve in its child",
+                ));
+            }
+            Ok(())
+        }
+        Expression::ScalarFunction(function) => {
+            for arg in &mut function.args {
+                resolve_by_identity_or_bound_position(arg, schema)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }
 
 fn resolve_expressions(

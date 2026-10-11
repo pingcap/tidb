@@ -33,6 +33,10 @@ use tidb_model::{PlacementSettings, PolicyInfo};
 
 use super::{Catalog, DriverError};
 
+/// Go `defaultPlacementPolicyName`: the reserved name that, as a policy
+/// reference, means no placement policy.
+pub(crate) const DEFAULT_PLACEMENT_POLICY_NAME: &str = "default";
+
 /// Go `SetDirectPlacementOpt` (`ddl/placement_policy.go:530`): folds the
 /// source-ordered options into one settings record.
 ///
@@ -93,7 +97,10 @@ pub fn run_create_placement_policy(
     }
     // Go reserves the case-insensitive name `default` for placement reset
     // syntax. The refusal happens before catalog insertion.
-    if statement.name.eq_ignore_ascii_case("default") {
+    if statement
+        .name
+        .eq_ignore_ascii_case(DEFAULT_PLACEMENT_POLICY_NAME)
+    {
         return Err(DriverError::DdlCoded {
             errno: tidb_error::mysql::errcode::ErrReservedSyntax,
             message: "The 'default' syntax is reserved for purposes internal to the MySQL server"

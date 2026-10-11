@@ -2364,27 +2364,48 @@ fn create_table_in(
     // (8239). Resolution means stamping the policy's ID onto the reference:
     // the placement BUNDLES that carry these settings to PD are looked up by
     // id, so a reference holding only a name cannot build one.
-    if let Some(name) = create.table_options.iter().find_map(|option| match option {
+    // Go `checkAndNormalizePlacementPolicy`: the name `default` removes the
+    // placement -- and, being written, it still keeps the schema's default
+    // off the table (`BuildTableInfoWithStmt` copies that default only when
+    // the table names no policy at all).
+    let written_policy = create.table_options.iter().find_map(|option| match option {
         tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
         _ => None,
-    }) {
-        let Some(policy) = catalog.policy(&name) else {
-            return Err(DriverError::PlacementPolicyNotExists(name));
+    });
+    if let Some(name) = written_policy
+        .as_ref()
+        .filter(|name| !name.eq_ignore_ascii_case(placement_policy::DEFAULT_PLACEMENT_POLICY_NAME))
+    {
+        let Some(policy) = catalog.policy(name) else {
+            return Err(DriverError::PlacementPolicyNotExists(name.clone()));
         };
         table.set_placement_policy(Some(tidb_model::PolicyRefInfo {
             id: policy.id,
-            name: tidb_ast::CiString::new(name),
+            name: tidb_ast::CiString::new(name.clone()),
         }));
     }
     // Go `BuildTableInfoWithStmt`: a non-temporary table with no placement
     // of its own takes the schema's default.
-    if temporary == tidb_model::TempTableType::NONE && table.placement_policy().is_none() {
+    if temporary == tidb_model::TempTableType::NONE && written_policy.is_none() {
         if let Some(reference) = catalog.database_placement_policy(&database) {
             table.set_placement_policy(Some(reference.clone()));
         }
     }
     if let Some(partition) = table.partition_mut() {
         for definition in &mut partition.definitions {
+            if definition
+                .placement_policy
+                .as_ref()
+                .is_some_and(|reference| {
+                    reference
+                        .name
+                        .original()
+                        .eq_ignore_ascii_case(placement_policy::DEFAULT_PLACEMENT_POLICY_NAME)
+                })
+            {
+                definition.placement_policy = None;
+                continue;
+            }
             let Some(reference) = definition.placement_policy.as_mut() else {
                 continue;
             };
