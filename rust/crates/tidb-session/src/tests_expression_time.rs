@@ -340,3 +340,31 @@ fn date_part_builtins_warn_on_zero_dates_as_go() {
         }
     }
 }
+
+/// Go `getIntervalFromReal`: a REAL amount of a composite INTERVAL unit is
+/// formatted with its argument type's scale (`FormatFloat(v, 'f', decimal,
+/// 64)`) before the unit parses it, so DOUBLE(6,3) 1.1 is "1.100" -- one
+/// minute and a hundred seconds -- and a plain DOUBLE keeps its shortest
+/// form. Captured from Go TiDB (`TestIssue11309`).
+#[test]
+fn a_real_composite_interval_amount_takes_its_types_scale() {
+    let mut session = Session::new();
+    session
+        .run("create table t (b double(6,3), c float(6,3), d double)")
+        .unwrap();
+    session.run("insert into t values (1.1, 1.1, 1.1)").unwrap();
+    for (column, want) in [
+        ("b", "2003-11-18 07:27:53"),
+        ("c", "2003-11-18 07:27:53"),
+        ("d", "2003-11-18 07:26:14"),
+    ] {
+        assert_eq!(
+            cell(
+                &mut session,
+                &format!("select date_add('2003-11-18 07:25:13', interval {column} minute_second) from t")
+            ),
+            want,
+            "{column}"
+        );
+    }
+}

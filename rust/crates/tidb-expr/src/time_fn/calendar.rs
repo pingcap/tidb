@@ -761,6 +761,12 @@ fn date_arithmetic_result(value: Datum, ctx: &dyn Columns) -> Result<Datum, Eval
     }
 }
 
+/// Whether `unit` is one of the composite `INTERVAL` units (`MINUTE_SECOND`,
+/// `YEAR_MONTH`, ...), whose amount is a delimited string.
+pub(crate) fn is_composite_unit(unit: &str) -> bool {
+    composite_spec(unit).is_some()
+}
+
 pub(crate) fn date_add_with_result_fsp(
     unit: &str,
     date: &Datum,

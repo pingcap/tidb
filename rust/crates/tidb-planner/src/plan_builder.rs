@@ -588,6 +588,12 @@ pub struct EvaluatedSubquery {
 pub type SubqueryEvaluator<'a> =
     &'a dyn Fn(&LogicalPlan, SubqueryKind, u64) -> Result<EvaluatedSubquery, PlanError>;
 
+/// Go `evalFieldDefaultValue` (`expression_rewriter.go:3303`) over the
+/// executor's catalog and statement context: the constant `DEFAULT(column)`
+/// reads for the public column `column` of `database.table`. The planner
+/// cannot evaluate a column default itself, as Go's cannot reach `table`.
+pub type DefaultEvaluator<'a> = &'a dyn Fn(&str, &str, &str) -> Result<Expression, EvalError>;
+
 pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `b.is infoschema.InfoSchema`, through the seam.
     pub source: &'a S,
@@ -670,6 +676,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// documented planner-only boundary (the `EvaluateSeparately` outcome is
     /// reported as an error instead of a wrong plan).
     pub subquery_evaluator: Option<SubqueryEvaluator<'a>>,
+    /// Go `evalFieldDefaultValue`, installed by the executor. `None` keeps a
+    /// query's `DEFAULT(column)` unsupported, as Go's is without a plan.
+    pub default_evaluator: Option<DefaultEvaluator<'a>>,
     /// The constants `MarkerKind::Constant` markers select, in insertion
     /// order. Go pushes them straight onto `ctxStack`; this port stores them
     /// here because the marker tail can only carry column paths.
@@ -905,6 +914,9 @@ pub struct PlanScopeResolver<'a> {
     /// Go `expressionRewriter.allowBuildCastArray`: only the rebuild of a
     /// virtual generated column may contain `CAST(... AS ... ARRAY)`.
     allow_build_cast_array: bool,
+    /// Go `evalDefaultExprWithPlanCtx` for a `DEFAULT(column)` leaf, bound by
+    /// the builder that owns the name scopes and the catalog hook.
+    default_lookup: Option<&'a dyn Fn(&[String]) -> Result<Expression, EvalError>>,
 }
 
 impl<'a> PlanScopeResolver<'a> {
@@ -939,6 +951,7 @@ impl<'a> PlanScopeResolver<'a> {
             clause_message: "expression",
             ambiguous_column: std::cell::RefCell::new(None),
             allow_build_cast_array: false,
+            default_lookup: None,
         }
     }
 
@@ -976,7 +989,18 @@ impl<'a> PlanScopeResolver<'a> {
             clause_message: "expression",
             ambiguous_column: std::cell::RefCell::new(None),
             allow_build_cast_array: false,
+            default_lookup: None,
         }
+    }
+
+    /// Attach Go's `evalDefaultExprWithPlanCtx` for `DEFAULT(column)`.
+    #[must_use]
+    pub fn with_default_lookup(
+        mut self,
+        lookup: &'a dyn Fn(&[String]) -> Result<Expression, EvalError>,
+    ) -> Self {
+        self.default_lookup = Some(lookup);
+        self
     }
 
     /// Attach the statement's implicit charset/collation pair to this
@@ -1162,6 +1186,10 @@ pub(crate) fn field_name_ambiguity(names: &[FieldName], path: &[String]) -> Opti
 }
 
 impl ColumnResolver for PlanScopeResolver<'_> {
+    fn resolve_default_in_query(&self, path: &[String]) -> Option<Result<Expression, EvalError>> {
+        self.default_lookup.map(|lookup| lookup(path))
+    }
+
     fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
         self.warning_context?.user_vars()
     }
@@ -1420,6 +1448,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             in_straight_join: false,
             handle_helper: HandleColHelper::new(),
             subquery_evaluator: None,
+            default_evaluator: None,
             subquery_constants: Vec::new(),
             all_names: Vec::new(),
             correlated_agg_columns: Vec::new(),
@@ -1507,6 +1536,95 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     pub const fn with_subquery_evaluator(mut self, evaluator: SubqueryEvaluator<'a>) -> Self {
         self.subquery_evaluator = Some(evaluator);
         self
+    }
+
+    /// Installs Go's `evalFieldDefaultValue` over the executor's catalog.
+    #[must_use]
+    pub const fn with_default_evaluator(mut self, evaluator: DefaultEvaluator<'a>) -> Self {
+        self.default_evaluator = Some(evaluator);
+        self
+    }
+
+    /// Go `evalDefaultExprWithPlanCtx` (`expression_rewriter.go:3249`): the
+    /// column a query's `DEFAULT(column)` names is looked up in `allNames`
+    /// from the innermost block out (`select a from t1 where a > (select
+    /// default(a) from t2)` reads `t2.a`), then in the rewrite's own `names`,
+    /// and its table's default is read through the catalog hook.
+    ///
+    /// # Errors
+    ///
+    /// 1052 for an ambiguous name, 1054 for an unknown one, 1364 for a column
+    /// that no base table owns (`select default(c) from (select a+1 as c from
+    /// t) t0`), and the default's own evaluation error.
+    fn eval_default_expr(
+        &self,
+        path: &[String],
+        names: &[FieldName],
+    ) -> Result<Expression, EvalError> {
+        let ambiguous = |path: &[String]| {
+            EvalError::Conversion(tidb_error::terror::TerrorError::registered(
+                tidb_error::terror::TerrorClass::Expression,
+                tidb_error::terror::TerrorCode::new(1052),
+                format!("Column '{}' in field list is ambiguous", path.join(".")),
+            ))
+        };
+        let mut found = None;
+        for scope in self.all_names.iter().rev() {
+            if field_name_ambiguity(scope, path).is_some() {
+                return Err(ambiguous(path));
+            }
+            if let Some(index) = find_field_name(scope, path) {
+                found = Some(&scope[index]);
+                break;
+            }
+        }
+        let name = match found {
+            Some(name) => name,
+            None => {
+                if field_name_ambiguity(names, path).is_some() {
+                    return Err(ambiguous(path));
+                }
+                match find_field_name(names, path) {
+                    Some(index) => &names[index],
+                    None => {
+                        return Err(EvalError::UnknownColumnInClause(
+                            path.last().cloned().unwrap_or_default(),
+                            "field list",
+                        ))
+                    }
+                }
+            }
+        };
+        if name.names.original_table.original.is_empty() {
+            // Go `table.ErrNoDefaultValue.GenWithStackByArgs(name.ColName)`:
+            // a column some expression computed has no default.
+            return Err(EvalError::Conversion(
+                tidb_error::terror::TerrorError::registered(
+                    tidb_error::terror::TerrorClass::Table,
+                    tidb_error::terror::TerrorCode::new(1364),
+                    format!(
+                        "Field '{}' doesn't have a default value",
+                        name.names.column.original
+                    ),
+                ),
+            ));
+        }
+        let database = if name.names.database.original.is_empty() {
+            self.source.current_database()
+        } else {
+            name.names.database.original.as_str()
+        };
+        let column = if name.names.original_column.original.is_empty() {
+            &name.names.column.original
+        } else {
+            &name.names.original_column.original
+        };
+        let Some(evaluator) = self.default_evaluator else {
+            return Err(EvalError::Unsupported(
+                "Unsupported expr *ast.DefaultExpr when source table not provided",
+            ));
+        };
+        evaluator(database, &name.names.original_table.original, column)
     }
 
     /// Go `GetOptFlag()` (`planbuilder.go:455`).
@@ -1796,6 +1914,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         .with_allow_build_cast_array(self.allow_build_cast_array.get())
         .with_warning_context(self.ctx);
         resolver.block_expand = self.current_block_expand.as_ref();
+        let default_lookup = |path: &[String]| self.eval_default_expr(path, names);
+        let resolver = resolver.with_default_lookup(&default_lookup);
         let resolver = match (full_schema, full_names) {
             (Some(schema), Some(names)) => resolver.with_full_scope(schema, names),
             _ => resolver,
@@ -2026,19 +2146,33 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     }
                     _ => return false,
                 };
-                let Some(outer) = self.plan.take() else {
+                let Some(mut outer) = self.plan.take() else {
                     self.error = Some(PlanError::internal("subquery lowering lost its outer plan"));
                     return true;
                 };
                 // The comparison/IN handlers take their left operand already
                 // rewritten, so build it before the rewriter borrows the
-                // builder.
+                // builder. Go visits that operand with the same rewriter
+                // first, so a subquery inside it is lowered against the
+                // enclosing plan before the quantified one
+                // (`(select c1 from t2 limit 1) = any (select c1 from t1)`).
                 let rewritten_left = match &form {
                     Form::Compare { left, .. } | Form::In { left, .. } => {
+                        let mut left = (**left).clone();
+                        match self.builder.lower_scalar_subqueries(outer, &mut left) {
+                            Ok((lowered, _)) => outer = lowered,
+                            Err(error) => {
+                                self.error = Some(error);
+                                return true;
+                            }
+                        }
                         let (schema, names) = snapshot_schema_and_names(&outer);
                         let mut markers = BTreeMap::new();
                         markers.insert(MarkerKind::Column, schema.columns.clone());
-                        match self.builder.rewrite_scalar(left, &schema, &names, &markers) {
+                        match self
+                            .builder
+                            .rewrite_scalar(&left, &schema, &names, &markers)
+                        {
                             Ok(left) => Some(left),
                             Err(error) => {
                                 self.error = Some(error);
@@ -2252,6 +2386,29 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         Ok((inner, hint_flags))
     }
 
+    /// The left operand of a filter-context quantified comparison or IN, as
+    /// Go's rewriter visits it before the subquery: a subquery inside it is
+    /// lowered against `outer` first, and the operand is rewritten over the
+    /// plan that lowering leaves.
+    fn rewrite_quantified_left(
+        &mut self,
+        outer: LogicalPlan,
+        left: &Expr,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<(LogicalPlan, Expression), PlanError> {
+        let mut left = left.clone();
+        let (outer, lowered) = self.lower_scalar_subqueries(outer, &mut left)?;
+        let (schema, names) = snapshot_schema_and_names(&outer);
+        let rewritten = if lowered {
+            let mut markers = markers.clone();
+            markers.insert(MarkerKind::Column, schema.columns.clone());
+            self.rewrite_scalar(&left, &schema, &names, &markers)?
+        } else {
+            self.rewrite_scalar(&left, &schema, &names, markers)?
+        };
+        Ok((outer, rewritten))
+    }
+
     /// Go's filter-context arms of `expressionRewriter.Enter`: a direct
     /// quantified, IN, or EXISTS predicate replaces the outer plan with the
     /// semi-apply/join produced by the corresponding handler.
@@ -2262,7 +2419,6 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
         conditions: &mut Vec<Expression>,
     ) -> Result<(LogicalPlan, bool), PlanError> {
-        let (schema, names) = snapshot_schema_and_names(&outer);
         match expression {
             Expr::CompareSubquery {
                 op,
@@ -2270,7 +2426,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 all,
                 subquery,
             } => {
-                let left = self.rewrite_scalar(left, &schema, &names, markers)?;
+                let (outer, left) = self.rewrite_quantified_left(outer, left, markers)?;
                 let (inner, hint_flags) =
                     self.build_expression_subquery(&outer, subquery, SubQueryCtx::Compare)?;
                 let op = match op {
@@ -2307,7 +2463,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 subquery,
                 not,
             } => {
-                let left = self.rewrite_scalar(expr, &schema, &names, markers)?;
+                let (outer, left) = self.rewrite_quantified_left(outer, expr, markers)?;
                 let (inner, hint_flags) =
                     self.build_expression_subquery(&outer, subquery, SubQueryCtx::In)?;
                 let mut rewriter = self.expression_rewriter();
@@ -4634,7 +4790,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         self.check_only_full_group_by(select, &fields, &gby_exprs, &source_names)?;
 
         let mut markers: BTreeMap<MarkerKind, Vec<Column>> = BTreeMap::new();
-        let group_by_items = self.rewrite_gby_exprs_with_plan(&gby_exprs, &plan, &markers)?;
+        let (gby_plan, group_by_items) =
+            self.rewrite_gby_exprs_with_plan(&gby_exprs, plan, &markers)?;
+        plan = gby_plan;
 
         // `:4405` resolveHavingAndOrderBy: HAVING first (it may append
         // auxiliary aggregate fields the ORDER BY half then sees), then

@@ -1382,9 +1382,25 @@ impl ScalarFunction {
         if date.is_null() {
             return Ok(Datum::Null);
         }
-        let amount = self.args[1].eval(ctx, row)?;
+        let mut amount = self.args[1].eval(ctx, row)?;
         if amount.is_null() {
             return Ok(Datum::Null);
+        }
+        // Go `getIntervalFromReal`: a REAL amount is formatted with its
+        // argument type's scale before the unit parses it
+        // (`strconv.FormatFloat(v, 'f', decimal, 64)`), so `INTERVAL b
+        // MINUTE_SECOND` over a DOUBLE(6,3) 1.1 reads "1.100".
+        if let (Datum::Real(value) | Datum::Float32(value), true) =
+            (&amount, crate::time_fn::calendar::is_composite_unit(unit))
+        {
+            let decimal = self.args[1].static_type().map_or(
+                tidb_datatype::UNSPECIFIED_LENGTH,
+                tidb_datatype::FieldType::decimal,
+            );
+            let prec = i32::try_from(decimal).unwrap_or(-1);
+            amount = Datum::new_string(tidb_datatype::go_strconv::format_float(
+                *value, b'f', prec, 64,
+            ));
         }
         let result_type = self.get_static_type();
         if result_type

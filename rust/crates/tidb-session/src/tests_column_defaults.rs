@@ -1958,3 +1958,62 @@ fn vector_columns_enforce_dimensions_and_computed_defaults() {
         "vector has 3 dimensions, does not fit VECTOR(2)"
     );
 }
+
+/// Go `evalDefaultExprWithPlanCtx`: a query's `DEFAULT(column)` finds its
+/// column in `allNames` from the innermost block out, then reads the table's
+/// default (`evalFieldDefaultValue`) as a constant; a computed column has
+/// none (1364), and ambiguity and unknown names are Go's 1052 and 1054.
+/// Captured from Go TiDB (`expression_rewriter.test`).
+#[test]
+fn a_query_reads_column_defaults_with_default_of_column() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table t1 (a varchar(10) default 'def', b varchar(10), c int default '10', \
+             f datetime default current_timestamp)",
+        )
+        .unwrap();
+    session
+        .run("insert into t1(a, b, c) values ('1', '1', 1)")
+        .unwrap();
+    session.run("set @@timestamp = 1321009871").unwrap();
+    session.run("set @@time_zone = '+00:00'").unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(
+            session.run("select default(a), default(b), default(c), default(f) from t1")
+        ),
+        [["def", "NULL", "10", "2011-11-11 11:11:11"]]
+    );
+    assert_eq!(
+        crate::tests_support::row_text(
+            session.run("select default(a0) from (select a as a0 from t1) as t0")
+        ),
+        [["def"]]
+    );
+    for (sql, code) in [
+        ("select default(x) from t1", 1054),
+        (
+            "select default(a0) from (select a+1 as a0 from t1) as t0",
+            1364,
+        ),
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, code, "{sql}: {}", error.message);
+    }
+    session.run("create table t2 (a varchar(10))").unwrap();
+    let error = session
+        .run("select default(a) from t1, t2")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1052, "{}", error.message);
+    session.run("create table t6 (a int default -1)").unwrap();
+    session.run("insert into t6 values (0), (1), (2)").unwrap();
+    session.run("create table t7 (a int default 1)").unwrap();
+    session.run("insert into t7 values (0), (1), (2)").unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run(
+            "select a, default(a) from t6 where a > (select default(a) from t7 where t6.a = t7.a)"
+        )),
+        [["2", "-1"]]
+    );
+}

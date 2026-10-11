@@ -145,6 +145,13 @@ pub trait ColumnResolver {
         None
     }
 
+    /// Go `evalDefaultExprWithPlanCtx`: `DEFAULT(column)` inside a query,
+    /// resolved through the plan's name scopes with Go's own errors (1052,
+    /// 1054, 1364). `None` leaves the leaf to [`Self::resolve_default`].
+    fn resolve_default_in_query(&self, _path: &[String]) -> Option<Result<Expression, EvalError>> {
+        None
+    }
+
     /// Resolves `VALUES(column)` to Go's `NewValuesFunc`. Go's rewriter builds
     /// it in every scope over the column the current schema names
     /// (`FindFieldName`, else 1054); an INSERT's ON DUPLICATE KEY UPDATE
@@ -309,6 +316,9 @@ impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
     }
     fn resolve_default(&self, path: &[String]) -> Option<Expression> {
         (**self).resolve_default(path)
+    }
+    fn resolve_default_in_query(&self, path: &[String]) -> Option<Result<Expression, EvalError>> {
+        (**self).resolve_default_in_query(path)
     }
     fn resolve_values(&self, path: &[String]) -> Option<Expression> {
         (**self).resolve_values(path)
@@ -1545,6 +1555,9 @@ fn rewrite_expr_resolved_inner(
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
     if let Expr::Default(Some(path)) = expr {
+        if let Some(result) = resolver.resolve_default_in_query(path) {
+            return result;
+        }
         return resolver
             .resolve_default(path)
             // Go `expression_rewriter.go:1835`, with neither a plan nor a
@@ -3409,6 +3422,10 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 args,
             )))
         }
+        // Go `expressionRewriter.Enter`: an aggregate that the plan's
+        // aggregation did not map (nested in another aggregate's argument)
+        // is `ErrInvalidGroupFuncUse` (1111), before its arguments are seen.
+        Expr::Aggregate { .. } | Expr::GroupConcat { .. } => Err(EvalError::InvalidGroupFuncUse),
         _ => Err(EvalError::Unsupported(
             "expression form is not yet supported by the rewriter",
         )),

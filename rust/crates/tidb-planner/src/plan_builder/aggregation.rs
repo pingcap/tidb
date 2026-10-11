@@ -545,35 +545,76 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             clauses.push(&mut item.expr);
         }
         scopes.push(own);
-        let mut error_slot = None;
+        let mut result = Ok(());
         for clause in clauses {
-            visit_exprs(clause, &mut |node| {
-                // A lifted aggregate moves whole; any other one is still
-                // walked, as Go's visitor enters the queries in its arguments
-                // (`sum((select count(a)))`).
-                if is_aggregate_call(node) && reads_only_the_current_block(node, outer.1, scopes) {
+            result =
+                self.lift_correlated_aggregates_in_expr(clause, outer, scopes, slot_base, lifted);
+            if result.is_err() {
+                break;
+            }
+        }
+        scopes.pop();
+        result
+    }
+
+    /// One clause of [`Self::lift_correlated_aggregates_in_select`], in Go's
+    /// order: `extractCorrelatedAggFuncs` walks the aggregates as
+    /// `AggregateFuncExtractor` collects them -- innermost first -- and maps
+    /// each one it has seen to -1, which the rewrite of an enclosing
+    /// aggregate's arguments reads as a NULL constant. So an aggregate's own
+    /// arguments are lifted first, and it is lifted itself only if what is
+    /// left of them reads the current block (`(select sum(count(a)))` lifts
+    /// `count(a)` and keeps the `sum`). A query in an argument is entered too
+    /// (`sum((select count(a)))`).
+    fn lift_correlated_aggregates_in_expr(
+        &mut self,
+        expr: &mut Expr,
+        outer: (&Schema, &[FieldName]),
+        scopes: &mut Vec<(Schema, Vec<FieldName>)>,
+        slot_base: usize,
+        lifted: &mut Vec<Expr>,
+    ) -> Result<(), PlanError> {
+        let mut error_slot = None;
+        visit_exprs(expr, &mut |node| {
+            if error_slot.is_some() {
+                return true;
+            }
+            if is_aggregate_call(node) {
+                let operands: Vec<&mut Expr> = match node {
+                    Expr::Aggregate { args, .. } => args.iter_mut().collect(),
+                    Expr::GroupConcat { args, order_by, .. } => args
+                        .iter_mut()
+                        .chain(order_by.iter_mut().map(|item| &mut item.expr))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                for operand in operands {
+                    if let Err(error) = self.lift_correlated_aggregates_in_expr(
+                        operand, outer, scopes, slot_base, lifted,
+                    ) {
+                        error_slot = Some(error);
+                        return true;
+                    }
+                }
+                if reads_only_the_current_block(node, outer.1, scopes) {
                     let replaced = marker::substitute(
                         node,
                         PlanMarker::new(MarkerKind::CorrelatedAgg, slot_base + lifted.len()),
                     );
                     lifted.push(replaced);
-                    return true;
                 }
-                let Some(subquery) = subquery_of(node) else {
-                    return false;
-                };
-                if let Err(error) = self.lift_correlated_aggregates_in_query(
-                    subquery, outer, scopes, slot_base, lifted,
-                ) {
-                    error_slot.get_or_insert(error);
-                }
-                true
-            });
-            if error_slot.is_some() {
-                break;
+                return true;
             }
-        }
-        scopes.pop();
+            let Some(subquery) = subquery_of(node) else {
+                return false;
+            };
+            if let Err(error) =
+                self.lift_correlated_aggregates_in_query(subquery, outer, scopes, slot_base, lifted)
+            {
+                error_slot = Some(error);
+            }
+            true
+        });
         match error_slot {
             Some(error) => Err(error),
             None => Ok(()),
@@ -627,33 +668,44 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 }
 
 /// Go `extractCorrelatedAggFuncs`' test at every level up to the current
-/// block: the aggregate reads at least one column, and each resolves -- by
-/// SQL's innermost-first rule over `scopes` -- in the current block's
-/// `outer_names` rather than in any nested level.
+/// block: the aggregate's ARGUMENTS read at least one column, and each
+/// resolves -- by SQL's innermost-first rule over `scopes` -- in the current
+/// block's `outer_names` rather than in any nested level. A nested aggregate
+/// (lifted to a marker or not) reads nothing: Go rewrites it as the NULL its
+/// -1 `aggMapper` slot stands for.
 fn reads_only_the_current_block(
     aggregate: &Expr,
     outer_names: &[FieldName],
     scopes: &[(Schema, Vec<FieldName>)],
 ) -> bool {
+    let args: &[Expr] = match aggregate {
+        Expr::Aggregate { args, .. } | Expr::GroupConcat { args, .. } => args,
+        _ => return false,
+    };
     let mut reads_outer = false;
     let mut reads_only_outer = true;
-    walk_exprs(aggregate, &mut |inner| {
-        let Expr::Column(path) = inner else {
-            return false;
-        };
-        if scopes
-            .iter()
-            .rev()
-            .any(|(_, names)| find_field_name(names, path).is_some())
-        {
-            reads_only_outer = false;
-        } else if find_field_name(outer_names, path).is_some() {
-            reads_outer = true;
-        } else {
-            reads_only_outer = false;
-        }
-        true
-    });
+    for arg in args {
+        walk_exprs(arg, &mut |inner| {
+            if is_aggregate_call(inner) || PlanMarker::from_expr(inner).is_some() {
+                return true;
+            }
+            let Expr::Column(path) = inner else {
+                return false;
+            };
+            if scopes
+                .iter()
+                .rev()
+                .any(|(_, names)| find_field_name(names, path).is_some())
+            {
+                reads_only_outer = false;
+            } else if find_field_name(outer_names, path).is_some() {
+                reads_outer = true;
+            } else {
+                reads_only_outer = false;
+            }
+            true
+        });
+    }
     reads_outer && reads_only_outer
 }
 
@@ -798,16 +850,35 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
     /// Plan-aware GROUP BY rewriting, retaining qualified columns hidden by a
     /// coalesced `USING`/`NATURAL` join in its `FullSchema` lookup.
+    ///
+    /// Go `resolveGbyExprs` rewrites each item with `b.rewrite(ctx, expr, p,
+    /// nil, true)` and keeps the plan it returns, so a subquery in an item --
+    /// `GROUP BY aa` over `SELECT (SELECT ...) aa` -- is lowered against the
+    /// source plan first, before the WHERE selection is built over it.
     pub fn rewrite_gby_exprs_with_plan(
         &mut self,
         items: &[Expr],
-        plan: &LogicalPlan,
+        mut plan: LogicalPlan,
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
-    ) -> Result<Vec<Expression>, PlanError> {
-        items
-            .iter()
-            .map(|item| self.rewrite_scalar_with_plan(item, plan, markers))
-            .collect()
+    ) -> Result<(LogicalPlan, Vec<Expression>), PlanError> {
+        let mut rewritten = Vec::with_capacity(items.len());
+        for item in items {
+            let mut item = item.clone();
+            let (lowered_plan, lowered) = self.lower_scalar_subqueries(plan, &mut item)?;
+            plan = lowered_plan;
+            let expression = if lowered {
+                let mut markers = markers.clone();
+                markers.insert(
+                    MarkerKind::Column,
+                    snapshot_schema_and_names(&plan).0.columns,
+                );
+                self.rewrite_scalar_with_plan(&item, &plan, &markers)?
+            } else {
+                self.rewrite_scalar_with_plan(&item, &plan, markers)?
+            };
+            rewritten.push(expression);
+        }
+        Ok((plan, rewritten))
     }
 }
 
@@ -1133,6 +1204,39 @@ pub fn agg_marker_columns(agg_index_map: &[usize], schema: &Schema) -> Vec<Colum
 }
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
+    /// Go `rewriteWithPreprocess` over one aggregate operand (an argument or
+    /// a `GROUP_CONCAT` ORDER BY item): it is rewritten like any other
+    /// expression, so a scalar subquery nested inside it inserts an Apply
+    /// into the child plan and is replaced by the Apply's output column.
+    /// `schema`/`names` follow the child plan the lowering leaves.
+    fn rewrite_aggregate_operand(
+        &mut self,
+        plan: LogicalPlan,
+        operand: &Expr,
+        schema: &mut Schema,
+        names: &mut Vec<FieldName>,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<(LogicalPlan, Expression), PlanError> {
+        let mut scratch = Self::clause_scratch(operand);
+        let plan_len = plan.schema().map_or(0, Schema::len);
+        let (mut plan, lowered) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+        if !lowered {
+            let built = self.rewrite_scalar(operand, schema, names, markers)?;
+            return Ok((plan, built));
+        }
+        hide_rewrite_columns(&mut plan, plan_len);
+        let (next_schema, next_names) = snapshot_schema_and_names(&plan);
+        *schema = next_schema;
+        *names = next_names;
+        // The lowering substituted a `#col#<index>` marker for the subquery
+        // node, so the rewrite needs the Column marker bound to the refreshed
+        // child schema exactly as the select-list path binds it.
+        let mut current_markers = markers.clone();
+        current_markers.insert(MarkerKind::Column, schema.columns.clone());
+        let built = self.rewrite_scalar_with_plan(&scratch, &plan, &current_markers)?;
+        Ok((plan, built))
+    }
+
     /// Go `buildAggregation(ctx, p, aggFuncList, gbyItems, correlatedAggMap)`
     /// (`logical_plan_builder.go:255`).
     ///
@@ -1183,35 +1287,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let (name, args, distinct, order_by, separator) = decompose_aggregate(agg)?;
             let mut built_args = Vec::with_capacity(args.len() + usize::from(separator.is_some()));
             for arg in args {
-                // Go `rewriteWithPreprocess`: an aggregate argument is
-                // rewritten like any other expression, so a scalar subquery
-                // nested inside it inserts an Apply into the child plan and
-                // is replaced by the Apply's output column. Without this the
-                // subquery reached the executor's expression rewriter, which
-                // rejects it ("expression form is not yet supported").
-                let mut scratch = Self::clause_scratch(arg);
-                let plan_len = plan.schema().map_or(0, Schema::len);
-                let (next_plan, lowered) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+                let (next_plan, built) =
+                    self.rewrite_aggregate_operand(plan, arg, &mut schema, &mut names, markers)?;
                 plan = next_plan;
-                if lowered {
-                    hide_rewrite_columns(&mut plan, plan_len);
-                    let (next_schema, next_names) = snapshot_schema_and_names(&plan);
-                    schema = next_schema;
-                    names = next_names;
-                    // The lowering substituted a `#col#<index>` marker for
-                    // the subquery node, so the rewrite needs the Column
-                    // marker bound to the refreshed child schema exactly as
-                    // the select-list path binds it.
-                    let mut current_markers = markers.clone();
-                    current_markers.insert(MarkerKind::Column, schema.columns.clone());
-                    built_args.push(self.rewrite_scalar_with_plan(
-                        &scratch,
-                        &plan,
-                        &current_markers,
-                    )?);
-                } else {
-                    built_args.push(self.rewrite_scalar(arg, &schema, &names, markers)?);
-                }
+                built_args.push(built);
             }
             if let Some(separator) = separator {
                 let mut field_type = FieldType::parser(FieldTypeCode::VarString);
@@ -1262,7 +1341,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .ok_or_else(|| PlanError::unknown_column_in_clause(text, "order clause"))?,
                     None => item.expr.clone(),
                 };
-                let built = self.rewrite_scalar(&resolved, &schema, &names, markers)?;
+                let (next_plan, built) = self.rewrite_aggregate_operand(
+                    plan,
+                    &resolved,
+                    &mut schema,
+                    &mut names,
+                    markers,
+                )?;
+                plan = next_plan;
                 descriptor
                     .order_by_items
                     .push(ByItems::new(built, item.desc));

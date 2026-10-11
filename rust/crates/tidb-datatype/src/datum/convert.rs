@@ -45,15 +45,19 @@ impl Datum {
                 value: i64::from(*value != 0.0),
                 event: None,
             },
+            // Go `StrToFloat` reads the numeric prefix of the raw bytes; a
+            // byte that is not valid UTF-8 is never part of that prefix, so
+            // the lossy view reads the same value (`WHERE from_base64('test')`
+            // is false, not an error).
             Self::String(value) => {
-                let parsed = str_to_float(value.as_utf8()?, false);
+                let parsed = str_to_float(&String::from_utf8_lossy(value.bytes()), false);
                 Converted {
                     value: i64::from(parsed.value != 0.0),
                     event: parsed.event,
                 }
             }
             Self::Bytes(value) => {
-                let parsed = str_to_float(std::str::from_utf8(value)?, false);
+                let parsed = str_to_float(&String::from_utf8_lossy(value), false);
                 Converted {
                     value: i64::from(parsed.value != 0.0),
                     event: parsed.event,
@@ -480,6 +484,26 @@ mod tests {
         BinaryJSON, BinaryLiteral, Collation, ConversionFlags, Decimal, FieldType, FieldTypeCode,
         MySqlDuration, ScalarConversionEvent, TimeType,
     };
+
+    /// Go `StrToFloat` reads the numeric prefix of raw bytes, so a byte
+    /// string that is not UTF-8 still has a truth value: `FROM_BASE64('test')`
+    /// is false, `UNHEX(2038330881)` (" 830\x88\x01") is true.
+    #[test]
+    fn to_bool_reads_the_numeric_prefix_of_non_utf8_bytes() {
+        assert_eq!(
+            Datum::new_bytes(b"\xb5\xeb\x2d").to_bool().unwrap().value,
+            0
+        );
+        assert_eq!(
+            Datum::new_bytes(b" 830\x88\x01").to_bool().unwrap().value,
+            1
+        );
+        let string = Datum::String(crate::StringDatum::new(
+            b"7\xff".to_vec(),
+            Collation::DEFAULT,
+        ));
+        assert_eq!(string.to_bool().unwrap().value, 1);
+    }
 
     #[test]
     fn test_to_bool() {

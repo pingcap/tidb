@@ -3034,6 +3034,55 @@ fn driver_error_to_plan(error: crate::DriverError) -> tidb_planner::plan_base::P
     }
 }
 
+/// Go `evalFieldDefaultValue` (`expression_rewriter.go:3303`) for the
+/// planner's [`tidb_planner::plan_builder::DefaultEvaluator`]: the public
+/// column's `table.GetColDefaultValue` under the statement's context -- a
+/// CURRENT_TIMESTAMP default reads the statement clock, a column with no
+/// default is NULL or 1364 -- as a constant of the column's type.
+fn default_evaluator<'a>(
+    catalog: &'a Catalog,
+    ctx: &'a crate::StmtContext,
+) -> impl Fn(&str, &str, &str) -> Result<Expression, tidb_expr::EvalError> + 'a {
+    move |database, table, column| {
+        let entry = catalog.table_in(database, table).ok_or_else(|| {
+            // Go `is.TableByName` failing.
+            tidb_expr::EvalError::Conversion(tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(1146),
+                format!("Table '{database}.{table}' doesn't exist"),
+            ))
+        })?;
+        let meta = super::dml::column_metadata(entry)
+            .into_iter()
+            .find(|meta| meta.name.eq_ignore_ascii_case(column))
+            .ok_or_else(|| {
+                // Go `ErrUnknownColumn.GenWithStackByArgs(colName, "field_list")`.
+                tidb_expr::EvalError::UnknownColumnInClause(column.to_lowercase(), "field_list")
+            })?;
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        let value = super::dml::materialize_column_default(
+            &meta,
+            super::dml::DefaultUse::Expression,
+            ctx,
+            chunk.get_row(0),
+        )
+        .map_err(|error| match error {
+            crate::DriverError::Exec(crate::ExecError::Eval(error)) => error,
+            error => {
+                let error = error.to_mysql_error();
+                tidb_expr::EvalError::Conversion(tidb_error::terror::TerrorError::compatible(
+                    tidb_error::terror::TerrorCode::new(error.code as isize),
+                    error.message,
+                ))
+            }
+        })?;
+        Ok(Expression::Constant(tidb_expr::constant::Constant::new(
+            value,
+            meta.field_type,
+        )))
+    }
+}
+
 /// Go's `EvalSubqueryFirstRow` function variable
 /// (`pkg/planner/core/expression_rewriter.go:55`), closed over one
 /// statement's catalog and allocators.
@@ -3178,8 +3227,10 @@ fn planner_optimized_query_with_allocators(
         registry,
     );
     let prune_fallback = dynamic_prune_fallback(catalog, ctx);
+    let defaults = default_evaluator(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
-        .with_subquery_evaluator(&evaluator);
+        .with_subquery_evaluator(&evaluator)
+        .with_default_evaluator(&defaults);
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
@@ -3242,8 +3293,10 @@ pub(crate) fn query_builds_correlated_columns(
         &session_zone,
         &registry,
     );
+    let defaults = default_evaluator(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone())
-        .with_subquery_evaluator(&evaluator);
+        .with_subquery_evaluator(&evaluator)
+        .with_default_evaluator(&defaults);
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
@@ -3294,8 +3347,10 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         &registry,
     );
     let prune_fallback = dynamic_prune_fallback(catalog, ctx);
+    let defaults = default_evaluator(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
-        .with_subquery_evaluator(&evaluator);
+        .with_subquery_evaluator(&evaluator)
+        .with_default_evaluator(&defaults);
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();

@@ -1512,3 +1512,125 @@ fn exists_over_an_ungrouped_aggregate_is_true() {
         [["0"]]
     );
 }
+
+/// Go's rewriter visits a quantified comparison's left operand before the
+/// subquery, so a scalar subquery there is lowered (here evaluated) against
+/// the enclosing plan first. Captured from Go TiDB.
+#[test]
+fn a_subquery_on_the_left_of_any_all_or_in_is_lowered_first() {
+    let mut session = Session::new();
+    session.run("create table q1 (c1 int, c2 int)").unwrap();
+    session.run("create table q2 (c1 int, c2 int)").unwrap();
+    session.run("insert into q1 values (1, 1), (2, 2)").unwrap();
+    session.run("insert into q2 values (1, 1), (3, 3)").unwrap();
+    let rows = |session: &mut Session, sql: &str| {
+        let mut rows = row_text(session.run(sql));
+        rows.sort();
+        rows
+    };
+    assert_eq!(
+        rows(
+            &mut session,
+            "select * from q2 where (select c1 from q2 order by c1 limit 1) = any (select c1 from q1)"
+        ),
+        [["1", "1"], ["3", "3"]]
+    );
+    assert!(rows(
+        &mut session,
+        "select * from q2 where (select c1 from q2 order by c1 limit 1) != all (select c1 from q1)"
+    )
+    .is_empty());
+    assert_eq!(
+        rows(
+            &mut session,
+            "select * from q2 where (select max(c1) from q1 where q1.c2 = q2.c2) in (select c1 from q1)"
+        ),
+        [["1", "1"]]
+    );
+}
+
+/// Go rewrites GROUP BY items, window specifications and arguments, and a
+/// GROUP_CONCAT's ORDER BY with the plan-carrying rewriter, so a subquery in
+/// any of them is lowered against the plan there. A window ORDER BY integer is
+/// a position into the child plan's columns; a PARTITION BY one is a value.
+/// Captured from Go TiDB.
+#[test]
+fn subqueries_in_group_by_window_specs_and_group_concat_order_by() {
+    let mut session = Session::new();
+    session
+        .run("create table t1 (a int, b int, c varchar(10))")
+        .unwrap();
+    session
+        .run("create table t2 (a int, c varchar(10))")
+        .unwrap();
+    session
+        .run("insert into t1 values (1, 1, 'x'), (1, 2, 'y'), (2, 3, 'z')")
+        .unwrap();
+    session
+        .run("insert into t2 values (1, 'p'), (2, 'q')")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "select (select tt.a from t1 tt order by a desc limit 1) aa, count(distinct b) from t1 group by aa"
+        )),
+        [["2", "3"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select (select c from t2 where t2.a = t1.a) x, count(*) from t1 group by x order by x"
+        )),
+        [["p", "2"], ["q", "1"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select a, sum(b) over (partition by (select c from t2 where t2.a = t1.a) order by b) from t1 order by a, b"
+        )),
+        [["1", "1"], ["1", "3"], ["2", "3"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select a, b, row_number() over (partition by 1 order by 2 desc) from t1 order by a, b"
+        )),
+        [["1", "1", "3"], ["1", "2", "2"], ["2", "3", "1"]]
+    );
+    let error = session
+        .run("select a, row_number() over (order by 9) from t1")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1054, "Unknown column '9' in 'field list'")
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select group_concat(c order by (select group_concat(c order by c) from t2 where a=t1.a), c desc) from t1"
+        )),
+        [["y,x,z"]]
+    );
+}
+
+/// Go `extractCorrelatedAggFuncs` lifts the innermost aggregates first and
+/// reads each one it has seen as NULL inside an enclosing aggregate, so
+/// `(select sum(count(a)))` lifts only `count(a)` to the outer query; an
+/// aggregate nested in the subquery's own aggregate is 1111. Captured from Go
+/// TiDB.
+#[test]
+fn a_correlated_aggregate_nested_in_an_inner_aggregate_is_lifted_alone() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b int)").unwrap();
+    session.run("insert into t values (1, 2), (3, 4)").unwrap();
+    session.run("create table t2 (b int)").unwrap();
+    assert_eq!(
+        row_text(session.run("select (select sum(count(a))) from t")),
+        [["2"]]
+    );
+    assert_eq!(
+        row_text(session.run("select (select sum((select count(a))+sum(a))) from t")),
+        [["6"]]
+    );
+    let error = session
+        .run("select (select sum(count(t2.b)) from t2) from t")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1111, "{}", error.message);
+}

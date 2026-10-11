@@ -375,6 +375,13 @@ impl ColumnResolver for SchemaNameResolver<'_> {
         self.base.resolve_default(path)
     }
 
+    fn resolve_default_in_query(
+        &self,
+        path: &[String],
+    ) -> Option<Result<Expression, crate::EvalError>> {
+        self.base.resolve_default_in_query(path)
+    }
+
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
         self.base.time_zone()
     }

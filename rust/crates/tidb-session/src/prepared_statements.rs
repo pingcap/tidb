@@ -166,6 +166,18 @@ impl Session {
         crate::binding::pin_current_database(&mut statement, self.current_database())?;
         let param_count = tidb_executor::parameter_count(&text, self.scanner_sql_mode())?;
         let limit_markers = limit_marker_orders(&statement);
+        // Go's PrepareExec builds the plan with each variable read as its value
+        // NOW (`rewriteVariable`); the retained statement keeps the variables,
+        // which EXECUTE binds afresh. Only the marker-free query validated
+        // below needs the bound copy.
+        let validated_query = match &statement {
+            tidb_ast::Stmt::Query(_) if param_count == 0 => {
+                let mut bound = statement.clone();
+                self.bind_variables(&mut bound)?;
+                Some(bound)
+            }
+            _ => None,
+        };
         // Build statement-local planner state before locking the catalog: the
         // context's sequence/key-decode snapshots consult that same catalog.
         let planner_context = self.statement_context(false);
@@ -181,15 +193,13 @@ impl Session {
             // parameters at EXECUTE, so only marker-free ones validate here.
             // The built plan is discarded -- the cache envelope above and
             // the EXECUTE-time plan remain the execution source.
-            if param_count == 0 {
-                if let tidb_ast::Stmt::Query(query) = &statement {
-                    tidb_executor::plan_query_meta_stmt(
-                        query,
-                        &catalog,
-                        self.current_database(),
-                        &planner_context,
-                    )?;
-                }
+            if let Some(tidb_ast::Stmt::Query(query)) = &validated_query {
+                tidb_executor::plan_query_meta_stmt(
+                    query,
+                    &catalog,
+                    self.current_database(),
+                    &planner_context,
+                )?;
             }
             // go's plan cache records the refusal as a statement warning at
             // PREPARE too (oracle m21: PREPARE st3 FROM 'CREATE TABLE ...'

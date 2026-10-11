@@ -97,6 +97,13 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.resolve_default(path)
     }
 
+    fn resolve_default_in_query(
+        &self,
+        path: &[String],
+    ) -> Option<Result<Expression, crate::EvalError>> {
+        self.base.resolve_default_in_query(path)
+    }
+
     fn resolve_values(&self, path: &[String]) -> Option<Expression> {
         self.base.resolve_values(path)
     }

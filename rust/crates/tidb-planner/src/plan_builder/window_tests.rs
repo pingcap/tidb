@@ -728,10 +728,13 @@ fn test_an_aggregate_inside_a_window_spec_is_built_below_the_window() {
 }
 
 #[test]
-fn test_a_positional_window_by_item_names_its_blocking_symbol() {
-    // Section 3's `itemTransformer` boundary.
-    let message = build_err("SELECT a, ROW_NUMBER() OVER (ORDER BY 1) FROM t");
-    assert!(message.contains("itemTransformer"), "{message}");
+fn test_a_positional_window_order_by_item_names_a_child_column() {
+    // Go's parser makes the integer a `PositionExpr`, and
+    // `positionToScalarFunc` resolves it against the window's child plan; one
+    // that names no column is 1054 under the clause the build runs in.
+    build("SELECT a, ROW_NUMBER() OVER (ORDER BY 1) FROM t");
+    let message = build_err("SELECT a, ROW_NUMBER() OVER (ORDER BY 99) FROM t");
+    assert!(message.contains("Unknown column '99'"), "{message}");
 }
 
 #[test]

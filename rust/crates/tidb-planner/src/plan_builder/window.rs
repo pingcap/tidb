@@ -105,10 +105,6 @@
 //! * `expression.ParamMarkerInPrepareChecker`. There is no prepared-statement
 //!   surface in this crate, so `NewWindowFuncDesc`'s `skipCheckArgs` is always
 //!   `false` — the STRICTER arm, which validates the constant arguments.
-//! * `itemTransformer` (`:2380`) as `buildByItemsForWindow` applies it: a bare
-//!   integer in a window `PARTITION BY` / `ORDER BY` becomes an
-//!   `ast.PositionExpr`, whose resolution against the window's child schema is
-//!   not ported. [`PlanBuilder::build_by_items_for_window`] refuses one.
 //!
 //! # 4. Session variables
 //!
@@ -1406,34 +1402,56 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     /// Go `buildByItemsForWindow(ctx, p, proj, items, retItems, aggMap)`
-    /// (`:6826`): rewrites one by-item list against the child and makes sure
-    /// each resulting column is projected.
+    /// (`:6844`): rewrites one by-item list against the child plan, keeping
+    /// the plan each rewrite returns (a subquery inserts an Apply), and makes
+    /// sure each resulting column is projected.
+    ///
+    /// In an ORDER BY list (`positions`), Go's parser turns an integer literal
+    /// and `itemTransformer` a parameter marker into a position, which names
+    /// the child plan's column at that position (`positionToScalarFunc`); a
+    /// hidden one or one out of range is 1054 naming `build_clause`, the clause
+    /// the window build runs under. A PARTITION BY item is never a position.
     ///
     /// # Errors
     ///
-    /// Any item's build error, or the `itemTransformer` refusal in section 3.
+    /// Any item's build error.
     #[allow(clippy::too_many_arguments)]
     pub fn build_by_items_for_window(
         &mut self,
+        mut plan: LogicalPlan,
         items: &[OrderItem],
-        schema: &Schema,
-        names: &[FieldName],
+        positions: Option<ClauseCode>,
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
         proj_exprs: &mut Vec<Expression>,
         proj_schema: &mut Schema,
         proj_names: &mut Vec<FieldName>,
         sort_items: &mut Vec<ColumnSortItem>,
-    ) -> Result<(), PlanError> {
+    ) -> Result<LogicalPlan, PlanError> {
         for item in items {
-            if matches!(item.expr, Expr::Int(_)) {
-                // `// boundary:` `itemTransformer` (`:2380`) as
-                // `buildByItemsForWindow` applies it; see section 3.
-                return Err(PlanError::internal(
-                    "a positional window PARTITION BY / ORDER BY item is not ported: itemTransformer (logical_plan_builder.go:2380)",
-                ));
-            }
-            let built = self.rewrite_scalar(&item.expr, schema, names, markers)?;
-            // `:6845` an item whose type is NULL contributes no sort key at
+            let position = positions
+                .and_then(|build_clause| Some((build_clause, window_item_position(&item.expr)?)));
+            let built = if let Some((build_clause, (position, text))) = position {
+                let schema = snapshot_schema_and_names(&plan).0;
+                match position
+                    .checked_sub(1)
+                    .and_then(|index| schema.columns.get(index))
+                    .filter(|column| !column.is_hidden)
+                {
+                    Some(column) => Expression::Column(column.clone()),
+                    None => {
+                        return Err(PlanError::unknown_column_in_clause(
+                            text,
+                            build_clause.message(),
+                        ))
+                    }
+                }
+            } else {
+                let (lowered_plan, built) =
+                    self.rewrite_window_operand(plan, &item.expr, markers)?;
+                plan = lowered_plan;
+                built
+            };
+            // `:6861` an item whose type is NULL contributes no sort key at
             // all — Go `continue`s, so it is neither projected nor ordered on.
             if built
                 .static_type()
@@ -1460,7 +1478,29 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             proj_schema.append([column.clone()]);
             sort_items.push(ColumnSortItem::new(column, item.desc));
         }
-        Ok(())
+        Ok(plan)
+    }
+
+    /// Go `b.rewrite(ctx, expr, p, aggMap, true)` for a window by-item or
+    /// argument: a subquery inside it is lowered against `plan` first, and the
+    /// expression is rewritten over the plan that leaves.
+    fn rewrite_window_operand(
+        &mut self,
+        plan: LogicalPlan,
+        operand: &Expr,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<(LogicalPlan, Expression), PlanError> {
+        let mut expr = operand.clone();
+        let (plan, lowered) = self.lower_scalar_subqueries(plan, &mut expr)?;
+        let (schema, names) = snapshot_schema_and_names(&plan);
+        let built = if lowered {
+            let mut markers = markers.clone();
+            markers.insert(MarkerKind::Column, schema.columns.clone());
+            self.rewrite_scalar(&expr, &schema, &names, &markers)?
+        } else {
+            self.rewrite_scalar(&expr, &schema, &names, markers)?
+        };
+        Ok((plan, built))
     }
 
     /// Go `buildProjectionForWindow(ctx, p, spec, args, aggMap)` (`:6728`):
@@ -1493,12 +1533,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut proj_schema = Schema::new(schema.columns.clone());
         let mut proj_names = names.clone();
 
+        // Go builds windows under the clause `buildProjection` (or HAVING)
+        // left; a positional ORDER BY item that names no column reports it.
+        let build_clause = self.cur_clause;
         let mut partition_by = Vec::new();
         self.cur_clause = ClauseCode::PartitionBy;
-        self.build_by_items_for_window(
+        let plan = self.build_by_items_for_window(
+            plan,
             &partition_by_items(&spec.def.spec),
-            &schema,
-            &names,
+            None,
             markers,
             &mut proj_exprs,
             &mut proj_schema,
@@ -1507,10 +1550,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         )?;
         let mut order_by = Vec::new();
         self.cur_clause = ClauseCode::WindowOrderBy;
-        self.build_by_items_for_window(
+        let mut plan = self.build_by_items_for_window(
+            plan,
             &spec.def.spec.order_by,
-            &schema,
-            &names,
+            Some(build_clause),
             markers,
             &mut proj_exprs,
             &mut proj_schema,
@@ -1520,7 +1563,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         let mut new_args = Vec::with_capacity(args.len());
         for arg in args {
-            let built = self.rewrite_scalar(arg, &schema, &names, markers)?;
+            let (lowered_plan, built) = self.rewrite_window_operand(plan, arg, markers)?;
+            plan = lowered_plan;
             match &built {
                 Expression::Constant(_) => {
                     new_args.push(built);
@@ -1789,6 +1833,37 @@ fn take_only_child(plan: LogicalPlan) -> LogicalPlan {
             }
         }
         other => other,
+    }
+}
+
+/// Go's parser turns an integer by-item literal into a `PositionExpr`, and
+/// `itemTransformer` turns a parameter marker into one, which
+/// `positionToScalarFunc` reads as an integer: the 1-based position and the
+/// text an unknown one is reported as. A literal beyond `int64` stays a value.
+fn window_item_position(expr: &Expr) -> Option<(usize, String)> {
+    match expr {
+        Expr::Int(digits) => {
+            let position = digits.parse::<i64>().ok()?;
+            Some((
+                usize::try_from(position).unwrap_or(usize::MAX),
+                digits.clone(),
+            ))
+        }
+        Expr::ParamMarker {
+            value: Some(tidb_datatype::Datum::Int(value)),
+            ..
+        } => Some((
+            usize::try_from(*value).unwrap_or(usize::MAX),
+            "?".to_owned(),
+        )),
+        Expr::ParamMarker {
+            value: Some(tidb_datatype::Datum::UInt(value)),
+            ..
+        } => Some((
+            usize::try_from(*value).unwrap_or(usize::MAX),
+            "?".to_owned(),
+        )),
+        _ => None,
     }
 }
 

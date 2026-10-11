@@ -829,3 +829,25 @@ fn cte_scope_batch_prepare_pins_base_table_despite_nested_cte() {
     }
     assert_eq!(row_text(session.run("EXECUTE cte_p")), [["1"]]);
 }
+
+/// Go's PrepareExec builds the plan with each variable read as its value at
+/// PREPARE (`rewriteVariable`), so a system variable no longer fails PREPARE
+/// and an unknown one is 1193 there; EXECUTE reads the variables afresh.
+/// Captured from Go TiDB.
+#[test]
+fn prepare_reads_variables_at_prepare_and_again_at_execute() {
+    let mut session = Session::new();
+    session
+        .run("prepare s1 from 'select /*+ set_var(max_execution_time=1) */ @@max_execution_time'")
+        .unwrap();
+    assert_eq!(row_text(session.run("execute s1")), [["1"]]);
+    let error = session
+        .run("prepare s2 from 'select @@no_such_var'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1193, "{}", error.message);
+    session.run("set @x = 5").unwrap();
+    session.run("prepare s3 from 'select @x + 1'").unwrap();
+    session.run("set @x = 7").unwrap();
+    assert_eq!(row_text(session.run("execute s3")), [["8"]]);
+}
