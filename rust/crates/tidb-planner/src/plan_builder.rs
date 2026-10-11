@@ -178,6 +178,7 @@ mod projection_group_check;
 pub mod set_opr;
 #[cfg(test)]
 mod set_opr_tests;
+mod summary_time_range;
 pub mod window;
 #[cfg(test)]
 mod window_tests;

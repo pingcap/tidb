@@ -1682,6 +1682,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 db_name,
                 &table.table_name,
             );
+        // Go sets the summary tables' `QueryTimeRange` with their extractors.
+        if db_name.eq_ignore_ascii_case("information_schema")
+            && matches!(
+                table.table_name.to_ascii_uppercase().as_str(),
+                "INSPECTION_RESULT"
+                    | "INSPECTION_SUMMARY"
+                    | "METRICS_SUMMARY"
+                    | "METRICS_SUMMARY_BY_LABEL"
+            )
+        {
+            mem_table.query_time_range = self.time_range_for_summary_table();
+        }
         mem_table
             .base
             .base

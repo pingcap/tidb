@@ -1237,6 +1237,7 @@ mod explain_arm;
 mod gcutil;
 mod identity;
 pub mod infoschema;
+mod inspection;
 mod load_stats_arm;
 mod non_prepared_plan_cache;
 mod nontransactional;

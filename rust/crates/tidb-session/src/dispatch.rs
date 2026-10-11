@@ -367,6 +367,14 @@ pub(crate) struct InformationSchemaReads {
     cluster_config_filters: Vec<tidb_planner::memtable_predicate_extractor::ClusterTableFilter>,
     cluster_log_extractors:
         Vec<tidb_planner::memtable_predicate_extractor::ClusterLogTableExtractor>,
+    /// Each `INSPECTION_SUMMARY` scan's extractor and time range.
+    inspection_summary_scans: Vec<(
+        tidb_planner::memtable_predicate_extractor::InspectionSummaryTableExtractor,
+        tidb_planner::logical::mem_table::QueryTimeRange,
+    )>,
+    /// Each `TABLE_STORAGE_STATS` scan's extractor.
+    table_storage_stats_extractors:
+        Vec<tidb_planner::memtable_predicate_extractor::TableStorageStatsExtractor>,
 }
 
 impl InformationSchemaReads {
@@ -412,6 +420,12 @@ impl InformationSchemaReads {
             reads
                 .cluster_log_extractors
                 .extend(tidb_planner::memtable_predicate_extractor::cluster_log_extractors(plan));
+            reads
+                .inspection_summary_scans
+                .extend(tidb_planner::memtable_predicate_extractor::inspection_summary_scans(plan));
+            reads.table_storage_stats_extractors.extend(
+                tidb_planner::memtable_predicate_extractor::table_storage_stats_extractors(plan),
+            );
         }
         reads
     }
@@ -422,12 +436,12 @@ impl InformationSchemaReads {
         let filters = |filters: &[_]| -> Vec<String> {
             filters.iter().map(|filter| format!("{filter:?}")).collect()
         };
-        let logs = |extractors: &[_]| -> Vec<String> {
+        fn logs<T: std::fmt::Debug>(extractors: &[T]) -> Vec<String> {
             extractors
                 .iter()
                 .map(|extractor| format!("{extractor:?}"))
                 .collect()
-        };
+        }
         reads.columns.iter().all(|(table, columns)| {
             self.columns
                 .get(table)
@@ -446,6 +460,18 @@ impl InformationSchemaReads {
                     .iter()
                     .all(|want| contains(&have, want))
             }
+            && {
+                let have = logs(&self.inspection_summary_scans);
+                logs(&reads.inspection_summary_scans)
+                    .iter()
+                    .all(|want| contains(&have, want))
+            }
+            && {
+                let have = logs(&self.table_storage_stats_extractors);
+                logs(&reads.table_storage_stats_extractors)
+                    .iter()
+                    .all(|want| contains(&have, want))
+            }
     }
 
     fn extend(&mut self, reads: Self) {
@@ -458,6 +484,10 @@ impl InformationSchemaReads {
             .extend(reads.cluster_config_filters);
         self.cluster_log_extractors
             .extend(reads.cluster_log_extractors);
+        self.inspection_summary_scans
+            .extend(reads.inspection_summary_scans);
+        self.table_storage_stats_extractors
+            .extend(reads.table_storage_stats_extractors);
     }
 }
 
@@ -918,6 +948,8 @@ impl Session {
             needs_column_lengths,
             cluster_config_filters,
             cluster_log_extractors,
+            inspection_summary_scans,
+            table_storage_stats_extractors,
         } = reads;
         let (needs_storage_stats, needs_column_lengths) =
             (*needs_storage_stats, *needs_column_lengths);
@@ -1042,6 +1074,24 @@ impl Session {
                 self.variables_info_table_rows()
             } else if table_name.eq_ignore_ascii_case("ATTRIBUTES") {
                 infoschema::attributes_rows(&scratch, &self.schema_visibility())?
+            } else if table_name.eq_ignore_ascii_case("INSPECTION_RULES") {
+                crate::inspection::inspection_rules_rows()
+            } else if table_name.eq_ignore_ascii_case("INSPECTION_SUMMARY") {
+                let mut rows = Vec::new();
+                for (extractor, time_range) in inspection_summary_scans {
+                    rows.extend(crate::inspection::inspection_summary_rows(
+                        extractor,
+                        time_range,
+                        |sql| {
+                            tidb_executor::run_select_meta_in(sql, &scratch, "metrics_schema", ctx)
+                                .map(|(_, rows)| rows)
+                        },
+                        |warning| ctx.append_warning_parts(1105, &warning),
+                    )?);
+                }
+                rows
+            } else if table_name.eq_ignore_ascii_case("TABLE_STORAGE_STATS") {
+                table_storage_stats_rows(table_storage_stats_extractors)?
             } else if serving_schema_of(&table_name)
                 == tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA
                 && table_name.eq_ignore_ascii_case("SESSION_VARIABLES")
@@ -4044,4 +4094,30 @@ impl Session {
         // clamped to now, the current read. Any other statement ignores it.
         Ok(())
     }
+}
+
+/// Go `tableStorageStatsRetriever.initialize` for the scans of one statement:
+/// a scan that names no `TABLE_SCHEMA` is refused, and any other needs PD's
+/// region statistics, which a store without PD cannot answer (Go's
+/// `helper.GetPDAddr` fails with `pd unavailable`). A scan whose predicates
+/// contradict each other (`SkipRequest`) reads nothing.
+fn table_storage_stats_rows(
+    extractors: &[tidb_planner::memtable_predicate_extractor::TableStorageStatsExtractor],
+) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+    for extractor in extractors
+        .iter()
+        .filter(|extractor| !extractor.skip_request)
+    {
+        let message = if extractor.table_schema.is_empty() {
+            "Please add where clause to filter the column TABLE_SCHEMA. \
+             For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')"
+        } else {
+            "pd unavailable"
+        };
+        return Err(DriverError::DdlCoded {
+            errno: 1105,
+            message: message.to_owned(),
+        });
+    }
+    Ok(Vec::new())
 }

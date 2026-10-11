@@ -1997,8 +1997,18 @@ fn every_information_schema_cell_matches_its_declared_column_type() {
         // An embedded session has no process HTTP owner for live config
         // retrieval (the boundary `cluster_metadata_config_refuses_captured_
         // runtime_rows` pins), and Go itself answers TIKV_STORE_STATUS with
-        // "pd http client unavailable" when there is no PD.
-        if name.eq_ignore_ascii_case("CLUSTER_CONFIG") || name.eq_ignore_ascii_case("TIKV_STORE_STATUS") {
+        // "pd http client unavailable" when there is no PD, INSPECTION_SUMMARY
+        // with its metrics query's "pd unavailable", and an unfiltered
+        // TABLE_STORAGE_STATS by asking for a TABLE_SCHEMA filter.
+        if [
+            "CLUSTER_CONFIG",
+            "TIKV_STORE_STATUS",
+            "INSPECTION_SUMMARY",
+            "TABLE_STORAGE_STATS",
+        ]
+        .iter()
+        .any(|refusing| name.eq_ignore_ascii_case(refusing))
+        {
             if answer.is_err() {
                 continue;
             }
@@ -2858,4 +2868,106 @@ fn performance_schema_tables_answer_as_go() {
     assert!(session
         .run("select * from information_schema.events_statements_summary_by_digest")
         .is_err());
+}
+
+/// Go's `INSPECTION_RULES`, `INSPECTION_SUMMARY` and `TABLE_STORAGE_STATS`
+/// retrievers in a store without PD. Captured from Go TiDB.
+#[test]
+fn inspection_and_storage_stats_tables_answer_as_go() {
+    let mut session = Session::new();
+    let rows = |session: &mut Session, sql: &str| crate::tests_support::row_text(session.run(sql));
+    let rule = |name: &str, kind: &str| vec![name.to_owned(), kind.to_owned(), String::new()];
+    let summary = [
+        "ddl",
+        "gc",
+        "pd",
+        "query-summary",
+        "raftstore",
+        "read-link",
+        "rocksdb",
+        "stats",
+        "wait-events",
+        "write-link",
+    ]
+    .map(|name| rule(name, "summary"));
+    let mut all = [
+        "config",
+        "version",
+        "node-load",
+        "critical-error",
+        "threshold-check",
+    ]
+    .map(|name| rule(name, "inspection"))
+    .to_vec();
+    all.extend(summary.iter().cloned());
+    assert_eq!(
+        rows(
+            &mut session,
+            "select * from information_schema.inspection_rules"
+        ),
+        all
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "select * from information_schema.inspection_rules where type='summary'"
+        ),
+        summary
+    );
+    assert!(rows(
+        &mut session,
+        "select * from information_schema.inspection_rules where type='inspection' and type='summary'"
+    )
+    .is_empty());
+
+    // The summary queries the metrics tables, which need PD.
+    let error = session
+        .run("select * from information_schema.inspection_summary where rule='ddl'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert!(
+        error.message.starts_with(
+            "execute 'select avg(value),min(value),max(value) from \
+             `metrics_schema`.`tidb_ddl_add_index_speed` where time>='"
+        ) && error
+            .message
+            .ends_with("' failed: query metric error: pd unavailable"),
+        "{}",
+        error.message
+    );
+    // Contradicting predicates skip the inspection: no query, no error.
+    assert!(rows(
+        &mut session,
+        "select * from information_schema.inspection_summary where rule='ddl' and rule='gc'"
+    )
+    .is_empty());
+
+    let storage_error = |session: &mut Session, sql: &str| {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        (error.code, error.message)
+    };
+    assert_eq!(
+        storage_error(
+            &mut session,
+            "select * from information_schema.table_storage_stats where table_schema='test'"
+        ),
+        (1105, "pd unavailable".to_owned())
+    );
+    assert_eq!(
+        storage_error(
+            &mut session,
+            "select * from information_schema.table_storage_stats"
+        ),
+        (
+            1105,
+            "Please add where clause to filter the column TABLE_SCHEMA. For example, \
+             where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')"
+                .to_owned()
+        )
+    );
+    assert_eq!(
+        rows(&mut session, "desc information_schema.inspection_summary")[5],
+        ["AVG_VALUE", "double(22,6)", "YES", "", "NULL", ""]
+    );
 }

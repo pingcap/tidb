@@ -1,21 +1,13 @@
-# CAPTURED from a running TiDB (`gorun`): SHOW CREATE TABLE
-# information_schema.<t> for every table `tidb-session`'s infoschema serves,
-# in the order the served-table registry lists them.
+# CAPTURED from this branch's Go TiDB (the go-oracle probe harness, a mock
+# store) on 2026-10-11: SHOW CREATE TABLE information_schema.<t> for these
+# served tables, in the order the served-table registry lists them.
 #
-# ONE CORRECTION applied to the raw capture: `gorun` never applies
+# ONE CORRECTION applied to the raw capture: the probe harness never applies
 # `deprecate-integer-display-length`, so it prints `bigint(21)` where a real
 # tidb-server prints `bigint` (Go `CompactStr` hides the width whenever
-# `TiDBStrictIntegerDisplayWidth` is set, which it is on a server). The
-# integer display widths below were therefore stripped; every other byte is
-# the capture verbatim.
-#
-# THREE BLOCKS ARE DERIVED, NOT CAPTURED: `TIDB_SERVERS_INFO`,
-# `CLUSTER_INFO` and `PARTITIONS` were added after this capture was taken, so
-# their blocks are written from Go's own column declarations
-# (`pkg/infoschema/tables.go`'s `tableTiDBServersInfoCols`,
-# `tableClusterInfoCols` and `partitionsCols`: name, type and size, with no
-# flags and no defaults) rendered under the conventions every captured block
-# above establishes. Re-capture them the next time `gorun` is available.
+# `TiDBStrictIntegerDisplayWidth` is set, which it is on a server; the
+# boolean `tinyint(1)` keeps it). The integer display widths below were
+# therefore stripped; every other byte is the capture verbatim.
 #
 # `partitionsCols` declares `PARTITION_EXPRESSION`, `SUBPARTITION_EXPRESSION`
 # and `PARTITION_DESCRIPTION` as `mysql.TypeLongBlob` with no explicit size,
@@ -23,9 +15,8 @@
 # does -- the column carries the table's utf8mb4 charset, so the blob type
 # prints as its text spelling.
 #
-# Go declares a `comment` on `CLUSTER_INFO`'s `SERVER_ID`, which renders as a
-# trailing `COMMENT '...'`; among the served tables it is the only one that
-# declares any. It is the sole column comment below.
+# A column `comment` Go declares renders as a trailing `COMMENT '...'`
+# (`CLUSTER_INFO.SERVER_ID`, every `DEADLOCKS` column).
 CREATE TABLE `SCHEMATA` (
   `CATALOG_NAME` varchar(512) DEFAULT NULL,
   `SCHEMA_NAME` varchar(64) DEFAULT NULL,
@@ -208,8 +199,6 @@ CREATE TABLE `PROCESSLIST` (
   `TIDB_CPU` bigint NOT NULL DEFAULT '0',
   `TIKV_CPU` bigint NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-# `CLUSTER_PROCESSLIST` was added to the served registry after the original capture;
-# captured from a running master tidb-server (92b9c752bc) verbatim.
 CREATE TABLE `CLUSTER_PROCESSLIST` (
   `INSTANCE` varchar(64) DEFAULT NULL,
   `ID` bigint unsigned NOT NULL DEFAULT '0',
@@ -261,8 +250,6 @@ CREATE TABLE `CLUSTER_INFO` (
   `UPTIME` varchar(32) DEFAULT NULL,
   `SERVER_ID` bigint DEFAULT NULL COMMENT 'invalid if the configuration item `enable-global-kill` is set to FALSE'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-# `TIFLASH_REPLICA` was added to the served registry after the original capture;
-# captured from a running master tidb-server (92b9c752bc) verbatim.
 CREATE TABLE `TIFLASH_REPLICA` (
   `TABLE_SCHEMA` varchar(64) DEFAULT NULL,
   `TABLE_NAME` varchar(64) DEFAULT NULL,
@@ -300,20 +287,16 @@ CREATE TABLE `COLUMN_PRIVILEGES` (
   `IS_GRANTABLE` varchar(3) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 CREATE TABLE `DEADLOCKS` (
-  `DEADLOCK_ID` bigint NOT NULL,
-  `OCCUR_TIME` timestamp(6) NULL DEFAULT NULL,
-  `RETRYABLE` tinyint(1) NOT NULL,
-  `TRY_LOCK_TRX_ID` bigint unsigned NOT NULL,
-  `CURRENT_SQL_DIGEST` varchar(64) DEFAULT NULL,
-  `CURRENT_SQL_DIGEST_TEXT` text DEFAULT NULL,
-  `KEY` text DEFAULT NULL,
-  `KEY_INFO` text DEFAULT NULL,
-  `TRX_HOLDING_LOCK` bigint unsigned NOT NULL
+  `DEADLOCK_ID` bigint NOT NULL COMMENT 'The ID to distinguish different deadlock events',
+  `OCCUR_TIME` timestamp(6) NULL DEFAULT NULL COMMENT 'The physical time when the deadlock occurs',
+  `RETRYABLE` tinyint(1) NOT NULL COMMENT 'Whether the deadlock is retryable. Retryable deadlocks are usually not reported to the client',
+  `TRY_LOCK_TRX_ID` bigint unsigned NOT NULL COMMENT 'The transaction ID (start ts) of the transaction that''s trying to acquire the lock',
+  `CURRENT_SQL_DIGEST` varchar(64) DEFAULT NULL COMMENT 'The digest of the SQL that''s being blocked',
+  `CURRENT_SQL_DIGEST_TEXT` text DEFAULT NULL COMMENT 'The normalized SQL that''s being blocked',
+  `KEY` text DEFAULT NULL COMMENT 'The key on which a transaction is waiting for another',
+  `KEY_INFO` text DEFAULT NULL COMMENT 'Information of the key',
+  `TRX_HOLDING_LOCK` bigint unsigned NOT NULL COMMENT 'The transaction ID (start ts) of the transaction that''s currently holding the lock'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-# CHARACTER_SETS / COLLATIONS / COLLATION_CHARACTER_SET_APPLICABILITY:
-# rendered by the ported catalog from Go's own column definitions
-# (infoschema/tables.go:568,575,852); the renderer itself is pinned by the
-# TiDB-captured blocks above.
 CREATE TABLE `CHARACTER_SETS` (
   `CHARACTER_SET_NAME` varchar(32) DEFAULT NULL,
   `DEFAULT_COLLATE_NAME` varchar(32) DEFAULT NULL,
