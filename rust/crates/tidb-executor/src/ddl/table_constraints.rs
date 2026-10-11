@@ -67,6 +67,7 @@ pub(crate) const PRI_KEY_FLAG: u32 = 1 << 1;
 /// options, all rejected rather than silently created as a plain index.
 pub(crate) fn table_indexes(
     create: &tidb_ast::CreateTableStmt,
+    names: &crate::ddl::constraint_names::CreateTableConstraintNames,
     columns: &[ColumnInfo],
     clustered: bool,
     common_handle: bool,
@@ -113,56 +114,9 @@ pub(crate) fn table_indexes(
         }
         Ok(offset)
     };
-    /// Go `GetName4AnonymousIndex` (`pkg/ddl/executor.go`): an index written
-    /// without a name is named after its FIRST column, and a collision with an
-    /// index already on the table appends `_2`, `_3`, ... until it is free.
-    /// `PRIMARY` is never taken as an anonymous name, so a column called
-    /// `primary` yields `primary_2`.
-    ///
-    /// Captured: `create table n3 (a int, b int, unique key (a), key (a))`
-    /// prints `UNIQUE KEY \`a\` (\`a\`)` and `KEY \`a_2\` (\`a\`)`.
-    fn anonymous_index_name(
-        indexes: &[KvIndex],
-        reserved: &[String],
-        first_column: &str,
-    ) -> String {
-        let mut id = 2;
-        let mut name = if first_column.eq_ignore_ascii_case("primary") {
-            id = 3;
-            format!("{first_column}_2")
-        } else {
-            first_column.to_owned()
-        };
-        let taken = |name: &str| {
-            indexes
-                .iter()
-                .any(|index| index.name.eq_ignore_ascii_case(name))
-                || reserved
-                    .iter()
-                    .any(|given| given.eq_ignore_ascii_case(name))
-        };
-        while taken(&name) {
-            name = format!("{first_column}_{id}");
-            id += 1;
-        }
-        name
-    }
-    // Go `checkConstraintNames` reserves every EXPLICIT key name in a first
-    // pass, then fills the anonymous ones from the same pool, so an anonymous
-    // index never takes a name a later constraint spells out. Captured:
-    // `create table n4 (a int, b int, key a_2(b), unique(a), key(a))` names
-    // the two anonymous keys `a` and `a_3`.
-    let mut reserved: Vec<String> = create
-        .table_constraints
-        .iter()
-        .filter_map(|constraint| match constraint {
-            tidb_ast::TableConstraint::Index(index) => index.name.clone(),
-            _ => None,
-        })
-        .collect();
     let mut indexes: Vec<KvIndex> = Vec::new();
 
-    for constraint in &create.table_constraints {
+    for (constraint_index, constraint) in create.table_constraints.iter().enumerate() {
         let tidb_ast::TableConstraint::Index(index) = constraint else {
             continue;
         };
@@ -186,20 +140,6 @@ pub(crate) fn table_indexes(
             ));
         }
         crate::ddl::indexes::reject_duplicate_index_columns(&index.parts)?;
-        // Go `setEmptyConstraintName` names every anonymous key constraint,
-        // a PRIMARY KEY included, before the primary key's index is called
-        // `PRIMARY`: the column's name is spent all the same, so
-        // `primary key (k(4)), key (k)` names the key `k_2`.
-        if index.kind == tidb_ast::IndexConstraintKind::PrimaryKey && index.name.is_none() {
-            let first = match index.parts.first() {
-                Some(tidb_ast::IndexPart::Column { name, .. }) => Some(name.as_str()),
-                Some(tidb_ast::IndexPart::Expr { .. }) => Some("expression_index"),
-                None => None,
-            };
-            if let Some(first) = first {
-                reserved.push(anonymous_index_name(&indexes, &reserved, first));
-            }
-        }
         match index.kind {
             // Go omits the physical PRIMARY index only for PKIsHandle.  A
             // common handle stores no separate index entries either, but its
@@ -227,24 +167,14 @@ pub(crate) fn table_indexes(
         );
         // The name has to be settled BEFORE the expression parts are built,
         // because a hidden column is named `_V$_<index name>_<part>`.
+        // Go `checkConstraintNames` settled every name; a PRIMARY KEY spent
+        // its anonymous name there and is called `PRIMARY` here.
         let name = match index.kind {
             tidb_ast::IndexConstraintKind::PrimaryKey => "PRIMARY".to_owned(),
-            _ => match index.name.clone() {
-                Some(given) => given,
-                None => match index.parts.first() {
-                    Some(tidb_ast::IndexPart::Column { name, .. }) => {
-                        anonymous_index_name(&indexes, &reserved, name)
-                    }
-                    // Go `getAnonymousIndexPrefix`: an expression key part has
-                    // no column name to be named after. Captured: two unnamed
-                    // expression indexes become `expression_index` and
-                    // `expression_index_2`.
-                    Some(tidb_ast::IndexPart::Expr { .. }) => {
-                        anonymous_index_name(&indexes, &reserved, "expression_index")
-                    }
-                    None => return Err(DriverError::unsupported("an index names no column")),
-                },
-            },
+            _ => names
+                .table_constraint(constraint_index)
+                .map(str::to_owned)
+                .ok_or_else(|| DriverError::unsupported("an index names no column"))?,
         };
         // Go `BuildIndexInfo` checks the name's length first.
         crate::ddl::check_too_long_identifier(&name)?;
@@ -356,9 +286,13 @@ pub(crate) fn table_indexes(
                 && index.kind == tidb_ast::IndexConstraintKind::PrimaryKey,
         });
     }
-    for def in &create.columns {
-        for option in &def.options {
+    for (column_index, def) in create.columns.iter().enumerate() {
+        for (option_index, option) in def.options.iter().enumerate() {
             if let tidb_ast::ColumnOption::InlineKey(key) = option {
+                // Go builds no constraint for a repeated inline PRIMARY KEY.
+                let Some(settled) = names.inline_key(column_index, option_index) else {
+                    continue;
+                };
                 match key.kind {
                     // An inline `UNIQUE` is an anonymous constraint like any
                     // other: Go names it after its column and appends `_2`,
@@ -374,7 +308,7 @@ pub(crate) fn table_indexes(
                             strict,
                             max_index_length,
                         )?;
-                        let name = anonymous_index_name(&indexes, &reserved, &def.name);
+                        let name = settled.to_owned();
                         indexes.push(KvIndex {
                             id: (indexes.len() + 1) as i64,
                             name,
@@ -396,7 +330,6 @@ pub(crate) fn table_indexes(
                     // calls the unique key `a_2` and not `a`.
                     tidb_ast::InlineKeyKind::Primary { .. } => {
                         let offset = offset_of(&def.name)?;
-                        reserved.push(anonymous_index_name(&indexes, &reserved, &def.name));
                         if !clustered || common_handle {
                             indexes.push(KvIndex {
                                 id: (indexes.len() + 1) as i64,

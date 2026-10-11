@@ -455,6 +455,7 @@ pub fn build_table_info_in_schema(
         .cloned();
 
     let mut columns = Vec::with_capacity(create.columns.len());
+    let mut inline_slots = Vec::new();
     for (offset, column) in create.columns.iter().enumerate() {
         let (info, inline) = build_column(
             offset,
@@ -472,9 +473,38 @@ pub fn build_table_info_in_schema(
         // the position Go appends it: after every table-level one. Inline
         // constraints carry no key parts, so they contribute no expression
         // parts to the hidden-column synthesis.
-        constraints.extend(inline);
-        constraint_exprs.push(Vec::new());
+        for (option, constraint) in inline {
+            inline_slots.push((offset, option, constraints.len()));
+            constraints.push(constraint);
+            constraint_exprs.push(Vec::new());
+        }
         columns.push(info);
+    }
+
+    // Go `checkConstraintNames`, run right after `buildColumnsAndConstraints`:
+    // duplicate explicit names fail (1061, 1826, 3822) and every anonymous key
+    // is named -- before the hidden columns of an expression index, which are
+    // named after their index.
+    let settled = tidb_executor::ddl::constraint_names::check_constraint_names(
+        create,
+        context.enable_check_constraint(),
+    )
+    .map_err(|error| DdlAdmissionError::with_code(error.code, error.message))?;
+    let table_index_names = create
+        .table_constraints
+        .iter()
+        .enumerate()
+        .filter(|(_, constraint)| matches!(constraint, TableConstraint::Index(_)))
+        .map(|(index, _)| settled.table_constraint(index));
+    for (constraint, name) in constraints.iter_mut().zip(table_index_names) {
+        if let Some(name) = name {
+            name.clone_into(&mut constraint.name);
+        }
+    }
+    for (column, option, position) in inline_slots {
+        if let Some(name) = settled.inline_key(column, option) {
+            name.clone_into(&mut constraints[position].name);
+        }
     }
 
     // go `BuildHiddenColumnInfo` (pkg/ddl/create_table.go:1590): every
@@ -502,25 +532,6 @@ pub fn build_table_info_in_schema(
             ));
         }
         seen.push(lowercase);
-    }
-
-    // Go `checkConstraintNames` (pkg/ddl/create_table.go:812, run right
-    // after buildColumnsAndConstraints): every non-empty index-constraint
-    // name must be unique case-insensitively across the whole statement —
-    // table-level and inline alike — or the create fails with 1061
-    // `Duplicate key name '%-.192s'` (ErrDupKeyName) and no table is built.
-    let mut constraint_names: std::collections::HashSet<String> =
-        std::collections::HashSet::with_capacity(constraints.len());
-    for constraint in &constraints {
-        if constraint.name.is_empty() {
-            continue;
-        }
-        if !constraint_names.insert(constraint.name.to_lowercase()) {
-            return Err(DdlAdmissionError::with_code(
-                1061,
-                format!("Duplicate key name '{}'", constraint.name),
-            ));
-        }
     }
 
     // Go `setColumnFlagWithConstraint`, run over every constraint once every
@@ -888,22 +899,9 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     }
     Ok(Constraint {
         kind,
-        // Go `setEmptyConstraintName`: an unnamed key takes its first column's
-        // name, but that pass EXCLUDES a PRIMARY KEY (`Tp !=
-        // ast.ConstraintPrimaryKey`). The PK's name stays empty here and the
-        // index build renames it `PRIMARY`. Column-naming it early would make
-        // the 1061 duplicate-name precheck collide `KEY b (...), PRIMARY KEY
-        // (b(...))` on the same first column, where go builds both indexes
-        // (oracle: d9.pf carries 'b' id 1 beside PRIMARY id 2).
-        name: index.name.clone().unwrap_or_else(|| {
-            if kind == ConstraintKind::PrimaryKey {
-                return String::new();
-            }
-            parts
-                .first()
-                .map(|part| part.name.clone())
-                .unwrap_or_default()
-        }),
+        // An anonymous key is named by `checkConstraintNames` once every
+        // column exists.
+        name: index.name.clone().unwrap_or_default(),
         parts,
         clustered: index.options.primary_key_storage,
         comment: index.options.comment.clone().unwrap_or_default(),
@@ -963,27 +961,12 @@ fn synthesize_expression_index_columns(
         .map(|column| column.name.original().to_owned())
         .collect();
     let types: Vec<FieldType> = columns.iter().map(|c| c.field_type.clone()).collect();
-    // go `GetName4AnonymousIndex` dedups the anonymous name against the
-    // index names already in the statement, suffixing `_2`, `_3`, ... .
-    let mut taken: Vec<String> = constraints
-        .iter()
-        .filter(|constraint| !constraint.name.is_empty())
-        .map(|constraint| constraint.name.to_lowercase())
-        .collect();
+    // `checkConstraintNames` has named every index, an expression index
+    // included (`expression_index`, `expression_index_2`, ...).
     for (constraint, exprs) in constraints.iter_mut().zip(constraint_exprs) {
         if exprs.is_empty() {
             // Inline constraints carry no key parts.
             continue;
-        }
-        if constraint.name.is_empty() && exprs.iter().any(|expr| expr.is_some()) {
-            let mut id = 2;
-            let mut candidate = "expression_index".to_owned();
-            while taken.contains(&candidate) || candidate.eq_ignore_ascii_case("PRIMARY") {
-                candidate = format!("expression_index_{id}");
-                id += 1;
-            }
-            taken.push(candidate.to_lowercase());
-            constraint.name = candidate;
         }
         if constraint.kind == ConstraintKind::PrimaryKey && exprs.iter().any(|expr| expr.is_some())
         {
@@ -1244,7 +1227,7 @@ fn build_column(
     table_collate: &str,
     context: &tidb_executor::StmtContext,
     generated_preceding: Option<&[ColumnInfo]>,
-) -> Refusal<(ColumnInfo, Vec<Constraint>)> {
+) -> Refusal<(ColumnInfo, Vec<(usize, Constraint)>)> {
     let name = &column.name;
     if !column.qualifier.is_empty() {
         return Err(DdlAdmissionError::with_code(
@@ -1399,7 +1382,7 @@ fn build_column(
     let mut staged_default = None;
     let mut has_null_flag = false;
     let mut set_on_update_now = false;
-    for option in &column.options {
+    for (option_index, option) in column.options.iter().enumerate() {
         match option {
             ColumnOption::NotNull => field_type.add_flags(FieldTypeFlags::NOT_NULL),
             ColumnOption::Null => {
@@ -1412,40 +1395,46 @@ fn build_column(
                     if field_type.has_flag(FieldTypeFlags::PRI_KEY) {
                         continue;
                     }
-                    constraints.push(Constraint {
-                        kind: ConstraintKind::PrimaryKey,
-                        name: name.clone(),
-                        parts: vec![KeyPart {
-                            name: name.clone(),
-                            prefix_len: UNSPECIFIED_LENGTH,
-                            desc: false,
-                        }],
-                        clustered: storage,
-                        comment: String::new(),
-                        invisible: false,
-                        global: inline.global,
-                        index_type: None,
-                    });
+                    constraints.push((
+                        option_index,
+                        Constraint {
+                            kind: ConstraintKind::PrimaryKey,
+                            // Named by `checkConstraintNames` with the rest.
+                            name: String::new(),
+                            parts: vec![KeyPart {
+                                name: name.clone(),
+                                prefix_len: UNSPECIFIED_LENGTH,
+                                desc: false,
+                            }],
+                            clustered: storage,
+                            comment: String::new(),
+                            invisible: false,
+                            global: inline.global,
+                            index_type: None,
+                        },
+                    ));
                     field_type.add_flags(FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL);
                 }
+                // Go's arm tests `UniqueFlag` but sets `UniqueKeyFlag`, so a
+                // repeated inline UNIQUE is a second constraint (`a`, `a_2`).
                 InlineKeyKind::Unique => {
-                    if field_type.has_flag(FieldTypeFlags::UNIQUE_KEY) {
-                        continue;
-                    }
-                    constraints.push(Constraint {
-                        kind: ConstraintKind::Unique,
-                        name: name.clone(),
-                        parts: vec![KeyPart {
-                            name: name.clone(),
-                            prefix_len: UNSPECIFIED_LENGTH,
-                            desc: false,
-                        }],
-                        clustered: None,
-                        comment: String::new(),
-                        invisible: false,
-                        global: inline.global,
-                        index_type: None,
-                    });
+                    constraints.push((
+                        option_index,
+                        Constraint {
+                            kind: ConstraintKind::Unique,
+                            name: String::new(),
+                            parts: vec![KeyPart {
+                                name: name.clone(),
+                                prefix_len: UNSPECIFIED_LENGTH,
+                                desc: false,
+                            }],
+                            clustered: None,
+                            comment: String::new(),
+                            invisible: false,
+                            global: inline.global,
+                            index_type: None,
+                        },
+                    ));
                     field_type.add_flags(FieldTypeFlags::UNIQUE_KEY);
                 }
             },

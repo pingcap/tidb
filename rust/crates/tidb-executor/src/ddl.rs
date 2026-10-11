@@ -323,6 +323,7 @@ mod column_changes;
 pub mod column_field_type;
 mod column_types;
 mod constraint_changes;
+pub mod constraint_names;
 mod exchange_partition;
 mod generated_modify;
 mod index_changes;
@@ -1385,43 +1386,21 @@ fn create_table_in(
         }
         seen_columns.push(&def.name);
     }
-    // Go `checkDuplicateConstraint` (`create_table.go:1174`). `run_create_index_in`
-    // already raises 1061, so without this the two entry points disagreed.
-    // Captured: `create table a2(a int, b int, key i(a), key i(b))` answers
-    // `Error|1061|Duplicate key name 'i'`.
-    // Go `checkConstraintNames` keeps foreign-key names in their own set, so
-    // a duplicate one is 1826 in the same ordered pass.
-    let mut seen_indexes: Vec<&str> = Vec::new();
-    let mut seen_foreign_keys: Vec<&str> = Vec::new();
-    for constraint in &create.table_constraints {
-        match constraint {
-            tidb_ast::TableConstraint::Index(index) => {
-                let Some(name) = index.name.as_deref().filter(|name| !name.is_empty()) else {
-                    continue;
-                };
-                if let Some(previous) = seen_indexes
-                    .iter()
-                    .find(|seen| seen.eq_ignore_ascii_case(name))
-                {
-                    return Err(DriverError::DuplicateKeyName((*previous).to_owned()));
-                }
-                seen_indexes.push(name);
-            }
-            tidb_ast::TableConstraint::ForeignKey(foreign_key) => {
-                let Some(name) = foreign_key.name.as_deref().filter(|name| !name.is_empty()) else {
-                    continue;
-                };
-                if seen_foreign_keys
-                    .iter()
-                    .any(|seen| seen.eq_ignore_ascii_case(name))
-                {
-                    return Err(DriverError::FkDupName(name.to_owned()));
-                }
-                seen_foreign_keys.push(name);
-            }
-            tidb_ast::TableConstraint::Check(_) => {}
-        }
-    }
+    // Go `checkConstraintNames`: duplicate explicit names fail here (1061,
+    // 1826 for a foreign key, 3822 for a CHECK), and every anonymous key is
+    // named. Captured: `create table a2(a int, b int, key i(a), key i(b))`
+    // answers `Error|1061|Duplicate key name 'i'`.
+    let constraint_names =
+        constraint_names::check_constraint_names(create, ctx.enable_check_constraint()).map_err(
+            |error| match error.code {
+                1061 => DriverError::DuplicateKeyName(error.name),
+                1826 => DriverError::FkDupName(error.name),
+                errno => DriverError::DdlCoded {
+                    errno,
+                    message: error.message,
+                },
+            },
+        )?;
 
     // Go `checkTooManyColumns` (`pkg/ddl/create_table.go:719`) runs after
     // duplicate/name checks and before the table metadata is published.
@@ -1992,6 +1971,7 @@ fn create_table_in(
     }
     let (indexes, hidden_columns, partial_conditions) = table_indexes(
         create,
+        &constraint_names,
         &columns,
         clustered,
         matches!(&handle, HandleKind::CommonHandle { .. }),
