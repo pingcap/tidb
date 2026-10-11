@@ -1010,6 +1010,17 @@ impl StagedWrites {
             .is_some_and(|keys| keys.contains(key))
     }
 
+    /// The keys `table_id` staged -- Go's membuffer walked for one table --
+    /// or `None` when the transaction never wrote it.
+    #[must_use]
+    pub fn keys_of(&self, table_id: i64) -> Option<Vec<Vec<u8>>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&table_id)
+            .map(|keys| keys.iter().map(|key| key.to_vec()).collect())
+    }
+
     /// Go `SetPresumeKeyNotExists` with the duplicate text kept for COMMIT.
     pub fn presume(&self, key: PresumedKey) {
         self.1
@@ -4133,6 +4144,22 @@ impl KvTable {
         let result = write(self);
         self.store.attach_txn_staging(None);
         result
+    }
+
+    /// Writes one committed key straight to this table's store, `None`
+    /// deleting it: a transaction's staged write replayed onto the image
+    /// another transaction committed meanwhile.
+    pub fn apply_committed_write(
+        &mut self,
+        key: &[u8],
+        value: Option<Vec<u8>>,
+    ) -> Result<(), KvTableError> {
+        let key = Key::from_bytes(key.to_vec());
+        match value {
+            Some(value) => self.store.set(key, value),
+            None => self.store.delete(key),
+        }
+        .map_err(KvTableError::from)
     }
 
     /// The bytes `key` holds in this table's store, if any: COMMIT's check

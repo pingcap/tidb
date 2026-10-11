@@ -53,10 +53,9 @@ pub type SnapshotSchemaProvider =
 /// peers see nothing until commit.
 ///
 /// `base_version` is the shared catalog's mutation counter at `BEGIN`. If it
-/// moved by commit time, someone else wrote, and the commit is refused rather
-/// than overwriting their work -- the outcome Go gets from TiKV's optimistic
-/// conflict check, though Go compares the WRITTEN KEYS while this compares the
-/// whole catalog, so this refuses some commits Go would allow (documented).
+/// moved by commit time, someone else wrote, and the commit replays this
+/// transaction onto their work ([`Catalog::rebase_transaction`]), refusing it
+/// only where Go's TiKV conflict check or schema validator would.
 pub(crate) struct Transaction {
     pub(crate) working: Catalog,
     /// The catalog as `BEGIN` found it: Go's `GetSnapshot(TxnCtx.StartTS)`,
@@ -917,14 +916,6 @@ impl Session {
                 return Err(error);
             }
         };
-        if shared.version() != txn.base_version {
-            drop(shared);
-            self.clear_table_delta();
-            if let Some(process) = &self.process {
-                process.registry().transaction_finished(process.id());
-            }
-            return Err(DriverError::Txn(TxnErrorKind::WriteConflict));
-        }
         // Go's prewrite rejects an `Op_Insert` mutation whose key the
         // committed rows hold: a key an INSERT presumed absent (an optimistic
         // transaction under `tidb_constraint_check_in_place = OFF`) reports
@@ -948,7 +939,43 @@ impl Session {
                 key: presumed.index,
             });
         }
-        *shared = txn.working;
+        if shared.version() == txn.base_version {
+            *shared = txn.working;
+        } else {
+            // Go's commit fails only on a key another transaction committed
+            // meanwhile, or on a touched table whose definition changed; a
+            // commit to an unrelated table is no conflict. The locking reads
+            // this store keeps no per-key record of still need the unmoved
+            // image.
+            let rebased = if txn.locking_read {
+                Err(tidb_executor::RebaseRefusal::NotRebasable)
+            } else {
+                shared.rebase_transaction(
+                    &txn.read_snapshot,
+                    &txn.working,
+                    &self.staged_writes,
+                    !txn.mode.is_pessimistic(),
+                )
+            };
+            if let Err(refusal) = rebased {
+                drop(shared);
+                self.clear_table_delta();
+                if let Some(process) = &self.process {
+                    process.registry().transaction_finished(process.id());
+                }
+                return Err(match refusal {
+                    tidb_executor::RebaseRefusal::SchemaChanged => {
+                        let error =
+                            tidb_domain::schema_checker::SchemaCheckError::InfoSchemaChanged;
+                        DriverError::DdlCoded {
+                            errno: error.code(),
+                            message: error.message(),
+                        }
+                    }
+                    _ => DriverError::Txn(TxnErrorKind::WriteConflict),
+                });
+            }
+        }
         // The commit is durable in this store the moment the shared catalog
         // holds it; the history snapshot and Go's `LastTxnInfo` record
         // both.

@@ -109,6 +109,21 @@ pub const DEFAULT_DATABASE: &str = "test";
 /// in. Spelled lower case, which is the name Go stores and reports.
 pub const SYSTEM_DATABASE: &str = "mysql";
 
+/// Why a transaction cannot be replayed onto a newer catalog image
+/// ([`Catalog::rebase_transaction`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RebaseRefusal {
+    /// Another transaction committed a key this one wrote: Go's write
+    /// conflict.
+    WriteConflict,
+    /// A table this transaction wrote changed definition: Go's
+    /// `ErrInfoSchemaChanged` (8028).
+    SchemaChanged,
+    /// This transaction changed state its staged keys do not describe; it
+    /// commits only over an unmoved image.
+    NotRebasable,
+}
+
 /// One schema: Go `model.DBInfo`, reduced to the metadata this catalog serves.
 #[derive(Clone, Debug, Default)]
 struct Database {
@@ -2342,6 +2357,139 @@ impl Catalog {
         // Go's write paths build a new `TableInfo` rather than editing the
         // shared one; `make_mut` is the same copy-on-write at the entry level.
         Some(Arc::make_mut(entry))
+    }
+
+    /// Go's optimistic commit when another transaction committed after this
+    /// one began: a transaction that read the image `base` and holds its
+    /// writes in `working` is replayed onto this newer image.
+    ///
+    /// Go's TiKV commit fails only on a key another transaction wrote in the
+    /// meantime (write conflict), and the schema validator only on a table
+    /// the transaction touched whose definition changed
+    /// (`ErrInfoSchemaChanged`). This tier's transaction holds a whole
+    /// catalog image, so the replay works per table: one only this
+    /// transaction changed is taken whole, one both changed is merged key
+    /// by key from `staged`, and anything else it changed that keys cannot
+    /// describe is refused as not rebasable. `staged_keys_complete` says
+    /// whether `staged` holds every key the transaction wrote, index entries
+    /// included; a pessimistic transaction notes only its record keys (see
+    /// `KvTable::with_txn_staging`), so a table both sides changed is not
+    /// rebasable from them.
+    ///
+    /// # Errors
+    ///
+    /// The [`RebaseRefusal`] naming why the transaction cannot commit here;
+    /// nothing is applied then.
+    pub fn rebase_transaction(
+        &mut self,
+        base: &Catalog,
+        working: &Catalog,
+        staged: &crate::kv_table::StagedWrites,
+        staged_keys_complete: bool,
+    ) -> Result<(), RebaseRefusal> {
+        enum Replay {
+            Whole(Arc<TableEntry>),
+            Keys(Vec<(Vec<u8>, Option<Vec<u8>>)>),
+        }
+        if working.metadata_version != base.metadata_version
+            || working.databases.len() != base.databases.len()
+        {
+            return Err(RebaseRefusal::NotRebasable);
+        }
+        let mut replays: Vec<(String, String, Replay)> = Vec::new();
+        for (database_name, database) in working.databases.iter() {
+            let Some(base_database) = base.databases.get(database_name) else {
+                return Err(RebaseRefusal::NotRebasable);
+            };
+            if database.tables.len() != base_database.tables.len() {
+                return Err(RebaseRefusal::NotRebasable);
+            }
+            for (table_name, entry) in &database.tables {
+                let Some(base_entry) = base_database.tables.get(table_name) else {
+                    return Err(RebaseRefusal::NotRebasable);
+                };
+                if Arc::ptr_eq(entry, base_entry) {
+                    continue;
+                }
+                let (TableEntry::Kv(written), TableEntry::Kv(read)) =
+                    (entry.as_ref(), base_entry.as_ref())
+                else {
+                    return Err(RebaseRefusal::NotRebasable);
+                };
+                let Some(keys) = staged.keys_of(written.table_id) else {
+                    return Err(RebaseRefusal::NotRebasable);
+                };
+                let Some(current) = self
+                    .databases
+                    .get(database_name)
+                    .and_then(|database| database.tables.get(table_name))
+                else {
+                    return Err(RebaseRefusal::SchemaChanged);
+                };
+                if Arc::ptr_eq(current, base_entry) {
+                    replays.push((
+                        database_name.clone(),
+                        table_name.clone(),
+                        Replay::Whole(Arc::clone(entry)),
+                    ));
+                    continue;
+                }
+                let TableEntry::Kv(committed) = current.as_ref() else {
+                    return Err(RebaseRefusal::SchemaChanged);
+                };
+                if committed.table_id != read.table_id
+                    || !Arc::ptr_eq(&committed.columns, &read.columns)
+                    || committed.indexes().as_ptr() != read.indexes().as_ptr()
+                {
+                    return Err(RebaseRefusal::SchemaChanged);
+                }
+                if keys.is_empty() || !staged_keys_complete {
+                    return Err(RebaseRefusal::NotRebasable);
+                }
+                let (mut read, mut committed, mut written) = (
+                    read.as_ref().clone(),
+                    committed.as_ref().clone(),
+                    written.as_ref().clone(),
+                );
+                let mut writes = Vec::with_capacity(keys.len());
+                for key in keys {
+                    if read.stored_raw_value(&key) != committed.stored_raw_value(&key) {
+                        return Err(RebaseRefusal::WriteConflict);
+                    }
+                    let value = written.stored_raw_value(&key);
+                    writes.push((key, value));
+                }
+                replays.push((
+                    database_name.clone(),
+                    table_name.clone(),
+                    Replay::Keys(writes),
+                ));
+            }
+        }
+        for (database_name, table_name, replay) in replays {
+            match replay {
+                Replay::Whole(entry) => {
+                    self.version += 1;
+                    if let Some(database) = self.database_mut(&database_name) {
+                        database.tables.insert(table_name, entry);
+                    }
+                }
+                Replay::Keys(writes) => {
+                    let Some(TableEntry::Kv(table)) =
+                        self.get_rows_mut_in(&database_name, &table_name)
+                    else {
+                        continue;
+                    };
+                    let table = Arc::make_mut(table);
+                    for (key, value) in writes {
+                        table
+                            .apply_committed_write(&key, value)
+                            .map_err(|_| RebaseRefusal::NotRebasable)?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The catalog's mutation counter.

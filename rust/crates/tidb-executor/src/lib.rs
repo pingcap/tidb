@@ -249,8 +249,8 @@ pub use driver::{
     run_query_meta_stmt_with_physical, run_select, run_select_meta_in, run_select_meta_on,
     run_select_meta_stmt, run_select_meta_stmt_with_physical, run_select_on, run_set_opr_stmt,
     run_update_in, run_update_on, run_update_stmt, run_update_stmt_with_physical, Catalog,
-    DriverError, MemTable, MysqlError, PreparedDmlExecution, PreparedDmlPlan, SchemaErrorKind,
-    SelectMeta, TableEntry, TxnErrorKind, VarErrorKind, ViewDef, DEFAULT_DATABASE,
+    DriverError, MemTable, MysqlError, PreparedDmlExecution, PreparedDmlPlan, RebaseRefusal,
+    SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind, ViewDef, DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{

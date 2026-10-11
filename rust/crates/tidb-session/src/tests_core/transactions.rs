@@ -67,21 +67,38 @@ fn transaction_stages_writes_until_commit() {
     );
 }
 
-/// A commit that would discard a peer's writes is refused, rather than
-/// silently overwriting them. The refused transaction is over, so its
-/// staged writes are gone -- the statements must be retried, not the
-/// COMMIT alone.
+/// Go's optimistic commit fails only on a key a peer committed after the
+/// transaction began, and its schema check only on a table it wrote: rows a
+/// peer inserted elsewhere, or a peer's unrelated DDL, do not refuse the
+/// commit, while a write to the row the peer changed does -- and the refused
+/// transaction is over, so its statements must be retried, not the COMMIT
+/// alone.
 #[test]
-fn a_conflicting_commit_is_refused() {
+fn a_commit_conflicts_only_on_a_key_a_peer_committed() {
     let mut first = Session::new();
-    first.run("CREATE TABLE t (a BIGINT)").unwrap();
+    first
+        .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b BIGINT)")
+        .unwrap();
+    first.run("INSERT INTO t VALUES (1, 0), (2, 0)").unwrap();
     let mut second = Session::with_catalog(first.shared_catalog());
 
-    first.control_transaction("BEGIN").unwrap();
-    first.run("INSERT INTO t VALUES (1)").unwrap();
-    // The peer commits first, moving the shared catalog.
-    second.run("INSERT INTO t VALUES (2)").unwrap();
+    first.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    first.run("INSERT INTO t VALUES (3, 0)").unwrap();
+    second.run("INSERT INTO t VALUES (4, 0)").unwrap();
+    first.control_transaction("COMMIT").unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(second.run("SELECT a FROM t ORDER BY a")),
+        [["1"], ["2"], ["3"], ["4"]]
+    );
 
+    first.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    first.run("UPDATE t SET b = 3 WHERE a = 2").unwrap();
+    second.run("CREATE TABLE u (a INT)").unwrap();
+    first.control_transaction("COMMIT").unwrap();
+
+    first.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    first.run("UPDATE t SET b = 1 WHERE a = 1").unwrap();
+    second.run("UPDATE t SET b = 2 WHERE a = 1").unwrap();
     assert!(matches!(
         first.control_transaction("COMMIT"),
         Err(DriverError::Txn(TxnErrorKind::WriteConflict))
@@ -89,8 +106,8 @@ fn a_conflicting_commit_is_refused() {
     assert!(!first.in_transaction(), "a refused commit ends the txn");
     // The peer's write survived; the refused one did not.
     assert_eq!(
-        second.run("SELECT a FROM t").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(2)]])
+        crate::tests_support::row_text(second.run("SELECT a, b FROM t ORDER BY a")),
+        [["1", "2"], ["2", "3"], ["3", "0"], ["4", "0"]]
     );
 }
 
